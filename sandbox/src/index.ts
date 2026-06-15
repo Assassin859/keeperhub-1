@@ -4,10 +4,10 @@ import {
   type ServerResponse,
 } from "node:http";
 import {
-  deserialize as v8Deserialize,
-  serialize as v8Serialize,
-} from "node:v8";
-import { runCode } from "./run-code.js";
+  encodeSandboxResult,
+  SANDBOX_WIRE_VERSION,
+} from "../../lib/sandbox/child-source.js";
+import { runCode, type SandboxRunResult } from "./run-code.js";
 
 /**
  * Sentinel bytes byte-identical to the child_process runner. Main-app
@@ -16,10 +16,14 @@ import { runCode } from "./run-code.js";
  */
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
-/** Default maximum request body size (256 KiB). Envelope is small because
- * the body carries only user-written JS plus a v8-serialized envelope; any
- * reasonable Code node fits in a small fraction of this. Env-overridable. */
-const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+/** Default maximum request body size (512 KiB). The body is JSON
+ * `{ code, timeout }`, and JSON.stringify can inflate escape-heavy user code
+ * up to ~2x (every quote/backslash/control char escapes) -- versus the old
+ * base64(v8) wire's flat ~1.33x. The cap is raised so a large escape-heavy
+ * Code node that fit the old wire is not rejected with a 413. It is a DoS
+ * backstop, not a product limit; readBody enforces it before any spawn.
+ * Env-overridable. */
+const DEFAULT_MAX_BODY_BYTES = 512 * 1024;
 
 /** Default maximum concurrent /run calls per Pod. With 500m CPU + ~80 ms
  * cold-spawn + V8 compile of CHILD_SOURCE, the Pod saturates around 8
@@ -95,20 +99,22 @@ async function readBody(
   return Buffer.concat(chunks);
 }
 
-function writeRunResult(res: ServerResponse, outcome: unknown): void {
-  const payload = v8Serialize(outcome).toString("base64");
-  res.writeHead(200, { "Content-Type": "application/octet-stream" });
+function writeRunResult(res: ServerResponse, result: SandboxRunResult): void {
+  // A relayed frame is the child's tagged-JSON forwarded verbatim; only a
+  // synthetic error outcome needs encoding here.
+  const payload = result.relay
+    ? result.frame.toString("utf8")
+    : encodeSandboxResult(result.outcome);
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+  });
   res.end(`${RESULT_SENTINEL}${payload}\n`);
 }
 
 function decodeRunRequest(raw: Buffer): RunRequest | null {
   try {
-    const bodyBase64 = raw.toString("ascii").trim();
-    const decoded = Buffer.from(bodyBase64, "base64");
-    if (decoded.length === 0) {
-      return null;
-    }
-    const deserialized = v8Deserialize(decoded);
+    const deserialized: unknown = JSON.parse(raw.toString("utf8"));
     if (
       typeof deserialized !== "object" ||
       deserialized === null ||
@@ -127,6 +133,17 @@ async function handlePostRun(
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
+  // Reject a wire-version skew up front with a clear 415 (e.g. an older app
+  // that still speaks base64(v8)) instead of a confusing "malformed body".
+  const wire = req.headers["x-kh-sandbox-wire"];
+  if (wire !== SANDBOX_WIRE_VERSION) {
+    res.writeHead(415);
+    res.end(
+      `unsupported sandbox wire version: ${typeof wire === "string" ? wire : "none"}; expected ${SANDBOX_WIRE_VERSION}`
+    );
+    return;
+  }
+
   // Concurrency gate BEFORE anything else so we shed load without paying
   // the cost of reading the body or spawning a child. 429 + Retry-After
   // tells the main-app client to back off; the kept-alive HTTP.Agent there
@@ -180,7 +197,7 @@ async function handlePostRun(
         ? request.timeout
         : DEFAULT_TIMEOUT_SECONDS;
     const timeoutMs = Math.max(1, Math.min(120, timeoutSeconds)) * 1000;
-    const outcome = await runCode({
+    const result = await runCode({
       code: request.code,
       timeoutMs,
       signal: abortController.signal,
@@ -190,7 +207,7 @@ async function handlePostRun(
     if (res.writableEnded || res.destroyed) {
       return;
     }
-    writeRunResult(res, outcome);
+    writeRunResult(res, result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "body too large") {

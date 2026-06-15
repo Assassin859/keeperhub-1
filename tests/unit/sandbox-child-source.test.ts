@@ -11,6 +11,7 @@ vi.mock("server-only", () => ({}));
 import {
   createSandboxResultReader,
   decodeSandboxResult,
+  encodeSandboxResult,
   SANDBOX_CHILD_SOURCE,
   SANDBOX_RESULT_FD,
   SANDBOX_RESULT_MAX_BYTES,
@@ -1014,5 +1015,239 @@ describe("decodeSandboxResult is safe on untrusted input", () => {
 
   it("throws on malformed JSON (callers map this to an error outcome)", () => {
     expect(() => decodeSandboxResult("not json")).toThrow();
+  });
+});
+
+// encodeSandboxResult is the module-scope inverse of decodeSandboxResult used
+// by the standalone sandbox server to put a result on the HTTP response. It
+// must be a faithful inverse for every type the tag codec supports.
+describe("encodeSandboxResult <-> decodeSandboxResult round-trip", () => {
+  function roundTrip(value: unknown): unknown {
+    return decodeSandboxResult(encodeSandboxResult(value));
+  }
+
+  it("round-trips undefined", () => {
+    expect(roundTrip(undefined)).toBeUndefined();
+  });
+
+  it("round-trips BigInt", () => {
+    expect(roundTrip(BigInt("1000000000000000000"))).toBe(
+      BigInt("1000000000000000000")
+    );
+  });
+
+  it("round-trips Date", () => {
+    const r = roundTrip(new Date(1_700_000_000_000)) as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(r.getTime()).toBe(1_700_000_000_000);
+  });
+
+  it("round-trips RegExp", () => {
+    const r = roundTrip(/ab+c/gi) as RegExp;
+    expect(r).toBeInstanceOf(RegExp);
+    expect(r.source).toBe("ab+c");
+    expect(r.flags).toBe("gi");
+  });
+
+  it("round-trips Map", () => {
+    const r = roundTrip(
+      new Map<string, number>([
+        ["a", 1],
+        ["b", 2],
+      ])
+    ) as Map<string, number>;
+    expect(r).toBeInstanceOf(Map);
+    expect(r.get("a")).toBe(1);
+    expect(r.get("b")).toBe(2);
+  });
+
+  it("round-trips Set", () => {
+    const r = roundTrip(new Set([1, 2, 3])) as Set<number>;
+    expect(r).toBeInstanceOf(Set);
+    expect([...r]).toEqual([1, 2, 3]);
+  });
+
+  it("round-trips a typed array", () => {
+    const r = roundTrip(new Uint8Array([1, 2, 255])) as Uint8Array;
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect([...r]).toEqual([1, 2, 255]);
+  });
+
+  it("round-trips nested objects and arrays", () => {
+    const value = { a: [1, { b: BigInt(2) }], c: { d: new Set([9]) } };
+    const r = roundTrip(value) as typeof value;
+    expect(r.a[0]).toBe(1);
+    expect((r.a[1] as { b: bigint }).b).toBe(BigInt(2));
+    expect([...(r.c.d as Set<number>)]).toEqual([9]);
+  });
+
+  it('round-trips an object literally containing a "$" key', () => {
+    expect(roundTrip({ $: "bigint", v: "5" })).toEqual({ $: "bigint", v: "5" });
+  });
+
+  it("throws on a function (not serializable)", () => {
+    expect(() => encodeSandboxResult(() => 1)).toThrow();
+  });
+});
+
+// The "bytes" tag carries an attacker-controllable `k` (constructor kind) on an
+// UNTRUSTED boundary. The decoder must only ever instantiate real view
+// constructors from a fixed allowlist, never resolve an arbitrary global by
+// name, and must never throw on a malformed frame.
+describe("decodeSandboxResult bytes tag is safe on a forged kind", () => {
+  const b64 = (bytes: number[]): string =>
+    Buffer.from(bytes).toString("base64");
+
+  it("returns inert Uint8Array bytes for a non-view global kind (e.g. fetch)", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"fetch","v":"${b64([1, 2, 3])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect([...(r as Uint8Array)]).toEqual([1, 2, 3]);
+    expect(typeof r).not.toBe("function");
+  });
+
+  it("returns inert Uint8Array bytes for the Function constructor kind", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"Function","v":"${b64([65])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect(typeof r).not.toBe("function");
+  });
+
+  it("does not throw and falls back to raw bytes for a size-mismatched known kind", () => {
+    // 5 bytes is not a multiple of Uint32Array's 4-byte element size.
+    let decoded: unknown;
+    expect(() => {
+      decoded = decodeSandboxResult(
+        `{"$":"bytes","k":"Uint32Array","v":"${b64([1, 2, 3, 4, 5])}"}`
+      );
+    }).not.toThrow();
+    expect(decoded).toBeInstanceOf(Uint8Array);
+    expect([...(decoded as Uint8Array)]).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("still reconstructs an allowlisted view kind with a valid byte length", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"Uint16Array","v":"${b64([1, 0, 2, 0])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint16Array);
+    expect([...(r as Uint16Array)]).toEqual([1, 2]);
+  });
+});
+
+// Fidelity fixes: the encoder must be a faithful inverse of the decoder for an
+// Invalid Date, an own "__proto__" key, and sparse-array holes.
+describe("encodeSandboxResult fidelity round-trips", () => {
+  function roundTrip(value: unknown): unknown {
+    return decodeSandboxResult(encodeSandboxResult(value));
+  }
+
+  it("round-trips an Invalid Date as an Invalid Date (not the epoch)", () => {
+    const r = roundTrip(new Date("not-a-date")) as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(Number.isNaN(r.getTime())).toBe(true);
+  });
+
+  it("decodes a date frame whose v is null as an Invalid Date", () => {
+    const r = decodeSandboxResult('{"$":"date","v":null}') as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(Number.isNaN(r.getTime())).toBe(true);
+  });
+
+  it("preserves an own __proto__ data key without polluting Object.prototype", () => {
+    const input = JSON.parse('{"a":1,"__proto__":{"polluted":true}}');
+    const r = roundTrip(input) as Record<string, unknown>;
+    expect(Object.hasOwn(r, "__proto__")).toBe(true);
+    expect((r as { a: number }).a).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("round-trips a sparse array with holes as undefined (not null)", () => {
+    const sparse = [1];
+    sparse[3] = 4; // holes at indices 1, 2
+    const r = roundTrip(sparse) as unknown[];
+    expect(r.length).toBe(4);
+    expect(r[0]).toBe(1);
+    expect(r[1]).toBeUndefined();
+    expect(r[2]).toBeUndefined();
+    expect(r[3]).toBe(4);
+  });
+});
+
+// Drift guard for finding F-010's two hand-maintained encoders: the module
+// encodeSandboxResult and the inline encodeResult template share one wire
+// format but are separate code. Spawn the real grandchild over a rich corpus,
+// then assert the module encoder reproduces the inline encoder's output exactly
+// (compared after one decode, so we never reconstruct the corpus by hand).
+describe("encodeSandboxResult parity with the inline grandchild encoder", () => {
+  function rawFrame(userCode: string, timeoutMs = 3000): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", SANDBOX_CHILD_SOURCE], {
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+      });
+      const reader = createSandboxResultReader();
+      const killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("harness timeout"));
+      }, timeoutMs + 3000);
+      child.stdout.resume();
+      child.stderr.resume();
+      const stream = child.stdio[SANDBOX_RESULT_FD];
+      if (stream && "on" in stream) {
+        stream.on("data", (chunk: Buffer) => {
+          reader.push(chunk);
+          if (reader.done && reader.frame) {
+            clearTimeout(killTimer);
+            child.kill("SIGKILL");
+            resolve(reader.frame);
+          }
+        });
+      }
+      child.on("error", (err: Error) => {
+        clearTimeout(killTimer);
+        reject(err);
+      });
+      child.stdin.write(JSON.stringify({ code: userCode, timeoutMs }));
+      child.stdin.end();
+    });
+  }
+
+  it("agrees with the inline encoder over a rich corpus", async () => {
+    const code = [
+      "const sparse = [1]; sparse[3] = 4;",
+      'const proto = JSON.parse(\'{"a":1,"__proto__":{"p":1}}\');',
+      "return {",
+      "  negZero: -0, nan: NaN, inf: Infinity, ninf: -Infinity,",
+      "  big: 10n, date: new Date(1700000000000), invalidDate: new Date('x'),",
+      "  re: /ab+c/gi, map: new Map([['a', 1], ['b', 2]]),",
+      "  set: new Set([1, 2, 3]), bytes: new Uint8Array([1, 2, 255]),",
+      "  nested: { a: [1, { b: 2n }] },",
+      "  dollar: { '$': 'bigint', v: '5' }, sparse, proto,",
+      "  undef: undefined, nul: null, str: 'x', bool: true,",
+      "};",
+    ].join("\n");
+    const text = (await rawFrame(code)).toString("utf8");
+    const inlineEncoded = (JSON.parse(text) as { result: unknown }).result;
+    const native = (decodeSandboxResult(text) as { result: unknown }).result;
+    const moduleEncoded = JSON.parse(encodeSandboxResult(native));
+    expect(moduleEncoded).toEqual(inlineEncoded);
+  });
+});
+
+// A forged frame can nest tags far deeper than any legitimate result; the
+// decoder must fail with a bounded error rather than recursing into a
+// RangeError (now in the main-app client, since the server relays unrevived).
+describe("decodeSandboxResult bounds recursion depth", () => {
+  it("throws a clear error on a too-deeply-nested frame", () => {
+    const depth = 1000; // > SANDBOX_MAX_DEPTH (256), well within JSON.parse
+    const json = "[".repeat(depth) + "]".repeat(depth);
+    expect(() => decodeSandboxResult(json)).toThrow(/too deep/);
+  });
+
+  it("still decodes a comfortably-nested frame", () => {
+    const depth = 50;
+    const json = "[".repeat(depth) + "]".repeat(depth);
+    expect(() => decodeSandboxResult(json)).not.toThrow();
   });
 });

@@ -79,6 +79,15 @@ const SANDBOX_RESULT_HEADER_BYTES = 4;
  */
 export const SANDBOX_RESULT_MAX_BYTES = 96 * 1024 * 1024;
 
+/**
+ * Identifier for the HTTP wire format between the main app and the standalone
+ * sandbox service (JSON request + tagged-JSON response). The client sends it as
+ * the `X-KH-Sandbox-Wire` request header and the server echoes it on the response;
+ * each side rejects a mismatch so a deploy-time version skew fails fast with a
+ * clear error instead of a confusing parse failure. Bump when the wire changes.
+ */
+export const SANDBOX_WIRE_VERSION = "json-v1";
+
 export type SandboxResultReader = {
   /** Feed a chunk from the parent's fd-3 stream. Chunks after the first
    * complete frame are ignored (first-frame-wins). */
@@ -171,6 +180,32 @@ function reviveSandboxNumber(token: string): number {
   }
 }
 
+/**
+ * Allowlisted view constructors the decoder will instantiate from a "bytes"
+ * tag. The sandbox payload is UNTRUSTED, so the decoder never resolves an
+ * arbitrary global by name: a forged `k` such as "fetch" would otherwise let a
+ * compromised child select any global constructor (`new fetch(ab)` returns a
+ * promise that rejects unhandled and can crash the process via the server's
+ * unhandledRejection handler). Anything off this list falls back to raw bytes.
+ */
+const SANDBOX_VIEW_CTORS: Record<
+  string,
+  new (buffer: ArrayBuffer) => ArrayBufferView
+> = {
+  Int8Array,
+  Uint8Array,
+  Uint8ClampedArray,
+  Int16Array,
+  Uint16Array,
+  Int32Array,
+  Uint32Array,
+  Float32Array,
+  Float64Array,
+  BigInt64Array,
+  BigUint64Array,
+  DataView,
+};
+
 function reviveSandboxBytes(kind: string, base64: string): unknown {
   const buf = Buffer.from(base64, "base64");
   // Copy into a standalone ArrayBuffer so the result does not alias Node's
@@ -179,17 +214,29 @@ function reviveSandboxBytes(kind: string, base64: string): unknown {
   if (kind === "ArrayBuffer") {
     return ab;
   }
-  if (kind === "DataView") {
-    return new DataView(ab);
+  const Ctor: (new (buffer: ArrayBuffer) => ArrayBufferView) | undefined =
+    SANDBOX_VIEW_CTORS[kind];
+  if (Ctor) {
+    try {
+      return new Ctor(ab);
+    } catch {
+      // A known kind whose byte length is not a multiple of its element size
+      // (a forged/malformed frame would make `new Uint32Array(ab)` throw):
+      // hand back raw bytes rather than throwing on the untrusted boundary.
+      return new Uint8Array(ab);
+    }
   }
-  const Ctor = (globalThis as Record<string, unknown>)[kind];
-  if (typeof Ctor === "function") {
-    return new (Ctor as new (b: ArrayBuffer) => unknown)(ab);
-  }
-  // Unknown view kind from a malformed/compromised child: hand back raw bytes
-  // rather than throwing.
+  // Unknown/forged view kind: never resolve an arbitrary global by name; hand
+  // back raw bytes rather than instantiating it.
   return new Uint8Array(ab);
 }
+
+// Bound the decoder's recursion on UNTRUSTED input. Legitimate results nest
+// shallowly; a forged frame with thousands of nested tags would otherwise
+// recurse until a RangeError - now thrown in the main-app client, since the
+// server relays the frame unrevived (it does not decode it). Throwing a clear,
+// bounded error here keeps the failure well below the JS stack limit.
+const SANDBOX_MAX_DEPTH = 256;
 
 /**
  * Rebuild a plain object key-by-key, defining each property so a "__proto__"
@@ -197,11 +244,14 @@ function reviveSandboxBytes(kind: string, base64: string): unknown {
  * (the prototype-pollution guard that makes deserializing untrusted input
  * safe).
  */
-function decodeSandboxObject(obj: Record<string, unknown>): Record<string, unknown> {
+function decodeSandboxObject(
+  obj: Record<string, unknown>,
+  depth: number
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(obj)) {
     Object.defineProperty(result, key, {
-      value: decodeSandboxNode(obj[key]),
+      value: decodeSandboxNode(obj[key], depth),
       enumerable: true,
       writable: true,
       configurable: true,
@@ -210,16 +260,20 @@ function decodeSandboxObject(obj: Record<string, unknown>): Record<string, unkno
   return result;
 }
 
-function decodeSandboxNode(node: unknown): unknown {
+function decodeSandboxNode(node: unknown, depth = 0): unknown {
+  if (depth > SANDBOX_MAX_DEPTH) {
+    throw new Error("sandbox result nesting too deep");
+  }
+  const next = depth + 1;
   if (Array.isArray(node)) {
-    return node.map(decodeSandboxNode);
+    return node.map((item) => decodeSandboxNode(item, next));
   }
   if (node === null || typeof node !== "object") {
     return node;
   }
   const obj = node as Record<string, unknown>;
   if (!Object.hasOwn(obj, SANDBOX_RESULT_TAG)) {
-    return decodeSandboxObject(obj);
+    return decodeSandboxObject(obj, next);
   }
   switch (obj[SANDBOX_RESULT_TAG]) {
     case "undef":
@@ -229,26 +283,32 @@ function decodeSandboxNode(node: unknown): unknown {
     case "num":
       return reviveSandboxNumber(obj.v as string);
     case "date":
-      return new Date(obj.v as number);
+      // A non-number v means an Invalid Date: every encoder emits
+      // value.getTime(), and JSON.stringify(NaN) === null, so an Invalid Date
+      // arrives as null. Revive it as Invalid Date rather than coercing null
+      // (new Date(null)) to the Unix epoch.
+      return new Date(typeof obj.v === "number" ? obj.v : Number.NaN);
     case "regexp":
       return new RegExp(obj.src as string, obj.flags as string);
     case "map":
       return new Map(
         (obj.v as [unknown, unknown][]).map((e) => [
-          decodeSandboxNode(e[0]),
-          decodeSandboxNode(e[1]),
+          decodeSandboxNode(e[0], next),
+          decodeSandboxNode(e[1], next),
         ])
       );
     case "set":
-      return new Set((obj.v as unknown[]).map(decodeSandboxNode));
+      return new Set(
+        (obj.v as unknown[]).map((item) => decodeSandboxNode(item, next))
+      );
     case "bytes":
       return reviveSandboxBytes(obj.k as string, obj.v as string);
     case "obj":
       // Escaped plain object: its keys are literal data, never tags.
-      return decodeSandboxObject(obj.v as Record<string, unknown>);
+      return decodeSandboxObject(obj.v as Record<string, unknown>, next);
     default:
       // Unknown tag from a malformed/compromised child: treat as plain data.
-      return decodeSandboxObject(obj);
+      return decodeSandboxObject(obj, next);
   }
 }
 
@@ -260,6 +320,174 @@ function decodeSandboxNode(node: unknown): unknown {
  */
 export function decodeSandboxResult(text: string): unknown {
   return decodeSandboxNode(JSON.parse(text));
+}
+
+function encodeSandboxNumber(value: number): unknown {
+  if (Number.isFinite(value) && !Object.is(value, -0)) {
+    return value;
+  }
+  let token = "-0";
+  if (Number.isNaN(value)) {
+    token = "NaN";
+  } else if (value === Number.POSITIVE_INFINITY) {
+    token = "Inf";
+  } else if (value === Number.NEGATIVE_INFINITY) {
+    token = "-Inf";
+  }
+  return { [SANDBOX_RESULT_TAG]: "num", v: token };
+}
+
+function encodeSandboxMap(
+  value: Map<unknown, unknown>,
+  seen: Set<unknown>
+): unknown {
+  const entries: [unknown, unknown][] = [];
+  for (const [k, v] of value) {
+    entries.push([encodeSandboxNode(k, seen), encodeSandboxNode(v, seen)]);
+  }
+  return { [SANDBOX_RESULT_TAG]: "map", v: entries };
+}
+
+function encodeSandboxSet(value: Set<unknown>, seen: Set<unknown>): unknown {
+  const items: unknown[] = [];
+  for (const item of value) {
+    items.push(encodeSandboxNode(item, seen));
+  }
+  return { [SANDBOX_RESULT_TAG]: "set", v: items };
+}
+
+function encodeSandboxView(value: ArrayBufferView): unknown {
+  // Mirror the inline encodeResult's falsy check: a missing or empty
+  // constructor name falls back to Uint8Array.
+  const ctorName = value.constructor?.name;
+  const kind =
+    ctorName === undefined || ctorName === "" ? "Uint8Array" : ctorName;
+  return {
+    [SANDBOX_RESULT_TAG]: "bytes",
+    k: kind,
+    v: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+      "base64"
+    ),
+  };
+}
+
+function encodeSandboxPlainObject(
+  value: Record<string, unknown>,
+  seen: Set<unknown>
+): unknown {
+  const out: Record<string, unknown> = {};
+  let hasTagKey = false;
+  for (const key of Object.keys(value)) {
+    if (key === SANDBOX_RESULT_TAG) {
+      hasTagKey = true;
+    }
+    const encoded = encodeSandboxNode(value[key], seen);
+    if (key === "__proto__") {
+      // Only "__proto__" needs defineProperty: a plain `out[key] =` invokes the
+      // prototype setter and silently drops it (decodeSandboxObject preserves it
+      // as a data property, so dropping would break the round-trip). Every other
+      // key uses cheap assignment.
+      Object.defineProperty(out, key, {
+        value: encoded,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    } else {
+      out[key] = encoded;
+    }
+  }
+  // Escape a plain object that literally carries a "$" key so the parent does
+  // not mistake it for a type tag.
+  return hasTagKey ? { [SANDBOX_RESULT_TAG]: "obj", v: out } : out;
+}
+
+function encodeSandboxComposite(value: object, seen: Set<unknown>): unknown {
+  if (Array.isArray(value)) {
+    // for...of yields `undefined` for holes (Array.prototype.map SKIPS them and
+    // JSON would render them as null), matching the inline encoder so a sparse
+    // array round-trips identically through both codecs.
+    const arr: unknown[] = [];
+    for (const item of value) {
+      arr.push(encodeSandboxNode(item, seen));
+    }
+    return arr;
+  }
+  if (value instanceof Date) {
+    return { [SANDBOX_RESULT_TAG]: "date", v: value.getTime() };
+  }
+  if (value instanceof RegExp) {
+    return {
+      [SANDBOX_RESULT_TAG]: "regexp",
+      src: value.source,
+      flags: value.flags,
+    };
+  }
+  if (value instanceof Map) {
+    return encodeSandboxMap(value, seen);
+  }
+  if (value instanceof Set) {
+    return encodeSandboxSet(value, seen);
+  }
+  if (value instanceof ArrayBuffer) {
+    return {
+      [SANDBOX_RESULT_TAG]: "bytes",
+      k: "ArrayBuffer",
+      v: Buffer.from(value).toString("base64"),
+    };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return encodeSandboxView(value);
+  }
+  return encodeSandboxPlainObject(value as Record<string, unknown>, seen);
+}
+
+function encodeSandboxNode(value: unknown, seen: Set<unknown>): unknown {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    return { [SANDBOX_RESULT_TAG]: "undef" };
+  }
+  if (typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return encodeSandboxNumber(value);
+  }
+  if (typeof value === "bigint") {
+    return { [SANDBOX_RESULT_TAG]: "bigint", v: value.toString() };
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    // Bare reason; the caller (writeRunResult / writeResult) adds the
+    // "Result is not serializable: " prefix so the message is not doubled.
+    throw new Error(typeof value);
+  }
+  if (seen.has(value)) {
+    throw new Error("circular reference");
+  }
+  seen.add(value);
+  try {
+    return encodeSandboxComposite(value, seen);
+  } finally {
+    seen.delete(value);
+  }
+}
+
+/**
+ * Encode an arbitrary value as the tagged-JSON wire form `decodeSandboxResult`
+ * reads back; the exact inverse of `decodeSandboxNode`. Used by the standalone
+ * sandbox server to put a result on the HTTP response (the in-pod grandchild
+ * uses the inline `encodeResult` instead, since it cannot import this module).
+ *
+ * keep in lockstep with decodeSandboxNode and the inline encodeResult in
+ * SANDBOX_CHILD_SOURCE: the three share one tag scheme ("$"-keyed envelopes for
+ * undefined, non-finite/-0 numbers, bigint, Date, RegExp, Map, Set, byte views,
+ * and "$"-collision escaping). Throws on a value with no safe representation
+ * (function, symbol, or a circular reference), mirroring the inline encodeResult.
+ */
+export function encodeSandboxResult(value: unknown): string {
+  return JSON.stringify(encodeSandboxNode(value, new Set<unknown>()));
 }
 
 /**
@@ -1124,7 +1352,19 @@ function encodeResult(value, seen) {
       if (key === "$") {
         hasTagKey = true;
       }
-      out[key] = encodeResult(value[key], seen);
+      const encoded = encodeResult(value[key], seen);
+      if (key === "__proto__") {
+        // Only "__proto__" needs defineProperty (a plain assignment invokes the
+        // prototype setter and drops it); every other key uses cheap assignment.
+        Object.defineProperty(out, key, {
+          value: encoded,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else {
+        out[key] = encoded;
+      }
     }
     // Escape a user object that literally carries a "$" key so the parent does
     // not mistake it for a type tag.

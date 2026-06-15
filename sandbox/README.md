@@ -1,11 +1,17 @@
 # @keeperhub/sandbox
 
-Standalone HTTP service that evaluates user JavaScript for the KeeperHub Code workflow node. Reuses the original `node:vm` + `child_process` + `\x01RESULT\x02` sentinel wire format verbatim.
+Standalone HTTP service that evaluates user JavaScript for the KeeperHub Code workflow node. Uses `node:vm` + `child_process` with a `\x01RESULT\x02` sentinel framing the response.
 
 ## Endpoints
 
 - `GET /healthz` -> `200 ok`
-- `POST /run` -> body: base64(v8.serialize({ code, timeout })); response: `\x01RESULT\x02` + base64(v8.serialize(ChildOutcome)) + `\n`
+- `POST /run`
+  - Request body: JSON `{ code, timeout }` (`Content-Type: application/json`).
+  - Response: `\x01RESULT\x02` + tagged-JSON(ChildOutcome) + `\n` (`Content-Type: application/json`). The tagged-JSON codec (`encodeSandboxResult` / `decodeSandboxResult` in `lib/sandbox/child-source.ts`) preserves BigInt, Map, Set, Date, RegExp, typed arrays, and `undefined`. Neither direction uses `v8.serialize`/`v8.deserialize`: the response is decoded with a safe `JSON.parse` + prototype-pollution-safe rebuild, so untrusted child bytes can never reach a deserialization gadget.
+
+## Wire protocol is a hard cutover (deploy ordering)
+
+The JSON request + tagged-JSON response above replaced a `base64(v8.serialize(...))` wire in both directions, with **no dual-accept shim**. The sandbox service and the main app deploy as separate artifacts, so a version mismatch in either direction during a wire change makes `POST /run` return `400` and remote Code-node runs fail for that window (clean failure, no crash or corruption). When changing the wire format: deploy the sandbox service first, then the app, as close together as possible. The app's `SANDBOX_BACKEND=local` is an escape hatch that bypasses this HTTP boundary during a cutover.
 
 ## Env
 
