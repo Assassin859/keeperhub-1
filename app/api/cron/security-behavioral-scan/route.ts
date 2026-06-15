@@ -97,9 +97,20 @@ async function scanNewAccountFirstWorkflow(
     // the other detection signals in lib/security/* -- alert lands even if
     // one transport fails, and Sentry's UI gives triagers richer pivots
     // than raw Loki JSON.
+    //
+    // The overlapping scan windows (10-minute lookback, 5-minute interval)
+    // mean the same execution is re-emitted by two consecutive scans -- and
+    // ~10x in PR envs where the job runs every minute. Fingerprint on the
+    // executionId so those duplicates collapse into a single Sentry issue
+    // (Loki already dedupes the page); the row's full detail still rides on
+    // each event's tags/extra for triage.
     try {
       captureMessage("security.behavioral.new_account_first_workflow", {
         level: "warning",
+        fingerprint: [
+          "security.behavioral.new_account_first_workflow",
+          row.executionId,
+        ],
         tags: {
           security: "behavioral.new_account_first_workflow",
           trigger_source: row.triggerSource ?? "unknown",

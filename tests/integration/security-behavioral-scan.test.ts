@@ -177,12 +177,15 @@ describe("security-behavioral-scan response shape", () => {
 
     // Dual-emit pattern: Sentry mirrors the stdout signal so triage gets
     // both transports for free. Asserts the tag / extra shape so an
-    // accidental shape change doesn't silently break Sentry grouping.
+    // accidental shape change doesn't silently break Sentry grouping, plus
+    // the executionId fingerprint that collapses the overlapping-scan
+    // duplicates into one Sentry issue.
     expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
     const [message, options] = mockCaptureMessage.mock.calls[0] as [
       string,
       {
         level: string;
+        fingerprint: string[];
         tags: Record<string, string>;
         user: { id: string };
         extra: Record<string, unknown>;
@@ -191,6 +194,10 @@ describe("security-behavioral-scan response shape", () => {
     expect(message).toBe("security.behavioral.new_account_first_workflow");
     expect(options).toMatchObject({
       level: "warning",
+      fingerprint: [
+        "security.behavioral.new_account_first_workflow",
+        "exec_1",
+      ],
       tags: {
         security: "behavioral.new_account_first_workflow",
         trigger_source: "manual",
