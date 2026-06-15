@@ -4,6 +4,7 @@ import { securityAuditLog } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
+import { alertHighRiskAudit } from "@/lib/security/audit-alerts";
 import {
   getRequestCountry,
   getRequestSourceIp,
@@ -181,6 +182,19 @@ export async function recordAuditEvent(
   const composed = args.executor !== undefined;
   try {
     await executor.insert(securityAuditLog).values(toInsertValues(args));
+    // Surface irreversible / fund-moving actions actively. Skip the composed
+    // path: that row is inside the caller's transaction and may still roll
+    // back, so alerting waits for the standalone (committed) write.
+    if (!composed) {
+      alertHighRiskAudit({
+        action: args.action,
+        actorUserId: args.actor.userId,
+        actorLabel: args.actor.actorLabel ?? null,
+        organizationId: args.actor.organizationId,
+        resourceType: args.resourceType ?? null,
+        resourceId: args.resourceId ?? null,
+      });
+    }
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
