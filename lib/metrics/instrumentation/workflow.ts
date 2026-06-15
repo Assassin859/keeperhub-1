@@ -128,6 +128,10 @@ export function recordStepMetrics(options: {
   durationMs: number;
   success: boolean;
   error?: string;
+  // Machine-readable failure code returned by the step (e.g. VALIDATION,
+  // POLICY_BLOCKED, UPSTREAM). Used to distinguish a deliberate guard deny
+  // from a transient failure in step-error metrics.
+  code?: string;
 }): void {
   const metrics = getMetricsCollector();
 
@@ -148,10 +152,16 @@ export function recordStepMetrics(options: {
 
   // Record error if failed
   if (!options.success && options.error) {
+    const errorLabels: Record<string, string> = { ...labels };
+    if (options.code) {
+      // Keep a security/validation deny distinguishable from a transient
+      // upstream failure in WORKFLOW_STEP_ERRORS dashboards and alerts.
+      errorLabels[LabelKeys.ERROR_TYPE] = options.code;
+    }
     metrics.recordError(
       MetricNames.WORKFLOW_STEP_ERRORS,
       { message: options.error },
-      labels
+      errorLabels
     );
   }
 }
