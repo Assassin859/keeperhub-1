@@ -66,6 +66,17 @@ const FUND_MOVING_PRIMARY_TYPES: ReadonlySet<string> = new Set(
     "CancelAuthorization",
     "DelegateBySig",
     "Delegation",
+    // Marketplace / intent / account-abstraction authorizations that move
+    // funds via a separate standing approval (or account ownership) rather
+    // than a permit. Each uses a fixed canonical primaryType on-chain, so an
+    // attacker cannot rename it without breaking signature validity - which
+    // is exactly why a name-based denylist is meaningful for these.
+    "SafeTx", // Gnosis Safe execTransaction (arbitrary call from the Safe)
+    "OrderComponents", // Seaport (OpenSea) order
+    "LimitOrder", // 0x v4
+    "RfqOrder", // 0x v4
+    "UserOperation", // ERC-4337 v0.6
+    "PackedUserOperation", // ERC-4337 v0.7
   ].map((name) => name.toLowerCase())
 );
 
@@ -73,6 +84,15 @@ const FUND_MOVING_PRIMARY_TYPES: ReadonlySet<string> = new Set(
 // (e.g. a custom "MyPermitThing") is a fund-moving authorization we refuse
 // to sign even if it is not in the explicit denylist above.
 const PERMIT_SUBSTRING = "permit";
+
+// LIMITATION: this is a denylist, so it is inherently incomplete. It cannot
+// enumerate every fund-moving EIP-712 scheme, and we deliberately do NOT
+// list overly generic names that legitimate custom intents also use - e.g.
+// a bare "Order" (CoW Protocol's GPv2 order primaryType) would block far
+// more legitimate intents than it protects. Such schemes (and any future
+// one) can still be signed here. The durable fix is a default-deny allowlist
+// of vetted (chainId, verifyingContract, struct-shape) usages rather than a
+// blocklist of names; see the A-06 follow-up.
 
 // EIP-712 `domain.chainId`, when present, must name a chain KeeperHub
 // actually supports. An unknown chainId signals a payload aimed at a
