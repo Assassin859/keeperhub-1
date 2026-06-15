@@ -864,3 +864,42 @@ describe("decodeSandboxResult bytes tag is safe on a forged kind", () => {
     expect([...(r as Uint16Array)]).toEqual([1, 2]);
   });
 });
+
+// Fidelity fixes: the encoder must be a faithful inverse of the decoder for an
+// Invalid Date, an own "__proto__" key, and sparse-array holes.
+describe("encodeSandboxResult fidelity round-trips", () => {
+  function roundTrip(value: unknown): unknown {
+    return decodeSandboxResult(encodeSandboxResult(value));
+  }
+
+  it("round-trips an Invalid Date as an Invalid Date (not the epoch)", () => {
+    const r = roundTrip(new Date("not-a-date")) as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(Number.isNaN(r.getTime())).toBe(true);
+  });
+
+  it("decodes a date frame whose v is null as an Invalid Date", () => {
+    const r = decodeSandboxResult('{"$":"date","v":null}') as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(Number.isNaN(r.getTime())).toBe(true);
+  });
+
+  it("preserves an own __proto__ data key without polluting Object.prototype", () => {
+    const input = JSON.parse('{"a":1,"__proto__":{"polluted":true}}');
+    const r = roundTrip(input) as Record<string, unknown>;
+    expect(Object.hasOwn(r, "__proto__")).toBe(true);
+    expect((r as { a: number }).a).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("round-trips a sparse array with holes as undefined (not null)", () => {
+    const sparse = [1];
+    sparse[3] = 4; // holes at indices 1, 2
+    const r = roundTrip(sparse) as unknown[];
+    expect(r.length).toBe(4);
+    expect(r[0]).toBe(1);
+    expect(r[1]).toBeUndefined();
+    expect(r[2]).toBeUndefined();
+    expect(r[3]).toBe(4);
+  });
+});

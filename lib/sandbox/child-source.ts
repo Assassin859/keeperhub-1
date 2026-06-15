@@ -257,7 +257,11 @@ function decodeSandboxNode(node: unknown): unknown {
     case "num":
       return reviveSandboxNumber(obj.v as string);
     case "date":
-      return new Date(obj.v as number);
+      // A non-number v means an Invalid Date: every encoder emits
+      // value.getTime(), and JSON.stringify(NaN) === null, so an Invalid Date
+      // arrives as null. Revive it as Invalid Date rather than coercing null
+      // (new Date(null)) to the Unix epoch.
+      return new Date(typeof obj.v === "number" ? obj.v : Number.NaN);
     case "regexp":
       return new RegExp(obj.src as string, obj.flags as string);
     case "map":
@@ -349,7 +353,15 @@ function encodeSandboxPlainObject(
     if (key === SANDBOX_RESULT_TAG) {
       hasTagKey = true;
     }
-    out[key] = encodeSandboxNode(value[key], seen);
+    // defineProperty so an own "__proto__" key lands as a data property; a
+    // plain `out[key] =` invokes the prototype setter and silently drops it,
+    // which decodeSandboxObject (which preserves it) would not round-trip.
+    Object.defineProperty(out, key, {
+      value: encodeSandboxNode(value[key], seen),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   // Escape a plain object that literally carries a "$" key so the parent does
   // not mistake it for a type tag.
@@ -358,7 +370,14 @@ function encodeSandboxPlainObject(
 
 function encodeSandboxComposite(value: object, seen: Set<unknown>): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => encodeSandboxNode(item, seen));
+    // for...of yields `undefined` for holes (Array.prototype.map SKIPS them and
+    // JSON would render them as null), matching the inline encoder so a sparse
+    // array round-trips identically through both codecs.
+    const arr: unknown[] = [];
+    for (const item of value) {
+      arr.push(encodeSandboxNode(item, seen));
+    }
+    return arr;
   }
   if (value instanceof Date) {
     return { [SANDBOX_RESULT_TAG]: "date", v: value.getTime() };
@@ -1027,7 +1046,15 @@ function encodeResult(value, seen) {
       if (key === "$") {
         hasTagKey = true;
       }
-      out[key] = encodeResult(value[key], seen);
+      // defineProperty so an own "__proto__" key lands as a data property
+      // instead of invoking the prototype setter (which drops it); mirrors
+      // decodeSandboxObject so the round-trip is faithful.
+      Object.defineProperty(out, key, {
+        value: encodeResult(value[key], seen),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     // Escape a user object that literally carries a "$" key so the parent does
     // not mistake it for a type tag.
