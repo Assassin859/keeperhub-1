@@ -57,15 +57,10 @@ const MAX_TYPED_DATA_BYTES = 32 * 1024;
  */
 const FUND_MOVING_PRIMARY_TYPES: ReadonlySet<string> = new Set(
   [
-    "Permit",
-    "PermitSingle",
-    "PermitBatch",
-    "PermitTransferFrom",
-    "PermitBatchTransferFrom",
-    "PermitWitnessTransferFrom",
-    "PermitBatchWitnessTransferFrom",
-    "ERC20Permit",
-    "DAIPermit",
+    // Only names that do NOT contain "permit" need to be listed here: every
+    // *permit* variant (ERC-2612 Permit, Permit2 Permit*/Permit*TransferFrom,
+    // ERC20Permit, DAIPermit, ...) is already caught by the PERMIT_SUBSTRING
+    // backstop below, so listing them explicitly would be dead weight.
     "TransferWithAuthorization",
     "ReceiveWithAuthorization",
     "CancelAuthorization",
