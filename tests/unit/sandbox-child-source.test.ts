@@ -903,3 +903,63 @@ describe("encodeSandboxResult fidelity round-trips", () => {
     expect(r[3]).toBe(4);
   });
 });
+
+// Drift guard for finding F-010's two hand-maintained encoders: the module
+// encodeSandboxResult and the inline encodeResult template share one wire
+// format but are separate code. Spawn the real grandchild over a rich corpus,
+// then assert the module encoder reproduces the inline encoder's output exactly
+// (compared after one decode, so we never reconstruct the corpus by hand).
+describe("encodeSandboxResult parity with the inline grandchild encoder", () => {
+  function rawFrame(userCode: string, timeoutMs = 3000): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", SANDBOX_CHILD_SOURCE], {
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+      });
+      const reader = createSandboxResultReader();
+      const killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("harness timeout"));
+      }, timeoutMs + 3000);
+      child.stdout.resume();
+      child.stderr.resume();
+      const stream = child.stdio[SANDBOX_RESULT_FD];
+      if (stream && "on" in stream) {
+        stream.on("data", (chunk: Buffer) => {
+          reader.push(chunk);
+          if (reader.done && reader.frame) {
+            clearTimeout(killTimer);
+            child.kill("SIGKILL");
+            resolve(reader.frame);
+          }
+        });
+      }
+      child.on("error", (err: Error) => {
+        clearTimeout(killTimer);
+        reject(err);
+      });
+      child.stdin.write(JSON.stringify({ code: userCode, timeoutMs }));
+      child.stdin.end();
+    });
+  }
+
+  it("agrees with the inline encoder over a rich corpus", async () => {
+    const code = [
+      "const sparse = [1]; sparse[3] = 4;",
+      'const proto = JSON.parse(\'{"a":1,"__proto__":{"p":1}}\');',
+      "return {",
+      "  negZero: -0, nan: NaN, inf: Infinity, ninf: -Infinity,",
+      "  big: 10n, date: new Date(1700000000000), invalidDate: new Date('x'),",
+      "  re: /ab+c/gi, map: new Map([['a', 1], ['b', 2]]),",
+      "  set: new Set([1, 2, 3]), bytes: new Uint8Array([1, 2, 255]),",
+      "  nested: { a: [1, { b: 2n }] },",
+      "  dollar: { '$': 'bigint', v: '5' }, sparse, proto,",
+      "  undef: undefined, nul: null, str: 'x', bool: true,",
+      "};",
+    ].join("\n");
+    const text = (await rawFrame(code)).toString("utf8");
+    const inlineEncoded = (JSON.parse(text) as { result: unknown }).result;
+    const native = (decodeSandboxResult(text) as { result: unknown }).result;
+    const moduleEncoded = JSON.parse(encodeSandboxResult(native));
+    expect(moduleEncoded).toEqual(inlineEncoded);
+  });
+});
