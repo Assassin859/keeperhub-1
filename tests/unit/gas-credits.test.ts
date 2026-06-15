@@ -105,8 +105,14 @@ beforeEach(() => {
   mockOnConflictDoUpdate.mockResolvedValue(undefined);
   mockSelectLimit.mockResolvedValue([]);
   mockReadContract.mockReset();
+  // Clear ALL per-plan gas-credit env overrides (not just free/pro) so caps
+  // fall through to the mocked plan defaults. A developer .env that sets
+  // GAS_CREDITS_BUSINESS_CENTS / GAS_CREDITS_ENTERPRISE_CENTS otherwise leaks
+  // real values into getGasCreditCaps and breaks the assertions below.
   process.env.GAS_CREDITS_FREE_CENTS = undefined;
   process.env.GAS_CREDITS_PRO_CENTS = undefined;
+  process.env.GAS_CREDITS_BUSINESS_CENTS = undefined;
+  process.env.GAS_CREDITS_ENTERPRISE_CENTS = undefined;
 });
 
 describe("getGasCreditCapCents", () => {
