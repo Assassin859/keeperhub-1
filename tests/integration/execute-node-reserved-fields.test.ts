@@ -220,6 +220,34 @@ describe("POST /api/execute/node reserved-field gating", () => {
     expect("web3Connection" in (mocks.capturedInput ?? {})).toBe(false);
   });
 
+  it("strips reserved keys from the persisted audit input", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: {
+          network: "1",
+          contractAddress: "0xabc",
+          web3Connection: "eoa",
+          _context: { spoofed: true },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    // The execution-audit record is the `input` reserved through the spending
+    // cap. web3Connection in particular must not be persisted as if it had
+    // influenced this org-custodied write -- it is stripped before the signer.
+    expect(mocks.checkAndReserveExecution).toHaveBeenCalledTimes(1);
+    const auditInput = mocks.checkAndReserveExecution.mock.calls[0]?.[0]
+      ?.input as Record<string, unknown>;
+    expect(auditInput).toBeDefined();
+    expect("web3Connection" in auditInput).toBe(false);
+    expect("network" in auditInput).toBe(false);
+    expect("integrationId" in auditInput).toBe(false);
+    expect("_context" in auditInput).toBe(false);
+    expect(auditInput.contractAddress).toBe("0xabc");
+  });
+
   it("passes an owned top-level integrationId through to the step", async () => {
     mocks.ownershipResult = [{ id: "int_mine" }];
 
