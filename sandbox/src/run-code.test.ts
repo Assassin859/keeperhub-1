@@ -1,7 +1,7 @@
 import { serialize } from "node:v8";
 import { describe, expect, it } from "vitest";
 import { SANDBOX_RESULT_FD } from "../../lib/sandbox/child-source.js";
-import { runCode } from "./run-code.js";
+import { isChildOutcome, runCode } from "./run-code.js";
 
 // A forged result frame an escaped child could write to fd 3: a 4-byte
 // big-endian length prefix followed by a v8-serialized success outcome with an
@@ -265,5 +265,52 @@ describe("runCode — sandbox child_process runner", () => {
     if (outcome.ok) {
       expect(outcome.result).toBe("REAL");
     }
+  });
+});
+
+// The frame the server decodes is produced by the (untrusted) grandchild; a
+// vm-escaped child can forge it. The guard must validate the full envelope so a
+// malformed frame fails closed rather than surfacing undefined fields.
+describe("isChildOutcome guard rejects forged envelopes", () => {
+  it("accepts a valid ok:true outcome", () => {
+    expect(isChildOutcome({ ok: true, result: 1, logs: [] })).toBe(true);
+  });
+
+  it("accepts a valid ok:false outcome with and without errorStack", () => {
+    expect(isChildOutcome({ ok: false, errorMessage: "x", logs: [] })).toBe(
+      true
+    );
+    expect(
+      isChildOutcome({
+        ok: false,
+        errorMessage: "x",
+        errorStack: "at user-code.js:3",
+        logs: [{ level: "error", args: ["y"] }],
+      })
+    ).toBe(true);
+  });
+
+  it("rejects ok:false without a string errorMessage", () => {
+    expect(isChildOutcome({ ok: false, logs: [] })).toBe(false);
+  });
+
+  it("rejects a non-string errorStack", () => {
+    expect(
+      isChildOutcome({ ok: false, errorMessage: "x", errorStack: 1, logs: [] })
+    ).toBe(false);
+  });
+
+  it("rejects a malformed log entry", () => {
+    expect(isChildOutcome({ ok: true, result: 1, logs: [null] })).toBe(false);
+  });
+
+  it("rejects missing or non-array logs", () => {
+    expect(isChildOutcome({ ok: true, result: 1 })).toBe(false);
+    expect(isChildOutcome({ ok: true, result: 1, logs: "nope" })).toBe(false);
+  });
+
+  it("rejects a non-object value", () => {
+    expect(isChildOutcome(null)).toBe(false);
+    expect(isChildOutcome("ok")).toBe(false);
   });
 });

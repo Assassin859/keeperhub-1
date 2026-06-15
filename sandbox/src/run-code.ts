@@ -49,11 +49,42 @@ function buildChildEnv(): NodeJS.ProcessEnv {
   return out as NodeJS.ProcessEnv;
 }
 
-function isChildOutcome(value: unknown): value is ChildOutcome {
+function isLogEntry(value: unknown): value is LogEntry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const e = value as { level?: unknown; args?: unknown };
+  return typeof e.level === "string" && Array.isArray(e.args);
+}
+
+/**
+ * Exported for unit testing. The decoded frame crosses an untrusted boundary (a
+ * vm-escaped child can forge it), so validate the whole envelope, not just `ok`
+ * -- mirroring the main-app client guard so both sides fail malformed outcomes
+ * closed instead of surfacing undefined error/log fields downstream.
+ */
+export function isChildOutcome(value: unknown): value is ChildOutcome {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as {
+    ok?: unknown;
+    logs?: unknown;
+    errorMessage?: unknown;
+    errorStack?: unknown;
+  };
+  if (typeof v.ok !== "boolean" || !Array.isArray(v.logs)) {
+    return false;
+  }
+  if (!v.logs.every(isLogEntry)) {
+    return false;
+  }
+  if (v.ok === true) {
+    return true;
+  }
   return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { ok?: unknown }).ok === "boolean"
+    typeof v.errorMessage === "string" &&
+    (v.errorStack === undefined || typeof v.errorStack === "string")
   );
 }
 
