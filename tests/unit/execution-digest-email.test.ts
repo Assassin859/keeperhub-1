@@ -14,6 +14,7 @@ function baseData() {
   return {
     to: "owner@example.com",
     orgName: "Acme",
+    organizationId: "org-123",
     cadence: "daily" as const,
     since: new Date("2026-06-08T14:00:00.000Z"),
     until: new Date("2026-06-09T14:00:00.000Z"),
@@ -111,6 +112,25 @@ describe("sendWorkflowExecutionDigestEmail", () => {
     expect(content).toContain("https://discord.gg/keeperhub");
     expect(content).toContain("https://x.com/KeeperHubApp");
     expect(content).not.toContain("mailto:");
+  });
+
+  it("names the organization clearly in the body", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const content = sentContent();
+    expect(content).toContain("Organization: Acme");
+    expect(content).toContain("Acme workflow digest");
+  });
+
+  it("includes a manage/unsubscribe link deep-linking to the org's settings", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const content = sentContent();
+    expect(content).toContain(
+      "https://app.keeperhub.com/workflows?digestSettings=org-123"
+    );
+    expect(content).toContain("Manage or turn off these emails");
+    expect(content).toContain(
+      "because you're an owner or admin of that organization"
+    );
   });
 
   it("attaches the social icons inline (cid) so they render without hosting", async () => {
