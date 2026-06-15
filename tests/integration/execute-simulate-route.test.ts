@@ -67,12 +67,19 @@ vi.mock("../../app/api/execute/_lib/spending-cap", () => ({
   checkAndReserveExecution: spies.checkAndReserveExecution,
 }));
 
-vi.mock("../../app/api/execute/_lib/execution-service", () => ({
-  markRunning: spies.markRunning,
-  completeExecution: spies.completeExecution,
-  failExecution: spies.failExecution,
-  redactInput: (x: unknown) => x,
-}));
+vi.mock("../../app/api/execute/_lib/execution-service", async (importActual) => {
+  const actual =
+    await importActual<
+      typeof import("../../app/api/execute/_lib/execution-service")
+    >();
+  return {
+    ...actual,
+    markRunning: spies.markRunning,
+    completeExecution: spies.completeExecution,
+    failExecution: spies.failExecution,
+    redactInput: (x: unknown) => x,
+  };
+});
 
 vi.mock("@/plugins/web3/steps/write-contract-core", () => ({
   writeContractCore: spies.writeContractCore,

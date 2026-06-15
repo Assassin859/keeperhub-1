@@ -25,6 +25,7 @@ import {
   failExecution,
   markRunning,
   redactInput,
+  withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
@@ -35,10 +36,10 @@ import { requireWallet } from "../_lib/wallet-check";
 export async function POST(request: Request): Promise<NextResponse> {
   // 1. Auth
   const apiKeyCtx = await validateApiKey(request);
-  if (!apiKeyCtx) {
+  if ("error" in apiKeyCtx) {
     return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: HttpStatus.UNAUTHORIZED }
+      { error: apiKeyCtx.error },
+      { status: apiKeyCtx.status }
     );
   }
 
@@ -174,7 +175,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 6. Spending cap + create execution atomically
-  const redactedInput = redactInput(body);
+  const redactedInput = redactInput(withRejectedSignerOverride(body, body));
   const reserve = await checkAndReserveExecution({
     organizationId: apiKeyCtx.organizationId,
     apiKeyId: apiKeyCtx.apiKeyId,

@@ -5,11 +5,11 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import {
-  deserialize as v8Deserialize,
-  serialize as v8Serialize,
-} from "node:v8";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  encodeSandboxResult,
+  SANDBOX_WIRE_VERSION,
+} from "@/lib/sandbox/child-source";
 
 vi.mock("server-only", () => ({}));
 
@@ -35,9 +35,7 @@ async function readReqBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 function decodeRunPayload(raw: Buffer): unknown {
-  const base64 = raw.toString("ascii").trim();
-  const decoded = Buffer.from(base64, "base64");
-  return v8Deserialize(decoded);
+  return JSON.parse(raw.toString("utf8"));
 }
 
 beforeAll(async () => {
@@ -53,6 +51,7 @@ beforeAll(async () => {
       const result = currentResponder({ body: parsed });
       res.writeHead(result.status, {
         "Content-Type": "application/octet-stream",
+        "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
         ...result.headers,
       });
       res.end(result.body);
@@ -83,8 +82,7 @@ afterAll(async () => {
 });
 
 function sentinelBody(outcome: unknown): string {
-  const payload = v8Serialize(outcome).toString("base64");
-  return `${RESULT_SENTINEL}${payload}\n`;
+  return `${RESULT_SENTINEL}${encodeSandboxResult(outcome)}\n`;
 }
 
 describe("lib/sandbox-client runRemote", () => {
@@ -178,12 +176,12 @@ describe("lib/sandbox-client runRemote", () => {
   });
 
   it("uses lastIndexOf to tolerate forged sentinels earlier in output", async () => {
-    const fakePayload = Buffer.from([0xff, 0xff, 0xff]).toString("base64");
-    const realPayload = v8Serialize({
+    const fakePayload = "garbage-not-json-payload";
+    const realPayload = encodeSandboxResult({
       ok: true,
       result: "real",
       logs: [],
-    }).toString("base64");
+    });
     currentResponder = (): { status: number; body: string } => ({
       status: 200,
       body: `noise${RESULT_SENTINEL}${fakePayload}\n${RESULT_SENTINEL}${realPayload}\n`,
@@ -198,7 +196,7 @@ describe("lib/sandbox-client runRemote", () => {
     }
   });
 
-  it("sends timeout in SECONDS in the v8 payload", async () => {
+  it("sends timeout in SECONDS in the JSON payload", async () => {
     let capturedPayload: unknown = null;
     currentResponder = ({ body }): { status: number; body: string } => {
       capturedPayload = body;
@@ -332,6 +330,61 @@ describe("lib/sandbox-client runRemote", () => {
     }
   });
 
+  it("rebuilds a __proto__ key as an own property without polluting Object.prototype", async () => {
+    const before = ({} as Record<string, unknown>).polluted;
+    // A hostile sandbox sends a tagged-JSON result carrying a __proto__ key.
+    // decodeSandboxResult rebuilds it as an own data property (JSON.parse +
+    // Object.defineProperty), never invoking the prototype setter.
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: `${RESULT_SENTINEL}{"ok":true,"result":{"__proto__":{"polluted":true}},"logs":[]}\n`,
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(({} as Record<string, unknown>).polluted).toBe(before);
+    expect(outcome.success).toBe(true);
+    if (outcome.success) {
+      const result = outcome.result as Record<string, unknown>;
+      expect(Object.hasOwn(result, "__proto__")).toBe(true);
+      expect(({} as Record<string, unknown>).polluted).toBe(before);
+    }
+  });
+
+  it("returns a clean error (never v8) when the payload after the sentinel is not JSON", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: `${RESULT_SENTINEL}this is not json at all\n`,
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("sandbox client error");
+    }
+  });
+
+  it("rejects a well-typed-discriminant but malformed outcome (ok:false, no errorMessage)", async () => {
+    // Valid tagged-JSON and a valid `ok` discriminant, but the variant fields
+    // are missing -- the tightened ChildOutcome guard must reject it rather
+    // than surface an undefined error/log downstream.
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: `${RESULT_SENTINEL}{"ok":false,"logs":[]}\n`,
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("sandbox client error");
+    }
+  });
+
   it("retries a 429 capacity response and succeeds on the next attempt", async () => {
     let attempts = 0;
     currentResponder = (): {
@@ -411,6 +464,131 @@ describe("lib/sandbox-client runRemote", () => {
     expect(outcome.success).toBe(false);
     if (!outcome.success) {
       expect(outcome.error).toContain("500");
+    }
+  });
+});
+
+describe("lib/sandbox-client runRemote untrusted-shape hardening", () => {
+  it("rejects a forged non-string errorStack cleanly instead of throwing in extractLineNumber", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({
+        ok: false,
+        errorMessage: "boom",
+        errorStack: 123,
+        logs: [],
+      }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("sandbox client error");
+      // Must NOT be the "stack.match is not a function" TypeError.
+      expect(outcome.error).not.toContain("match");
+    }
+  });
+
+  it("rejects a forged logs array containing a non-entry", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({ ok: true, result: 1, logs: [null] }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+  });
+
+  it("still surfaces a valid ok:false outcome and extracts the line number", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({
+        ok: false,
+        errorMessage: "kaboom",
+        errorStack: "Error: kaboom\n    at user-code.js:6:7",
+        logs: [],
+      }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toBe("kaboom");
+      expect(outcome.line).toBe(5);
+    }
+  });
+});
+
+describe("lib/sandbox-client runRemote response size cap", () => {
+  it("rejects a response body that exceeds SANDBOX_MAX_RESPONSE_BYTES", async () => {
+    const oversized = `${RESULT_SENTINEL}${"x".repeat(200_000)}\n`;
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: oversized,
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    process.env.SANDBOX_MAX_RESPONSE_BYTES = "1024";
+    try {
+      const { runRemote } = await import("@/lib/sandbox/client");
+      const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+      expect(outcome.success).toBe(false);
+      if (!outcome.success) {
+        expect(outcome.error).toContain("exceeds maximum size");
+      }
+    } finally {
+      delete process.env.SANDBOX_MAX_RESPONSE_BYTES;
+    }
+  });
+});
+
+describe("lib/sandbox-client runRemote wire-version skew", () => {
+  it("rejects a 200 response whose X-KH-Sandbox-Wire header does not match", async () => {
+    currentResponder = (): {
+      status: number;
+      body: string;
+      headers: Record<string, string>;
+    } => ({
+      status: 200,
+      body: sentinelBody({ ok: true, result: 1, logs: [] }),
+      // Simulate an older sandbox advertising a different wire version.
+      headers: { "X-KH-Sandbox-Wire": "json-v0" },
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("wire version mismatch");
+    }
+  });
+});
+
+describe("lib/sandbox-client runRemote env override guards", () => {
+  it("ignores a negative SANDBOX_MAX_RESPONSE_BYTES instead of rejecting every response", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({ ok: true, result: 7, logs: [] }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    process.env.SANDBOX_MAX_RESPONSE_BYTES = "-1";
+    try {
+      const { runRemote } = await import("@/lib/sandbox/client");
+      const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+      expect(outcome.success).toBe(true);
+      if (outcome.success) {
+        expect(outcome.result).toBe(7);
+      }
+    } finally {
+      delete process.env.SANDBOX_MAX_RESPONSE_BYTES;
     }
   });
 });

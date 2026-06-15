@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { tags } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export async function PATCH(
@@ -19,6 +21,11 @@ export async function PATCH(
         { error: authResult.error },
         { status: authResult.status }
       );
+    }
+
+    const scopeError = requireScope(authResult.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const { organizationId, userId, authMethod, apiKeyId } = authResult;
@@ -114,6 +121,11 @@ export async function DELETE(
         { error: authResult.error },
         { status: authResult.status }
       );
+    }
+
+    const scopeError = requireScope(authResult.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const { organizationId, userId, authMethod, apiKeyId } = authResult;

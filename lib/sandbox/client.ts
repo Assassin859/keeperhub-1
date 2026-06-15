@@ -2,22 +2,36 @@ import "server-only";
 
 import { Agent, request as httpRequest } from "node:http";
 import {
-  deserialize as v8Deserialize,
-  serialize as v8Serialize,
-} from "node:v8";
+  decodeSandboxResult,
+  SANDBOX_RESULT_MAX_BYTES,
+  SANDBOX_WIRE_VERSION,
+} from "@/lib/sandbox/child-source";
 
 const SANDBOX_URL = process.env.SANDBOX_URL;
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
+
+// Parse an integer env override, falling back to `fallback` when unset or
+// invalid (non-numeric, NaN, or below `min`). Mirrors the server's
+// getMaxBodyBytes guard so a stray negative value cannot silently become a
+// negative byte cap (rejecting every response) or skip the retry loop.
+function parseIntEnv(
+  raw: string | undefined,
+  fallback: number,
+  min: number
+): number {
+  if (raw === undefined) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= min ? parsed : fallback;
+}
 
 // HTTP budget on top of the user-code timeout. Sandbox server's in-child
 // wall-clock kill adds 1000 ms; we give 2000 ms more for network RTT,
 // TCP teardown, and kubeproxy conntrack flush. If the socket yields no
 // response within (timeoutMs + HTTP_SLACK_MS), we destroy it so the
 // caller sees a timeout instead of hanging on a dead peer.
-const HTTP_SLACK_MS = Number.parseInt(
-  process.env.SANDBOX_HTTP_SLACK_MS ?? "3000",
-  10
-);
+const HTTP_SLACK_MS = parseIntEnv(process.env.SANDBOX_HTTP_SLACK_MS, 3000, 0);
 
 const sandboxAgent = new Agent({
   keepAlive: true,
@@ -29,10 +43,7 @@ const sandboxAgent = new Agent({
 // short backoff lets the in-flight runs on the pod drain instead of surfacing
 // a hard error to the caller. Bounded so sustained saturation still fails
 // fast rather than amplifying load on an already-full sandbox.
-const MAX_CAPACITY_RETRIES = Number.parseInt(
-  process.env.SANDBOX_MAX_RETRIES ?? "3",
-  10
-);
+const MAX_CAPACITY_RETRIES = parseIntEnv(process.env.SANDBOX_MAX_RETRIES, 3, 0);
 
 // Base backoff for the first retry. We deliberately compute the wait from a
 // fixed schedule rather than the response's Retry-After: deriving a timer
@@ -49,6 +60,16 @@ const MAX_BACKOFF_MS = 5000;
 const RETRY_JITTER_MS = 250;
 
 const HTTP_TOO_MANY_REQUESTS = 429;
+
+// Hard ceiling on the response body the client will buffer from the (untrusted)
+// sandbox. Mirrors the local fd-3 frame cap so a compromised sandbox cannot pin
+// main-app memory by streaming an unbounded body within the time budget.
+// Env-overridable; falls back to the frame cap on a missing/invalid value.
+const MAX_RESPONSE_BYTES = parseIntEnv(
+  process.env.SANDBOX_MAX_RESPONSE_BYTES,
+  SANDBOX_RESULT_MAX_BYTES,
+  1
+);
 
 /**
  * Carries the HTTP status off a non-200 sandbox response so runRemote can
@@ -121,7 +142,9 @@ export type RunCodeResult =
 const VM_LINE_REGEX = /user-code\.js:(\d+)/;
 
 function extractLineNumber(stack: string | undefined): number | undefined {
-  if (!stack) {
+  // Defensive: the decoded outcome crosses an untrusted boundary, so `stack`
+  // may not actually be a string at runtime; `.match` on a non-string throws.
+  if (typeof stack !== "string") {
     return undefined;
   }
   const match = stack.match(VM_LINE_REGEX);
@@ -178,13 +201,29 @@ function postOnce(
         path: url.pathname,
         method: "POST",
         headers: {
-          "Content-Type": "application/octet-stream",
+          "Content-Type": "application/json",
           "Content-Length": body.length.toString(),
+          "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
         },
       },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let received = 0;
+        res.on("data", (chunk: Buffer) => {
+          received += chunk.length;
+          if (received > MAX_RESPONSE_BYTES) {
+            settle(() => {
+              req.destroy();
+              reject(
+                new Error(
+                  `sandbox response exceeds maximum size (${MAX_RESPONSE_BYTES} bytes)`
+                )
+              );
+            });
+            return;
+          }
+          chunks.push(chunk);
+        });
         res.on("end", () => {
           settle(() => {
             const buf = Buffer.concat(chunks);
@@ -193,6 +232,18 @@ function postOnce(
                 new SandboxHttpError(
                   res.statusCode ?? 0,
                   `sandbox returned ${res.statusCode ?? "no status"}: ${buf.toString("utf8").slice(0, 200)}`
+                )
+              );
+              return;
+            }
+            // Fail fast on a wire-version skew (e.g. this newer client talking
+            // to an older sandbox that does not speak tagged-JSON) with a clear
+            // message rather than a downstream JSON parse error.
+            const wire = res.headers["x-kh-sandbox-wire"];
+            if (wire !== SANDBOX_WIRE_VERSION) {
+              reject(
+                new Error(
+                  `sandbox wire version mismatch: expected ${SANDBOX_WIRE_VERSION}, got ${typeof wire === "string" ? wire : "none"}`
                 )
               );
               return;
@@ -232,6 +283,49 @@ function postOnce(
   });
 }
 
+/**
+ * Shape guard for the decoded response. The sandbox is untrusted, so the
+ * tagged-JSON payload is validated to be a ChildOutcome envelope before use.
+ */
+function isLogEntry(value: unknown): value is LogEntry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const e = value as { level?: unknown; args?: unknown };
+  return typeof e.level === "string" && Array.isArray(e.args);
+}
+
+function isChildOutcome(value: unknown): value is ChildOutcome {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as {
+    ok?: unknown;
+    logs?: unknown;
+    errorMessage?: unknown;
+    errorStack?: unknown;
+  };
+  if (typeof v.ok !== "boolean" || !Array.isArray(v.logs)) {
+    return false;
+  }
+  // Every log entry must be well-shaped so a forged logs array cannot surface a
+  // null/garbage entry to downstream consumers on this untrusted boundary.
+  if (!v.logs.every(isLogEntry)) {
+    return false;
+  }
+  if (v.ok === true) {
+    // ok:true's `result` is unknown by design.
+    return true;
+  }
+  // ok:false must carry a string errorMessage and, if present, a string
+  // errorStack: toRunCodeResult passes errorStack to extractLineNumber, which
+  // calls `.match` on it, so a non-string would throw and mask the real error.
+  return (
+    typeof v.errorMessage === "string" &&
+    (v.errorStack === undefined || typeof v.errorStack === "string")
+  );
+}
+
 function parseResponse(buf: Buffer): ChildOutcome {
   const text = buf.toString("utf8");
   const idx = text.lastIndexOf(RESULT_SENTINEL);
@@ -239,8 +333,13 @@ function parseResponse(buf: Buffer): ChildOutcome {
     throw new Error("sandbox response missing sentinel");
   }
   const payload = text.slice(idx + RESULT_SENTINEL.length).trim();
-  const decoded = Buffer.from(payload, "base64");
-  return v8Deserialize(decoded) as ChildOutcome;
+  // Safe by construction: JSON.parse + tag rebuild (prototype-pollution-safe),
+  // never v8.deserialize on sandbox-produced bytes (F-010).
+  const decoded = decodeSandboxResult(payload);
+  if (!isChildOutcome(decoded)) {
+    throw new Error("sandbox response: malformed result");
+  }
+  return decoded;
 }
 
 function toRunCodeResult(outcome: ChildOutcome): RunCodeResult {
@@ -267,10 +366,8 @@ export async function runRemote(input: {
   try {
     const timeoutSeconds = Math.ceil(input.timeoutMs / 1000);
     const body = Buffer.from(
-      v8Serialize({ code: input.code, timeout: timeoutSeconds }).toString(
-        "base64"
-      ),
-      "ascii"
+      JSON.stringify({ code: input.code, timeout: timeoutSeconds }),
+      "utf8"
     );
 
     let lastError: unknown;

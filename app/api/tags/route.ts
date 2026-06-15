@@ -3,10 +3,12 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { tags, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import {
   resolveCreatorContext,
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { loadCreators } from "@/lib/security/creator-lookup";
 
@@ -81,6 +83,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         { error: resolved.error },
         { status: resolved.status }
       );
+    }
+    const scopeError = requireScope(resolved.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
     const {
       organizationId,

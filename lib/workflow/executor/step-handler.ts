@@ -275,7 +275,11 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
       (result as { success: boolean }).success === false;
 
     if (isErrorResult) {
-      const errorResult = result as { success: false; error?: string };
+      const errorResult = result as {
+        success: false;
+        error?: string;
+        code?: string;
+      };
       await logStepComplete(
         logInfo,
         "error",
@@ -292,6 +296,7 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
         durationMs: Date.now() - logInfo.startTime,
         success: false,
         error: errorResult.error,
+        code: errorResult.code,
       });
     } else {
       await logStepComplete(

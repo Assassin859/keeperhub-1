@@ -9,14 +9,18 @@ export type ApiKeyContext = {
   scope?: string;
 };
 
+export type ApiKeyAuthError = { error: string; status: number };
+
 /**
  * Validates a request for the direct execution API.
  * Accepts MCP OAuth tokens or API keys (kh_).
- * Returns the org context if valid, null otherwise.
+ * Returns the org context if valid, otherwise an `{ error, status }` failure
+ * (401 for missing/invalid credentials, 403 for forbidden principals such as
+ * anonymous accounts). Callers branch on `"error" in result`.
  */
 export async function validateApiKey(
   request: Request
-): Promise<ApiKeyContext | null> {
+): Promise<ApiKeyContext | ApiKeyAuthError> {
   const oauthResult = await authenticateOAuthToken(request);
   if (oauthResult.authenticated && oauthResult.organizationId) {
     return {
@@ -26,18 +30,24 @@ export async function validateApiKey(
     };
   }
 
+  // A forbidden OAuth subject (e.g. an anonymous account) must surface as 403
+  // rather than fall through to api-key auth. Other OAuth failures (no header,
+  // kh_ token, invalid token) are 401 and the api-key path handles them.
+  if (oauthResult.statusCode === 403) {
+    return { error: oauthResult.error ?? "Forbidden", status: 403 };
+  }
+
   const result = await authenticateApiKey(request);
-
-  if (!result.authenticated) {
-    return null;
+  if (result.authenticated && result.organizationId && result.apiKeyId) {
+    return {
+      organizationId: result.organizationId,
+      apiKeyId: result.apiKeyId,
+    };
   }
 
-  if (!(result.organizationId && result.apiKeyId)) {
-    return null;
+  if (result.statusCode === 403) {
+    return { error: result.error ?? "Forbidden", status: 403 };
   }
 
-  return {
-    organizationId: result.organizationId,
-    apiKeyId: result.apiKeyId,
-  };
+  return { error: "Unauthorized", status: 401 };
 }

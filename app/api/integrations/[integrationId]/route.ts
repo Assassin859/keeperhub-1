@@ -10,7 +10,9 @@ import {
 } from "@/lib/db/integrations";
 import { organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import type { IntegrationConfig } from "@/lib/types/integration";
 
@@ -132,6 +134,11 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const body: UpdateIntegrationRequest = await request.json();
 
     // Fetch existing integration so updateIntegration can merge database
@@ -236,6 +243,11 @@ export async function DELETE(
 
     if (!(userId || organizationId)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     // Capture name/type before deletion so the audit trail can name what went.

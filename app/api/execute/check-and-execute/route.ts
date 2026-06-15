@@ -27,6 +27,7 @@ import {
   failExecution,
   markRunning,
   redactInput,
+  withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
@@ -134,7 +135,9 @@ async function executeConditionalWrite(
     return recordIdempotentResponse(idem, walletError, "release");
   }
 
-  const redactedInput = redactInput(fullBody);
+  const redactedInput = redactInput(
+    withRejectedSignerOverride(fullBody, fullBody)
+  );
   const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId,
@@ -197,10 +200,10 @@ async function executeConditionalWrite(
 
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
-  if (!apiKeyCtx) {
+  if ("error" in apiKeyCtx) {
     return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: HttpStatus.UNAUTHORIZED }
+      { error: apiKeyCtx.error },
+      { status: apiKeyCtx.status }
     );
   }
 

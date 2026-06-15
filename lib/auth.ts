@@ -945,6 +945,12 @@ export const auth = betterAuth({
       // Turnstile until a shared store is wired up.
       "/sign-up/email": (req) =>
         rateLimitBypassRule(req, { window: 3600, max: 5 }),
+      // Per-IP anonymous sign-in gate (5/hour). Without it the endpoint falls
+      // through to the loose "/*" default, leaving unbounded anon account/org
+      // creation. Same in-memory caveat as signup (effective limit is
+      // 5 * pod_count) and the same E2E bypass.
+      "/sign-in/anonymous": (req) =>
+        rateLimitBypassRule(req, { window: 3600, max: 5 }),
       // Rate-limit bypass is gated by the same predicate as admin test
       // routes (build-time + runtime). See lib/admin-auth.ts for the gate
       // and KEEP-237 for context.

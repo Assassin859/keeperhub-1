@@ -4,12 +4,14 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import {
   dualFactorErrorResponse,
   requireDualFactor,
 } from "@/lib/mfa/dual-factor";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
@@ -26,6 +28,14 @@ export async function DELETE(
         { error: authCtx.error },
         { status: authCtx.status }
       );
+    }
+    // Defense-in-depth: this route is not OAuth-reachable today (the session +
+    // admin/owner + dual-factor gates below reject a Bearer OAuth token), but
+    // gate on write scope anyway so the A-03 class stays closed if that ordering
+    // is ever refactored. Mirrors the sibling resolveOrganizationId mutations.
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
     const { organizationId: activeOrgId } = authCtx;
 

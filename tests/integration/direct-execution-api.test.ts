@@ -34,12 +34,19 @@ vi.mock("@/app/api/execute/_lib/spending-cap", () => ({
   checkAndReserveExecution: mocks.checkAndReserveExecution,
 }));
 
-vi.mock("@/app/api/execute/_lib/execution-service", () => ({
-  markRunning: mocks.markRunning,
-  completeExecution: mocks.completeExecution,
-  failExecution: mocks.failExecution,
-  redactInput: mocks.redactInput,
-}));
+vi.mock("@/app/api/execute/_lib/execution-service", async (importActual) => {
+  const actual =
+    await importActual<
+      typeof import("@/app/api/execute/_lib/execution-service")
+    >();
+  return {
+    ...actual,
+    markRunning: mocks.markRunning,
+    completeExecution: mocks.completeExecution,
+    failExecution: mocks.failExecution,
+    redactInput: mocks.redactInput,
+  };
+});
 
 vi.mock("@/plugins/web3/steps/transfer-funds-core", () => ({
   transferFundsCore: mocks.transferFundsCore,
@@ -201,7 +208,7 @@ describe("Direct Execution API", () => {
     };
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue(null);
+      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
 
       const response = await transferPOST(postRequest("/transfer", validBody));
 
@@ -386,7 +393,7 @@ describe("Direct Execution API", () => {
     };
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue(null);
+      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
 
       const response = await contractCallPOST(
         postRequest("/contract-call", validReadBody)
@@ -604,7 +611,7 @@ describe("Direct Execution API", () => {
     };
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue(null);
+      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
 
       const response = await checkAndExecutePOST(
         postRequest("/check-and-execute", validBody)
@@ -726,7 +733,7 @@ describe("Direct Execution API", () => {
   // ==========================================================================
   describe("GET /api/execute/{id}/status", () => {
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue(null);
+      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
 
       const response = await statusGET(getRequest("/exec_1/status"), {
         params: Promise.resolve({ executionId: "exec_1" }),
@@ -823,7 +830,7 @@ describe("Direct Execution API", () => {
     });
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue(null);
+      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
 
       const response = await swapPOST(
         postRequest("/swap", { fromToken: "ETH" })

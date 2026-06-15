@@ -18,10 +18,11 @@ export type SignTypedDataInput = StepInput & SignTypedDataCoreInput;
 /**
  * Sign Typed Data (EIP-712) Step
  * Produces a 65-byte secp256k1 signature over an EIP-712 typed-data object
- * using the organization's Turnkey-backed wallet. Suitable for x402 /
- * EIP-3009 transferWithAuthorization, MPP proofs, EIP-2612 permits, and
- * arbitrary protocol intents that need an off-chain signature destined for
- * an HTTP body or contract argument.
+ * using the organization's Turnkey-backed wallet, for arbitrary protocol
+ * intents that need an off-chain signature destined for an HTTP body or
+ * contract argument. Fund-moving authorizations (permits, transfer
+ * authorizations, delegations) are refused on this step - see
+ * sign-typed-data-core.
  */
 export async function signTypedDataStep(
   input: SignTypedDataInput

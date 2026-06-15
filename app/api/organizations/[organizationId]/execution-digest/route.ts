@@ -8,7 +8,9 @@ import {
 } from "@/lib/db/schema";
 import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import {
   DIGEST_REQUIRES_CADENCE_ERROR,
   DIGEST_REQUIRES_SUBSCRIBER_ERROR,
@@ -27,6 +29,7 @@ type ManagerOk = {
   userId: string;
   authMethod: string;
   apiKeyId: string | null;
+  scope?: string;
 };
 type ManagerErr = { ok: false; status: number; error: string };
 
@@ -64,7 +67,13 @@ async function requireOrgManager(
   ) {
     return { ok: false, status: 403, error: "Forbidden" };
   }
-  return { ok: true, userId, authMethod, apiKeyId: authContext.apiKeyId };
+  return {
+    ok: true,
+    userId,
+    authMethod,
+    apiKeyId: authContext.apiKeyId,
+    scope: authContext.scope,
+  };
 }
 
 async function loadSettings(organizationId: string) {
@@ -165,6 +174,11 @@ export async function PUT(
         { error: manager.error },
         { status: manager.status }
       );
+    }
+
+    const scopeError = requireScope(manager.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     if (!(await isFeatureEnabledForOrg(FEATURE_ID, organizationId))) {

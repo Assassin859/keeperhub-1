@@ -8,7 +8,9 @@ import { db } from "@/lib/db";
 import { chains, organizationTokens, supportedTokens } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { organizationHasWallet } from "@/lib/web3/wallet-helpers";
 
@@ -107,6 +109,12 @@ export async function POST(request: Request) {
         { status: authCtx.status }
       );
     }
+
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { organizationId: activeOrgId } = authCtx;
 
     // Check if organization has a wallet
@@ -292,6 +300,12 @@ export async function DELETE(request: Request) {
         { status: authCtx.status }
       );
     }
+
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { organizationId: activeOrgId } = authCtx;
 
     const body = await request.json();

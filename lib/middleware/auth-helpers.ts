@@ -1,6 +1,7 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { auth } from "@/lib/auth";
+import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
@@ -140,6 +141,7 @@ export type DualAuthContext =
       authMethod: AuthMethod;
       apiKeyId: string | null;
       scope?: string;
+      isAnonymous: boolean;
     }
   | { error: string; status: number; code?: "mfa_required" };
 
@@ -242,10 +244,13 @@ export async function getDualAuthContext(
 
   const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth) {
+    // Anonymous subjects are rejected inside authenticateOAuthToken, so a
+    // resolved token always belongs to a real account.
     return {
       ...oauthAuth,
       authMethod: "oauth",
       apiKeyId: null,
+      isAnonymous: false,
     };
   }
 
@@ -269,6 +274,7 @@ export async function getDualAuthContext(
       organizationId: null,
       authMethod: "session",
       apiKeyId: null,
+      isAnonymous: false,
     };
   }
 
@@ -297,6 +303,7 @@ export async function getDualAuthContext(
     organizationId: orgResult.organizationId,
     authMethod: "session",
     apiKeyId: null,
+    isAnonymous: isAnonymousUserShape(session.user),
   };
 }
 
@@ -310,6 +317,8 @@ function resolveApiKeyContext(apiKeyAuth: {
     organizationId: apiKeyAuth.organizationId ?? null,
     authMethod: "api-key",
     apiKeyId: apiKeyAuth.apiKeyId ?? null,
+    // Anonymous creators are rejected inside authenticateApiKey.
+    isAnonymous: false,
   };
 }
 
@@ -318,6 +327,9 @@ export type OrganizationAuthContext =
       organizationId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      // OAuth token scope (mcp:read|write|admin). Undefined for api-key/session
+      // callers, which scopeSatisfies() treats as full access.
+      scope?: string;
     }
   | { error: string; status: number };
 
@@ -335,6 +347,7 @@ export async function resolveOrganizationId(
       organizationId: oauthAuth.organizationId,
       authMethod: "oauth",
       apiKeyId: null,
+      scope: oauthAuth.scope,
     };
   }
 
@@ -391,6 +404,9 @@ export async function resolveCreatorContext(request: Request): Promise<
       userId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      // OAuth token scope (mcp:read|write|admin). Undefined for api-key/session
+      // callers, which scopeSatisfies() treats as full access.
+      scope?: string;
     }
   | { error: string; status: number }
 > {
@@ -400,7 +416,8 @@ export async function resolveCreatorContext(request: Request): Promise<
       oauthAuth.organizationId,
       oauthAuth.userId,
       "oauth",
-      null
+      null,
+      oauthAuth.scope
     );
   }
 
@@ -448,13 +465,15 @@ function validateCreatorFields(
   organizationId: string | null | undefined,
   userId: string | null | undefined,
   authMethod: AuthMethod,
-  apiKeyId: string | null
+  apiKeyId: string | null,
+  scope?: string
 ):
   | {
       organizationId: string;
       userId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      scope?: string;
     }
   | { error: string; status: number } {
   if (!organizationId) {
@@ -466,5 +485,5 @@ function validateCreatorFields(
       status: 400,
     };
   }
-  return { organizationId, userId, authMethod, apiKeyId };
+  return { organizationId, userId, authMethod, apiKeyId, scope };
 }

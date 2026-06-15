@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import {
   auditFromAuth,
   type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type UpdateOrganizationNameRequest = {
@@ -28,6 +30,11 @@ export async function PATCH(
         { error: authContext.error },
         { status: authContext.status }
       );
+    }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const { userId, organizationId: callerOrgId, authMethod } = authContext;

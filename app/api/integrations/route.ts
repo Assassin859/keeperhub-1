@@ -9,7 +9,9 @@ import {
 import { member, users } from "@/lib/db/schema";
 import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import type {
   IntegrationConfig,
@@ -196,6 +198,11 @@ export async function POST(request: Request) {
         hint: "Provide a valid `Authorization: Bearer <token>` header.",
         requestHeaders: request.headers,
       });
+    }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     if (!authContext.userId) {

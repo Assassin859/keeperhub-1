@@ -30,6 +30,7 @@ import {
   markRunning,
   redactInput,
   setRetryCount,
+  withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import {
@@ -311,6 +312,30 @@ async function handleResult(
   );
 }
 
+// Caller-supplied config keys the route must own, not the caller. `network`
+// and `integrationId` are resolved and gated by the route itself; `_context`
+// is injected server-side. `web3Connection` selects the signer mode in
+// resolveSignerForNode (lib/safe/signer-resolver.ts): a direct-execution
+// caller must NOT be able to set web3Connection='eoa' to short-circuit to the
+// org's Turnkey EOA and bypass the org Safe's Zodiac Roles policy on
+// org-custodied writes. With it absent, resolveSignerForNode falls back to the
+// "default" branch (resolveSignerMode org-policy path), honouring the Safe +
+// active Role. The sibling execute routes never forward web3Connection either,
+// so this keeps /api/execute/node no weaker. Stripping all four in one place
+// keeps the step input and the persisted audit input in lockstep.
+function stripReservedConfig(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  const {
+    network: _ignoredNetwork,
+    integrationId: _ignoredIntegrationId,
+    web3Connection: _ignoredWeb3Connection,
+    _context: _ignoredContext,
+    ...rest
+  } = config;
+  return rest;
+}
+
 async function executeNode(
   data: NodeExecuteRequest,
   resolved: ResolvedAction,
@@ -323,24 +348,18 @@ async function executeNode(
   const network = resolvedRefs?.network;
   const integrationId = resolvedRefs?.integrationId;
 
-  // Drop caller-supplied gating keys so the step only sees the values the
-  // route resolved and gated on. web3Connection is intentionally preserved;
-  // it stays org-ownership-verified downstream in lib/safe/signer-resolver.ts.
-  const {
-    network: _ignoredNetwork,
-    integrationId: _ignoredIntegrationId,
-    _context: _ignoredContext,
-    ...safeConfig
-  } = config;
+  const safeConfig = stripReservedConfig(config);
 
   let executionId: string;
   if (preCreatedExecutionId) {
     executionId = preCreatedExecutionId;
   } else {
-    const redactedInput = redactInput({
-      actionType: data.actionType,
-      ...safeConfig,
-    });
+    const redactedInput = redactInput(
+      withRejectedSignerOverride(
+        { actionType: data.actionType, ...safeConfig },
+        config
+      )
+    );
     const created = await createExecution({
       organizationId: apiKeyCtx.organizationId,
       apiKeyId: apiKeyCtx.apiKeyId,
@@ -437,10 +456,10 @@ async function executeNode(
 
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
-  if (!apiKeyCtx) {
+  if ("error" in apiKeyCtx) {
     return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: HttpStatus.UNAUTHORIZED }
+      { error: apiKeyCtx.error },
+      { status: apiKeyCtx.status }
     );
   }
 
@@ -555,10 +574,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       return recordIdempotentResponse(idem, walletError, "release");
     }
 
-    const redactedInput = redactInput({
-      actionType: validation.data.actionType,
-      ...validation.data.config,
-    });
+    // Strip the same reserved keys executeNode removes so the persisted audit
+    // input matches what the step actually received (see stripReservedConfig),
+    // but preserve a non-honored web3Connection under _rejectedConfig so the
+    // audit log still shows the attempt (see withRejectedSignerOverride).
+    const redactedInput = redactInput(
+      withRejectedSignerOverride(
+        {
+          actionType: validation.data.actionType,
+          ...stripReservedConfig(validation.data.config),
+        },
+        validation.data.config
+      )
+    );
     const reserve = await checkAndReserveExecution({
       organizationId: apiKeyCtx.organizationId,
       apiKeyId: apiKeyCtx.apiKeyId,

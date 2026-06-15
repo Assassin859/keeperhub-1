@@ -8,7 +8,9 @@ import { explorerConfigs } from "@/lib/db/schema";
 import { fetchEtherscanSourceCode } from "@/lib/explorer/etherscan";
 import { detectProxyViaRpc } from "@/lib/explorer/proxy-detection";
 import { ErrorCategory, logUserError } from "@/lib/logging";
+import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 
@@ -1292,6 +1294,11 @@ export async function POST(request: Request) {
         { error: authCtx.error },
         { status: authCtx.status }
       );
+    }
+
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_READ);
+    if (scopeError) {
+      return scopeError;
     }
 
     // Parse request body

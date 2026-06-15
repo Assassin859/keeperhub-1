@@ -12,7 +12,12 @@
  */
 import "server-only";
 
-import { safeFetch } from "@/lib/safe-fetch";
+import { ErrorCategory, logUserError } from "@/lib/logging";
+import {
+  assertUrlIsPublic,
+  SsrfBlockedError,
+  safeFetch,
+} from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import { extractTemplateTokens } from "@/lib/utils/template";
 import type { StepInput } from "@/lib/workflow/executor/step-handler";
@@ -170,6 +175,15 @@ export async function httpRequest(
   const httpMethod = resolveHttpMethod(input.httpMethod);
 
   try {
+    // SSRF guard: reject private/loopback/link-local/metadata destinations
+    // before any outbound request. `assertUrlIsPublic` is always-on -- it
+    // ignores `SAFE_FETCH_ENFORCE`/shadow mode -- so a user-supplied endpoint
+    // pointing at an internal address (e.g.
+    // http://169.254.169.254/latest/meta-data/) is blocked here even in
+    // environments where `safeFetch` itself would only log-and-continue.
+    // Mirrors plugins/webhook/steps/send-webhook.ts.
+    await assertUrlIsPublic(endpoint);
+
     const response = await safeFetch(endpoint, {
       method: httpMethod,
       headers: parseHeaders(input.httpHeaders),
@@ -192,6 +206,33 @@ export async function httpRequest(
     const data = await parseResponse(response);
     return { success: true, data, status: response.status };
   } catch (error) {
+    // An SSRF block is a security/config error, not a transient source miss:
+    // hard-fail it regardless of failOnError so an aggregator workflow never
+    // silently swallows a request aimed at an internal/metadata address. This
+    // fires for both the always-on assertUrlIsPublic pre-check and a safeFetch
+    // block in enforce mode.
+    if (error instanceof SsrfBlockedError) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[HTTP Request] Blocked SSRF target",
+        error.message,
+        { node_type: "http-request" }
+      );
+      return {
+        success: false,
+        error: `HTTP request failed: URL is not allowed: ${error.message}`,
+      };
+    }
+    // A malformed endpoint makes assertUrlIsPublic's URL parse throw a
+    // TypeError. That is a configuration error, not a transient source miss,
+    // so hard-fail it regardless of failOnError rather than soft-failing into
+    // a null-data success an aggregator workflow would silently swallow.
+    if (error instanceof TypeError) {
+      return {
+        success: false,
+        error: `HTTP request failed: ${getErrorMessage(error)}`,
+      };
+    }
     // A timeout abort surfaces here too -- AbortSignal.timeout() rejects the
     // fetch, which getErrorMessage renders as a timeout error.
     const message = `HTTP request failed: ${getErrorMessage(error)}`;

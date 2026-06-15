@@ -4,7 +4,9 @@ import {
   mergeDatabaseConfig,
 } from "@/lib/db/integrations";
 import { handleDatabaseTest, handlePluginTest } from "@/lib/db/test-connection";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import type { IntegrationConfig } from "@/lib/types/integration";
 
 export type { TestConnectionResult } from "@/lib/db/test-connection";
@@ -40,6 +42,12 @@ export async function POST(
         { status: authContext.status }
       );
     }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
 
     const { integrationId } = await params;
