@@ -94,12 +94,16 @@ const PERMIT_SUBSTRING = "permit";
 // of vetted (chainId, verifyingContract, struct-shape) usages rather than a
 // blocklist of names; see the A-06 follow-up.
 
-// EIP-712 `domain.chainId`, when present, must name a chain KeeperHub
+// EIP-712 `domain.chainId`, when present, must name an EVM chain KeeperHub
 // actually supports. An unknown chainId signals a payload aimed at a
-// contract/network we never vetted. Derived from the same canonical
-// `SUPPORTED_CHAIN_IDS` map that `lib/rpc/network-utils` resolves against.
+// contract/network we never vetted. Derived from the canonical
+// `SUPPORTED_CHAIN_IDS` map, MINUS the Solana entries: `domain.chainId` is
+// an EVM concept, so the Solana pseudo-ids (101/103) would be meaningless
+// here and must not be treated as valid EIP-712 chains.
 const SUPPORTED_CHAIN_ID_SET: ReadonlySet<number> = new Set<number>(
-  Object.values(SUPPORTED_CHAIN_IDS)
+  Object.entries(SUPPORTED_CHAIN_IDS)
+    .filter(([name]) => !name.startsWith("SOLANA"))
+    .map(([, id]) => id)
 );
 
 const HEX_CHAIN_ID_RE = /^0x[0-9a-f]+$/i;
