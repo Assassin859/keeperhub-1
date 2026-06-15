@@ -39,7 +39,7 @@ async function request(
             ? {
                 "Content-Type": "application/json",
                 "Content-Length": Buffer.byteLength(body),
-                "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+                "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
               }
             : {}),
       },
@@ -132,7 +132,7 @@ describe("sandbox HTTP server", () => {
 
   it("POST /run with empty body returns 400", async () => {
     const res = await request(port, "POST", "/run", undefined, {
-      "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+      "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
     });
     expect(res.status).toBe(400);
   });
@@ -235,7 +235,7 @@ describe("sandbox HTTP server", () => {
           headers: {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(hangingCode),
-            "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+            "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
           },
         },
         () => {

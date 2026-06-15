@@ -107,7 +107,7 @@ function writeRunResult(res: ServerResponse, result: SandboxRunResult): void {
     : encodeSandboxResult(result.outcome);
   res.writeHead(200, {
     "Content-Type": "application/json",
-    "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+    "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
   });
   res.end(`${RESULT_SENTINEL}${payload}\n`);
 }
@@ -135,7 +135,7 @@ async function handlePostRun(
 ): Promise<void> {
   // Reject a wire-version skew up front with a clear 415 (e.g. an older app
   // that still speaks base64(v8)) instead of a confusing "malformed body".
-  const wire = req.headers["x-sandbox-wire"];
+  const wire = req.headers["x-kh-sandbox-wire"];
   if (wire !== SANDBOX_WIRE_VERSION) {
     res.writeHead(415);
     res.end(

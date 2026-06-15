@@ -203,7 +203,7 @@ function postOnce(
         headers: {
           "Content-Type": "application/json",
           "Content-Length": body.length.toString(),
-          "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+          "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
         },
       },
       (res) => {
@@ -239,7 +239,7 @@ function postOnce(
             // Fail fast on a wire-version skew (e.g. this newer client talking
             // to an older sandbox that does not speak tagged-JSON) with a clear
             // message rather than a downstream JSON parse error.
-            const wire = res.headers["x-sandbox-wire"];
+            const wire = res.headers["x-kh-sandbox-wire"];
             if (wire !== SANDBOX_WIRE_VERSION) {
               reject(
                 new Error(

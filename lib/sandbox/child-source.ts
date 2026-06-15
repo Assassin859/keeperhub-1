@@ -79,7 +79,7 @@ export const SANDBOX_RESULT_MAX_BYTES = 96 * 1024 * 1024;
 /**
  * Identifier for the HTTP wire format between the main app and the standalone
  * sandbox service (JSON request + tagged-JSON response). The client sends it as
- * the `X-Sandbox-Wire` request header and the server echoes it on the response;
+ * the `X-KH-Sandbox-Wire` request header and the server echoes it on the response;
  * each side rejects a mismatch so a deploy-time version skew fails fast with a
  * clear error instead of a confusing parse failure. Bump when the wire changes.
  */

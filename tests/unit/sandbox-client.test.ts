@@ -51,7 +51,7 @@ beforeAll(async () => {
       const result = currentResponder({ body: parsed });
       res.writeHead(result.status, {
         "Content-Type": "application/octet-stream",
-        "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+        "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
         ...result.headers,
       });
       res.end(result.body);
@@ -549,7 +549,7 @@ describe("lib/sandbox-client runRemote response size cap", () => {
 });
 
 describe("lib/sandbox-client runRemote wire-version skew", () => {
-  it("rejects a 200 response whose X-Sandbox-Wire header does not match", async () => {
+  it("rejects a 200 response whose X-KH-Sandbox-Wire header does not match", async () => {
     currentResponder = (): {
       status: number;
       body: string;
@@ -558,7 +558,7 @@ describe("lib/sandbox-client runRemote wire-version skew", () => {
       status: 200,
       body: sentinelBody({ ok: true, result: 1, logs: [] }),
       // Simulate an older sandbox advertising a different wire version.
-      headers: { "X-Sandbox-Wire": "json-v0" },
+      headers: { "X-KH-Sandbox-Wire": "json-v0" },
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
