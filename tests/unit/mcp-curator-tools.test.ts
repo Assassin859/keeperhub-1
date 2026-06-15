@@ -50,6 +50,7 @@ const mockAuth = (orgId = "org-abc") =>
     organizationId: orgId,
     authMethod: "session" as const,
     apiKeyId: null,
+    isAnonymous: false,
   });
 
 const mockNoAuth = () =>

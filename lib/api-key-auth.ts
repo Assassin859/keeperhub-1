@@ -131,9 +131,8 @@ export async function authenticateApiKey(
       };
     }
 
-    // Reject keys created by an anonymous account. Anonymous principals are
-    // barred from the compute/egress execution primitive (KEEP-826); an api
-    // key minted by one must not become a durable bypass of that gate.
+    // Reject keys created by an anonymous account so a key minted by one
+    // cannot become a durable bypass of the anonymous-execution gate.
     if (
       apiKey.createdBy &&
       isAnonymousUserShape({

@@ -1,10 +1,7 @@
 import { HttpStatus } from "@/lib/http-status";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import {
-  isAnonymousUserId,
-  logAnonymousExecutionBlock,
-} from "@/lib/auth-anonymous-guard";
+import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
@@ -94,11 +91,10 @@ export async function POST(
         );
       }
 
-      // Anonymous principals may browse and build but never run: the execution
-      // path is unmetered compute + outbound egress (KEEP-826). Token/api-key
-      // callers are already refused at auth resolution; this closes the
-      // browser-session path.
-      if (await isAnonymousUserId(authContext.userId)) {
+      // Anonymous principals may browse and build but never run. Token and
+      // api-key callers are already refused at auth resolution; this closes
+      // the browser-session path.
+      if (authContext.isAnonymous) {
         logAnonymousExecutionBlock("workflow_execute", authContext.userId, {
           workflowId,
         });

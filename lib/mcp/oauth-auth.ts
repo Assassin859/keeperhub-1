@@ -171,9 +171,8 @@ export async function authenticateOAuthToken(
     },
   });
 
-  // Anonymous accounts must never hold a usable mcp token. The consent screen
-  // refuses to mint one for them (KEEP-826), so a token reaching here is an
-  // anomaly: neutralize the credential rather than grant free compute/egress.
+  // Anonymous accounts must never hold a usable mcp token: the consent screen
+  // refuses to mint one for them, so reject any token that reaches this far.
   if (user && isAnonymousUserShape(user)) {
     logAnonymousExecutionBlock("mcp_oauth", payload.sub, {
       organizationId: payload.org,

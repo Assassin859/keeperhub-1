@@ -107,6 +107,7 @@ describe("getDualAuthContext", () => {
         userId: "user_oauth",
         organizationId: "org_oauth",
         authMethod: "oauth",
+        isAnonymous: false,
         apiKeyId: null,
       });
       expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
@@ -127,6 +128,7 @@ describe("getDualAuthContext", () => {
         userId: "user_oauth",
         organizationId: "org_oauth",
         authMethod: "oauth",
+        isAnonymous: false,
         apiKeyId: null,
         scope: "mcp:read",
       });
@@ -149,6 +151,7 @@ describe("getDualAuthContext", () => {
         userId: "user_creator",
         organizationId: "org_123",
         authMethod: "api-key",
+        isAnonymous: false,
         apiKeyId: null,
       });
       expect(mockGetSession).not.toHaveBeenCalled();
@@ -166,6 +169,7 @@ describe("getDualAuthContext", () => {
         userId: null,
         organizationId: "org_123",
         authMethod: "api-key",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -184,6 +188,7 @@ describe("getDualAuthContext", () => {
         userId: "user_creator",
         organizationId: "org_123",
         authMethod: "api-key",
+        isAnonymous: false,
         apiKeyId: "key-abc",
       });
     });
@@ -206,6 +211,7 @@ describe("getDualAuthContext", () => {
         userId: "user_creator",
         organizationId: "org_native",
         authMethod: "api-key",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -230,6 +236,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -246,6 +253,7 @@ describe("getDualAuthContext", () => {
         userId: "user_no_org",
         organizationId: null,
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -269,6 +277,7 @@ describe("getDualAuthContext", () => {
           userId: "user_session",
           organizationId: "org_target",
           authMethod: "session",
+          isAnonymous: false,
           apiKeyId: null,
         });
       });
@@ -308,6 +317,7 @@ describe("getDualAuthContext", () => {
           userId: "user_session",
           organizationId: "org_default",
           authMethod: "session",
+          isAnonymous: false,
           apiKeyId: null,
         });
         // Default path uses its own org-existence lookup, never the member
@@ -352,6 +362,7 @@ describe("getDualAuthContext", () => {
         userId: null,
         organizationId: null,
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -376,6 +387,7 @@ describe("getDualAuthContext", () => {
         userId: "user_oauth",
         organizationId: "org_oauth",
         authMethod: "oauth",
+        isAnonymous: false,
         apiKeyId: null,
       });
       expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
@@ -397,6 +409,7 @@ describe("getDualAuthContext", () => {
         userId: "user_apikey",
         organizationId: "org_apikey",
         authMethod: "api-key",
+        isAnonymous: false,
         apiKeyId: null,
       });
       expect(mockGetSession).not.toHaveBeenCalled();
@@ -427,6 +440,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -446,6 +460,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -490,6 +505,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -509,6 +525,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -522,6 +539,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -538,6 +556,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -561,6 +580,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });
@@ -587,6 +607,7 @@ describe("getDualAuthContext", () => {
         userId: "user_oauth",
         organizationId: "org_oauth",
         authMethod: "oauth",
+        isAnonymous: false,
         apiKeyId: null,
       });
     });

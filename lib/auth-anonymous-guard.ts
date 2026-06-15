@@ -1,7 +1,4 @@
 import { captureMessage } from "@sentry/nextjs";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
 
 /**
  * Anonymous-user gate for sensitive account operations.
@@ -32,28 +29,6 @@ export function isAnonymousUserShape(user: {
     return true;
   }
   return false;
-}
-
-/**
- * Resolves a user id to its anonymity status by reading the persisted row.
- * Use at execution sinks that only have a user id in hand (token / session
- * principals) to refuse anonymous accounts the compute + egress primitive.
- * A missing user resolves to anonymous (fail closed).
- */
-export async function isAnonymousUserId(
-  userId: string | null | undefined
-): Promise<boolean> {
-  if (!userId) {
-    return true;
-  }
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-    columns: { isAnonymous: true, name: true, email: true },
-  });
-  if (!user) {
-    return true;
-  }
-  return isAnonymousUserShape(user);
 }
 
 /**

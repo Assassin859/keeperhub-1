@@ -34,6 +34,7 @@ const mockAuth = (orgId = "org-abc") =>
     organizationId: orgId,
     authMethod: "session" as const,
     apiKeyId: null,
+    isAnonymous: false,
   });
 
 describe("mcp curator routes — slug collision and preservation", () => {

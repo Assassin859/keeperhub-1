@@ -66,8 +66,7 @@ async function handleApprove(formData: FormData): Promise<void> {
     redirect(`/?returnTo=${encodeURIComponent("/oauth/authorize")}`);
   }
 
-  // Anonymous accounts must never be issued an mcp token: that token is the
-  // entry point to the unmetered execution + egress primitive (KEEP-826).
+  // Anonymous accounts must never be issued an mcp token.
   if (isAnonymousUserShape(session.user)) {
     logAnonymousExecutionBlock("oauth_consent", session.user.id);
     errorRedirect(redirectUri, "access_denied", state ?? undefined);
@@ -221,9 +220,8 @@ export default async function AuthorizePage({
     );
   }
 
-  // Anonymous demo accounts cannot grant API access (KEEP-826). Show a
-  // sign-up prompt rather than the consent form so the Approve path is never
-  // reachable for them.
+  // Anonymous demo accounts cannot grant API access. Show a sign-up prompt
+  // rather than the consent form.
   if (isAnonymousUserShape(session.user)) {
     return (
       <main className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60">
