@@ -6,7 +6,10 @@ import {
 } from "node:http";
 import { type AddressInfo, createServer as createNetServer } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { decodeSandboxResult } from "../../lib/sandbox/child-source.js";
+import {
+  decodeSandboxResult,
+  SANDBOX_WIRE_VERSION,
+} from "../../lib/sandbox/child-source.js";
 import { handleRequest } from "./index.js";
 
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
@@ -19,7 +22,8 @@ async function request(
   port: number,
   method: string,
   path: string,
-  body?: string
+  body?: string,
+  headers?: Record<string, string | number>
 ): Promise<{ status: number; body: Buffer }> {
   const { request: httpRequest } = await import("node:http");
   return await new Promise((resolve, reject) => {
@@ -29,12 +33,15 @@ async function request(
         port,
         method,
         path,
-        headers: body
-          ? {
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(body),
-            }
-          : {},
+        headers:
+          headers ??
+          (body
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body),
+                "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+              }
+            : {}),
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -124,8 +131,20 @@ describe("sandbox HTTP server", () => {
   });
 
   it("POST /run with empty body returns 400", async () => {
-    const res = await request(port, "POST", "/run");
+    const res = await request(port, "POST", "/run", undefined, {
+      "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+    });
     expect(res.status).toBe(400);
+  });
+
+  it("POST /run without the wire-version header returns 415", async () => {
+    const body = makeRunBody({ code: "return 1;", timeout: 5 });
+    const res = await request(port, "POST", "/run", body, {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    });
+    expect(res.status).toBe(415);
+    expect(res.body.toString()).toContain("unsupported sandbox wire version");
   });
 
   it("POST /run with non-JSON garbage body returns 400 malformed body", async () => {
@@ -214,8 +233,9 @@ describe("sandbox HTTP server", () => {
           method: "POST",
           path: "/run",
           headers: {
-            "Content-Type": "application/octet-stream",
+            "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(hangingCode),
+            "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
           },
         },
         () => {

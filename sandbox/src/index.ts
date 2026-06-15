@@ -3,7 +3,10 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { encodeSandboxResult } from "../../lib/sandbox/child-source.js";
+import {
+  encodeSandboxResult,
+  SANDBOX_WIRE_VERSION,
+} from "../../lib/sandbox/child-source.js";
 import { runCode, type SandboxRunResult } from "./run-code.js";
 
 /**
@@ -102,7 +105,10 @@ function writeRunResult(res: ServerResponse, result: SandboxRunResult): void {
   const payload = result.relay
     ? result.frame.toString("utf8")
     : encodeSandboxResult(result.outcome);
-  res.writeHead(200, { "Content-Type": "application/json" });
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+  });
   res.end(`${RESULT_SENTINEL}${payload}\n`);
 }
 
@@ -127,6 +133,17 @@ async function handlePostRun(
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
+  // Reject a wire-version skew up front with a clear 415 (e.g. an older app
+  // that still speaks base64(v8)) instead of a confusing "malformed body".
+  const wire = req.headers["x-sandbox-wire"];
+  if (wire !== SANDBOX_WIRE_VERSION) {
+    res.writeHead(415);
+    res.end(
+      `unsupported sandbox wire version: ${typeof wire === "string" ? wire : "none"}; expected ${SANDBOX_WIRE_VERSION}`
+    );
+    return;
+  }
+
   // Concurrency gate BEFORE anything else so we shed load without paying
   // the cost of reading the body or spawning a child. 429 + Retry-After
   // tells the main-app client to back off; the kept-alive HTTP.Agent there

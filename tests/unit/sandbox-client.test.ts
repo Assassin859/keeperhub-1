@@ -6,7 +6,10 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { encodeSandboxResult } from "@/lib/sandbox/child-source";
+import {
+  encodeSandboxResult,
+  SANDBOX_WIRE_VERSION,
+} from "@/lib/sandbox/child-source";
 
 vi.mock("server-only", () => ({}));
 
@@ -48,6 +51,7 @@ beforeAll(async () => {
       const result = currentResponder({ body: parsed });
       res.writeHead(result.status, {
         "Content-Type": "application/octet-stream",
+        "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
         ...result.headers,
       });
       res.end(result.body);
@@ -540,6 +544,29 @@ describe("lib/sandbox-client runRemote response size cap", () => {
       }
     } finally {
       delete process.env.SANDBOX_MAX_RESPONSE_BYTES;
+    }
+  });
+});
+
+describe("lib/sandbox-client runRemote wire-version skew", () => {
+  it("rejects a 200 response whose X-Sandbox-Wire header does not match", async () => {
+    currentResponder = (): {
+      status: number;
+      body: string;
+      headers: Record<string, string>;
+    } => ({
+      status: 200,
+      body: sentinelBody({ ok: true, result: 1, logs: [] }),
+      // Simulate an older sandbox advertising a different wire version.
+      headers: { "X-Sandbox-Wire": "json-v0" },
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("wire version mismatch");
     }
   });
 });

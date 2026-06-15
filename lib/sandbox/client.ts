@@ -4,6 +4,7 @@ import { Agent, request as httpRequest } from "node:http";
 import {
   decodeSandboxResult,
   SANDBOX_RESULT_MAX_BYTES,
+  SANDBOX_WIRE_VERSION,
 } from "@/lib/sandbox/child-source";
 
 const SANDBOX_URL = process.env.SANDBOX_URL;
@@ -190,6 +191,7 @@ function postOnce(
         headers: {
           "Content-Type": "application/json",
           "Content-Length": body.length.toString(),
+          "X-Sandbox-Wire": SANDBOX_WIRE_VERSION,
         },
       },
       (res) => {
@@ -218,6 +220,18 @@ function postOnce(
                 new SandboxHttpError(
                   res.statusCode ?? 0,
                   `sandbox returned ${res.statusCode ?? "no status"}: ${buf.toString("utf8").slice(0, 200)}`
+                )
+              );
+              return;
+            }
+            // Fail fast on a wire-version skew (e.g. this newer client talking
+            // to an older sandbox that does not speak tagged-JSON) with a clear
+            // message rather than a downstream JSON parse error.
+            const wire = res.headers["x-sandbox-wire"];
+            if (wire !== SANDBOX_WIRE_VERSION) {
+              reject(
+                new Error(
+                  `sandbox wire version mismatch: expected ${SANDBOX_WIRE_VERSION}, got ${typeof wire === "string" ? wire : "none"}`
                 )
               );
               return;
