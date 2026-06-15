@@ -118,7 +118,9 @@ export type RunCodeResult =
 const VM_LINE_REGEX = /user-code\.js:(\d+)/;
 
 function extractLineNumber(stack: string | undefined): number | undefined {
-  if (!stack) {
+  // Defensive: the decoded outcome crosses an untrusted boundary, so `stack`
+  // may not actually be a string at runtime; `.match` on a non-string throws.
+  if (typeof stack !== "string") {
     return undefined;
   }
   const match = stack.match(VM_LINE_REGEX);
@@ -233,18 +235,43 @@ function postOnce(
  * Shape guard for the decoded response. The sandbox is untrusted, so the
  * tagged-JSON payload is validated to be a ChildOutcome envelope before use.
  */
+function isLogEntry(value: unknown): value is LogEntry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const e = value as { level?: unknown; args?: unknown };
+  return typeof e.level === "string" && Array.isArray(e.args);
+}
+
 function isChildOutcome(value: unknown): value is ChildOutcome {
   if (typeof value !== "object" || value === null) {
     return false;
   }
-  const v = value as { ok?: unknown; logs?: unknown; errorMessage?: unknown };
+  const v = value as {
+    ok?: unknown;
+    logs?: unknown;
+    errorMessage?: unknown;
+    errorStack?: unknown;
+  };
   if (typeof v.ok !== "boolean" || !Array.isArray(v.logs)) {
     return false;
   }
-  // ok:false must carry a string errorMessage; ok:true's `result` is unknown
-  // by design. Reject anything else so a forged or buggy sandbox response
-  // cannot surface as an undefined error/log on this untrusted boundary.
-  return v.ok === true || typeof v.errorMessage === "string";
+  // Every log entry must be well-shaped so a forged logs array cannot surface a
+  // null/garbage entry to downstream consumers on this untrusted boundary.
+  if (!v.logs.every(isLogEntry)) {
+    return false;
+  }
+  if (v.ok === true) {
+    // ok:true's `result` is unknown by design.
+    return true;
+  }
+  // ok:false must carry a string errorMessage and, if present, a string
+  // errorStack: toRunCodeResult passes errorStack to extractLineNumber, which
+  // calls `.match` on it, so a non-string would throw and mask the real error.
+  return (
+    typeof v.errorMessage === "string" &&
+    (v.errorStack === undefined || typeof v.errorStack === "string")
+  );
 }
 
 function parseResponse(buf: Buffer): ChildOutcome {

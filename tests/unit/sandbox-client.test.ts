@@ -463,3 +463,60 @@ describe("lib/sandbox-client runRemote", () => {
     }
   });
 });
+
+describe("lib/sandbox-client runRemote untrusted-shape hardening", () => {
+  it("rejects a forged non-string errorStack cleanly instead of throwing in extractLineNumber", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({
+        ok: false,
+        errorMessage: "boom",
+        errorStack: 123,
+        logs: [],
+      }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("sandbox client error");
+      // Must NOT be the "stack.match is not a function" TypeError.
+      expect(outcome.error).not.toContain("match");
+    }
+  });
+
+  it("rejects a forged logs array containing a non-entry", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({ ok: true, result: 1, logs: [null] }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+  });
+
+  it("still surfaces a valid ok:false outcome and extracts the line number", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({
+        ok: false,
+        errorMessage: "kaboom",
+        errorStack: "Error: kaboom\n    at user-code.js:6:7",
+        logs: [],
+      }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toBe("kaboom");
+      expect(outcome.line).toBe(5);
+    }
+  });
+});
