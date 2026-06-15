@@ -192,6 +192,14 @@ export const twoFactor = pgTable(
     backupCodes: text("backup_codes"),
     name: text("name"),
     enrolledAt: timestamp("enrolled_at").notNull().defaultNow(),
+    // Better Auth's two-factor plugin expects a `verified` field on this
+    // model. Its verify-totp path reads the row and, when `verified` is
+    // not strictly true, issues an UPDATE setting it to true. Without the
+    // column the drizzle adapter strips that field, producing an empty
+    // SET that Postgres rejects and breaking every fresh TOTP sign-in.
+    // Defaults to true so rows enrolled through our own routes are treated
+    // as verified and the plugin skips the write entirely.
+    verified: boolean("verified").notNull().default(true),
   },
   (table) => [index("idx_two_factor_user_id").on(table.userId)]
 );

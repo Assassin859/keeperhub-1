@@ -222,18 +222,32 @@ function buildPaymentRequiredHint(
   ].join("\n");
 }
 
+// Optional idempotency key shared by the mutating tools. Forwarded to the REST
+// layer as the `Idempotency-Key` header so a retry with the same key and
+// arguments replays the original result instead of executing again.
+const IDEMPOTENCY_KEY_ARG = z
+  .string()
+  .optional()
+  .describe(
+    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Reusing a key with different arguments returns a 409 conflict."
+  );
+
 async function callApi(
   internalApiBaseUrl: string,
   authHeader: string,
   path: string,
   method: string,
-  body?: unknown
+  body?: unknown,
+  idempotencyKey?: string
 ): Promise<ApiResponse> {
   const url = `${internalApiBaseUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: authHeader,
   };
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
 
   const response = await fetch(url, {
     method,
@@ -350,6 +364,7 @@ export function registerTools(
         .string()
         .optional()
         .describe("Optional tag ID to label the workflow"),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Create Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("create_workflow", scope, async (args) =>
@@ -367,7 +382,8 @@ export function registerTools(
             enabled: args.enabled,
             projectId: args.projectId,
             tagId: args.tagId,
-          }
+          },
+          args.idempotency_key
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -461,6 +477,7 @@ export function registerTools(
         .record(z.string(), z.unknown())
         .optional()
         .describe("Optional input data to pass to the workflow trigger"),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Execute Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("execute_workflow", scope, async (args) =>
@@ -470,7 +487,8 @@ export function registerTools(
           authHeader,
           `/api/workflow/${args.workflowId}/execute`,
           "POST",
-          { input: args.input ?? {} }
+          { input: args.input ?? {} },
+          args.idempotency_key
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -893,6 +911,7 @@ export function registerTools(
         .describe(
           "ERC20 token contract address. Omit for native token transfers."
         ),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Transfer Funds", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("execute_transfer", scope, async (args) =>
@@ -907,7 +926,8 @@ export function registerTools(
             recipientAddress: args.to_address,
             amount: args.amount,
             tokenAddress: args.token_address,
-          }
+          },
+          args.idempotency_key
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -953,6 +973,7 @@ export function registerTools(
         .describe(
           "Explicit maxPriorityFeePerGas in gwei (e.g., '2'). Bypasses the chain's default min/max priority-fee clamp. Use when the network's mempool requires a tip above the configured floor."
         ),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Contract Call", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("execute_contract_call", scope, async (args) =>
@@ -971,7 +992,8 @@ export function registerTools(
             value: args.value,
             gasLimitMultiplier: args.gas_limit_multiplier,
             priorityFeeGwei: args.priority_fee_gwei,
-          }
+          },
+          args.idempotency_key
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1022,6 +1044,7 @@ export function registerTools(
           .optional()
           .describe("Gas limit multiplier for the action"),
       }),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Check and Execute", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("execute_check_and_execute", scope, async (args) =>
@@ -1045,7 +1068,8 @@ export function registerTools(
               abi: args.action.abi,
               gasLimitMultiplier: args.action.gas_limit_multiplier,
             },
-          }
+          },
+          args.idempotency_key
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

@@ -11,10 +11,6 @@ import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
-import {
-  getOrganizationWalletAddress,
-  initializeWalletSigner,
-} from "@/lib/web3/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
@@ -26,6 +22,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import {
+  getOrganizationWalletAddress,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 
 const ERC20_TRANSFER_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -152,7 +152,12 @@ async function validateUserAndOrganization(
     headers: request.headers,
   });
   if (!dual.ok) {
-    return { error: dual.error, status: dual.status, code: dual.code };
+    return {
+      error: dual.error,
+      status: dual.status,
+      code: dual.code,
+      retryAfter: dual.retryAfter,
+    };
   }
 
   return { user: session.user, organizationId: activeOrgId };
@@ -181,9 +186,16 @@ export async function POST(request: Request) {
       body.emailOtp
     );
     if ("error" in validation) {
+      const retryAfter =
+        "retryAfter" in validation ? validation.retryAfter : undefined;
       return NextResponse.json(
         { error: validation.error, code: validation.code },
-        { status: validation.status }
+        validation.status === 429 && retryAfter !== undefined
+          ? {
+              status: validation.status,
+              headers: { "Retry-After": String(retryAfter) },
+            }
+          : { status: validation.status }
       );
     }
     const { organizationId, user } = validation;

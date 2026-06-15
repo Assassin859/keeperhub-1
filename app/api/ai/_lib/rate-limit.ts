@@ -11,8 +11,14 @@ const LIMIT = 10;
 const requestLog = new Map<string, number[]>();
 
 export type AiRateLimitResult =
-  | { allowed: true }
-  | { allowed: false; retryAfter: number };
+  | { allowed: true; limit: number; remaining: number; reset: number }
+  | {
+      allowed: false;
+      retryAfter: number;
+      limit: number;
+      remaining: number;
+      reset: number;
+    };
 
 export function checkAiGenerateRateLimit(key: string): AiRateLimitResult {
   const now = Date.now();
@@ -24,13 +30,25 @@ export function checkAiGenerateRateLimit(key: string): AiRateLimitResult {
   if (recent.length >= LIMIT) {
     const oldestInWindow = recent[0];
     const retryAfter = Math.ceil((oldestInWindow + WINDOW_MS - now) / 1000);
-    return { allowed: false, retryAfter: Math.max(retryAfter, 1) };
+    return {
+      allowed: false,
+      retryAfter: Math.max(retryAfter, 1),
+      limit: LIMIT,
+      remaining: 0,
+      reset: Math.ceil((oldestInWindow + WINDOW_MS) / 1000),
+    };
   }
 
   recent.push(now);
   requestLog.set(key, recent);
 
-  return { allowed: true };
+  const reset = Math.ceil((recent[0] + WINDOW_MS) / 1000);
+  return {
+    allowed: true,
+    limit: LIMIT,
+    remaining: LIMIT - recent.length,
+    reset,
+  };
 }
 
 type RateLimitContext = {

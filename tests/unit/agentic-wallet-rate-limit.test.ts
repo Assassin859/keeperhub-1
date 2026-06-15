@@ -71,6 +71,13 @@ function upsertAndIncrement(
 // Mocks
 // ---------------------------------------------------------------------------
 
+function nextBucketEpoch(date: Date): number {
+  const next = new Date(date);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return Math.floor(next.getTime() / 1000);
+}
+
 vi.mock("@/lib/db", () => ({
   db: {
     execute: vi.fn((sqlValue: unknown) => {
@@ -78,9 +85,14 @@ vi.mock("@/lib/db", () => ({
       // First string interpolation in the INSERT ... VALUES (${key}, ...)
       // is the rate-limit key.
       const key = interpolations[0] ?? "";
-      const bucketStart = truncateToHour(new Date());
+      const now = new Date();
+      const bucketStart = truncateToHour(now);
       const count = upsertAndIncrement(store, key, bucketStart);
-      return Promise.resolve([{ request_count: count }]);
+      // Mirror the SQL `date_trunc('hour', now()) + interval '1 hour'` boundary
+      // the production query now returns, so reset is derived from "Postgres".
+      return Promise.resolve([
+        { request_count: count, next_bucket_epoch: nextBucketEpoch(now) },
+      ]);
     }),
   },
 }));
@@ -142,6 +154,22 @@ describe("rate-limit incrementAndCheck (Phase 37 fix #7)", () => {
         expect(r.retryAfter).toBeGreaterThanOrEqual(1);
         expect(r.retryAfter).toBeLessThanOrEqual(3600);
       }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("derives reset from the SQL bucket boundary, not Node-local clock fields", async () => {
+    // Pin a non-:00 wall clock so a Node-TZ computation would differ from the
+    // SQL-returned boundary; assert reset equals the next-hour epoch from SQL.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T12:34:56.000Z"));
+      const expectedReset = Math.floor(
+        new Date("2026-01-01T13:00:00.000Z").getTime() / 1000
+      );
+      const r = await incrementAndCheck("provision:reset", 5);
+      expect(r.reset).toBe(expectedReset);
     } finally {
       vi.useRealTimers();
     }

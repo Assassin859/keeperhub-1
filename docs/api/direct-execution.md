@@ -19,11 +19,33 @@ See [Authentication](/api/authentication) for the full auth model and [API Keys]
 
 ## Rate Limits
 
-Direct execution requests are limited to 60 requests per minute per API key. When rate limited, the API returns a `429` status with a `Retry-After` header indicating seconds to wait.
+Direct execution requests are limited to 60 requests per minute per API key. Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` so you can pace requests; a `429` adds `Retry-After` with the seconds to wait. See [API errors](errors.md#rate-limit-headers) for the full header reference.
 
 ## Spending Caps
 
 Organizations can configure daily spending caps in wei. If the cap is exceeded, execution requests return a `422` status with error code `SPENDING_CAP_EXCEEDED`.
+
+## Idempotency
+
+Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID).
+
+- **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again.
+- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for a different request.
+- **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress`; retry shortly.
+- **Scope**: keys are scoped per organization, so the same key is shared across an org's API keys.
+- **Window**: stored responses are replayable for 24 hours. After that the key is free to reuse.
+
+Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
+
+```bash
+curl -X POST https://api.keeperhub.com/api/execute/transfer \
+  -H "Authorization: Bearer kh_..." \
+  -H "Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Content-Type: application/json" \
+  -d '{ "chainId": "8453", "recipientAddress": "0x...", "amount": "0.1" }'
+```
+
+Workflow webhooks (`POST /api/workflows/{workflowId}/webhook`) accept the same header, scoped per workflow.
 
 ## Transfer Funds
 
@@ -314,6 +336,8 @@ Check the status of a direct execution.
 - `running`: Currently executing
 - `completed`: Successfully completed
 - `failed`: Execution failed
+
+When polling this endpoint, honour the `X-Poll-Interval-Hint` response header instead of polling on a fixed timer: it gives the recommended number of seconds to wait before the next poll. A value of `0` means the execution has reached a terminal state (`completed` or `failed`) and you can stop polling.
 
 ## Error Responses
 

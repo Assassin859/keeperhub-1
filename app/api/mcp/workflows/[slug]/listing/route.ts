@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { HttpStatus } from "@/lib/http-status";
 import {
   getWorkflowListingPublic,
   type ListingErrorDetails,
@@ -12,6 +13,7 @@ import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 
 const LISTING_RATE_LIMIT = 60;
@@ -24,7 +26,10 @@ function mapListingError(
   details?: ListingErrorDetails
 ): NextResponse {
   if (error === "NOT_FOUND") {
-    return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Workflow not found" },
+      { status: HttpStatus.NOT_FOUND }
+    );
   }
   if (error === "SLUG_CONFLICT") {
     return NextResponse.json(
@@ -32,7 +37,7 @@ function mapListingError(
         error: "SLUG_CONFLICT",
         message: "This slug is already in use by another listed workflow.",
       },
-      { status: 409 }
+      { status: HttpStatus.CONFLICT }
     );
   }
   if (error === "PRICE_CHANGE_WHILE_LISTED") {
@@ -41,7 +46,7 @@ function mapListingError(
         error: "PRICE_CHANGE_WHILE_LISTED",
         message: "Unlist the workflow before changing the price.",
       },
-      { status: 409 }
+      { status: HttpStatus.CONFLICT }
     );
   }
   if (error === "MISSING_WRITE_ACTION") {
@@ -51,7 +56,7 @@ function mapListingError(
         message:
           "Workflows listed as workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action to the workflow before listing it.",
       },
-      { status: 422 }
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
   if (error === "INVALID_TEMPLATE_LITERALS") {
@@ -64,7 +69,7 @@ function mapListingError(
           ? { literals: details.literals }
           : {}),
       },
-      { status: 422 }
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
   if (error === "INPUT_SCHEMA_REQUIRED") {
@@ -74,12 +79,12 @@ function mapListingError(
         message:
           'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object (`{"type": "object"}` is fine for workflows that take no inputs).',
       },
-      { status: 422 }
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
   return NextResponse.json(
     { error: "INVALID_INPUT", message: "Invalid request." },
-    { status: 400 }
+    { status: HttpStatus.BAD_REQUEST }
   );
 }
 
@@ -96,12 +101,12 @@ export async function GET(
       LISTING_RATE_WINDOW_MS
     );
     if (!rateCheck.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status: 429,
-          headers: { "Retry-After": String(rateCheck.retryAfter) },
-        }
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many requests" },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateCheck
       );
     }
 
@@ -111,7 +116,10 @@ export async function GET(
     const result = await getWorkflowListingPublic(slug);
 
     if (!result.ok) {
-      return NextResponse.json({ error: "Listing not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Listing not found" },
+        { status: HttpStatus.NOT_FOUND }
+      );
     }
 
     const listing = {
@@ -121,15 +129,18 @@ export async function GET(
         : null,
     };
 
-    return NextResponse.json(listing, {
-      headers: {
-        "Cache-Control": "public, max-age=60",
-      },
-    });
+    return applyRateLimitHeaders(
+      NextResponse.json(listing, {
+        headers: {
+          "Cache-Control": "public, max-age=60",
+        },
+      }),
+      rateCheck
+    );
   } catch {
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }
@@ -159,7 +170,7 @@ export async function POST(
   if (!organizationId) {
     return NextResponse.json(
       { error: "Organization required" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -169,7 +180,10 @@ export async function POST(
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const rawBody = body as Record<string, unknown>;
@@ -198,7 +212,7 @@ export async function POST(
     return mapListingError(result.error, result.details);
   }
 
-  return NextResponse.json(result.listing, { status: 200 });
+  return NextResponse.json(result.listing, { status: HttpStatus.OK });
 }
 
 export async function PATCH(
@@ -222,7 +236,7 @@ export async function PATCH(
   if (!organizationId) {
     return NextResponse.json(
       { error: "Organization required" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -232,7 +246,10 @@ export async function PATCH(
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const rawBody = body as Record<string, unknown>;
@@ -264,7 +281,7 @@ export async function PATCH(
     return mapListingError(result.error, result.details);
   }
 
-  return NextResponse.json(result.listing, { status: 200 });
+  return NextResponse.json(result.listing, { status: HttpStatus.OK });
 }
 
 export async function DELETE(
@@ -288,7 +305,7 @@ export async function DELETE(
   if (!organizationId) {
     return NextResponse.json(
       { error: "Organization required" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -299,5 +316,5 @@ export async function DELETE(
     return mapListingError(result.error, result.details);
   }
 
-  return NextResponse.json(result.listing, { status: 200 });
+  return NextResponse.json(result.listing, { status: HttpStatus.OK });
 }

@@ -5,7 +5,10 @@ import { db } from "@/lib/db";
 import { organizationApiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -71,10 +74,7 @@ export async function DELETE(
       headers: request.headers,
     });
     if (!dual.ok) {
-      return NextResponse.json(
-        { error: dual.error, code: dual.code },
-        { status: dual.status }
-      );
+      return dualFactorErrorResponse(dual);
     }
 
     // Revoke the key (soft delete) - only if it belongs to the organization

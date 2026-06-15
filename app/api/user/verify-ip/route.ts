@@ -14,6 +14,7 @@ import {
   verifications,
 } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   checkDualFactorRateLimit,
@@ -101,7 +102,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Server misconfigured", code: "server_misconfigured" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
@@ -113,7 +114,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: "No pending IP verification",
         code: "no_pending_ip",
       },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
   const decoded = decodePendingIpCookie(cookieValue, serverSecret);
@@ -127,7 +128,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             : "Invalid verification state. Sign in again.",
         code: decoded.reason,
       },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -137,7 +138,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON body", code: "bad_body" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   const totpCode = typeof body.code === "string" ? body.code.trim() : "";
@@ -156,7 +157,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         code: "rate_limited",
         retryAfter: rateLimit.retryAfter,
       },
-      { status: 429 }
+      {
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        headers: { "Retry-After": String(rateLimit.retryAfter) },
+      }
     );
   }
 
@@ -199,7 +203,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           error: "Failed to send confirmation email",
           code: "email_send_failed",
         },
-        { status: 503 }
+        { status: HttpStatus.SERVICE_UNAVAILABLE }
       );
     }
     logIpVerify("verify-ip:otp_sent", {
@@ -213,7 +217,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           "Enter the 6-digit code from your authenticator app and the code emailed to you.",
         code: "factors_required",
       },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -249,7 +253,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: "Verification must be completed from the same network.",
         code: "ip_mismatch",
       },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -264,14 +268,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: "Two-factor not configured on this account",
         code: "totp_not_configured",
       },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
   const totpOk = await verifyUserTotp(totpRow.secret, totpCode, serverSecret);
   if (!totpOk) {
     return NextResponse.json(
       { error: "Invalid authenticator code", code: "mfa_code_invalid" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -292,7 +296,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: "Email code expired. Request a new one.",
         code: "email_code_invalid",
       },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
   let decryptedOtp: string;
@@ -310,13 +314,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Server misconfigured", code: "server_misconfigured" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
   if (!constantTimeEquals(decryptedOtp, inboxCode)) {
     return NextResponse.json(
       { error: "Invalid email code", code: "email_code_invalid" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -393,7 +397,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Failed to create session", code: "session_create_failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
