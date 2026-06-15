@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { deserialize, serialize } from "node:v8";
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -446,6 +447,276 @@ describe("sandbox grandchild redirect following", () => {
       expect(outcome.errorMessage).toMatch(TOO_MANY_REDIRECTS_REGEX);
     }
   });
+}, 30_000);
+
+// F-024: the wrapped fetch resolves + validates the hostname EXACTLY ONCE
+// (resolveValidatedAddresses) and pins that validated address set. The grandchild
+// has no undici connect hook (zero-dep sandbox image), so the dial goes through
+// node:http / node:https with a custom `lookup` that returns the pre-validated
+// addresses verbatim - no second DNS lookup. net.connect dials exactly those, so
+// the address that was validated is the address that is dialed, closing the
+// DNS-rebinding TOCTOU: there is no second resolution to race.
+//
+// We prove this behaviourally by injecting a deterministic DNS stub into the
+// grandchild source (string-replacing the `node:dns` require with a stub baked
+// into the source - still zero-dep, plain JS). The stub lets a test control what
+// a name resolves to without real network IO, which is what makes the
+// single-resolve pin testable: a fake `.invalid` name (guaranteed unresolvable
+// by real DNS, RFC 6761) that the stub maps to 127.0.0.1 can only reach a local
+// server if the dial used the validated stub result rather than re-resolving.
+type DnsRecord = { address: string; family: number };
+function withStubbedDns(
+  source: string,
+  mapping: Record<string, DnsRecord[]>
+): string {
+  const stub = `const __DNS_STUB = ${JSON.stringify(mapping)};
+const __realDns = require("node:dns").promises;
+const dnsPromises = {
+  lookup: async function(host, opts) {
+    const key = String(host).toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(__DNS_STUB, key)) {
+      const recs = __DNS_STUB[key];
+      if (opts && opts.all) { return recs; }
+      return { address: recs[0].address, family: recs[0].family };
+    }
+    return __realDns.lookup(host, opts);
+  },
+};`;
+  // Function replacement avoids `$` being treated as a replacement pattern.
+  return source.replace(
+    'const dnsPromises = require("node:dns").promises;',
+    () => stub
+  );
+}
+
+describe("sandbox grandchild pins the resolved address at dial time (F-024)", () => {
+  let server: Server;
+  let port: number;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/r/rebind") {
+        // Redirect into a name the DNS stub maps to a private (IMDS) address,
+        // exercising the per-hop re-resolve+validate+pin on the redirect path.
+        res.writeHead(302, { Location: "http://evil-redirect.invalid/" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, path: req.url }));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("wires the single-resolve pin: http/https dial, manual redirects, no global fetch in the loop", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain('require("node:http")');
+    expect(SANDBOX_CHILD_SOURCE).toContain('require("node:https")');
+    expect(SANDBOX_CHILD_SOURCE).toContain("function resolveValidatedAddresses");
+    expect(SANDBOX_CHILD_SOURCE).toContain('redirect: "manual"');
+    // The loop dials through the pinning fetch, never the global fetch that
+    // would re-resolve DNS at connect time (the rebinding window).
+    expect(SANDBOX_CHILD_SOURCE).toContain("await pinnedFetch(");
+    expect(SANDBOX_CHILD_SOURCE).not.toContain("await fetch(currentResource");
+  });
+
+  it("dials the validated resolution, not a re-resolved hostname (pin proof)", async () => {
+    // `pinned.invalid` cannot be resolved by real DNS (RFC 6761). The stub maps
+    // it to 127.0.0.1, which is allowed because REDIRECT_TEST_SOURCE lifts the
+    // loopback block. Reaching the local server therefore proves the dial used
+    // the validated, pinned address from the single resolution - a re-resolving
+    // dial would NXDOMAIN.
+    const source = withStubbedDns(REDIRECT_TEST_SOURCE, {
+      "pinned.invalid": [{ address: "127.0.0.1", family: 4 }],
+    });
+    const code = `const r = await fetch("http://pinned.invalid:${port}/ping"); return { status: r.status, body: await r.json() };`;
+    const outcome = await runSandboxed(code, 3000, source);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as { status: number; body: { path: string } };
+      expect(r.status).toBe(200);
+      expect(r.body.path).toBe("/ping");
+    }
+  }, 10_000);
+
+  it("rejects when ANY resolved record is private (split-horizon)", async () => {
+    // One private address in the validated set is enough to reject the whole
+    // name, even when a public record is also present.
+    const source = withStubbedDns(SANDBOX_CHILD_SOURCE, {
+      "split.invalid": [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.1", family: 4 },
+      ],
+    });
+    const outcome = await runSandboxed(
+      'return await fetch("http://split.invalid/");',
+      3000,
+      source
+    );
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("10.0.0.1");
+    }
+  }, 10_000);
+
+  it("re-resolves and blocks a redirect hop that rebinds to a private address", async () => {
+    // The redirect target is a name the stub maps to IMDS link-local; the
+    // per-hop resolveValidatedAddresses must catch it before pinning/dialing.
+    const source = withStubbedDns(REDIRECT_TEST_SOURCE, {
+      "evil-redirect.invalid": [
+        { address: "169.254.169.254", family: 4 },
+      ],
+    });
+    const code = `return await fetch("http://127.0.0.1:${port}/r/rebind");`;
+    const outcome = await runSandboxed(code, 3000, source);
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("169.254.169.254");
+    }
+  }, 10_000);
+}, 30_000);
+
+// Behavioural coverage that the node:http/https pin path is a faithful drop-in
+// for global fetch: a real Response (status + headers + decoded JSON body) must
+// survive the rewrite, including transparent content-encoding decompression.
+// Uses REDIRECT_TEST_SOURCE so the loopback block is lifted and a local server
+// on 127.0.0.1 is a reachable (validated) dial target.
+describe("sandbox grandchild pinned fetch preserves the Response contract", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "x-pinned": "yes",
+      });
+      res.end(gzipSync(Buffer.from(JSON.stringify({ ok: true, path: req.url }))));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    base = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("returns status, headers, and a gzip-decoded JSON body through the pin", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/ping`)}); const j = await r.json(); return { status: r.status, header: r.headers.get("x-pinned"), body: j };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as {
+        status: number;
+        header: string;
+        body: { ok: boolean; path: string };
+      };
+      expect(r.status).toBe(200);
+      expect(r.header).toBe("yes");
+      expect(r.body.ok).toBe(true);
+      expect(r.body.path).toBe("/ping");
+    }
+  }, 10_000);
+}, 30_000);
+
+// The node:http/https pin path replaces global fetch, so it must faithfully
+// forward the request (method, body, content-length) and handle response
+// content-encoding the way the old wrapped fetch did. Uses REDIRECT_TEST_SOURCE
+// so a local 127.0.0.1 server is a reachable (validated) dial target.
+describe("sandbox grandchild pinned fetch forwards requests and bounds decoding", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/br") {
+        // Advertise an encoding the pin does not decode; the body bytes are
+        // irrelevant because classification rejects before reading.
+        res.writeHead(200, { "content-encoding": "br" });
+        res.end(Buffer.from([0x00, 0x01, 0x02]));
+        return;
+      }
+      if (url.pathname === "/gzip-bomb") {
+        res.writeHead(200, { "content-encoding": "gzip" });
+        // Highly compressible payload that decodes far past the (test-lowered)
+        // GZIP_MAX_OUTPUT_BYTES cap.
+        res.end(gzipSync(Buffer.alloc(64 * 1024, 0x61)));
+        return;
+      }
+      // Echo method + declared content-length + body for the POST test.
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks).toString();
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(
+          `method=${req.method} len=${req.headers["content-length"]} body=${body}`
+        );
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("forwards POST method, body, and a correct content-length through the pin", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/echo`)}, { method: "POST", body: "hello-pin" }); return { status: r.status, body: await r.text() };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    const result = resultOf(outcome);
+    expect(result.status).toBe(200);
+    expect(result.body).toContain("method=POST");
+    expect(result.body).toContain("len=9");
+    expect(result.body).toContain("body=hello-pin");
+  }, 10_000);
+
+  it("fails loudly on a response content-encoding it cannot decode", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/br`)}); return await r.text();`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("unsupported content-encoding");
+      expect(outcome.errorMessage).toContain("br");
+    }
+  }, 10_000);
+
+  it("errors instead of OOMing when a gzip body exceeds the output cap", async () => {
+    // Lower the decoded-output cap so a modest body trips it deterministically,
+    // mirroring the loopback-lift technique. A bomb must error, not return.
+    const source = REDIRECT_TEST_SOURCE.replace(
+      `const GZIP_MAX_OUTPUT_BYTES = ${SANDBOX_RESULT_MAX_BYTES};`,
+      "const GZIP_MAX_OUTPUT_BYTES = 1024;"
+    );
+    expect(source).not.toBe(REDIRECT_TEST_SOURCE);
+    const code = `const r = await fetch(${JSON.stringify(`${base}/gzip-bomb`)}); return await r.text();`;
+    const outcome = await runSandboxed(code, 3000, source);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).not.toContain("SSRF blocked");
+    }
+  }, 10_000);
 }, 30_000);
 
 // Helper: a forged result frame an escaped child could write to fd 3 — a

@@ -18,9 +18,12 @@
  * or third-party deps would not propagate to the grandchild.
  *
  * The grandchild uses only node: builtins (node:vm, node:v8, node:dns,
- * node:net) so the downstream sandbox package can remain zero-runtime-dep
- * by design. Adding third-party packages (e.g. undici) would enlarge the
- * supply-chain attack surface of the sandbox container.
+ * node:net, plus node:http / node:https / node:zlib / node:stream for the
+ * IP-pinned fetch) so the downstream sandbox package can remain
+ * zero-runtime-dep by design. Adding third-party packages (e.g. undici)
+ * would enlarge the supply-chain attack surface of the sandbox container --
+ * which is exactly why the SSRF pin is built on node:http/https rather than
+ * an undici connect hook (see pinnedFetch / F-024).
  */
 // The blocklist data is imported as JSON (not as a `.ts` module) because
 // this file is compiled by two separate tsconfigs with incompatible
@@ -280,6 +283,10 @@ const { createContext, runInContext } = require("node:vm");
 const fs = require("node:fs");
 const dnsPromises = require("node:dns").promises;
 const { BlockList, isIP } = require("node:net");
+const http = require("node:http");
+const https = require("node:https");
+const zlib = require("node:zlib");
+const { Readable, Transform } = require("node:stream");
 
 // Captured BEFORE any user code runs so the result frame is written through a
 // reference a sandbox escape cannot monkeypatch. The genuine result therefore
@@ -316,10 +323,19 @@ const MAX_SANDBOX_REDIRECTS = 20;
 // the prefix would block all of them. Instead, on a NAT64 hit we
 // extract the embedded IPv4 and recheck it against the IPv4 list —
 // preserving the SSRF property without false positives on public IPv4.
-// TOCTOU: we do not have undici's per-connect hook (would require adding
-// undici as a sandbox dep), so there is a small window between our
-// dns.lookup and the fetch's internal connect where the record could
-// change. NetworkPolicy is the real defense for that (tracked elsewhere).
+// TOCTOU (F-024): the wrapped fetch resolves and validates the hostname EXACTLY
+// ONCE (resolveValidatedAddresses) and then pins that validated address set.
+// pinnedFetch dials it through node:http / node:https with a custom lookup that
+// returns the pre-validated addresses verbatim, performing no second DNS lookup
+// (mirroring lib/safe-fetch.ts validatingConnect). Because net.connect dials
+// exactly the address the lookup returns, the address that was validated is the
+// address that is dialed -- a guard that saw a public A record cannot be raced
+// into dialing a private one (DNS rebinding) because there is no second
+// resolution to race. The hostname stays in the request options so TLS SNI,
+// certificate validation, and the Host header still use the real name. IP
+// literals never reach the custom lookup (net.connect dials a literal
+// directly), so for them the resolveValidatedAddresses isBlockedIp check is the
+// only control -- which is sufficient because a literal cannot be rebound.
 // Redirects: lacking the per-connect hook, the wrapped fetch uses
 // redirect:"manual" and re-runs these same checks on each 3xx Location
 // before following it, so a redirect cannot chase a public host into a
@@ -496,23 +512,267 @@ function isBlockedHost(host) {
   return false;
 }
 
-async function checkHostnameSsrf(hostname) {
+// Resolve + validate the hostname ONCE and return the validated address set to
+// pin. This is the single load-bearing SSRF control: pinnedFetch dials exactly
+// the addresses returned here, so the validated address is the dialed address
+// (mirrors lib/safe-fetch.ts validatingConnect, but keeps all:true so the whole
+// A/AAAA set is checked). Returns { blocked: true, ip } for a denied target, or
+// { blocked: false, addresses: [{ address, family }] } otherwise. isBlockedHost
+// is a pre-DNS denylist (localhost, *.svc.cluster.local, ... ) that also yields
+// nicer hostname-based errors. IP literals are validated directly and returned
+// as their own single address (net.connect dials a literal without invoking the
+// pinned lookup, so this is their only check - sufficient because a literal
+// cannot be rebound). For names, all:true catches split-horizon DNS where A and
+// AAAA differ - one private address in the response is enough to reject.
+async function resolveValidatedAddresses(hostname) {
   if (isBlockedHost(hostname)) {
     return { blocked: true, ip: hostname };
   }
-  if (isIP(hostname) !== 0) {
-    return isBlockedIp(hostname);
+  const literalFamily = isIP(hostname);
+  if (literalFamily !== 0) {
+    const check = isBlockedIp(hostname);
+    if (check.blocked) {
+      return check;
+    }
+    return {
+      blocked: false,
+      addresses: [{ address: hostname, family: literalFamily }],
+    };
   }
-  // all:true catches split-horizon DNS where A and AAAA differ — one
-  // private address in the response is enough to reject.
   const records = await dnsPromises.lookup(hostname, { all: true });
+  const validated = [];
   for (const rec of records) {
     const check = isBlockedIp(rec.address);
     if (check.blocked) {
       return check;
     }
+    validated.push({ address: rec.address, family: rec.family });
   }
-  return { blocked: false };
+  return { blocked: false, addresses: validated };
+}
+
+// F-024 IP pin. The grandchild has no undici connect hook (the standalone
+// @keeperhub/sandbox image is zero-runtime-dep, so undici cannot be required),
+// so the wrapped fetch is issued through node:http / node:https. The caller
+// resolves + validates the hostname once (resolveValidatedAddresses) and hands
+// the validated address set to pinnedFetch, whose custom lookup returns those
+// addresses verbatim with NO second DNS lookup. net.connect dials exactly the
+// address the lookup returns, so the address that was validated is the address
+// that is dialed -- closing the DNS-rebinding TOCTOU. The hostname stays in the
+// request options so TLS SNI, certificate validation, and the Host header still
+// use the real name.
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
+// Upper bound on the bytes a single gzip-decoded response body may expand to,
+// tied to the sandbox result byte budget (SANDBOX_RESULT_MAX_BYTES). The
+// pinned fetch advertises "Accept-Encoding: identity", so this gzip path is
+// only a fallback for a misbehaving server that compresses anyway; the cap
+// makes a decompression bomb error out instead of pinning unbounded memory in
+// the child. Enforced by countingByteCap below: zlib's own maxOutputLength only
+// bounds a single output buffer, not the cumulative stream, so a bomb delivered
+// across chunks would otherwise slip past it.
+const GZIP_MAX_OUTPUT_BYTES = ${SANDBOX_RESULT_MAX_BYTES};
+
+// Transform that errors the stream once cumulative bytes exceed maxBytes. zlib's
+// maxOutputLength is per-output-buffer, so this is the load-bearing cumulative
+// cap on a decompressed body; it tears the pipe down with an error rather than
+// letting a decompression bomb accumulate unboundedly.
+function countingByteCap(maxBytes) {
+  let total = 0;
+  return new Transform({
+    transform: function capTransform(chunk, _enc, cb) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        cb(new Error("sandbox fetch: decoded body exceeds " + maxBytes + " bytes"));
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
+}
+
+// Classify a response Content-Encoding. Because the request asks for identity,
+// the common case is "none". gzip is still honoured as a fallback; any other
+// non-identity coding is reported as "unsupported" so the response handling
+// can surface a clear error instead of returning still-compressed bytes under
+// a now-misleading content-encoding header. deflate/brotli were removed: raw
+// deflate framing is ambiguous (the old createInflate path regressed on it)
+// and brotli only widened the decode surface for no real-world benefit.
+function classifyContentEncoding(encoding) {
+  const normalised = (encoding || "").trim().toLowerCase();
+  if (normalised === "" || normalised === "identity") {
+    return { kind: "identity" };
+  }
+  if (normalised === "gzip" || normalised === "x-gzip") {
+    return { kind: "gzip" };
+  }
+  return { kind: "unsupported", encoding: normalised };
+}
+
+// Mirror undici's default outbound request headers so the node:http/https path
+// behaves like the global fetch it replaces (some hosts gate on these).
+function applyDefaultRequestHeaders(headers) {
+  if (!("user-agent" in headers)) {
+    headers["user-agent"] = "node";
+  }
+  if (!("accept" in headers)) {
+    headers["accept"] = "*/*";
+  }
+  if (!("accept-encoding" in headers)) {
+    // Request uncompressed so the grandchild does not need a general-purpose
+    // decompression layer. gzip is still honoured as a fallback below for a
+    // misbehaving server that compresses despite this.
+    headers["accept-encoding"] = "identity";
+  }
+}
+
+function buildResponseHeaders(rawHeaders) {
+  const headers = new Headers();
+  const keys = Object.keys(rawHeaders);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const value = rawHeaders[key];
+    if (Array.isArray(value)) {
+      for (let j = 0; j < value.length; j++) {
+        headers.append(key, value[j]);
+      }
+    } else if (value !== undefined) {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+}
+
+// Drop-in replacement for global fetch used by the wrapped sandbox fetch. Dials
+// only the pre-validated pinnedAddresses (resolved + validated once by the
+// caller) instead of letting the network layer re-resolve, and returns a
+// genuine WHATWG Response so user code keeps the full fetch contract (.ok /
+// .status / .headers / .json() / .text() / .body). Redirects are NOT
+// auto-followed here; the caller's loop re-validates and follows each hop.
+async function pinnedFetch(resource, init, pinnedAddresses) {
+  // Normalise method/headers/body via the WHATWG Request so multipart,
+  // urlencoded, content-type and content-length handling match global fetch.
+  const request = new Request(resource, init);
+  const parsed = new URL(request.url);
+  const isHttps = parsed.protocol === "https:";
+  const transport = isHttps ? https : http;
+
+  const headers = {};
+  request.headers.forEach(function copyHeader(value, key) {
+    headers[key] = value;
+  });
+  applyDefaultRequestHeaders(headers);
+
+  const method = request.method.toUpperCase();
+  let bodyBuffer = null;
+  if (method !== "GET" && method !== "HEAD" && request.body !== null) {
+    bodyBuffer = Buffer.from(await request.arrayBuffer());
+    headers["content-length"] = String(bodyBuffer.length);
+  }
+
+  const hostname = stripIpv6Brackets(parsed.hostname);
+  const callerSignal = init && init.signal ? init.signal : undefined;
+
+  return await new Promise(function dial(resolve, reject) {
+    const options = {
+      protocol: parsed.protocol,
+      hostname: hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: method,
+      headers: headers,
+      lookup: function pinnedLookup(_lookupHost, lookupOptions, lookupCallback) {
+        // Return the pre-validated, pinned addresses verbatim - no second DNS
+        // lookup. net.connect dials exactly these, so the validated address is
+        // the dialed address (the F-024 pin). all:true (Happy Eyeballs) gets the
+        // whole set, each entry already past isBlockedIp; else the first.
+        if (lookupOptions && lookupOptions.all) {
+          lookupCallback(null, pinnedAddresses);
+        } else {
+          lookupCallback(null, pinnedAddresses[0].address, pinnedAddresses[0].family);
+        }
+      },
+    };
+    if (callerSignal) {
+      options.signal = callerSignal;
+    }
+    const clientRequest = transport.request(options, function onResponse(incoming) {
+      const status = incoming.statusCode || 0;
+      const responseHeaders = buildResponseHeaders(incoming.headers);
+      if (NULL_BODY_STATUSES.has(status) || method === "HEAD") {
+        incoming.resume();
+        resolve(
+          new Response(null, {
+            status: status,
+            statusText: incoming.statusMessage || "",
+            headers: responseHeaders,
+          })
+        );
+        return;
+      }
+      const encodingPlan = classifyContentEncoding(
+        responseHeaders.get("content-encoding")
+      );
+      if (encodingPlan.kind === "unsupported") {
+        // We asked for identity and only decode gzip. Returning the still
+        // -compressed bytes under their content-encoding header would silently
+        // hand user code an undecodable body, so fail loudly instead.
+        incoming.resume();
+        reject(
+          new Error(
+            "sandbox fetch: unsupported content-encoding: " + encodingPlan.encoding
+          )
+        );
+        return;
+      }
+      let bodyStream = incoming;
+      if (encodingPlan.kind === "gzip") {
+        // Bounded output so a gzip bomb errors instead of OOMing the child.
+        // maxOutputLength caps a single output buffer; countingByteCap enforces
+        // the cumulative limit across the whole stream.
+        const decoder = zlib.createGunzip({ maxOutputLength: GZIP_MAX_OUTPUT_BYTES });
+        const cap = countingByteCap(GZIP_MAX_OUTPUT_BYTES);
+        // The decoded bytes no longer match the on-wire length/encoding.
+        responseHeaders.delete("content-encoding");
+        responseHeaders.delete("content-length");
+        incoming.on("error", function onIncomingError(streamErr) {
+          decoder.destroy(streamErr);
+        });
+        decoder.on("error", function onDecoderError(streamErr) {
+          cap.destroy(streamErr);
+        });
+        bodyStream = incoming.pipe(decoder).pipe(cap);
+      }
+      resolve(
+        new Response(Readable.toWeb(bodyStream), {
+          status: status,
+          statusText: incoming.statusMessage || "",
+          headers: responseHeaders,
+        })
+      );
+    });
+    clientRequest.on("error", function onRequestError(err) {
+      reject(err);
+    });
+    if (bodyBuffer) {
+      clientRequest.write(bodyBuffer);
+    }
+    clientRequest.end();
+  });
+}
+
+// Release the node socket behind a 3xx response we are not going to follow.
+// pinnedFetch wraps the incoming message in a web ReadableStream, so cancelling
+// it tears down the underlying socket. Must run before every redirect-loop exit
+// (both the success hop and each throw) or the connection leaks.
+async function cancelResponseBody(response) {
+  if (response && response.body) {
+    try {
+      await response.body.cancel();
+    } catch (_e) {
+      // body may already be consumed or unsupported; ignore
+    }
+  }
 }
 
 function safeCloneArg(value) {
@@ -577,13 +837,16 @@ function run(input) {
     }
 
     const hostname = stripIpv6Brackets(parsed.hostname);
-    const ssrfCheck = await checkHostnameSsrf(hostname);
-    if (ssrfCheck.blocked) {
-      const targetIp = ssrfCheck.ip;
+    const resolved = await resolveValidatedAddresses(hostname);
+    if (resolved.blocked) {
+      const targetIp = resolved.ip;
       const suffix = targetIp && targetIp !== hostname ? " -> " + targetIp : "";
       throw new Error(
         "sandbox fetch: SSRF blocked (" + hostname + suffix + ")"
       );
+    }
+    if (resolved.addresses.length === 0) {
+      throw new Error("sandbox fetch: could not resolve " + hostname);
     }
 
     const controller = new AbortController();
@@ -618,11 +881,19 @@ function run(input) {
     let currentResource = resource;
     let currentBase = parsed;
     let currentInit = baseInit;
+    let currentAddresses = resolved.addresses;
     let redirectsLeft = MAX_SANDBOX_REDIRECTS;
 
     try {
       while (true) {
-        const response = await fetch(currentResource, currentInit);
+        // pinnedFetch dials only the SSRF-validated addresses (F-024); it does
+        // not auto-follow redirects, so this loop re-resolves + re-validates
+        // each hop below and pins the next hop's addresses before dialing it.
+        const response = await pinnedFetch(
+          currentResource,
+          currentInit,
+          currentAddresses
+        );
         const location = REDIRECT_STATUSES.has(response.status)
           ? response.headers.get("location")
           : null;
@@ -630,6 +901,7 @@ function run(input) {
           return response;
         }
         if (redirectsLeft <= 0) {
+          await cancelResponseBody(response);
           throw new Error("sandbox fetch: too many redirects");
         }
         redirectsLeft -= 1;
@@ -638,33 +910,36 @@ function run(input) {
         try {
           nextUrl = new URL(location, currentBase);
         } catch (_e) {
+          await cancelResponseBody(response);
           throw new Error("sandbox fetch: invalid redirect location: " + location);
         }
         if (!ALLOWED_SCHEMES.has(nextUrl.protocol)) {
+          await cancelResponseBody(response);
           throw new Error("sandbox fetch: scheme not allowed: " + nextUrl.protocol);
         }
         const nextHostname = stripIpv6Brackets(nextUrl.hostname);
-        const nextCheck = await checkHostnameSsrf(nextHostname);
-        if (nextCheck.blocked) {
-          const nextIp = nextCheck.ip;
+        const nextResolved = await resolveValidatedAddresses(nextHostname);
+        if (nextResolved.blocked) {
+          const nextIp = nextResolved.ip;
           const nextSuffix = nextIp && nextIp !== nextHostname ? " -> " + nextIp : "";
+          await cancelResponseBody(response);
           throw new Error(
             "sandbox fetch: SSRF blocked (" + nextHostname + nextSuffix + ")"
           );
         }
-
-        // Discard the redirect body so the underlying socket is freed.
-        if (response.body) {
-          try {
-            await response.body.cancel();
-          } catch (_e) {
-            // body may already be consumed or unsupported; ignore
-          }
+        if (nextResolved.addresses.length === 0) {
+          await cancelResponseBody(response);
+          throw new Error("sandbox fetch: could not resolve " + nextHostname);
         }
+
+        // Discard the redirect body so the underlying socket is freed before
+        // issuing the next hop.
+        await cancelResponseBody(response);
 
         currentInit = applyRedirectMethod(currentInit, response.status);
         currentResource = nextUrl.href;
         currentBase = nextUrl;
+        currentAddresses = nextResolved.addresses;
       }
     } finally {
       clearTimeout(timer);
