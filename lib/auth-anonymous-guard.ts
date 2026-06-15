@@ -1,3 +1,8 @@
+import { captureMessage } from "@sentry/nextjs";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
+
 /**
  * Anonymous-user gate for sensitive account operations.
  *
@@ -27,4 +32,60 @@ export function isAnonymousUserShape(user: {
     return true;
   }
   return false;
+}
+
+/**
+ * Resolves a user id to its anonymity status by reading the persisted row.
+ * Use at execution sinks that only have a user id in hand (token / session
+ * principals) to refuse anonymous accounts the compute + egress primitive.
+ * A missing user resolves to anonymous (fail closed).
+ */
+export async function isAnonymousUserId(
+  userId: string | null | undefined
+): Promise<boolean> {
+  if (!userId) {
+    return true;
+  }
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { isAnonymous: true, name: true, email: true },
+  });
+  if (!user) {
+    return true;
+  }
+  return isAnonymousUserShape(user);
+}
+
+/**
+ * Emits the security telemetry for a refused anonymous principal. Best-effort
+ * and never throws, mirroring the deactivated-login signal so abuse of the
+ * free-compute path surfaces in the same dashboards.
+ */
+export function logAnonymousExecutionBlock(
+  surface: string,
+  userId: string | null | undefined,
+  extra?: Record<string, string>
+): void {
+  try {
+    captureMessage("security.anonymous_execution_blocked", {
+      level: "warning",
+      tags: { security: "anonymous_execution_blocked", surface },
+      user: userId ? { id: userId } : undefined,
+      extra,
+    });
+  } catch {
+    // observability must never affect the auth response
+  }
+  try {
+    console.warn(
+      JSON.stringify({
+        event: "security.anonymous_execution_blocked",
+        surface,
+        userId: userId ?? null,
+        ...extra,
+      })
+    );
+  } catch {
+    // logging must never affect the auth response
+  }
 }

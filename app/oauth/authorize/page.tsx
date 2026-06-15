@@ -1,5 +1,9 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import {
+  isAnonymousUserShape,
+  logAnonymousExecutionBlock,
+} from "@/lib/auth-anonymous-guard";
 import { auth } from "@/lib/auth";
 import { parseScopes } from "@/lib/mcp/oauth-scopes";
 import {
@@ -60,6 +64,13 @@ async function handleApprove(formData: FormData): Promise<void> {
   const session = await auth.api.getSession({ headers: requestHeaders });
   if (!session?.user) {
     redirect(`/?returnTo=${encodeURIComponent("/oauth/authorize")}`);
+  }
+
+  // Anonymous accounts must never be issued an mcp token: that token is the
+  // entry point to the unmetered execution + egress primitive (KEEP-826).
+  if (isAnonymousUserShape(session.user)) {
+    logAnonymousExecutionBlock("oauth_consent", session.user.id);
+    errorRedirect(redirectUri, "access_denied", state ?? undefined);
   }
 
   const orgContext = await getOrgContext();
@@ -207,6 +218,27 @@ export default async function AuthorizePage({
     );
     redirect(
       `/?returnTo=${encodeURIComponent(returnTo.pathname + returnTo.search)}`
+    );
+  }
+
+  // Anonymous demo accounts cannot grant API access (KEEP-826). Show a
+  // sign-up prompt rather than the consent form so the Approve path is never
+  // reachable for them.
+  if (isAnonymousUserShape(session.user)) {
+    return (
+      <main className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div className="w-full max-w-sm rounded-xl border bg-background px-4 shadow-2xl ring-1 ring-black/5">
+          <div className="flex flex-col gap-1.5 p-6 pb-0">
+            <h2 className="font-semibold text-lg leading-none tracking-tight">
+              Create an account to continue
+            </h2>
+            <p className="text-muted-foreground text-sm">
+              Authorizing API access requires a full KeeperHub account. Sign up
+              to connect this application.
+            </p>
+          </div>
+        </div>
+      </main>
     );
   }
 

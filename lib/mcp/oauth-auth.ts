@@ -1,6 +1,10 @@
 import { captureMessage } from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
+import {
+  isAnonymousUserShape,
+  logAnonymousExecutionBlock,
+} from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import { isUserMemberOfOrganization } from "@/lib/workflow/access";
@@ -159,8 +163,28 @@ export async function authenticateOAuthToken(
   // authenticateApiKey -- both auth paths must close the same gap.
   const user = await db.query.users.findFirst({
     where: eq(users.id, payload.sub),
-    columns: { deactivatedAt: true },
+    columns: {
+      deactivatedAt: true,
+      isAnonymous: true,
+      name: true,
+      email: true,
+    },
   });
+
+  // Anonymous accounts must never hold a usable mcp token. The consent screen
+  // refuses to mint one for them (KEEP-826), so a token reaching here is an
+  // anomaly: neutralize the credential rather than grant free compute/egress.
+  if (user && isAnonymousUserShape(user)) {
+    logAnonymousExecutionBlock("mcp_oauth", payload.sub, {
+      organizationId: payload.org,
+    });
+    return {
+      authenticated: false,
+      error: "Anonymous accounts cannot use API access tokens",
+      statusCode: 403,
+    };
+  }
+
   if (user?.deactivatedAt) {
     // KEEP-612: fourth deactivated-login surface (alongside better-auth
     // session/account hooks and api-key auth). A deactivated user with a
