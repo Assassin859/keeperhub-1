@@ -5,6 +5,7 @@ import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { redactAuditDiff } from "@/lib/security/audit-redaction";
+import { toCsvCell } from "@/lib/security/csv";
 
 /**
  * Compliance export of the org's security audit trail as CSV. Same gate as the
@@ -15,7 +16,6 @@ import { redactAuditDiff } from "@/lib/security/audit-redaction";
  */
 
 const MAX_EXPORT_ROWS = 50_000;
-const CSV_SPECIAL = /[",\n\r]/;
 
 const COLUMNS = [
   "created_at",
@@ -29,18 +29,6 @@ const COLUMNS = [
   "resource_id",
   "diff",
 ] as const;
-
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  // Quote and escape if the cell contains a comma, quote, or newline.
-  if (CSV_SPECIAL.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -113,18 +101,18 @@ export async function GET(request: Request): Promise<Response> {
       const actor = r.actorUserId ? actorMap.get(r.actorUserId) : undefined;
       lines.push(
         [
-          csvCell(r.createdAt.toISOString()),
-          csvCell(r.action),
-          csvCell(actor?.name ?? r.actorLabel ?? null),
-          csvCell(actor?.email ?? null),
-          csvCell(actor?.role ?? null),
-          csvCell((r.metadata as { ip?: unknown } | null)?.ip ?? null),
-          csvCell(
+          toCsvCell(r.createdAt.toISOString()),
+          toCsvCell(r.action),
+          toCsvCell(actor?.name ?? r.actorLabel ?? null),
+          toCsvCell(actor?.email ?? null),
+          toCsvCell(actor?.role ?? null),
+          toCsvCell((r.metadata as { ip?: unknown } | null)?.ip ?? null),
+          toCsvCell(
             (r.metadata as { country?: unknown } | null)?.country ?? null
           ),
-          csvCell(r.resourceType),
-          csvCell(r.resourceId),
-          csvCell(redactAuditDiff(r.diff)),
+          toCsvCell(r.resourceType),
+          toCsvCell(r.resourceId),
+          toCsvCell(redactAuditDiff(r.diff)),
         ].join(",")
       );
     }
