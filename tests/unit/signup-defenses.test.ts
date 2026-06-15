@@ -180,3 +180,57 @@ describe("signup defenses: /sign-up/email rate limit rule", () => {
     expect(resolved).toBe(false);
   });
 });
+
+describe("signup defenses: /sign-in/anonymous rate limit rule", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    clearTurnstileEnv();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    clearTurnstileEnv();
+  });
+
+  it("declares /sign-in/anonymous before /* so first-match wins", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const { auth } = await import("@/lib/auth");
+    const keys = Object.keys(auth.options.rateLimit?.customRules ?? {});
+    const anonIdx = keys.indexOf("/sign-in/anonymous");
+    const wildcardIdx = keys.indexOf("/*");
+    expect(anonIdx).toBeGreaterThanOrEqual(0);
+    expect(wildcardIdx).toBeGreaterThanOrEqual(0);
+    expect(anonIdx).toBeLessThan(wildcardIdx);
+  });
+
+  it("returns { window: 3600, max: 5 } for anonymous sign-in attempts", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const { auth } = await import("@/lib/auth");
+    const rule = auth.options.rateLimit?.customRules?.[
+      "/sign-in/anonymous"
+    ] as RateLimitRuleFn | undefined;
+    expect(typeof rule).toBe("function");
+    const req = new Request(
+      "http://localhost:3000/api/auth/sign-in/anonymous"
+    );
+    const resolved = await rule?.(req, { window: 60, max: 100 });
+    expect(resolved).toEqual({ window: 3600, max: 5 });
+  });
+
+  it("returns false (bypass) when a valid X-Test-API-Key is presented", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "true");
+    process.env.TEST_API_KEY = TEST_API_KEY;
+    const { auth } = await import("@/lib/auth");
+    const rule = auth.options.rateLimit?.customRules?.[
+      "/sign-in/anonymous"
+    ] as RateLimitRuleFn | undefined;
+    const req = new Request(
+      "http://localhost:3000/api/auth/sign-in/anonymous",
+      { headers: { "X-Test-API-Key": TEST_API_KEY } }
+    );
+    const resolved = await rule?.(req, { window: 60, max: 100 });
+    expect(resolved).toBe(false);
+  });
+});
