@@ -139,11 +139,17 @@ export async function GET(request: Request): Promise<Response> {
 
   // Fail closed via the shared internal-service auth: the CronJob signs the
   // request with the HMAC scheme (X-KH-Caller/Timestamp/Signature, see
-  // reaper.sh), which resolves to caller "scheduler". Scoped to that caller
-  // specifically -- the mcp/events/hub/executor callers that also satisfy
-  // authenticateInternalService have no business invoking a detection scan,
-  // so least-privilege rejects them. No NODE_ENV bypass: when the signature
-  // does not verify nothing matches.
+  // reaper.sh), which resolves to caller "scheduler". The caller check scopes
+  // the endpoint to that identity -- an honest mcp/events/hub/executor caller
+  // signing under its own identity is rejected, and the verdict carries the
+  // attribution that lands in the auth audit log. Caveat (not overstated): in
+  // v1 every producer shares one signing secret (SHARED_SECRET_KEY in
+  // lib/internal-service-auth.ts), and the caller is bound into the signed
+  // string, so any holder of that secret can sign AS "scheduler". This check
+  // therefore gives audit attribution and blocks honest misrouting, NOT
+  // cryptographic isolation from a compromised internal service -- closing
+  // that needs the per-caller secret split noted in the auth module. No
+  // NODE_ENV bypass: when the signature does not verify nothing matches.
   const auth = await authenticateInternalService(request);
   if (!auth.authenticated || auth.caller !== "scheduler") {
     return Response.json({ error: "unauthorized" }, { status: 401 });
