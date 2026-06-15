@@ -13,11 +13,14 @@ import { runCode, type SandboxRunResult } from "./run-code.js";
  */
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
-/** Default maximum request body size (256 KiB). Envelope is small because
- * the body carries only user-written JS plus a small JSON envelope
- * ({ code, timeout }); any reasonable Code node fits in a small fraction of
- * this. Env-overridable. */
-const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+/** Default maximum request body size (512 KiB). The body is JSON
+ * `{ code, timeout }`, and JSON.stringify can inflate escape-heavy user code
+ * up to ~2x (every quote/backslash/control char escapes) -- versus the old
+ * base64(v8) wire's flat ~1.33x. The cap is raised so a large escape-heavy
+ * Code node that fit the old wire is not rejected with a 413. It is a DoS
+ * backstop, not a product limit; readBody enforces it before any spawn.
+ * Env-overridable. */
+const DEFAULT_MAX_BODY_BYTES = 512 * 1024;
 
 /** Default maximum concurrent /run calls per Pod. With 500m CPU + ~80 ms
  * cold-spawn + V8 compile of CHILD_SOURCE, the Pod saturates around 8
