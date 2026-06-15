@@ -23,9 +23,29 @@ SIGNATURE=$(printf '%s' "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$INTERNA
 
 echo "Environment variables are ready"
 
-curl -sS \
+# Capture the response (body + the -w trailer carrying the HTTP status) so we
+# can both surface it for logs AND react to the status. curl -sS has no -f, so
+# a 4xx/5xx is delivered with exit 0; without the check below a persistent auth
+# (401, e.g. an HMAC-secret mismatch that rejects before the handler runs) or
+# server (500) failure would leave the CronJob green while the job's work is
+# silently undone. Fail the job on any non-2xx (and on an unparseable status)
+# so Kubernetes records a failed job and the cluster's CronJob-failure alerting
+# can page. Applies to every cron that runs this script, not just the scan.
+RESPONSE=$(curl -sS \
   -w '\n{"http_code":%{http_code},"time_total":%{time_total}}' \
   -H "X-KH-Caller: ${CALLER}" \
   -H "X-KH-Timestamp: ${TIMESTAMP}" \
   -H "X-KH-Signature: ${SIGNATURE}" \
-  "$URL"
+  "$URL")
+
+printf '%s\n' "$RESPONSE"
+
+HTTP_CODE=$(printf '%s\n' "$RESPONSE" | tail -n1 | sed -n 's/.*"http_code":\([0-9]\{1,\}\).*/\1/p')
+
+case "$HTTP_CODE" in
+  2[0-9][0-9]) ;;
+  *)
+    echo "{\"error\":\"non-2xx response\",\"http_code\":\"${HTTP_CODE}\",\"url\":\"${URL}\"}" >&2
+    exit 1
+    ;;
+esac

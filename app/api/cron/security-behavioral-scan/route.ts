@@ -10,60 +10,62 @@
  * One log line per detected event so triage can pivot by user/key without
  * having to re-run the query.
  *
- * Deployment: invoked by an external scheduler (Kubernetes CronJob)
- * every 5 minutes. Authorized via `Authorization: Bearer $CRON_SECRET`,
- * mirroring `app/api/cron/agentic-wallet-sweeper`. The endpoint fails
- * closed when `CRON_SECRET` is unset -- there is no NODE_ENV dev/test
- * bypass, so a prod container that boots with `NODE_ENV=test` (the
- * misconfig the v2 review flagged) cannot accidentally open the
- * endpoint. Local dev sets `CRON_SECRET` in `.env` to invoke via curl.
+ * Deployment: invoked by a Kubernetes CronJob every 5 minutes (the
+ * `security-behavioral-scan` job in `deploy/keeperhub/{prod,staging}/
+ * values.yaml`, which runs `deploy/scripts/reaper.sh` against this path).
+ * Authorized via the internal-service HMAC scheme (`X-KH-Caller`,
+ * `X-KH-Timestamp`, `X-KH-Signature` signed with
+ * `INTERNAL_SERVICE_HMAC_SECRET`) through `authenticateInternalService`,
+ * the same mechanism the reaper CronJob uses -- so scheduling reuses the
+ * existing shared signing secret rather than provisioning a dedicated cron
+ * secret. The endpoint fails closed when the signature does not verify;
+ * there is no NODE_ENV dev/test bypass, so a prod container that boots with
+ * `NODE_ENV=test` (the misconfig the v2 review flagged) cannot accidentally
+ * open the endpoint. Local dev signs with `INTERNAL_SERVICE_HMAC_SECRET`
+ * (see `deploy/scripts/reaper.sh`) to invoke via curl.
  *
  * Detection windows are deliberately overlapping so a transient blip in
- * scheduler timing doesn't drop an event. Idempotency comes from the
- * downstream alert layer (Loki dedupe within the alert group window),
- * not from this endpoint.
+ * scheduler timing doesn't drop an event: the CronJob fires every 5
+ * minutes but EXECUTION_LOOKBACK_MS is 10 minutes, so every execution is
+ * read by two consecutive scans and a single late/skipped run still
+ * leaves it covered. Idempotency comes from the downstream alert layer
+ * (the `new_account_first_workflow` Loki rule evaluates a 10-minute
+ * window and fires on >=1 occurrence, so the duplicate emissions collapse
+ * to a single page), not from this endpoint.
  */
 
 import { captureMessage } from "@sentry/nextjs";
 import { and, eq, gt, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users, workflowExecutions } from "@/lib/db/schema";
+import { authenticateInternalService } from "@/lib/internal-service-auth";
 
 export const dynamic = "force-dynamic";
 
 const NEW_ACCOUNT_WINDOW_MS = 15 * 60 * 1000;
-const EXECUTION_LOOKBACK_MS = 5 * 60 * 1000;
+// Wider than the 5-minute CronJob interval so consecutive scans overlap and
+// scheduler jitter cannot drop an execution from coverage. Matched to the
+// 10-minute window of the downstream `new_account_first_workflow` Loki alert
+// (relative_time_range from=600 in keeperhub-security-alerts.tf) so the
+// resulting duplicate emissions dedupe to a single page.
+const EXECUTION_LOOKBACK_MS = 10 * 60 * 1000;
 
 type BehavioralScanResponse = {
   newAccountFirstWorkflowEvents: number;
   durationMs: number;
 };
 
-function isAuthorized(request: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  // Fail closed when CRON_SECRET is unset -- mirrors
-  // app/api/cron/agentic-wallet-sweeper. No NODE_ENV bypass; local dev
-  // sets CRON_SECRET in .env to invoke via curl.
-  if (!expected) {
-    return false;
-  }
-  return request.headers.get("authorization") === `Bearer ${expected}`;
-}
-
-export async function GET(request: Request): Promise<Response> {
-  const startedAt = Date.now();
-
-  if (!isAuthorized(request)) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-
+async function scanNewAccountFirstWorkflow(
+  startedAt: number
+): Promise<BehavioralScanResponse> {
   const now = new Date();
   const accountFloor = new Date(now.getTime() - NEW_ACCOUNT_WINDOW_MS);
   const executionFloor = new Date(now.getTime() - EXECUTION_LOOKBACK_MS);
 
-  // New-account-first-workflow: any execution within the last 5 minutes
-  // owned by a user whose account is newer than the 15-minute floor. The
-  // join captures the user's signup age so the alert can carry it.
+  // New-account-first-workflow: any execution within the EXECUTION_LOOKBACK_MS
+  // window (10 minutes) owned by a user whose account is newer than the
+  // 15-minute floor. The join captures the user's signup age so the alert
+  // can carry it.
   const rows = await db
     .select({
       userId: workflowExecutions.userId,
@@ -95,9 +97,20 @@ export async function GET(request: Request): Promise<Response> {
     // the other detection signals in lib/security/* -- alert lands even if
     // one transport fails, and Sentry's UI gives triagers richer pivots
     // than raw Loki JSON.
+    //
+    // The overlapping scan windows (10-minute lookback, 5-minute interval)
+    // mean the same execution is re-emitted by two consecutive scans -- and
+    // ~10x in PR envs where the job runs every minute. Fingerprint on the
+    // executionId so those duplicates collapse into a single Sentry issue
+    // (Loki already dedupes the page); the row's full detail still rides on
+    // each event's tags/extra for triage.
     try {
       captureMessage("security.behavioral.new_account_first_workflow", {
         level: "warning",
+        fingerprint: [
+          "security.behavioral.new_account_first_workflow",
+          row.executionId,
+        ],
         tags: {
           security: "behavioral.new_account_first_workflow",
           trigger_source: row.triggerSource ?? "unknown",
@@ -126,9 +139,61 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  const body: BehavioralScanResponse = {
+  return {
     newAccountFirstWorkflowEvents: rows.length,
     durationMs: Date.now() - startedAt,
   };
-  return Response.json(body);
+}
+
+export async function GET(request: Request): Promise<Response> {
+  const startedAt = Date.now();
+
+  // Fail closed via the shared internal-service auth: the CronJob signs the
+  // request with the HMAC scheme (X-KH-Caller/Timestamp/Signature, see
+  // reaper.sh), which resolves to caller "scheduler". The caller check scopes
+  // the endpoint to that identity -- an honest mcp/events/hub/executor caller
+  // signing under its own identity is rejected, and the verdict carries the
+  // attribution that lands in the auth audit log. Caveat (not overstated): in
+  // v1 every producer shares one signing secret (SHARED_SECRET_KEY in
+  // lib/internal-service-auth.ts), and the caller is bound into the signed
+  // string, so any holder of that secret can sign AS "scheduler". This check
+  // therefore gives audit attribution and blocks honest misrouting, NOT
+  // cryptographic isolation from a compromised internal service -- closing
+  // that needs the per-caller secret split noted in the auth module. No
+  // NODE_ENV bypass: when the signature does not verify nothing matches.
+  const auth = await authenticateInternalService(request);
+  if (!auth.authenticated || auth.caller !== "scheduler") {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const body = await scanNewAccountFirstWorkflow(startedAt);
+    return Response.json(body);
+  } catch (error) {
+    // The scan itself failed (e.g. a DB error). reaper.sh now fails the
+    // CronJob on a non-2xx (it checks the status), so the 500 below already
+    // turns the job red -- but a generic job failure says nothing about WHY
+    // detection went dark. Emit a specific, queryable self-failure signal
+    // (self-guarded, dual transport) so the detection layer going dark is
+    // observable as its own event rather than a bare job-failure alert, then
+    // surface the 500. Mirrors content-scanner's security.content_scanner_error.
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      captureMessage("security.behavioral.scan_error", {
+        level: "error",
+        tags: { security: "behavioral.scan_error" },
+        extra: { message, durationMs: Date.now() - startedAt },
+      });
+    } catch {
+      // never let the failure-signal emission mask the original error
+    }
+    console.error(
+      JSON.stringify({
+        event: "security.behavioral.scan_error",
+        message,
+        durationMs: Date.now() - startedAt,
+      })
+    );
+    return Response.json({ error: "scan_failed" }, { status: 500 });
+  }
 }
