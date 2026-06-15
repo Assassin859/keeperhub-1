@@ -877,10 +877,14 @@ function buildResponseHeaders(rawHeaders) {
 // genuine WHATWG Response so user code keeps the full fetch contract (.ok /
 // .status / .headers / .json() / .text() / .body). Redirects are NOT
 // auto-followed here; the caller's loop re-validates and follows each hop.
-async function pinnedFetch(resource, init, pinnedAddresses) {
-  // Normalise method/headers/body via the WHATWG Request so multipart,
-  // urlencoded, content-type and content-length handling match global fetch.
-  const request = new Request(resource, init);
+async function pinnedFetch(request, pinnedAddresses, signal) {
+  // request is the WHATWG Request the caller already built and validated.
+  // pinnedFetch reads the dial URL from THIS object and never re-derives it from
+  // a raw resource: a crafted resource whose toString() / .url disagree could
+  // otherwise make the dialed URL diverge from the validated one and slip past
+  // the SSRF guard (F-024 follow-up). The caller normalised method/headers/body
+  // on this Request too, so multipart, urlencoded, content-type and
+  // content-length handling still match global fetch.
   const parsed = new URL(request.url);
   const isHttps = parsed.protocol === "https:";
   const transport = isHttps ? https : http;
@@ -899,7 +903,25 @@ async function pinnedFetch(resource, init, pinnedAddresses) {
   }
 
   const hostname = stripIpv6Brackets(parsed.hostname);
-  const callerSignal = init && init.signal ? init.signal : undefined;
+  // Load-bearing backstop for the IP-literal dial path. net.connect dials an IP
+  // literal directly and NEVER invokes pinnedLookup below, so for a literal the
+  // only thing between user code and the socket is that this exact literal was in
+  // the validated, pinned set. Assert it. For DNS names pinnedLookup returns only
+  // pre-validated addresses, so the dial is already constrained to them. This
+  // makes "the address dialed is the address validated" a hard invariant even if
+  // a future change reintroduces a URL derivation that diverges from the guard
+  // (the F-024 class).
+  if (isIP(hostname) !== 0) {
+    const isValidatedLiteral = pinnedAddresses.some(function matchPinned(addr) {
+      return stripIpv6Brackets(addr.address) === hostname;
+    });
+    if (!isValidatedLiteral) {
+      throw new Error(
+        "sandbox fetch: SSRF blocked (unvalidated dial target " + hostname + ")"
+      );
+    }
+  }
+  const callerSignal = signal;
 
   return await new Promise(function dial(resolve, reject) {
     const options = {
@@ -1038,27 +1060,31 @@ function run(input) {
     error: capture("error"),
   };
 
-  function extractUrl(resource) {
-    if (typeof resource === "string") {
-      return resource;
-    }
-    if (resource && typeof resource.url === "string") {
-      return resource.url;
-    }
-    try {
-      return String(resource);
-    } catch (_) {
-      return "";
-    }
-  }
-
   async function sandboxedFetch(resource, init) {
-    const url = extractUrl(resource);
+    // Build the WHATWG Request EXACTLY ONCE. Both the SSRF validation below and
+    // the actual dial (pinnedFetch) read the URL from this single object, so the
+    // address validated is provably the address dialed. The earlier code
+    // validated extractUrl(resource) (=resource.url) while pinnedFetch dialed
+    // new Request(resource).url (=String(resource)); a crafted resource
+    // ({ url: <allowed>, toString: () => <IMDS> }) made those diverge, and when
+    // the dialed value was an IP literal it skipped the pinned lookup entirely
+    // and reached the blocked target (F-024 follow-up). Building once also means
+    // a hostile toString / Symbol.toPrimitive is invoked a single time, so it
+    // cannot hand one value to the guard and another to the socket.
+    let request;
+    try {
+      request = new Request(resource, init);
+    } catch (err) {
+      throw new TypeError(
+        "sandbox fetch: invalid request: " +
+          (err && err.message ? err.message : String(err))
+      );
+    }
     let parsed;
     try {
-      parsed = new URL(url);
+      parsed = new URL(request.url);
     } catch (_e) {
-      throw new TypeError("sandbox fetch: invalid URL: " + url);
+      throw new TypeError("sandbox fetch: invalid URL: " + request.url);
     }
     if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
       throw new Error("sandbox fetch: scheme not allowed: " + parsed.protocol);
@@ -1106,7 +1132,10 @@ function run(input) {
       redirect: "manual",
     });
 
-    let currentResource = resource;
+    // currentRequest is the single, already-built Request dialed this hop.
+    // currentInit only carries the method/body/headers used to build the NEXT
+    // hop's request; the abort signal is passed to pinnedFetch directly.
+    let currentRequest = request;
     let currentBase = parsed;
     let currentInit = baseInit;
     let currentAddresses = resolved.addresses;
@@ -1118,9 +1147,9 @@ function run(input) {
         // not auto-follow redirects, so this loop re-resolves + re-validates
         // each hop below and pins the next hop's addresses before dialing it.
         const response = await pinnedFetch(
-          currentResource,
-          currentInit,
-          currentAddresses
+          currentRequest,
+          currentAddresses,
+          controller.signal
         );
         const location = REDIRECT_STATUSES.has(response.status)
           ? response.headers.get("location")
@@ -1165,7 +1194,10 @@ function run(input) {
         await cancelResponseBody(response);
 
         currentInit = applyRedirectMethod(currentInit, response.status);
-        currentResource = nextUrl.href;
+        // Build the next hop's request from the server-provided, re-validated
+        // URL string (never a raw object), so its dial URL cannot diverge from
+        // what nextResolved just validated.
+        currentRequest = new Request(nextUrl.href, currentInit);
         currentBase = nextUrl;
         currentAddresses = nextResolved.addresses;
       }
