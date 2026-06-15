@@ -168,6 +168,32 @@ function reviveSandboxNumber(token: string): number {
   }
 }
 
+/**
+ * Allowlisted view constructors the decoder will instantiate from a "bytes"
+ * tag. The sandbox payload is UNTRUSTED, so the decoder never resolves an
+ * arbitrary global by name: a forged `k` such as "fetch" would otherwise let a
+ * compromised child select any global constructor (`new fetch(ab)` returns a
+ * promise that rejects unhandled and can crash the process via the server's
+ * unhandledRejection handler). Anything off this list falls back to raw bytes.
+ */
+const SANDBOX_VIEW_CTORS: Record<
+  string,
+  new (buffer: ArrayBuffer) => ArrayBufferView
+> = {
+  Int8Array,
+  Uint8Array,
+  Uint8ClampedArray,
+  Int16Array,
+  Uint16Array,
+  Int32Array,
+  Uint32Array,
+  Float32Array,
+  Float64Array,
+  BigInt64Array,
+  BigUint64Array,
+  DataView,
+};
+
 function reviveSandboxBytes(kind: string, base64: string): unknown {
   const buf = Buffer.from(base64, "base64");
   // Copy into a standalone ArrayBuffer so the result does not alias Node's
@@ -176,15 +202,20 @@ function reviveSandboxBytes(kind: string, base64: string): unknown {
   if (kind === "ArrayBuffer") {
     return ab;
   }
-  if (kind === "DataView") {
-    return new DataView(ab);
+  const Ctor: (new (buffer: ArrayBuffer) => ArrayBufferView) | undefined =
+    SANDBOX_VIEW_CTORS[kind];
+  if (Ctor) {
+    try {
+      return new Ctor(ab);
+    } catch {
+      // A known kind whose byte length is not a multiple of its element size
+      // (a forged/malformed frame would make `new Uint32Array(ab)` throw):
+      // hand back raw bytes rather than throwing on the untrusted boundary.
+      return new Uint8Array(ab);
+    }
   }
-  const Ctor = (globalThis as Record<string, unknown>)[kind];
-  if (typeof Ctor === "function") {
-    return new (Ctor as new (b: ArrayBuffer) => unknown)(ab);
-  }
-  // Unknown view kind from a malformed/compromised child: hand back raw bytes
-  // rather than throwing.
+  // Unknown/forged view kind: never resolve an arbitrary global by name; hand
+  // back raw bytes rather than instantiating it.
   return new Uint8Array(ab);
 }
 

@@ -818,3 +818,49 @@ describe("encodeSandboxResult <-> decodeSandboxResult round-trip", () => {
     expect(() => encodeSandboxResult(() => 1)).toThrow();
   });
 });
+
+// The "bytes" tag carries an attacker-controllable `k` (constructor kind) on an
+// UNTRUSTED boundary. The decoder must only ever instantiate real view
+// constructors from a fixed allowlist, never resolve an arbitrary global by
+// name, and must never throw on a malformed frame.
+describe("decodeSandboxResult bytes tag is safe on a forged kind", () => {
+  const b64 = (bytes: number[]): string =>
+    Buffer.from(bytes).toString("base64");
+
+  it("returns inert Uint8Array bytes for a non-view global kind (e.g. fetch)", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"fetch","v":"${b64([1, 2, 3])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect([...(r as Uint8Array)]).toEqual([1, 2, 3]);
+    expect(typeof r).not.toBe("function");
+  });
+
+  it("returns inert Uint8Array bytes for the Function constructor kind", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"Function","v":"${b64([65])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect(typeof r).not.toBe("function");
+  });
+
+  it("does not throw and falls back to raw bytes for a size-mismatched known kind", () => {
+    // 5 bytes is not a multiple of Uint32Array's 4-byte element size.
+    let decoded: unknown;
+    expect(() => {
+      decoded = decodeSandboxResult(
+        `{"$":"bytes","k":"Uint32Array","v":"${b64([1, 2, 3, 4, 5])}"}`
+      );
+    }).not.toThrow();
+    expect(decoded).toBeInstanceOf(Uint8Array);
+    expect([...(decoded as Uint8Array)]).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("still reconstructs an allowlisted view kind with a valid byte length", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"Uint16Array","v":"${b64([1, 0, 2, 0])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint16Array);
+    expect([...(r as Uint16Array)]).toEqual([1, 2]);
+  });
+});
