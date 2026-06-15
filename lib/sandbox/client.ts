@@ -1,7 +1,10 @@
 import "server-only";
 
 import { Agent, request as httpRequest } from "node:http";
-import { decodeSandboxResult } from "@/lib/sandbox/child-source";
+import {
+  decodeSandboxResult,
+  SANDBOX_RESULT_MAX_BYTES,
+} from "@/lib/sandbox/child-source";
 
 const SANDBOX_URL = process.env.SANDBOX_URL;
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
@@ -46,6 +49,14 @@ const MAX_BACKOFF_MS = 5000;
 const RETRY_JITTER_MS = 250;
 
 const HTTP_TOO_MANY_REQUESTS = 429;
+
+// Hard ceiling on the response body the client will buffer from the (untrusted)
+// sandbox. Mirrors the local fd-3 frame cap so a compromised sandbox cannot pin
+// main-app memory by streaming an unbounded body within the time budget.
+// Env-overridable; falls back to the frame cap on a missing/invalid value.
+const MAX_RESPONSE_BYTES =
+  Number.parseInt(process.env.SANDBOX_MAX_RESPONSE_BYTES ?? "", 10) ||
+  SANDBOX_RESULT_MAX_BYTES;
 
 /**
  * Carries the HTTP status off a non-200 sandbox response so runRemote can
@@ -183,7 +194,22 @@ function postOnce(
       },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let received = 0;
+        res.on("data", (chunk: Buffer) => {
+          received += chunk.length;
+          if (received > MAX_RESPONSE_BYTES) {
+            settle(() => {
+              req.destroy();
+              reject(
+                new Error(
+                  `sandbox response exceeds maximum size (${MAX_RESPONSE_BYTES} bytes)`
+                )
+              );
+            });
+            return;
+          }
+          chunks.push(chunk);
+        });
         res.on("end", () => {
           settle(() => {
             const buf = Buffer.concat(chunks);

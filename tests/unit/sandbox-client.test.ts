@@ -520,3 +520,26 @@ describe("lib/sandbox-client runRemote untrusted-shape hardening", () => {
     }
   });
 });
+
+describe("lib/sandbox-client runRemote response size cap", () => {
+  it("rejects a response body that exceeds SANDBOX_MAX_RESPONSE_BYTES", async () => {
+    const oversized = `${RESULT_SENTINEL}${"x".repeat(200_000)}\n`;
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: oversized,
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    process.env.SANDBOX_MAX_RESPONSE_BYTES = "1024";
+    try {
+      const { runRemote } = await import("@/lib/sandbox/client");
+      const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+      expect(outcome.success).toBe(false);
+      if (!outcome.success) {
+        expect(outcome.error).toContain("exceeds maximum size");
+      }
+    } finally {
+      delete process.env.SANDBOX_MAX_RESPONSE_BYTES;
+    }
+  });
+});
