@@ -767,34 +767,57 @@ export const auth = betterAuth({
           };
         },
         after: async (session) => {
-          // If session already has an active organization, skip
-          if (session.activeOrganizationId) {
-            return;
-          }
+          let orgId: string | null =
+            (session.activeOrganizationId as string | null | undefined) ?? null;
 
-          try {
-            // Find the user's first organization
-            const [member] = await db
-              .select()
-              .from(memberTable)
-              .where(eq(memberTable.userId, session.userId))
-              .limit(1);
+          // Backfill the active org for sessions that don't carry one yet.
+          if (!orgId) {
+            try {
+              const [member] = await db
+                .select()
+                .from(memberTable)
+                .where(eq(memberTable.userId, session.userId))
+                .limit(1);
 
-            if (member) {
-              // Set as active organization in the session
-              await db
-                .update(sessions)
-                .set({ activeOrganizationId: member.organizationId })
-                .where(eq(sessions.id, session.id));
+              if (member) {
+                orgId = member.organizationId;
+                await db
+                  .update(sessions)
+                  .set({ activeOrganizationId: member.organizationId })
+                  .where(eq(sessions.id, session.id));
+              }
+            } catch (error) {
+              logSystemError(
+                ErrorCategory.AUTH,
+                "[Auth] Failed to set active org on session",
+                error,
+                { sessionId: session.id }
+              );
             }
-          } catch (error) {
-            logSystemError(
-              ErrorCategory.AUTH,
-              "[Auth] Failed to set active org on session",
-              error,
-              { sessionId: session.id }
-            );
           }
+
+          // Audit the sign-in. ip/userAgent are columns on the session row;
+          // buildAuditMetadata isn't usable here (no Request in the hook), and
+          // country is only resolved on the request path, so it stays null.
+          const sessionRow = session as {
+            ipAddress?: string | null;
+            userAgent?: string | null;
+          };
+          await recordAuditEvent({
+            actor: {
+              userId: session.userId,
+              organizationId: orgId,
+              authMethod: "session",
+            },
+            action: "session.created",
+            resourceType: "session",
+            resourceId: session.id,
+            metadata: {
+              ip: sessionRow.ipAddress ?? null,
+              country: null,
+              userAgent: sessionRow.userAgent ?? null,
+            },
+          });
         },
       },
     },
