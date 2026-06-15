@@ -22,10 +22,10 @@ export async function GET(
   { params }: { params: Promise<{ executionId: string }> }
 ): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
-  if (!apiKeyCtx) {
+  if ("error" in apiKeyCtx) {
     return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: HttpStatus.UNAUTHORIZED }
+      { error: apiKeyCtx.error },
+      { status: apiKeyCtx.status }
     );
   }
 

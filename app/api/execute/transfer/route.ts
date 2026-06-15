@@ -36,10 +36,10 @@ import { requireWallet } from "../_lib/wallet-check";
 export async function POST(request: Request): Promise<NextResponse> {
   // 1. Auth
   const apiKeyCtx = await validateApiKey(request);
-  if (!apiKeyCtx) {
+  if ("error" in apiKeyCtx) {
     return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: HttpStatus.UNAUTHORIZED }
+      { error: apiKeyCtx.error },
+      { status: apiKeyCtx.status }
     );
   }
 

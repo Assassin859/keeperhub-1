@@ -20,6 +20,10 @@
 import { createHash } from "node:crypto";
 import { captureMessage } from "@sentry/nextjs";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
+import {
+  isAnonymousUserShape,
+  logAnonymousExecutionBlock,
+} from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
 
@@ -91,6 +95,9 @@ export async function authenticateApiKey(
         organizationId: organizationApiKeys.organizationId,
         createdBy: organizationApiKeys.createdBy,
         creatorDeactivatedAt: users.deactivatedAt,
+        creatorIsAnonymous: users.isAnonymous,
+        creatorName: users.name,
+        creatorEmail: users.email,
         creatorMemberId: member.id,
       })
       .from(organizationApiKeys)
@@ -121,6 +128,27 @@ export async function authenticateApiKey(
         authenticated: false,
         error: "Invalid or revoked API key",
         statusCode: 401,
+      };
+    }
+
+    // Reject keys created by an anonymous account so a key minted by one
+    // cannot become a durable bypass of the anonymous-execution gate.
+    if (
+      apiKey.createdBy &&
+      isAnonymousUserShape({
+        isAnonymous: apiKey.creatorIsAnonymous,
+        name: apiKey.creatorName,
+        email: apiKey.creatorEmail,
+      })
+    ) {
+      logAnonymousExecutionBlock("api_key", apiKey.createdBy, {
+        apiKeyId: apiKey.id,
+        organizationId: apiKey.organizationId,
+      });
+      return {
+        authenticated: false,
+        error: "Anonymous accounts cannot use API keys",
+        statusCode: 403,
       };
     }
 
