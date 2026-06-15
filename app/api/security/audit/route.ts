@@ -142,6 +142,9 @@ export async function GET(request: Request) {
       } else if (r.actorUserId) {
         actor = { id: r.actorUserId };
       }
+      // Expose only ip + country. userAgent is stored for forensics but the
+      // UI never renders it, so it stays server-side.
+      const meta = r.metadata as Record<string, unknown> | null;
       return {
         id: r.id,
         action: r.action,
@@ -149,7 +152,9 @@ export async function GET(request: Request) {
         resourceId: r.resourceId,
         createdAt: r.createdAt,
         diff: redactAuditDiff(r.diff),
-        metadata: r.metadata,
+        metadata: meta
+          ? { ip: meta.ip ?? null, country: meta.country ?? null }
+          : null,
         actor,
       };
     });
