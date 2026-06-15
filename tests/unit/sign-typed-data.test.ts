@@ -399,6 +399,109 @@ describe("signTypedDataCore (KEEP-473)", () => {
     if (result.success) {
       expect(result.signature).toMatch(SIGNATURE_HEX_RE);
     }
+    expect(mockSign).toHaveBeenCalledWith(
+      WALLET.turnkeySubOrgId,
+      WALLET.walletAddress,
+      noChainId
+    );
+  });
+
+  it("rejects a Gnosis Safe SafeTx typedData", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const result = await signTypedDataCore({
+      typedData: { ...VALID_TYPED_DATA, primaryType: "SafeTx" },
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Seaport OrderComponents typedData", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const result = await signTypedDataCore({
+      typedData: { ...VALID_TYPED_DATA, primaryType: "OrderComponents" },
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects a denylisted primaryType supplied as a JSON string", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const result = await signTypedDataCore({
+      typedData: JSON.stringify({ ...VALID_TYPED_DATA, primaryType: "Permit" }),
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects a junk string chainId that parseInt would leniently truncate", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const result = await signTypedDataCore({
+      typedData: {
+        ...VALID_TYPED_DATA,
+        domain: { ...VALID_TYPED_DATA.domain, chainId: "8453garbage" },
+      },
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("signs when a supported chainId is given as a decimal string", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+    mockSign.mockResolvedValue(`0x${"ab".repeat(65)}`);
+
+    const result = await signTypedDataCore({
+      typedData: {
+        ...VALID_TYPED_DATA,
+        domain: { ...VALID_TYPED_DATA.domain, chainId: "8453" },
+      },
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.signature).toMatch(SIGNATURE_HEX_RE);
+    }
     expect(mockSign).toHaveBeenCalled();
+  });
+
+  it("strips control characters from the rejection error message", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const result = await signTypedDataCore({
+      typedData: { ...VALID_TYPED_DATA, primaryType: "Permit\nINJECTED LOG" },
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+      expect(result.error).not.toContain("\n");
+      expect(result.error).toContain("PermitINJECTED LOG");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
   });
 });
