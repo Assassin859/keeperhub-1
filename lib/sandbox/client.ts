@@ -10,15 +10,28 @@ import {
 const SANDBOX_URL = process.env.SANDBOX_URL;
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
+// Parse an integer env override, falling back to `fallback` when unset or
+// invalid (non-numeric, NaN, or below `min`). Mirrors the server's
+// getMaxBodyBytes guard so a stray negative value cannot silently become a
+// negative byte cap (rejecting every response) or skip the retry loop.
+function parseIntEnv(
+  raw: string | undefined,
+  fallback: number,
+  min: number
+): number {
+  if (raw === undefined) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= min ? parsed : fallback;
+}
+
 // HTTP budget on top of the user-code timeout. Sandbox server's in-child
 // wall-clock kill adds 1000 ms; we give 2000 ms more for network RTT,
 // TCP teardown, and kubeproxy conntrack flush. If the socket yields no
 // response within (timeoutMs + HTTP_SLACK_MS), we destroy it so the
 // caller sees a timeout instead of hanging on a dead peer.
-const HTTP_SLACK_MS = Number.parseInt(
-  process.env.SANDBOX_HTTP_SLACK_MS ?? "3000",
-  10
-);
+const HTTP_SLACK_MS = parseIntEnv(process.env.SANDBOX_HTTP_SLACK_MS, 3000, 0);
 
 const sandboxAgent = new Agent({
   keepAlive: true,
@@ -30,10 +43,7 @@ const sandboxAgent = new Agent({
 // short backoff lets the in-flight runs on the pod drain instead of surfacing
 // a hard error to the caller. Bounded so sustained saturation still fails
 // fast rather than amplifying load on an already-full sandbox.
-const MAX_CAPACITY_RETRIES = Number.parseInt(
-  process.env.SANDBOX_MAX_RETRIES ?? "3",
-  10
-);
+const MAX_CAPACITY_RETRIES = parseIntEnv(process.env.SANDBOX_MAX_RETRIES, 3, 0);
 
 // Base backoff for the first retry. We deliberately compute the wait from a
 // fixed schedule rather than the response's Retry-After: deriving a timer
@@ -55,9 +65,11 @@ const HTTP_TOO_MANY_REQUESTS = 429;
 // sandbox. Mirrors the local fd-3 frame cap so a compromised sandbox cannot pin
 // main-app memory by streaming an unbounded body within the time budget.
 // Env-overridable; falls back to the frame cap on a missing/invalid value.
-const MAX_RESPONSE_BYTES =
-  Number.parseInt(process.env.SANDBOX_MAX_RESPONSE_BYTES ?? "", 10) ||
-  SANDBOX_RESULT_MAX_BYTES;
+const MAX_RESPONSE_BYTES = parseIntEnv(
+  process.env.SANDBOX_MAX_RESPONSE_BYTES,
+  SANDBOX_RESULT_MAX_BYTES,
+  1
+);
 
 /**
  * Carries the HTTP status off a non-200 sandbox response so runRemote can

@@ -570,3 +570,25 @@ describe("lib/sandbox-client runRemote wire-version skew", () => {
     }
   });
 });
+
+describe("lib/sandbox-client runRemote env override guards", () => {
+  it("ignores a negative SANDBOX_MAX_RESPONSE_BYTES instead of rejecting every response", async () => {
+    currentResponder = (): { status: number; body: string } => ({
+      status: 200,
+      body: sentinelBody({ ok: true, result: 7, logs: [] }),
+    });
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    process.env.SANDBOX_MAX_RESPONSE_BYTES = "-1";
+    try {
+      const { runRemote } = await import("@/lib/sandbox/client");
+      const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
+      expect(outcome.success).toBe(true);
+      if (outcome.success) {
+        expect(outcome.result).toBe(7);
+      }
+    } finally {
+      delete process.env.SANDBOX_MAX_RESPONSE_BYTES;
+    }
+  });
+});
