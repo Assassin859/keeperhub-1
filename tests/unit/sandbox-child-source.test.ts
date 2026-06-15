@@ -963,3 +963,20 @@ describe("encodeSandboxResult parity with the inline grandchild encoder", () => 
     expect(moduleEncoded).toEqual(inlineEncoded);
   });
 });
+
+// A forged frame can nest tags far deeper than any legitimate result; the
+// decoder must fail with a bounded error rather than recursing into a
+// RangeError (now in the main-app client, since the server relays unrevived).
+describe("decodeSandboxResult bounds recursion depth", () => {
+  it("throws a clear error on a too-deeply-nested frame", () => {
+    const depth = 1000; // > SANDBOX_MAX_DEPTH (256), well within JSON.parse
+    const json = "[".repeat(depth) + "]".repeat(depth);
+    expect(() => decodeSandboxResult(json)).toThrow(/too deep/);
+  });
+
+  it("still decodes a comfortably-nested frame", () => {
+    const depth = 50;
+    const json = "[".repeat(depth) + "]".repeat(depth);
+    expect(() => decodeSandboxResult(json)).not.toThrow();
+  });
+});

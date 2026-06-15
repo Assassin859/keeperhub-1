@@ -228,17 +228,27 @@ function reviveSandboxBytes(kind: string, base64: string): unknown {
   return new Uint8Array(ab);
 }
 
+// Bound the decoder's recursion on UNTRUSTED input. Legitimate results nest
+// shallowly; a forged frame with thousands of nested tags would otherwise
+// recurse until a RangeError - now thrown in the main-app client, since the
+// server relays the frame unrevived (it does not decode it). Throwing a clear,
+// bounded error here keeps the failure well below the JS stack limit.
+const SANDBOX_MAX_DEPTH = 256;
+
 /**
  * Rebuild a plain object key-by-key, defining each property so a "__proto__"
  * key lands as an own data property instead of invoking the prototype setter
  * (the prototype-pollution guard that makes deserializing untrusted input
  * safe).
  */
-function decodeSandboxObject(obj: Record<string, unknown>): Record<string, unknown> {
+function decodeSandboxObject(
+  obj: Record<string, unknown>,
+  depth: number
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(obj)) {
     Object.defineProperty(result, key, {
-      value: decodeSandboxNode(obj[key]),
+      value: decodeSandboxNode(obj[key], depth),
       enumerable: true,
       writable: true,
       configurable: true,
@@ -247,16 +257,20 @@ function decodeSandboxObject(obj: Record<string, unknown>): Record<string, unkno
   return result;
 }
 
-function decodeSandboxNode(node: unknown): unknown {
+function decodeSandboxNode(node: unknown, depth = 0): unknown {
+  if (depth > SANDBOX_MAX_DEPTH) {
+    throw new Error("sandbox result nesting too deep");
+  }
+  const next = depth + 1;
   if (Array.isArray(node)) {
-    return node.map(decodeSandboxNode);
+    return node.map((item) => decodeSandboxNode(item, next));
   }
   if (node === null || typeof node !== "object") {
     return node;
   }
   const obj = node as Record<string, unknown>;
   if (!Object.hasOwn(obj, SANDBOX_RESULT_TAG)) {
-    return decodeSandboxObject(obj);
+    return decodeSandboxObject(obj, next);
   }
   switch (obj[SANDBOX_RESULT_TAG]) {
     case "undef":
@@ -276,20 +290,22 @@ function decodeSandboxNode(node: unknown): unknown {
     case "map":
       return new Map(
         (obj.v as [unknown, unknown][]).map((e) => [
-          decodeSandboxNode(e[0]),
-          decodeSandboxNode(e[1]),
+          decodeSandboxNode(e[0], next),
+          decodeSandboxNode(e[1], next),
         ])
       );
     case "set":
-      return new Set((obj.v as unknown[]).map(decodeSandboxNode));
+      return new Set(
+        (obj.v as unknown[]).map((item) => decodeSandboxNode(item, next))
+      );
     case "bytes":
       return reviveSandboxBytes(obj.k as string, obj.v as string);
     case "obj":
       // Escaped plain object: its keys are literal data, never tags.
-      return decodeSandboxObject(obj.v as Record<string, unknown>);
+      return decodeSandboxObject(obj.v as Record<string, unknown>, next);
     default:
       // Unknown tag from a malformed/compromised child: treat as plain data.
-      return decodeSandboxObject(obj);
+      return decodeSandboxObject(obj, next);
   }
 }
 
