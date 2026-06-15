@@ -79,15 +79,19 @@ export function isRelayableEnvelope(value: unknown): boolean {
   return v.ok === true || typeof v.errorMessage === "string";
 }
 
+/** The ok:false arm of ChildOutcome; every synthetic (non-relay) result is an
+ * error, so it always carries errorMessage. */
+type ChildErrorOutcome = Extract<ChildOutcome, { ok: false }>;
+
 /**
  * A run result the server writes to the HTTP response. A valid child frame is
  * RELAYED verbatim -- it is already the tagged-JSON the main-app client reads,
  * so the server does not revive tagged values nor re-encode them. Synthetic
- * errors (timeout, abort, malformed/no frame) carry a ChildOutcome to encode.
+ * errors (timeout, abort, malformed/no frame) carry an error outcome to encode.
  */
 export type SandboxRunResult =
   | { relay: true; frame: Buffer }
-  | { relay: false; outcome: ChildOutcome };
+  | { relay: false; outcome: ChildErrorOutcome };
 
 function syntheticError(errorMessage: string): SandboxRunResult {
   return { relay: false, outcome: { ok: false, errorMessage, logs: [] } };
