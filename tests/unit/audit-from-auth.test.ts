@@ -11,6 +11,7 @@ const sessionCtx: DualAuthContext = {
   organizationId: "org-1",
   authMethod: "session",
   apiKeyId: null,
+  isAnonymous: false,
 };
 
 const apiKeyCtx: DualAuthContext = {
@@ -18,6 +19,7 @@ const apiKeyCtx: DualAuthContext = {
   organizationId: "org-1",
   authMethod: "api-key",
   apiKeyId: "key-abc",
+  isAnonymous: false,
 };
 
 const apiKeyCtxNoCreator: DualAuthContext = {
@@ -25,6 +27,7 @@ const apiKeyCtxNoCreator: DualAuthContext = {
   organizationId: "org-1",
   authMethod: "api-key",
   apiKeyId: "key-legacy",
+  isAnonymous: false,
 };
 
 const oauthCtx: DualAuthContext = {
@@ -32,6 +35,7 @@ const oauthCtx: DualAuthContext = {
   organizationId: "org-1",
   authMethod: "oauth",
   apiKeyId: null,
+  isAnonymous: false,
 };
 
 const errorCtx: DualAuthContext = { error: "Unauthorized", status: 401 };

@@ -7,8 +7,8 @@ import { validateApiKey } from "../_lib/auth";
 
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
-  if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if ("error" in apiKeyCtx) {
+    return NextResponse.json({ error: apiKeyCtx.error }, { status: apiKeyCtx.status });
   }
 
   const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);

@@ -1,6 +1,7 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { auth } from "@/lib/auth";
+import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
@@ -140,6 +141,7 @@ export type DualAuthContext =
       authMethod: AuthMethod;
       apiKeyId: string | null;
       scope?: string;
+      isAnonymous: boolean;
     }
   | { error: string; status: number; code?: "mfa_required" };
 
@@ -242,10 +244,13 @@ export async function getDualAuthContext(
 
   const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth) {
+    // Anonymous subjects are rejected inside authenticateOAuthToken, so a
+    // resolved token always belongs to a real account.
     return {
       ...oauthAuth,
       authMethod: "oauth",
       apiKeyId: null,
+      isAnonymous: false,
     };
   }
 
@@ -269,6 +274,7 @@ export async function getDualAuthContext(
       organizationId: null,
       authMethod: "session",
       apiKeyId: null,
+      isAnonymous: false,
     };
   }
 
@@ -297,6 +303,7 @@ export async function getDualAuthContext(
     organizationId: orgResult.organizationId,
     authMethod: "session",
     apiKeyId: null,
+    isAnonymous: isAnonymousUserShape(session.user),
   };
 }
 
@@ -310,6 +317,8 @@ function resolveApiKeyContext(apiKeyAuth: {
     organizationId: apiKeyAuth.organizationId ?? null,
     authMethod: "api-key",
     apiKeyId: apiKeyAuth.apiKeyId ?? null,
+    // Anonymous creators are rejected inside authenticateApiKey.
+    isAnonymous: false,
   };
 }
 

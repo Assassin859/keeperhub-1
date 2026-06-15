@@ -152,6 +152,7 @@ vi.mock("@/lib/middleware/auth-helpers", () => ({
     organizationId: orgId,
     authMethod: "session",
     apiKeyId: null,
+    isAnonymous: false,
   }),
   auditFromAuth: vi.fn().mockReturnValue({ authMethod: "session" }),
   UNAUTHENTICATED_AUDIT: { authMethod: "unknown" },
@@ -500,6 +501,7 @@ describe("POST /api/workflows/import", () => {
       organizationId: null,
       authMethod: "session",
       apiKeyId: null,
+      isAnonymous: false,
     });
 
     const exportPayload = buildWorkflowExportV1({

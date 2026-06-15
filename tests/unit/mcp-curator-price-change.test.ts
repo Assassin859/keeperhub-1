@@ -32,6 +32,7 @@ const mockAuth = (orgId = "org-abc") =>
     organizationId: orgId,
     authMethod: "session" as const,
     apiKeyId: null,
+    isAnonymous: false,
   });
 
 describe("mcp curator routes — price change guard", () => {

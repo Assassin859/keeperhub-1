@@ -1,6 +1,7 @@
 import { HttpStatus } from "@/lib/http-status";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
@@ -87,6 +88,19 @@ export async function POST(
         return NextResponse.json(
           { error: authContext.error },
           { status: authContext.status }
+        );
+      }
+
+      // Anonymous principals may browse and build but never run. Token and
+      // api-key callers are already refused at auth resolution; this closes
+      // the browser-session path.
+      if (authContext.isAnonymous) {
+        logAnonymousExecutionBlock("workflow_execute", authContext.userId, {
+          workflowId,
+        });
+        return NextResponse.json(
+          { error: "Sign up to run workflows" },
+          { status: HttpStatus.FORBIDDEN }
         );
       }
 
