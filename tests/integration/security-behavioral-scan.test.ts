@@ -194,10 +194,7 @@ describe("security-behavioral-scan response shape", () => {
     expect(message).toBe("security.behavioral.new_account_first_workflow");
     expect(options).toMatchObject({
       level: "warning",
-      fingerprint: [
-        "security.behavioral.new_account_first_workflow",
-        "exec_1",
-      ],
+      fingerprint: ["security.behavioral.new_account_first_workflow", "exec_1"],
       tags: {
         security: "behavioral.new_account_first_workflow",
         trigger_source: "manual",

@@ -26,11 +26,14 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const TEST_SECRET = "test-shared-secret-do-not-use-in-production";
 const SECRET_LOOKUP_KEY = "*shared*";
-const SCAN_URL = "http://keeperhub-common:3000/api/cron/security-behavioral-scan";
+const SCAN_URL =
+  "http://keeperhub-common:3000/api/cron/security-behavioral-scan";
 
 const { mockListActive, mockLookup } = vi.hoisted(() => ({
   mockListActive:
-    vi.fn<(caller: string) => Promise<{ secret: string; keyVersion: number }[]>>(),
+    vi.fn<
+      (caller: string) => Promise<{ secret: string; keyVersion: number }[]>
+    >(),
   mockLookup:
     vi.fn<
       (
@@ -61,6 +64,10 @@ const reaperPath = fileURLToPath(
   new URL("../../deploy/scripts/reaper.sh", import.meta.url)
 );
 
+const HEADER_LINE_RE = /^(X-KH-[A-Za-z-]+):\s*(.+)$/;
+const TIMESTAMP_RE = /^\d+$/;
+const SIGNATURE_HEX_RE = /^[0-9a-f]{64}$/;
+
 // One stub-curl dir shared by the suite. The stub prints the -H header values
 // reaper.sh passed it, then a -w-style trailer carrying a 200 so reaper.sh's
 // status check passes and it exits 0.
@@ -84,7 +91,7 @@ function runReaper(url: string): Record<string, string> {
 
   const headers: Record<string, string> = {};
   for (const line of result.stdout.split("\n")) {
-    const match = line.match(/^(X-KH-[A-Za-z-]+):\s*(.+)$/);
+    const match = line.match(HEADER_LINE_RE);
     if (match) {
       headers[match[1]] = match[2];
     }
@@ -92,71 +99,76 @@ function runReaper(url: string): Record<string, string> {
   return headers;
 }
 
-describe.runIf(shellSigningAvailable)("reaper.sh -> verifier signing contract", () => {
-  beforeEach(() => {
-    mockListActive.mockReset();
-    mockLookup.mockReset();
-    mockListActive.mockResolvedValue([{ secret: TEST_SECRET, keyVersion: 1 }]);
+describe.runIf(shellSigningAvailable)(
+  "reaper.sh -> verifier signing contract",
+  () => {
+    beforeEach(() => {
+      mockListActive.mockReset();
+      mockLookup.mockReset();
+      mockListActive.mockResolvedValue([
+        { secret: TEST_SECRET, keyVersion: 1 },
+      ]);
 
-    stubDir = mkdtempSync(join(tmpdir(), "reaper-curl-stub-"));
-    const stub = [
-      "#!/bin/sh",
-      'while [ $# -gt 0 ]; do',
-      '  case "$1" in',
-      "    -H) printf '%s\\n' \"$2\"; shift 2 ;;",
-      "    *) shift ;;",
-      "  esac",
-      "done",
-      "printf '{\"http_code\":200,\"time_total\":0.01}\\n'",
-      "",
-    ].join("\n");
-    writeFileSync(join(stubDir, "curl"), stub, { mode: 0o755 });
-  });
-
-  afterAll(() => {
-    if (stubDir) {
-      rmSync(stubDir, { recursive: true, force: true });
-    }
-  });
-
-  it("produces headers the unmocked verifier accepts as caller scheduler", async () => {
-    const headers = runReaper(SCAN_URL);
-
-    // Sanity: the producer emitted the three signed headers.
-    expect(headers["X-KH-Caller"]).toBe("scheduler");
-    expect(headers["X-KH-Timestamp"]).toMatch(/^\d+$/);
-    expect(headers["X-KH-Signature"]).toMatch(/^[0-9a-f]{64}$/);
-
-    const { authenticateInternalService } = await import(
-      "@/lib/internal-service-auth"
-    );
-    const result = await authenticateInternalService(
-      new Request(SCAN_URL, { method: "GET", headers })
-    );
-
-    expect(result).toMatchObject({
-      authenticated: true,
-      caller: "scheduler",
-      scheme: "hmac",
+      stubDir = mkdtempSync(join(tmpdir(), "reaper-curl-stub-"));
+      const stub = [
+        "#!/bin/sh",
+        "while [ $# -gt 0 ]; do",
+        '  case "$1" in',
+        "    -H) printf '%s\\n' \"$2\"; shift 2 ;;",
+        "    *) shift ;;",
+        "  esac",
+        "done",
+        'printf \'{"http_code":200,"time_total":0.01}\\n\'',
+        "",
+      ].join("\n");
+      writeFileSync(join(stubDir, "curl"), stub, { mode: 0o755 });
     });
-    expect(mockListActive).toHaveBeenCalledWith(SECRET_LOOKUP_KEY);
-  });
 
-  it("is rejected when the shell-produced signature is tampered", async () => {
-    const headers = runReaper(SCAN_URL);
-    // Flip the first hex nibble so the signature stays 64 hex chars (passes
-    // the length pre-check) but no longer verifies -- proving the positive
-    // case above is not trivially passing.
-    const sig = headers["X-KH-Signature"];
-    headers["X-KH-Signature"] = (sig[0] === "0" ? "1" : "0") + sig.slice(1);
+    afterAll(() => {
+      if (stubDir) {
+        rmSync(stubDir, { recursive: true, force: true });
+      }
+    });
 
-    const { authenticateInternalService } = await import(
-      "@/lib/internal-service-auth"
-    );
-    const result = await authenticateInternalService(
-      new Request(SCAN_URL, { method: "GET", headers })
-    );
+    it("produces headers the unmocked verifier accepts as caller scheduler", async () => {
+      const headers = runReaper(SCAN_URL);
 
-    expect(result.authenticated).toBe(false);
-  });
-});
+      // Sanity: the producer emitted the three signed headers.
+      expect(headers["X-KH-Caller"]).toBe("scheduler");
+      expect(headers["X-KH-Timestamp"]).toMatch(TIMESTAMP_RE);
+      expect(headers["X-KH-Signature"]).toMatch(SIGNATURE_HEX_RE);
+
+      const { authenticateInternalService } = await import(
+        "@/lib/internal-service-auth"
+      );
+      const result = await authenticateInternalService(
+        new Request(SCAN_URL, { method: "GET", headers })
+      );
+
+      expect(result).toMatchObject({
+        authenticated: true,
+        caller: "scheduler",
+        scheme: "hmac",
+      });
+      expect(mockListActive).toHaveBeenCalledWith(SECRET_LOOKUP_KEY);
+    });
+
+    it("is rejected when the shell-produced signature is tampered", async () => {
+      const headers = runReaper(SCAN_URL);
+      // Flip the first hex nibble so the signature stays 64 hex chars (passes
+      // the length pre-check) but no longer verifies -- proving the positive
+      // case above is not trivially passing.
+      const sig = headers["X-KH-Signature"];
+      headers["X-KH-Signature"] = (sig[0] === "0" ? "1" : "0") + sig.slice(1);
+
+      const { authenticateInternalService } = await import(
+        "@/lib/internal-service-auth"
+      );
+      const result = await authenticateInternalService(
+        new Request(SCAN_URL, { method: "GET", headers })
+      );
+
+      expect(result.authenticated).toBe(false);
+    });
+  }
+);
