@@ -44,6 +44,7 @@ import {
   assertUrlIsPublic,
   isBlockedHost,
   isBlockedIp,
+  isShadowMode,
   SsrfBlockedError,
   type SsrfBlockReason,
   safeFetch,
@@ -255,6 +256,42 @@ describe("isBlockedHost", () => {
   });
 });
 
+describe("isShadowMode", () => {
+  const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
+
+  afterEach(() => {
+    if (originalEnforce === undefined) {
+      // biome-ignore lint/performance/noDelete: restore unset state
+      delete process.env.SAFE_FETCH_ENFORCE;
+    } else {
+      process.env.SAFE_FETCH_ENFORCE = originalEnforce;
+    }
+  });
+
+  it("is fail-closed (enforces) when SAFE_FETCH_ENFORCE is unset", () => {
+    // biome-ignore lint/performance/noDelete: simulate an env that forgot the flag
+    delete process.env.SAFE_FETCH_ENFORCE;
+    expect(isShadowMode()).toBe(false);
+  });
+
+  it("enforces when SAFE_FETCH_ENFORCE='true'", () => {
+    process.env.SAFE_FETCH_ENFORCE = "true";
+    expect(isShadowMode()).toBe(false);
+  });
+
+  it("enforces for any non-'false' value (e.g. '1', 'shadow')", () => {
+    process.env.SAFE_FETCH_ENFORCE = "1";
+    expect(isShadowMode()).toBe(false);
+    process.env.SAFE_FETCH_ENFORCE = "shadow";
+    expect(isShadowMode()).toBe(false);
+  });
+
+  it("only enters shadow mode on the explicit opt-in SAFE_FETCH_ENFORCE='false'", () => {
+    process.env.SAFE_FETCH_ENFORCE = "false";
+    expect(isShadowMode()).toBe(true);
+  });
+});
+
 describe("safeFetch (enforce mode)", () => {
   const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
 
@@ -375,8 +412,11 @@ describe("safeFetch (shadow mode)", () => {
   const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
 
   beforeEach(() => {
-    // biome-ignore lint/performance/noDelete: default shadow requires unset
-    delete process.env.SAFE_FETCH_ENFORCE;
+    // Shadow mode is now opt-in: it requires an explicit
+    // SAFE_FETCH_ENFORCE="false". Leaving the var unset would enforce
+    // (fail-closed) and throw SsrfBlockedError, which these tests do not
+    // expect.
+    process.env.SAFE_FETCH_ENFORCE = "false";
     incrementCounter.mockClear();
     captureException.mockClear();
   });
