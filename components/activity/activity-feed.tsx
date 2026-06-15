@@ -1,6 +1,7 @@
 "use client";
 
 import { Minus, Pencil, Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { relativeTime } from "@/components/settings/session-format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { groupByDate } from "@/lib/activity/time-groups";
@@ -17,8 +18,17 @@ import { Pager } from "./pager";
 
 type FeedParams = {
   resourceType?: string;
+  resourceTypes?: string[];
   resourceId?: string;
+  resourceIds?: string[];
+  projectIds?: string[];
+  tagIds?: string[];
+  workflowIds?: string[];
   action?: string;
+  actorUserId?: string;
+  actorUserIds?: string[];
+  from?: string;
+  to?: string;
   limit?: number;
 };
 
@@ -49,8 +59,12 @@ function metadataLine(event: SecurityAuditEvent): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function roleLabel(role?: string | null): string | null {
-  return role ? role.charAt(0).toUpperCase() + role.slice(1) : null;
+  return role ? capitalize(role) : null;
 }
 
 type DiffEntry = { label: string; from: string | null; to: string | null };
@@ -197,15 +211,19 @@ function ActivityRow({
         icon={Icon}
       />
       <div className="min-w-0 flex-1">
-        <p className="text-sm leading-snug">
-          <span className="font-medium">{actorLabel(actor)}</span>
-          {role && (
-            <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 align-middle font-medium text-[10px] text-muted-foreground uppercase">
-              {role}
-            </span>
-          )}{" "}
-          <span className="text-muted-foreground">{phrase}</span>
-        </p>
+        <div className="flex items-baseline justify-between gap-2 text-sm leading-snug">
+          <span className="min-w-0 truncate">
+            <span className="font-medium">{actorLabel(actor)}</span>
+            {role && (
+              <span className="ml-1 text-muted-foreground text-xs">
+                · {role}
+              </span>
+            )}
+          </span>
+          <span className="shrink-0 whitespace-nowrap text-muted-foreground">
+            {capitalize(phrase)}
+          </span>
+        </div>
         <DiffLines diff={event.diff} />
         {email && (
           <p className="truncate text-muted-foreground text-xs">{email}</p>
@@ -273,13 +291,29 @@ function SkeletonRow(): React.ReactElement {
 export function ActivityFeed({
   params,
   fallback,
+  embedded = false,
 }: {
   params?: FeedParams;
   fallback?: SecurityAuditEvent[];
+  /**
+   * When the feed lives inside an already-scrolling container (e.g. the
+   * Settings overlay), set this to skip the feed's own fixed-height scroll box
+   * and avoid a nested second scrollbar; the parent owns scrolling.
+   */
+  embedded?: boolean;
 }): React.ReactElement {
   const resourceType = params?.resourceType;
+  const resourceTypes = params?.resourceTypes;
   const resourceId = params?.resourceId;
+  const resourceIds = params?.resourceIds;
+  const projectIds = params?.projectIds;
+  const tagIds = params?.tagIds;
+  const workflowIds = params?.workflowIds;
   const action = params?.action;
+  const actorUserId = params?.actorUserId;
+  const actorUserIds = params?.actorUserIds;
+  const from = params?.from;
+  const to = params?.to;
   const limit = params?.limit;
 
   const {
@@ -290,24 +324,69 @@ export function ActivityFeed({
     error,
   } = usePaginatedResource<SecurityAuditEvent>(
     (page) =>
-      api.security.getAudit({ resourceType, resourceId, action, page, limit }),
-    JSON.stringify({ resourceType, resourceId, action, limit })
+      api.security.getAudit({
+        resourceType,
+        resourceTypes,
+        resourceId,
+        resourceIds,
+        projectIds,
+        tagIds,
+        workflowIds,
+        action,
+        actorUserId,
+        actorUserIds,
+        from,
+        to,
+        page,
+        limit,
+      }),
+    JSON.stringify({
+      resourceType,
+      resourceTypes,
+      resourceId,
+      resourceIds,
+      projectIds,
+      tagIds,
+      workflowIds,
+      action,
+      actorUserId,
+      actorUserIds,
+      from,
+      to,
+      limit,
+    })
   );
+
+  // Capture the settled content height so the skeleton can hold it on the next
+  // load. Without this the embedded feed (no fixed box) collapses to the
+  // skeleton's natural height and back, jumping the modal on every filter/page
+  // change. Per-resource overlays use the fixed box below instead.
+  const listRef = useRef<HTMLDivElement>(null);
+  const [reservedHeight, setReservedHeight] = useState<number>();
+  useEffect(() => {
+    if (embedded && !loading && listRef.current) {
+      setReservedHeight(listRef.current.offsetHeight);
+    }
+  }, [embedded, loading]);
 
   // Fixed-height scroll region (when a page size is set) so the modal never
   // resizes: the skeleton, every page, and the empty/error states all occupy
   // the same box, and content taller than the box scrolls inside it instead of
   // growing the modal. The Pager lives outside this box so it stays put.
-  const scrollClass = `thin-scrollbar overflow-y-auto ${limit ? "h-[32rem]" : ""}`;
+  const scrollClass = embedded
+    ? ""
+    : `thin-scrollbar overflow-y-auto ${limit ? "h-[32rem]" : ""}`;
 
-  // Skeletons show on every load -- first open AND page change. Because they
-  // render inside the same fixed-height box as the rows, the modal height never
-  // changes; only the box content swaps. The Pager stays mounted during a page
-  // change so navigation keeps working.
+  // Skeletons show on every load in both modes. In the fixed box the swap is
+  // absorbed; when embedded, the skeleton holds the last content height
+  // (reservedHeight) so the modal doesn't jump.
   if (loading) {
     return (
       <div>
-        <div className={scrollClass}>
+        <div
+          className={scrollClass}
+          style={embedded ? { minHeight: reservedHeight } : undefined}
+        >
           <ul className="divide-y divide-border/60">
             {SKELETON_KEYS.slice(
               0,
@@ -352,10 +431,10 @@ export function ActivityFeed({
 
   return (
     <div>
-      <div className={`${scrollClass} space-y-4`}>
+      <div className={`${scrollClass} space-y-4`} ref={listRef}>
         {groups.map((group) => (
           <div key={group.label}>
-            <p className="sticky top-0 bg-background py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+            <p className="sticky top-0 z-10 bg-background py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
               {group.label}
             </p>
             <ul className="divide-y divide-border/60">

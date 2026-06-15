@@ -555,8 +555,18 @@ export const userApi = {
 
 // Workflow API
 export const workflowApi = {
-  // Get all workflows
-  getAll: () => apiCall<SavedWorkflow[]>("/api/workflows"),
+  // Get all workflows, optionally scoped server-side to a project or tag.
+  getAll: (filter?: { projectId?: string; tagId?: string }) => {
+    const qs = new URLSearchParams();
+    if (filter?.projectId) {
+      qs.set("projectId", filter.projectId);
+    }
+    if (filter?.tagId) {
+      qs.set("tagId", filter.tagId);
+    }
+    const s = qs.toString();
+    return apiCall<SavedWorkflow[]>(`/api/workflows${s ? `?${s}` : ""}`);
+  },
   // Get public workflows (non-featured)
   getPublic: () => apiCall<SavedWorkflow[]>("/api/workflows/public"),
   // Get featured workflows
@@ -942,20 +952,58 @@ export const securityApi = {
   // single resource's history (e.g. one API key's create/revoke events).
   getAudit: (params?: {
     resourceType?: string;
+    resourceTypes?: string[];
     resourceId?: string;
+    resourceIds?: string[];
+    // Relational dimensions. The server expands a project/tag into the audit
+    // events of the workflows under it; the client never assembles that set.
+    projectIds?: string[];
+    tagIds?: string[];
+    workflowIds?: string[];
     action?: string;
+    actorUserId?: string;
+    actorUserIds?: string[];
+    from?: string;
+    to?: string;
     page?: number;
     limit?: number;
   }) => {
     const qs = new URLSearchParams();
-    if (params?.resourceType) {
-      qs.set("resourceType", params.resourceType);
+    // Single (per-resource views) and multi (filter builder) collapse to a
+    // repeated query param the API reads with getAll().
+    const resourceTypes =
+      params?.resourceTypes ??
+      (params?.resourceType ? [params.resourceType] : []);
+    for (const t of resourceTypes) {
+      qs.append("resourceType", t);
     }
-    if (params?.resourceId) {
-      qs.set("resourceId", params.resourceId);
+    const resourceIds =
+      params?.resourceIds ?? (params?.resourceId ? [params.resourceId] : []);
+    for (const id of resourceIds) {
+      qs.append("resourceId", id);
+    }
+    for (const id of params?.projectIds ?? []) {
+      qs.append("projectId", id);
+    }
+    for (const id of params?.tagIds ?? []) {
+      qs.append("tagId", id);
+    }
+    for (const id of params?.workflowIds ?? []) {
+      qs.append("workflowId", id);
+    }
+    const actorUserIds =
+      params?.actorUserIds ?? (params?.actorUserId ? [params.actorUserId] : []);
+    for (const id of actorUserIds) {
+      qs.append("actorUserId", id);
     }
     if (params?.action) {
       qs.set("action", params.action);
+    }
+    if (params?.from) {
+      qs.set("from", params.from);
+    }
+    if (params?.to) {
+      qs.set("to", params.to);
     }
     if (params?.page !== undefined) {
       qs.set("page", String(params.page));

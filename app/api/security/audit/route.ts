@@ -1,8 +1,8 @@
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { member, securityAuditLog, users } from "@/lib/db/schema";
+import { member, securityAuditLog, users, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
@@ -55,28 +55,89 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const req = parsePageRequest(url);
     const action = url.searchParams.get("action");
-    const resourceType = url.searchParams.get("resourceType");
-    const resourceId = url.searchParams.get("resourceId");
-    const actorUserId = url.searchParams.get("actorUserId");
+    const resourceTypes = url.searchParams.getAll("resourceType");
+    const resourceIds = url.searchParams.getAll("resourceId");
+    const projectIds = url.searchParams.getAll("projectId");
+    const tagIds = url.searchParams.getAll("tagId");
+    const workflowIds = url.searchParams.getAll("workflowId");
+    const actorUserIds = url.searchParams.getAll("actorUserId");
     const correlationId = url.searchParams.get("correlationId");
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
 
     const conditions = [eq(securityAuditLog.organizationId, organizationId)];
     if (action) {
       conditions.push(eq(securityAuditLog.action, action));
     }
-    if (resourceType) {
-      conditions.push(eq(securityAuditLog.resourceType, resourceType));
+    if (resourceTypes.length === 1) {
+      conditions.push(eq(securityAuditLog.resourceType, resourceTypes[0]));
+    } else if (resourceTypes.length > 1) {
+      conditions.push(inArray(securityAuditLog.resourceType, resourceTypes));
     }
-    if (resourceId) {
-      conditions.push(eq(securityAuditLog.resourceId, resourceId));
+
+    // Resolve the relational resource filter entirely in the database. A
+    // project or tag selection means "every event for that container AND for
+    // the workflows currently under it"; the membership lookup is a single
+    // org-scoped query, so the client never assembles the id set. Explicit
+    // resourceId/workflowId selections are unioned in. When any resource
+    // dimension is requested but resolves to no ids, the empty inArray yields
+    // no rows -- the intended "nothing matches" result.
+    const usesResourceFilter =
+      resourceIds.length > 0 ||
+      projectIds.length > 0 ||
+      tagIds.length > 0 ||
+      workflowIds.length > 0;
+    if (usesResourceFilter) {
+      const resourceIdSet = new Set<string>([
+        ...resourceIds,
+        ...workflowIds,
+        ...projectIds,
+        ...tagIds,
+      ]);
+      if (projectIds.length > 0 || tagIds.length > 0) {
+        const membershipFilters = [
+          ...(projectIds.length > 0
+            ? [inArray(workflows.projectId, projectIds)]
+            : []),
+          ...(tagIds.length > 0 ? [inArray(workflows.tagId, tagIds)] : []),
+        ];
+        const owned = await db
+          .select({ id: workflows.id })
+          .from(workflows)
+          .where(
+            and(
+              eq(workflows.organizationId, organizationId),
+              or(...membershipFilters)
+            )
+          );
+        for (const w of owned) {
+          resourceIdSet.add(w.id);
+        }
+      }
+      const ids = [...resourceIdSet];
+      conditions.push(
+        ids.length === 1
+          ? eq(securityAuditLog.resourceId, ids[0])
+          : inArray(securityAuditLog.resourceId, ids)
+      );
     }
-    if (actorUserId) {
-      conditions.push(eq(securityAuditLog.actorUserId, actorUserId));
+    if (actorUserIds.length === 1) {
+      conditions.push(eq(securityAuditLog.actorUserId, actorUserIds[0]));
+    } else if (actorUserIds.length > 1) {
+      conditions.push(inArray(securityAuditLog.actorUserId, actorUserIds));
     }
     // Read one cascade back as a unit. ANDed with the org scope above, so a
     // correlation id can only ever surface the caller's own org's events.
     if (correlationId) {
       conditions.push(eq(securityAuditLog.correlationId, correlationId));
+    }
+    const fromDate = from ? new Date(from) : null;
+    if (fromDate && !Number.isNaN(fromDate.getTime())) {
+      conditions.push(gte(securityAuditLog.createdAt, fromDate));
+    }
+    const toDate = to ? new Date(to) : null;
+    if (toDate && !Number.isNaN(toDate.getTime())) {
+      conditions.push(lte(securityAuditLog.createdAt, toDate));
     }
     const where = and(...conditions);
 

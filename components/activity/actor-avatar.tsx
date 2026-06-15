@@ -76,3 +76,43 @@ export function ActorAvatarBadge({
     </div>
   );
 }
+
+function roleBadgeLabel(role?: string | null): string | null {
+  return role ? role.charAt(0).toUpperCase() + role.slice(1) : null;
+}
+
+/**
+ * Compact person identity: avatar + name + org-role badge + email. Reused
+ * wherever a member needs to be shown unambiguously (e.g. an actor filter), so
+ * "joel" vs "joelorzet" is disambiguated by role + email rather than name alone.
+ */
+export function ActorIdentity({
+  actor,
+}: {
+  actor: Actor | null;
+}): React.ReactElement {
+  const name = actorLabel(actor);
+  const role = roleBadgeLabel(actor?.role);
+  // Only show the email when it isn't already the displayed name.
+  const email = actor?.name ? actor.email : null;
+  // Avatar on the left; name + role on the first line, email on the second --
+  // mirrors the activity-row identity so a person reads unambiguously.
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <ActorAvatar actor={actor} className="size-6 shrink-0" />
+      <div className="flex min-w-0 flex-col">
+        <span className="truncate text-sm">
+          <span className="font-medium">{name}</span>
+          {role && (
+            <span className="text-muted-foreground text-xs"> · {role}</span>
+          )}
+        </span>
+        {email && (
+          <span className="truncate text-muted-foreground text-xs">
+            {email}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}

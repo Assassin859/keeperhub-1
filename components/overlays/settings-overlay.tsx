@@ -1,17 +1,32 @@
 "use client";
 
+import { Download } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ActivityFeed } from "@/components/activity/activity-feed";
+import { AuditFilterBar } from "@/components/activity/audit-filter-bar";
+import { ExportAuditOverlay } from "@/components/overlays/export-audit-overlay";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { ActiveSessionsSection } from "@/components/settings/active-sessions-section";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
 import { TwoFactorSection } from "@/components/settings/two-factor-section";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
+import {
+  PAGE_SIZE_OPTIONS,
+  useAuditActivity,
+} from "@/lib/hooks/use-audit-activity";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { Overlay } from "./overlay";
@@ -24,7 +39,7 @@ type SettingsOverlayProps = {
 export function SettingsOverlay({
   overlayId,
 }: SettingsOverlayProps): React.ReactElement {
-  const { closeAll } = useOverlay();
+  const { closeAll, push } = useOverlay();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -35,7 +50,9 @@ export function SettingsOverlay({
   const dual = useDualFactorState();
 
   const session = useSession();
-  const { isAdmin } = useActiveMember();
+  const { isAdmin, isOwner } = useActiveMember();
+  const activity = useAuditActivity();
+
   const sessionUser = session.data?.user as
     | { twoFactorEnabled?: boolean | null }
     | undefined;
@@ -178,14 +195,53 @@ export function SettingsOverlay({
 
           {isAdmin && (
             <TabsContent value="activity">
-              <div className="space-y-1">
-                <h3 className="font-medium text-sm">Organization activity</h3>
-                <p className="text-muted-foreground text-xs">
-                  Recent security-sensitive actions across your organization.
-                </p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h3 className="font-medium text-sm">Organization activity</h3>
+                  <p className="text-muted-foreground text-xs">
+                    Recent security-sensitive actions across your organization.
+                  </p>
+                </div>
+                <Button
+                  className="shrink-0"
+                  disabled={!isOwner}
+                  onClick={() =>
+                    push(ExportAuditOverlay, {
+                      resourceTypes: activity.types,
+                    })
+                  }
+                  size="sm"
+                  title={
+                    isOwner ? undefined : "Only organization owners can export"
+                  }
+                  variant="outline"
+                >
+                  <Download className="mr-2 size-4" />
+                  Export CSV
+                </Button>
               </div>
-              <div className="mt-3 max-h-[60vh]">
-                <ActivityFeed params={{ limit: 50 }} />
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <AuditFilterBar activity={activity} />
+                <Select
+                  onValueChange={(v) => activity.setPageSize(Number(v))}
+                  value={String(activity.pageSize)}
+                >
+                  <SelectTrigger className="h-8 w-[110px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <SelectItem key={size} value={String(size)}>
+                        {size} / page
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="mt-3">
+                <ActivityFeed embedded params={activity.feedParams} />
               </div>
             </TabsContent>
           )}
