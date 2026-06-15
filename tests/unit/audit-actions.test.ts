@@ -54,6 +54,24 @@ describe("describeAuditAction", () => {
     );
   });
 
+  it("maps session, workflow-toggle, wallet, and Safe actions", () => {
+    expect(describeAuditAction("session.created").kind).toBe("add");
+    expect(describeAuditAction("subscription.checkout_started").kind).toBe(
+      "change"
+    );
+    expect(describeAuditAction("workflow.deactivated").kind).toBe("remove");
+    expect(describeAuditAction("workflow.reactivated").kind).toBe("add");
+    expect(describeAuditAction("agentic_wallet.signed").kind).toBe("change");
+    expect(describeAuditAction("agentic_wallet.linked").kind).toBe("add");
+    expect(describeAuditAction("wallet.funds_withdrawn").kind).toBe("change");
+    expect(describeAuditAction("safe_role.installed").kind).toBe("add");
+    expect(describeAuditAction("safe_role.updated").kind).toBe("change");
+    expect(describeAuditAction("safe_role_allowance.created").kind).toBe("add");
+    expect(describeAuditAction("safe_role_allowance.revoked").kind).toBe(
+      "remove"
+    );
+  });
+
   it("humanizes an unknown action as a change", () => {
     expect(describeAuditAction("widget.frobnicated")).toEqual({
       phrase: "widget frobnicated",

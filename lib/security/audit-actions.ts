@@ -53,6 +53,33 @@ const ACTION_MAP: Record<string, AuditActionDescription> = {
     phrase: "requested cancellation",
     kind: "change",
   },
+  "subscription.checkout_started": {
+    phrase: "started checkout",
+    kind: "change",
+  },
+  "session.created": { phrase: "signed in", kind: "add" },
+  "workflow.deactivated": { phrase: "deactivated a workflow", kind: "remove" },
+  "workflow.reactivated": { phrase: "reactivated a workflow", kind: "add" },
+  "agentic_wallet.signed": {
+    phrase: "signed a wallet operation",
+    kind: "change",
+  },
+  "agentic_wallet.linked": { phrase: "linked a wallet", kind: "add" },
+  "wallet.funds_withdrawn": { phrase: "withdrew funds", kind: "change" },
+  "safe_role.installed": { phrase: "installed Safe roles", kind: "add" },
+  "safe_role.updated": { phrase: "updated Safe roles", kind: "change" },
+  "safe_role_allowance.created": {
+    phrase: "set a spending allowance",
+    kind: "add",
+  },
+  "safe_role_allowance.updated": {
+    phrase: "updated a spending allowance",
+    kind: "change",
+  },
+  "safe_role_allowance.revoked": {
+    phrase: "revoked a spending allowance",
+    kind: "remove",
+  },
   "org_wallet.created": { phrase: "created an org wallet", kind: "add" },
   "agentic_wallet.hmac_rotated": {
     phrase: "rotated a wallet signing key",
