@@ -79,6 +79,18 @@ describe("httpRequest SSRF guard", () => {
     expect(safeFetch).not.toHaveBeenCalled();
   });
 
+  it("hard-fails a malformed URL even when failOnError is false", async () => {
+    // A malformed endpoint is a config error, not a transient miss: it must
+    // not soft-fail into a `{ success: true }` result an aggregator swallows.
+    const result = await httpRequest({
+      endpoint: "http://",
+      failOnError: false,
+    });
+
+    expect(result.success).toBe(false);
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
   it("allows a public IP-literal target and routes it through safeFetch", async () => {
     // 93.184.216.34 (example.com) is a public address; the IP-literal path in
     // assertUrlIsPublic resolves synchronously without DNS, so this stays

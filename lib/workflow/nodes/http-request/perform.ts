@@ -223,6 +223,16 @@ export async function httpRequest(
         error: `HTTP request failed: URL is not allowed: ${error.message}`,
       };
     }
+    // A malformed endpoint makes assertUrlIsPublic's URL parse throw a
+    // TypeError. That is a configuration error, not a transient source miss,
+    // so hard-fail it regardless of failOnError rather than soft-failing into
+    // a null-data success an aggregator workflow would silently swallow.
+    if (error instanceof TypeError) {
+      return {
+        success: false,
+        error: `HTTP request failed: ${getErrorMessage(error)}`,
+      };
+    }
     // A timeout abort surfaces here too -- AbortSignal.timeout() rejects the
     // fetch, which getErrorMessage renders as a timeout error.
     const message = `HTTP request failed: ${getErrorMessage(error)}`;
