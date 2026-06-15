@@ -318,6 +318,9 @@ export type OrganizationAuthContext =
       organizationId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      // OAuth token scope (mcp:read|write|admin). Undefined for api-key/session
+      // callers, which scopeSatisfies() treats as full access.
+      scope?: string;
     }
   | { error: string; status: number };
 
@@ -335,6 +338,7 @@ export async function resolveOrganizationId(
       organizationId: oauthAuth.organizationId,
       authMethod: "oauth",
       apiKeyId: null,
+      scope: oauthAuth.scope,
     };
   }
 
@@ -391,6 +395,9 @@ export async function resolveCreatorContext(request: Request): Promise<
       userId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      // OAuth token scope (mcp:read|write|admin). Undefined for api-key/session
+      // callers, which scopeSatisfies() treats as full access.
+      scope?: string;
     }
   | { error: string; status: number }
 > {
@@ -400,7 +407,8 @@ export async function resolveCreatorContext(request: Request): Promise<
       oauthAuth.organizationId,
       oauthAuth.userId,
       "oauth",
-      null
+      null,
+      oauthAuth.scope
     );
   }
 
@@ -448,13 +456,15 @@ function validateCreatorFields(
   organizationId: string | null | undefined,
   userId: string | null | undefined,
   authMethod: AuthMethod,
-  apiKeyId: string | null
+  apiKeyId: string | null,
+  scope?: string
 ):
   | {
       organizationId: string;
       userId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      scope?: string;
     }
   | { error: string; status: number } {
   if (!organizationId) {
@@ -466,5 +476,5 @@ function validateCreatorFields(
       status: 400,
     };
   }
-  return { organizationId, userId, authMethod, apiKeyId };
+  return { organizationId, userId, authMethod, apiKeyId, scope };
 }

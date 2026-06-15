@@ -5,7 +5,9 @@ import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
 import { addressBookEntry } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 
 // Helper: Get existing entry and validate it belongs to organization
 async function getExistingEntry(entryId: string, activeOrgId: string) {
@@ -87,6 +89,10 @@ export async function PATCH(
         { status: authCtx.status }
       );
     }
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
     const { organizationId: activeOrgId } = authCtx;
 
     // Get existing entry
@@ -162,6 +168,10 @@ export async function DELETE(
         { error: authCtx.error },
         { status: authCtx.status }
       );
+    }
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
     const { organizationId: activeOrgId } = authCtx;
 
