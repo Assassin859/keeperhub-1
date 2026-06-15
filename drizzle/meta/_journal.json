@@ -790,42 +790,7 @@
       "idx": 112,
       "version": "7",
       "when": 1781274021443,
-      "tag": "0112_keep_671_security_audit_log",
-      "breakpoints": true
-    },
-    {
-      "idx": 113,
-      "version": "7",
-      "when": 1781274021444,
-      "tag": "0113_keep_671_execution_credential_and_version",
-      "breakpoints": true
-    },
-    {
-      "idx": 114,
-      "version": "7",
-      "when": 1781274021445,
-      "tag": "0114_keep_671_workflow_history",
-      "breakpoints": true
-    },
-    {
-      "idx": 115,
-      "version": "7",
-      "when": 1781274021446,
-      "tag": "0115_keep_695_audit_cascade",
-      "breakpoints": true
-    },
-    {
-      "idx": 116,
-      "version": "7",
-      "when": 1781274021447,
-      "tag": "0116_keep_671_audit_append_only",
-      "breakpoints": true
-    },
-    {
-      "idx": 117,
-      "version": "7",
-      "when": 1781274021448,
-      "tag": "0117_keep_671_backfill_created_events",
+      "tag": "0112_keep_671_audit_system",
       "breakpoints": true
     }
   ]
