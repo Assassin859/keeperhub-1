@@ -237,9 +237,9 @@ describe("security-behavioral-scan self-failure signal", () => {
     const res = await GET(authedRequest());
     expect(res.status).toBe(500);
 
-    // A broken scan must be observable: reaper.sh reports a 500 as a
-    // "successful" job (curl -sS, no -f), so without this signal the
-    // detection layer could go dark behind a green CronJob.
+    // A broken scan must be observable as its own event: reaper.sh fails the
+    // CronJob on the 500, but this specific signal says WHY detection went
+    // dark instead of leaving only a generic job-failure alert.
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const logged = JSON.parse(errorSpy.mock.calls[0][0] as string);
     expect(logged).toMatchObject({

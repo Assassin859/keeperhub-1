@@ -153,12 +153,13 @@ export async function GET(request: Request): Promise<Response> {
     const body = await scanNewAccountFirstWorkflow(startedAt);
     return Response.json(body);
   } catch (error) {
-    // The scan itself failed (e.g. a DB error). Swallowing silently would
-    // drop detection to zero with no signal -- and reaper.sh reports a
-    // non-2xx as a "successful" job (curl -sS, no -f), so a broken scan
-    // would otherwise look healthy. Emit a self-failure signal (self-guarded,
-    // dual transport) so the detection layer going dark is itself observable,
-    // then surface a 500. Mirrors content-scanner's security.content_scanner_error.
+    // The scan itself failed (e.g. a DB error). reaper.sh now fails the
+    // CronJob on a non-2xx (it checks the status), so the 500 below already
+    // turns the job red -- but a generic job failure says nothing about WHY
+    // detection went dark. Emit a specific, queryable self-failure signal
+    // (self-guarded, dual transport) so the detection layer going dark is
+    // observable as its own event rather than a bare job-failure alert, then
+    // surface the 500. Mirrors content-scanner's security.content_scanner_error.
     const message = error instanceof Error ? error.message : String(error);
     try {
       captureMessage("security.behavioral.scan_error", {
