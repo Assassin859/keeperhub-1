@@ -1022,6 +1022,104 @@ KeeperHub - Blockchain Workflow Automation
   return success;
 }
 
+type SecurityAlertData = {
+  email: string;
+  // Human-readable phrase completing "{actor} ___" (from describeAuditAction),
+  // e.g. "exported a wallet private key".
+  actionPhrase: string;
+  actorLabel: string;
+  when: Date;
+  resourceType?: string | null;
+};
+
+/**
+ * Notify an organization owner out-of-band when a high-risk action (wallet
+ * private-key export, withdrawal, Safe role/allowance change, HMAC rotation,
+ * org deactivation, ...) is recorded. The real-time signal so an owner learns
+ * promptly rather than only on a later trail review. Carries the action phrase
+ * and actor only -- never the diff, a secret, or a payload.
+ */
+export async function sendSecurityAlertEmail(
+  data: SecurityAlertData
+): Promise<boolean> {
+  const { email, actionPhrase, actorLabel, when, resourceType } = data;
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+  const whenFormatted = when.toUTCString();
+  const summary = `${actorLabel} ${actionPhrase}`;
+  const subject = "Security alert: a high-risk action on your organization";
+
+  const text = `
+Hi,
+
+A high-risk security action was just performed on your KeeperHub organization.
+
+What: ${summary}
+${resourceType ? `Resource: ${resourceType}\n` : ""}When: ${whenFormatted}
+
+If this was expected, no action is needed. If it was not, revoke the actor's access, rotate affected credentials, and contact support immediately.
+
+---
+KeeperHub - Blockchain Workflow Automation
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">High-risk security action</h2>
+
+    <p>A high-risk security action was just performed on your KeeperHub organization.</p>
+
+    <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; font-size: 14px;">
+      <div><strong>What:</strong> ${summary}</div>
+      ${resourceType ? `<div><strong>Resource:</strong> ${resourceType}</div>` : ""}
+      <div><strong>When:</strong> ${whenFormatted}</div>
+    </div>
+
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 20px 0;">
+      <p style="margin: 0; color: #991b1b;">
+        <strong>If this was not expected</strong>, revoke the actor's access, rotate affected credentials, and contact support immediately.
+      </p>
+    </div>
+
+    <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;">
+
+    <p style="color: #999; font-size: 12px; margin-bottom: 0;">
+      You're receiving this as an owner of the organization. These security notifications cannot be turned off.
+    </p>
+  </div>
+
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  const success = await sendEmail({ to: email, subject, text, html });
+
+  if (!(success || isTestEnv)) {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Email] Failed to send security alert to ${email}`,
+      new Error("Failed to send security alert notification"),
+      { service: "sendgrid" }
+    );
+  }
+
+  return success;
+}
+
 type AccountDeactivatedData = {
   email: string;
   // The user's display name (the single `name` column). May be null/empty for

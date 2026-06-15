@@ -5,6 +5,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { alertHighRiskAudit } from "@/lib/security/audit-alerts";
+import { notifyOwnersOfHighRiskAction } from "@/lib/security/audit-owner-alert";
 import {
   getRequestCountry,
   getRequestSourceIp,
@@ -193,6 +194,16 @@ export async function recordAuditEvent(
         organizationId: args.actor.organizationId,
         resourceType: args.resourceType ?? null,
         resourceId: args.resourceId ?? null,
+      });
+      // Out-of-band: email the org's owners for high-risk actions so they
+      // learn promptly, not only on a later trail review. Fire-and-forget.
+      notifyOwnersOfHighRiskAction({
+        action: args.action,
+        organizationId: args.actor.organizationId,
+        actorUserId: args.actor.userId,
+        actorLabel: args.actor.actorLabel ?? null,
+        resourceType: args.resourceType ?? null,
+        when: new Date(),
       });
     }
   } catch (error) {
