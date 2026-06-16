@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ExecutionDigestSection } from "@/components/organization/execution-digest-section";
@@ -487,6 +487,10 @@ type ManageOrgsModalProps = {
   defaultShowCreateForm?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  // When set, this instance consumes the `?digestSettings=<orgId>` deep link
+  // from digest emails: it opens the modal on the Notifications tab for that
+  // org. Enable on exactly one always-mounted instance to avoid double-opens.
+  consumeDeepLink?: boolean;
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Complex modal with multiple states - refactoring would split related logic
@@ -495,12 +499,14 @@ export function ManageOrgsModal({
   defaultShowCreateForm = false,
   open: externalOpen,
   onOpenChange: externalOnOpenChange,
+  consumeDeepLink = false,
 }: ManageOrgsModalProps = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
 
   // Use external state if provided, otherwise use internal state
   const open = externalOpen === undefined ? internalOpen : externalOpen;
   const setOpen = externalOnOpenChange || setInternalOpen;
+  const [activeTab, setActiveTab] = useState("organizations");
   const [showCreateForm, setShowCreateForm] = useState(defaultShowCreateForm);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
@@ -534,7 +540,56 @@ export function ManageOrgsModal({
     role: activeOrgRole,
   } = useActiveMember();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = authClient.useSession();
+
+  // Arrive from a digest email's "manage emails" link
+  // (`?digestSettings=<orgId>`): switch to that org so the whole context (org
+  // dropdown, role, plan) matches, then open the modal on the Notifications tab
+  // once the switch settles so it's correct on first paint. Runs once; the param
+  // is stripped via history so it can't re-trigger.
+  const deepLinkConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!consumeDeepLink) {
+      return;
+    }
+    const deepLinkOrgId = searchParams.get("digestSettings");
+    if (!deepLinkOrgId) {
+      deepLinkConsumedRef.current = false;
+      return;
+    }
+    if (deepLinkConsumedRef.current) {
+      return;
+    }
+    deepLinkConsumedRef.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("digestSettings");
+    window.history.replaceState(null, "", url.toString());
+    setActiveTab("notifications");
+    if (organization?.id === deepLinkOrgId) {
+      setOpen(true);
+      return;
+    }
+    switchOrganization(deepLinkOrgId).finally(() => setOpen(true));
+  }, [
+    consumeDeepLink,
+    searchParams,
+    organization?.id,
+    switchOrganization,
+    setOpen,
+  ]);
+
+  // Reset to the default tab when the modal closes so reopening it manually
+  // doesn't land on the deep-linked Notifications tab.
+  const handleDialogOpenChange = useCallback(
+    (next: boolean): void => {
+      setOpen(next);
+      if (!next) {
+        setActiveTab("organizations");
+      }
+    },
+    [setOpen]
+  );
 
   // Get the managed organization object (for detail view)
   const managedOrg = managedOrgId
@@ -1237,7 +1292,7 @@ export function ManageOrgsModal({
 
   return (
     <>
-      <Dialog onOpenChange={setOpen} open={open}>
+      <Dialog onOpenChange={handleDialogOpenChange} open={open}>
         {/* Only show trigger when not controlled externally */}
         {externalOpen === undefined && (
           <DialogTrigger asChild>
@@ -1260,7 +1315,11 @@ export function ManageOrgsModal({
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs className="w-full" defaultValue="organizations">
+          <Tabs
+            className="w-full"
+            onValueChange={setActiveTab}
+            value={activeTab}
+          >
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="organizations">Organizations</TabsTrigger>
               <TabsTrigger value="invitations">
@@ -1632,10 +1691,19 @@ export function ManageOrgsModal({
 
             <TabsContent className="space-y-4" value="notifications">
               {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
-                <ExecutionDigestSection
-                  canManageBilling={isActiveOrgOwner}
-                  organizationId={organization.id}
-                />
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    Settings for{" "}
+                    <span className="font-medium text-foreground">
+                      {organization.name}
+                    </span>
+                  </p>
+                  <ExecutionDigestSection
+                    canManageBilling={isActiveOrgOwner}
+                    key={organization.id}
+                    organizationId={organization.id}
+                  />
+                </>
               ) : (
                 <div className="py-8 text-center text-muted-foreground">
                   Only organization owners and admins can manage notifications.

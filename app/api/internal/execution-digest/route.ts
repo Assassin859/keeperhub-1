@@ -113,6 +113,7 @@ async function processOrg(
       await sendWorkflowExecutionDigestEmail({
         to,
         orgName: row.orgName,
+        organizationId: row.organizationId,
         cadence,
         since,
         until,

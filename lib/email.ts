@@ -588,6 +588,7 @@ KeeperHub - Blockchain Workflow Automation
 type ExecutionDigestEmailData = {
   to: string;
   orgName: string;
+  organizationId: string;
   cadence: "daily" | "weekly" | "monthly";
   // Window the digest summarizes, [since, until).
   since: Date;
@@ -709,6 +710,7 @@ export async function sendWorkflowExecutionDigestEmail(
   const {
     to,
     orgName,
+    organizationId,
     cadence,
     since,
     until,
@@ -734,6 +736,12 @@ export async function sendWorkflowExecutionDigestEmail(
 
   const workflowUrl = (id: string): string =>
     `${appUrl}/workflows/${encodeURIComponent(id)}`;
+
+  // Deep-links into the org's Notifications settings so a recipient can adjust
+  // or turn off this digest. Carries the org id so the app opens the right org.
+  const manageUrl = `${appUrl}/workflows?digestSettings=${encodeURIComponent(
+    organizationId
+  )}`;
 
   const failingText = topFailing.length
     ? topFailing
@@ -764,7 +772,8 @@ export async function sendWorkflowExecutionDigestEmail(
   );
 
   const text = `
-${orgName} - ${summaryLabel}
+Organization: ${orgName}
+${summaryLabel}
 ${periodRange}
 
 Total runs: ${stats.total}
@@ -781,6 +790,9 @@ Top failing workflows:
 ${failingText}
 
 View runs: ${appUrl}/analytics
+
+You're receiving this digest for ${orgName} because you're an owner or admin of that organization.
+Manage notifications: ${manageUrl}
 
 ---
 KeeperHub - Blockchain Workflow Automation
@@ -865,9 +877,13 @@ ${socialText}
     <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px; text-align: center;">
+    <div style="margin:0 0 14px;">
+      <div style="color:#999; font-size:11px; font-weight:600; letter-spacing:0.6px; text-transform:uppercase; margin-bottom:6px;">Organization</div>
+      <span style="display:inline-block; background:#f5f5f5; border:1px solid #e5e5e5; border-radius:999px; padding:6px 14px; color:#1a1a2e; font-weight:600; font-size:14px;">${escapeHtml(orgName)}</span>
+    </div>
     <h2 style="color: #1a1a2e; margin-top: 0;">${escapeHtml(orgName)} workflow digest</h2>
     <p style="color:#666; margin-bottom:10px;">${summaryLabel}</p>
-    <p style="color:#444; font-size:13px; margin:0 0 4px; line-height:1.8;">${formatUtcStamp(since)}<br><span style="color:#aaa;">to</span><br>${formatUtcStamp(until)}</p>
+    <p style="color:#444; font-size:13px; margin:0 0 4px;">${formatUtcStamp(since)} <span style="color:#aaa;">to</span> ${formatUtcStamp(until)}</p>
     <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:24px 0;">
       <tr>${statCard(stats.total, "Total runs")}${statCard(stats.distinctWorkflows, "Workflows run")}</tr>
     </table>
@@ -891,6 +907,8 @@ ${socialText}
       (s) =>
         `<td style="padding:0 8px;"><a href="${s.url}" target="_blank" rel="noopener"><img src="cid:${s.icon}" alt="${s.name}" width="20" height="20" style="display:block;" /></a></td>`
     ).join("")}</tr></table>
+    <p style="margin: 0 0 6px;">You're receiving this digest for <strong>${escapeHtml(orgName)}</strong> because you're an owner or admin of that organization.</p>
+    <p style="margin: 0 0 12px;"><a href="${manageUrl}" style="color:#666; text-decoration:underline;">Manage notifications</a></p>
     <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
   </div>
 </body>
