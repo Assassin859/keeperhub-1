@@ -37,10 +37,10 @@ type ProviderResult =
 
 export type TransactionListResult =
   | {
-      success: true;
-      transactions: NormalizedTransaction[];
-      usedBackup: boolean;
-    }
+    success: true;
+    transactions: NormalizedTransaction[];
+    usedBackup: boolean;
+  }
   | { success: false; error: string };
 
 /**
@@ -121,7 +121,11 @@ export async function fetchContractAbi(
       );
 
     case "blockscout":
-      return await fetchBlockscoutAbi(config.explorerApiUrl, contractAddress);
+      return await fetchBlockscoutAbi(
+        config.explorerApiUrl,
+        contractAddress,
+        apiKey
+      );
 
     case "solscan":
       return {
@@ -201,7 +205,8 @@ async function fetchTransactionsFromProvider(
         apiUrl,
         contractAddress,
         startBlock,
-        endBlock
+        endBlock,
+        apiKey
       );
       if (!result.success) {
         return result;
@@ -255,11 +260,11 @@ export async function fetchContractTransactions(
   const backup =
     config.backupExplorerApiType != null && config.backupExplorerApiUrl != null
       ? {
-          apiType: config.backupExplorerApiType,
-          apiUrl: config.backupExplorerApiUrl,
-          apiKey: config.backupExplorerApiKey ?? undefined,
-          apiKeyNeeded: config.backupExplorerApiKeyNeeded,
-        }
+        apiType: config.backupExplorerApiType,
+        apiUrl: config.backupExplorerApiUrl,
+        apiKey: config.backupExplorerApiKey ?? undefined,
+        apiKeyNeeded: config.backupExplorerApiKeyNeeded,
+      }
       : null;
 
   let lastPrimaryError: string | undefined;
