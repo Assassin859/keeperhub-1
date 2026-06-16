@@ -159,6 +159,34 @@ function isLegacyIgnoredField(actionType: string, key: string): boolean {
   return LEGACY_IGNORED_FIELDS[actionType]?.has(key) ?? false;
 }
 
+// Whether a config key is accepted for the given action. Mirrors the
+// UNKNOWN_FIELD check in validateWorkflowActionConfigs so the editor can prune
+// cross-action leftovers before save with the same allowlist the server uses.
+// Unknown action types return true; that case is reported separately.
+export function isKnownConfigKeyForAction(
+  actionType: string,
+  key: string
+): boolean {
+  if (RESERVED_CONFIG_KEYS.has(key)) {
+    return true;
+  }
+  const action = findActionById(actionType);
+  if (!action) {
+    return true;
+  }
+  const fieldKeys = new Set(
+    flattenConfigFields(action.configFields).map((field) => field.key)
+  );
+  if (fieldKeys.has(key)) {
+    return true;
+  }
+  const aliasMap = getLegacyAliasMap(actionType);
+  if (aliasMap[key] && fieldKeys.has(aliasMap[key])) {
+    return true;
+  }
+  return isLegacyIgnoredField(actionType, key);
+}
+
 function validateStringLike(value: unknown): boolean {
   return typeof value === "string" || typeof value === "number";
 }
