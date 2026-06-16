@@ -19,11 +19,12 @@
  *
  * Deployment: this endpoint is an HTTP GET handler. It must be invoked by an
  * external scheduler (Kubernetes CronJob, GitHub Actions scheduled workflow,
- * or equivalent) every 5 minutes. Configure the scheduler to send
- * `Authorization: Bearer $CRON_SECRET` in production; in dev/test the auth
- * check is bypassed so local testing via curl works.
+ * or equivalent) every 5 minutes. The scheduler must send
+ * `Authorization: Bearer $CRON_SECRET` in every environment; the endpoint
+ * fails closed (503) when CRON_SECRET is unset rather than running open.
  */
 import { and, eq, lt, or } from "drizzle-orm";
+import { authorizeCronRequest } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import {
   agenticWalletDailySpend,
@@ -45,12 +46,9 @@ type SweeperResponse = {
 };
 
 export async function GET(request: Request): Promise<Response> {
-  if (process.env.NODE_ENV === "production") {
-    const provided = request.headers.get("authorization");
-    const expected = `Bearer ${process.env.CRON_SECRET ?? ""}`;
-    if (!process.env.CRON_SECRET || provided !== expected) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  const authError = authorizeCronRequest(request);
+  if (authError) {
+    return authError;
   }
 
   const now = new Date();
