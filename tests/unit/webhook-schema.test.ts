@@ -1,7 +1,7 @@
 /**
  * KEEP-828: webhook payload envelope. Contents stay freeform (forwarded to the
  * workflow as trigger input), but the payload must be a JSON object so template
- * references resolve -- arrays and primitives are rejected.
+ * references resolve. Arrays and primitives are rejected.
  */
 import { describe, expect, it } from "vitest";
 import { webhookPayloadSchema } from "@/lib/schemas/webhook";

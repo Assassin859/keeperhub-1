@@ -34,7 +34,7 @@ beforeEach(() => {
   mockStoreOAuthClient.mockClear();
 });
 
-describe("POST /api/oauth/register -- input validation (KEEP-828)", () => {
+describe("POST /api/oauth/register input validation (KEEP-828)", () => {
   it("returns 400 and stores nothing when client_name is missing", async () => {
     const response = await POST(
       buildRequest({ redirect_uris: ["https://example.com/cb"] })

@@ -1,6 +1,6 @@
 /**
  * KEEP-828: wallet route input schemas. The withdraw schema is the tightest
- * gate in the app -- it guards a fund-moving endpoint -- so it must reject bad
+ * gate in the app (it guards a fund-moving endpoint), so it must reject bad
  * addresses, non-positive amounts, the fromMax/token conflict, and unknown
  * fields.
  */
