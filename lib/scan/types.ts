@@ -95,6 +95,16 @@ export interface ScanResponse {
 }
 
 /**
+ * Output produced by scanning a single chain — used as the element type
+ * in the `chainOutputs` array returned by `scanChains`.
+ */
+export interface ChainScanOutput {
+  chainId: number;
+  positions: ProtocolPosition[];
+  stablecoins: StablecoinBalance[];
+}
+
+/**
  * A single call descriptor passed to the Multicall3 aggregate3 batch.
  * Mirrors the on-chain struct exactly so no mapping is needed.
  */

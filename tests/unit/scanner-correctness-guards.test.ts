@@ -18,7 +18,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { executeMulticallBatch } from "@/lib/scan/multicall-batch";
-import type { AdapterCallDescriptor } from "@/lib/scan/types";
+import { scanChains } from "@/lib/scan/scan-chains";
+import type { AdapterCallDescriptor, ChainScanOutput } from "@/lib/scan/types";
 
 // ─── Module mocks (hoisted before imports by vitest) ─────────────────────────
 
@@ -231,7 +232,42 @@ describe("scanner correctness guards", () => {
     "EIP-1967 proxy ABI -> impl slot resolves real implementation address"
   );
 
-  it.todo(
-    "partial chain -> slow/failed chain yields unavailableChains[], not 500"
-  );
+  it("partial chain -> slow/failed chain yields unavailableChains[], not 500", async () => {
+    const chainAOutput: ChainScanOutput = {
+      chainId: 1,
+      positions: [],
+      stablecoins: [],
+    };
+
+    // Chain 1 resolves; chain 2 rejects simulating an RPC failure.
+    const mockScanOneChain = (chainId: number): Promise<ChainScanOutput> => {
+      if (chainId === 1) {
+        return Promise.resolve(chainAOutput);
+      }
+      return Promise.reject(new Error("chainB RPC connection timeout"));
+    };
+
+    const { chainOutputs, unavailableChains } = await scanChains(
+      [1, 2],
+      mockScanOneChain
+    );
+
+    // The resolved chain's data is present in chainOutputs.
+    expect(chainOutputs.map((o) => o.chainId)).toStrictEqual([1]);
+
+    // The rejected chain surfaces as an unavailable marker, not a thrown error.
+    expect(unavailableChains.map((u) => u.chainId)).toStrictEqual([2]);
+
+    // The reason must not contain RPC URL/key material.
+    const [unavailable] = unavailableChains;
+    expect(unavailable?.reason).not.toContain("http");
+    expect(unavailable?.reason).not.toContain("apikey");
+    expect(unavailable?.reason).not.toContain("key=");
+
+    // Verify scanChains itself never throws even when all chains fail.
+    await expect(scanChains([2], mockScanOneChain)).resolves.toMatchObject({
+      chainOutputs: [],
+      unavailableChains: [{ chainId: 2 }],
+    });
+  });
 });
