@@ -15,7 +15,10 @@
  * are imported by sibling test files so encoding is consistent across the suite.
  */
 
-import { describe, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { executeMulticallBatch } from "@/lib/scan/multicall-batch";
+import type { AdapterCallDescriptor } from "@/lib/scan/types";
 
 // ─── Module mocks (hoisted before imports by vitest) ─────────────────────────
 
@@ -157,7 +160,72 @@ describe("scanner correctness guards", () => {
     "HF MAX_UINT256 or zero-debt -> healthFactor null + noActiveLoan true"
   );
 
-  it.todo("Multicall3 soft-miss -> one failed sub-call leaves siblings intact");
+  it("Multicall3 soft-miss -> one failed sub-call leaves siblings intact", async () => {
+    // Encode two realistic getUserAccountData return values for call 0 and call 2.
+    const encoded0 = encodeAccountData({ totalDebtBase: BigInt(100) })[1];
+    const encoded2 = encodeAccountData({ totalDebtBase: BigInt(300) })[1];
+
+    // aggregate3 returns [success, returnData][]; index 1 simulates a soft-miss.
+    mockAggregate3StaticCall.mockResolvedValueOnce([
+      [true, encoded0],
+      [false, "0x"],
+      [true, encoded2],
+    ]);
+
+    const mockRpcManager: Pick<RpcProviderManager, "executeWithFailover"> = {
+      executeWithFailover: vi
+        .fn()
+        .mockImplementation((fn: (provider: unknown) => unknown) => fn({})),
+    };
+
+    const calls: AdapterCallDescriptor[] = [
+      {
+        target: "0x0000000000000000000000000000000000000001",
+        allowFailure: true,
+        callData: "0xdeadbeef",
+      },
+      {
+        target: "0x0000000000000000000000000000000000000002",
+        allowFailure: true,
+        callData: "0xcafebabe",
+      },
+      {
+        target: "0x0000000000000000000000000000000000000003",
+        allowFailure: true,
+        callData: "0x12345678",
+      },
+    ];
+
+    const results = await executeMulticallBatch(
+      calls,
+      mockRpcManager as unknown as RpcProviderManager
+    );
+
+    // All three results are returned; the soft-miss at index 1 does not abort siblings.
+    expect(results).toHaveLength(3);
+
+    expect(results[0]?.success).toBe(true);
+    expect(results[0]?.returnData).toBe(encoded0);
+
+    expect(results[1]?.success).toBe(false);
+    expect(results[1]?.returnData).toBe("0x");
+
+    expect(results[2]?.success).toBe(true);
+    expect(results[2]?.returnData).toBe(encoded2);
+
+    // Siblings decode to the values that were encoded — confirming data integrity.
+    const poolIface = getPoolIface();
+    const decoded0 = poolIface.decodeFunctionResult(
+      "getUserAccountData",
+      encoded0
+    );
+    const decoded2 = poolIface.decodeFunctionResult(
+      "getUserAccountData",
+      encoded2
+    );
+    expect(decoded0.totalDebtBase).toBe(BigInt(100));
+    expect(decoded2.totalDebtBase).toBe(BigInt(300));
+  });
 
   it.todo(
     "EIP-1967 proxy ABI -> impl slot resolves real implementation address"
