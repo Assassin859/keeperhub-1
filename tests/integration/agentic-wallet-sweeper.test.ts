@@ -13,16 +13,20 @@
  *   3. DELETE agentic_wallet_rate_limits rows whose bucket_start is older
  *      than 24h.
  *
- * Auth: in production, require Authorization: Bearer $CRON_SECRET (the cron
- * scheduler injects this). In dev/test, no header is required so local
- * pnpm dev can trigger it via curl.
+ * Auth: the internal-service HMAC scheme (X-KH-Caller/Timestamp/Signature,
+ * signed with INTERNAL_SERVICE_HMAC_SECRET) via authenticateInternalService,
+ * scoped to caller "scheduler". Runs in every environment (no NODE_ENV
+ * bypass). The verdict is mocked here, like the security-behavioral-scan
+ * test, so these cases assert the route's handling of the verdict, not the
+ * HMAC verification itself.
  *
  * Strategy: mirror the mock pattern from
  * tests/integration/agentic-wallet-approval-lifecycle.test.ts -- hoisted vi.fn
  * slots backing an in-memory store, with db.update/db.delete chains returning
  * the "rows affected" arrays the sweeper expects from `.returning(...)`.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { InternalServiceAuthResult } from "@/lib/internal-service-auth";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -118,6 +122,17 @@ vi.mock("drizzle-orm", () => ({
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { DATABASE: "DATABASE" },
   logSystemError: vi.fn(),
+}));
+
+// authenticateInternalService returns a discriminated union; reassign
+// mockAuthResult per-test to drive the route's handling of each verdict.
+let mockAuthResult: InternalServiceAuthResult = {
+  authenticated: true,
+  caller: "scheduler",
+  scheme: "hmac",
+};
+vi.mock("@/lib/internal-service-auth", () => ({
+  authenticateInternalService: vi.fn(() => Promise.resolve(mockAuthResult)),
 }));
 
 // ---------------------------------------------------------------------------
@@ -301,15 +316,13 @@ function makeGetRequest(headers: Record<string, string> = {}): Request {
 describe("agentic-wallet-sweeper", () => {
   beforeEach(() => {
     resetStore();
-    // Default to non-production so auth checks are bypassed; the prod auth
-    // test stubs NODE_ENV+CRON_SECRET explicitly.
-    vi.stubEnv("NODE_ENV", "test");
-    vi.unstubAllEnvs();
-    vi.stubEnv("NODE_ENV", "test");
-  });
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
+    // Reset the auth verdict to an authenticated scheduler; the auth-specific
+    // tests below override it per case.
+    mockAuthResult = {
+      authenticated: true,
+      caller: "scheduler",
+      scheme: "hmac",
+    };
   });
 
   it("flips pending rows past expires_at to expired", async () => {
@@ -460,31 +473,28 @@ describe("agentic-wallet-sweeper", () => {
     ]);
   });
 
-  it("requires CRON_SECRET header in production", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("CRON_SECRET", "test-secret");
+  it("returns 401 when the internal-service auth rejects", async () => {
+    mockAuthResult = { authenticated: false, error: "denied", status: 401 };
 
     const res = await GET(makeGetRequest());
     expect(res.status).toBe(401);
   });
 
-  it("accepts a valid CRON_SECRET bearer header in production", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("CRON_SECRET", "test-secret");
+  it("returns 401 when authenticated as a non-scheduler caller", async () => {
+    mockAuthResult = { authenticated: true, caller: "mcp", scheme: "hmac" };
 
-    const res = await GET(
-      makeGetRequest({ authorization: "Bearer test-secret" })
-    );
-    expect(res.status).toBe(200);
+    const res = await GET(makeGetRequest());
+    expect(res.status).toBe(401);
   });
 
-  it("rejects a wrong CRON_SECRET bearer header in production", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("CRON_SECRET", "test-secret");
+  it("runs when authenticated as the scheduler caller", async () => {
+    mockAuthResult = {
+      authenticated: true,
+      caller: "scheduler",
+      scheme: "hmac",
+    };
 
-    const res = await GET(
-      makeGetRequest({ authorization: "Bearer wrong-secret" })
-    );
-    expect(res.status).toBe(401);
+    const res = await GET(makeGetRequest());
+    expect(res.status).toBe(200);
   });
 });

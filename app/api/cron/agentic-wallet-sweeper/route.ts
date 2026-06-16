@@ -17,20 +17,25 @@
  *      2 days (fix-pack-2 R1). Two-day retention keeps yesterday's row
  *      visible for debugging without unbounded growth.
  *
- * Deployment: this endpoint is an HTTP GET handler. It must be invoked by an
- * external scheduler (Kubernetes CronJob, GitHub Actions scheduled workflow,
- * or equivalent) every 5 minutes. The scheduler must send
- * `Authorization: Bearer $CRON_SECRET` in every environment; the endpoint
- * fails closed (503) when CRON_SECRET is unset rather than running open.
+ * Deployment: this endpoint is an HTTP GET handler invoked by a Kubernetes
+ * CronJob every 5 minutes via `deploy/scripts/reaper.sh`, which signs the
+ * request with the internal-service HMAC scheme (`X-KH-Caller`,
+ * `X-KH-Timestamp`, `X-KH-Signature` signed with `INTERNAL_SERVICE_HMAC_SECRET`)
+ * resolving to caller "scheduler". This is the same mechanism the reaper and
+ * security-behavioral-scan CronJobs use, so it reuses the existing shared
+ * signing secret rather than provisioning a dedicated cron secret. Auth runs
+ * in every environment (no NODE_ENV bypass) and fails closed when the
+ * signature does not verify. Local dev signs with `INTERNAL_SERVICE_HMAC_SECRET`
+ * (see `deploy/scripts/reaper.sh`) to invoke via curl.
  */
 import { and, eq, lt, or } from "drizzle-orm";
-import { authorizeCronRequest } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import {
   agenticWalletDailySpend,
   agenticWalletRateLimits,
   walletApprovalRequests,
 } from "@/lib/db/schema";
+import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 export const dynamic = "force-dynamic";
@@ -46,9 +51,12 @@ type SweeperResponse = {
 };
 
 export async function GET(request: Request): Promise<Response> {
-  const authError = authorizeCronRequest(request);
-  if (authError) {
-    return authError;
+  // Fail closed via the shared internal-service HMAC auth (no NODE_ENV bypass).
+  // The CronJob signs as caller "scheduler" through reaper.sh; any other signed
+  // caller is rejected so the endpoint is scoped to the scheduler identity.
+  const auth = await authenticateInternalService(request);
+  if (!auth.authenticated || auth.caller !== "scheduler") {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const now = new Date();
