@@ -1033,3 +1033,152 @@ export const workflowRatings = pgTable(
     index("idx_workflow_ratings_workflow").on(table.workflowId),
   ]
 );
+
+/**
+ * Security Audit Log table
+ *
+ * Durable forensic record of sensitive account/security actions: who did
+ * what, when, from where, and -- for mutations -- a structured before/after
+ * diff. The out-of-band email notifications are the real-time alert; this
+ * table is the queryable history that answers "who changed this" after the
+ * fact.
+ *
+ * `actorUserId` and `organizationId` use ON DELETE SET NULL so a purged user
+ * or org never erases the audit trail of what they did. `diff` holds the
+ * deep-diff between the prior and new state (null for pure create/delete
+ * events that have no meaningful field-level diff); `metadata` carries
+ * request context (ip, user agent) and any action-specific details.
+ */
+export const securityAuditLog = pgTable(
+  "security_audit_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // Denormalized actor identity (e.g. email or name) captured at write time.
+    // The FK above nulls on user deletion (onDelete: set null), which would
+    // erase attribution from the very deletion events we audit; this column is
+    // the durable fallback that survives the actor row.
+    actorLabel: text("actor_label"),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "set null",
+    }),
+    // Durable org identity, same reasoning as actorLabel: an org-deletion
+    // cascade nulls the FK above, so reads after the org is gone fall back here.
+    organizationLabel: text("organization_label"),
+    authMethod: text("auth_method").notNull(), // session | api-key | oauth | internal | unknown
+    apiKeyId: text("api_key_id"),
+    action: text("action").notNull(), // e.g. "api_key.created", "api_key.revoked"
+    resourceType: text("resource_type"), // e.g. "api_key", "user", "workflow"
+    resourceId: text("resource_id"),
+    // Groups every row emitted by one logical operation (e.g. an account
+    // deactivation that fans out to sessions, API keys, wallets). Null for
+    // standalone single-row events; lets a cascade be read back as one unit.
+    correlationId: text("correlation_id"),
+    // Operation outcome. Success rows are written inside the action's own
+    // transaction; a "failed" row is written out-of-band (global db, post
+    // rollback) so a rolled-back cascade still leaves a durable trace.
+    outcome: text("outcome").notNull().default("succeeded"), // succeeded | failed | partial
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - deep-diff change records; shape varies by action
+    diff: jsonb("diff").$type<any>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Audit reads are always "filter by one dimension, newest first", so each
+    // index trails with createdAt -- Postgres satisfies ORDER BY createdAt DESC
+    // via a backward scan, so the filter and the sort are both served by one
+    // index with no separate sort step.
+    // Org admin viewing their audit trail (primary access path).
+    index("idx_security_audit_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
+    // "Who did it" -- a single actor's timeline.
+    index("idx_security_audit_actor_created").on(
+      table.actorUserId,
+      table.createdAt
+    ),
+    // "What happened to this resource" -- e.g. one API key's full history.
+    index("idx_security_audit_resource_created").on(
+      table.resourceType,
+      table.resourceId,
+      table.createdAt
+    ),
+    // Filter by event type -- e.g. all "api_key.revoked" events.
+    index("idx_security_audit_action_created").on(
+      table.action,
+      table.createdAt
+    ),
+    // Read an entire cascade back as one unit, newest first.
+    index("idx_security_audit_correlation_created").on(
+      table.correlationId,
+      table.createdAt
+    ),
+  ]
+);
+
+// Type exports for Security Audit Log table
+export type SecurityAuditLog = typeof securityAuditLog.$inferSelect;
+export type NewSecurityAuditLog = typeof securityAuditLog.$inferInsert;
+
+/**
+ * Workflow History table
+ *
+ * One row per saved workflow version. Complements security_audit_log: that
+ * table keeps a lightweight cross-resource "who did what" event for each
+ * workflow change; this table holds the heavy per-version payload needed to
+ * load, diff, and restore a past version. It mirrors the audit-log actor
+ * capture (changedByUserId, authMethod, createdAt) so "who did it" is
+ * answerable here too.
+ *
+ * `snapshot` stores the full definition (incl. edges, which are structural --
+ * the executor builds its run graph from them). `change` is the deep-diff
+ * against the previous version, and both it and `contentHash` are computed
+ * over the MEANINGFUL definition only (cosmetic ReactFlow state stripped via
+ * lib/workflow/content-hash.ts), so a cosmetic node drag does not create a
+ * version while a connection change does. `contentHash` joins to
+ * workflow_executions.executed_workflow_hash.
+ */
+export const workflowHistory = pgTable(
+  "workflow_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "set null",
+    }),
+    // Per-workflow monotonic version (MAX(version)+1 at write time).
+    version: integer("version").notNull(),
+    changedByUserId: text("changed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    authMethod: text("auth_method").notNull(),
+    source: text("source").notNull(), // create | update | listing
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - full workflow snapshot, shape is the workflow definition
+    snapshot: jsonb("snapshot").$type<any>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - deep-diff change records vs the previous version
+    change: jsonb("change").$type<any>(),
+    contentHash: text("content_hash").notNull(),
+    previousVersion: integer("previous_version"),
+    previousHash: text("previous_hash"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_workflow_history_workflow_version").on(
+      table.workflowId,
+      table.version
+    ),
+    index("idx_workflow_history_content_hash").on(table.contentHash),
+  ]
+);
+
+export type WorkflowHistory = typeof workflowHistory.$inferSelect;
+export type NewWorkflowHistory = typeof workflowHistory.$inferInsert;

@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { workflowPublicTags, workflows } from "@/lib/db/schema";
+import { publicTags, workflowPublicTags, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 
 export async function PUT(
@@ -125,6 +126,33 @@ export async function PUT(
     if (updatedWorkflow.isListed) {
       revalidateTag("marketplace", "max");
     }
+
+    const publicTagNames =
+      publicTagIds.length > 0
+        ? (
+            await db
+              .select({ name: publicTags.name })
+              .from(publicTags)
+              .where(inArray(publicTags.id, publicTagIds))
+          ).map((r) => r.name)
+        : [];
+    await recordAuditEvent({
+      actor: {
+        userId: orgContext.user.id,
+        organizationId: orgContext.organization?.id ?? null,
+        authMethod: "session",
+      },
+      action: mode === "public" ? "workflow.listed" : "workflow.listing_updated",
+      resourceType: "workflow",
+      resourceId: workflowId,
+      before: { visibility: workflow.visibility, name: workflow.name },
+      after: {
+        visibility: mode,
+        name,
+        publicTags: publicTagNames.join(", ") || null,
+      },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       ...updatedWorkflow,

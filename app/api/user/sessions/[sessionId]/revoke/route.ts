@@ -9,6 +9,7 @@ import {
   dualFactorErrorResponse,
   requireDualFactor,
 } from "@/lib/mfa/dual-factor";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RequestBody = {
   code?: string;
@@ -95,6 +96,17 @@ export async function POST(
         { status: 404 }
       );
     }
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "session.revoked",
+      resourceType: "session",
+      resourceId: sessionId,
+      metadata: buildAuditMetadata(request),
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logSystemError(

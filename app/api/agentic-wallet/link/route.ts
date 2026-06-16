@@ -39,6 +39,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -136,6 +137,15 @@ export async function POST(request: Request): Promise<Response> {
         { status: 409 }
       );
     }
+
+    await recordAuditEvent({
+      actor: { userId, organizationId: null, authMethod: "session" },
+      action: "agentic_wallet.linked",
+      resourceType: "agentic_wallet",
+      resourceId: subOrgId,
+      after: { linkedUserId: userId },
+      metadata: buildAuditMetadata(request),
+    });
 
     return Response.json({ ok: true }, { status: 200 });
   } catch (error) {

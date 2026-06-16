@@ -5,6 +5,7 @@ import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { sendAccountDeactivatedEmail } from "@/lib/email";
 import { authenticateKhAdmin } from "@/lib/kh-admin-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // The body is optional; callers (raita-bot auto-block, on-call tooling) may
 // POST nothing at all. notifyUser defaults to true so a deactivated user is
@@ -108,6 +109,20 @@ export async function POST(
         );
       }
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: null,
+        authMethod: "kh-admin",
+        actorLabel: "KeeperHub admin",
+      },
+      action: "account.deactivated",
+      resourceType: "user",
+      resourceId: result.userId,
+      after: { deactivatedAt: result.deactivatedAt.toISOString() },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       userId: result.userId,

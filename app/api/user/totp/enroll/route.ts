@@ -18,6 +18,7 @@ import {
   resetDualFactor,
 } from "@/lib/mfa/dual-factor-rate-limit";
 import { buildPendingSignupClearCookie } from "@/lib/pending-signup-cookie";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { resolveSigninDevice } from "@/lib/security/device-trust";
 import {
   recordTrustedCountryFromRequest,
@@ -208,6 +209,13 @@ export async function POST(request: Request): Promise<NextResponse> {
           );
         }
       }
+      await recordAuditEvent({
+        actor: { userId, organizationId: null, authMethod: "session" },
+        action: "totp.enrolled",
+        resourceType: "user",
+        resourceId: userId,
+        metadata: buildAuditMetadata(request),
+      });
       const responseBody: EnrollResponse = { backupCodes };
       const response = NextResponse.json(responseBody);
       for (const [name, value] of verifyHeaders.entries()) {
@@ -324,6 +332,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     // (first attestation) so a later sign-in from it isn't bounced to
     // /verify-ip for a country the user already signed up from.
     await recordTrustedCountryFromRequest(userId);
+
+    await recordAuditEvent({
+      actor: { userId, organizationId: null, authMethod: "session" },
+      action: "totp.enrolled",
+      resourceType: "user",
+      resourceId: userId,
+      metadata: buildAuditMetadata(request),
+    });
 
     const responseBody: EnrollResponse = {
       backupCodes,

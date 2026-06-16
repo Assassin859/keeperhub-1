@@ -1,0 +1,359 @@
+/**
+ * Human-readable semantic diff between two workflow snapshots, for the version
+ * history UI. Compares nodes by id and edges by connectivity, ignoring cosmetic
+ * canvas state (node position, selection) so a drag never shows as a change.
+ * This replaces a raw JSON diff -- it answers "what changed", not "which bytes
+ * differ".
+ */
+
+import { getActionLabel } from "@/lib/step-registry";
+
+type AnyRecord = Record<string, unknown>;
+
+type Snapshotish = {
+  name?: string | null;
+  description?: string | null;
+  visibility?: string | null;
+  enabled?: boolean | null;
+  nodes?: unknown;
+  edges?: unknown;
+};
+
+export type SettingChange = {
+  field: "name" | "description" | "visibility" | "enabled";
+  before: string;
+  after: string;
+};
+
+export type NodeRef = { id: string; label: string; nodeType: string };
+
+export type ConfigChange = { key: string; before: string; after: string };
+
+export type NodeFieldDelta = {
+  field: "name" | "description" | "type" | "configuration" | "enabled";
+  before?: string;
+  after?: string;
+  configKeys?: string[];
+  // Per-field before/after for configuration changes (values truncated).
+  configChanges?: ConfigChange[];
+};
+
+export type NodeFieldChange = {
+  id: string;
+  label: string;
+  nodeType: string;
+  // The action id (e.g. "web3/read-contract") so the UI can map config keys
+  // to their human field labels.
+  actionType?: string;
+  // The node's configured chain id, so address values can link to the right
+  // block explorer.
+  chainId?: string;
+  deltas: NodeFieldDelta[];
+};
+
+export type ConnectionRef = { from: string; to: string };
+
+export type VersionDiff = {
+  settings: SettingChange[];
+  nodesAdded: NodeRef[];
+  nodesRemoved: NodeRef[];
+  nodesChanged: NodeFieldChange[];
+  connectionsAdded: ConnectionRef[];
+  connectionsRemoved: ConnectionRef[];
+  hasChanges: boolean;
+};
+
+function asArray(value: unknown): AnyRecord[] {
+  return Array.isArray(value) ? (value as AnyRecord[]) : [];
+}
+
+function nodeLabel(node: AnyRecord): string {
+  const data = (node.data ?? {}) as AnyRecord;
+  const label = typeof data.label === "string" ? data.label.trim() : "";
+  if (label) {
+    return label;
+  }
+  const config = (data.config ?? {}) as AnyRecord;
+  // Plugin actions resolve via getActionLabel (e.g. web3/read-contract ->
+  // "Read Contract"); system actions ("Condition", "HTTP Request", ...) are
+  // already their own label, so fall back to the raw actionType.
+  if (typeof config.actionType === "string") {
+    return getActionLabel(config.actionType) ?? config.actionType;
+  }
+  if (typeof config.triggerType === "string") {
+    return config.triggerType;
+  }
+  // Unconfigured node (no action picked yet): present the category capitalized
+  // ("action" -> "Action") rather than the raw lowercase type.
+  const rawType =
+    (typeof data.type === "string" ? data.type : "") ||
+    (typeof node.type === "string" ? node.type : "") ||
+    "node";
+  return rawType.charAt(0).toUpperCase() + rawType.slice(1);
+}
+
+function nodeType(node: AnyRecord): string {
+  const data = (node.data ?? {}) as AnyRecord;
+  if (typeof data.type === "string") {
+    return data.type;
+  }
+  return typeof node.type === "string" ? node.type : "step";
+}
+
+function nodeActionType(node: AnyRecord): string | undefined {
+  const config = ((node.data ?? {}) as AnyRecord).config as
+    | AnyRecord
+    | undefined;
+  const actionType = config?.actionType;
+  return typeof actionType === "string" ? actionType : undefined;
+}
+
+function nodeChainId(node: AnyRecord): string | undefined {
+  const config = ((node.data ?? {}) as AnyRecord).config as
+    | AnyRecord
+    | undefined;
+  const raw = config?.network ?? config?.chainId ?? config?.chain;
+  if (typeof raw === "string" || typeof raw === "number") {
+    return String(raw);
+  }
+  return;
+}
+
+// Template refs persist as `{{@nodeId:Display.field}}`; the node id is noise in
+// a human diff, so collapse them to `{{Display.field}}`.
+const TEMPLATE_REF = /\{\{@[^:}]+:([^}]+)\}\}/g;
+
+function cleanTemplateRefs(text: string): string {
+  return text.replace(TEMPLATE_REF, "{{$1}}");
+}
+
+function byId(nodes: AnyRecord[]): Map<string, AnyRecord> {
+  const map = new Map<string, AnyRecord>();
+  for (const n of nodes) {
+    if (typeof n.id === "string") {
+      map.set(n.id, n);
+    }
+  }
+  return map;
+}
+
+const MAX_VALUE_LEN = 80;
+
+function shortConfigValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "empty";
+  }
+  const raw = typeof value === "string" ? value : JSON.stringify(value);
+  const text = cleanTemplateRefs(raw);
+  return text.length > MAX_VALUE_LEN
+    ? `${text.slice(0, MAX_VALUE_LEN - 1)}…`
+    : text;
+}
+
+function changedConfigDetails(
+  before: AnyRecord,
+  after: AnyRecord
+): ConfigChange[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const changed: ConfigChange[] = [];
+  for (const key of keys) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      changed.push({
+        key,
+        before: shortConfigValue(before[key]),
+        after: shortConfigValue(after[key]),
+      });
+    }
+  }
+  return changed;
+}
+
+function buildNodeDeltas(
+  before: AnyRecord,
+  after: AnyRecord
+): NodeFieldDelta[] {
+  const bd = (before.data ?? {}) as AnyRecord;
+  const ad = (after.data ?? {}) as AnyRecord;
+  const deltas: NodeFieldDelta[] = [];
+
+  const bLabel = typeof bd.label === "string" ? bd.label : "";
+  const aLabel = typeof ad.label === "string" ? ad.label : "";
+  if (bLabel !== aLabel) {
+    deltas.push({ field: "name", before: bLabel, after: aLabel });
+  }
+
+  const bDesc = typeof bd.description === "string" ? bd.description : "";
+  const aDesc = typeof ad.description === "string" ? ad.description : "";
+  if (bDesc !== aDesc) {
+    deltas.push({ field: "description", before: bDesc, after: aDesc });
+  }
+
+  if (nodeType(before) !== nodeType(after)) {
+    deltas.push({
+      field: "type",
+      before: nodeType(before),
+      after: nodeType(after),
+    });
+  }
+
+  const bConfig = (bd.config ?? {}) as AnyRecord;
+  const aConfig = (ad.config ?? {}) as AnyRecord;
+  const configChanges = changedConfigDetails(bConfig, aConfig);
+  if (configChanges.length > 0) {
+    deltas.push({
+      field: "configuration",
+      configKeys: configChanges.map((c) => c.key),
+      configChanges,
+    });
+  }
+
+  const bEnabled = bd.enabled ?? true;
+  const aEnabled = ad.enabled ?? true;
+  if (bEnabled !== aEnabled) {
+    deltas.push({
+      field: "enabled",
+      before: String(bEnabled),
+      after: String(aEnabled),
+    });
+  }
+
+  return deltas;
+}
+
+function edgeKey(edge: AnyRecord): string {
+  return [
+    edge.source,
+    edge.target,
+    edge.sourceHandle ?? "",
+    edge.targetHandle ?? "",
+  ].join("|");
+}
+
+function connectionRef(
+  edge: AnyRecord,
+  labels: Map<string, string>
+): ConnectionRef {
+  const from = labels.get(String(edge.source)) ?? String(edge.source);
+  const to = labels.get(String(edge.target)) ?? String(edge.target);
+  return { from, to };
+}
+
+function diffSettings(
+  before: Snapshotish,
+  after: Snapshotish
+): SettingChange[] {
+  const out: SettingChange[] = [];
+  const fields: SettingChange["field"][] = [
+    "name",
+    "description",
+    "visibility",
+    "enabled",
+  ];
+  for (const field of fields) {
+    const b = before[field] ?? "";
+    const a = after[field] ?? "";
+    if (String(b) !== String(a)) {
+      out.push({ field, before: String(b), after: String(a) });
+    }
+  }
+  return out;
+}
+
+export function computeVersionDiff(
+  before: Snapshotish | null,
+  after: Snapshotish
+): VersionDiff {
+  const empty: VersionDiff = {
+    settings: [],
+    nodesAdded: [],
+    nodesRemoved: [],
+    nodesChanged: [],
+    connectionsAdded: [],
+    connectionsRemoved: [],
+    hasChanges: false,
+  };
+  if (!before) {
+    return empty;
+  }
+
+  const beforeNodes = byId(asArray(before.nodes));
+  const afterNodes = byId(asArray(after.nodes));
+
+  const nodesAdded: NodeRef[] = [];
+  const nodesRemoved: NodeRef[] = [];
+  const nodesChanged: NodeFieldChange[] = [];
+
+  for (const [id, node] of afterNodes) {
+    const prev = beforeNodes.get(id);
+    if (!prev) {
+      nodesAdded.push({ id, label: nodeLabel(node), nodeType: nodeType(node) });
+      continue;
+    }
+    const deltas = buildNodeDeltas(prev, node);
+    if (deltas.length > 0) {
+      nodesChanged.push({
+        id,
+        label: nodeLabel(node),
+        nodeType: nodeType(node),
+        actionType: nodeActionType(node),
+        chainId: nodeChainId(node),
+        deltas,
+      });
+    }
+  }
+  for (const [id, node] of beforeNodes) {
+    if (!afterNodes.has(id)) {
+      nodesRemoved.push({
+        id,
+        label: nodeLabel(node),
+        nodeType: nodeType(node),
+      });
+    }
+  }
+
+  // Connection labels resolve to the node's display name in whichever snapshot
+  // knows it (after preferred, before as fallback for removed connections).
+  const labels = new Map<string, string>();
+  for (const [id, n] of beforeNodes) {
+    labels.set(id, nodeLabel(n));
+  }
+  for (const [id, n] of afterNodes) {
+    labels.set(id, nodeLabel(n));
+  }
+
+  const beforeEdges = new Map(
+    asArray(before.edges).map((e) => [edgeKey(e), e])
+  );
+  const afterEdges = new Map(asArray(after.edges).map((e) => [edgeKey(e), e]));
+  const connectionsAdded: ConnectionRef[] = [];
+  const connectionsRemoved: ConnectionRef[] = [];
+  for (const [key, edge] of afterEdges) {
+    if (!beforeEdges.has(key)) {
+      connectionsAdded.push(connectionRef(edge, labels));
+    }
+  }
+  for (const [key, edge] of beforeEdges) {
+    if (!afterEdges.has(key)) {
+      connectionsRemoved.push(connectionRef(edge, labels));
+    }
+  }
+
+  const settings = diffSettings(before, after);
+  const hasChanges =
+    settings.length > 0 ||
+    nodesAdded.length > 0 ||
+    nodesRemoved.length > 0 ||
+    nodesChanged.length > 0 ||
+    connectionsAdded.length > 0 ||
+    connectionsRemoved.length > 0;
+
+  return {
+    settings,
+    nodesAdded,
+    nodesRemoved,
+    nodesChanged,
+    connectionsAdded,
+    connectionsRemoved,
+    hasChanges,
+  };
+}

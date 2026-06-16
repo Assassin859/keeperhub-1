@@ -7,6 +7,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The route records a workflow snapshot, pulling in history -> version-diff ->
+// step-registry, which `import "server-only"`. Stub the guard for vitest.
+vi.mock("server-only", () => ({}));
+
 const {
   mockGetDualAuthContext,
   mockWorkflowsFindFirst,

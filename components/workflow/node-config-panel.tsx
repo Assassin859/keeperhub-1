@@ -1,14 +1,6 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import {
-  Copy,
-  Eraser,
-  Eye,
-  EyeOff,
-  FileCode,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Eraser, Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
 import { DeleteWorkflowWithRunsOverlay } from "@/components/overlays/delete-workflow-overlay";
@@ -24,7 +16,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { CodeEditor } from "@/components/ui/code-editor";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,7 +25,7 @@ import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { api } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
-import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
+import { VersionHistoryContent } from "./version-history-content";
 import {
   clearNodeStatusesAtom,
   clearWorkflowAtom,
@@ -67,12 +58,7 @@ import { ActionConfig } from "./config/action-config";
 import { ActionGrid } from "./config/action-grid";
 
 import { TriggerConfig } from "./config/trigger-config";
-import { generateNodeCode } from "./utils/code-generators";
 import { WorkflowRuns } from "./workflow-runs";
-
-// Regex constants
-const NON_ALPHANUMERIC_REGEX = /[^a-zA-Z0-9\s]/g;
-const WORD_SPLIT_REGEX = /\s+/;
 
 // System actions that need integrations (not in plugin registry)
 const SYSTEM_ACTION_INTEGRATIONS: Record<string, IntegrationType> = {
@@ -414,36 +400,6 @@ export const PanelInner = () => {
     // If multiple integrations exist, let the user choose manually
   }, [selectedNode, globalIntegrations, isOwner, updateNodeData]);
 
-  // Generate workflow code
-  const workflowCode = useMemo(() => {
-    const baseName =
-      currentWorkflowName
-        .replace(NON_ALPHANUMERIC_REGEX, "")
-        .split(WORD_SPLIT_REGEX)
-        .map((word, i) => {
-          if (i === 0) {
-            return word.toLowerCase();
-          }
-          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        })
-        .join("") || "execute";
-
-    const functionName = `${baseName}Workflow`;
-
-    const { code } = generateWorkflowCode(nodes, edges, { functionName });
-    return code;
-  }, [nodes, edges, currentWorkflowName]);
-
-  const handleCopyCode = () => {
-    if (selectedNode) {
-      navigator.clipboard.writeText(generateNodeCode(selectedNode));
-    }
-  };
-
-  const handleCopyWorkflowCode = () => {
-    navigator.clipboard.writeText(workflowCode);
-    toast.success("Code copied to clipboard");
-  };
 
   const handleDelete = () => {
     if (selectedNodeId) {
@@ -780,7 +736,12 @@ export const PanelInner = () => {
           className="size-full"
           defaultValue="properties"
           onValueChange={setActiveTab}
-          value={activeTab}
+          value={
+            activeTab === "properties" ||
+            ((activeTab === "runs" || activeTab === "history") && isOwner)
+              ? activeTab
+              : "properties"
+          }
         >
           <TabsList className="h-14 w-full shrink-0 rounded-none border-b bg-transparent px-4 py-2.5">
             <TabsTrigger
@@ -789,18 +750,20 @@ export const PanelInner = () => {
             >
               Properties
             </TabsTrigger>
-            <TabsTrigger
-              className="bg-transparent text-muted-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none"
-              value="code"
-            >
-              Code
-            </TabsTrigger>
             {isOwner && (
               <TabsTrigger
                 className="bg-transparent text-muted-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none"
                 value="runs"
               >
                 Runs
+              </TabsTrigger>
+            )}
+            {isOwner && (
+              <TabsTrigger
+                className="bg-transparent text-muted-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none"
+                value="history"
+              >
+                History
               </TabsTrigger>
             )}
           </TabsList>
@@ -935,51 +898,14 @@ export const PanelInner = () => {
               </div>
             </TabsContent>
           )}
-          <TabsContent
-            className="flex flex-col overflow-hidden data-[state=inactive]:hidden"
-            forceMount
-            value="code"
-          >
-            <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-3 pb-2">
-              <div className="flex items-center gap-2">
-                <FileCode className="size-3.5 text-muted-foreground" />
-                <code className="text-muted-foreground text-xs">
-                  workflows/
-                  {currentWorkflowName
-                    .toLowerCase()
-                    .replace(/\s+/g, "-")
-                    .replace(/[^a-z0-9-]/g, "") || "workflow"}
-                  .ts
-                </code>
-              </div>
-              <Button
-                className="text-muted-foreground"
-                onClick={handleCopyWorkflowCode}
-                size="sm"
-                variant="ghost"
-              >
-                <Copy className="mr-2 size-4" />
-                Copy
-              </Button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <CodeEditor
-                height="100%"
-                language="typescript"
-                options={{
-                  readOnly: true,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  fontSize: 13,
-                  lineNumbers: "on",
-                  folding: true,
-                  wordWrap: "off",
-                  padding: { top: 16, bottom: 16 },
-                }}
-                value={workflowCode}
-              />
-            </div>
-          </TabsContent>
+          {isOwner && (
+            <TabsContent
+              className="flex flex-col overflow-y-auto p-3"
+              value="history"
+            >
+              <VersionHistoryContent active={activeTab === "history"} />
+            </TabsContent>
+          )}
         </Tabs>
 
         <AlertDialog
@@ -1013,7 +939,12 @@ export const PanelInner = () => {
         data-testid="properties-panel"
         defaultValue="properties"
         onValueChange={setActiveTab}
-        value={activeTab}
+        value={
+          activeTab === "properties" ||
+          ((activeTab === "runs" || activeTab === "history") && isOwner)
+            ? activeTab
+            : "properties"
+        }
       >
         <TabsList className="h-14 w-full shrink-0 rounded-none border-b bg-transparent px-4 py-2.5">
           <TabsTrigger
@@ -1022,24 +953,20 @@ export const PanelInner = () => {
           >
             Properties
           </TabsTrigger>
-          {(selectedNode.data.type !== "trigger" ||
-            (selectedNode.data.config?.triggerType as string) !== "Manual") &&
-          selectedNode.data.config?.actionType !== "Condition" &&
-          selectedNode.data.config?.actionType !== "For Each" &&
-          selectedNode.data.config?.actionType !== "Collect" ? (
-            <TabsTrigger
-              className="bg-transparent text-muted-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none"
-              value="code"
-            >
-              Code
-            </TabsTrigger>
-          ) : null}
           {isOwner && (
             <TabsTrigger
               className="bg-transparent text-muted-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none"
               value="runs"
             >
               Runs
+            </TabsTrigger>
+          )}
+          {isOwner && (
+            <TabsTrigger
+              className="bg-transparent text-muted-foreground data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              value="history"
+            >
+              History
             </TabsTrigger>
           )}
         </TabsList>
@@ -1191,78 +1118,18 @@ export const PanelInner = () => {
             </div>
           )}
         </TabsContent>
-        <TabsContent
-          className="flex flex-col overflow-hidden data-[state=inactive]:hidden"
-          forceMount
-          value="code"
-        >
-          {(() => {
-            const triggerType = selectedNode.data.config?.triggerType as string;
-            let filename = "";
-            let language = "typescript";
-
-            if (selectedNode.data.type === "trigger") {
-              if (triggerType === "Schedule") {
-                filename = "schedule.json";
-                language = "json";
-              } else if (triggerType === "Webhook") {
-                const webhookPath =
-                  (selectedNode.data.config?.webhookPath as string) ||
-                  "/webhook";
-                filename = `app/api${webhookPath}/route.ts`;
-                language = "typescript";
-              }
-            } else {
-              filename = `steps/${
-                (selectedNode.data.config?.actionType as string)
-                  ?.toLowerCase()
-                  .replace(/\s+/g, "-")
-                  .replace(/[^a-z0-9-]/g, "") || "action"
-              }-step.ts`;
-            }
-
-            return (
-              <>
-                {filename && (
-                  <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-3 pb-2">
-                    <div className="flex items-center gap-2">
-                      <FileCode className="size-3.5 text-muted-foreground" />
-                      <code className="text-muted-foreground text-xs">
-                        {filename}
-                      </code>
-                    </div>
-                    <Button
-                      className="text-muted-foreground"
-                      onClick={handleCopyCode}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      <Copy className="mr-2 size-4" />
-                      Copy
-                    </Button>
-                  </div>
-                )}
-                <div className="flex-1 overflow-hidden">
-                  <CodeEditor
-                    height="100%"
-                    language={language}
-                    options={{
-                      readOnly: true,
-                      minimap: { enabled: false },
-                      scrollBeyondLastLine: false,
-                      fontSize: 13,
-                      lineNumbers: "on",
-                      folding: false,
-                      wordWrap: "off",
-                      padding: { top: 16, bottom: 16 },
-                    }}
-                    value={generateNodeCode(selectedNode)}
-                  />
-                </div>
-              </>
-            );
-          })()}
-        </TabsContent>
+        {isOwner && (
+          <TabsContent
+            className="flex flex-col overflow-y-auto p-3"
+            value="history"
+          >
+            <VersionHistoryContent
+              active={activeTab === "history"}
+              nodeId={selectedNode.id}
+              nodeLabel={(selectedNode.data.label as string) ?? null}
+            />
+          </TabsContent>
+        )}
         {isOwner && (
           <TabsContent className="flex flex-col overflow-hidden" value="runs">
             {/* Actions in content header */}

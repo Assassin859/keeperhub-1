@@ -1,9 +1,10 @@
 "use client";
 
-import { Copy, Key, Server, Trash2 } from "lucide-react";
+import { Copy, History, Key, Server, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Pager } from "@/components/activity/pager";
 import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Button } from "@/components/ui/button";
@@ -11,10 +12,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import { useActiveMember } from "@/lib/hooks/use-organization";
+import type { Page, PageMeta } from "@/lib/pagination";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { ConfirmOverlay } from "./confirm-overlay";
+import { KeyActivityOverlay } from "./key-activity-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
 import { SettingsOverlay } from "./settings-overlay";
@@ -26,11 +31,17 @@ type ApiKey = {
   createdAt: string;
   lastUsedAt: string | null;
   createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
   key?: string;
 };
 
 type ApiKeysOverlayProps = {
   overlayId: string;
+  // Highlight + scroll to this key (e.g. opened from the activity feed). The
+  // resource type selects which tab opens: org keys vs personal/user keys.
+  highlightId?: string;
+  highlightType?: "api_key" | "org_api_key";
 };
 
 /**
@@ -252,6 +263,8 @@ function DeleteApiKeyOverlay({
 
 function ApiKeysList({
   apiKeys,
+  meta,
+  onPage,
   newlyCreatedKey,
   deleting,
   onDelete,
@@ -260,8 +273,11 @@ function ApiKeysList({
   deleteEndpoint,
   canDelete = true,
   readOnlyReason,
+  highlightId,
 }: {
   apiKeys: ApiKey[];
+  meta?: PageMeta | null;
+  onPage?: (page: number) => void;
   newlyCreatedKey: string | null;
   deleting: string | null;
   onDelete: (
@@ -274,8 +290,15 @@ function ApiKeysList({
   deleteEndpoint: (id: string) => string;
   canDelete?: boolean;
   readOnlyReason?: string;
+  highlightId?: string;
 }) {
   const { push } = useOverlay();
+  const highlightedRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (highlightId && highlightedRef.current) {
+      highlightedRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightId]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -338,8 +361,13 @@ function ApiKeysList({
         <div className="space-y-2">
           {apiKeys.map((apiKey) => (
             <div
-              className="flex items-center justify-between rounded-md border p-3"
+              className={`flex items-center justify-between rounded-md border p-3 ${
+                apiKey.id === highlightId
+                  ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
+                  : ""
+              }`}
               key={apiKey.id}
+              ref={apiKey.id === highlightId ? highlightedRef : undefined}
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -355,8 +383,9 @@ function ApiKeysList({
                   {showCreator &&
                     apiKey.createdByName &&
                     ` by ${apiKey.createdByName}`}
-                  {apiKey.lastUsedAt &&
-                    ` · Last used ${formatDate(apiKey.lastUsedAt)}`}
+                  {apiKey.lastUsedAt
+                    ? ` · Last used ${formatDate(apiKey.lastUsedAt)}`
+                    : " · Never used"}
                 </p>
               </div>
               <Button
@@ -376,6 +405,11 @@ function ApiKeysList({
           ))}
         </div>
       )}
+      {meta && meta.totalPages > 1 && (
+        <div className="pt-2">
+          <Pager meta={meta} onPage={onPage ?? (() => undefined)} unit="keys" />
+        </div>
+      )}
     </div>
   );
 }
@@ -389,35 +423,36 @@ function useApiKeys(
 ) {
   const { open: openOverlay, closeAll } = useOverlay();
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const loadApiKeys = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(listEndpoint);
-      if (!response.ok) {
-        throw new Error("Failed to load API keys");
-      }
-      const keys = await response.json();
-      setApiKeys(keys);
-    } catch (error) {
-      console.error("Failed to load API keys:", error);
-      toast.error("Failed to load API keys");
-    } finally {
-      setLoading(false);
-    }
-  }, [listEndpoint]);
+  const {
+    items: apiKeys,
+    meta,
+    setPage,
+    loading,
+    error,
+    reload,
+  } = usePaginatedResource<ApiKey>(
+    (page) =>
+      fetch(`${listEndpoint}?page=${page}`).then((r) => {
+        if (!r.ok) {
+          throw new Error("Failed to load API keys");
+        }
+        return r.json() as Promise<Page<ApiKey>>;
+      }),
+    listEndpoint
+  );
 
   useEffect(() => {
-    loadApiKeys();
-  }, [loadApiKeys]);
+    if (error) {
+      toast.error("Failed to load API keys");
+    }
+  }, [error]);
 
   const handleKeyCreated = (newKey: ApiKey) => {
     setNewlyCreatedKey(newKey.key ?? null);
-    setApiKeys((prev) => [newKey, ...prev]);
+    reload();
   };
 
   const handleDelete = async (
@@ -462,7 +497,7 @@ function useApiKeys(
         return { ok: false, code: "unknown" };
       }
 
-      setApiKeys((prev) => prev.filter((k) => k.id !== keyId));
+      reload();
       toast.success("API key revoked");
       return { ok: true };
     } catch (error) {
@@ -479,6 +514,8 @@ function useApiKeys(
   return {
     loading,
     apiKeys,
+    meta,
+    setPage,
     newlyCreatedKey,
     deleting,
     handleKeyCreated,
@@ -540,12 +577,67 @@ function McpEndpointCard() {
 }
 
 /**
+ * Opens the key-activity modal (create/revoke trail) for a key set. The audit
+ * read is admin/owner-only, so the caller gates this on that.
+ */
+function KeyActivityButton({
+  resourceType,
+  title,
+  keys,
+  defaultActor,
+}: {
+  resourceType: string;
+  title: string;
+  keys: ApiKey[];
+  defaultActor?: {
+    name?: string | null;
+    email?: string | null;
+    role?: string | null;
+  } | null;
+}): React.ReactElement {
+  const { push } = useOverlay();
+  return (
+    <div className="mt-4 border-border border-t pt-3">
+      <Button
+        className="px-0 text-muted-foreground text-xs hover:text-foreground"
+        onClick={() =>
+          push(KeyActivityOverlay, {
+            resourceType,
+            title,
+            keys,
+            defaultActor,
+          })
+        }
+        size="sm"
+        variant="link"
+      >
+        <History className="mr-1.5 size-3.5" />
+        View key activity
+      </Button>
+    </div>
+  );
+}
+
+/**
  * Main API Keys management overlay with tabs for Webhook and Organisation keys.
  */
-export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
+export function ApiKeysOverlay({
+  overlayId,
+  highlightId,
+  highlightType,
+}: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
-  const { isAdmin } = useActiveMember();
-  const [activeTab, setActiveTab] = useState("organisation");
+  const { isAdmin, role } = useActiveMember();
+  const { data: session } = useSession();
+  // Webhook keys are personal, so their creator is the current user.
+  const currentUser = {
+    name: session?.user?.name ?? null,
+    email: session?.user?.email ?? null,
+    role: role ?? null,
+  };
+  const [activeTab, setActiveTab] = useState(
+    highlightType === "api_key" ? "webhook" : "organisation"
+  );
 
   // Webhook (User) keys
   const webhookKeys = useApiKeys(
@@ -620,11 +712,26 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
               canDelete={canManageOrgKeys}
               deleteEndpoint={orgKeys.deleteEndpoint}
               deleting={orgKeys.deleting}
+              highlightId={
+                highlightType === "org_api_key" ? highlightId : undefined
+              }
+              meta={orgKeys.meta}
               newlyCreatedKey={orgKeys.newlyCreatedKey}
               onDelete={orgKeys.handleDelete}
               onDismissNewKey={orgKeys.dismissNewKey}
+              onPage={orgKeys.setPage}
               readOnlyReason={orgReadOnlyReason}
               showCreator
+            />
+          )}
+
+          {/* Create + revoke trail across all keys (incl. revoked ones no
+              longer in the list). Audit read is admin/owner only. */}
+          {canManageOrgKeys && (
+            <KeyActivityButton
+              keys={orgKeys.apiKeys}
+              resourceType="org_api_key"
+              title="Organisation key activity"
             />
           )}
         </TabsContent>
@@ -643,9 +750,23 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
               apiKeys={webhookKeys.apiKeys}
               deleteEndpoint={webhookKeys.deleteEndpoint}
               deleting={webhookKeys.deleting}
+              highlightId={
+                highlightType === "api_key" ? highlightId : undefined
+              }
+              meta={webhookKeys.meta}
               newlyCreatedKey={webhookKeys.newlyCreatedKey}
               onDelete={webhookKeys.handleDelete}
               onDismissNewKey={webhookKeys.dismissNewKey}
+              onPage={webhookKeys.setPage}
+            />
+          )}
+          {/* Audit read is admin/owner only (org-scoped security trail). */}
+          {isAdmin && (
+            <KeyActivityButton
+              defaultActor={currentUser}
+              keys={webhookKeys.apiKeys}
+              resourceType="api_key"
+              title="User key activity"
             />
           )}
         </TabsContent>

@@ -21,6 +21,7 @@ import {
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import {
   buildAttribution,
+  type ExecutionCredentialType,
   resolveTriggerLabels,
 } from "@/lib/security/request-attribution";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
@@ -33,6 +34,7 @@ import {
   workflows,
 } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -58,12 +60,17 @@ export async function POST(
     let userId: string;
     let workflow: typeof workflows.$inferSelect | undefined;
     let orgApiKeyId: string | null = null;
+    let credentialType: ExecutionCredentialType | null = null;
+    let credentialLabel: string | null = null;
 
     if (isInternalExecution) {
       // Internal execution from authenticated service
       console.log(
         `[Workflow Execute] Internal execution from service: ${internalAuth.caller}`
       );
+
+      credentialType = "internal";
+      credentialLabel = internalAuth.caller ?? null;
 
       workflow = await db.query.workflows.findFirst({
         where: eq(workflows.id, workflowId),
@@ -136,6 +143,14 @@ export async function POST(
       userId = authContext.userId ?? workflow.userId;
       if (authContext.authMethod === "api-key") {
         orgApiKeyId = authContext.apiKeyId;
+        credentialType = "org_api_key";
+        // The org key row is soft-revoked (never hard-deleted), so its prefix
+        // stays joinable via triggered_by_org_api_key_id; no label lookup on
+        // this hot path.
+      } else if (authContext.authMethod === "oauth") {
+        credentialType = "oauth";
+      } else {
+        credentialType = "session";
       }
     }
 
@@ -253,7 +268,13 @@ export async function POST(
       request,
       source: triggerSource,
       orgApiKeyId,
+      credentialType,
+      credentialLabel,
     });
+    const executedWorkflowHash = hashWorkflowDefinition(
+      workflow.nodes,
+      workflow.edges
+    );
 
     // Check if executionId was provided (for scheduled executions)
     // This allows the executor to pre-create the execution record
@@ -285,6 +306,7 @@ export async function POST(
               status: "pending",
               input,
               ...attribution,
+              executedWorkflowHash,
             })
         );
         console.log("[API] Created execution with provided ID:", executionId);
@@ -303,6 +325,7 @@ export async function POST(
               status: "pending",
               input,
               ...attribution,
+              executedWorkflowHash,
             })
             .returning()
       );

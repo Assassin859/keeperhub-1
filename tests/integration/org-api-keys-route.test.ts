@@ -8,7 +8,8 @@ const {
   mockGetSession,
   mockGetOrgContext,
   mockOrgKeysFindMany,
-  mockUsersFindMany,
+  mockCountWhere,
+  mockCreatorsWhere,
   mockInsertReturning,
   mockUpdateReturning,
   mockRequireAdminOrOwnerWithMfa,
@@ -18,7 +19,8 @@ const {
   mockGetSession: vi.fn(),
   mockGetOrgContext: vi.fn(),
   mockOrgKeysFindMany: vi.fn(),
-  mockUsersFindMany: vi.fn(),
+  mockCountWhere: vi.fn(),
+  mockCreatorsWhere: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockUpdateReturning: vi.fn(),
   mockRequireAdminOrOwnerWithMfa: vi.fn(),
@@ -53,8 +55,17 @@ vi.mock("@/lib/db", () => ({
   db: {
     query: {
       organizationApiKeys: { findMany: mockOrgKeysFindMany },
-      users: { findMany: mockUsersFindMany },
     },
+    // GET runs a COUNT (select().from().where()) then a creator lookup
+    // (select().from().leftJoin().where()); both branch off the same select.
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: mockCountWhere,
+        leftJoin: vi.fn(() => ({
+          where: mockCreatorsWhere,
+        })),
+      })),
+    })),
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
         returning: mockInsertReturning,
@@ -86,6 +97,12 @@ vi.mock("@/lib/db/schema", () => ({
   users: {
     id: "id",
     name: "name",
+    email: "email",
+  },
+  member: {
+    userId: "user_id",
+    organizationId: "organization_id",
+    role: "role",
   },
 }));
 
@@ -167,34 +184,38 @@ describe("GET /api/keys", () => {
         expiresAt: "2027-01-01T00:00:00.000Z",
       },
     ]);
-    mockUsersFindMany.mockResolvedValue([{ id: USER_ID, name: "Test User" }]);
+    mockCountWhere.mockResolvedValue([{ total: 2 }]);
+    mockCreatorsWhere.mockResolvedValue([
+      { id: USER_ID, name: "Test User", email: "test@test.com", role: "owner" },
+    ]);
 
     const response = await GET(createRequest("GET"));
     expect(response.status).toBe(200);
     const data = await response.json();
-    expect(data).toHaveLength(2);
-    expect(data[0].createdByName).toBe("Test User");
-    expect(data[0].createdBy).toBeUndefined();
-    expect(data[1].createdByName).toBeNull();
+    expect(data.items).toHaveLength(2);
+    expect(data.items[0].createdByName).toBe("Test User");
+    expect(data.items[0].createdBy).toBeUndefined();
+    expect(data.items[1].createdByName).toBeNull();
   });
 
-  it("should return empty array when org has no keys", async () => {
+  it("should return empty items when org has no keys", async () => {
     mockResolveOrganizationId.mockResolvedValue({
       organizationId: ORG_ID,
     });
+    mockCountWhere.mockResolvedValue([{ total: 0 }]);
     mockOrgKeysFindMany.mockResolvedValue([]);
-    mockUsersFindMany.mockResolvedValue([]);
 
     const response = await GET(createRequest("GET"));
     expect(response.status).toBe(200);
     const data = await response.json();
-    expect(data).toEqual([]);
+    expect(data.items).toEqual([]);
   });
 
   it("should return 500 on database error", async () => {
     mockResolveOrganizationId.mockResolvedValue({
       organizationId: ORG_ID,
     });
+    mockCountWhere.mockResolvedValue([{ total: 0 }]);
     mockOrgKeysFindMany.mockRejectedValue(new Error("DB connection failed"));
 
     const response = await GET(createRequest("GET"));

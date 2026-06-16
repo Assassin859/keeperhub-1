@@ -18,6 +18,7 @@ import {
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-client";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -322,6 +323,15 @@ export async function POST(request: Request) {
         turnkeyWalletId: turnkeyResult.walletId,
         turnkeyPrivateKeyId: turnkeyResult.privateKeyId,
       });
+
+    await recordAuditEvent({
+      actor: { userId: user.id, organizationId, authMethod: "session" },
+      action: "org_wallet.created",
+      resourceType: "org_wallet",
+      resourceId: turnkeyResult.subOrgId,
+      after: { walletAddress: storedAddress },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       success: true,

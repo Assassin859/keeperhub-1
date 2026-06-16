@@ -7,8 +7,9 @@ import { requireOrgOwner } from "@/lib/billing/require-org-owner";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -18,7 +19,7 @@ export async function POST(): Promise<NextResponse> {
     if ("error" in authResult) {
       return authResult.error;
     }
-    const { orgId: activeOrgId } = authResult;
+    const { orgId: activeOrgId, userId } = authResult;
 
     const sub = await getOrgSubscription(activeOrgId);
 
@@ -41,6 +42,19 @@ export async function POST(): Promise<NextResponse> {
         updatedAt: new Date(),
       })
       .where(eq(organizationSubscriptions.organizationId, activeOrgId));
+
+    // Intent record: which user requested cancellation. The authoritative
+    // subscription.canceled event is emitted by the Stripe webhook handler
+    // when the subscription actually ends.
+    await recordAuditEvent({
+      actor: { userId, organizationId: activeOrgId, authMethod: "session" },
+      action: "subscription.cancel_requested",
+      resourceType: "subscription",
+      resourceId: activeOrgId,
+      before: { plan: sub.plan, cancelAtPeriodEnd: sub.cancelAtPeriodEnd },
+      after: { cancelAtPeriodEnd: true },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       canceled: true,

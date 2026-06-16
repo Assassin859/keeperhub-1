@@ -6,6 +6,7 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RequestBody = {
   code?: string;
@@ -116,6 +117,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       .update(twoFactorTable)
       .set({ backupCodes: encryptedBackupCodes })
       .where(eq(twoFactorTable.userId, userId));
+
+    await recordAuditEvent({
+      actor: { userId, organizationId: null, authMethod: "session" },
+      action: "backup_codes.regenerated",
+      resourceType: "user",
+      resourceId: userId,
+      metadata: buildAuditMetadata(request),
+    });
 
     const responseBody: Response = { backupCodes };
     return NextResponse.json(responseBody);
