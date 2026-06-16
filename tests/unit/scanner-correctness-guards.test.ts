@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { decodeAaveV3Results } from "@/lib/scan/adapters/aave-v3";
 import { executeMulticallBatch } from "@/lib/scan/multicall-batch";
+import { resolveImplementationAddress } from "@/lib/scan/proxy-abi";
 import { scanChains } from "@/lib/scan/scan-chains";
 import type { AdapterCallDescriptor, ChainScanOutput } from "@/lib/scan/types";
 
@@ -275,9 +276,39 @@ describe("scanner correctness guards", () => {
     expect(decoded2.totalDebtBase).toBe(BigInt(300));
   });
 
-  it.todo(
-    "EIP-1967 proxy ABI -> impl slot resolves real implementation address"
-  );
+  it("EIP-1967 proxy ABI -> impl slot resolves real implementation address", async () => {
+    // Aave V3 Ethereum pool used as the known implementation address.
+    const implAddr = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    // EIP-1967 storage layout: 32 bytes = 12 zero bytes of padding + 20-byte address.
+    const paddedStorage = `0x${"0".repeat(24)}${implAddr.slice(2).toLowerCase()}`;
+
+    type StorageProvider = {
+      getStorage(address: string, slot: string): Promise<string>;
+    };
+
+    const mockGetStorage = vi.fn().mockResolvedValue(paddedStorage);
+    const mockProvider: StorageProvider = {
+      getStorage: mockGetStorage as StorageProvider["getStorage"],
+    };
+
+    const result = await resolveImplementationAddress(
+      "0x0000000000000000000000000000000000000001",
+      mockProvider
+    );
+
+    // Returned address must be EIP-55 checksummed.
+    expect(result).toBe(implAddr);
+
+    // Non-proxy contract: zero slot value -> null (address is zero address).
+    const zeroStorage = `0x${"0".repeat(64)}`;
+    mockGetStorage.mockResolvedValue(zeroStorage);
+
+    const nullResult = await resolveImplementationAddress(
+      "0x0000000000000000000000000000000000000001",
+      mockProvider
+    );
+    expect(nullResult).toBeNull();
+  });
 
   it("partial chain -> slow/failed chain yields unavailableChains[], not 500", async () => {
     const chainAOutput: ChainScanOutput = {
