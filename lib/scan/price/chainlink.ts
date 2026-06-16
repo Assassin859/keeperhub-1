@@ -13,6 +13,15 @@ import { AGGREGATOR_V3_ABI } from "@/lib/web3/chainlink-feeds";
 export const DEPEG_THRESHOLD = 0.005;
 
 /**
+ * Module-level Chainlink aggregator interface. Constructed once and reused
+ * across every encode/decode call rather than per-invocation, matching the
+ * adapter convention elsewhere in lib/scan.
+ */
+const AGGREGATOR_V3_IFACE = new ethers.Interface(
+  AGGREGATOR_V3_ABI as unknown as ethers.InterfaceAbi
+);
+
+/**
  * Returns true when a stablecoin's USD price deviates >= 0.5% from $1.00.
  *
  * - price < $0.995  → true  (depeg below peg)
@@ -34,13 +43,10 @@ export function isDepegged(price: number): boolean {
  * by the scanner orchestrator — not executed directly.
  */
 export function readChainlinkPrice(feedAddress: string): AdapterCallDescriptor {
-  const iface = new ethers.Interface(
-    AGGREGATOR_V3_ABI as unknown as ethers.InterfaceAbi
-  );
   return {
     target: feedAddress,
     allowFailure: true,
-    callData: iface.encodeFunctionData("latestRoundData", []),
+    callData: AGGREGATOR_V3_IFACE.encodeFunctionData("latestRoundData", []),
   };
 }
 
@@ -62,10 +68,10 @@ export function decodeChainlinkAnswer(
   decimals = 8
 ): number | null {
   try {
-    const iface = new ethers.Interface(
-      AGGREGATOR_V3_ABI as unknown as ethers.InterfaceAbi
+    const decoded = AGGREGATOR_V3_IFACE.decodeFunctionResult(
+      "latestRoundData",
+      returnData
     );
-    const decoded = iface.decodeFunctionResult("latestRoundData", returnData);
     // decoded[1] is the `answer` field (int256); ethers v6 decodes int256 as bigint
     const answer = decoded[1] as bigint;
     if (answer <= BigInt(0)) {

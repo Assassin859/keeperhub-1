@@ -6,16 +6,16 @@
  * (429 on 4th/hr from same IP, scanAddress NOT called), and happy path
  * (200 + scanAddress called once with the rate-limit key `scan:<ip>`).
  *
- * Mocks: incrementAndCheck, resolveTrustedClientIp, scanAddress.
+ * Mocks: incrementAndCheck, getRequestSourceIp, scanAddress.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockIncrementAndCheck, mockResolveTrustedClientIp, mockScanAddress } =
+const { mockIncrementAndCheck, mockGetRequestSourceIp, mockScanAddress } =
   vi.hoisted(() => ({
     mockIncrementAndCheck: vi.fn(),
-    mockResolveTrustedClientIp: vi.fn(),
+    mockGetRequestSourceIp: vi.fn(),
     mockScanAddress: vi.fn(),
   }));
 
@@ -23,8 +23,8 @@ vi.mock("@/lib/agentic-wallet/rate-limit", () => ({
   incrementAndCheck: mockIncrementAndCheck,
 }));
 
-vi.mock("@/lib/security/trusted-proxies", () => ({
-  resolveTrustedClientIp: mockResolveTrustedClientIp,
+vi.mock("@/lib/security/request-attribution", () => ({
+  getRequestSourceIp: mockGetRequestSourceIp,
 }));
 
 vi.mock("@/lib/scan/scanner", () => ({
@@ -55,7 +55,7 @@ const DENIED_RATE = {
 
 function makeRequest(address: string): Request {
   return new Request(`http://localhost/api/scan/${address}`, {
-    headers: { "x-real-ip": MOCK_IP },
+    headers: { "cf-connecting-ip": MOCK_IP },
   });
 }
 
@@ -66,9 +66,9 @@ function makeParams(address: string): { params: Promise<{ address: string }> } {
 describe("GET /api/scan/[address]", () => {
   beforeEach(() => {
     mockIncrementAndCheck.mockReset();
-    mockResolveTrustedClientIp.mockReset();
+    mockGetRequestSourceIp.mockReset();
     mockScanAddress.mockReset();
-    mockResolveTrustedClientIp.mockReturnValue(MOCK_IP);
+    mockGetRequestSourceIp.mockReturnValue(MOCK_IP);
     mockIncrementAndCheck.mockResolvedValue(ALLOWED_RATE);
     mockScanAddress.mockResolvedValue({
       schemaVersion: 1,

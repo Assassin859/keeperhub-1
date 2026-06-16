@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS scan_results (
   scanned_at TIMESTAMP NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMP NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_scan_results_address
+-- UNIQUE: address is the cache key + the upsert (ON CONFLICT) target.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_scan_results_address
   ON scan_results (address);
 CREATE INDEX IF NOT EXISTS idx_scan_results_expires
   ON scan_results (expires_at);

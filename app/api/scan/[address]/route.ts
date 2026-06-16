@@ -6,8 +6,9 @@
  *
  * Abuse-control order (SCAN-14):
  *   1. Validate ethers.isAddress — 400 on malformed (no rate-limit/RPC work).
- *   2. Resolve trusted client IP via resolveTrustedClientIp (Cloudflare CIDR
- *      trust chain; never raw X-Forwarded-For header).
+ *   2. Resolve canonical client IP via getRequestSourceIp (cf-connecting-ip,
+ *      set authoritatively by Cloudflare and unforgeable by clients; trusted-
+ *      proxy XFF fallback). Never raw x-real-ip / X-Forwarded-For.
  *   3. Postgres-backed rate limit 3/hr/IP via incrementAndCheck. 4th request
  *      within the hour returns 429 BEFORE scanAddress is called.
  *   4. scanAddress handles the 5-min cache short-circuit (SCAN-13) and fans
@@ -24,16 +25,11 @@ import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
 import { HttpStatus } from "@/lib/http-status";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { scanAddress } from "@/lib/scan/scanner";
-import { resolveTrustedClientIp } from "@/lib/security/trusted-proxies";
+import { getRequestSourceIp } from "@/lib/security/request-attribution";
 
 export const dynamic = "force-dynamic";
 
 const RATE_LIMIT_MAX = 3;
-
-function getPeerIp(request: Request): string | null {
-  const ip = (request as unknown as { ip?: string }).ip;
-  return ip ?? request.headers.get("x-real-ip");
-}
 
 export async function GET(
   request: Request,
@@ -48,8 +44,12 @@ export async function GET(
     );
   }
 
-  const peerIp = getPeerIp(request);
-  const trustedIp = resolveTrustedClientIp(request, peerIp);
+  // Canonical client IP via cf-connecting-ip (Cloudflare-authoritative,
+  // unforgeable). Raw x-real-ip / X-Forwarded-For is client-controllable and
+  // would let a caller spoof the rate-limit key to bypass the 3/hr limit.
+  // Unattributable requests share one "unknown" bucket so they cannot escape
+  // the limit by withholding the header.
+  const trustedIp = getRequestSourceIp(request) ?? "unknown";
   const rate = await incrementAndCheck(`scan:${trustedIp}`, RATE_LIMIT_MAX);
 
   if (!rate.allowed) {
@@ -62,6 +62,17 @@ export async function GET(
     );
   }
 
-  const result = await scanAddress(address);
-  return applyRateLimitHeaders(Response.json(result), rate);
+  try {
+    const result = await scanAddress(address);
+    return applyRateLimitHeaders(Response.json(result), rate);
+  } catch {
+    // Never leak internal/RPC error detail on the public surface.
+    return applyRateLimitHeaders(
+      Response.json(
+        { error: "Scan failed" },
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
+      ),
+      rate
+    );
+  }
 }

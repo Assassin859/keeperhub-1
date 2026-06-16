@@ -260,13 +260,31 @@ export async function scanAddress(rawAddress: string): Promise<ScanResponse> {
     scannedAt: new Date().toISOString(),
   };
 
-  // 6. Write cache row with 5-min TTL (SCAN-13).
-  await db.insert(scanResults).values({
-    address: cacheKey,
-    resultJson: response,
-    scannedAt: new Date(),
-    expiresAt: new Date(Date.now() + CACHE_TTL_MS),
-  });
+  // 6. Write cache row with 5-min TTL (SCAN-13). Upsert on the unique address
+  //    key so concurrent cache misses converge to one row rather than
+  //    accumulating duplicates. A cache-write failure must never discard a
+  //    successfully computed scan — swallow it and still return the result.
+  try {
+    const now = new Date();
+    await db
+      .insert(scanResults)
+      .values({
+        address: cacheKey,
+        resultJson: response,
+        scannedAt: now,
+        expiresAt: new Date(now.getTime() + CACHE_TTL_MS),
+      })
+      .onConflictDoUpdate({
+        target: scanResults.address,
+        set: {
+          resultJson: response,
+          scannedAt: now,
+          expiresAt: new Date(now.getTime() + CACHE_TTL_MS),
+        },
+      });
+  } catch {
+    // Cache is best-effort; the scan already succeeded.
+  }
 
   return response;
 }
