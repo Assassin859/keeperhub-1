@@ -46,8 +46,8 @@
 **Plans**: 8 plans (5 waves)
 Plans:
 - [x] 51-01-PLAN.md — Foundation: scan type contract + verified protocol-address registry + TEST-01 scaffold [wave 1] — COMPLETE (2026-06-16)
-- [ ] 51-02-PLAN.md — scan_results Postgres cache schema + [BLOCKING] file-based migration 0112 [wave 2]
-- [ ] 51-03-PLAN.md — Multicall3 batch harness (<=20, soft-miss) + per-chain 4s timeout fan-out [wave 2]
+- [x] 51-02-PLAN.md — scan_results Postgres cache schema + [BLOCKING] file-based migration 0112 [wave 2]
+- [x] 51-03-PLAN.md — Multicall3 batch harness (<=20, soft-miss) + per-chain 4s timeout fan-out [wave 2]
 - [ ] 51-04-PLAN.md — USD pricing: Chainlink feeds + depeg detection + DefiLlama fallback (N/A not $0) [wave 2]
 - [ ] 51-06-PLAN.md — Lido staking + stablecoin balance adapters (registry-driven, soft-miss) [wave 2]
 - [ ] 51-05-PLAN.md — Aave V3 adapter (account data + eMode + HF guard) + EIP-1967 proxy resolution [wave 3]
@@ -108,7 +108,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 51. Scanner Infrastructure | 0/8 | Planned | - |
+| 51. Scanner Infrastructure | 3/8 | In Progress|  |
 | 52. Suggestion Engine + Workflow Factory | 0/TBD | Not started | - |
 | 53. /scan UI | 0/TBD | Not started | - |
 | 54. Auth Round-Trip + Persistence | 0/TBD | Not started | - |

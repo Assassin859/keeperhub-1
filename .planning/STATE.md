@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-16T21:35:00Z"
-last_activity: 2026-06-16 -- Completed 51-01: scan type contract + registry + TEST-01 scaffold
+last_updated: "2026-06-17T00:02:00Z"
+last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 8
-  completed_plans: 1
-  percent: 12
+  completed_plans: 3
+  percent: 0
 ---
 
 # Project State
@@ -23,16 +23,18 @@ progress:
 ## Current Position
 
 Phase: 51 (scanner-infrastructure) — EXECUTING
-Plan: 2 of 8
+Plan: 4 of 8
 Status: Executing Phase 51
-Last activity: 2026-06-16 -- Completed 51-01 (type contract + registry + TEST-01 scaffold)
+Last activity: 2026-06-17 -- Completed 51-03 (Multicall3 batch harness + per-chain timeout fan-out)
 
 ## Performance Metrics
 
 - Phases planned: 5 (51-55)
 - Phases complete: 0
-- Plans complete: 1/8 (51-01 done)
+- Plans complete: 3/8 (51-01, 51-02, 51-03 done)
 - Duration 51-01: 31 minutes
+- Duration 51-02: ~20 minutes
+- Duration 51-03: 27 minutes
 
 ## Accumulated Context
 
@@ -53,6 +55,8 @@ Last activity: 2026-06-16 -- Completed 51-01 (type contract + registry + TEST-01
 - ProtocolAdapter uses pure buildCalls/decode shape (no class instantiation); orchestrator owns the multicall batch (51-01).
 - L2 Chainlink stablecoin feeds omitted from registry (multiple candidate addresses); DefiLlama fallback applies for all L2 stablecoin pricing (51-01).
 - BigInt() constructor used in tests instead of n-suffix literals for ES2017 tsconfig compatibility (51-01).
+- aggregate3 (not tryAggregate or aggregate) used for Multicall3 batching — per-call allowFailure is embedded in each call struct (51-03).
+- AbortController races via Promise.race in scanWithTimeout; clearTimeout in finally ensures cleanup on both fast-resolve and abort paths (51-03).
 
 ### Todos
 
@@ -67,9 +71,9 @@ Last activity: 2026-06-16 -- Completed 51-01 (type contract + registry + TEST-01
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 51-01 (scan type contract + registry + TEST-01 scaffold) — 2026-06-16
-- Stopped at: Plan 2 of 8 ready to execute
-- Next command: `/gsd:execute-phase 51 02`
+- Last completed: 51-03 (Multicall3 batch harness + per-chain timeout fan-out) — 2026-06-17
+- Stopped at: Plan 4 of 8 ready to execute
+- Next command: `/gsd:execute-phase 51 04`
 
 ## Deferred Items
 
