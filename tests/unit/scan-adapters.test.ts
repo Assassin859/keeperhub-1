@@ -40,7 +40,7 @@ describe("lido adapter", () => {
   });
 
   it("lido: Arbitrum (chainId 42161) builds 1 balanceOf call — wstETH only", () => {
-    const calls = buildLidoCalls(TEST_USER, 42161);
+    const calls = buildLidoCalls(TEST_USER, 42_161);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.allowFailure).toBe(true);
   });
@@ -81,9 +81,11 @@ describe("lido adapter", () => {
   it("lido: chainId 42161 decode emits 1 wstETH asset (raw balance, no conversion call)", () => {
     const wstEthBalance = BigInt("200000000000000000"); // 0.2 wstETH
 
-    const results = [{ success: true, returnData: encodeBalance(wstEthBalance) }];
+    const results = [
+      { success: true, returnData: encodeBalance(wstEthBalance) },
+    ];
 
-    const positions = decodeLidoResults(results, TEST_USER, 42161);
+    const positions = decodeLidoResults(results, TEST_USER, 42_161);
     expect(positions).toHaveLength(1);
 
     const pos = positions[0];
@@ -119,7 +121,9 @@ describe("lido adapter", () => {
   });
 
   it("lido: returns empty array for unsupported chainId", () => {
-    const results = [{ success: true, returnData: encodeBalance(BigInt("1000")) }];
+    const results = [
+      { success: true, returnData: encodeBalance(BigInt("1000")) },
+    ];
     expect(decodeLidoResults(results, TEST_USER, 99)).toHaveLength(0);
   });
 });
@@ -190,7 +194,9 @@ describe("stablecoin adapter", () => {
       { success: false, returnData: "0x" },
       { success: false, returnData: "0x" },
     ];
-    expect(() => decodeStablecoinResults(results, MOCK_TOKENS, 1)).not.toThrow();
+    expect(() =>
+      decodeStablecoinResults(results, MOCK_TOKENS, 1)
+    ).not.toThrow();
     expect(decodeStablecoinResults(results, MOCK_TOKENS, 1)).toHaveLength(0);
   });
 

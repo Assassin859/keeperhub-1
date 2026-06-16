@@ -1,7 +1,11 @@
 import "server-only";
 
 import { ethers } from "ethers";
-import type { AdapterCallDescriptor, MulticallResult, StablecoinBalance } from "@/lib/scan/types";
+import type {
+  AdapterCallDescriptor,
+  MulticallResult,
+  StablecoinBalance,
+} from "@/lib/scan/types";
 
 /**
  * Minimal ERC20 balanceOf ABI fragment used to encode per-token balance reads.

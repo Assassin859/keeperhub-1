@@ -81,7 +81,7 @@ export function normalizeHealthFactor(
   }
   // Pitfall 5: precision loss beyond ~15 significant digits is acceptable
   // for the 4-decimal display value. Raw bigint is never emitted.
-  return parseFloat((Number(rawHf) / 1e18).toFixed(4));
+  return Number.parseFloat((Number(rawHf) / 1e18).toFixed(4));
 }
 
 /**
@@ -107,8 +107,7 @@ export function decodeAaveV3Results(
   const eModeResult = results[1];
 
   if (
-    !accountResult?.success ||
-    !accountResult.returnData ||
+    !(accountResult?.success && accountResult.returnData) ||
     accountResult.returnData === "0x"
   ) {
     return [];

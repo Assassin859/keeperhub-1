@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T00:30:00Z"
+last_updated: "2026-06-17T00:47:00Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 7
   percent: 0
 ---
 
@@ -23,19 +23,20 @@ progress:
 ## Current Position
 
 Phase: 51 (scanner-infrastructure) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Executing Phase 51
-Last activity: 2026-06-17 -- Completed 51-06 (Lido + stablecoin adapters)
+Last activity: 2026-06-17 -- Completed 51-05 (Aave V3 adapter + EIP-1967 proxy resolution)
 
 ## Performance Metrics
 
 - Phases planned: 5 (51-55)
 - Phases complete: 0
-- Plans complete: 6/8 (51-01, 51-02, 51-03, 51-04, 51-05, 51-06 done)
+- Plans complete: 7/8 (51-01, 51-02, 51-03, 51-04, 51-05, 51-06 done; 51-05 completed 2026-06-17)
 - Duration 51-01: 31 minutes
 - Duration 51-02: ~20 minutes
 - Duration 51-03: 27 minutes
 - Duration 51-04: 7 minutes
+- Duration 51-05: 10 minutes
 - Duration 51-06: 7 minutes
 
 ## Accumulated Context
@@ -63,6 +64,9 @@ Last activity: 2026-06-17 -- Completed 51-06 (Lido + stablecoin adapters)
 - resolveUsdPrice opts.chainlinkResult pattern: orchestrator pre-fetches Chainlink via aggregate3 and passes decoded MulticallResult; no independent RPC from pricing layer (51-04).
 - L2 wstETH: raw balance only — getStETHByWstETH not called on L2 bridges (A6 resolved, Phase 52 may add conversion) (51-06).
 - Stablecoin adapter is pure over orchestrator-supplied token list; no direct DB query inside the adapter (51-06).
+- decodeAaveV3Results does not check AAVE_V3_POOLS registry — decode is chainId-agnostic; registry used only in buildAaveV3Calls (51-05).
+- resolveImplementationAddress takes provider directly (not chainId) for clean testability without getRpcProvider mock (51-05).
+- EIP1967_IMPLEMENTATION_SLOT exported from proxy-detection.ts rather than re-implemented as a new literal (51-05).
 
 ### Todos
 
@@ -77,8 +81,8 @@ Last activity: 2026-06-17 -- Completed 51-06 (Lido + stablecoin adapters)
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 51-06 (Lido + stablecoin adapters) — 2026-06-17
-- Stopped at: Plan 7 of 8 ready to execute
+- Last completed: 51-05 (Aave V3 adapter + EIP-1967 proxy resolution) — 2026-06-17
+- Stopped at: Plan 8 of 8 ready to execute
 - Next command: `/gsd:execute-phase 51 07`
 
 ## Deferred Items
@@ -96,3 +100,4 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | v1.13 future | Category-4 auto-claim WRITE workflows | deferred |
 | v1.13 future | Additional protocol adapters (Morpho, Curve, Pendle, Yearn, Aerodrome) | deferred |
 | v1.13 future | Shareable scan-result URLs (with privacy consent) | deferred |
+| scanner-infra | `pnpm check` Biome config error (`noIncrementDecrement` unknown key in biome.jsonc:58) — pre-existing, unrelated to plan 51-05 | deferred |
