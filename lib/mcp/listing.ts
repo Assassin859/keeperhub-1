@@ -155,10 +155,14 @@ export async function listWorkflow(
   };
 
   if (current.listedSlug === null) {
-    if (!metadata.slug) {
+    // Trim before validating and persisting so a blank/whitespace slug is
+    // refused (not stored as an uncallable listing) and the stored value
+    // matches what the PATCH route's gate (which trims) would accept.
+    const slug = metadata.slug?.trim();
+    if (!slug) {
       return { ok: false, error: "SLUG_REQUIRED" };
     }
-    updateSet.listedSlug = metadata.slug;
+    updateSet.listedSlug = slug;
   }
   // If listedSlug is already set, do not overwrite it (slug is sticky)
 

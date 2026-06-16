@@ -590,6 +590,11 @@ export async function PATCH(
           { status: 422 }
         );
       }
+      // When the body sets the slug, persist the trimmed value so the stored
+      // slug matches what was validated (no leading/trailing whitespace).
+      if (updateData.listedSlug !== undefined) {
+        updateData.listedSlug = finalSlug.trim();
+      }
 
       const checkNodes =
         updateData.nodes !== undefined || isTransitioningToListed;

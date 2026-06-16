@@ -163,6 +163,22 @@ describe("workflow listing lifecycle", () => {
     expect(result.error).toBe("SLUG_REQUIRED");
   });
 
+  it("list with a whitespace-only slug returns SLUG_REQUIRED (matches the PATCH route's trim check)", async () => {
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "   " });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("SLUG_REQUIRED");
+  });
+
+  it("list trims a padded slug before persisting it", async () => {
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "  padded-slug  ",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.listing.listedSlug).toBe("padded-slug");
+  });
+
   it("unlist: sets isListed=false, preserves listedSlug and listedAt", async () => {
     await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "my-test-workflow" });
     const listingTimestamp = workflowState.listedAt;

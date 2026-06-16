@@ -1446,6 +1446,35 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(mockUpdateReturning).not.toHaveBeenCalled();
   });
 
+  it("SLUG-GATE trims a padded slug before persisting it", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      listedSlug: null,
+      inputSchema: { type: "object" },
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "padded-slug",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        isListed: true,
+        listedSlug: "  padded-slug  ",
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedSet.data?.listedSlug).toBe("padded-slug");
+  });
+
   it("SLUG-GATE edit nodes on an already-listed workflow with a sticky slug: succeeds (no false reject)", async () => {
     const existing = makeWorkflow({
       isListed: true,
