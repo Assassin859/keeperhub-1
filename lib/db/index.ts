@@ -21,6 +21,7 @@ import {
   overageBillingRecords,
   pendingTransactions,
   publicTags,
+  scanResults,
   sessions,
   tags,
   tagsRelations,
@@ -73,6 +74,7 @@ const schema = {
   explorerConfigsRelations,
   userRpcPreferences,
   userRpcPreferencesRelations,
+  scanResults,
 };
 
 const connectionString = getDatabaseUrl();
