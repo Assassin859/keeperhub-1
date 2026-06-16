@@ -637,34 +637,63 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     loadExistingWorkflow,
   ]);
 
-  // Open a shared `?version=N` link read-only: once the workflow is loaded,
-  // preview that version on the canvas and reveal the history panel. Fires
-  // once per distinct version param; clears when the param is removed.
+  // Open a shared `?version=` link read-only: once the workflow is loaded,
+  // reveal the History tab and (for a specific past version) preview it on the
+  // canvas. "current" is the live version, so it opens history without a canvas
+  // preview. Fires once per distinct version param; clears when removed.
   const { preview: previewVersionOnCanvas } = useVersionPreview();
-  const appliedVersionParamRef = useRef<number | null>(null);
+  const appliedVersionParamRef = useRef<string | null>(null);
   useEffect(() => {
     const raw = searchParams?.get("version");
-    const version = raw ? Number.parseInt(raw, 10) : Number.NaN;
-    if (Number.isNaN(version)) {
+    if (!raw) {
       appliedVersionParamRef.current = null;
       return;
     }
     if (
       currentWorkflowId === workflowId &&
-      appliedVersionParamRef.current !== version
+      appliedVersionParamRef.current !== raw
     ) {
-      appliedVersionParamRef.current = version;
-      previewVersionOnCanvas(version);
-      // Reveal the History tab (workflow-level) so the shared version is shown
-      // in context alongside the on-canvas preview.
+      appliedVersionParamRef.current = raw;
       setSelectedNode(null);
       setActiveTab("history");
+      if (raw !== "current") {
+        const version = Number.parseInt(raw, 10);
+        if (!Number.isNaN(version)) {
+          previewVersionOnCanvas(version);
+        }
+      }
     }
   }, [
     searchParams,
     currentWorkflowId,
     workflowId,
     previewVersionOnCanvas,
+    setSelectedNode,
+    setActiveTab,
+  ]);
+
+  // Deep-link from the activity feed: `?tab=history` opens the workflow-level
+  // History tab once the workflow is loaded (no specific version preview).
+  // Fires once per distinct tab param.
+  const appliedTabParamRef = useRef<string | null>(null);
+  useEffect(() => {
+    const tab = searchParams?.get("tab");
+    if (tab !== "history") {
+      appliedTabParamRef.current = null;
+      return;
+    }
+    if (
+      currentWorkflowId === workflowId &&
+      appliedTabParamRef.current !== tab
+    ) {
+      appliedTabParamRef.current = tab;
+      setSelectedNode(null);
+      setActiveTab(tab);
+    }
+  }, [
+    searchParams,
+    currentWorkflowId,
+    workflowId,
     setSelectedNode,
     setActiveTab,
   ]);
@@ -1120,7 +1149,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
             <div className="absolute inset-y-0 left-0 w-px bg-border" />
             {!(isDraggingResize || panelCollapsed) && (
               <button
-                className="-translate-x-1/2 absolute top-3 left-0 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+                className="absolute top-3 left-0 flex size-6 -translate-x-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsPanelAnimating(true);

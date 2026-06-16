@@ -1,7 +1,11 @@
 "use client";
 
-import { Minus, Pencil, Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronRight, Minus, Pencil, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
+import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
+import { useOverlay } from "@/components/overlays/overlay-provider";
 import { relativeTime } from "@/components/settings/session-format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { groupByDate } from "@/lib/activity/time-groups";
@@ -190,10 +194,44 @@ function DiffLines({ diff }: { diff: unknown }): React.ReactElement | null {
   );
 }
 
+// The workflow definition (nodes/edges/config) is audited as a content hash;
+// when it appears in the diff the build itself changed, even if no scalar field
+// did. We don't print the hash (it's a HIDDEN_FIELD), so surface a plain note
+// instead so the row says what kind of update happened.
+function definitionChanged(diff: unknown): boolean {
+  if (!Array.isArray(diff)) {
+    return false;
+  }
+  return diff.some((c) => {
+    const path = (c as { path?: Array<string | number> })?.path ?? [];
+    return String(path.at(-1) ?? "") === "contentHash";
+  });
+}
+
+// Resource types a feed row can open: workflows go to their editor's version
+// History; integrations and API keys open their management modal. Types with no
+// such destination (wallet signings, projects, tags) stay non-clickable.
+const OPENABLE_TYPES = new Set([
+  "workflow",
+  "integration",
+  "api_key",
+  "org_api_key",
+]);
+
+function isOpenableEvent(event: SecurityAuditEvent): boolean {
+  return (
+    Boolean(event.resourceId) &&
+    event.resourceType !== null &&
+    OPENABLE_TYPES.has(event.resourceType)
+  );
+}
+
 function ActivityRow({
   event,
+  onOpen,
 }: {
   event: SecurityAuditEvent;
+  onOpen?: (event: SecurityAuditEvent) => void;
 }): React.ReactElement {
   const { phrase, kind } = describeAuditAction(event.action);
   const Icon = KIND_ICON[kind];
@@ -203,6 +241,31 @@ function ActivityRow({
   // Show the email on its own line only when we also have a name -- otherwise
   // actorLabel already falls back to the email.
   const email = actor?.name ? actor.email : null;
+  const resourceName = event.resourceName;
+  const canOpen = Boolean(onOpen) && isOpenableEvent(event);
+
+  const header = (
+    <>
+      <div className="flex items-baseline justify-between gap-2 text-sm leading-snug">
+        <span className="min-w-0 truncate">
+          <span className="font-medium">{actorLabel(actor)}</span>
+          {role && (
+            <span className="ml-1 text-muted-foreground text-xs">· {role}</span>
+          )}
+        </span>
+        <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-muted-foreground">
+          {capitalize(phrase)}
+          {canOpen && <ChevronRight className="size-3.5" />}
+        </span>
+      </div>
+      {resourceName && (
+        <div className="mt-0.5 truncate font-medium text-foreground/90 text-sm">
+          {resourceName}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <li className="flex items-start gap-3 py-2.5">
       <ActorAvatarBadge
@@ -211,20 +274,23 @@ function ActivityRow({
         icon={Icon}
       />
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2 text-sm leading-snug">
-          <span className="min-w-0 truncate">
-            <span className="font-medium">{actorLabel(actor)}</span>
-            {role && (
-              <span className="ml-1 text-muted-foreground text-xs">
-                · {role}
-              </span>
-            )}
-          </span>
-          <span className="shrink-0 whitespace-nowrap text-muted-foreground">
-            {capitalize(phrase)}
-          </span>
-        </div>
+        {canOpen ? (
+          <button
+            className="-mx-1 block w-full rounded px-1 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onOpen?.(event)}
+            type="button"
+          >
+            {header}
+          </button>
+        ) : (
+          header
+        )}
         <DiffLines diff={event.diff} />
+        {definitionChanged(event.diff) && (
+          <p className="mt-1 text-muted-foreground text-xs">
+            Definition updated
+          </p>
+        )}
         {email && (
           <p className="truncate text-muted-foreground text-xs">{email}</p>
         )}
@@ -315,6 +381,43 @@ export function ActivityFeed({
   const from = params?.from;
   const to = params?.to;
   const limit = params?.limit;
+
+  // Open the event's resource: workflows leave for their editor's History tab
+  // (deep-linked to the exact version when known); integrations and API keys
+  // open their management modal on top of the feed.
+  const router = useRouter();
+  const { closeAll, push } = useOverlay();
+  const openResource = useCallback(
+    (event: SecurityAuditEvent) => {
+      if (!event.resourceId) {
+        return;
+      }
+      if (event.resourceType === "workflow") {
+        closeAll();
+        const versionQuery =
+          event.version === null ? "" : `&version=${event.version}`;
+        router.push(
+          `/workflows/${event.resourceId}?tab=history${versionQuery}`
+        );
+        return;
+      }
+      if (event.resourceType === "integration") {
+        push(IntegrationsOverlay, { highlightId: event.resourceId });
+        return;
+      }
+      if (
+        event.resourceType === "api_key" ||
+        event.resourceType === "org_api_key"
+      ) {
+        const highlightType: "api_key" | "org_api_key" = event.resourceType;
+        push(ApiKeysOverlay, {
+          highlightId: event.resourceId,
+          highlightType,
+        });
+      }
+    },
+    [router, closeAll, push]
+  );
 
   const {
     items: events,
@@ -439,7 +542,13 @@ export function ActivityFeed({
             </p>
             <ul className="divide-y divide-border/60">
               {group.items.map((event) => (
-                <ActivityRow event={event} key={event.id} />
+                <ActivityRow
+                  event={event}
+                  key={event.id}
+                  // A single-resource feed (e.g. a per-resource overlay) is
+                  // already that resource's history, so its rows don't drill in.
+                  onOpen={resourceId ? undefined : openResource}
+                />
               ))}
             </ul>
           </div>

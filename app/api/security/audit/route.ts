@@ -2,7 +2,16 @@ import { and, count, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { member, securityAuditLog, users, workflows } from "@/lib/db/schema";
+import {
+  apiKeys,
+  integrations,
+  member,
+  organizationApiKeys,
+  securityAuditLog,
+  users,
+  workflowHistory,
+  workflows,
+} from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
@@ -180,6 +189,182 @@ export async function GET(request: Request) {
           .where(inArray(users.id, actorIds))
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
+
+    // Name the affected workflow so the feed can show "which workflow" and
+    // link into it. Org-scoped; soft-deleted workflows are kept so their
+    // name still resolves. Other resource types have no in-app history view
+    // to link to, so they are left unnamed here.
+    const workflowResourceIds = [
+      ...new Set(
+        rows
+          .filter((r) => r.resourceType === "workflow" && r.resourceId)
+          .map((r) => r.resourceId)
+      ),
+    ] as string[];
+    const workflowNames = workflowResourceIds.length
+      ? await db
+          .select({ id: workflows.id, name: workflows.name })
+          .from(workflows)
+          .where(
+            and(
+              eq(workflows.organizationId, organizationId),
+              inArray(workflows.id, workflowResourceIds)
+            )
+          )
+      : [];
+    const workflowNameMap = new Map(workflowNames.map((w) => [w.id, w.name]));
+
+    // Names for the other audited resources so a row shows which one and can
+    // open its activity. Resolved by id; org-owned tables are also org-scoped.
+    const idsForType = (type: string): string[] =>
+      [
+        ...new Set(
+          rows
+            .filter((r) => r.resourceType === type && r.resourceId)
+            .map((r) => r.resourceId)
+        ),
+      ].filter((id): id is string => id !== null);
+    const integrationIds = idsForType("integration");
+    const orgKeyIds = idsForType("org_api_key");
+    const personalKeyIds = idsForType("api_key");
+    const integrationRows = integrationIds.length
+      ? await db
+          .select({
+            id: integrations.id,
+            name: integrations.name,
+            type: integrations.type,
+          })
+          .from(integrations)
+          .where(
+            and(
+              eq(integrations.organizationId, organizationId),
+              inArray(integrations.id, integrationIds)
+            )
+          )
+      : [];
+    const orgKeyRows = orgKeyIds.length
+      ? await db
+          .select({
+            id: organizationApiKeys.id,
+            name: organizationApiKeys.name,
+          })
+          .from(organizationApiKeys)
+          .where(
+            and(
+              eq(organizationApiKeys.organizationId, organizationId),
+              inArray(organizationApiKeys.id, orgKeyIds)
+            )
+          )
+      : [];
+    const personalKeyRows = personalKeyIds.length
+      ? await db
+          .select({ id: apiKeys.id, name: apiKeys.name })
+          .from(apiKeys)
+          .where(inArray(apiKeys.id, personalKeyIds))
+      : [];
+    // Carry the type so the feed says which kind of integration. Show the type
+    // alone when it is the only label (no distinct name), else "Name · Type".
+    const integrationLabel = (name: string, type: string): string => {
+      const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);
+      const trimmed = name.trim();
+      return trimmed && trimmed.toLowerCase() !== type.toLowerCase()
+        ? `${trimmed} · ${typeLabel}`
+        : typeLabel;
+    };
+    const integrationNameMap = new Map(
+      integrationRows.map((i) => [i.id, integrationLabel(i.name, i.type)])
+    );
+    const orgKeyNameMap = new Map(orgKeyRows.map((k) => [k.id, k.name]));
+    const personalKeyNameMap = new Map(
+      personalKeyRows.map((k) => [k.id, k.name])
+    );
+    const resourceNameFor = (
+      type: string | null,
+      id: string | null
+    ): string | null => {
+      if (!(type && id)) {
+        return null;
+      }
+      if (type === "workflow") {
+        return workflowNameMap.get(id) ?? null;
+      }
+      if (type === "integration") {
+        return integrationNameMap.get(id) ?? null;
+      }
+      if (type === "org_api_key") {
+        return orgKeyNameMap.get(id) ?? null;
+      }
+      if (type === "api_key") {
+        return personalKeyNameMap.get(id) ?? null;
+      }
+      return null;
+    };
+
+    // Link each workflow event to the history version written in the same
+    // request, matched by near-identical timestamp (the audit row and the
+    // snapshot are persisted together). This resolves the exact version each
+    // event produced -- across definition, rename, and enable changes -- so the
+    // feed can deep-link straight to it. A tight tolerance rejects events that
+    // produced no snapshot (e.g. a no-op autosave).
+    const VERSION_MATCH_TOLERANCE_MS = 3000;
+    const versionByEventId = new Map<string, number>();
+    const workflowRows = rows.filter(
+      (r) => r.resourceType === "workflow" && r.resourceId
+    );
+    if (workflowRows.length > 0) {
+      const eventTimes = workflowRows.map((r) => r.createdAt.getTime());
+      const windowStart = new Date(
+        Math.min(...eventTimes) - VERSION_MATCH_TOLERANCE_MS
+      );
+      const windowEnd = new Date(
+        Math.max(...eventTimes) + VERSION_MATCH_TOLERANCE_MS
+      );
+      const historyRows = await db
+        .select({
+          workflowId: workflowHistory.workflowId,
+          version: workflowHistory.version,
+          createdAt: workflowHistory.createdAt,
+        })
+        .from(workflowHistory)
+        .where(
+          and(
+            inArray(workflowHistory.workflowId, workflowResourceIds),
+            gte(workflowHistory.createdAt, windowStart),
+            lte(workflowHistory.createdAt, windowEnd)
+          )
+        );
+      const historyByWorkflow = new Map<
+        string,
+        { version: number; time: number }[]
+      >();
+      for (const h of historyRows) {
+        const list = historyByWorkflow.get(h.workflowId) ?? [];
+        list.push({ version: h.version, time: h.createdAt.getTime() });
+        historyByWorkflow.set(h.workflowId, list);
+      }
+      for (const r of workflowRows) {
+        const candidates = r.resourceId
+          ? historyByWorkflow.get(r.resourceId)
+          : undefined;
+        if (!candidates) {
+          continue;
+        }
+        const eventTime = r.createdAt.getTime();
+        let best: { version: number; time: number } | null = null;
+        for (const c of candidates) {
+          const delta = Math.abs(c.time - eventTime);
+          if (
+            delta <= VERSION_MATCH_TOLERANCE_MS &&
+            (best === null || delta < Math.abs(best.time - eventTime))
+          ) {
+            best = c;
+          }
+        }
+        if (best) {
+          versionByEventId.set(r.id, best.version);
+        }
+      }
+    }
     // Return an explicit, display-only DTO -- never the raw row. Spreading the
     // row would leak internal audit columns (apiKeyId, authMethod,
     // correlationId, outcome, org/actor labels) and the unredacted diff to the
@@ -211,6 +396,12 @@ export async function GET(request: Request) {
         action: r.action,
         resourceType: r.resourceType,
         resourceId: r.resourceId,
+        resourceName: resourceNameFor(r.resourceType, r.resourceId),
+        version:
+          versionByEventId.get(r.id) ??
+          (r.resourceType === "workflow" && r.action.endsWith(".created")
+            ? 1
+            : null),
         createdAt: r.createdAt,
         diff: redactAuditDiff(r.diff),
         metadata: meta

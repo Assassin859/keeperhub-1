@@ -17,6 +17,8 @@ export type CreatedFallbackInput = {
   createdAt: string;
   /** Defaults to `${resourceType}.created`. */
   action?: string;
+  /** Human label for the resource (e.g. the workflow name), if known. */
+  resourceName?: string | null;
   creator?: FallbackCreator | null;
 };
 
@@ -38,6 +40,10 @@ export function createdFallback(
     action: input.action ?? `${input.resourceType}.created`,
     resourceType: input.resourceType,
     resourceId: input.resourceId,
+    resourceName: input.resourceName ?? null,
+    // A synthesized creation predates the version-history feature, so there is
+    // no specific version to deep-link to.
+    version: null,
     createdAt: input.createdAt,
     diff: null,
     metadata: null,

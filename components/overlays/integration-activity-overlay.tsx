@@ -20,10 +20,18 @@ export function IntegrationActivityOverlay({
   integration: Integration;
 }): React.ReactElement {
   const { pop } = useOverlay();
+  const typeLabel =
+    integration.type.charAt(0).toUpperCase() + integration.type.slice(1);
+  const resourceName =
+    integration.name.trim() &&
+    integration.name.toLowerCase() !== integration.type.toLowerCase()
+      ? `${integration.name} · ${typeLabel}`
+      : typeLabel;
   const fallback: SecurityAuditEvent[] = [
     createdFallback({
       resourceType: "integration",
       resourceId: integration.id,
+      resourceName,
       createdAt: integration.createdAt,
       creator: {
         name: integration.createdByName,

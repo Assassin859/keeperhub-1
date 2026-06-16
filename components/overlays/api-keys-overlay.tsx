@@ -2,7 +2,7 @@
 
 import { Copy, History, Key, Server, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Pager } from "@/components/activity/pager";
 import { DualFactorInput } from "@/components/auth/dual-factor-input";
@@ -38,6 +38,10 @@ type ApiKey = {
 
 type ApiKeysOverlayProps = {
   overlayId: string;
+  // Highlight + scroll to this key (e.g. opened from the activity feed). The
+  // resource type selects which tab opens: org keys vs personal/user keys.
+  highlightId?: string;
+  highlightType?: "api_key" | "org_api_key";
 };
 
 /**
@@ -269,6 +273,7 @@ function ApiKeysList({
   deleteEndpoint,
   canDelete = true,
   readOnlyReason,
+  highlightId,
 }: {
   apiKeys: ApiKey[];
   meta?: PageMeta | null;
@@ -285,8 +290,15 @@ function ApiKeysList({
   deleteEndpoint: (id: string) => string;
   canDelete?: boolean;
   readOnlyReason?: string;
+  highlightId?: string;
 }) {
   const { push } = useOverlay();
+  const highlightedRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (highlightId && highlightedRef.current) {
+      highlightedRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightId]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -349,8 +361,13 @@ function ApiKeysList({
         <div className="space-y-2">
           {apiKeys.map((apiKey) => (
             <div
-              className="flex items-center justify-between rounded-md border p-3"
+              className={`flex items-center justify-between rounded-md border p-3 ${
+                apiKey.id === highlightId
+                  ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
+                  : ""
+              }`}
               key={apiKey.id}
+              ref={apiKey.id === highlightId ? highlightedRef : undefined}
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -604,7 +621,11 @@ function KeyActivityButton({
 /**
  * Main API Keys management overlay with tabs for Webhook and Organisation keys.
  */
-export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
+export function ApiKeysOverlay({
+  overlayId,
+  highlightId,
+  highlightType,
+}: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
   const { isAdmin, role } = useActiveMember();
   const { data: session } = useSession();
@@ -614,7 +635,9 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
     email: session?.user?.email ?? null,
     role: role ?? null,
   };
-  const [activeTab, setActiveTab] = useState("organisation");
+  const [activeTab, setActiveTab] = useState(
+    highlightType === "api_key" ? "webhook" : "organisation"
+  );
 
   // Webhook (User) keys
   const webhookKeys = useApiKeys(
@@ -689,6 +712,9 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
               canDelete={canManageOrgKeys}
               deleteEndpoint={orgKeys.deleteEndpoint}
               deleting={orgKeys.deleting}
+              highlightId={
+                highlightType === "org_api_key" ? highlightId : undefined
+              }
               meta={orgKeys.meta}
               newlyCreatedKey={orgKeys.newlyCreatedKey}
               onDelete={orgKeys.handleDelete}
@@ -724,6 +750,9 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
               apiKeys={webhookKeys.apiKeys}
               deleteEndpoint={webhookKeys.deleteEndpoint}
               deleting={webhookKeys.deleting}
+              highlightId={
+                highlightType === "api_key" ? highlightId : undefined
+              }
               meta={webhookKeys.meta}
               newlyCreatedKey={webhookKeys.newlyCreatedKey}
               onDelete={webhookKeys.handleDelete}

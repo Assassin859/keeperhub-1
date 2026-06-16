@@ -935,6 +935,12 @@ export type SecurityAuditEvent = {
   action: string;
   resourceType: string | null;
   resourceId: string | null;
+  // Human label for the affected resource (currently workflows), resolved
+  // server-side so the feed can name "which workflow" and link into it.
+  resourceName: string | null;
+  // The workflow history version this event produced, when one exists, so the
+  // feed can deep-link to that exact version. Null for events with no version.
+  version: number | null;
   createdAt: string;
   // biome-ignore lint/suspicious/noExplicitAny: stored deep-diff, shape varies by action
   diff: any;

@@ -2,7 +2,8 @@
 
 import { useAtomValue } from "jotai";
 import { Eye } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api-client";
 import { currentWorkflowIdAtom, previewVersionAtom } from "@/lib/workflow/store";
 import { useVersionPreview } from "@/lib/workflow/use-version-preview";
 
@@ -18,10 +19,40 @@ export function VersionPreviewBanner(): React.ReactElement | null {
   const workflowId = useAtomValue(currentWorkflowIdAtom);
   const { exitPreview, restore } = useVersionPreview();
   const [busy, setBusy] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState<number | null>(null);
+
+  // Resolve the workflow's latest version so previewing it presents as the live
+  // "Current version" (green) with Restore hidden -- restoring the current
+  // version is a no-op.
+  useEffect(() => {
+    if (!workflowId) {
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await api.workflow.getHistory(workflowId, {
+          page: 1,
+          limit: 1,
+        });
+        if (!cancelled) {
+          setCurrentVersion(res.items[0]?.version ?? null);
+        }
+      } catch {
+        // Best-effort: without it Restore simply stays available, which is safe.
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [workflowId]);
 
   if (previewVersion === null || !workflowId) {
     return null;
   }
+
+  const isCurrent = previewVersion === currentVersion;
 
   const run = (action: () => Promise<void>) => async () => {
     setBusy(true);
@@ -35,27 +66,35 @@ export function VersionPreviewBanner(): React.ReactElement | null {
   return (
     <div className="-translate-x-1/2 fixed top-[calc(var(--header-height,60px)+12px)] left-1/2 z-50 flex h-9 items-center rounded-md border bg-secondary text-secondary-foreground shadow-md">
       <span className="flex h-full items-center gap-1.5 rounded-l-md px-3 font-medium text-sm">
-        <Eye className="size-4 text-amber-400" />
-        Viewing version {previewVersion}
+        <Eye
+          className={`size-4 ${isCurrent ? "text-keeperhub-green" : "text-amber-400"}`}
+        />
+        {isCurrent ? "Current version" : `Viewing version ${previewVersion}`}
       </span>
       <div className="h-5 w-px bg-border" />
       <button
-        className="flex h-full items-center px-3 text-muted-foreground text-sm transition-colors hover:bg-black/5 hover:text-foreground disabled:opacity-50 dark:hover:bg-white/5"
+        className={`flex h-full items-center px-3 font-medium text-sm transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5 ${
+          isCurrent ? "rounded-r-md" : ""
+        }`}
         disabled={busy}
         onClick={run(exitPreview)}
         type="button"
       >
         Exit preview
       </button>
-      <div className="h-5 w-px bg-border" />
-      <button
-        className="flex h-full items-center rounded-r-md px-3 font-medium text-sm transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
-        disabled={busy}
-        onClick={run(() => restore(previewVersion))}
-        type="button"
-      >
-        Restore this version
-      </button>
+      {!isCurrent && (
+        <>
+          <div className="h-5 w-px bg-border" />
+          <button
+            className="flex h-full items-center rounded-r-md px-3 font-medium text-sm transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
+            disabled={busy}
+            onClick={run(() => restore(previewVersion))}
+            type="button"
+          >
+            Restore this version
+          </button>
+        </>
+      )}
     </div>
   );
 }

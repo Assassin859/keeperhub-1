@@ -17,8 +17,9 @@ import {
   PowerOff,
   Unlink,
 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ActorAvatar, actorLabel } from "@/components/activity/actor-avatar";
 import { Pager } from "@/components/activity/pager";
@@ -43,6 +44,10 @@ import {
 import { useVersionPreview } from "@/lib/workflow/use-version-preview";
 import type { VersionDiff } from "@/lib/workflow/version-diff";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
+
+// Page size for the history list. Shared with the page-of-a-version math so a
+// deep link can land on the page that holds its target version.
+const WORKFLOW_HISTORY_PAGE_SIZE = 10;
 
 type ChangeKind =
   | "add"
@@ -488,7 +493,9 @@ function VersionRow({
   version,
   isCurrent,
   isPreviewing,
+  isTarget,
   onView,
+  onCopyLink,
   resolveValue,
   nodeId,
   nodeLabel,
@@ -496,14 +503,25 @@ function VersionRow({
   version: WorkflowVersionSummary;
   isCurrent: boolean;
   isPreviewing: boolean;
+  // The version named by the URL (?version=) -- highlighted, auto-expanded, and
+  // scrolled into view so a shared/deep link lands on it.
+  isTarget: boolean;
   onView: () => void;
+  onCopyLink?: () => void;
   resolveValue: ConfigValueResolver;
   nodeId?: string;
   nodeLabel?: string | null;
 }): React.ReactElement {
   // Each row owns its open/closed state. Switching page remounts the rows
   // (keys change), so they naturally collapse.
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(isTarget);
+  const rowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (isTarget) {
+      setIsExpanded(true);
+      rowRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [isTarget]);
   // The semantic diff vs the previous version is precomputed and stored, so we
   // can show what each version changed without fetching its snapshot. Versions
   // recorded before this format shipped hold a raw diff and are skipped. When
@@ -517,8 +535,13 @@ function VersionRow({
   return (
     <li
       className={`rounded-xl transition-colors ${
-        isExpanded ? "bg-muted/40 ring-1 ring-border/70" : "hover:bg-muted/30"
+        isTarget
+          ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
+          : isExpanded
+            ? "bg-muted/40 ring-1 ring-border/70 ring-inset"
+            : "hover:bg-muted/30"
       }`}
+      ref={rowRef}
     >
       <button
         className="flex w-full items-start gap-2.5 rounded-xl p-3 text-left"
@@ -574,18 +597,27 @@ function VersionRow({
                   : "No tracked changes."}
               </p>
             )}
-            {/* The current version is already on the canvas. */}
-            {!isCurrent && (
-              <Button
-                disabled={isPreviewing}
-                onClick={onView}
-                size="sm"
-                variant="outline"
-              >
-                <Eye className="mr-1.5 size-3.5" />
-                {isPreviewing ? "Viewing on canvas" : "View on canvas"}
-              </Button>
-            )}
+            {/* Actions are revealed with the row so the collapsed list stays
+                clean. The current version is already on the canvas. */}
+            <div className="flex flex-wrap items-center gap-2">
+              {!isCurrent && (
+                <Button
+                  disabled={isPreviewing}
+                  onClick={onView}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Eye className="mr-1.5 size-3.5" />
+                  {isPreviewing ? "Viewing on canvas" : "View on canvas"}
+                </Button>
+              )}
+              {onCopyLink && (
+                <Button onClick={onCopyLink} size="sm" variant="ghost">
+                  <Link2 className="mr-1.5 size-3.5" />
+                  Copy link
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -597,8 +629,9 @@ function VersionRow({
  * Workflow version history rendered inside the editor's right-panel "History"
  * tab. `active` mirrors the old open/closed atom: it gates the fetch and, on
  * leaving the tab, drops any on-canvas version preview so the editor returns to
- * the live workflow. The docked-panel chrome (slide/resize/close) and the
- * shareable ?historyPage= URL sync are intentionally not carried over.
+ * the live workflow. The docked-panel chrome (slide/resize/close) is not carried
+ * over, but the shareable ?historyPage=/?version= URL sync is: the page and the
+ * selected version live in the URL so a link reopens the exact view.
  */
 export function VersionHistoryContent({
   active,
@@ -616,6 +649,38 @@ export function VersionHistoryContent({
   const { preview, exitPreview } = useVersionPreview();
   const resolveValue = useConfigValueDisplay(active);
 
+  // The workflow-level timeline is URL-driven so the page and the selected
+  // version are shareable and survive navigation. The per-node view keeps its
+  // own local paging (it is a filtered, in-place sub-view, not a shared link).
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const urlDriven = !nodeId;
+  const historyPageParam = searchParams?.get("historyPage");
+  const urlPage = Math.max(
+    1,
+    Number.parseInt(historyPageParam ?? "1", 10) || 1
+  );
+  // The selected version. "current" is a stable alias for whatever the latest
+  // version is, so a shared link to the live version keeps tracking it instead
+  // of pinning to a number that later stops being current.
+  const versionParamRaw = searchParams?.get("version") ?? null;
+
+  const setUrlParams = useCallback(
+    (updates: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null) {
+          params.delete(key);
+        } else {
+          params.set(key, value);
+        }
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams]
+  );
+
   const {
     items: versions,
     meta,
@@ -624,7 +689,11 @@ export function VersionHistoryContent({
     loading,
     error,
   } = usePaginatedResource<WorkflowVersionSummary>(
-    (p) => api.workflow.getHistory(workflowId ?? "", { page: p, limit: 10 }),
+    (p) =>
+      api.workflow.getHistory(workflowId ?? "", {
+        page: p,
+        limit: WORKFLOW_HISTORY_PAGE_SIZE,
+      }),
     `${workflowId}`,
     { enabled: active && !!workflowId, refetchIntervalMs: 30_000 }
   );
@@ -644,12 +713,78 @@ export function VersionHistoryContent({
     }
   }, [active, exitPreview]);
 
+  // The URL owns the page in the workflow-level view: mirror ?historyPage= into
+  // the fetch.
+  useEffect(() => {
+    if (urlDriven && page !== urlPage) {
+      setPage(urlPage);
+    }
+  }, [urlDriven, page, urlPage, setPage]);
+
+  // A deep link with ?version= but no explicit ?historyPage= lands on whatever
+  // page holds that version (versions are contiguous and listed newest-first,
+  // so its offset from the newest gives the page; "current" is always page 1).
+  // Runs once per target.
+  const pagedForVersionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!(active && urlDriven) || versionParamRaw === null || historyPageParam) {
+      return;
+    }
+    if (pagedForVersionRef.current === versionParamRaw) {
+      return;
+    }
+    let targetPage: number | null = null;
+    if (versionParamRaw === "current") {
+      targetPage = 1;
+    } else if (meta) {
+      const v = Number.parseInt(versionParamRaw, 10);
+      if (!Number.isNaN(v)) {
+        targetPage = Math.max(
+          1,
+          Math.floor((meta.total - v) / WORKFLOW_HISTORY_PAGE_SIZE) + 1
+        );
+      }
+    }
+    if (targetPage === null) {
+      return;
+    }
+    pagedForVersionRef.current = versionParamRaw;
+    setUrlParams({ historyPage: String(targetPage) });
+  }, [active, urlDriven, versionParamRaw, historyPageParam, meta, setUrlParams]);
+
+  const copyVersionLink = useCallback(
+    async (versionValue: string) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      params.set("tab", "history");
+      params.set("version", versionValue);
+      params.set("historyPage", String(page));
+      const url = `${window.location.origin}${pathname}?${params.toString()}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.success("Version link copied");
+      } catch {
+        toast.error("Failed to copy link");
+      }
+    },
+    [searchParams, pathname, page]
+  );
+
   if (!workflowId) {
     return null;
   }
 
   // The newest version only ever appears on page 1 (descending order).
   const latestVersion = page === 1 ? versions[0]?.version : undefined;
+  // Resolve the highlighted version: "current" tracks the latest version.
+  const parsedVersionParam = versionParamRaw
+    ? Number.parseInt(versionParamRaw, 10)
+    : Number.NaN;
+  const targetVersion =
+    versionParamRaw === "current"
+      ? (latestVersion ?? null)
+      : Number.isNaN(parsedVersionParam)
+        ? null
+        : parsedVersionParam;
   // Per-node scope: show only the versions that touched this node.
   const shown = nodeId
     ? versions.filter((v) =>
@@ -690,10 +825,28 @@ export function VersionHistoryContent({
                 <VersionRow
                   isCurrent={v.version === latestVersion}
                   isPreviewing={previewVersion === v.version}
+                  isTarget={urlDriven && targetVersion === v.version}
                   key={v.version}
                   nodeId={nodeId}
                   nodeLabel={nodeLabel}
-                  onView={() => preview(v.version)}
+                  onCopyLink={
+                    urlDriven
+                      ? () => {
+                          void copyVersionLink(
+                            v.version === latestVersion
+                              ? "current"
+                              : String(v.version)
+                          );
+                        }
+                      : undefined
+                  }
+                  onView={() => {
+                    if (urlDriven) {
+                      setUrlParams({ version: String(v.version) });
+                    } else {
+                      preview(v.version);
+                    }
+                  }}
                   resolveValue={resolveValue}
                   version={v}
                 />
@@ -704,7 +857,17 @@ export function VersionHistoryContent({
       </div>
       {meta && (
         <div className="mt-2 border-border border-t pt-2.5">
-          <Pager meta={meta} onPage={setPage} unit="versions" />
+          <Pager
+            meta={meta}
+            onPage={(p) => {
+              if (urlDriven) {
+                setUrlParams({ historyPage: String(p) });
+              } else {
+                setPage(p);
+              }
+            }}
+            unit="versions"
+          />
         </div>
       )}
     </div>
