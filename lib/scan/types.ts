@@ -140,6 +140,6 @@ export interface ProtocolAdapter {
   decode(
     results: MulticallResult[],
     address: string,
-    chainId: number,
+    chainId: number
   ): ProtocolPosition[];
 }
