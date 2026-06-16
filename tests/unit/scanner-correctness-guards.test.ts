@@ -17,6 +17,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { decodeAaveV3Results } from "@/lib/scan/adapters/aave-v3";
 import { executeMulticallBatch } from "@/lib/scan/multicall-batch";
 import { scanChains } from "@/lib/scan/scan-chains";
 import type { AdapterCallDescriptor, ChainScanOutput } from "@/lib/scan/types";
@@ -157,9 +158,55 @@ export function encodeAccountData(
 // ─── Guard todos ─────────────────────────────────────────────────────────────
 
 describe("scanner correctness guards", () => {
-  it.todo(
-    "HF MAX_UINT256 or zero-debt -> healthFactor null + noActiveLoan true"
-  );
+  it("HF MAX_UINT256 or zero-debt -> healthFactor null + noActiveLoan true", () => {
+    // Use BigInt() constructor — tsconfig target ES2017 does not support n-suffix literals.
+    const MAX = BigInt(2) ** BigInt(256) - BigInt(1);
+
+    // Supply-only user: zero debt, MAX_UINT256 health factor from Aave V3 contract.
+    const [, accountDataZeroDebt] = encodeAccountData({
+      healthFactor: MAX,
+      totalDebtBase: BigInt(0),
+      totalCollateralBase: BigInt(1000),
+    });
+    const eModeData = getPoolIface().encodeFunctionResult("getUserEMode", [
+      BigInt(0),
+    ]);
+
+    const resultsNoLoan = [
+      { success: true, returnData: accountDataZeroDebt },
+      { success: true, returnData: eModeData },
+    ];
+
+    const positionsNoLoan = decodeAaveV3Results(
+      resultsNoLoan,
+      "0x0000000000000000000000000000000000000001",
+      1
+    );
+
+    expect(positionsNoLoan[0]?.healthFactor).toBeNull();
+    expect(positionsNoLoan[0]?.noActiveLoan).toBe(true);
+
+    // Active loan: HF = 2.0 WAD with 500 base-unit debt -> healthFactor === 2.
+    const [, accountDataLoan] = encodeAccountData({
+      healthFactor: BigInt("2000000000000000000"), // 2.0 WAD
+      totalDebtBase: BigInt(500),
+      totalCollateralBase: BigInt(1000),
+    });
+
+    const resultsWithLoan = [
+      { success: true, returnData: accountDataLoan },
+      { success: true, returnData: eModeData },
+    ];
+
+    const positionsWithLoan = decodeAaveV3Results(
+      resultsWithLoan,
+      "0x0000000000000000000000000000000000000001",
+      1
+    );
+
+    expect(positionsWithLoan[0]?.healthFactor).toBe(2);
+    expect(positionsWithLoan[0]?.noActiveLoan).toBeFalsy();
+  });
 
   it("Multicall3 soft-miss -> one failed sub-call leaves siblings intact", async () => {
     // Encode two realistic getUserAccountData return values for call 0 and call 2.
