@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T00:02:00Z"
+last_updated: "2026-06-17T00:20:00Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 8
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -23,18 +23,19 @@ progress:
 ## Current Position
 
 Phase: 51 (scanner-infrastructure) — EXECUTING
-Plan: 4 of 8
+Plan: 5 of 8
 Status: Executing Phase 51
-Last activity: 2026-06-17 -- Completed 51-03 (Multicall3 batch harness + per-chain timeout fan-out)
+Last activity: 2026-06-17 -- Completed 51-04 (Chainlink + DefiLlama USD pricing layer)
 
 ## Performance Metrics
 
 - Phases planned: 5 (51-55)
 - Phases complete: 0
-- Plans complete: 3/8 (51-01, 51-02, 51-03 done)
+- Plans complete: 4/8 (51-01, 51-02, 51-03, 51-04 done)
 - Duration 51-01: 31 minutes
 - Duration 51-02: ~20 minutes
 - Duration 51-03: 27 minutes
+- Duration 51-04: 7 minutes
 
 ## Accumulated Context
 
@@ -57,6 +58,8 @@ Last activity: 2026-06-17 -- Completed 51-03 (Multicall3 batch harness + per-cha
 - BigInt() constructor used in tests instead of n-suffix literals for ES2017 tsconfig compatibility (51-01).
 - aggregate3 (not tryAggregate or aggregate) used for Multicall3 batching — per-call allowFailure is embedded in each call struct (51-03).
 - AbortController races via Promise.race in scanWithTimeout; clearTimeout in finally ensures cleanup on both fast-resolve and abort paths (51-03).
+- isDepegged uses inclusive >= 0.005 threshold; IEEE 754 means price exactly 1.005 evaluates as non-depegged — plan test cases use 1.005000001 to sidestep this (51-04).
+- resolveUsdPrice opts.chainlinkResult pattern: orchestrator pre-fetches Chainlink via aggregate3 and passes decoded MulticallResult; no independent RPC from pricing layer (51-04).
 
 ### Todos
 
@@ -71,9 +74,9 @@ Last activity: 2026-06-17 -- Completed 51-03 (Multicall3 batch harness + per-cha
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 51-03 (Multicall3 batch harness + per-chain timeout fan-out) — 2026-06-17
-- Stopped at: Plan 4 of 8 ready to execute
-- Next command: `/gsd:execute-phase 51 04`
+- Last completed: 51-04 (Chainlink + DefiLlama USD pricing layer) — 2026-06-17
+- Stopped at: Plan 5 of 8 ready to execute
+- Next command: `/gsd:execute-phase 51 05`
 
 ## Deferred Items
 
