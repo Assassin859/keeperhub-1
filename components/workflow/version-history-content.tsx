@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom, useAtomValue } from "jotai";
+import { useAtomValue } from "jotai";
 import {
   ArrowRight,
   Check,
@@ -9,7 +9,6 @@ import {
   Copy,
   ExternalLink,
   Eye,
-  GitBranch,
   Link2,
   Minus,
   Pencil,
@@ -18,9 +17,8 @@ import {
   PowerOff,
   Unlink,
 } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ActorAvatar, actorLabel } from "@/components/activity/actor-avatar";
 import { Pager } from "@/components/activity/pager";
@@ -36,13 +34,7 @@ import {
 import { api, type WorkflowVersionSummary } from "@/lib/api-client";
 import { groupByDate } from "@/lib/activity/time-groups";
 import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
-import {
-  currentWorkflowIdAtom,
-  previewVersionAtom,
-  rightPanelWidthPctAtom,
-  selectedNodeAtom,
-  versionHistoryOpenAtom,
-} from "@/lib/workflow/store";
+import { currentWorkflowIdAtom, previewVersionAtom } from "@/lib/workflow/store";
 import {
   type ConfigValueResolver,
   type ResolvedValue,
@@ -446,26 +438,81 @@ function ChangeRow({ item }: { item: ChangeItem }): React.ReactElement {
   );
 }
 
+// Narrow a version's diff to a single node: node add/remove/config/rename/
+// enable match by id; connections match the node's current label (they're
+// stored by label, not id). Workflow-level settings are dropped -- they aren't
+// node-specific. Used by the per-node History tab.
+function filterDiffToNode(
+  diff: VersionDiff,
+  nodeId: string,
+  nodeLabel: string | null
+): VersionDiff {
+  return {
+    ...diff,
+    settings: [],
+    nodesAdded: diff.nodesAdded.filter((n) => n.id === nodeId),
+    nodesRemoved: diff.nodesRemoved.filter((n) => n.id === nodeId),
+    nodesChanged: diff.nodesChanged.filter((n) => n.id === nodeId),
+    connectionsAdded: nodeLabel
+      ? diff.connectionsAdded.filter(
+          (c) => c.from === nodeLabel || c.to === nodeLabel
+        )
+      : [],
+    connectionsRemoved: nodeLabel
+      ? diff.connectionsRemoved.filter(
+          (c) => c.from === nodeLabel || c.to === nodeLabel
+        )
+      : [],
+  };
+}
+
+function versionTouchesNode(
+  change: unknown,
+  nodeId: string,
+  nodeLabel: string | null
+): boolean {
+  if (!isVersionDiff(change)) {
+    return false;
+  }
+  const scoped = filterDiffToNode(change, nodeId, nodeLabel);
+  return (
+    scoped.nodesAdded.length > 0 ||
+    scoped.nodesRemoved.length > 0 ||
+    scoped.nodesChanged.length > 0 ||
+    scoped.connectionsAdded.length > 0 ||
+    scoped.connectionsRemoved.length > 0
+  );
+}
+
 function VersionRow({
   version,
   isCurrent,
   isPreviewing,
   onView,
   resolveValue,
+  nodeId,
+  nodeLabel,
 }: {
   version: WorkflowVersionSummary;
   isCurrent: boolean;
   isPreviewing: boolean;
   onView: () => void;
   resolveValue: ConfigValueResolver;
+  nodeId?: string;
+  nodeLabel?: string | null;
 }): React.ReactElement {
   // Each row owns its open/closed state. Switching page remounts the rows
   // (keys change), so they naturally collapse.
   const [isExpanded, setIsExpanded] = useState(false);
   // The semantic diff vs the previous version is precomputed and stored, so we
   // can show what each version changed without fetching its snapshot. Versions
-  // recorded before this format shipped hold a raw diff and are skipped.
-  const diff = isVersionDiff(version.change) ? version.change : null;
+  // recorded before this format shipped hold a raw diff and are skipped. When
+  // scoped to a node, the diff is narrowed to that node's changes.
+  const fullDiff = isVersionDiff(version.change) ? version.change : null;
+  const diff =
+    fullDiff && nodeId
+      ? filterDiffToNode(fullDiff, nodeId, nodeLabel ?? null)
+      : fullDiff;
   const items = diff ? buildChangeItems(diff, resolveValue) : [];
   return (
     <li
@@ -546,19 +593,28 @@ function VersionRow({
   );
 }
 
-export function VersionHistoryPanel(): React.ReactElement | null {
-  const [open, setOpen] = useAtom(versionHistoryOpenAtom);
+/**
+ * Workflow version history rendered inside the editor's right-panel "History"
+ * tab. `active` mirrors the old open/closed atom: it gates the fetch and, on
+ * leaving the tab, drops any on-canvas version preview so the editor returns to
+ * the live workflow. The docked-panel chrome (slide/resize/close) and the
+ * shareable ?historyPage= URL sync are intentionally not carried over.
+ */
+export function VersionHistoryContent({
+  active,
+  nodeId,
+  nodeLabel,
+}: {
+  active: boolean;
+  // When set, the timeline is scoped to a single node: only versions that
+  // touched it are shown, each narrowed to that node's changes.
+  nodeId?: string;
+  nodeLabel?: string | null;
+}): React.ReactElement | null {
   const workflowId = useAtomValue(currentWorkflowIdAtom);
   const previewVersion = useAtomValue(previewVersionAtom);
-  const [widthPct, setWidthPct] = useAtom(rightPanelWidthPctAtom);
-  const [selectedNode, setSelectedNode] = useAtom(selectedNodeAtom);
-  const isResizing = useRef(false);
   const { preview, exitPreview } = useVersionPreview();
-  const resolveValue = useConfigValueDisplay(open);
-
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const resolveValue = useConfigValueDisplay(active);
 
   const {
     items: versions,
@@ -569,40 +625,9 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     error,
   } = usePaginatedResource<WorkflowVersionSummary>(
     (p) => api.workflow.getHistory(workflowId ?? "", { page: p, limit: 10 }),
-    // Reset only when the workflow changes, so the page survives close/reopen
-    // and stays in sync with the URL.
     `${workflowId}`,
-    { enabled: open && !!workflowId, refetchIntervalMs: 30_000 }
+    { enabled: active && !!workflowId, refetchIntervalMs: 30_000 }
   );
-
-  // Open at the page named in the URL (shareable deep link).
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const fromUrl = Number.parseInt(searchParams?.get("historyPage") ?? "", 10);
-    if (!Number.isNaN(fromUrl) && fromUrl > 1) {
-      setPage(fromUrl);
-    }
-  }, [open, searchParams, setPage]);
-
-  // Reflect the current page in the URL so the view is shareable; the param is
-  // removed when the panel is closed or on page 1.
-  useEffect(() => {
-    const current = searchParams?.toString() ?? "";
-    const params = new URLSearchParams(current);
-    if (open && page > 1) {
-      params.set("historyPage", String(page));
-    } else {
-      params.delete("historyPage");
-    }
-    const next = params.toString();
-    if (next !== current) {
-      router.replace(next ? `${pathname}?${next}` : pathname, {
-        scroll: false,
-      });
-    }
-  }, [open, page, pathname, router, searchParams]);
 
   useEffect(() => {
     if (error) {
@@ -610,103 +635,37 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     }
   }, [error]);
 
-  // Opening history clears any node selection so the panel isn't covering a
-  // config form; a subsequent node click (current version only) then closes
-  // the panel to reveal that node's config for editing.
   useEffect(() => {
-    if (open) {
-      setSelectedNode(null);
+    if (!active) {
+      exitPreview().catch(() => {
+        // Best-effort: leaving the tab should drop the preview, but a failure
+        // here must not break tab switching.
+      });
     }
-  }, [open, setSelectedNode]);
+  }, [active, exitPreview]);
 
-  useEffect(() => {
-    if (open && previewVersion === null && selectedNode) {
-      setOpen(false);
-    }
-  }, [open, previewVersion, selectedNode, setOpen]);
-
-  const close = useCallback(async () => {
-    await exitPreview();
-    setOpen(false);
-  }, [exitPreview, setOpen]);
-
-  const handleResizeStart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizing.current = true;
-    const onMove = (move: MouseEvent) => {
-      if (!isResizing.current) {
-        return;
-      }
-      const pct = ((window.innerWidth - move.clientX) / window.innerWidth) * 100;
-      setWidthPct(Math.min(50, Math.max(20, pct)));
-    };
-    const onUp = () => {
-      isResizing.current = false;
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  };
-
-  // Keep mounted so open/close slides; only fully unmount when no workflow.
   if (!workflowId) {
     return null;
   }
 
   // The newest version only ever appears on page 1 (descending order).
   const latestVersion = page === 1 ? versions[0]?.version : undefined;
-  const groups = groupByDate(versions, (v) => v.createdAt);
+  // Per-node scope: show only the versions that touched this node.
+  const shown = nodeId
+    ? versions.filter((v) =>
+        versionTouchesNode(v.change, nodeId, nodeLabel ?? null)
+      )
+    : versions;
+  const groups = groupByDate(shown, (v) => v.createdAt);
+  const emptyMessage = nodeId
+    ? "No changes recorded for this node yet."
+    : "No versions recorded yet.";
 
   return (
-    <aside
-      className="fixed top-[calc(6rem+var(--app-banner-height,0px))] right-0 bottom-0 z-30 flex flex-col border-border border-t border-l bg-background shadow-xl transition-transform duration-300 ease-out lg:top-[calc(60px+var(--app-banner-height,0px))]"
-      style={{
-        width: `${widthPct}%`,
-        transform: open ? "translateX(0)" : "translateX(100%)",
-      }}
-    >
-      {/* Drag handle: resizes both right-docked panels (shared width atom).
-          Only while open -- when closed the panel is parked off-screen and its
-          left-edge button would otherwise protrude at the viewport's right. */}
-      {open && (
-        // biome-ignore lint/a11y/useSemanticElements: custom resize handle
-        <div
-          aria-orientation="vertical"
-          aria-valuenow={widthPct}
-          className="absolute inset-y-0 left-0 z-10 w-3 cursor-col-resize"
-          onMouseDown={handleResizeStart}
-          role="separator"
-          tabIndex={0}
-        >
-          <div className="absolute inset-y-0 left-0 w-px bg-border" />
-          {/* Collapse button mirrors the node-config panel's handle affordance. */}
-          <button
-            className="-translate-x-1/2 absolute top-3 left-0 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              close();
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            title="Close version history"
-            type="button"
-          >
-            <ChevronRight className="size-3.5" />
-          </button>
-        </div>
-      )}
-      <div className="flex items-center gap-2 border-border border-b px-4 py-3">
-        <GitBranch className="size-4 text-muted-foreground" />
-        <h2 className="font-semibold text-sm">Version history</h2>
-      </div>
-
-      <div className="thin-scrollbar flex-1 overflow-y-auto p-3">
+    <div>
+      <div className="thin-scrollbar overflow-y-auto">
         {loading && (
-          <div className="space-y-3">
+          <div className="space-y-3 p-1">
             {[0, 1, 2].map((i) => (
               <div className="flex items-center gap-2.5" key={i}>
                 <Skeleton className="size-7 rounded-full" />
@@ -718,10 +677,8 @@ export function VersionHistoryPanel(): React.ReactElement | null {
             ))}
           </div>
         )}
-        {!loading && versions.length === 0 && (
-          <p className="p-2 text-muted-foreground text-sm">
-            No versions recorded yet.
-          </p>
+        {!loading && shown.length === 0 && (
+          <p className="p-2 text-muted-foreground text-sm">{emptyMessage}</p>
         )}
         {groups.map((group) => (
           <div className="mb-3" key={group.label}>
@@ -734,6 +691,8 @@ export function VersionHistoryPanel(): React.ReactElement | null {
                   isCurrent={v.version === latestVersion}
                   isPreviewing={previewVersion === v.version}
                   key={v.version}
+                  nodeId={nodeId}
+                  nodeLabel={nodeLabel}
                   onView={() => preview(v.version)}
                   resolveValue={resolveValue}
                   version={v}
@@ -744,10 +703,10 @@ export function VersionHistoryPanel(): React.ReactElement | null {
         ))}
       </div>
       {meta && (
-        <div className="border-border border-t px-4 py-2.5">
+        <div className="mt-2 border-border border-t pt-2.5">
           <Pager meta={meta} onPage={setPage} unit="versions" />
         </div>
       )}
-    </aside>
+    </div>
   );
 }

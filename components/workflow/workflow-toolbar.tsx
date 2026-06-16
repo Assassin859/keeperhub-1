@@ -7,7 +7,6 @@ import {
   Copy,
   Download,
   Globe,
-  History,
   Link2,
   Loader2,
   Lock,
@@ -44,7 +43,6 @@ import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
-import { useActiveMember } from "@/lib/hooks/use-organization";
 import { VersionPreviewBanner } from "./version-preview-banner";
 import { useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
@@ -89,7 +87,6 @@ import {
   triggerExecuteAtom,
   undoAtom,
   updateNodeDataAtom,
-  versionHistoryOpenAtom,
   type WorkflowEdge,
   type WorkflowNode,
   WorkflowTriggerEnum,
@@ -105,7 +102,6 @@ import { Panel } from "../ai-elements/panel";
 import { ConfigurationOverlay } from "../overlays/configuration-overlay";
 import { ConfirmOverlay } from "../overlays/confirm-overlay";
 import { useOverlay } from "../overlays/overlay-provider";
-import { VersionHistoryPanel } from "./version-history-panel";
 import { WorkflowIOOverlay } from "../overlays/workflow-io-overlay";
 import { WorkflowIssuesOverlay } from "../overlays/workflow-issues-overlay";
 import {
@@ -1450,9 +1446,6 @@ function ToolbarActions({
       {/* Listing Button */}
       <ListingButton actions={actions} state={state} />
 
-      {/* Version history (admin/owner only) */}
-      <VersionHistoryButton />
-
       {shouldDisplayEnableWorkflowSwitch && (
         <button
           className="relative hidden h-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:inline-flex"
@@ -1499,26 +1492,6 @@ function ToolbarActions({
 
       <RunButtonGroup actions={actions} state={state} />
     </>
-  );
-}
-
-// Version history button. Admin/owner only -- history is an audit trail.
-function VersionHistoryButton() {
-  const { isAdmin } = useActiveMember();
-  const setOpen = useSetAtom(versionHistoryOpenAtom);
-  if (!isAdmin) {
-    return null;
-  }
-  return (
-    <Button
-      className="hidden border hover:bg-black/5 lg:inline-flex dark:hover:bg-white/5"
-      onClick={() => setOpen((v) => !v)}
-      size="icon"
-      title="Version history"
-      variant="secondary"
-    >
-      <History className="size-4" />
-    </Button>
   );
 }
 
@@ -1867,7 +1840,6 @@ export const WorkflowToolbar = ({
     return (
       <div className={containerClassName}>
         <VersionPreviewBanner />
-        <VersionHistoryPanel />
         {/* Left side: Logo + Menu + Org Switcher */}
         <div className={leftSectionClassName}>
           {(() => {

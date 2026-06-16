@@ -64,7 +64,6 @@ import {
   selectedNodeAtom,
   triggerExecuteAtom,
   updateNodeDataAtom,
-  versionHistoryOpenAtom,
   type WorkflowNode,
   type WorkflowVisibility,
   workflowNotFoundAtom,
@@ -642,7 +641,6 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   // preview that version on the canvas and reveal the history panel. Fires
   // once per distinct version param; clears when the param is removed.
   const { preview: previewVersionOnCanvas } = useVersionPreview();
-  const setVersionHistoryOpen = useSetAtom(versionHistoryOpenAtom);
   const appliedVersionParamRef = useRef<number | null>(null);
   useEffect(() => {
     const raw = searchParams?.get("version");
@@ -657,14 +655,18 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     ) {
       appliedVersionParamRef.current = version;
       previewVersionOnCanvas(version);
-      setVersionHistoryOpen(true);
+      // Reveal the History tab (workflow-level) so the shared version is shown
+      // in context alongside the on-canvas preview.
+      setSelectedNode(null);
+      setActiveTab("history");
     }
   }, [
     searchParams,
     currentWorkflowId,
     workflowId,
     previewVersionOnCanvas,
-    setVersionHistoryOpen,
+    setSelectedNode,
+    setActiveTab,
   ]);
 
   // KEEP-323: Rehydrate the Run/Stop button when the page loads while an
