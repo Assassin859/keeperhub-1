@@ -44,10 +44,9 @@ test.describe("marketplace slug gate (full HTTP path)", () => {
         },
       });
       const withSlugBody = await withSlug.text();
-      expect(
-        withSlug.status(),
-        `expected 200, got body: ${withSlugBody}`
-      ).toBe(200);
+      expect(withSlug.status(), `expected 200, got body: ${withSlugBody}`).toBe(
+        200
+      );
       const listed = JSON.parse(withSlugBody);
       expect(listed.isListed).toBe(true);
       expect(listed.listedSlug).toBe(slug);
