@@ -51,7 +51,8 @@ import {
   updateNodeDataAtom,
   workflowNotFoundAtom,
 } from "@/lib/workflow/store";
-import { findActionById, flattenConfigFields } from "@/plugins/registry";
+import { buildConfigForActionTypeChange } from "@/lib/workflow/editor/action-type-transition";
+import { findActionById } from "@/plugins/registry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ActionConfig } from "./config/action-config";
 import { ActionGrid } from "./config/action-grid";
@@ -518,30 +519,13 @@ export const PanelInner = () => {
   ): void => {
     if (selectedNode) {
       const baseConfig = pendingConfigRef.current ?? selectedNode.data.config;
-      let newConfig = { ...baseConfig, [key]: value };
+      let newConfig: Record<string, unknown> = { ...baseConfig, [key]: value };
 
-      // When action type changes, clear the integrationId since it may not be valid for the new action
-      if (key === "actionType" && baseConfig?.integrationId) {
-        newConfig = { ...newConfig, integrationId: undefined };
-      }
-
-      // When action type is selected, persist defaultValues from configFields
-      // into config so that showWhen conditions and validation work immediately.
-      // For _protocolMeta: always overwrite with the new action's value since
-      // stale metadata causes the wrong contract function to be called at runtime.
       if (key === "actionType" && typeof value === "string") {
-        const selectedAction = findActionById(value);
-        if (selectedAction?.configFields) {
-          for (const field of flattenConfigFields(selectedAction.configFields)) {
-            if (field.defaultValue === undefined) {
-              continue;
-            }
-            const forceUpdate = field.key === "_protocolMeta";
-            if (forceUpdate || !(field.key in newConfig)) {
-              newConfig = { ...newConfig, [field.key]: field.defaultValue };
-            }
-          }
-        }
+        // Prune leftovers from the previous action type and seed the new
+        // action's defaults so showWhen conditions and validation evaluate
+        // immediately. See buildConfigForActionTypeChange for details.
+        newConfig = buildConfigForActionTypeChange(value, newConfig);
       }
 
       pendingConfigRef.current = newConfig;

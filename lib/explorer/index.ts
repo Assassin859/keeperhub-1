@@ -31,8 +31,16 @@ export type NormalizedTransaction = {
   isError: boolean;
 };
 
-type TransactionListResult =
+type ProviderResult =
   | { success: true; transactions: NormalizedTransaction[] }
+  | { success: false; error: string };
+
+export type TransactionListResult =
+  | {
+      success: true;
+      transactions: NormalizedTransaction[];
+      usedBackup: boolean;
+    }
   | { success: false; error: string };
 
 /**
@@ -168,7 +176,7 @@ async function fetchTransactionsFromProvider(
   startBlock: number,
   endBlock: number,
   apiKey?: string
-): Promise<TransactionListResult> {
+): Promise<ProviderResult> {
   switch (apiType) {
     case "etherscan": {
       const result = await fetchEtherscanTransactions(
@@ -249,6 +257,8 @@ export async function fetchContractTransactions(
       ? {
           apiType: config.backupExplorerApiType,
           apiUrl: config.backupExplorerApiUrl,
+          apiKey: config.backupExplorerApiKey ?? undefined,
+          apiKeyNeeded: config.backupExplorerApiKeyNeeded,
         }
       : null;
 
@@ -273,13 +283,19 @@ export async function fetchContractTransactions(
     );
 
     if (primaryResult.success) {
-      return primaryResult;
+      return { ...primaryResult, usedBackup: false };
     }
 
     lastPrimaryError = primaryResult.error;
 
     if (backup === null) {
       continue;
+    }
+
+    if (backup.apiKeyNeeded && !backup.apiKey) {
+      lastBackupError =
+        "Backup explorer requires an API key but none is configured";
+      break;
     }
 
     const backupResult = await fetchTransactionsFromProvider(
@@ -289,11 +305,11 @@ export async function fetchContractTransactions(
       chainId,
       startBlock,
       endBlock,
-      apiKey
+      backup.apiKey
     );
 
     if (backupResult.success) {
-      return backupResult;
+      return { ...backupResult, usedBackup: true };
     }
 
     lastBackupError = backupResult.error;
@@ -309,5 +325,28 @@ export async function fetchContractTransactions(
   return {
     success: false,
     error: lastPrimaryError ?? "Explorer request failed",
+  };
+}
+
+/**
+ * Returns an ExplorerConfig-shaped object with the URL and path fields
+ * resolved to the backup provider when it was used. Falls back to primary
+ * values for any backup field that is not configured.
+ */
+export function resolveExplorerUrlConfig(
+  config: ExplorerConfig,
+  usedBackup: boolean
+): ExplorerConfig {
+  if (!usedBackup) {
+    return config;
+  }
+  return {
+    ...config,
+    explorerUrl: config.backupExplorerUrl ?? config.explorerUrl,
+    explorerTxPath: config.backupExplorerTxPath ?? config.explorerTxPath,
+    explorerAddressPath:
+      config.backupExplorerAddressPath ?? config.explorerAddressPath,
+    explorerContractPath:
+      config.backupExplorerContractPath ?? config.explorerContractPath,
   };
 }

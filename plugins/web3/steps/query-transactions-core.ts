@@ -9,6 +9,7 @@ import {
   getAddressUrl,
   getTransactionUrl,
   type NormalizedTransaction,
+  resolveExplorerUrlConfig,
 } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
@@ -484,6 +485,7 @@ export async function queryTransactionsCore(
     return { success: false, error: txResult.error };
   }
 
+  const urlConfig = resolveExplorerUrlConfig(explorerConfig, txResult.usedBackup);
   const filterArgs = parseFunctionArgsFilter(input.functionArgs);
 
   const { matched, totalFiltered } = filterAndDecodeTransactions(
@@ -492,7 +494,7 @@ export async function queryTransactionsCore(
     iface,
     functionFragment,
     filterArgs,
-    (hash: string) => getTransactionUrl(explorerConfig, hash)
+    (hash: string) => getTransactionUrl(urlConfig, hash)
   );
 
   return {

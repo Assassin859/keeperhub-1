@@ -9,8 +9,10 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import { exportKeyVerifySchema } from "@/lib/schemas/wallet";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
+import { validateBody } from "@/lib/validate-request";
 import { checkVerifyRateLimit } from "../_lib/rate-limit";
 
 /**
@@ -81,7 +83,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const body: { code?: string; emailOtp?: string } = await request.json();
+    const bodyValidation = await validateBody(request, exportKeyVerifySchema);
+    if (!bodyValidation.success) {
+      return bodyValidation.response;
+    }
+    const body = bodyValidation.data;
     const dual = await requireDualFactor({
       userId: session.user.id,
       email: session.user.email,

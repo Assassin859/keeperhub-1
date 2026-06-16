@@ -1,5 +1,9 @@
 name: Cleanup PR Environment
 
+concurrency:
+  group: pr-env-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [closed, unlabeled]

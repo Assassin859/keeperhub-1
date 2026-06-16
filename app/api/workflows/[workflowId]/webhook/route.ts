@@ -34,6 +34,8 @@ import {
   workflows,
 } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import { webhookPayloadSchema } from "@/lib/schemas/webhook";
+import { validateData } from "@/lib/validate-request";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
 import {
@@ -357,8 +359,30 @@ export async function POST(
       );
     }
 
-    // Parse request body
-    const body = await request.json().catch(() => ({}));
+    // Parse + validate the webhook payload (KEEP-828). Contents are freeform
+    // (forwarded to the workflow as trigger input), but the envelope must be a
+    // JSON object so template references resolve. An empty body is allowed and
+    // triggers the workflow with no input.
+    let body: Record<string, unknown> = {};
+    const rawBody = await request.text();
+    if (rawBody.trim() !== "") {
+      let parsedPayload: unknown;
+      try {
+        parsedPayload = JSON.parse(rawBody);
+      } catch {
+        return failResponse(workflowId, timer, 400, "Invalid JSON body");
+      }
+      const payloadValidation = validateData(parsedPayload, webhookPayloadSchema);
+      if (!payloadValidation.success) {
+        return failResponse(
+          workflowId,
+          timer,
+          400,
+          "Webhook payload must be a JSON object"
+        );
+      }
+      body = payloadValidation.data;
+    }
 
     // Idempotency: a retry carrying the same key + body replays the original
     // executionId instead of triggering the workflow again. Scoped per workflow.
