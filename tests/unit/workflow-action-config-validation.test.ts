@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   formatActionConfigValidationResponse,
+  isKnownConfigKeyForAction,
   validateWorkflowActionConfigs,
 } from "@/lib/workflow/validation/action-config";
 
@@ -1018,6 +1019,46 @@ describe("validateWorkflowActionConfigs", () => {
         ])
       );
     });
+  });
+});
+
+describe("isKnownConfigKeyForAction", () => {
+  it("rejects web3 leftover fields after a switch to discord/send-message", () => {
+    for (const key of ["abi", "network", "abiFunction", "contractAddress"]) {
+      expect(isKnownConfigKeyForAction("discord/send-message", key)).toBe(
+        false
+      );
+    }
+  });
+
+  it("keeps fields the target action declares", () => {
+    expect(
+      isKnownConfigKeyForAction("discord/send-message", "discordMessage")
+    ).toBe(true);
+  });
+
+  it("keeps reserved structural keys for any action", () => {
+    for (const key of ["actionType", "integrationId"]) {
+      expect(isKnownConfigKeyForAction("discord/send-message", key)).toBe(true);
+    }
+  });
+
+  it("keeps legacy aliases that map to a declared field", () => {
+    expect(
+      isKnownConfigKeyForAction("web3/read-contract", "functionName")
+    ).toBe(true);
+  });
+
+  it("keeps legacy ignored fields for the target action", () => {
+    expect(
+      isKnownConfigKeyForAction("web3/query-transactions", "inputMode")
+    ).toBe(true);
+  });
+
+  it("does not prune when the action type is unknown", () => {
+    expect(isKnownConfigKeyForAction("not-a-real/action", "anything")).toBe(
+      true
+    );
   });
 });
 
