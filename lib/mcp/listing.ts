@@ -16,6 +16,7 @@ export type ListingErrorCode =
   | "SLUG_CONFLICT"
   | "PRICE_CHANGE_WHILE_LISTED"
   | "INVALID_INPUT"
+  | "SLUG_REQUIRED"
   | "MISSING_WRITE_ACTION"
   | "INVALID_TEMPLATE_LITERALS"
   | "INPUT_SCHEMA_REQUIRED";
@@ -155,7 +156,7 @@ export async function listWorkflow(
 
   if (current.listedSlug === null) {
     if (!metadata.slug) {
-      return { ok: false, error: "INVALID_INPUT" };
+      return { ok: false, error: "SLUG_REQUIRED" };
     }
     updateSet.listedSlug = metadata.slug;
   }

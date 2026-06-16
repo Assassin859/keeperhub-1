@@ -49,6 +49,16 @@ function mapListingError(
       { status: HttpStatus.CONFLICT }
     );
   }
+  if (error === "SLUG_REQUIRED") {
+    return NextResponse.json(
+      {
+        error: "SLUG_REQUIRED",
+        message:
+          "Listed workflows must have a slug. Provide a non-empty `slug` (lowercase letters, numbers, and hyphens) to list this workflow.",
+      },
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
+    );
+  }
   if (error === "MISSING_WRITE_ACTION") {
     return NextResponse.json(
       {
