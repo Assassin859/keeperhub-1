@@ -127,7 +127,7 @@ describe("sendWorkflowExecutionDigestEmail", () => {
     expect(content).toContain(
       "https://app.keeperhub.com/workflows?digestSettings=org-123"
     );
-    expect(content).toContain("Manage or turn off these emails");
+    expect(content).toContain("Manage notifications");
     expect(content).toContain(
       "because you're an owner or admin of that organization"
     );

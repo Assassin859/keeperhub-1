@@ -792,7 +792,7 @@ ${failingText}
 View runs: ${appUrl}/analytics
 
 You're receiving this digest for ${orgName} because you're an owner or admin of that organization.
-Manage or turn off these emails: ${manageUrl}
+Manage notifications: ${manageUrl}
 
 ---
 KeeperHub - Blockchain Workflow Automation
@@ -883,7 +883,7 @@ ${socialText}
     </div>
     <h2 style="color: #1a1a2e; margin-top: 0;">${escapeHtml(orgName)} workflow digest</h2>
     <p style="color:#666; margin-bottom:10px;">${summaryLabel}</p>
-    <p style="color:#444; font-size:13px; margin:0 0 4px; line-height:1.8;">${formatUtcStamp(since)}<br><span style="color:#aaa;">to</span><br>${formatUtcStamp(until)}</p>
+    <p style="color:#444; font-size:13px; margin:0 0 4px;">${formatUtcStamp(since)} <span style="color:#aaa;">to</span> ${formatUtcStamp(until)}</p>
     <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:24px 0;">
       <tr>${statCard(stats.total, "Total runs")}${statCard(stats.distinctWorkflows, "Workflows run")}</tr>
     </table>
@@ -908,7 +908,7 @@ ${socialText}
         `<td style="padding:0 8px;"><a href="${s.url}" target="_blank" rel="noopener"><img src="cid:${s.icon}" alt="${s.name}" width="20" height="20" style="display:block;" /></a></td>`
     ).join("")}</tr></table>
     <p style="margin: 0 0 6px;">You're receiving this digest for <strong>${escapeHtml(orgName)}</strong> because you're an owner or admin of that organization.</p>
-    <p style="margin: 0 0 12px;"><a href="${manageUrl}" style="color:#666; text-decoration:underline;">Manage or turn off these emails</a></p>
+    <p style="margin: 0 0 12px;"><a href="${manageUrl}" style="color:#666; text-decoration:underline;">Manage notifications</a></p>
     <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
   </div>
 </body>
