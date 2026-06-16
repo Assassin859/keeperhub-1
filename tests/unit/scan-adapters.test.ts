@@ -15,6 +15,10 @@ vi.mock("server-only", () => ({}));
 
 import { ethers } from "ethers";
 import { buildLidoCalls, decodeLidoResults } from "@/lib/scan/adapters/lido";
+import {
+  buildStablecoinCalls,
+  decodeStablecoinResults,
+} from "@/lib/scan/adapters/stablecoins";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -117,5 +121,104 @@ describe("lido adapter", () => {
   it("lido: returns empty array for unsupported chainId", () => {
     const results = [{ success: true, returnData: encodeBalance(BigInt("1000")) }];
     expect(decodeLidoResults(results, TEST_USER, 99)).toHaveLength(0);
+  });
+});
+
+// ─── Stablecoin adapter ───────────────────────────────────────────────────────
+
+const MOCK_TOKENS = [
+  {
+    tokenAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    symbol: "USDC",
+    decimals: 6,
+  },
+  {
+    tokenAddress: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    symbol: "USDT",
+    decimals: 6,
+  },
+];
+
+describe("stablecoin adapter", () => {
+  it("stablecoin: buildStablecoinCalls produces one balanceOf call per token", () => {
+    const calls = buildStablecoinCalls(TEST_USER, MOCK_TOKENS);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.allowFailure).toBe(true);
+    }
+    expect(calls[0]?.target).toBe(MOCK_TOKENS[0]?.tokenAddress);
+    expect(calls[1]?.target).toBe(MOCK_TOKENS[1]?.tokenAddress);
+  });
+
+  it("stablecoin: decodeStablecoinResults returns one StablecoinBalance per non-failed non-zero balance", () => {
+    const usdcBalance = BigInt("1000000"); // 1 USDC (6 decimals)
+
+    const results = [
+      { success: true, returnData: encodeBalance(usdcBalance) },
+      { success: false, returnData: "0x" }, // USDT sub-call failed
+    ];
+
+    const stablecoins = decodeStablecoinResults(results, MOCK_TOKENS, 1);
+    expect(stablecoins).toHaveLength(1);
+
+    const sc = stablecoins[0];
+    expect(sc?.symbol).toBe("USDC");
+    expect(sc?.amount).toBe(String(usdcBalance));
+    expect(sc?.decimals).toBe(6);
+    expect(sc?.chainId).toBe(1);
+    expect(sc?.tokenAddress).toBe(MOCK_TOKENS[0]?.tokenAddress);
+    expect(sc?.usdValue).toBeNull();
+    expect(sc?.priceUsd).toBeNull();
+    expect(sc?.depegged).toBe(false);
+  });
+
+  it("stablecoin: amount is a stringified bigint, not a JS number", () => {
+    const balance = BigInt("999999999999"); // large value to exercise string path
+    const results = [
+      { success: true, returnData: encodeBalance(balance) },
+      { success: false, returnData: "0x" },
+    ];
+
+    const stablecoins = decodeStablecoinResults(results, MOCK_TOKENS, 1);
+    expect(stablecoins).toHaveLength(1);
+    expect(typeof stablecoins[0]?.amount).toBe("string");
+    expect(stablecoins[0]?.amount).toBe(String(balance));
+  });
+
+  it("stablecoin: failed sub-call drops only that token, does not throw (soft miss)", () => {
+    const results = [
+      { success: false, returnData: "0x" },
+      { success: false, returnData: "0x" },
+    ];
+    expect(() => decodeStablecoinResults(results, MOCK_TOKENS, 1)).not.toThrow();
+    expect(decodeStablecoinResults(results, MOCK_TOKENS, 1)).toHaveLength(0);
+  });
+
+  it("stablecoin: zero balance is excluded even when sub-call succeeded", () => {
+    const results = [
+      { success: true, returnData: encodeBalance(BigInt(0)) },
+      { success: true, returnData: encodeBalance(BigInt(0)) },
+    ];
+    expect(decodeStablecoinResults(results, MOCK_TOKENS, 1)).toHaveLength(0);
+  });
+
+  it("stablecoin: buildStablecoinCalls returns empty array for empty token list", () => {
+    expect(buildStablecoinCalls(TEST_USER, [])).toHaveLength(0);
+  });
+
+  it("stablecoin: decimals from registry are carried through to the result", () => {
+    const tokens = [
+      {
+        tokenAddress: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+      },
+    ];
+    const results = [
+      { success: true, returnData: encodeBalance(BigInt("500000")) }, // 0.5 USDC
+    ];
+    const stablecoins = decodeStablecoinResults(results, tokens, 8453);
+    expect(stablecoins[0]?.decimals).toBe(6);
+    expect(stablecoins[0]?.chainId).toBe(8453);
   });
 });
