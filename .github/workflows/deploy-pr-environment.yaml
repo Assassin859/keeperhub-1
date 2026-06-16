@@ -1,5 +1,9 @@
 name: Deploy PR Environment
 
+concurrency:
+  group: pr-env-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
@@ -439,7 +443,14 @@ jobs:
           cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EXECUTOR_ECR_NAME }}:cache-pr,mode=max
 
   deploy:
-    needs: [check-labels, build-images, build-events-image, build-executor-image, build-collector-image]
+    needs:
+      [
+        check-labels,
+        build-images,
+        build-events-image,
+        build-executor-image,
+        build-collector-image,
+      ]
     # Cannot use the `success()` shorthand here because GHA evaluates it
     # as false whenever ANY needed job is skipped. build-events-image is
     # skipped on purpose for PRs without the deploy-pr-events label, so
