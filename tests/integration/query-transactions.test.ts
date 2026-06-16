@@ -16,6 +16,7 @@ const {
   mockFetchContractTransactions,
   mockGetAddressUrl,
   mockGetTransactionUrl,
+  mockResolveExplorerUrlConfig,
   mockGetChainIdFromNetwork,
   mockGetRpcProvider,
 } = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ const {
   mockFetchContractTransactions: vi.fn(),
   mockGetAddressUrl: vi.fn(),
   mockGetTransactionUrl: vi.fn(),
+  mockResolveExplorerUrlConfig: vi.fn((config: unknown) => config),
   mockGetChainIdFromNetwork: vi.fn(),
   mockGetRpcProvider: vi.fn(),
 }));
@@ -130,6 +132,7 @@ vi.mock("@/lib/explorer", () => ({
   fetchContractTransactions: mockFetchContractTransactions,
   getAddressUrl: mockGetAddressUrl,
   getTransactionUrl: mockGetTransactionUrl,
+  resolveExplorerUrlConfig: mockResolveExplorerUrlConfig,
 }));
 
 // ---------------------------------------------------------------------------

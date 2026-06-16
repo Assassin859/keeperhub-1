@@ -189,6 +189,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: null,
         backupExplorerApiUrl: null,
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -220,6 +226,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: null,
         backupExplorerApiUrl: null,
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -264,6 +276,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: "blockscout",
         backupExplorerApiUrl: "https://backup.blockscout.io/api",
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: "https://backup.blockscout.io",
+        backupExplorerTxPath: "/tx/{hash}",
+        backupExplorerAddressPath: "/address/{address}",
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -324,6 +342,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: "etherscan",
         backupExplorerApiUrl: "https://backup.etherscan.io/v2/api",
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -377,6 +401,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: "etherscan",
         backupExplorerApiUrl: "https://backup.etherscan.io/v2/api",
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -427,6 +457,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: "blockscout",
         backupExplorerApiUrl: "https://backup.blockscout.io/api",
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: "https://backup.blockscout.io",
+        backupExplorerTxPath: "/tx/{hash}",
+        backupExplorerAddressPath: "/address/{address}",
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -457,6 +493,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: null,
         backupExplorerApiUrl: null,
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -486,6 +528,51 @@ describe("queryTransactionsCore", () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
+    it("returns error immediately when backup requires an API key but none is set", async () => {
+      mockFindFirst.mockResolvedValue({
+        chainId: 1,
+        chainType: "evm",
+        explorerUrl: "https://etherscan.io",
+        explorerApiType: "etherscan",
+        explorerApiUrl: "https://api.etherscan.io/v2/api",
+        explorerTxPath: "/tx/{hash}",
+        explorerAddressPath: "/address/{address}",
+        explorerContractPath: null,
+        backupExplorerApiType: "etherscan",
+        backupExplorerApiUrl: "https://backup.etherscan.io/v2/api",
+        backupExplorerApiKeyNeeded: true,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Primary fails — backup should not be attempted due to missing key
+      mockFetch.mockResolvedValueOnce({
+        json: () =>
+          Promise.resolve({
+            status: "0",
+            message: "NOTOK",
+            result: "Rate limit exceeded",
+          }),
+      });
+
+      const result = await queryTransactionsCore(BASE_INPUT);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("All explorer providers failed");
+        expect(result.error).toContain(
+          "Backup explorer requires an API key but none is configured"
+        );
+      }
+      // Primary called once (break on missing key exits after round 1), backup never called
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it("falls back when primary throws a network error", async () => {
       mockFindFirst.mockResolvedValue({
         chainId: 1,
@@ -498,6 +585,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: "etherscan",
         backupExplorerApiUrl: "https://backup.etherscan.io/v2/api",
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -532,6 +625,12 @@ describe("queryTransactionsCore", () => {
         explorerContractPath: null,
         backupExplorerApiType: null,
         backupExplorerApiUrl: null,
+        backupExplorerApiKeyNeeded: false,
+        backupExplorerApiKey: null,
+        backupExplorerUrl: null,
+        backupExplorerTxPath: null,
+        backupExplorerAddressPath: null,
+        backupExplorerContractPath: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
