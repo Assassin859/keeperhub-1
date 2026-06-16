@@ -87,6 +87,8 @@ deployment:
           pnpm db:migrate
           echo "Seeding chains..."
           pnpm db:seed
+          echo "Backfilling workflow version-history baselines..."
+          pnpm tsx scripts/backfill-workflow-history.ts
           echo "Migrations and seeding completed successfully"
       env: *shared_env
 
