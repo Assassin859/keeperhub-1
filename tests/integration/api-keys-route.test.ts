@@ -12,6 +12,7 @@ const mockSession = {
 const {
   mockGetSession,
   mockFindMany,
+  mockCountWhere,
   mockInsertReturning,
   mockDeleteReturning,
   mockRequireMfaEnrolled,
@@ -19,6 +20,7 @@ const {
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockFindMany: vi.fn(),
+  mockCountWhere: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockDeleteReturning: vi.fn(),
   mockRequireMfaEnrolled: vi.fn(),
@@ -48,6 +50,11 @@ vi.mock("@/lib/db", () => ({
         findMany: mockFindMany,
       },
     },
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: mockCountWhere,
+      })),
+    })),
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
         returning: mockInsertReturning,
@@ -131,27 +138,31 @@ describe("GET /api/api-keys", () => {
         lastUsedAt: "2026-01-03T00:00:00.000Z",
       },
     ];
+    mockCountWhere.mockResolvedValue([{ total: 2 }]);
     mockFindMany.mockResolvedValue(mockKeys);
 
     const response = await GET(createRequest("GET"));
     expect(response.status).toBe(200);
     const data = await response.json();
-    expect(data).toEqual(mockKeys);
-    expect(data).toHaveLength(2);
+    expect(data.items).toEqual(mockKeys);
+    expect(data.items).toHaveLength(2);
+    expect(data.meta.total).toBe(2);
   });
 
-  it("should return empty array when user has no keys", async () => {
+  it("should return empty items when user has no keys", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockCountWhere.mockResolvedValue([{ total: 0 }]);
     mockFindMany.mockResolvedValue([]);
 
     const response = await GET(createRequest("GET"));
     expect(response.status).toBe(200);
     const data = await response.json();
-    expect(data).toEqual([]);
+    expect(data.items).toEqual([]);
   });
 
   it("should return 500 on database error", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockCountWhere.mockResolvedValue([{ total: 0 }]);
     mockFindMany.mockRejectedValue(new Error("DB connection failed"));
 
     const response = await GET(createRequest("GET"));

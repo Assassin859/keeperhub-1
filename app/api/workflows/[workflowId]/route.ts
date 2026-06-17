@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -9,7 +9,7 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
-import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
+import { projects, publicTags, tags, workflowExecutions, workflowHistory, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
 import {
   deriveWorkflowType,
   findFirstWriteActionNode,
@@ -24,7 +24,11 @@ import {
   syncWorkflowSchedule,
 } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { isOrgAdmin } from "@/lib/security/org-role";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
+import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
@@ -132,6 +136,51 @@ export async function GET(
     }
 
     const hasFullAccess = access.hasFullAccess;
+
+    // ?version=N returns a historical snapshot instead of the live row.
+    // History is an audit trail, so it is gated to org admins/owners with
+    // full workflow access, scoped to the workflow's org.
+    const versionParam = new URL(request.url).searchParams.get("version");
+    if (versionParam !== null) {
+      const versionNumber = Number.parseInt(versionParam, 10);
+      if (Number.isNaN(versionNumber)) {
+        return NextResponse.json({ error: "Invalid version" }, { status: 400 });
+      }
+      if (
+        !(hasFullAccess && userId && workflow.organizationId) ||
+        !(await isOrgAdmin(userId, workflow.organizationId))
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const [historyRow] = await db
+        .select()
+        .from(workflowHistory)
+        .where(
+          and(
+            eq(workflowHistory.workflowId, workflowId),
+            eq(workflowHistory.version, versionNumber)
+          )
+        )
+        .limit(1);
+      if (!historyRow) {
+        return NextResponse.json(
+          { error: "Version not found" },
+          { status: 404 }
+        );
+      }
+      const snapshot = (historyRow.snapshot ?? {}) as Record<string, unknown>;
+      return NextResponse.json({
+        ...workflow,
+        ...snapshot,
+        id: workflow.id,
+        version: historyRow.version,
+        isHistoricalVersion: true,
+        versionCreatedAt: historyRow.createdAt.toISOString(),
+        createdAt: workflow.createdAt.toISOString(),
+        updatedAt: workflow.updatedAt.toISOString(),
+        isOwner: hasFullAccess,
+      });
+    }
 
     const workflowTags = await fetchWorkflowPublicTags(workflowId);
 
@@ -565,6 +614,37 @@ export async function PATCH(
     }
 
     if (willBeListed) {
+      // A listed workflow must always carry a non-empty slug — external callers
+      // invoke it by slug at /api/mcp/workflows/<slug>/call, so a listed-but-
+      // slugless row is discoverable in the catalog yet uncallable. The curator
+      // publish path enforces this (lib/mcp/listing.ts::listWorkflow); without
+      // the same gate on this backdoor PATCH, a caller could list a workflow
+      // with a null slug or strip the slug off one that is already listed.
+      // Checked for any willBeListed state (not field-touched-only) because the
+      // invariant holds regardless of which field the PATCH changed; unlisting
+      // already makes willBeListed false, so a PATCH setting isListed=false is
+      // exempt. Same error code as the curator route (SLUG_REQUIRED) so both
+      // surfaces reject identically.
+      const finalSlug =
+        updateData.listedSlug !== undefined
+          ? updateData.listedSlug
+          : existingWorkflow.listedSlug;
+      if (typeof finalSlug !== "string" || finalSlug.trim().length === 0) {
+        return NextResponse.json(
+          {
+            error: "SLUG_REQUIRED",
+            message:
+              "Listed workflows must have a slug. Set a non-empty `listedSlug` (lowercase letters, numbers, and hyphens), or unlist the workflow before saving these changes.",
+          },
+          { status: 422 }
+        );
+      }
+      // When the body sets the slug, persist the trimmed value so the stored
+      // slug matches what was validated (no leading/trailing whitespace).
+      if (updateData.listedSlug !== undefined) {
+        updateData.listedSlug = finalSlug.trim();
+      }
+
       const checkNodes =
         updateData.nodes !== undefined || isTransitioningToListed;
       const checkSchema =
@@ -660,6 +740,86 @@ export async function PATCH(
     }
 
     await handlePostUpdateSideEffects(workflowId, body);
+
+    // Resolve project/tag names so a move/tagging shows "Project: A -> B" in
+    // the activity feed rather than opaque ids.
+    const movementProjectIds = [
+      existingWorkflow.projectId,
+      updatedWorkflow.projectId,
+    ].filter((v): v is string => Boolean(v));
+    const movementTagIds = [
+      existingWorkflow.tagId,
+      updatedWorkflow.tagId,
+    ].filter((v): v is string => Boolean(v));
+    const [projectNameRows, tagNameRows] = await Promise.all([
+      movementProjectIds.length > 0
+        ? db
+            .select({ id: projects.id, name: projects.name })
+            .from(projects)
+            .where(inArray(projects.id, movementProjectIds))
+        : Promise.resolve([]),
+      movementTagIds.length > 0
+        ? db
+            .select({ id: tags.id, name: tags.name })
+            .from(tags)
+            .where(inArray(tags.id, movementTagIds))
+        : Promise.resolve([]),
+    ]);
+    const projectNameById = new Map(projectNameRows.map((r) => [r.id, r.name]));
+    const tagNameById = new Map(tagNameRows.map((r) => [r.id, r.name]));
+    const nameFor = (
+      map: Map<string, string>,
+      id: string | null
+    ): string | null => (id ? (map.get(id) ?? null) : null);
+
+    // Audit the change with scalar fields plus a content hash of the
+    // definition, so the row stays small. The full nodes/edges snapshot and
+    // structural diff are the job of the workflow change-history table.
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "workflow.updated",
+      resourceType: "workflow",
+      resourceId: workflowId,
+      before: {
+        name: existingWorkflow.name,
+        enabled: existingWorkflow.enabled,
+        visibility: existingWorkflow.visibility,
+        isListed: existingWorkflow.isListed,
+        project: nameFor(projectNameById, existingWorkflow.projectId),
+        tag: nameFor(tagNameById, existingWorkflow.tagId),
+        contentHash: hashWorkflowDefinition(
+          existingWorkflow.nodes,
+          existingWorkflow.edges
+        ),
+      },
+      after: {
+        name: updatedWorkflow.name,
+        enabled: updatedWorkflow.enabled,
+        visibility: updatedWorkflow.visibility,
+        isListed: updatedWorkflow.isListed,
+        project: nameFor(projectNameById, updatedWorkflow.projectId),
+        tag: nameFor(tagNameById, updatedWorkflow.tagId),
+        contentHash: hashWorkflowDefinition(
+          updatedWorkflow.nodes,
+          updatedWorkflow.edges
+        ),
+      },
+      metadata: buildAuditMetadata(request),
+    });
+
+    // Full version snapshot for the change-history timeline + restore.
+    await recordWorkflowSnapshot({
+      workflowId,
+      before: existingWorkflow,
+      after: updatedWorkflow,
+      actor: { userId, organizationId, authMethod: authContext.authMethod },
+      source: "update",
+    });
 
     return NextResponse.json({
       ...updatedWorkflow,
@@ -788,6 +948,19 @@ export async function DELETE(
           .where(eq(workflows.id, workflowId));
       });
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "workflow.deleted",
+      resourceType: "workflow",
+      resourceId: workflowId,
+      metadata: { ...buildAuditMetadata(request), forced: force },
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -92,6 +92,14 @@ export type WorkflowVisibility = "private" | "unlisted" | "public";
 // Atoms for workflow state (now backed by database)
 export const nodesAtom = atom<WorkflowNode[]>([]);
 export const edgesAtom = atom<WorkflowEdge[]>([]);
+
+// When non-null, the canvas is showing a historical version (read-only
+// preview from the version-history overlay). Autosave is suppressed while
+// this is set so previewing a past version can never clobber the live
+// workflow via the debounced save.
+export const previewVersionAtom = atom<number | null>(null);
+// Whether the right-docked version-history panel is open in the editor.
+export const versionHistoryOpenAtom = atom(false);
 export const selectedNodeAtom = atom<string | null>(null);
 export const selectedEdgeAtom = atom<string | null>(null);
 export const isExecutingAtom = atom(false);
@@ -131,6 +139,10 @@ export const runsRefreshTriggerAtom = atom<number>(0);
 export const showMinimapAtom = atom(false);
 export const selectedExecutionIdAtom = atom<string | null>(null);
 export const rightPanelWidthAtom = atom<string | null>(null);
+// Width (in viewport %) shared by the right-docked editor panels (node config
+// + version history) so they stay the same size and a resize on either keeps
+// them in sync. Clamp 20-50 when writing.
+export const rightPanelWidthPctAtom = atom(30);
 export const isPanelAnimatingAtom = atom<boolean>(false);
 export const hasSidebarBeenShownAtom = atom<boolean>(false);
 export const isSidebarCollapsedAtom = atom<boolean>(false);
@@ -176,7 +188,7 @@ export const lastExecutionLogsAtom = atom<LastExecutionLogsState>({
 
 // Autosave functionality
 let autosaveTimeoutId: NodeJS.Timeout | null = null;
-const AUTOSAVE_DELAY = 1000; // 1 second debounce for field typing
+const AUTOSAVE_DELAY = 2500; // debounce so rapid edits don't each save/version
 
 // Autosave atom that handles saving workflow state
 export const autosaveAtom = atom(
@@ -188,6 +200,12 @@ export const autosaveAtom = atom(
 
     // Only autosave if we have a workflow ID
     if (!workflowId) {
+      return;
+    }
+
+    // Never autosave while previewing a historical version -- the canvas is
+    // showing an old snapshot, not the user's working edits.
+    if (get(previewVersionAtom) !== null) {
       return;
     }
 

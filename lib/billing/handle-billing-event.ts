@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/schema";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
+import { recordAuditEvent } from "@/lib/security/audit-log";
 import { BILLING_ALERTS } from "./constants";
 import { clearAllDebtForOrg, clearDebtForInvoice } from "./execution-debt";
 import { billOverageForOrg } from "./overage";
@@ -340,6 +341,23 @@ async function handleSubscriptionUpdated(
       to_plan: newPlan,
       direction: planChangeDirection(fromPlan, newPlan),
     });
+
+    // Authoritative plan-change record. The acting user is captured separately
+    // by subscription.change_requested on the checkout route; here the actor
+    // is the provider webhook that finalized the transition.
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: current.organizationId,
+        authMethod: "internal",
+      },
+      action: "subscription.plan_changed",
+      resourceType: "subscription",
+      resourceId: current.organizationId,
+      before: { plan: current.plan, tier: current.tier },
+      after: { plan: newPlan, tier: (update.tier as string | null) ?? null },
+      metadata: { source: "stripe", providerSubscriptionId },
+    });
   }
 }
 
@@ -397,6 +415,22 @@ async function handleSubscriptionDeleted(
         tier: current?.tier ?? "none",
       }
     );
+
+    if (current) {
+      await recordAuditEvent({
+        actor: {
+          userId: null,
+          organizationId: current.organizationId,
+          authMethod: "internal",
+        },
+        action: "subscription.canceled",
+        resourceType: "subscription",
+        resourceId: current.organizationId,
+        before: { plan: current.plan, status: current.status },
+        after: { status: "canceled", activeUntil: periodEnd.toISOString() },
+        metadata: { source: "stripe", providerSubscriptionId },
+      });
+    }
     return;
   }
 
@@ -438,6 +472,22 @@ async function handleSubscriptionDeleted(
       tier: current?.tier ?? "none",
     }
   );
+
+  if (current) {
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: current.organizationId,
+        authMethod: "internal",
+      },
+      action: "subscription.canceled",
+      resourceType: "subscription",
+      resourceId: current.organizationId,
+      before: { plan: current.plan, status: current.status },
+      after: { plan: "free", status: "canceled" },
+      metadata: { source: "stripe", providerSubscriptionId },
+    });
+  }
 }
 
 async function markOverageRecordsPaid(

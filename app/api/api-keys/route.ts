@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -10,6 +10,9 @@ import {
   requireDualFactor,
 } from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { buildPage, parsePageRequest } from "@/lib/pagination";
+import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // Generate a secure API key
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -31,8 +34,17 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const url = new URL(request.url);
+    const req = parsePageRequest(url);
+    const where = eq(apiKeys.userId, session.user.id);
+
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(apiKeys)
+      .where(where);
+
     const keys = await db.query.apiKeys.findMany({
-      where: eq(apiKeys.userId, session.user.id),
+      where,
       columns: {
         id: true,
         name: true,
@@ -41,9 +53,11 @@ export async function GET(request: Request) {
         lastUsedAt: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
+      limit: req.pageSize,
+      offset: req.offset,
     });
 
-    return NextResponse.json(keys);
+    return NextResponse.json(buildPage(keys, total, req, url));
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to list API keys", error, {
       endpoint: "/api/api-keys",
@@ -134,6 +148,30 @@ export async function POST(request: Request) {
         keyPrefix: apiKeys.keyPrefix,
         createdAt: apiKeys.createdAt,
       });
+
+    // Out-of-band alert so the owner learns a long-lived bypass credential
+    // was minted, even if their own session did it. Non-blocking.
+    notifyApiKeyChange({
+      email: session.user.email,
+      action: "created",
+      tokenName: newKey.name,
+      keyPrefix: newKey.keyPrefix,
+      when: newKey.createdAt,
+    });
+
+    // Durable forensic record of who minted the key and from where.
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "api_key.created",
+      resourceType: "api_key",
+      resourceId: newKey.id,
+      after: { name: newKey.name, keyPrefix: newKey.keyPrefix },
+      metadata: buildAuditMetadata(request),
+    });
 
     // Return the full key only on creation (won't be shown again)
     return NextResponse.json({

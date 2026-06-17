@@ -9,6 +9,8 @@ import {
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { loadCreators } from "@/lib/security/creator-lookup";
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
@@ -41,11 +43,22 @@ export async function GET(request: Request): Promise<NextResponse> {
       .groupBy(tags.id)
       .orderBy(tags.name);
 
-    const response = orgTags.map((t) => ({
-      ...t,
-      createdAt: t.createdAt.toISOString(),
-      updatedAt: t.updatedAt.toISOString(),
-    }));
+    const creatorMap = await loadCreators(
+      orgTags.map((t) => t.userId),
+      organizationId
+    );
+
+    const response = orgTags.map((t) => {
+      const creator = creatorMap.get(t.userId);
+      return {
+        ...t,
+        createdAt: t.createdAt.toISOString(),
+        updatedAt: t.updatedAt.toISOString(),
+        createdByName: creator?.name ?? null,
+        createdByEmail: creator?.email ?? null,
+        createdByRole: creator?.role ?? null,
+      };
+    });
 
     return NextResponse.json(response);
   } catch (error) {
@@ -75,7 +88,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (scopeError) {
       return scopeError;
     }
-    const { organizationId, userId: creatorUserId } = resolved;
+    const {
+      organizationId,
+      userId: creatorUserId,
+      authMethod,
+      apiKeyId,
+    } = resolved;
 
     const body = await request.json().catch(() => ({}));
     const name = body.name?.trim();
@@ -97,6 +115,15 @@ export async function POST(request: Request): Promise<NextResponse> {
         userId: creatorUserId,
       })
       .returning();
+
+    await recordAuditEvent({
+      actor: { userId: creatorUserId, organizationId, authMethod, apiKeyId },
+      action: "tag.created",
+      resourceType: "tag",
+      resourceId: newTag.id,
+      after: { name: newTag.name },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json(
       {

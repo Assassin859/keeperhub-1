@@ -17,6 +17,7 @@ import {
   executeNativeTransferAsSafe,
 } from "@/lib/safe/execute-as-safe";
 import { withdrawSchema } from "@/lib/schemas/wallet";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { validateBody } from "@/lib/validate-request";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager } from "@/lib/web3/nonce-manager";
@@ -513,6 +514,26 @@ export async function POST(request: Request) {
         return { txHash };
       }
     );
+
+    await recordAuditEvent({
+      actor: {
+        userId: user.id,
+        organizationId,
+        authMethod: "session",
+      },
+      action: "wallet.funds_withdrawn",
+      resourceType: "wallet",
+      resourceId: recipientAddr,
+      after: {
+        chainId,
+        tokenAddress: tokenAddress || null,
+        amount,
+        recipient: recipientAddr,
+        safeId: safeId ?? null,
+        txHash: result.txHash,
+      },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       success: true,

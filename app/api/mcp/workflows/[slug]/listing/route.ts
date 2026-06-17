@@ -15,6 +15,7 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 const LISTING_RATE_LIMIT = 60;
 const LISTING_RATE_WINDOW_MS = 60_000;
@@ -47,6 +48,16 @@ function mapListingError(
         message: "Unlist the workflow before changing the price.",
       },
       { status: HttpStatus.CONFLICT }
+    );
+  }
+  if (error === "SLUG_REQUIRED") {
+    return NextResponse.json(
+      {
+        error: "SLUG_REQUIRED",
+        message:
+          "Listed workflows must have a slug. Provide a non-empty `slug` (lowercase letters, numbers, and hyphens) to list this workflow.",
+      },
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
   if (error === "MISSING_WRITE_ACTION") {
@@ -212,6 +223,20 @@ export async function POST(
     return mapListingError(result.error, result.details);
   }
 
+  await recordAuditEvent({
+    actor: {
+      userId: authContext.userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+      apiKeyId: authContext.apiKeyId,
+    },
+    action: "workflow.listed",
+    resourceType: "workflow",
+    resourceId: workflowId,
+    after: { slug: result.listing.listedSlug },
+    metadata: buildAuditMetadata(request),
+  });
+
   return NextResponse.json(result.listing, { status: HttpStatus.OK });
 }
 
@@ -281,6 +306,19 @@ export async function PATCH(
     return mapListingError(result.error, result.details);
   }
 
+  await recordAuditEvent({
+    actor: {
+      userId: authContext.userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+      apiKeyId: authContext.apiKeyId,
+    },
+    action: "workflow.listing_updated",
+    resourceType: "workflow",
+    resourceId: workflowId,
+    metadata: buildAuditMetadata(request),
+  });
+
   return NextResponse.json(result.listing, { status: HttpStatus.OK });
 }
 
@@ -315,6 +353,19 @@ export async function DELETE(
   if (!result.ok) {
     return mapListingError(result.error, result.details);
   }
+
+  await recordAuditEvent({
+    actor: {
+      userId: authContext.userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+      apiKeyId: authContext.apiKeyId,
+    },
+    action: "workflow.unlisted",
+    resourceType: "workflow",
+    resourceId: workflowId,
+    metadata: buildAuditMetadata(request),
+  });
 
   return NextResponse.json(result.listing, { status: HttpStatus.OK });
 }

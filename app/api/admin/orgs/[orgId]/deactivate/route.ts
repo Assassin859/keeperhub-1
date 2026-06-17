@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { organization, workflows } from "@/lib/db/schema";
 import { authenticateKhAdmin } from "@/lib/kh-admin-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export async function POST(
   request: Request,
@@ -63,6 +64,23 @@ export async function POST(
         { status: 409 }
       );
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: result.orgId,
+        authMethod: "kh-admin",
+        actorLabel: "KeeperHub admin",
+      },
+      action: "org.deactivated",
+      resourceType: "organization",
+      resourceId: result.orgId,
+      after: {
+        deactivatedAt: result.deactivatedAt?.toISOString(),
+        workflowsDeactivated: result.workflowsDeactivated,
+      },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json(result);
   } catch (error) {

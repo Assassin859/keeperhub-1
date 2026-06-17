@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { publicTags, workflowPublicTags } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 
 function slugify(name: string): string {
@@ -106,6 +107,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       .insert(publicTags)
       .values({ name, slug })
       .returning();
+
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "public_tag.created",
+      resourceType: "public_tag",
+      resourceId: newTag.id,
+      after: { name: newTag.name, slug: newTag.slug },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json(
       {

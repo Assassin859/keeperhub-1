@@ -9,6 +9,7 @@ import { getActiveOrgId } from "@/lib/middleware/org-context";
 
 export type AdminContext = {
   organizationId: string;
+  userId: string;
 };
 
 export type AdminError = {
@@ -59,7 +60,7 @@ export async function validateSafeAdmin(
     };
   }
 
-  return { organizationId: activeOrgId };
+  return { organizationId: activeOrgId, userId: session.user.id };
 }
 
 /**
@@ -105,7 +106,7 @@ export async function validateSafeOwner(
     };
   }
 
-  return { organizationId: activeOrgId };
+  return { organizationId: activeOrgId, userId: session.user.id };
 }
 
 /**

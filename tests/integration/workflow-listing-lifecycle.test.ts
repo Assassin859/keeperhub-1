@@ -152,6 +152,33 @@ describe("workflow listing lifecycle", () => {
     expect(result.listing.listedAt).toBeInstanceOf(Date);
   });
 
+  it("list without a slug on a never-listed workflow returns SLUG_REQUIRED (consistent with the workflows PATCH route)", async () => {
+    // A listed workflow must carry a slug — external agents invoke it by slug
+    // at /api/mcp/workflows/<slug>/call. listedSlug starts null here, so listing
+    // with no slug must be refused rather than create a discoverable-but-
+    // uncallable row. The PATCH backdoor route enforces the same SLUG_REQUIRED.
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("SLUG_REQUIRED");
+  });
+
+  it("list with a whitespace-only slug returns SLUG_REQUIRED (matches the PATCH route's trim check)", async () => {
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "   " });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("SLUG_REQUIRED");
+  });
+
+  it("list trims a padded slug before persisting it", async () => {
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "  padded-slug  ",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.listing.listedSlug).toBe("padded-slug");
+  });
+
   it("unlist: sets isListed=false, preserves listedSlug and listedAt", async () => {
     await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "my-test-workflow" });
     const listingTimestamp = workflowState.listedAt;

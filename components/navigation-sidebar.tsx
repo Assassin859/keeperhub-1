@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   BarChart3,
   Bookmark,
   ChevronDown,
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { DiscordIcon } from "@/components/icons/discord-icon";
+import { ActivityOverlay } from "@/components/overlays/activity-overlay";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -32,6 +34,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { Project, SavedWorkflow, Tag } from "@/lib/api-client";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { NavPanelStates } from "@/lib/hooks/use-persisted-nav-state";
 import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
 import { isAnonymousUser } from "@/lib/is-anonymous";
@@ -455,6 +458,7 @@ function SidebarHeader({
 const ACTION_ITEM_IDS: ReadonlySet<string> = new Set([
   "workflows",
   "address-book",
+  "activity",
 ]);
 
 type NavItemDef = {
@@ -463,6 +467,9 @@ type NavItemDef = {
   label: string;
   href: string | null;
   requireAuth: boolean;
+  // Visible only to organization owners/admins (the audit feed is gated the
+  // same way server-side).
+  adminOnly?: boolean;
 };
 
 function NavItem({
@@ -568,6 +575,14 @@ const NAV_ITEMS: NavItemDef[] = [
     href: null,
     requireAuth: true,
   },
+  {
+    id: "activity",
+    icon: Activity,
+    label: "Activity",
+    href: null,
+    requireAuth: true,
+    adminOnly: true,
+  },
 ];
 
 export function NavigationSidebar(): React.ReactNode {
@@ -575,6 +590,7 @@ export function NavigationSidebar(): React.ReactNode {
   const { data: session, isPending } = useSession();
   const { openAuthPrompt } = useAuthPrompt();
   const { open: openOverlay } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
@@ -853,6 +869,11 @@ export function NavigationSidebar(): React.ReactNode {
       openOverlay(AddressBookOverlay);
       return;
     }
+    if (item.id === "activity") {
+      navState.closeAll();
+      openOverlay(ActivityOverlay);
+      return;
+    }
     navState.closeAll();
     if (item.href) {
       router.push(item.href);
@@ -877,8 +898,9 @@ export function NavigationSidebar(): React.ReactNode {
   }
 
   // NAV-01: render every nav item for everyone (anonymous, signed-out, signed-in).
-  // Click-gating for requireAuth items happens in handleNavClick.
-  const navItems = NAV_ITEMS;
+  // Click-gating for requireAuth items happens in handleNavClick. The exception
+  // is adminOnly items (e.g. org Activity), hidden for non-owner/admin members.
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
 
   // NAV-03: branch on isPending FIRST. While the better-auth session resolves,
   // render a neutral skeleton with the same width as the fully-loaded sidebar

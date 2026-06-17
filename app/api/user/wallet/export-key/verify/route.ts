@@ -10,6 +10,7 @@ import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { exportKeyVerifySchema } from "@/lib/schemas/wallet";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
 import { validateBody } from "@/lib/validate-request";
 import { checkVerifyRateLimit } from "../_lib/rate-limit";
@@ -135,6 +136,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       wallet.turnkeySubOrgId,
       toChecksumAddress(wallet.walletAddress)
     );
+
+    // Records only the wallet address; the exported private key is never
+    // passed into the audit before/after payload.
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+        authMethod: "session",
+      },
+      action: "wallet.private_key_exported",
+      resourceType: "wallet",
+      resourceId: wallet.walletAddress,
+      after: { walletAddress: toChecksumAddress(wallet.walletAddress) },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ privateKey });
   } catch (error) {
