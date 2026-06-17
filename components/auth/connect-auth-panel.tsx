@@ -1,0 +1,877 @@
+"use client";
+
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
+import { Mail } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
+import { authClient, signIn, signUp } from "@/lib/auth-client";
+import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
+import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
+import { getEnabledAuthProviders } from "@/lib/auth-providers";
+
+type View = "chooser" | "signin" | "signup" | "forgot" | "reset" | "verify";
+
+type Item = { key: string; node: React.ReactNode };
+
+const EXISTING_ACCOUNT = /already|exists|duplicate/i;
+
+const GitHubIcon = (): React.ReactElement => (
+  <svg
+    aria-hidden="true"
+    className="size-4"
+    fill="currentColor"
+    role="img"
+    viewBox="0 0 24 24"
+  >
+    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+  </svg>
+);
+
+const GoogleIcon = (): React.ReactElement => (
+  <svg aria-hidden="true" className="size-4" role="img" viewBox="0 0 24 24">
+    <path
+      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+      fill="currentColor"
+    />
+    <path
+      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+      fill="currentColor"
+    />
+    <path
+      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+      fill="currentColor"
+    />
+    <path
+      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+function reloadHome(): void {
+  window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+  window.location.assign("/");
+}
+
+/**
+ * Layered step-up dialog for an MFA-enrolled sign-in: collects the emailed OTP
+ * then the authenticator code and finishes the atomic /strict-signin call.
+ * Rendered above the Connect modal, which stays open until this completes.
+ */
+function StepUpDialog({
+  email,
+  password,
+  onCancel,
+}: {
+  email: string;
+  password: string;
+  onCancel: () => void;
+}): React.ReactElement {
+  const [step, setStep] = useState<"email" | "totp">("email");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const resend = async (): Promise<void> => {
+    const res = await authClient.emailOtp.sendVerificationOtp({
+      email,
+      type: "sign-in",
+    });
+    if (res.error) {
+      toast.error(res.error.message ?? "Could not resend code");
+      return;
+    }
+    toast.success("Code resent");
+  };
+
+  const complete = async (): Promise<void> => {
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch("/api/auth/strict-signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          password,
+          emailOtp: emailOtp.trim(),
+          totpCode: totpCode.trim(),
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        redirect?: string;
+      };
+      if (!response.ok) {
+        if (body.code === "invalid_email_otp") {
+          setError("Invalid email code");
+          setStep("email");
+          return;
+        }
+        if (body.code === "invalid_totp") {
+          setError("Invalid authenticator code");
+          setTotpCode("");
+          return;
+        }
+        setError(body.error ?? "Sign in failed");
+        return;
+      }
+      if (body.redirect === "/verify-ip") {
+        window.location.assign("/verify-ip");
+        return;
+      }
+      toast.success("Signed in successfully!");
+      reloadHome();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign in failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog
+      onOpenChange={(next) => {
+        if (!next) {
+          onCancel();
+        }
+      }}
+      open
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>
+            {step === "email" ? "Check your email" : "Authenticator code"}
+          </DialogTitle>
+          <DialogDescription>
+            {step === "email"
+              ? `Enter the 6-digit code sent to ${email}.`
+              : "Enter the 6-digit code from your authenticator app."}
+          </DialogDescription>
+        </DialogHeader>
+        {step === "email" ? (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (emailOtp.trim().length === 6) {
+                setError("");
+                setStep("totp");
+              } else {
+                setError("Enter the 6-digit email code");
+              }
+            }}
+          >
+            <Input
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(e) => setEmailOtp(e.target.value)}
+              placeholder="123456"
+              value={emailOtp}
+            />
+            {error && <p className="text-destructive text-sm">{error}</p>}
+            <Button type="submit">Continue</Button>
+            <button
+              className="text-muted-foreground text-xs hover:text-foreground"
+              onClick={resend}
+              type="button"
+            >
+              Resend code
+            </button>
+          </form>
+        ) : (
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (totpCode.trim().length === 6) {
+                complete();
+              } else {
+                setError("Enter the 6-digit authenticator code");
+              }
+            }}
+          >
+            <Input
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(e) => setTotpCode(e.target.value)}
+              placeholder="123456"
+              value={totpCode}
+            />
+            {error && <p className="text-destructive text-sm">{error}</p>}
+            <Button disabled={loading} type="submit">
+              {loading ? <Spinner className="size-4" /> : "Sign in"}
+            </Button>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Inline email + social auth for the Connect modal's right panel. Credential
+ * entry, sign-up, and password reset all happen in place; only the
+ * MFA-enrolled sign-in step-up opens a (layered) dialog, keeping the Connect
+ * modal open beneath it. Reuses the same endpoints as the standalone dialog.
+ *
+ * The views render as a single keyed item list: items shared between two views
+ * (header, email, password, submit) keep the same key and stay put, so only
+ * the items that actually differ animate in (top-to-bottom) or out
+ * (bottom-to-top) when switching views.
+ */
+export function ConnectAuthPanel(): React.ReactElement {
+  const providers = getEnabledAuthProviders();
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+  const [view, setView] = useState<View>("chooser");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [social, setSocial] = useState<"github" | "google" | null>(null);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const captchaRef = useRef<TurnstileInstance | null>(null);
+  const [stepUp, setStepUp] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
+
+  // Animate the real (px) height of the list so the modal box grows/shrinks
+  // smoothly. framer's `layout` only transforms, which leaves the actual box
+  // height (and the centered dialog) snapping -- measuring + animating the
+  // true height is what keeps the modal from jumping.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | "auto">("auto");
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) {
+      return;
+    }
+    const observer = new ResizeObserver(() => setHeight(el.scrollHeight));
+    observer.observe(el);
+    setHeight(el.scrollHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  const handleSocial = async (provider: "github" | "google"): Promise<void> => {
+    setSocial(provider);
+    try {
+      await signIn.social({ provider, callbackURL: window.location.pathname });
+    } catch {
+      setSocial(null);
+      toast.error(`Could not start ${provider} sign-in.`);
+    }
+  };
+
+  const handleSignIn = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch("/api/auth/strict-signin/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        signedIn?: boolean;
+      };
+      if (!response.ok) {
+        setError(body.error ?? "Sign in failed");
+        return;
+      }
+      if (body.signedIn) {
+        toast.success("Signed in successfully!");
+        reloadHome();
+        return;
+      }
+      setStepUp({ email, password });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign in failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const result = await signUp.email({
+        email,
+        password,
+        name: email.split("@")[0],
+        ...(captchaToken && {
+          fetchOptions: { headers: { "x-captcha-response": captchaToken } },
+        }),
+      });
+      if (result.error) {
+        const msg = result.error.message || "Sign up failed";
+        if (msg === DISPOSABLE_EMAIL_REJECTION_MESSAGE) {
+          setError(DISPOSABLE_EMAIL_REJECTION_MESSAGE);
+        } else if (EXISTING_ACCOUNT.test(msg)) {
+          await authClient.emailOtp.sendVerificationOtp({
+            email,
+            type: "email-verification",
+          });
+          setOtp("");
+          setView("verify");
+          toast.info("This email already exists. Verify it to continue.");
+        } else {
+          setError(msg);
+        }
+        captchaRef.current?.reset();
+        setCaptchaToken("");
+        return;
+      }
+      setOtp("");
+      setView("verify");
+      toast.success(`Verification code sent to ${email}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign up failed");
+      captchaRef.current?.reset();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const verifyResult = await authClient.emailOtp.verifyEmail({
+        email,
+        otp,
+      });
+      if (verifyResult.error) {
+        setError(verifyResult.error.message ?? "Verification failed");
+        return;
+      }
+      const finish = await fetch("/api/auth/finish-credential-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const finishBody = (await finish.json().catch(() => ({}))) as {
+        error?: string;
+        redirect?: string;
+      };
+      if (!finish.ok) {
+        setError(finishBody.error ?? "Could not finish signup");
+        return;
+      }
+      toast.success("Email verified! Set up your authenticator to continue.");
+      window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+      window.location.assign(finishBody.redirect ?? "/enroll-mfa");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotRequest = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch("/api/user/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "request", email }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) {
+        setError(data.error ?? "Failed to send reset code");
+        return;
+      }
+      toast.success("Check your inbox for the reset code.");
+      setOtp("");
+      setView("reset");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to send reset code"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    if (newPassword !== confirmNewPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch("/api/user/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset",
+          email,
+          otp,
+          newPassword,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) {
+        setError(data.error ?? "Failed to reset password");
+        return;
+      }
+      toast.success("Password reset! Please sign in.");
+      setPassword("");
+      setView("signin");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const titles: Record<View, string> = {
+    chooser: "Log in or sign up",
+    signin: "Sign in with email",
+    signup: "Create your account",
+    forgot: "Reset your password",
+    reset: "Enter your reset code",
+    verify: "Verify your email",
+  };
+  const descriptions: Record<View, string> = {
+    chooser: "Use email or a social account to get started.",
+    signin: "Enter your email and password.",
+    signup: "Sign up with your email and a password.",
+    forgot: "We'll email you a code to reset your password.",
+    reset: "Enter the code we emailed and choose a new password.",
+    verify: `Enter the 6-digit code sent to ${email}.`,
+  };
+
+  const onSubmit = (e: React.FormEvent): void => {
+    if (view === "signin") {
+      handleSignIn(e);
+    } else if (view === "signup") {
+      handleSignUp(e);
+    } else if (view === "verify") {
+      handleVerify(e);
+    } else if (view === "forgot") {
+      handleForgotRequest(e);
+    } else if (view === "reset") {
+      handleReset(e);
+    } else {
+      e.preventDefault();
+    }
+  };
+
+  // Build the visible rows as keyed items. Stable keys (header/email/password/
+  // submit) persist across views and don't re-animate; only differing items
+  // enter or exit.
+  const items: Item[] = [
+    {
+      key: "header",
+      node: (
+        <div>
+          <h2 className="font-semibold text-base">{titles[view]}</h2>
+          <p className="text-muted-foreground text-sm">{descriptions[view]}</p>
+        </div>
+      ),
+    },
+  ];
+
+  const emailField = (autoComplete: string): React.ReactNode => (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor="auth-email">Email</Label>
+      <Input
+        autoComplete={autoComplete}
+        id="auth-email"
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@example.com"
+        required
+        type="email"
+        value={email}
+      />
+    </div>
+  );
+
+  if (view === "chooser") {
+    if (providers.google) {
+      items.push({
+        key: "google",
+        node: (
+          <Button
+            className="w-full justify-start"
+            disabled={social !== null}
+            onClick={() => handleSocial("google")}
+            type="button"
+            variant="outline"
+          >
+            {social === "google" ? <Spinner /> : <GoogleIcon />}
+            Continue with Google
+          </Button>
+        ),
+      });
+    }
+    if (providers.github) {
+      items.push({
+        key: "github",
+        node: (
+          <Button
+            className="w-full justify-start"
+            disabled={social !== null}
+            onClick={() => handleSocial("github")}
+            type="button"
+            variant="outline"
+          >
+            {social === "github" ? <Spinner /> : <GitHubIcon />}
+            Continue with GitHub
+          </Button>
+        ),
+      });
+    }
+    items.push({
+      key: "email-cta",
+      node: (
+        <Button
+          className="w-full justify-start"
+          onClick={() => {
+            setError("");
+            setView("signin");
+          }}
+          type="button"
+          variant="outline"
+        >
+          <Mail className="size-4" />
+          Continue with email
+        </Button>
+      ),
+    });
+  }
+
+  if (view === "signin") {
+    items.push({ key: "email", node: emailField("email") });
+    items.push({
+      key: "password",
+      node: (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="auth-password">Password</Label>
+            <button
+              className="text-muted-foreground text-xs hover:text-foreground"
+              onClick={() => {
+                setError("");
+                setView("forgot");
+              }}
+              type="button"
+            >
+              Forgot password?
+            </button>
+          </div>
+          <Input
+            autoComplete="current-password"
+            id="auth-password"
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your password"
+            required
+            type="password"
+            value={password}
+          />
+        </div>
+      ),
+    });
+    items.push({
+      key: "submit",
+      node: (
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? <Spinner className="size-4" /> : "Sign in"}
+        </Button>
+      ),
+    });
+    items.push({
+      key: "signin-create",
+      node: (
+        <p className="text-center text-muted-foreground text-sm">
+          New here?{" "}
+          <button
+            className="font-medium text-foreground underline underline-offset-2"
+            onClick={() => {
+              setError("");
+              setView("signup");
+            }}
+            type="button"
+          >
+            Create an account
+          </button>
+        </p>
+      ),
+    });
+    items.push({
+      key: "signin-other",
+      node: (
+        <button
+          className="text-center text-muted-foreground text-xs hover:text-foreground"
+          onClick={() => {
+            setError("");
+            setView("chooser");
+          }}
+          type="button"
+        >
+          Other ways to sign in
+        </button>
+      ),
+    });
+  }
+
+  if (view === "signup") {
+    items.push({ key: "email", node: emailField("email") });
+    items.push({
+      key: "password",
+      node: (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="auth-password">Password</Label>
+          <Input
+            autoComplete="new-password"
+            id="auth-password"
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Create a password"
+            required
+            type="password"
+            value={password}
+          />
+        </div>
+      ),
+    });
+    if (turnstileSiteKey) {
+      items.push({
+        key: "captcha",
+        node: (
+          <Turnstile
+            onError={() => setCaptchaToken("")}
+            onExpire={() => setCaptchaToken("")}
+            onSuccess={setCaptchaToken}
+            options={{ theme: "auto" }}
+            ref={captchaRef}
+            siteKey={turnstileSiteKey}
+          />
+        ),
+      });
+    }
+    items.push({
+      key: "submit",
+      node: (
+        <Button
+          className="w-full"
+          disabled={loading || (!!turnstileSiteKey && !captchaToken)}
+          type="submit"
+        >
+          {loading ? <Spinner className="size-4" /> : "Create account"}
+        </Button>
+      ),
+    });
+    items.push({
+      key: "signup-signin",
+      node: (
+        <p className="text-center text-muted-foreground text-sm">
+          Already have an account?{" "}
+          <button
+            className="font-medium text-foreground underline underline-offset-2"
+            onClick={() => {
+              setError("");
+              setView("signin");
+            }}
+            type="button"
+          >
+            Sign in
+          </button>
+        </p>
+      ),
+    });
+  }
+
+  if (view === "verify") {
+    items.push({
+      key: "otp",
+      node: (
+        <Input
+          autoFocus
+          inputMode="numeric"
+          maxLength={6}
+          onChange={(e) => setOtp(e.target.value)}
+          placeholder="123456"
+          value={otp}
+        />
+      ),
+    });
+    items.push({
+      key: "submit",
+      node: (
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? <Spinner className="size-4" /> : "Verify"}
+        </Button>
+      ),
+    });
+  }
+
+  if (view === "forgot") {
+    items.push({ key: "email", node: emailField("email") });
+    items.push({
+      key: "submit",
+      node: (
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? <Spinner className="size-4" /> : "Send reset code"}
+        </Button>
+      ),
+    });
+    items.push({
+      key: "forgot-back",
+      node: (
+        <button
+          className="text-center text-muted-foreground text-sm hover:text-foreground"
+          onClick={() => {
+            setError("");
+            setView("signin");
+          }}
+          type="button"
+        >
+          Back to sign in
+        </button>
+      ),
+    });
+  }
+
+  if (view === "reset") {
+    items.push({
+      key: "otp",
+      node: (
+        <Input
+          inputMode="numeric"
+          maxLength={6}
+          onChange={(e) => setOtp(e.target.value)}
+          placeholder="Reset code"
+          value={otp}
+        />
+      ),
+    });
+    items.push({
+      key: "new-password",
+      node: (
+        <Input
+          autoComplete="new-password"
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="New password"
+          type="password"
+          value={newPassword}
+        />
+      ),
+    });
+    items.push({
+      key: "confirm-password",
+      node: (
+        <Input
+          autoComplete="new-password"
+          onChange={(e) => setConfirmNewPassword(e.target.value)}
+          placeholder="Confirm new password"
+          type="password"
+          value={confirmNewPassword}
+        />
+      ),
+    });
+    items.push({
+      key: "submit",
+      node: (
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? <Spinner className="size-4" /> : "Reset password"}
+        </Button>
+      ),
+    });
+  }
+
+  if (error) {
+    items.push({
+      key: "error",
+      node: <p className="text-destructive text-sm">{error}</p>,
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <form onSubmit={onSubmit}>
+        {/* Outer wrapper animates the real px height (measured below) so the
+            modal box grows/shrinks smoothly. overflow-hidden + top-anchored
+            content means a shrink clips the bottom away (bottom-to-top) and a
+            grow reveals top-to-bottom. Items only fade -- persistent items
+            (same key) stay opaque and slide via `layout`; removed items fade
+            out fast; new items fade in. */}
+        <motion.div
+          animate={{ height }}
+          className="overflow-hidden"
+          initial={false}
+          transition={{ duration: 0.25, ease: "easeInOut" }}
+        >
+          <div className="flex flex-col gap-3" ref={contentRef}>
+            <AnimatePresence initial={false} mode="popLayout">
+              {items.map(({ key, node }) => (
+                <motion.div
+                  animate={{ opacity: 1 }}
+                  // Fade entering items in slightly late so they appear as the
+                  // height finishes expanding (no pop before the box opens).
+                  // Removed items vanish instantly so the box shrinks in a
+                  // single move instead of double-jumping while one lingers.
+                  exit={{ opacity: 0, transition: { duration: 0 } }}
+                  initial={{ opacity: 0 }}
+                  key={key}
+                  layout
+                  transition={{
+                    layout: { duration: 0.25, ease: "easeInOut" },
+                    opacity: { duration: 0.15, delay: 0.25 },
+                  }}
+                >
+                  {node}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        </motion.div>
+      </form>
+
+      {stepUp && (
+        <StepUpDialog
+          email={stepUp.email}
+          onCancel={() => setStepUp(null)}
+          password={stepUp.password}
+        />
+      )}
+    </div>
+  );
+}
