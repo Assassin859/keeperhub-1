@@ -1,0 +1,269 @@
+/**
+ * Typed node and edge builder helpers for the deterministic workflow factory.
+ *
+ * Each helper emits the canonical WorkflowNode / WorkflowEdge wire-shape
+ * verified against real fixtures in tests/fixtures/workflows.ts and
+ * lib/test-data/build-workflow.ts.
+ *
+ * CRITICAL wire-shape invariants (KEEP-571 / PR #1246):
+ *   - node.type MUST equal node.data.type ("trigger" | "action")
+ *   - actionType lives at node.data.config.actionType (never node.data.actionType)
+ *   - Schedule trigger: config.scheduleCron / config.scheduleTimezone (not cron/timezone)
+ *   - Condition out-edges MUST carry sourceHandle "true" | "false"
+ *   - config.network is always a string (String(chainId))
+ *
+ * No server-only imports — safe to call from tests and client-side code.
+ */
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+
+// ---------------------------------------------------------------------------
+// Position constants — nodes laid out left-to-right, 250px apart
+// ---------------------------------------------------------------------------
+
+const STEP_X_START = 100;
+const STEP_X_GAP = 250;
+const STEP_Y = 200;
+
+function stepPosition(index: number): { x: number; y: number } {
+  return { x: STEP_X_START + index * STEP_X_GAP, y: STEP_Y };
+}
+
+// ---------------------------------------------------------------------------
+// Schedule trigger
+// ---------------------------------------------------------------------------
+
+export interface ScheduleTriggerOptions {
+  cron: string;
+  timezone?: string;
+}
+
+/**
+ * Build a Schedule trigger node.
+ *
+ * Keys: scheduleCron / scheduleTimezone (not cron/timezone — those are
+ * seed-builder-only keys per lib/mcp/workflow-schema-constants.ts TRIGGERS.Schedule).
+ */
+export function buildScheduleTrigger(
+  id: string,
+  options: ScheduleTriggerOptions,
+  positionIndex = 0
+): WorkflowNode {
+  return {
+    id,
+    type: "trigger",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "trigger",
+      label: "Schedule Trigger",
+      config: {
+        triggerType: "Schedule",
+        scheduleCron: options.cron,
+        scheduleTimezone: options.timezone ?? "UTC",
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Read-contract action node
+// ---------------------------------------------------------------------------
+
+export interface ReadContractOptions {
+  label: string;
+  description?: string;
+  network: string;
+  contractAddress: string;
+  abi: string;
+  abiFunction: string;
+  functionArgs: string;
+}
+
+/**
+ * Build a web3/read-contract action node.
+ *
+ * actionType lives at data.config.actionType (KEEP-571 wire-shape).
+ */
+export function buildReadContractNode(
+  id: string,
+  options: ReadContractOptions,
+  positionIndex = 1
+): WorkflowNode {
+  return {
+    id,
+    type: "action",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "action",
+      label: options.label,
+      description: options.description,
+      config: {
+        actionType: "web3/read-contract",
+        network: options.network,
+        contractAddress: options.contractAddress,
+        abi: options.abi,
+        abiFunction: options.abiFunction,
+        functionArgs: options.functionArgs,
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Check-token-balance action node
+// ---------------------------------------------------------------------------
+
+export interface CheckTokenBalanceOptions {
+  label: string;
+  network: string;
+  address: string;
+  tokenConfig: string;
+}
+
+/**
+ * Build a web3/check-token-balance action node.
+ *
+ * Output fields: balance.balance, balance.balanceRaw, balance.symbol, etc.
+ * (from plugins/web3/index.ts outputFields for check-token-balance)
+ */
+export function buildCheckTokenBalanceNode(
+  id: string,
+  options: CheckTokenBalanceOptions,
+  positionIndex = 1
+): WorkflowNode {
+  return {
+    id,
+    type: "action",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "action",
+      label: options.label,
+      config: {
+        actionType: "web3/check-token-balance",
+        network: options.network,
+        address: options.address,
+        tokenConfig: options.tokenConfig,
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Condition action node
+// ---------------------------------------------------------------------------
+
+export interface ConditionOptions {
+  label: string;
+  slug: string;
+  leftOperand: string;
+  operator: string;
+  rightOperand: string;
+}
+
+/**
+ * Build a Condition action node.
+ *
+ * conditionConfig group.id and rules[0].id are derived from the slug to
+ * guarantee uniqueness (Pitfall 2 from 52-RESEARCH.md).
+ */
+export function buildConditionNode(
+  id: string,
+  options: ConditionOptions,
+  positionIndex = 2
+): WorkflowNode {
+  const groupId = `${options.slug}-group`;
+  const ruleId = `${options.slug}-rule-0`;
+  const expression = `${options.leftOperand} ${options.operator} ${options.rightOperand}`;
+
+  return {
+    id,
+    type: "action",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "action",
+      label: options.label,
+      config: {
+        actionType: "Condition",
+        condition: expression,
+        conditionConfig: {
+          group: {
+            id: groupId,
+            logic: "AND",
+            rules: [
+              {
+                id: ruleId,
+                leftOperand: options.leftOperand,
+                operator: options.operator,
+                rightOperand: options.rightOperand,
+              },
+            ],
+          },
+        },
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HTTP Request alert action node
+// ---------------------------------------------------------------------------
+
+export interface HttpAlertOptions {
+  label?: string;
+  bodyTemplate: string;
+}
+
+/**
+ * Build an HTTP Request action node used as the default alert step.
+ *
+ * HTTP Request requires no credentials (unlike discord/send-message),
+ * so it is the factory default for alert nodes (resolved in 52-RESEARCH.md).
+ */
+export function buildHttpAlertNode(
+  id: string,
+  options: HttpAlertOptions,
+  positionIndex = 3
+): WorkflowNode {
+  return {
+    id,
+    type: "action",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "action",
+      label: options.label ?? "Send Alert",
+      config: {
+        actionType: "HTTP Request",
+        endpoint: "https://your-webhook-endpoint.example.com",
+        httpMethod: "POST",
+        httpBody: options.bodyTemplate,
+        httpHeaders: "{}",
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Edge builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a workflow edge.
+ *
+ * All edges use type "default".
+ * Condition out-edges require sourceHandle "true" | "false".
+ */
+export function buildEdge(
+  source: string,
+  target: string,
+  sourceHandle?: "true" | "false"
+): WorkflowEdge {
+  const id = `e-${source}-${target}`;
+  if (sourceHandle !== undefined) {
+    return { id, source, target, type: "default", sourceHandle };
+  }
+  return { id, source, target, type: "default" };
+}

@@ -1,22 +1,98 @@
 /**
- * Stub — Wave 0 placeholder for the deterministic workflow factory.
- * Full implementation lands in Wave 2 (52-03-PLAN).
+ * Deterministic workflow factory dispatcher.
  *
- * This file exists so TypeScript resolves the import in the RED test files.
- * All exported functions throw "not implemented" so tests remain RED.
+ * Maps a SuggestionDescriptor to a validated PrefillWorkflow with correct
+ * wire-shape node/edge JSON ready for Phase 53 canvas preview and Phase 54 save.
+ *
+ * Guarantees:
+ *   - Zero AI calls; completes in < 10ms (pure TypeScript)
+ *   - Every {{@nodeId:...}} template ref resolves to an existing node (PREFILL-03)
+ *   - No MaxUint256 approve-token nodes escape the factory (PREFILL-07)
+ *   - workflowType is always "read" for Phase 52 shapes (PREFILL-06)
+ *
+ * No server-only import: the factory is pure deterministic TypeScript that
+ * must be testable in a Node.js Vitest environment without a Next.js server
+ * context. Shape builders avoid importing server-only modules.
  */
-
+import { buildHfMonitor } from "@/lib/scan/factory/shapes/hf-monitor";
+import { buildStablecoinYield } from "@/lib/scan/factory/shapes/stablecoin-yield";
 import type { PrefillWorkflow } from "@/lib/scan/factory/types";
+import {
+  validateNoMaxUint256Approval,
+  validateTemplateRefs,
+} from "@/lib/scan/factory/validate";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /**
- * Map a SuggestionDescriptor to a deterministic PrefillWorkflow.
- * Stub: throws so Wave 0 tests remain RED; replaced in Wave 2.
+ * Build a deterministic, validated PrefillWorkflow from a SuggestionDescriptor.
+ *
+ * Dispatches to the appropriate shape builder based on descriptor.category.
+ * After building nodes/edges, runs validateTemplateRefs and
+ * validateNoMaxUint256Approval; throws on any validation failure.
  */
 export function buildWorkflow(
-  _descriptor: SuggestionDescriptor
+  descriptor: SuggestionDescriptor
 ): PrefillWorkflow {
-  throw new Error(
-    "buildWorkflow: not yet implemented — lands in 52-03-PLAN (Wave 2)"
-  );
+  const { nodes, edges } = dispatchShape(descriptor);
+
+  // PREFILL-03: every template ref must resolve to a node in this output
+  const refResult = validateTemplateRefs(nodes, edges);
+  if (!refResult.valid) {
+    throw new Error(
+      `Factory template ref validation failed: ${refResult.errors.join("; ")}`
+    );
+  }
+
+  // PREFILL-07: no MaxUint256 approve-token escapes the factory
+  const maxResult = validateNoMaxUint256Approval(nodes);
+  if (!maxResult.valid) {
+    throw new Error(
+      `Factory MaxUint256 validation failed: ${maxResult.errors.join("; ")}`
+    );
+  }
+
+  return {
+    nodes,
+    edges,
+    workflowType: "read",
+    name: descriptor.name,
+    description: descriptor.description,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shape dispatcher
+// ---------------------------------------------------------------------------
+
+interface ShapeOutput {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
+function dispatchShape(descriptor: SuggestionDescriptor): ShapeOutput {
+  switch (descriptor.category) {
+    case "health": {
+      return buildHfMonitor(descriptor);
+    }
+    case "yield": {
+      return buildStablecoinYield(descriptor);
+    }
+    case "alert":
+    case "claim": {
+      throw new Error(
+        `No factory shape for category "${descriptor.category}" in Phase 52. Additional shapes land in 52-04.`
+      );
+    }
+    default: {
+      // TypeScript exhaustiveness guard — SuggestionCategory is a union type;
+      // this branch is unreachable when all cases are covered above.
+      const unreachable: never = descriptor.category;
+      throw new Error(`Unknown suggestion category: ${String(unreachable)}`);
+    }
+  }
 }
