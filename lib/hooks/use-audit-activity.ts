@@ -83,14 +83,18 @@ function toggle(list: string[], value: string): string[] {
  * once), and which dimensions are currently shown as chips. Exposes a derived
  * `feedParams` ready to spread into <ActivityFeed>.
  */
-export function useAuditActivity() {
+export const DEFAULT_AUDIT_PAGE_SIZE = 5;
+
+export function useAuditActivity(options?: { initialPageSize?: number }) {
   const [people, setPeople] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const [workflows, setWorkflows] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [datePreset, setDatePreset] = useState<string>(ALL);
-  const [pageSize, setPageSize] = useState<number>(5);
+  const [pageSize, setPageSize] = useState<number>(
+    options?.initialPageSize ?? DEFAULT_AUDIT_PAGE_SIZE
+  );
 
   // Option lists for the specific-resource dimensions.
   const [projectOptions, setProjectOptions] = useState<ResourceOption[]>([]);

@@ -360,6 +360,7 @@ export function ActivityFeed({
   embedded = false,
   fillHeight = false,
   syncPageToUrl = false,
+  urlPageSizeDefault,
 }: {
   params?: FeedParams;
   fallback?: SecurityAuditEvent[];
@@ -376,11 +377,18 @@ export function ActivityFeed({
    */
   fillHeight?: boolean;
   /**
-   * Reflect the current page in the URL (`?page=N`) and seed the initial page
-   * from it, so the feed is deep-linkable and survives refresh/back. Only makes
-   * sense for a route-backed feed, not an overlay.
+   * Reflect the current page and page size in the URL (`?page=N&size=M`) and
+   * seed them from it, so the feed is deep-linkable and survives refresh/back.
+   * Page size is seeded by the caller (via params.limit); this only writes it
+   * back. Only makes sense for a route-backed feed, not an overlay.
    */
   syncPageToUrl?: boolean;
+  /**
+   * The page size considered "default" when syncing to the URL: at this size
+   * the `size` param is omitted to keep the URL clean. Defaults to the limit
+   * being absent (always write when a limit is set).
+   */
+  urlPageSizeDefault?: number;
 }): React.ReactElement {
   const resourceType = params?.resourceType;
   const resourceTypes = params?.resourceTypes;
@@ -481,10 +489,12 @@ export function ActivityFeed({
     { initialPage }
   );
 
-  // Reflect the active page in the URL when asked (route-backed feed only), and
-  // drop the param on page 1 / filter resets so the URL stays clean. Reading
-  // searchParams here only to preserve sibling params; it is intentionally not
-  // a dep -- our own replace would otherwise loop.
+  // Reflect the active page + size in the URL when asked (route-backed feed
+  // only), dropping each param at its default (page 1 / default size) so the
+  // URL stays clean. This is the single writer for both params, so size and
+  // page changes never race each other. Reading searchParams here only to
+  // preserve sibling params; it is intentionally not a dep -- our own replace
+  // would otherwise loop.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see note above
   useEffect(() => {
     if (!syncPageToUrl) {
@@ -496,9 +506,14 @@ export function ActivityFeed({
     } else {
       next.delete("page");
     }
+    if (limit && limit !== urlPageSizeDefault) {
+      next.set("size", String(limit));
+    } else {
+      next.delete("size");
+    }
     const qs = next.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [syncPageToUrl, page, pathname, router]);
+  }, [syncPageToUrl, page, limit, urlPageSizeDefault, pathname, router]);
 
   // Capture the settled content height so the skeleton can hold it on the next
   // load. Without this the embedded feed (no fixed box) collapses to the

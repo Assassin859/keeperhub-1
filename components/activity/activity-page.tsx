@@ -2,6 +2,7 @@
 
 import { Activity, Download, LogIn } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { ActivityFeed } from "@/components/activity/activity-feed";
 import { AuditFilterBar } from "@/components/activity/audit-filter-bar";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { useSession } from "@/lib/auth-client";
 import {
+  DEFAULT_AUDIT_PAGE_SIZE,
   PAGE_SIZE_OPTIONS,
   useAuditActivity,
 } from "@/lib/hooks/use-audit-activity";
@@ -67,7 +69,16 @@ export function ActivityPage(): ReactNode {
   const { data: session, isPending } = useSession();
   const { isAdmin, isOwner, isLoading } = useActiveMember();
   const { push } = useOverlay();
-  const activity = useAuditActivity();
+  const searchParams = useSearchParams();
+  // Seed page size from the URL so a shared/refreshed ?size=N is honored; an
+  // out-of-range value falls back to the default.
+  const sizeParam = Number.parseInt(searchParams.get("size") ?? "", 10);
+  const initialPageSize = (PAGE_SIZE_OPTIONS as readonly number[]).includes(
+    sizeParam
+  )
+    ? sizeParam
+    : DEFAULT_AUDIT_PAGE_SIZE;
+  const activity = useAuditActivity({ initialPageSize });
 
   if (isPending || isLoading) {
     return null;
@@ -146,7 +157,12 @@ export function ActivityPage(): ReactNode {
             </Select>
           </div>
 
-          <ActivityFeed fillHeight params={activity.feedParams} syncPageToUrl />
+          <ActivityFeed
+            fillHeight
+            params={activity.feedParams}
+            syncPageToUrl
+            urlPageSizeDefault={DEFAULT_AUDIT_PAGE_SIZE}
+          />
         </div>
       </div>
     </div>

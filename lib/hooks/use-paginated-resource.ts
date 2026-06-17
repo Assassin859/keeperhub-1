@@ -46,17 +46,15 @@ export function usePaginatedResource<T>(
   const fetchRef = useRef(fetchPage);
   fetchRef.current = fetchPage;
 
-  // A new query identity always starts from the first page. Skip the very first
-  // run so an initialPage (e.g. seeded from the URL) survives mount; only an
-  // actual resetKey change after mount snaps back to page 1.
-  const didResetOnceRef = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey is the change trigger, not read in the body
+  // A new query identity snaps back to page 1, but only on an ACTUAL change of
+  // resetKey -- not on mount, and not on StrictMode's double-invoked effect --
+  // so an initialPage (e.g. seeded from the URL) survives the first render.
+  const prevResetKeyRef = useRef(resetKey);
   useEffect(() => {
-    if (!didResetOnceRef.current) {
-      didResetOnceRef.current = true;
-      return;
+    if (prevResetKeyRef.current !== resetKey) {
+      prevResetKeyRef.current = resetKey;
+      setPage(1);
     }
-    setPage(1);
   }, [resetKey]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey/reloadTick are refetch triggers; fetchPage is read via ref
