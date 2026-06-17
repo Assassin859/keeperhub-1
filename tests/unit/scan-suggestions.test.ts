@@ -1,13 +1,14 @@
 /**
- * RED scaffold — Wave 0 tests for the scan suggestion engine.
- *
- * These tests FAIL because lib/scan/suggestions/engine.ts does not yet exist.
- * Downstream plans (Wave 2) implement the engine and turn these green.
+ * Tests for the scan suggestion engine (52-02).
  *
  * Requirements covered: SUGGEST-01..10
  */
 import { describe, expect, it } from "vitest";
 import { buildSuggestions } from "@/lib/scan/suggestions/engine";
+import {
+  clampHfThreshold,
+  hfThresholdRaw,
+} from "@/lib/scan/suggestions/ranking";
 import type {
   SuggestionCategory,
   SuggestionDescriptor,
@@ -345,5 +346,44 @@ describe("SUGGEST-10: disclaimer and risk notes", () => {
     for (const s of result) {
       expect(["read", "write"]).toContain(s.readOrWrite);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SUGGEST-09: HF clamping and 1e18-scale threshold helpers (ranking.ts)
+// ---------------------------------------------------------------------------
+
+describe("SUGGEST-09: clampHfThreshold and hfThresholdRaw helpers", () => {
+  it("clamp: returns HF_DEFAULT (1.5) when currentHf > 1.5", () => {
+    expect(clampHfThreshold(2.5)).toBe(1.5);
+    expect(clampHfThreshold(1.6)).toBe(1.5);
+    expect(clampHfThreshold(10)).toBe(1.5);
+  });
+
+  it("clamp: returns value >= 1.3 and < 1.5 when currentHf is between floor and default", () => {
+    const result = clampHfThreshold(1.4);
+    expect(result).toBeGreaterThanOrEqual(1.3);
+    expect(result).toBeLessThan(1.5);
+  });
+
+  it("clamp: returns hard floor 1.3 when currentHf at or below 1.3 + 0.1 margin", () => {
+    expect(clampHfThreshold(1.25)).toBe(1.3);
+    expect(clampHfThreshold(1.0)).toBe(1.3);
+    expect(clampHfThreshold(0.5)).toBe(1.3);
+  });
+
+  it("clamp: never returns a value below 1.3 for any finite input", () => {
+    const inputs = [0, 0.5, 1.0, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 2.0, 5.0];
+    for (const hf of inputs) {
+      expect(clampHfThreshold(hf)).toBeGreaterThanOrEqual(1.3);
+    }
+  });
+
+  it("hfThresholdRaw: 1.5 → '1500000000000000000'", () => {
+    expect(hfThresholdRaw(1.5)).toBe("1500000000000000000");
+  });
+
+  it("hfThresholdRaw: 1.3 → '1300000000000000000'", () => {
+    expect(hfThresholdRaw(1.3)).toBe("1300000000000000000");
   });
 });
