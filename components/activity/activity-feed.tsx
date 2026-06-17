@@ -33,6 +33,7 @@ type FeedParams = {
   actorUserIds?: string[];
   from?: string;
   to?: string;
+  search?: string;
   limit?: number;
 };
 
@@ -408,6 +409,7 @@ export function ActivityFeed({
   const actorUserIds = params?.actorUserIds;
   const from = params?.from;
   const to = params?.to;
+  const search = params?.search;
   const limit = params?.limit;
 
   // Open the event's resource: workflows leave for their editor's History tab
@@ -475,6 +477,7 @@ export function ActivityFeed({
         actorUserIds,
         from,
         to,
+        search,
         page,
         limit,
       }),
@@ -494,6 +497,7 @@ export function ActivityFeed({
       actorUserIds,
       from,
       to,
+      search,
     }),
     { initialPage }
   );

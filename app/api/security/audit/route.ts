@@ -1,4 +1,15 @@
-import { and, count, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -16,6 +27,13 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { redactAuditDiff } from "@/lib/security/audit-redaction";
+
+// Max characters honored from the free-text search; longer input is truncated
+// so a pathological query can't blow up the LIKE scan.
+const MAX_SEARCH_LENGTH = 200;
+// LIKE wildcards + the escape char, neutralized so the user's text is matched
+// literally rather than acting as a pattern.
+const LIKE_SPECIAL = /[\\%_]/g;
 
 /**
  * Read the org's security audit trail. Sensitive forensic data, so it is
@@ -148,6 +166,69 @@ export async function GET(request: Request) {
     if (toDate && !Number.isNaN(toDate.getTime())) {
       conditions.push(lte(securityAuditLog.createdAt, toDate));
     }
+
+    // Free-text search across the human-meaningful fields: the denormalized
+    // actor label, the action, the resource id, the actor's current name/email,
+    // matching workflow names, and the request IP. Every comparison is a
+    // parameterized ILIKE (Drizzle binds the value, so no SQL injection) with
+    // the user's wildcards escaped so the text matches literally. The IP lives
+    // in the metadata JSONB and is matched through Postgres' `->>` accessor, so
+    // the filter runs in the database rather than by scanning rows in JS.
+    const q = (url.searchParams.get("q") ?? "")
+      .trim()
+      .slice(0, MAX_SEARCH_LENGTH);
+    if (q) {
+      const pattern = `%${q.replace(LIKE_SPECIAL, (c) => `\\${c}`)}%`;
+      const [matchedActors, matchedWorkflows] = await Promise.all([
+        db
+          .select({ id: users.id })
+          .from(users)
+          .innerJoin(
+            member,
+            and(
+              eq(member.userId, users.id),
+              eq(member.organizationId, organizationId)
+            )
+          )
+          .where(or(ilike(users.name, pattern), ilike(users.email, pattern))),
+        db
+          .select({ id: workflows.id })
+          .from(workflows)
+          .where(
+            and(
+              eq(workflows.organizationId, organizationId),
+              ilike(workflows.name, pattern)
+            )
+          ),
+      ]);
+      const searchConditions = [
+        ilike(securityAuditLog.actorLabel, pattern),
+        ilike(securityAuditLog.action, pattern),
+        ilike(securityAuditLog.resourceId, pattern),
+        sql`(${securityAuditLog.metadata} ->> 'ip') ILIKE ${pattern}`,
+      ];
+      if (matchedActors.length > 0) {
+        searchConditions.push(
+          inArray(
+            securityAuditLog.actorUserId,
+            matchedActors.map((a) => a.id)
+          )
+        );
+      }
+      if (matchedWorkflows.length > 0) {
+        searchConditions.push(
+          inArray(
+            securityAuditLog.resourceId,
+            matchedWorkflows.map((w) => w.id)
+          )
+        );
+      }
+      const searchClause = or(...searchConditions);
+      if (searchClause) {
+        conditions.push(searchClause);
+      }
+    }
+
     const where = and(...conditions);
 
     const [{ total }] = await db

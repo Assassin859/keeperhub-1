@@ -1,14 +1,14 @@
 "use client";
 
-import { Activity, Download, LogIn } from "lucide-react";
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import type { ReactNode } from "react";
+import { Download, Search } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type ReactNode, useEffect } from "react";
 import { ActivityFeed } from "@/components/activity/activity-feed";
 import { AuditFilterBar } from "@/components/activity/audit-filter-bar";
 import { ExportAuditOverlay } from "@/components/overlays/export-audit-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -24,51 +24,17 @@ import {
 } from "@/lib/hooks/use-audit-activity";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 
-function Gate({
-  icon,
-  title,
-  description,
-  showCta,
-}: {
-  icon: ReactNode;
-  title: string;
-  description: string;
-  showCta: boolean;
-}): ReactNode {
-  return (
-    <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
-        <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
-          <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
-            {icon}
-          </div>
-          <div className="space-y-2">
-            <h2 className="font-semibold text-xl tracking-tight">{title}</h2>
-            <p className="max-w-sm text-muted-foreground text-sm">
-              {description}
-            </p>
-          </div>
-          {showCta && (
-            <Button asChild>
-              <Link href="/">Get Started</Link>
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /**
  * Full-page organization activity feed. Mirrors the body of ActivityOverlay but
  * in page chrome, reachable at /activity from the left nav. Admin/owner only --
- * the read endpoint is gated the same way server-side; non-admins who land here
- * by URL get a gate rather than a stream of 403s.
+ * the read endpoint is gated the same way server-side, and anyone without that
+ * role who lands here by URL is bounced home rather than shown an empty page.
  */
 export function ActivityPage(): ReactNode {
   const { data: session, isPending } = useSession();
   const { isAdmin, isOwner, isLoading } = useActiveMember();
   const { push } = useOverlay();
+  const router = useRouter();
   const searchParams = useSearchParams();
   // Seed page size from the URL so a shared/refreshed ?size=N is honored; an
   // out-of-range value falls back to the default.
@@ -80,31 +46,19 @@ export function ActivityPage(): ReactNode {
     : DEFAULT_AUDIT_PAGE_SIZE;
   const activity = useAuditActivity({ initialPageSize });
 
-  if (isPending || isLoading) {
+  // Admin/owner only. Once auth + membership resolve, bounce anyone else home;
+  // the server already 403s the data, this just keeps them off the page.
+  const resolved = !(isPending || isLoading);
+  const allowed =
+    Boolean(session?.user) && !session?.user?.isAnonymous && isAdmin;
+  useEffect(() => {
+    if (resolved && !allowed) {
+      router.replace("/");
+    }
+  }, [resolved, allowed, router]);
+
+  if (!(resolved && allowed)) {
     return null;
-  }
-
-  const isAnonymous = !session?.user || session.user.isAnonymous;
-  if (isAnonymous) {
-    return (
-      <Gate
-        description="Sign in to your account to view your organization's activity."
-        icon={<LogIn className="size-10 text-muted-foreground" />}
-        showCta={false}
-        title="Sign in to view activity"
-      />
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <Gate
-        description="Only organization admins and owners can view activity."
-        icon={<Activity className="size-10 text-muted-foreground" />}
-        showCta={false}
-        title="Admins only"
-      />
-    );
   }
 
   return (
@@ -139,7 +93,18 @@ export function ActivityPage(): ReactNode {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <AuditFilterBar activity={activity} />
+            <div className="flex flex-1 flex-wrap items-center gap-2">
+              <div className="relative w-full max-w-xs">
+                <Search className="-translate-y-1/2 absolute top-1/2 left-2.5 size-4 text-muted-foreground" />
+                <Input
+                  className="h-8 pl-8 text-sm"
+                  onChange={(e) => activity.setSearchText(e.target.value)}
+                  placeholder="Search name, email, workflow, IP..."
+                  value={activity.searchText}
+                />
+              </div>
+              <AuditFilterBar activity={activity} />
+            </div>
             <Select
               onValueChange={(v) => activity.setPageSize(Number(v))}
               value={String(activity.pageSize)}
