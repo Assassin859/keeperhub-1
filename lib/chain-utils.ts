@@ -4,7 +4,7 @@ const CHAIN_NAMES: Record<string, string> = {
   "100": "Gnosis",
   "8453": "Base",
   "42161": "Arbitrum",
-  "11155111": "Sepolia",
+  "11155111": "Ethereum Sepolia",
   "84532": "Base Sepolia",
   "42431": "Tempo Testnet",
   "4217": "Tempo",
