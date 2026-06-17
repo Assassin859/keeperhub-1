@@ -119,6 +119,28 @@ const workflowExecutionsTotal = getOrCreateGauge(
   ["status", "org_slug", "error_type"]
 );
 
+// TECH-48: per-workflow error counts for managed orgs, DB-sourced so the
+// series is authoritative regardless of which finalization path wrote the
+// error row. Replaces the per-pod `keeperhub_workflow_execution_errors_by_workflow_total`
+// counter, which was only incremented on the kickoff/reaper/MCP paths and so
+// returned no data in prod for normal workflow failures (the managed-client
+// alert numerator + workflow_id dedup key read from this).
+//
+// Gauge, not counter: it carries the all-time cumulative error count per
+// (workflow_id, org_slug, error_type), so the alert recovers a window delta as
+// value(now) - value(now offset W) — the same dedup pattern the alert already
+// uses on workflowExecutionsTotal. No `_total` suffix: that suffix on a
+// poll-driven gauge is exactly the trap KEEP-545 documents below.
+//
+// Cardinality is bounded by scoping to managed orgs in the DB query: only the
+// handful of managed workflows that have ever errored emit a series.
+const workflowErrorsByWorkflow = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_workflow_errors_by_workflow",
+  "All-time workflow execution errors by workflow_id for managed orgs, by org_slug and error_type",
+  ["workflow_id", "org_slug", "error_type"]
+);
+
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
 // has been removed. It was named with the `_total` counter suffix but was
 // actually a poll-driven gauge that overwrote itself on every scrape with the
@@ -1371,6 +1393,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const {
       getWorkflowStatsFromDb,
+      getWorkflowErrorsByWorkflowFromDb,
       getStepStatsFromDb,
       getDailyActiveUsersFromDb,
       getUserStatsFromDb,
@@ -1386,6 +1409,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     } = await import("../db-metrics");
     const [
       workflowStats,
+      errorsByWorkflow,
       stepStats,
       dailyActiveUsers,
       userStats,
@@ -1400,6 +1424,7 @@ async function refreshDbMetricsNow(): Promise<void> {
       billingStats,
     ] = await Promise.all([
       getWorkflowStatsFromDb(),
+      getWorkflowErrorsByWorkflowFromDb(),
       getStepStatsFromDb(),
       getDailyActiveUsersFromDb(),
       getUserStatsFromDb(),
@@ -1432,6 +1457,21 @@ async function refreshDbMetricsNow(): Promise<void> {
     // KEEP-545: the per-org error gauge that used to live here was removed.
     // See `keeperhub_workflow_execution_errors_created_total` (per-pod
     // counter incremented at finalization time) for the replacement.
+
+    // TECH-48: per-workflow error counts for managed orgs. Reset before
+    // populating so a workflow that no longer has errors in a bucket clears
+    // out instead of pinning a stale value.
+    workflowErrorsByWorkflow.reset();
+    for (const row of errorsByWorkflow) {
+      workflowErrorsByWorkflow.set(
+        {
+          workflow_id: row.workflowId,
+          org_slug: row.orgSlug,
+          error_type: row.errorType,
+        },
+        row.count
+      );
+    }
 
     // Update workflow duration histogram buckets
     for (let i = 0; i < WORKFLOW_DURATION_BUCKETS.length; i++) {
