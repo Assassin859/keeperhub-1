@@ -119,8 +119,13 @@ export function buildHfMonitor(
   // Template ref for the healthFactor output field
   const hfRef = `{{@${readId}:Read Health Factor.result.healthFactor}}`;
 
-  // Threshold in Aave's 1e18 base units
-  const thresholdStr = hfThresholdRaw(DEFAULT_HF_THRESHOLD);
+  // Threshold in Aave's 1e18 base units.
+  // Prefer the clamped value pre-computed by the engine (confirmInputs.threshold),
+  // which is the same value shown in the description (WR-01). Fall back to the
+  // module default only when the factory is called with a hand-written descriptor
+  // that lacks the pre-computed key (e.g. test fixtures).
+  const thresholdStr =
+    descriptor.confirmInputs.threshold ?? hfThresholdRaw(DEFAULT_HF_THRESHOLD);
 
   const nodes: WorkflowNode[] = [
     buildScheduleTrigger(triggerId, { cron: HF_MONITOR_CRON }, 0),
@@ -141,7 +146,7 @@ export function buildHfMonitor(
     buildConditionNode(
       conditionId,
       {
-        label: `HF Below ${DEFAULT_HF_THRESHOLD}`,
+        label: "HF Below Alert Threshold",
         slug,
         leftOperand: hfRef,
         operator: "<",
