@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T11:46:12.446Z"
+last_updated: "2026-06-17T17:53:58.795Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 18
-  completed_plans: 17
-  percent: 40
+  completed_phases: 3
+  total_plans: 22
+  completed_plans: 19
+  percent: 60
 ---
 
 # Project State
@@ -18,14 +18,14 @@ progress:
 ## Project Reference
 
 - **Core value:** Users can build and deploy Web3 automation workflows through a visual builder without writing code.
-- **Current focus:** Phase 53 — scan-ui
+- **Current focus:** Phase 54 — auth-round-trip-persistence
 
 ## Current Position
 
-Phase: 53 (scan-ui) — EXECUTING
-Plan: 5 of 5
-Status: Ready to execute
-Last activity: 2026-06-17
+Phase: 54 (auth-round-trip-persistence) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute 54-02 (scan-intent cookie route implementation)
+Last activity: 2026-06-17 -- 54-01 complete (Wave-0 scaffold: 3 throw-stubs + 4 RED unit tests + TEST-03 E2E)
 
 ## Performance Metrics
 
@@ -89,6 +89,9 @@ Last activity: 2026-06-17
 - section element for canvas landmark instead of div role=region — biome useSemanticElements prefers HTML5 semantic elements (53-04).
 - buildWorkflow wrapped in try/catch inside useMemo for graceful degradation if factory throws on invalid descriptors (53-04).
 - Atom cleanup (setNodes([]), setEdges([]), setIsOwner(true)) runs in useEffect return; currentWorkflowIdAtom never set so WorkflowToolbar stays hidden and autosave never fires (53-04).
+- Throw-stubs use non-async functions to satisfy biome useAwait rule; Next.js route handlers support synchronous handlers (54-01).
+- Idempotency key uses descriptor.id (SuggestionDescriptor.id), NOT a non-existent suggestionSlug field — distinct ids produce distinct sessionStorage slots (54-01).
+- scan-callback-url.test.ts added as 4th RED unit test per objective spec; covers FUNNEL-02 address preservation and intent.id idempotency key distinction (54-01).
 
 ### Todos
 
@@ -103,8 +106,8 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 53-04 (SuggestionPreviewDrawer — read-only canvas preview, confirmInputs, auth-gated CTAs) — 2026-06-17
-- Stopped at: Plan 4 of 5 complete (phase 53 plan 5 ready)
+- Last completed: 54-01 (Wave-0 scaffold: throw-stubs + 4 RED unit tests + TEST-03 E2E) — 2026-06-17
+- Stopped at: Plan 1 of 4 complete in phase 54
 - Next command: `/gsd:execute-phase 53 05`
 
 ## Deferred Items
@@ -123,3 +126,4 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | v1.13 future | Additional protocol adapters (Morpho, Curve, Pendle, Yearn, Aerodrome) | deferred |
 | v1.13 future | Shareable scan-result URLs (with privacy consent) | deferred |
 | scanner-infra | `pnpm check` Biome config error (`noIncrementDecrement` unknown key in biome.jsonc:58) — pre-existing, unrelated to plan 51-05 | deferred |
+| Phase 54-auth-round-trip-persistence P01 | 28 minutes | 3 tasks | 9 files |
