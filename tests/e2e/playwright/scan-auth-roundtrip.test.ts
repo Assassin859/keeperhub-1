@@ -23,7 +23,6 @@
  *   The E2E test is skip-guarded below when the bootstrap sentinel is absent.
  */
 import { expect, test } from "@playwright/test";
-import { signIn } from "./utils/auth";
 import {
   PERSISTENT_TEST_PASSWORD,
   PERSISTENT_TEST_USER_EMAIL,
@@ -116,7 +115,10 @@ const FIXTURE_SCAN_RESPONSE: FixtureScanResponse = {
 // ---------------------------------------------------------------------------
 
 const RE_WORKFLOWS_URL = /\/workflows\/[^/]+$/;
-const RE_SCAN_API = /\/api\/scan\//;
+// String glob for context.route() — Playwright resolves string globs before
+// the first network request fires, avoiding the regex-setup race condition
+// that caused first-attempt flakiness when using a RegExp pattern.
+const GLOB_SCAN_API = "**/api/scan/*";
 
 // ---------------------------------------------------------------------------
 // TEST-03 suite
@@ -140,8 +142,10 @@ test.describe("TEST-03: scan auth round-trip", () => {
       // -----------------------------------------------------------------
       // 1. Mock GET /api/scan/* — fulfil with fixture to avoid real RPC.
       //    The scan address is a path param: /api/scan/{address}
+      //    Register at CONTEXT level (not page level) so the mock persists
+      //    across any SPA navigation within the test.
       // -----------------------------------------------------------------
-      await page.route(RE_SCAN_API, async (route) => {
+      await ctx.route(GLOB_SCAN_API, async (route) => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -190,10 +194,35 @@ test.describe("TEST-03: scan auth round-trip", () => {
       await page.getByRole("button", { name: "Save on schedule" }).click();
 
       // -----------------------------------------------------------------
-      // 8. Auth dialog opens — sign in with the persistent test user.
-      //    signIn() waits for dialog close + org switcher visible.
+      // 8. Auth dialog opens on top of the scan page (openAuthPrompt).
+      //    Sign in inline — the dialog is already open so we must NOT call
+      //    signIn() which navigates to "/" first (that would race with
+      //    PendingScanRunner and lose the org-switcher wait on /workflows/*).
+      //    Both the Sheet drawer and the auth dialog have role="dialog";
+      //    filter for the one containing the #email sign-in field.
       // -----------------------------------------------------------------
-      await signIn(page, PERSISTENT_TEST_USER_EMAIL, PERSISTENT_TEST_PASSWORD);
+      const authDialog = page
+        .locator('[role="dialog"]')
+        .filter({ has: page.locator("#email") });
+      await expect(authDialog).toBeVisible({ timeout: 10_000 });
+      await authDialog.locator("#email").fill(PERSISTENT_TEST_USER_EMAIL);
+      await authDialog.locator("#password").fill(PERSISTENT_TEST_PASSWORD);
+      await authDialog
+        .locator('button[type="submit"]:has-text("Sign in")')
+        .click();
+      // Wait for the auth dialog to close (sign-in complete).
+      await expect(authDialog).not.toBeVisible({ timeout: 15_000 });
+
+      // Skip-guard: if sign-in redirected to MFA enrollment the persistent
+      // test user is not fully seeded. This indicates pnpm dev:bootstrap
+      // has not been run (or ran without TOTP enrolment completing).
+      if (page.url().includes("/enroll-mfa")) {
+        test.skip(
+          true,
+          "MFA enrollment required — run pnpm dev:bootstrap to seed the test user with TOTP before running this suite"
+        );
+        return;
+      }
 
       // -----------------------------------------------------------------
       // 9. PendingScanRunner (mounted in layout) reads the pending_scan
