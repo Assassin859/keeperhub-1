@@ -8,6 +8,8 @@ import {
 import { db } from "@/lib/db";
 import { supportedTokens } from "@/lib/db/schema";
 import { scanResults } from "@/lib/db/schema-scan";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import { getEnabledChains } from "@/lib/rpc/chain-service";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
@@ -215,8 +217,11 @@ export async function scanAddress(rawAddress: string): Promise<ScanResponse> {
     .limit(1);
 
   if (cached[0] !== undefined) {
+    getMetricsCollector().incrementCounter(MetricNames.SCAN_CACHE_HIT_TOTAL);
     return cached[0].resultJson;
   }
+
+  getMetricsCollector().incrementCounter(MetricNames.SCAN_CACHE_MISS_TOTAL);
 
   // 2. Determine which chains to scan (intersection of enabled chains and
   //    chains that have at least one registered Aave V3 or Lido address).
@@ -232,6 +237,8 @@ export async function scanAddress(rawAddress: string): Promise<ScanResponse> {
 
   // 4. Zerion breadth fallback (SCAN-12, Phase 51: no-op stub).
   //    Native positions take precedence by (protocol, chainId).
+  //    TODO(HARDEN-03): increment MetricNames.SCAN_ZERION_CALLS_TOTAL here
+  //    when the real Zerion adapter is wired (stays 0 in v1.13 by design).
   const zerionPositions = await maybeZerionFallback(rawAddress, chainIds);
   const nativeKeys = new Set<string>(
     chainOutputs.flatMap((output) =>
