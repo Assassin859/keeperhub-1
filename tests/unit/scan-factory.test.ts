@@ -571,3 +571,99 @@ describe("PREFILL-02 claim: reward-reminder shape", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 2 (52-04): generic-monitor fallback + all-categories dispatcher coverage
+// ---------------------------------------------------------------------------
+
+// Descriptor with a runtime-only unknown category to exercise the dispatcher
+// default branch. The double cast bypasses TypeScript so we can test
+// runtime behavior (unreachable via the type system after all 4 cases covered).
+const UNKNOWN_CATEGORY_DESCRIPTOR = {
+  id: "generic-fallback-test-1",
+  name: "Generic Fallback Monitor",
+  description: "Generic daily balance check.",
+  category: "unknown-category",
+  chainId: 1,
+  readOrWrite: "read",
+  protocol: undefined,
+  usdValue: 150,
+  riskNote: "Read-only monitoring.",
+  confirmInputs: { walletAddress: "Your wallet address" },
+} as unknown as SuggestionDescriptor;
+
+describe("PREFILL-02 generic: generic-monitor fallback (dispatcher default branch)", () => {
+  it("generic: buildWorkflow with unrecognized category does not throw", () => {
+    expect(() => buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR)).not.toThrow();
+  });
+
+  it("generic: fallback returns PrefillWorkflow with workflowType 'read'", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    expect(result.workflowType).toBe("read");
+    expect(result.nodes.length).toBeGreaterThan(0);
+  });
+
+  it("generic: schedule cron is '0 9 * * *' (daily at 9am UTC)", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    const trigger = result.nodes.find((n) => n.data.type === "trigger");
+    expect(trigger?.data.config?.scheduleCron).toBe("0 9 * * *");
+  });
+
+  it("generic: config.network === '1' (matches descriptor.chainId)", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    const web3Nodes = result.nodes.filter(
+      (n) => n.data.config?.network !== undefined
+    );
+    expect(web3Nodes.length).toBeGreaterThan(0);
+    for (const node of web3Nodes) {
+      expect(node.data.config?.network).toBe("1");
+    }
+  });
+
+  it("generic: template refs all resolve", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    const { valid, errors } = validateTemplateRefs(result.nodes, result.edges);
+    expect(errors).toEqual([]);
+    expect(valid).toBe(true);
+  });
+
+  it("generic: condition->alert edge carries sourceHandle 'true'", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    const condNode = result.nodes.find(
+      (n) => String(n.data.config?.actionType) === "Condition"
+    );
+    expect(condNode).toBeDefined();
+    const condEdge = result.edges.find((e) => e.source === condNode?.id);
+    expect(condEdge?.sourceHandle).toBe("true");
+  });
+
+  it("generic: every node satisfies node.type === node.data.type", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    for (const node of result.nodes) {
+      expect(node.type).toBe(node.data.type);
+    }
+  });
+
+  it("generic: no node has a write-type actionType (read-only)", () => {
+    const result: PrefillWorkflow = buildWorkflow(UNKNOWN_CATEGORY_DESCRIPTOR);
+    for (const node of result.nodes) {
+      const actionType = String(node.data.config?.actionType ?? "");
+      expect(actionType).not.toMatch(RE_WRITE_ACTION);
+    }
+  });
+});
+
+describe("PREFILL-02: all four named categories dispatched without throwing", () => {
+  it("dispatcher: buildWorkflow resolves each category to non-empty nodes", () => {
+    for (const desc of [
+      HEALTH_DESCRIPTOR,
+      YIELD_DESCRIPTOR,
+      ALERT_DESCRIPTOR,
+      CLAIM_DESCRIPTOR,
+    ]) {
+      const result = buildWorkflow(desc);
+      expect(result.nodes.length).toBeGreaterThan(0);
+      expect(result.workflowType).toBe("read");
+    }
+  });
+});
