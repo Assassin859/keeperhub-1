@@ -20,6 +20,7 @@
 import {
   clampHfThreshold,
   DUST_THRESHOLD_USD,
+  hfThresholdRaw,
   rankAndFilter,
 } from "@/lib/scan/suggestions/ranking";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
@@ -102,7 +103,9 @@ function buildHealthSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
     readOrWrite: "read",
     confirmInputs: {
       walletAddress: "Your wallet address to monitor",
-      threshold: `Alert threshold (default: ${threshold.toFixed(1)}, floor: 1.3)`,
+      // Pre-computed as a 1e18 base-unit string so the factory condition
+      // rightOperand and the user-visible description use the same value.
+      threshold: hfThresholdRaw(threshold),
     },
     riskNote: RISK_NOTE_READ_ONLY,
     protocol: pos.protocol,
@@ -163,7 +166,8 @@ function buildAlertSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
     readOrWrite: "read",
     confirmInputs: {
       walletAddress: "Your wallet address to monitor",
-      priceThreshold: "Price threshold in USD",
+      tokenAddress: "ERC20 token contract address to monitor",
+      alertThreshold: "Balance threshold in token base units",
     },
     riskNote: RISK_NOTE_READ_ONLY,
     protocol: pos.protocol,
@@ -193,6 +197,8 @@ function buildRewardSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
     readOrWrite: "read",
     confirmInputs: {
       walletAddress: "Your wallet address to monitor",
+      stakingTokenAddress:
+        "Staking token contract address (e.g. wstETH on Ethereum)",
     },
     riskNote: RISK_NOTE_READ_ONLY,
     protocol: pos.protocol,
