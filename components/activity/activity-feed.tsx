@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight, Minus, Pencil, Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
@@ -267,7 +267,7 @@ function ActivityRow({
   );
 
   return (
-    <li className="flex items-start gap-3 py-2.5">
+    <li className="flex items-start gap-3 py-3">
       <ActorAvatarBadge
         actor={actor}
         badgeClassName={KIND_COLOR[kind]}
@@ -343,7 +343,7 @@ const SKELETON_KEYS = ["a", "b", "c", "d", "e", "f"] as const;
 
 function SkeletonRow(): React.ReactElement {
   return (
-    <li className="flex items-start gap-3 py-2.5">
+    <li className="flex items-start gap-3 py-3">
       <Skeleton className="size-7 shrink-0 rounded-full" />
       <div className="flex-1 space-y-2 py-0.5">
         <Skeleton className="h-3.5 w-2/5" />
@@ -358,6 +358,8 @@ export function ActivityFeed({
   params,
   fallback,
   embedded = false,
+  fillHeight = false,
+  syncPageToUrl = false,
 }: {
   params?: FeedParams;
   fallback?: SecurityAuditEvent[];
@@ -367,6 +369,18 @@ export function ActivityFeed({
    * and avoid a nested second scrollbar; the parent owns scrolling.
    */
   embedded?: boolean;
+  /**
+   * Full-page mode: the feed grows to fill its flex parent and the pager is
+   * pinned to the bottom of that space (the list scrolls between header and
+   * pager). The parent must be a flex column with a bounded height.
+   */
+  fillHeight?: boolean;
+  /**
+   * Reflect the current page in the URL (`?page=N`) and seed the initial page
+   * from it, so the feed is deep-linkable and survives refresh/back. Only makes
+   * sense for a route-backed feed, not an overlay.
+   */
+  syncPageToUrl?: boolean;
 }): React.ReactElement {
   const resourceType = params?.resourceType;
   const resourceTypes = params?.resourceTypes;
@@ -386,6 +400,11 @@ export function ActivityFeed({
   // (deep-linked to the exact version when known); integrations and API keys
   // open their management modal on top of the feed.
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const initialPage = syncPageToUrl
+    ? Math.max(1, Number.parseInt(searchParams.get("page") ?? "", 10) || 1)
+    : 1;
   const { closeAll, push } = useOverlay();
   const openResource = useCallback(
     (event: SecurityAuditEvent) => {
@@ -422,6 +441,7 @@ export function ActivityFeed({
   const {
     items: events,
     meta,
+    page,
     setPage,
     loading,
     error,
@@ -457,8 +477,28 @@ export function ActivityFeed({
       from,
       to,
       limit,
-    })
+    }),
+    { initialPage }
   );
+
+  // Reflect the active page in the URL when asked (route-backed feed only), and
+  // drop the param on page 1 / filter resets so the URL stays clean. Reading
+  // searchParams here only to preserve sibling params; it is intentionally not
+  // a dep -- our own replace would otherwise loop.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see note above
+  useEffect(() => {
+    if (!syncPageToUrl) {
+      return;
+    }
+    const next = new URLSearchParams(searchParams.toString());
+    if (page > 1) {
+      next.set("page", String(page));
+    } else {
+      next.delete("page");
+    }
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [syncPageToUrl, page, pathname, router]);
 
   // Capture the settled content height so the skeleton can hold it on the next
   // load. Without this the embedded feed (no fixed box) collapses to the
@@ -467,30 +507,44 @@ export function ActivityFeed({
   const listRef = useRef<HTMLDivElement>(null);
   const [reservedHeight, setReservedHeight] = useState<number>();
   useEffect(() => {
-    if (embedded && !loading && listRef.current) {
+    if (embedded && !fillHeight && !loading && listRef.current) {
       setReservedHeight(listRef.current.offsetHeight);
     }
-  }, [embedded, loading]);
+  }, [embedded, fillHeight, loading]);
 
-  // Fixed-height scroll region (when a page size is set) so the modal never
-  // resizes: the skeleton, every page, and the empty/error states all occupy
-  // the same box, and content taller than the box scrolls inside it instead of
-  // growing the modal. The Pager lives outside this box so it stays put.
-  const scrollClass = embedded
-    ? ""
-    : `thin-scrollbar overflow-y-auto ${limit ? "h-[32rem]" : ""}`;
+  // Three layout modes:
+  // - fillHeight (full page): the list grows to fill the flex parent and scrolls
+  //   internally, so the Pager stays pinned at the bottom of the viewport.
+  // - embedded (already-scrolling overlay): no box, the parent owns scrolling.
+  // - default (per-resource overlay): a fixed-height box so the modal never
+  //   resizes; content taller than the box scrolls inside it.
+  let scrollClass: string;
+  if (fillHeight) {
+    scrollClass = "thin-scrollbar min-h-0 flex-1 overflow-y-auto";
+  } else if (embedded) {
+    scrollClass = "";
+  } else {
+    scrollClass = `thin-scrollbar overflow-y-auto ${limit ? "h-[32rem]" : ""}`;
+  }
+
+  // In fillHeight mode the feed is a flex column so the list (flex-1) pushes the
+  // Pager to the bottom; other modes keep the natural block flow.
+  const rootClass = fillHeight ? "flex min-h-0 flex-1 flex-col" : undefined;
+  const pagerClass = fillHeight ? "border-border/60 border-t pt-3" : "pt-2";
 
   // Skeletons show on every load in both modes. In the fixed box the swap is
   // absorbed; when embedded, the skeleton holds the last content height
   // (reservedHeight) so the modal doesn't jump.
   if (loading) {
     return (
-      <div>
+      <div className={rootClass}>
         <div
           className={scrollClass}
-          style={embedded ? { minHeight: reservedHeight } : undefined}
+          style={
+            embedded && !fillHeight ? { minHeight: reservedHeight } : undefined
+          }
         >
-          <ul className="divide-y divide-border/60">
+          <ul>
             {SKELETON_KEYS.slice(
               0,
               Math.min(limit ?? 3, SKELETON_KEYS.length)
@@ -500,7 +554,7 @@ export function ActivityFeed({
           </ul>
         </div>
         {meta && (
-          <div className="pt-2">
+          <div className={pagerClass}>
             <Pager meta={meta} onPage={setPage} unit="events" />
           </div>
         )}
@@ -533,14 +587,14 @@ export function ActivityFeed({
   const groups = groupByDate(merged, (e) => e.createdAt);
 
   return (
-    <div>
-      <div className={`${scrollClass} space-y-4`} ref={listRef}>
+    <div className={rootClass}>
+      <div className={scrollClass} ref={listRef}>
         {groups.map((group) => (
           <div key={group.label}>
-            <p className="sticky top-0 z-10 bg-background py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+            <p className="sticky top-0 z-10 mb-2 border-border/60 border-b bg-background pt-6 pb-2 font-medium text-muted-foreground text-xs uppercase tracking-wide first:pt-0">
               {group.label}
             </p>
-            <ul className="divide-y divide-border/60">
+            <ul>
               {group.items.map((event) => (
                 <ActivityRow
                   event={event}
@@ -555,7 +609,7 @@ export function ActivityFeed({
         ))}
       </div>
       {meta && (
-        <div className="pt-2">
+        <div className={pagerClass}>
           <Pager meta={meta} onPage={setPage} unit="events" />
         </div>
       )}

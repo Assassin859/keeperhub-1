@@ -28,11 +28,15 @@ type UsePaginatedResourceResult<T> = {
 export function usePaginatedResource<T>(
   fetchPage: (page: number) => Promise<Page<T>>,
   resetKey: string,
-  options?: { enabled?: boolean; refetchIntervalMs?: number }
+  options?: {
+    enabled?: boolean;
+    refetchIntervalMs?: number;
+    initialPage?: number;
+  }
 ): UsePaginatedResourceResult<T> {
   const enabled = options?.enabled ?? true;
   const refetchIntervalMs = options?.refetchIntervalMs;
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(options?.initialPage ?? 1);
   const [items, setItems] = useState<T[]>([]);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [loading, setLoading] = useState(enabled);
@@ -42,9 +46,16 @@ export function usePaginatedResource<T>(
   const fetchRef = useRef(fetchPage);
   fetchRef.current = fetchPage;
 
-  // A new query identity always starts from the first page.
+  // A new query identity always starts from the first page. Skip the very first
+  // run so an initialPage (e.g. seeded from the URL) survives mount; only an
+  // actual resetKey change after mount snaps back to page 1.
+  const didResetOnceRef = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey is the change trigger, not read in the body
   useEffect(() => {
+    if (!didResetOnceRef.current) {
+      didResetOnceRef.current = true;
+      return;
+    }
     setPage(1);
   }, [resetKey]);
 

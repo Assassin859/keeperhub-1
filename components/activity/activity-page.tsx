@@ -97,9 +97,9 @@ export function ActivityPage(): ReactNode {
   }
 
   return (
-    <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
-        <div className="flex flex-col gap-6 p-6 pt-[calc(5rem+var(--app-banner-height,0px))]">
+    <div className="pointer-events-auto fixed inset-0 flex flex-col overflow-hidden bg-sidebar">
+      <div className="flex min-h-0 flex-1 flex-col transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+        <div className="flex min-h-0 flex-1 flex-col gap-6 p-6 pt-[calc(5rem+var(--app-banner-height,0px))]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1">
               <h1 className="font-semibold text-2xl tracking-tight">
@@ -133,7 +133,7 @@ export function ActivityPage(): ReactNode {
               onValueChange={(v) => activity.setPageSize(Number(v))}
               value={String(activity.pageSize)}
             >
-              <SelectTrigger className="h-8 w-[110px] text-xs">
+              <SelectTrigger className="h-8 w-28 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -146,7 +146,7 @@ export function ActivityPage(): ReactNode {
             </Select>
           </div>
 
-          <ActivityFeed embedded params={activity.feedParams} />
+          <ActivityFeed fillHeight params={activity.feedParams} syncPageToUrl />
         </div>
       </div>
     </div>
