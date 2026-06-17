@@ -1,7 +1,6 @@
 "use client";
 
 import { Copy, History, Key, Server, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Pager } from "@/components/activity/pager";
@@ -22,7 +21,6 @@ import { ConfirmOverlay } from "./confirm-overlay";
 import { KeyActivityOverlay } from "./key-activity-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
-import { SettingsOverlay } from "./settings-overlay";
 
 type ApiKey = {
   id: string;
@@ -59,8 +57,7 @@ function CreateApiKeyOverlay({
   endpoint: string;
   keyType: "webhook" | "organisation";
 }): React.ReactElement {
-  const { open: openOverlay, pop } = useOverlay();
-  const router = useRouter();
+  const { pop } = useOverlay();
   const [keyName, setKeyName] = useState("");
   const [phase, setPhase] = useState<"label" | "codes">("label");
   const dual = useDualFactorState();
@@ -87,16 +84,10 @@ function CreateApiKeyOverlay({
       });
 
       if (!response.ok) {
-        const guarded = await handleGuardError(response, {
-          onEnrollMfa: () => {
-            pop();
-            openOverlay(SettingsOverlay);
-          },
-          onPendingMfa: (next) => {
-            pop();
-            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
-          },
-        });
+        // Guard failures (role / MFA) surface as a toast and leave the user
+        // on this dialog. Don't pop and bounce them to Settings or the
+        // step-up page; that reads as being dropped onto an unrelated modal.
+        const guarded = await handleGuardError(response);
         if (guarded) {
           return;
         }
@@ -421,8 +412,6 @@ function useApiKeys(
   listEndpoint: string,
   deleteEndpoint: (id: string) => string
 ) {
-  const { open: openOverlay, closeAll } = useOverlay();
-  const router = useRouter();
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
@@ -469,16 +458,10 @@ function useApiKeys(
       });
 
       if (!response.ok) {
-        const guarded = await handleGuardError(response, {
-          onEnrollMfa: () => {
-            closeAll();
-            openOverlay(SettingsOverlay);
-          },
-          onPendingMfa: (next) => {
-            closeAll();
-            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
-          },
-        });
+        // Guard failures (role / MFA) surface as a toast and the confirm
+        // dialog closes back to the key list. Don't bounce the user to
+        // Settings or the step-up page; that reads as a random modal.
+        const guarded = await handleGuardError(response);
         if (guarded) {
           return { ok: false, code: "guarded" };
         }
