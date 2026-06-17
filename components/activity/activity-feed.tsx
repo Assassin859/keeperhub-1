@@ -255,7 +255,13 @@ function ActivityRow({
         </span>
         <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-muted-foreground">
           {capitalize(phrase)}
-          {canOpen && <ChevronRight className="size-3.5" />}
+          {/* Always reserve the chevron slot so non-openable rows keep their
+              label aligned with openable ones. */}
+          {canOpen ? (
+            <ChevronRight className="size-3.5" />
+          ) : (
+            <span aria-hidden="true" className="size-3.5" />
+          )}
         </span>
       </div>
       {resourceName && (
