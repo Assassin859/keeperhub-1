@@ -21,7 +21,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { DiscordIcon } from "@/components/icons/discord-icon";
-import { ActivityOverlay } from "@/components/overlays/activity-overlay";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -579,7 +578,7 @@ const NAV_ITEMS: NavItemDef[] = [
     id: "activity",
     icon: Activity,
     label: "Activity",
-    href: null,
+    href: "/activity",
     requireAuth: true,
     adminOnly: true,
   },
@@ -867,11 +866,6 @@ export function NavigationSidebar(): React.ReactNode {
     if (item.id === "address-book") {
       navState.closeAll();
       openOverlay(AddressBookOverlay);
-      return;
-    }
-    if (item.id === "activity") {
-      navState.closeAll();
-      openOverlay(ActivityOverlay);
       return;
     }
     navState.closeAll();

@@ -76,6 +76,12 @@ function toggle(list: string[], value: string): string[] {
     : [...list, value];
 }
 
+export const DEFAULT_AUDIT_PAGE_SIZE = 5;
+
+// Wait this long after the last keystroke before searching, so typing doesn't
+// fire a request per character.
+const SEARCH_DEBOUNCE_MS = 500;
+
 /**
  * State + data for the audit activity filter builder. Owns the selected values
  * per dimension (person/activity/project/workflow/tag/date), the page size,
@@ -83,14 +89,32 @@ function toggle(list: string[], value: string): string[] {
  * once), and which dimensions are currently shown as chips. Exposes a derived
  * `feedParams` ready to spread into <ActivityFeed>.
  */
-export function useAuditActivity() {
+export function useAuditActivity(options?: {
+  initialPageSize?: number;
+  initialSearch?: string;
+}) {
   const [people, setPeople] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const [workflows, setWorkflows] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [datePreset, setDatePreset] = useState<string>(ALL);
-  const [pageSize, setPageSize] = useState<number>(5);
+  const [pageSize, setPageSize] = useState<number>(
+    options?.initialPageSize ?? DEFAULT_AUDIT_PAGE_SIZE
+  );
+
+  // Free-text search. `searchText` is the raw input (kept responsive); `search`
+  // is the debounced value that actually drives the query, so typing doesn't
+  // fire a request per keystroke.
+  const [searchText, setSearchText] = useState(options?.initialSearch ?? "");
+  const [search, setSearch] = useState(options?.initialSearch ?? "");
+  useEffect(() => {
+    const id = setTimeout(
+      () => setSearch(searchText.trim()),
+      SEARCH_DEBOUNCE_MS
+    );
+    return () => clearTimeout(id);
+  }, [searchText]);
 
   // Option lists for the specific-resource dimensions.
   const [projectOptions, setProjectOptions] = useState<ResourceOption[]>([]);
@@ -192,8 +216,9 @@ export function useAuditActivity() {
       tagIds: tags.length > 0 ? tags : undefined,
       workflowIds: workflows.length > 0 ? workflows : undefined,
       from,
+      search: search || undefined,
     };
-  }, [pageSize, types, people, projects, workflows, tags, datePreset]);
+  }, [pageSize, types, people, projects, workflows, tags, datePreset, search]);
 
   return {
     // selections
@@ -211,6 +236,8 @@ export function useAuditActivity() {
     setDatePreset,
     pageSize,
     setPageSize,
+    searchText,
+    setSearchText,
     // options
     members,
     projectOptions,
