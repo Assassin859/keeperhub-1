@@ -6,18 +6,20 @@ import {
   Key,
   LogOut,
   Plug,
+  Rocket,
   Settings,
   Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ConnectButton } from "@/components/auth/connect-button";
 import {
-  AuthDialog,
   isAuthFlowInProgress,
   isSingleProviderSignInInitiated,
 } from "@/components/auth/dialog";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
+import { GettingStartedOverlay } from "@/components/overlays/getting-started-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
@@ -33,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
@@ -55,6 +58,10 @@ export const UserMenu = (): React.ReactElement => {
 
   // Check if user's email is verified
   const isEmailVerified = session?.user?.emailVerified === true;
+
+  // Wallet (SIWE) users authenticate by signature and never verify an email,
+  // so they count as authenticated despite emailVerified being false.
+  const isWalletUser = isWalletEmail(session?.user?.email);
 
   // While the session loader is pending the visitor's identity is not yet
   // known. On a hard refresh `session` is undefined, so a signed-in user
@@ -82,18 +89,10 @@ export const UserMenu = (): React.ReactElement => {
   // `useActiveMember`, which auto-fire protected fetches as soon as they are
   // called. Routing anonymous users through a separate sign-in surface keeps
   // the network log clean on initial load.
-  if (isAnonymousUser || !isEmailVerified) {
+  if (isAnonymousUser || !(isEmailVerified || isWalletUser)) {
     return (
       <div className="flex items-center gap-2">
-        <AuthDialog>
-          <Button
-            className="h-9 disabled:opacity-100 disabled:*:text-muted-foreground"
-            size="sm"
-            variant="default"
-          >
-            Sign In
-          </Button>
-        </AuthDialog>
+        <ConnectButton />
       </div>
     );
   }
@@ -116,6 +115,22 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
     notificationStatus,
     "billing_limit_reached"
   );
+
+  // Auto-open the getting-started intro once per account (tracked in
+  // localStorage by user id) so new users get a guided tour without it
+  // resurfacing on every visit.
+  const userId = session?.user?.id;
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+    const key = `kh:getting-started-seen:${userId}`;
+    if (localStorage.getItem(key)) {
+      return;
+    }
+    localStorage.setItem(key, "1");
+    openOverlay(GettingStartedOverlay);
+  }, [userId, openOverlay]);
 
   const handleDropdownOpenChange = (open: boolean): void => {
     if (open) {
@@ -193,6 +208,10 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </div>
+          <DropdownMenuItem onClick={() => openOverlay(GettingStartedOverlay)}>
+            <Rocket className="size-4" />
+            <span>Getting started</span>
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openOverlay(SettingsOverlay)}>
             <Settings className="size-4" />
             <span>Settings</span>
