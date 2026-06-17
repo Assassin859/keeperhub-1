@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T17:53:58.795Z"
+last_updated: "2026-06-17T18:05:34.540Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 22
-  completed_plans: 19
+  completed_plans: 20
   percent: 60
 ---
 
@@ -23,9 +23,9 @@ progress:
 ## Current Position
 
 Phase: 54 (auth-round-trip-persistence) — EXECUTING
-Plan: 2 of 4
-Status: Ready to execute 54-02 (scan-intent cookie route implementation)
-Last activity: 2026-06-17 -- 54-01 complete (Wave-0 scaffold: 3 throw-stubs + 4 RED unit tests + TEST-03 E2E)
+Plan: 3 of 4
+Status: Ready to execute
+Last activity: 2026-06-17
 
 ## Performance Metrics
 
@@ -92,6 +92,9 @@ Last activity: 2026-06-17 -- 54-01 complete (Wave-0 scaffold: 3 throw-stubs + 4 
 - Throw-stubs use non-async functions to satisfy biome useAwait rule; Next.js route handlers support synchronous handlers (54-01).
 - Idempotency key uses descriptor.id (SuggestionDescriptor.id), NOT a non-existent suggestionSlug field — distinct ids produce distinct sessionStorage slots (54-01).
 - scan-callback-url.test.ts added as 4th RED unit test per objective spec; covers FUNNEL-02 address preservation and intent.id idempotency key distinction (54-01).
+- resolveCallbackUrl allowlist guard: starts with single "/", not "//", no "://", no backslash — reject-by-default is correct for open-redirect mitigation (54-02).
+- Biome import sort places @/lib/auth/ before @/lib/auth- (sorts "/" before "-" in path segments); resolveCallbackUrl import placed first in the @/lib/auth* block (54-02).
+- Pre-existing biome issues in dialog.tsx (noUnusedVariables:router, useExhaustiveDependencies, noNestedTernary, suppressions/unused x3) deferred per SCOPE BOUNDARY rule — none introduced by 54-02 (54-02).
 
 ### Todos
 
@@ -106,9 +109,9 @@ Last activity: 2026-06-17 -- 54-01 complete (Wave-0 scaffold: 3 throw-stubs + 4 
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 54-01 (Wave-0 scaffold: throw-stubs + 4 RED unit tests + TEST-03 E2E) — 2026-06-17
-- Stopped at: Plan 1 of 4 complete in phase 54
-- Next command: `/gsd:execute-phase 53 05`
+- Last completed: 54-02 (FUNNEL-02: pending_scan cookie route + resolveCallbackUrl open-redirect guard + dialog.tsx social sign-in wired) — 2026-06-17
+- Stopped at: Plan 2 of 4 complete in phase 54
+- Next command: `/gsd:execute-phase 54 03`
 
 ## Deferred Items
 
@@ -127,3 +130,4 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | v1.13 future | Shareable scan-result URLs (with privacy consent) | deferred |
 | scanner-infra | `pnpm check` Biome config error (`noIncrementDecrement` unknown key in biome.jsonc:58) — pre-existing, unrelated to plan 51-05 | deferred |
 | Phase 54-auth-round-trip-persistence P01 | 28 minutes | 3 tasks | 9 files |
+| Phase 54-auth-round-trip-persistence P02 | 6 minutes | 2 tasks | 4 files |
