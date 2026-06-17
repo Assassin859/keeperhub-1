@@ -24,6 +24,8 @@ import { ethers } from "ethers";
 import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
 import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { HttpStatus } from "@/lib/http-status";
+import { createTimer, getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { scanAddress } from "@/lib/scan/scanner";
 import { buildSuggestions } from "@/lib/scan/suggestions/engine";
@@ -81,8 +83,16 @@ export async function GET(
     );
   }
 
+  const metricsCollector = getMetricsCollector();
+  const scanTimer = createTimer();
+
   try {
     const result = await scanAddress(address);
+    metricsCollector.recordLatency(
+      MetricNames.SCAN_ADDRESS_DURATION,
+      scanTimer(),
+      { status: "success" }
+    );
     // T-52-12: buildSuggestions is pure and bounded (<10ms), but any engine
     // error degrades gracefully to [] rather than failing the 200 response.
     let suggestions: ReturnType<typeof buildSuggestions> = [];
@@ -96,6 +106,11 @@ export async function GET(
       rate
     );
   } catch {
+    metricsCollector.recordLatency(
+      MetricNames.SCAN_ADDRESS_DURATION,
+      scanTimer(),
+      { status: "failure" }
+    );
     // Never leak internal/RPC error detail on the public surface.
     return applyRateLimitHeaders(
       Response.json(

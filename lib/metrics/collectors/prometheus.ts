@@ -943,6 +943,13 @@ const dbPoolUtilization = getOrCreateGauge(
   POOL_LABELS
 );
 
+// TODO(HARDEN-03 / v1.13): register keeperhub_scan_address_duration_ms
+// (histogram, label: status), keeperhub_scan_cache_hit_total,
+// keeperhub_scan_cache_miss_total, and keeperhub_scan_zerion_calls_total
+// here (in apiRegistry) and wire them into histogramMap/counterMap when a
+// Grafana scan dashboard is added. Console-mode emission via
+// getMetricsCollector() covers HARDEN-03 for v1.13; no live registration yet.
+
 // Allowed labels per error metric (must match counter definitions)
 const errorLabelAllowlist: Record<string, string[]> = {
   "workflow.execution.errors": [
