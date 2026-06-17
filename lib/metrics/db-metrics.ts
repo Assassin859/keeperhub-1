@@ -9,7 +9,7 @@
 
 import "server-only";
 
-import { and, count, countDistinct, eq, gte, sql } from "drizzle-orm";
+import { and, count, countDistinct, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   PLANS,
   type PlanName,
@@ -47,6 +47,14 @@ import type { BillingStatus } from "./types";
 // rows. Also re-exported for the runtime finalization counter so personal
 // workflows still produce a series rather than silently dropping increments.
 export const ANONYMOUS_ORG_SLUG = "_anonymous";
+
+// Org slugs for the managed clients (Sky, Ajna) whose per-workflow error series
+// power the managed-client user-error alerts. The per-workflow gauge is scoped
+// to these slugs so `workflow_id` never becomes an unbounded label across the
+// whole user base — only managed workflows that have errored emit a series.
+// Mirrors `local.managed_org_slugs_regex` in the infra Grafana alert config;
+// adding a managed org requires updating both lists.
+export const MANAGED_ORG_SLUGS = ["techops-services", "ajna"] as const;
 
 // Histogram bucket boundaries in milliseconds (must match prometheus.ts)
 const WORKFLOW_DURATION_BUCKETS = [
@@ -225,6 +233,66 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       durationSum: 0,
       durationCount: 0,
     };
+  }
+}
+
+// One cumulative all-time error count per (workflow_id, org_slug, error_type)
+// for managed orgs. Mirrors the gauge semantics of
+// executionsByStatusAndOrgSlug: a point-in-time snapshot the alert reads as
+// `value(now) - value(now offset W)` to recover the delta over a window.
+export type WorkflowErrorsByWorkflow = Array<{
+  workflowId: string;
+  orgSlug: string;
+  errorType: string;
+  count: number;
+}>;
+
+/**
+ * Per-workflow error counts for managed orgs, sourced from the DB so the
+ * series is authoritative regardless of which finalization path wrote the
+ * `status='error'` row. Replaces the per-pod counter that only fired on the
+ * rarely-hit kickoff/reaper/MCP paths and so returned no data in prod.
+ *
+ * Scoped to MANAGED_ORG_SLUGS to bound `workflow_id` cardinality. errorType is
+ * the `workflow_executions.error_type` column, projected to "unknown" for
+ * rows that predate classification so every series carries a populated label.
+ */
+export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowErrorsByWorkflow> {
+  try {
+    const rows = await db
+      .select({
+        workflowId: workflowExecutions.workflowId,
+        orgSlug: organization.slug,
+        errorType: sql<string>`COALESCE(${workflowExecutions.errorType}, 'unknown')`,
+        count: count(),
+      })
+      .from(workflowExecutions)
+      .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
+      .innerJoin(organization, eq(workflows.organizationId, organization.id))
+      .where(
+        and(
+          eq(workflowExecutions.status, "error"),
+          inArray(organization.slug, [...MANAGED_ORG_SLUGS])
+        )
+      )
+      .groupBy(
+        workflowExecutions.workflowId,
+        organization.slug,
+        workflowExecutions.errorType
+      );
+
+    return rows.map((row) => ({
+      workflowId: row.workflowId,
+      orgSlug: row.orgSlug,
+      errorType: row.errorType,
+      count: Number(row.count) || 0,
+    }));
+  } catch (error) {
+    console.error(
+      "[Metrics] Failed to query per-workflow errors from DB:",
+      error
+    );
+    return [];
   }
 }
 
