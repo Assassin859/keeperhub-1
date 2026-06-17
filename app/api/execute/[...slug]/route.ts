@@ -4,6 +4,7 @@ import "@/protocols";
 
 import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
+import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import {
   beginIdempotentFromRequest,
@@ -28,7 +29,16 @@ import {
   writeContractCore,
 } from "@/plugins/web3/steps/write-contract-core";
 import { validateApiKey } from "../_lib/auth";
+import {
+  completeExecution,
+  failExecution,
+  markRunning,
+  redactInput,
+  withRejectedSignerOverride,
+} from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { checkAndReserveExecution } from "../_lib/spending-cap";
+import { requireWallet } from "../_lib/wallet-check";
 
 function buildFunctionArgs(
   input: Record<string, unknown>,
@@ -60,7 +70,8 @@ function buildFunctionArgs(
 async function executeProtocolAction(
   actionType: string,
   body: Record<string, unknown>,
-  organizationId: string
+  organizationId: string,
+  apiKeyId: string
 ): Promise<NextResponse> {
   const meta = resolveProtocolMeta({ _actionType: actionType });
   if (!meta) {
@@ -177,6 +188,37 @@ async function executeProtocolAction(
     return NextResponse.json(result);
   }
 
+  // KEEP-793 / A-07: protocol write actions sign and broadcast a real tx from
+  // the org wallet, so they must clear the same gates as every other direct
+  // write path (transfer, contract-call, check-and-execute): plan execution
+  // limit, wallet presence, daily spend cap, and a recorded directExecutions
+  // audit row. Reads above stay ungated.
+  const executionGuard = await enforceExecutionLimit(organizationId);
+  if (executionGuard.blocked) {
+    return executionGuard.response;
+  }
+
+  const walletError = await requireWallet(organizationId);
+  if (walletError) {
+    return walletError;
+  }
+
+  const reserve = await checkAndReserveExecution({
+    organizationId,
+    apiKeyId,
+    type: "protocol-action",
+    network,
+    input: redactInput(withRejectedSignerOverride(body, body)),
+  });
+  if (!reserve.allowed) {
+    return NextResponse.json(
+      { success: false, error: reserve.reason },
+      { status: HttpStatus.FORBIDDEN }
+    );
+  }
+  const { executionId } = reserve;
+  await markRunning(executionId);
+
   const ethValue = body.ethValue ? String(body.ethValue) : undefined;
   const coreInput: WriteContractCoreInput = {
     contractAddress,
@@ -188,6 +230,19 @@ async function executeProtocolAction(
     _context: { organizationId },
   };
   const result = await writeContractCore(coreInput);
+
+  if (result.success) {
+    await completeExecution(executionId, {
+      transactionHash: result.transactionHash,
+      transactionLink: result.transactionLink,
+      gasUsedWei: result.gasUsed,
+      gasPriceWei: result.effectiveGasPrice,
+      output: result as unknown as Record<string, unknown>,
+    });
+  } else {
+    await failExecution(executionId, result.error);
+  }
+
   return NextResponse.json(result);
 }
 
@@ -291,7 +346,12 @@ export async function POST(
     const meta = resolveProtocolMeta({ _actionType: actionType });
     if (meta) {
       const response = await withIdempotencyHeartbeat(idem, () =>
-        executeProtocolAction(actionType, body, apiKeyCtx.organizationId)
+        executeProtocolAction(
+          actionType,
+          body,
+          apiKeyCtx.organizationId,
+          apiKeyCtx.apiKeyId
+        )
       );
       return applyRateLimitHeaders(
         await recordIdempotentResponse(
