@@ -67,8 +67,8 @@ Plans:
 **Plans**: 5 plans
 - [x] 52-01-PLAN.md — Wave 0 scaffold: SuggestionDescriptor + PrefillWorkflow types, 3 failing test files
 - [x] 52-02-PLAN.md — Suggestion engine: 4-category builders, dust filter, cap/rank, HF clamp, disclaimer
-- [ ] 52-03-PLAN.md — Factory core: validators (template-ref + MaxUint256), dispatcher, HF-monitor + stablecoin-yield shapes
-- [ ] 52-04-PLAN.md — Factory shapes: price-alert, reward-reminder, generic fallback + dispatcher wiring
+- [x] 52-03-PLAN.md — Factory core: validators (template-ref + MaxUint256), dispatcher, HF-monitor + stablecoin-yield shapes
+- [x] 52-04-PLAN.md — Factory shapes: price-alert, reward-reminder, generic fallback + dispatcher wiring
 - [ ] 52-05-PLAN.md — Scan route extension (suggestions[]) + TEST-02 integration (Arbitrum USDC → network "42161")
 
 ### Phase 53: /scan UI
@@ -114,7 +114,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 51. Scanner Infrastructure | 6/8 | In Progress|  |
-| 52. Suggestion Engine + Workflow Factory | 2/5 | In Progress|  |
+| 52. Suggestion Engine + Workflow Factory | 4/5 | In Progress|  |
 | 53. /scan UI | 0/TBD | Not started | - |
 | 54. Auth Round-Trip + Persistence | 0/TBD | Not started | - |
 | 55. Polish + Hardening | 0/TBD | Not started | - |

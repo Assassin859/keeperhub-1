@@ -25,6 +25,7 @@ import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
 import { HttpStatus } from "@/lib/http-status";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { scanAddress } from "@/lib/scan/scanner";
+import { buildSuggestions } from "@/lib/scan/suggestions/engine";
 import { getRequestSourceIp } from "@/lib/security/request-attribution";
 
 export const dynamic = "force-dynamic";
@@ -64,7 +65,18 @@ export async function GET(
 
   try {
     const result = await scanAddress(address);
-    return applyRateLimitHeaders(Response.json(result), rate);
+    // T-52-12: buildSuggestions is pure and bounded (<10ms), but any engine
+    // error degrades gracefully to [] rather than failing the 200 response.
+    let suggestions: ReturnType<typeof buildSuggestions> = [];
+    try {
+      suggestions = buildSuggestions(result);
+    } catch {
+      // Engine error — return empty suggestions, do not fail the scan response.
+    }
+    return applyRateLimitHeaders(
+      Response.json({ ...result, suggestions }),
+      rate
+    );
   } catch {
     // Never leak internal/RPC error detail on the public surface.
     return applyRateLimitHeaders(

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
+
 /**
  * Scan schema version. Downstream consumers (suggestion engine, UI) guard on
  * this value to detect breaking shape changes.
@@ -92,6 +94,13 @@ export interface ScanResponse {
   unavailableChains: UnavailableChain[];
   /** ISO 8601 timestamp of when the scan was executed (or served from cache). */
   scannedAt: string;
+  /**
+   * Ranked, capped suggestion descriptors derived from the scan output.
+   * Optional for backward compatibility — Phase 51 callers and cached rows
+   * that pre-date this field still validate. Absent when buildSuggestions
+   * throws or the scan has no qualifying positions.
+   */
+  suggestions?: SuggestionDescriptor[];
 }
 
 /**
