@@ -58,6 +58,31 @@ function isFlagFresh(flag: StoredFlag): boolean {
 }
 
 /**
+ * Runtime type guard for the JSON payload returned by GET /api/auth/scan-intent.
+ *
+ * Validates the required SuggestionDescriptor fields (id, category, chainId,
+ * readOrWrite, confirmInputs) plus the runner-specific mode field. If the
+ * cookie was crafted or corrupted, rejects it early rather than passing a
+ * malformed object into buildWorkflow (IN-01).
+ */
+function isValidScanIntent(v: unknown): v is ScanIntent {
+  if (v === null || typeof v !== "object") {
+    return false;
+  }
+  const s = v as Record<string, unknown>;
+  return (
+    typeof s.id === "string" &&
+    s.id.length > 0 &&
+    typeof s.category === "string" &&
+    typeof s.chainId === "number" &&
+    (s.readOrWrite === "read" || s.readOrWrite === "write") &&
+    s.confirmInputs !== null &&
+    typeof s.confirmInputs === "object" &&
+    (s.mode === "run" || s.mode === "schedule")
+  );
+}
+
+/**
  * Mounts in app/layout.tsx (broadest scope). Reads the pending_scan HttpOnly
  * cookie via GET /api/auth/scan-intent (atomically cleared on read) and, if a
  * scan intent is present, persists the workflow and navigates to /workflows/{id}.
@@ -105,7 +130,9 @@ export function PendingScanRunner(): null {
           return;
         }
 
-        if (!intent || cancelled) {
+        // IN-01: validate the cookie-derived payload before use. Malformed or
+        // crafted cookies are silently discarded — no toast spam.
+        if (!isValidScanIntent(intent) || cancelled) {
           return;
         }
 
