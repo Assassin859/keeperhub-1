@@ -77,7 +77,9 @@ export async function persistSuggestion(
     }
   }
 
-  // Execute immediately (both run and schedule modes)
+  // Execute immediately for both run and schedule modes. The immediate first
+  // run for schedule mode is intentional per FUNNEL-04: "save... and it runs
+  // immediately." Do NOT remove this call for schedule mode.
   await api.workflow.execute(id, {});
 
   return { id };
