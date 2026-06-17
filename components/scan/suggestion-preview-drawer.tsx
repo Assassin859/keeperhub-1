@@ -51,6 +51,7 @@ export function SuggestionPreviewDrawer({
   const router = useRouter();
   const [needsWallet, setNeedsWallet] = useState<boolean>(false);
   const [isPersisting, setIsPersisting] = useState<boolean>(false);
+  const [isProvisioning, setIsProvisioning] = useState<boolean>(false);
 
   // Build the prefilled workflow client-side. Factory has no server-only
   // import (confirmed in RESEARCH). Guard with try/catch: buildWorkflow throws
@@ -184,6 +185,7 @@ export function SuggestionPreviewDrawer({
   };
 
   const doProvision = async (): Promise<void> => {
+    setIsProvisioning(true);
     try {
       const res = await fetch("/api/agentic-wallet/provision", {
         method: "POST",
@@ -197,6 +199,8 @@ export function SuggestionPreviewDrawer({
       }
     } catch {
       toast.error("Failed to set up wallet. Please try again.");
+    } finally {
+      setIsProvisioning(false);
     }
   };
 
@@ -269,6 +273,7 @@ export function SuggestionPreviewDrawer({
               </p>
               <Button
                 className="w-full"
+                disabled={isProvisioning}
                 onClick={handleProvisionClick}
                 variant="default"
               >
