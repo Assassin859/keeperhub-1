@@ -3,21 +3,28 @@
  * scan route.
  *
  * Verifies: address validation (400 on malformed), rate-limit enforcement
- * (429 on 4th/hr from same IP, scanAddress NOT called), and happy path
- * (200 + scanAddress called once with the rate-limit key `scan:<ip>`).
+ * (429 on 4th/hr from same IP, scanAddress NOT called), happy path
+ * (200 + scanAddress called once with the rate-limit key `scan:<ip>`),
+ * HARDEN-01 abuse telemetry on 429, and HARDEN-04 flag-gate 404.
  *
- * Mocks: incrementAndCheck, getRequestSourceIp, scanAddress.
+ * Mocks: incrementAndCheck, getRequestSourceIp, scanAddress,
+ *        logAnonymousExecutionBlock.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockIncrementAndCheck, mockGetRequestSourceIp, mockScanAddress } =
-  vi.hoisted(() => ({
-    mockIncrementAndCheck: vi.fn(),
-    mockGetRequestSourceIp: vi.fn(),
-    mockScanAddress: vi.fn(),
-  }));
+const {
+  mockIncrementAndCheck,
+  mockGetRequestSourceIp,
+  mockScanAddress,
+  mockLogAnonymousExecutionBlock,
+} = vi.hoisted(() => ({
+  mockIncrementAndCheck: vi.fn(),
+  mockGetRequestSourceIp: vi.fn(),
+  mockScanAddress: vi.fn(),
+  mockLogAnonymousExecutionBlock: vi.fn(),
+}));
 
 vi.mock("@/lib/agentic-wallet/rate-limit", () => ({
   incrementAndCheck: mockIncrementAndCheck,
@@ -29,6 +36,10 @@ vi.mock("@/lib/security/request-attribution", () => ({
 
 vi.mock("@/lib/scan/scanner", () => ({
   scanAddress: mockScanAddress,
+}));
+
+vi.mock("@/lib/auth-anonymous-guard", () => ({
+  logAnonymousExecutionBlock: mockLogAnonymousExecutionBlock,
 }));
 
 const { GET } = await import("@/app/api/scan/[address]/route");
@@ -68,6 +79,7 @@ describe("GET /api/scan/[address]", () => {
     mockIncrementAndCheck.mockReset();
     mockGetRequestSourceIp.mockReset();
     mockScanAddress.mockReset();
+    mockLogAnonymousExecutionBlock.mockReset();
     mockGetRequestSourceIp.mockReturnValue(MOCK_IP);
     mockIncrementAndCheck.mockResolvedValue(ALLOWED_RATE);
     mockScanAddress.mockResolvedValue({
@@ -78,6 +90,9 @@ describe("GET /api/scan/[address]", () => {
       unavailableChains: [],
       scannedAt: new Date().toISOString(),
     });
+    // HARDEN-04: set the flag so existing tests keep passing once the gate
+    // is added to the route in 55-03
+    process.env.NEXT_PUBLIC_SCAN_ENABLED = "true";
   });
 
   it("invalid address: returns 400 without touching rate limit or scanner", async () => {
@@ -116,5 +131,39 @@ describe("GET /api/scan/[address]", () => {
     expect(mockScanAddress).toHaveBeenCalledTimes(1);
     expect(mockScanAddress).toHaveBeenCalledWith(VALID_ADDRESS);
     expect(mockIncrementAndCheck).toHaveBeenCalledWith(`scan:${MOCK_IP}`, 3);
+  });
+
+  // HARDEN-01: abuse telemetry on 429
+  it("emits abuse telemetry before returning 429", async () => {
+    mockIncrementAndCheck.mockResolvedValue(DENIED_RATE);
+    const res = await GET(
+      makeRequest(VALID_ADDRESS),
+      makeParams(VALID_ADDRESS)
+    );
+    expect(res.status).toBe(429);
+    // RED: logAnonymousExecutionBlock is not yet called in the route (55-02 adds it)
+    expect(mockLogAnonymousExecutionBlock).toHaveBeenCalledWith("scan", null, {
+      ip: MOCK_IP,
+      rateLimitCount: "4",
+      address: VALID_ADDRESS,
+    });
+  });
+
+  // HARDEN-04: feature flag gate
+  it("returns 404 when NEXT_PUBLIC_SCAN_ENABLED is not 'true'", async () => {
+    const saved = process.env.NEXT_PUBLIC_SCAN_ENABLED;
+    try {
+      process.env.NEXT_PUBLIC_SCAN_ENABLED = undefined;
+      // RED: flag gate not yet added to the route (55-03 adds it)
+      const res = await GET(
+        makeRequest(VALID_ADDRESS),
+        makeParams(VALID_ADDRESS)
+      );
+      expect(res.status).toBe(404);
+      expect(mockIncrementAndCheck).not.toHaveBeenCalled();
+      expect(mockScanAddress).not.toHaveBeenCalled();
+    } finally {
+      process.env.NEXT_PUBLIC_SCAN_ENABLED = saved;
+    }
   });
 });
