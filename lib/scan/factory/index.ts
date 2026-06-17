@@ -15,6 +15,8 @@
  * context. Shape builders avoid importing server-only modules.
  */
 import { buildHfMonitor } from "@/lib/scan/factory/shapes/hf-monitor";
+import { buildPriceAlert } from "@/lib/scan/factory/shapes/price-alert";
+import { buildRewardReminder } from "@/lib/scan/factory/shapes/reward-reminder";
 import { buildStablecoinYield } from "@/lib/scan/factory/shapes/stablecoin-yield";
 import type { PrefillWorkflow } from "@/lib/scan/factory/types";
 import {
@@ -82,11 +84,11 @@ function dispatchShape(descriptor: SuggestionDescriptor): ShapeOutput {
     case "yield": {
       return buildStablecoinYield(descriptor);
     }
-    case "alert":
+    case "alert": {
+      return buildPriceAlert(descriptor);
+    }
     case "claim": {
-      throw new Error(
-        `No factory shape for category "${descriptor.category}" in Phase 52. Additional shapes land in 52-04.`
-      );
+      return buildRewardReminder(descriptor);
     }
     default: {
       // TypeScript exhaustiveness guard — SuggestionCategory is a union type;
