@@ -8,7 +8,7 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import {
   beginIdempotentFromRequest,
-  type IdempotencyDisposition,
+  type IdempotencyOutcome,
   idempotencyEarlyResponse,
   recordIdempotentResponse,
   withIdempotencyHeartbeat,
@@ -71,35 +71,45 @@ async function executeProtocolAction(
   actionType: string,
   body: Record<string, unknown>,
   organizationId: string,
-  apiKeyId: string
+  apiKeyId: string,
+  idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const meta = resolveProtocolMeta({ _actionType: actionType });
   if (!meta) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Could not resolve protocol metadata for: ${actionType}`,
-      },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Could not resolve protocol metadata for: ${actionType}`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
 
   const protocol = getProtocol(meta.protocolSlug);
   if (!protocol) {
-    return NextResponse.json(
-      { success: false, error: `Unknown protocol: ${meta.protocolSlug}` },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { success: false, error: `Unknown protocol: ${meta.protocolSlug}` },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
 
   const contract = protocol.contracts[meta.contractKey];
   if (!contract) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Unknown contract key "${meta.contractKey}" in protocol "${meta.protocolSlug}"`,
-      },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Unknown contract key "${meta.contractKey}" in protocol "${meta.protocolSlug}"`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
 
@@ -110,13 +120,16 @@ async function executeProtocolAction(
   // numeric chainId, so normalize here once.
   const rawNetwork = String(body.chainId ?? body.network ?? "");
   if (!rawNetwork) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "Missing required field: chainId (or network, which is a deprecated alias)",
-      },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error:
+            "Missing required field: chainId (or network, which is a deprecated alias)",
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
 
@@ -124,12 +137,15 @@ async function executeProtocolAction(
   try {
     resolvedChainId = getChainIdFromNetwork(rawNetwork);
   } catch (err: unknown) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: err instanceof Error ? err.message : String(err),
-      },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
   const network = String(resolvedChainId);
@@ -139,14 +155,17 @@ async function executeProtocolAction(
     : contract.addresses[network];
 
   if (!contractAddress) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: contract.userSpecifiedAddress
-          ? `Missing contract address for "${meta.contractKey}"`
-          : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on chain ${network} (input: "${rawNetwork}")`,
-      },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: contract.userSpecifiedAddress
+            ? `Missing contract address for "${meta.contractKey}"`
+            : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on chain ${network} (input: "${rawNetwork}")`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
 
@@ -159,12 +178,15 @@ async function executeProtocolAction(
     });
     resolvedAbi = abiResult.abi;
   } catch (err: unknown) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Failed to resolve ABI: ${err instanceof Error ? err.message : String(err)}`,
-      },
-      { status: HttpStatus.BAD_REQUEST }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Failed to resolve ABI: ${err instanceof Error ? err.message : String(err)}`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
     );
   }
 
@@ -185,22 +207,24 @@ async function executeProtocolAction(
       _context: { organizationId },
     };
     const result = await readContractCore(coreInput);
-    return NextResponse.json(result);
+    return recordIdempotentResponse(idem, NextResponse.json(result));
   }
 
   // KEEP-793 / A-07: protocol write actions sign and broadcast a real tx from
   // the org wallet, so they must clear the same gates as every other direct
   // write path (transfer, contract-call, check-and-execute): plan execution
   // limit, wallet presence, daily spend cap, and a recorded directExecutions
-  // audit row. Reads above stay ungated.
+  // audit row. Reads above stay ungated. Each gate fails before any broadcast,
+  // so it releases the idempotency lock for a clean retry instead of finalizing
+  // the error against the key.
   const executionGuard = await enforceExecutionLimit(organizationId);
   if (executionGuard.blocked) {
-    return executionGuard.response;
+    return recordIdempotentResponse(idem, executionGuard.response, "release");
   }
 
   const walletError = await requireWallet(organizationId);
   if (walletError) {
-    return walletError;
+    return recordIdempotentResponse(idem, walletError, "release");
   }
 
   const reserve = await checkAndReserveExecution({
@@ -211,9 +235,13 @@ async function executeProtocolAction(
     input: redactInput(withRejectedSignerOverride(body, body)),
   });
   if (!reserve.allowed) {
-    return NextResponse.json(
-      { success: false, error: reserve.reason },
-      { status: HttpStatus.FORBIDDEN }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { success: false, error: reserve.reason },
+        { status: HttpStatus.FORBIDDEN }
+      ),
+      "release"
     );
   }
   const { executionId } = reserve;
@@ -229,7 +257,9 @@ async function executeProtocolAction(
     ethValue,
     _context: { organizationId },
   };
-  const result = await writeContractCore(coreInput);
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    writeContractCore(coreInput)
+  );
 
   if (result.success) {
     await completeExecution(executionId, {
@@ -243,27 +273,13 @@ async function executeProtocolAction(
     await failExecution(executionId, result.error);
   }
 
-  return NextResponse.json(result);
-}
-
-// Disposition for a protocol-action response. Reads and successful writes are a
-// replayable success. A write returning success:false (revert) reached the
-// broadcast path, so it is finalized as failed (never released) to keep a retry
-// from re-broadcasting.
-function protocolActionDisposition(
-  response: NextResponse
-): Promise<IdempotencyDisposition> {
-  return response
-    .clone()
-    .json()
-    .then((b: unknown): IdempotencyDisposition => {
-      const record = (b ?? {}) as Record<string, unknown>;
-      return record.success === false ? "failed" : "success";
-    })
-    .catch(
-      (): IdempotencyDisposition =>
-        response.status >= 200 && response.status < 300 ? "success" : "failed"
-    );
+  // The tx reached the broadcast path, so finalize as success or failed and
+  // never release: a retry on the same key must not re-broadcast.
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(result),
+    result.success ? "success" : "failed"
+  );
 }
 
 export async function POST(
@@ -345,22 +361,14 @@ export async function POST(
     // Try protocol action first (covers all protocol read/write tools)
     const meta = resolveProtocolMeta({ _actionType: actionType });
     if (meta) {
-      const response = await withIdempotencyHeartbeat(idem, () =>
-        executeProtocolAction(
-          actionType,
-          body,
-          apiKeyCtx.organizationId,
-          apiKeyCtx.apiKeyId
-        )
+      const response = await executeProtocolAction(
+        actionType,
+        body,
+        apiKeyCtx.organizationId,
+        apiKeyCtx.apiKeyId,
+        idem
       );
-      return applyRateLimitHeaders(
-        await recordIdempotentResponse(
-          idem,
-          response,
-          await protocolActionDisposition(response)
-        ),
-        rateLimit
-      );
+      return applyRateLimitHeaders(response, rateLimit);
     }
 
     // Non-protocol actions are not yet supported via direct execution. This
