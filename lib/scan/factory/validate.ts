@@ -111,3 +111,42 @@ export function validateNoMaxUint256Approval(
 
   return { valid: errors.length === 0, errors };
 }
+
+// ---------------------------------------------------------------------------
+// PREFILL-06: approve-token block (WR-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Block any approve-token node unconditionally in factory output.
+ *
+ * Phase 52 shapes are read-only (PREFILL-06). An approve-token node mutates
+ * chain state regardless of the amount, and findFirstWriteActionNode in
+ * lib/mcp/calldata.ts intentionally excludes approve-token from write
+ * detection (because it is not calldata-generatable). That means a factory
+ * shape that accidentally includes an approve-token with a finite amount
+ * would pass both validateNoMaxUint256Approval (not max amount) and the
+ * runWriteActionCheck (not classified as write), and be returned with
+ * workflowType "read" — silently allowing a state-mutation node to ship.
+ *
+ * This validator closes the gap: any approve-token in factory output is a
+ * violation of the read-only invariant and must be rejected here.
+ */
+export function validateNoApproveTokenNode(
+  nodes: WorkflowNode[]
+): ValidationResult {
+  const errors: string[] = [];
+
+  for (const node of nodes) {
+    const config = node.data.config;
+    if (!config) {
+      continue;
+    }
+    if (config.actionType === "web3/approve-token") {
+      errors.push(
+        `Node ${node.id}: approve-token node blocked in read-only factory output (PREFILL-06).`
+      );
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}

@@ -21,6 +21,7 @@ import { buildRewardReminder } from "@/lib/scan/factory/shapes/reward-reminder";
 import { buildStablecoinYield } from "@/lib/scan/factory/shapes/stablecoin-yield";
 import type { PrefillWorkflow } from "@/lib/scan/factory/types";
 import {
+  validateNoApproveTokenNode,
   validateNoMaxUint256Approval,
   validateTemplateRefs,
 } from "@/lib/scan/factory/validate";
@@ -56,6 +57,14 @@ export function buildWorkflow(
   if (!maxResult.valid) {
     throw new Error(
       `Factory MaxUint256 validation failed: ${maxResult.errors.join("; ")}`
+    );
+  }
+
+  // PREFILL-06 / WR-02: no approve-token node of any amount in read-only output
+  const approveResult = validateNoApproveTokenNode(nodes);
+  if (!approveResult.valid) {
+    throw new Error(
+      `Factory approve-token validation failed: ${approveResult.errors.join("; ")}`
     );
   }
 
