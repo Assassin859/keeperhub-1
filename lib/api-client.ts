@@ -718,6 +718,9 @@ export const workflowApi = {
         lastSuccessfulNodeId: string | null;
         lastSuccessfulNodeName: string | null;
         executionTrace: string[] | null;
+        // The workflow_history version this run executed, resolved from the
+        // run's content hash. Null when no matching version exists yet.
+        ranVersion: number | null;
       }>
     >(`/api/workflows/${id}/executions`),
 
