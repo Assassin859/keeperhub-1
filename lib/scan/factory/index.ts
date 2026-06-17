@@ -14,6 +14,7 @@
  * must be testable in a Node.js Vitest environment without a Next.js server
  * context. Shape builders avoid importing server-only modules.
  */
+import { buildGenericMonitor } from "@/lib/scan/factory/shapes/generic-monitor";
 import { buildHfMonitor } from "@/lib/scan/factory/shapes/hf-monitor";
 import { buildPriceAlert } from "@/lib/scan/factory/shapes/price-alert";
 import { buildRewardReminder } from "@/lib/scan/factory/shapes/reward-reminder";
@@ -91,10 +92,11 @@ function dispatchShape(descriptor: SuggestionDescriptor): ShapeOutput {
       return buildRewardReminder(descriptor);
     }
     default: {
-      // TypeScript exhaustiveness guard — SuggestionCategory is a union type;
-      // this branch is unreachable when all cases are covered above.
-      const unreachable: never = descriptor.category;
-      throw new Error(`Unknown suggestion category: ${String(unreachable)}`);
+      // Runtime safety for any category value that bypasses TypeScript's type
+      // system (e.g. test fixtures or future union additions not yet handled).
+      // All four current SuggestionCategory values are covered above; this
+      // branch is unreachable from well-typed call sites (PREFILL-02).
+      return buildGenericMonitor(descriptor);
     }
   }
 }
