@@ -12,10 +12,13 @@ import {
 import { buildWorkflow } from "@/lib/scan/factory";
 import type { PrefillWorkflow } from "@/lib/scan/factory/types";
 import {
+  validateNoApproveTokenNode,
   validateNoMaxUint256Approval,
   validateTemplateRefs,
 } from "@/lib/scan/factory/validate";
+import { buildSuggestions } from "@/lib/scan/suggestions/engine";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
+import type { ScanResponse } from "@/lib/scan/types";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
@@ -24,6 +27,8 @@ import type { WorkflowNode } from "@/lib/workflow/store";
 
 const RE_WRITE_ACTION = /write-contract|protocol-write/;
 const RE_HF_1E18 = /^\d{19}$/;
+// Matches simple {{key}} Phase-53 substitution placeholders (no leading @).
+const RE_SIMPLE_PLACEHOLDER = /\{\{([^@}][^}]*)\}\}/g;
 
 // ---------------------------------------------------------------------------
 // ConditionConfig inline type (avoids `as any` for dynamic conditionConfig)
@@ -54,7 +59,8 @@ const HEALTH_DESCRIPTOR: SuggestionDescriptor = {
     "Read-only monitoring. This workflow does not make any transactions.",
   confirmInputs: {
     walletAddress: "Your wallet address to monitor",
-    threshold: "Alert threshold (default: 1.5, floor: 1.3)",
+    // Matches engine.ts buildHealthSuggestion: hfThresholdRaw(clampHfThreshold(1.80)) = 1.5 → 1e18 string
+    threshold: "1500000000000000000",
   },
 };
 
@@ -665,5 +671,229 @@ describe("PREFILL-02: all four named categories dispatched without throwing", ()
       expect(result.nodes.length).toBeGreaterThan(0);
       expect(result.workflowType).toBe("read");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-02: validateNoApproveTokenNode blocks any approve-token unconditionally
+// ---------------------------------------------------------------------------
+
+describe("PREFILL-06 WR-02: validateNoApproveTokenNode", () => {
+  it("approve-token: validateNoApproveTokenNode is a function", () => {
+    expect(typeof validateNoApproveTokenNode).toBe("function");
+  });
+
+  it("approve-token: node with amount 'max' is rejected", () => {
+    const { valid, errors } = validateNoApproveTokenNode([APPROVE_NODE_MAX]);
+    expect(valid).toBe(false);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("approve-token: node with exact (finite) amount is also rejected", () => {
+    // Finite-amount approve-token passes validateNoMaxUint256Approval but must
+    // be blocked here — any approve-token mutates state (PREFILL-06 / WR-02).
+    const { valid, errors } = validateNoApproveTokenNode([APPROVE_NODE_EXACT]);
+    expect(valid).toBe(false);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("approve-token: non-approve nodes pass the check", () => {
+    const readNode: WorkflowNode = {
+      id: "read-1",
+      type: "action",
+      position: { x: 100, y: 200 },
+      data: {
+        type: "action",
+        label: "Read Contract",
+        config: { actionType: "web3/read-contract", network: "1" },
+        status: "idle",
+      },
+    };
+    const { valid, errors } = validateNoApproveTokenNode([readNode]);
+    expect(valid).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  it("approve-token: all current factory shapes pass (no shape emits approve-token)", () => {
+    for (const desc of [
+      HEALTH_DESCRIPTOR,
+      YIELD_DESCRIPTOR,
+      ALERT_DESCRIPTOR,
+      CLAIM_DESCRIPTOR,
+    ]) {
+      const result = buildWorkflow(desc);
+      const { valid } = validateNoApproveTokenNode(result.nodes);
+      expect(valid).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable contract guard: real engine output → factory → no unresolved
+// {{key}} placeholders (catches CR-01, CR-02 regressions) (WR-01 coverage)
+// ---------------------------------------------------------------------------
+
+// Representative ScanResponse that exercises all four suggestion categories.
+const ARBITRUM_USDC_ADDR = "0xaf88d065e77c8cc2239327c5edb3a432268e5831";
+const WALLET_ADDR = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+const CONTRACT_SCAN: ScanResponse = {
+  schemaVersion: 1,
+  address: WALLET_ADDR,
+  positions: [
+    // health: Aave V3 position with active loan
+    {
+      chainId: 42_161,
+      protocol: "aave-v3" as const,
+      healthFactor: 1.8,
+      noActiveLoan: false,
+      totalCollateralUsd: 10_000,
+      totalDebtUsd: 5000,
+      suppliedAssets: [
+        {
+          symbol: "WETH",
+          tokenAddress: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+          amount: "3000000000000000000",
+          decimals: 18,
+          usdValue: 10_000,
+        },
+      ],
+      borrowedAssets: [
+        {
+          symbol: "USDC",
+          tokenAddress: ARBITRUM_USDC_ADDR,
+          amount: "5000000000",
+          decimals: 6,
+          usdValue: 5000,
+        },
+      ],
+    },
+    // alert: supply-only Aave position (no active loan, not lido)
+    {
+      chainId: 42_161,
+      protocol: "aave-v3" as const,
+      healthFactor: null,
+      noActiveLoan: true,
+      totalCollateralUsd: 500,
+      totalDebtUsd: null,
+      suppliedAssets: [
+        {
+          symbol: "USDC",
+          tokenAddress: ARBITRUM_USDC_ADDR,
+          amount: "500000000",
+          decimals: 6,
+          usdValue: 500,
+        },
+      ],
+      borrowedAssets: [],
+    },
+    // claim: Lido position
+    {
+      chainId: 1,
+      protocol: "lido" as const,
+      healthFactor: null,
+      noActiveLoan: true,
+      totalCollateralUsd: 1000,
+      totalDebtUsd: null,
+      suppliedAssets: [
+        {
+          symbol: "stETH",
+          tokenAddress: "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+          amount: "500000000000000000",
+          decimals: 18,
+          usdValue: 1200,
+        },
+      ],
+      borrowedAssets: [],
+    },
+  ],
+  // yield: non-depegged stablecoin above dust threshold
+  stablecoins: [
+    {
+      chainId: 42_161,
+      symbol: "USDC",
+      tokenAddress: ARBITRUM_USDC_ADDR,
+      amount: "500000000",
+      decimals: 6,
+      usdValue: 500,
+      priceUsd: 1.0,
+      depegged: false,
+    },
+  ],
+  unavailableChains: [],
+  scannedAt: new Date().toISOString(),
+};
+
+describe("Contract: engine → factory → no unresolved {{key}} placeholders (CR-01, CR-02)", () => {
+  it("all four categories covered by the scan fixture", () => {
+    const descriptors = buildSuggestions(CONTRACT_SCAN);
+    const categories = new Set(descriptors.map((d) => d.category));
+    expect(categories).toContain("health");
+    expect(categories).toContain("yield");
+    expect(categories).toContain("alert");
+    expect(categories).toContain("claim");
+  });
+
+  it("every engine-produced descriptor: buildWorkflow output has no unresolved {{key}} placeholder", () => {
+    const descriptors = buildSuggestions(CONTRACT_SCAN);
+
+    for (const descriptor of descriptors) {
+      const workflow = buildWorkflow(descriptor);
+      const workflowJson = JSON.stringify({
+        nodes: workflow.nodes,
+        edges: workflow.edges,
+      });
+
+      for (const match of workflowJson.matchAll(RE_SIMPLE_PLACEHOLDER)) {
+        const key = match[1];
+        expect(
+          key in descriptor.confirmInputs,
+          `Category "${descriptor.category}" (id: ${descriptor.id}): ` +
+            `placeholder {{${key}}} has no matching key in confirmInputs. ` +
+            `Available keys: ${Object.keys(descriptor.confirmInputs).join(", ")}`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("alert descriptor: confirmInputs carries tokenAddress and alertThreshold (CR-01)", () => {
+    const descriptors = buildSuggestions(CONTRACT_SCAN);
+    const alert = descriptors.find((d) => d.category === "alert");
+    expect(alert).toBeDefined();
+    expect("tokenAddress" in (alert?.confirmInputs ?? {})).toBe(true);
+    expect("alertThreshold" in (alert?.confirmInputs ?? {})).toBe(true);
+    expect("priceThreshold" in (alert?.confirmInputs ?? {})).toBe(false);
+  });
+
+  it("claim descriptor: confirmInputs carries stakingTokenAddress (CR-02)", () => {
+    const descriptors = buildSuggestions(CONTRACT_SCAN);
+    const claim = descriptors.find((d) => d.category === "claim");
+    expect(claim).toBeDefined();
+    expect("stakingTokenAddress" in (claim?.confirmInputs ?? {})).toBe(true);
+  });
+
+  it("health descriptor: condition rightOperand matches the clamped threshold in confirmInputs (WR-01)", () => {
+    const descriptors = buildSuggestions(CONTRACT_SCAN);
+    const health = descriptors.find((d) => d.category === "health");
+    expect(health).toBeDefined();
+
+    const workflow = buildWorkflow(health as SuggestionDescriptor);
+    const condNode = workflow.nodes.find(
+      (n) => String(n.data.config?.actionType) === "Condition"
+    );
+    expect(condNode).toBeDefined();
+
+    type ConditionGroup = {
+      rules?: Array<{ rightOperand?: unknown }>;
+    };
+    type ConditionConfig = { group?: ConditionGroup } | undefined;
+    const condConfig = condNode?.data.config
+      ?.conditionConfig as ConditionConfig;
+    const rightOperand = String(condConfig?.group?.rules?.[0]?.rightOperand);
+
+    // rightOperand must equal the threshold in confirmInputs (description and condition agree)
+    expect(rightOperand).toBe(health?.confirmInputs.threshold);
+    // and must be a 19-digit 1e18-scale integer string
+    expect(rightOperand).toMatch(RE_HF_1E18);
   });
 });
