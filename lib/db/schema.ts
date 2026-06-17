@@ -54,6 +54,12 @@ export const users = pgTable("users", {
   isAnonymous: boolean("is_anonymous").default(false),
   deactivatedAt: timestamp("deactivated_at"),
   twoFactorEnabled: boolean("two_factor_enabled").default(false),
+  // Wallet (SIWE) accounts start with a generated handle and must confirm or
+  // edit it in the rename modal on first login. Flipped true once chosen so
+  // returning wallet users are not re-prompted.
+  displayNameConfirmed: boolean("display_name_confirmed")
+    .notNull()
+    .default(false),
 });
 
 export const sessions = pgTable(
@@ -75,6 +81,32 @@ export const sessions = pgTable(
     riskFlagsJson: text("risk_flags_json"),
   },
   (table) => [index("idx_sessions_user_id").on(table.userId)]
+);
+
+/**
+ * Wallet addresses linked to a user, populated by Better Auth's SIWE plugin
+ * (Sign-In With Ethereum). One user may link multiple addresses; the first
+ * one is flagged `isPrimary`. Field shape mirrors the plugin's expected
+ * `walletAddress` model so the Drizzle adapter can satisfy its reads/writes.
+ */
+export const walletAddress = pgTable(
+  "wallet_address",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    address: text("address").notNull(),
+    chainId: integer("chain_id").notNull(),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_wallet_address_user_id").on(table.userId),
+    index("idx_wallet_address_address").on(table.address),
+  ]
 );
 
 /**
