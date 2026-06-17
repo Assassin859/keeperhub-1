@@ -1,13 +1,14 @@
 /**
- * RED scaffold — Wave 0 tests for the deterministic workflow factory.
- *
- * These tests FAIL because lib/scan/factory/index.ts and
- * lib/scan/factory/validate.ts do not yet exist.
- * Downstream plans (Wave 2) implement the factory and turn these green.
+ * Factory tests for the deterministic workflow factory (52-03).
  *
  * Requirements covered: PREFILL-01..07 + HF condition coercion (SC#1)
+ * Wave 0 scaffold; Wave 2 (52-03) implementation turns all tests GREEN.
  */
 import { describe, expect, it } from "vitest";
+import {
+  type ValidatorWorkflow,
+  validateWorkflow,
+} from "@/lib/mcp/validate-workflow";
 import { buildWorkflow } from "@/lib/scan/factory";
 import type { PrefillWorkflow } from "@/lib/scan/factory/types";
 import {
@@ -336,5 +337,84 @@ describe("condition evaluates: HF condition coercion (SC#1)", () => {
       ?.conditionConfig as ConditionConfig;
     const rules = condConfig2?.group?.rules ?? [];
     expect(rules[0].operator).toBe("<");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3 (52-03): stablecoin yield shape + read-only guard conformance
+// ---------------------------------------------------------------------------
+
+describe("PREFILL-06 Task 3: yield workflow passes validateWorkflow read-only guard", () => {
+  it("read-only: validateWorkflow(workflowType:'read') returns zero errors and zero warnings", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    const validatorInput: ValidatorWorkflow = {
+      id: "factory-test-yield",
+      nodes: result.nodes,
+      edges: result.edges,
+      inputSchema: null,
+      outputMapping: null,
+      isListed: false,
+      workflowType: "read",
+    };
+    const validation = validateWorkflow(validatorInput);
+    expect(validation.errors).toEqual([]);
+    expect(validation.warnings).toEqual([]);
+  });
+
+  it("read-only: no yield node has a write-type actionType", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    for (const node of result.nodes) {
+      const actionType = String(node.data.config?.actionType ?? "");
+      expect(actionType).not.toMatch(RE_WRITE_ACTION);
+    }
+  });
+});
+
+describe("PREFILL-01 Task 3: yield shape conforms to canvas wire-shape", () => {
+  it("shape: every node satisfies node.type === node.data.type", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    for (const node of result.nodes) {
+      expect(node.type).toBe(node.data.type);
+    }
+  });
+
+  it("shape: all edges have type 'default'", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    for (const edge of result.edges) {
+      expect(edge.type).toBe("default");
+    }
+  });
+
+  it("shape: yield workflow has 4 nodes and 3 edges", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    expect(result.nodes).toHaveLength(4);
+    expect(result.edges).toHaveLength(3);
+  });
+
+  it("shape: condition→alert edge on yield shape carries sourceHandle 'true'", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    const condNode = result.nodes.find(
+      (n) => String(n.data.config?.actionType) === "Condition"
+    );
+    expect(condNode).toBeDefined();
+    const condEdge = result.edges.find((e) => e.source === condNode?.id);
+    expect(condEdge?.sourceHandle).toBe("true");
+  });
+});
+
+describe("PREFILL-03 Task 3: yield shape template refs all resolve", () => {
+  it("template ref: validateTemplateRefs on yield output returns valid:true", () => {
+    const result: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    const { valid, errors } = validateTemplateRefs(result.nodes, result.edges);
+    expect(errors).toEqual([]);
+    expect(valid).toBe(true);
+  });
+
+  it("template ref: yield node IDs are deterministic (same descriptor → same IDs)", () => {
+    const a: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    const b: PrefillWorkflow = buildWorkflow(YIELD_DESCRIPTOR);
+    const aIds = a.nodes.map((n) => n.id).sort();
+    const bIds = b.nodes.map((n) => n.id).sort();
+    expect(aIds).toEqual(bIds);
   });
 });
