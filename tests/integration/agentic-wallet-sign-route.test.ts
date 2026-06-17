@@ -28,6 +28,16 @@ import { privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { extractPayerAddress } from "@/lib/payments/x402/payment-gate";
 
+// The sign route's real signing deps (lib/agentic-wallet/sign ->
+// lib/turnkey/agentic-wallet) pull in `server-only`, which throws when
+// imported outside an RSC graph. Stub it so the route module loads under the
+// node test environment (matches the unit-test convention).
+vi.mock("server-only", () => ({}));
+
+// 65-byte secp256k1 signature as 0x + 130 hex chars. Hoisted per
+// lint/performance/useTopLevelRegex.
+const SIGNATURE_HEX_RE = /^0x[0-9a-fA-F]{130}$/;
+
 // A realistic mppx-issued Tempo challenge the route can deserialize. Zero
 // amount intentionally routes to proof-mode (signMppProof) so the existing
 // assertions can continue reading EIP-712 typed-data JSON from Turnkey's
@@ -326,7 +336,7 @@ describe("POST /api/agentic-wallet/sign -- EIP-3009 ecrecover round-trip", () =>
     );
     expect(res.status).toBe(200);
     const json = (await res.json()) as { signature: string };
-    expect(json.signature).toMatch(/^0x[0-9a-fA-F]{130}$/);
+    expect(json.signature).toMatch(SIGNATURE_HEX_RE);
 
     // Assertion A: direct ecrecover via viem
     const recovered = await recoverTypedDataAddress({
@@ -921,6 +931,142 @@ describe("POST /api/agentic-wallet/sign -- MPP chainId enum (Phase 37 fix #3)", 
       domain: { chainId: number };
     };
     expect(typedData.domain.chainId).toBe(4217);
+  });
+});
+
+describe("POST /api/agentic-wallet/sign -- Tempo MPP inner-amount validation (KEEP-736 / KEEP-737)", () => {
+  const CREATOR_PAYTO = "0x1111111111111111111111111111111111111111";
+  const ATTACKER_PAYTO = "0x2222222222222222222222222222222222222222";
+
+  // Build a real charge-intent Tempo MPP challenge whose inner request carries
+  // the fund-moving amount + recipient (what signMppTransaction would sign).
+  function buildTempoCharge(amount: string, recipient: string): string {
+    const full = Challenge.serialize(
+      Challenge.from({
+        secretKey: "mpp-route-test-secret",
+        realm: "test.keeperhub.local",
+        method: "tempo",
+        intent: "charge",
+        request: {
+          amount,
+          currency: "0x20c000000000000000000000b9537d11c60e8b50",
+          recipient,
+          methodDetails: { chainId: 4217 },
+        },
+      })
+    );
+    return full.startsWith("Payment ") ? full.slice("Payment ".length) : full;
+  }
+
+  function postTempo(serialized: string): Promise<Response> {
+    const body = JSON.stringify({
+      chain: "tempo",
+      workflowSlug: "test-slug",
+      paymentChallenge: { chainId: 4217, serialized },
+    });
+    const path = "/api/agentic-wallet/sign";
+    return POST(
+      new Request(`http://localhost:3000${path}`, {
+        method: "POST",
+        headers: buildHmacHeaders("subOrg_test", "POST", path, body),
+        body,
+      })
+    );
+  }
+
+  it("blocks the cover-workflow bypass: cheap slug + expensive inner charge (403 AMOUNT_MISMATCH)", async () => {
+    // Binding resolves the cheap cover workflow's price ($0.05); the serialized
+    // challenge encodes a $100 transfer to the same creator.
+    mockVerifyWorkflowBinding.mockResolvedValue({
+      ok: true,
+      expectedPayTo: CREATOR_PAYTO,
+      expectedAmountMicro: "50000",
+      workflowId: "wf_cheap",
+    });
+    const res = await postTempo(buildTempoCharge("100000000", CREATOR_PAYTO));
+
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as { code: string };
+    expect(json.code).toBe("AMOUNT_MISMATCH");
+    // Gate fires before reserve + signer: no cap burn, no broadcast.
+    expect(mockReserveSpend).not.toHaveBeenCalled();
+    expect(mockSignRawPayload).not.toHaveBeenCalled();
+  });
+
+  it("blocks an inner charge that pays a different recipient (403 PAYTO_MISMATCH)", async () => {
+    mockVerifyWorkflowBinding.mockResolvedValue({
+      ok: true,
+      expectedPayTo: CREATOR_PAYTO,
+      expectedAmountMicro: "50000",
+      workflowId: "wf_cheap",
+    });
+    const res = await postTempo(buildTempoCharge("50000", ATTACKER_PAYTO));
+
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as { code: string };
+    expect(json.code).toBe("PAYTO_MISMATCH");
+    expect(mockReserveSpend).not.toHaveBeenCalled();
+    expect(mockSignRawPayload).not.toHaveBeenCalled();
+  });
+
+  it("feeds the inner charge amount to the risk classifier so a $60 charge reaches the ask tier (F-012)", async () => {
+    mockVerifyWorkflowBinding.mockResolvedValue({
+      ok: true,
+      expectedPayTo: CREATOR_PAYTO,
+      expectedAmountMicro: "60000000",
+      workflowId: "wf_pricey",
+    });
+    mockClassifyRisk.mockReturnValue("ask");
+    mockCreateApprovalRequest.mockResolvedValue({ id: "ar_tempo" });
+
+    const res = await postTempo(buildTempoCharge("60000000", CREATOR_PAYTO));
+
+    expect(res.status).toBe(202);
+    // The classifier must see the inner amount, NOT the outer 0.
+    expect(mockClassifyRisk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chain: "tempo",
+        challenge: expect.objectContaining({ amount: "60000000" }),
+      })
+    );
+    // The ask-tier binding is derived from the inner recipient + amount.
+    expect(mockCreateApprovalRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          recipient: CREATOR_PAYTO,
+          amountMicro: "60000000",
+          chain: "tempo",
+        }),
+      })
+    );
+  });
+
+  it("reaches the signer when the inner charge matches the binding and is under threshold", async () => {
+    mockVerifyWorkflowBinding.mockResolvedValue({
+      ok: true,
+      expectedPayTo: CREATOR_PAYTO,
+      expectedAmountMicro: "50000",
+      workflowId: "wf_cheap",
+    });
+    mockClassifyRisk.mockReturnValue("auto");
+    mockSignRawPayload.mockResolvedValue({
+      activity: {
+        status: "ACTIVITY_STATUS_COMPLETED",
+        result: {
+          signRawPayloadResult: {
+            r: "ab".repeat(32),
+            s: "cd".repeat(32),
+            v: "00",
+          },
+        },
+      },
+    });
+
+    await postTempo(buildTempoCharge("50000", CREATOR_PAYTO));
+
+    // All gates passed: spend reserved and the signer was reached.
+    expect(mockReserveSpend).toHaveBeenCalledOnce();
+    expect(mockSignRawPayload).toHaveBeenCalled();
   });
 });
 
