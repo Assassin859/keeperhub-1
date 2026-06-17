@@ -57,13 +57,23 @@ export default function ScanPage(): React.ReactElement {
 
       if (res.status === 429) {
         const body = (await res.json()) as { retryAfter?: number };
-        setRetryAfter(body.retryAfter ?? null);
+        // The API returns retryAfter in SECONDS; the banner renders minutes.
+        // Convert to whole minutes (min 1) and fall back to 60 (hourly limit)
+        // when the field is absent or non-positive.
+        const retrySeconds = body.retryAfter;
+        setRetryAfter(
+          retrySeconds && retrySeconds > 0
+            ? Math.max(1, Math.ceil(retrySeconds / 60))
+            : 60
+        );
         setScanState("rate-limited");
         return;
       }
 
       if (!res.ok) {
-        setErrorMessage(null);
+        setErrorMessage(
+          "The scan service is temporarily unavailable. Please try again."
+        );
         setScanState("error");
         return;
       }
@@ -72,6 +82,9 @@ export default function ScanPage(): React.ReactElement {
       setScanData(data);
       setScanState(data.suggestions?.length ? "populated" : "empty");
     } catch {
+      setErrorMessage(
+        "Couldn't reach the scanner. Check your connection and try again."
+      );
       setScanState("error");
     }
   };

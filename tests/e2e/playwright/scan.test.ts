@@ -192,4 +192,35 @@ test.describe("scan", () => {
       page.locator('[role="alert"]').filter({ hasText: "USDC" }).first()
     ).toBeVisible();
   });
+
+  /**
+   * SCANUI-01 (rate limit): a 429 response renders the rate-limit banner with
+   * the retry window converted from API seconds to whole MINUTES. Guards the
+   * seconds-vs-minutes unit bug — the API returns retryAfter in seconds (3600),
+   * the banner must read "60 minutes", never "3600 minutes".
+   */
+  test("SCANUI-01: 429 renders rate-limit banner with seconds converted to minutes", async ({
+    page,
+  }) => {
+    await page.route("**/api/scan/**", async (route) => {
+      await route.fulfill({
+        status: 429,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Rate limit exceeded",
+          retryAfter: 3600,
+        }),
+      });
+    });
+
+    await page.goto("/scan", { waitUntil: "load" });
+    await page.locator("#scan-address").fill(SCAN_ADDRESS);
+    await page.getByRole("button", { name: "Scan" }).click();
+
+    const banner = page.locator('[data-testid="scan-results-rate-limited"]');
+    await expect(banner).toBeVisible({ timeout: 15_000 });
+    // 3600 seconds -> 60 minutes (not "3600 minutes").
+    await expect(banner).toContainText("60 minute");
+    await expect(banner).not.toContainText("3600");
+  });
 });

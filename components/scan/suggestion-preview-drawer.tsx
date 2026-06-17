@@ -147,7 +147,6 @@ export function SuggestionPreviewDrawer({
                     {key}
                   </label>
                   <Input
-                    aria-readonly={true}
                     className="cursor-default bg-muted font-mono text-sm"
                     id={`param-${key}`}
                     readOnly
