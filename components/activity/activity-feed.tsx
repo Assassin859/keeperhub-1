@@ -453,6 +453,7 @@ export function ActivityFeed({
     setPage,
     loading,
     error,
+    reload,
   } = usePaginatedResource<SecurityAuditEvent>(
     (page) =>
       api.security.getAudit({
@@ -471,6 +472,9 @@ export function ActivityFeed({
         page,
         limit,
       }),
+    // `limit` (page size) is intentionally NOT part of the reset key: changing
+    // the page size keeps the current page (it just refetches via the effect
+    // below). Only the actual filters reset the feed back to page 1.
     JSON.stringify({
       resourceType,
       resourceTypes,
@@ -484,10 +488,21 @@ export function ActivityFeed({
       actorUserIds,
       from,
       to,
-      limit,
     }),
     { initialPage }
   );
+
+  // Page size lives outside the reset key, so refetch the current page when it
+  // changes (skip the first render -- the initial fetch already covers it).
+  const didMountLimitRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: limit is the change trigger, not read in the body
+  useEffect(() => {
+    if (didMountLimitRef.current) {
+      reload();
+    } else {
+      didMountLimitRef.current = true;
+    }
+  }, [limit, reload]);
 
   // Reflect the active page + size in the URL when asked (route-backed feed
   // only), dropping each param at its default (page 1 / default size) so the
