@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T09:09:28.667Z"
+last_updated: "2026-06-17T09:25:36.758Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 13
-  completed_plans: 12
-  percent: 20
+  completed_plans: 13
+  percent: 40
 ---
 
 # Project State
@@ -23,7 +23,7 @@ progress:
 ## Current Position
 
 Phase: 52 (suggestion-engine-workflow-factory) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-06-17
 
@@ -40,6 +40,7 @@ Last activity: 2026-06-17
 - Duration 51-06: 7 minutes
 - Duration 52-01: 10 minutes
 - Duration 52-02: 4 minutes
+- Duration 52-05: 12 minutes
 
 ## Accumulated Context
 
@@ -73,6 +74,9 @@ Last activity: 2026-06-17
 - clampHfThreshold: returns HF_DEFAULT (1.5) when currentHf > 1.5; Math.max(currentHf - 0.1, 1.3) otherwise; hard floor 1.3 never breached (52-02).
 - hfThresholdRaw uses BigInt(Math.floor(threshold * 1e18)).toString() — safe for 1.3/1.5 because both are exactly representable IEEE 754 doubles at 1e18 scale (52-02).
 - alert category built from supply-only Aave positions (healthFactor null, protocol !== lido); Lido null-HF positions route to claim only (52-02).
+- suggestions? field is OPTIONAL on ScanResponse (type-only import from suggestions/types.ts) for backward compatibility with Phase 51 callers and cached rows pre-dating 52-05.
+- buildSuggestions wrapped in inner try/catch in the route so any engine failure degrades to suggestions:[] rather than failing the 200 response (T-52-12, 52-05).
+- Suggestions attached in the route (not inside scanAddress) — cached scan rows pre-dating 52-05 are unaffected; route computes fresh suggestions on each response.
 
 ### Todos
 
@@ -87,9 +91,9 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 52-02 (suggestion engine: buildSuggestions, ranking.ts, 27 tests GREEN) — 2026-06-17
-- Stopped at: Plan 3 of 5 (52-03 ready to execute)
-- Next command: `/gsd:execute-phase 52 03`
+- Last completed: 52-05 (scan route suggestions seam: ScanResponse.suggestions?, buildSuggestions wired, TEST-02 GREEN) — 2026-06-17
+- Stopped at: Plan 5 of 5 (phase 52 complete)
+- Next command: `/gsd:execute-phase 53 01`
 
 ## Deferred Items
 

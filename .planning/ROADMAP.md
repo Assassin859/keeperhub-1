@@ -24,7 +24,7 @@
 ## Phases
 
 - [ ] **Phase 51: Scanner Infrastructure** - Multi-protocol position scanner + Postgres cache + public rate-limited `GET /api/scan` endpoint + scanner correctness unit tests
-- [ ] **Phase 52: Suggestion Engine + Workflow Factory** - 4-category deterministic rule engine + 6-template workflow factory + remaining protocol adapters + Zerion breadth fallback + integration test
+- [x] **Phase 52: Suggestion Engine + Workflow Factory** - 4-category deterministic rule engine + 6-template workflow factory + remaining protocol adapters + Zerion breadth fallback + integration test (completed 2026-06-17)
 - [ ] **Phase 53: /scan UI** - Address input page, suggestion card list, WorkflowCanvas read-only preview, unauthenticated run/save CTAs
 - [ ] **Phase 54: Auth Round-Trip + Persistence** - `pending_scan` cookie, `PendingScanRunner`, save-on-schedule wiring, Turnkey provision pre-flight, E2E funnel test
 - [ ] **Phase 55: Polish + Hardening** - Abuse telemetry, cache sweeper cron, observability metrics, financial-advice disclaimer review
@@ -69,7 +69,7 @@ Plans:
 - [x] 52-02-PLAN.md — Suggestion engine: 4-category builders, dust filter, cap/rank, HF clamp, disclaimer
 - [x] 52-03-PLAN.md — Factory core: validators (template-ref + MaxUint256), dispatcher, HF-monitor + stablecoin-yield shapes
 - [x] 52-04-PLAN.md — Factory shapes: price-alert, reward-reminder, generic fallback + dispatcher wiring
-- [ ] 52-05-PLAN.md — Scan route extension (suggestions[]) + TEST-02 integration (Arbitrum USDC → network "42161")
+- [x] 52-05-PLAN.md — Scan route extension (suggestions[]) + TEST-02 integration (Arbitrum USDC → network "42161")
 
 ### Phase 53: /scan UI
 **Goal**: An anonymous visitor can paste an Ethereum address at `/scan`, see their DeFi positions and ranked suggestion cards rendered in the existing design system, click a suggestion to view a prefilled WorkflowCanvas preview in read-only mode, and reach the run/save CTAs — which gate on sign-in only when clicked.
@@ -114,7 +114,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 51. Scanner Infrastructure | 6/8 | In Progress|  |
-| 52. Suggestion Engine + Workflow Factory | 4/5 | In Progress|  |
+| 52. Suggestion Engine + Workflow Factory | 5/5 | Complete   | 2026-06-17 |
 | 53. /scan UI | 0/TBD | Not started | - |
 | 54. Auth Round-Trip + Persistence | 0/TBD | Not started | - |
 | 55. Polish + Hardening | 0/TBD | Not started | - |
