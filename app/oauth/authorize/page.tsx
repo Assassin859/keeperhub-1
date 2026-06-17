@@ -1,10 +1,10 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
 import {
   isAnonymousUserShape,
   logAnonymousExecutionBlock,
 } from "@/lib/auth-anonymous-guard";
-import { auth } from "@/lib/auth";
 import { parseScopes } from "@/lib/mcp/oauth-scopes";
 import {
   AUTH_CODE_TTL_MS,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/mcp/oauth-store";
 import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { isConsentOrgMismatch } from "./_lib/consent-binding";
 
 type AuthorizeSearchParams = {
   client_id?: string;
@@ -74,6 +75,16 @@ async function handleApprove(formData: FormData): Promise<void> {
 
   const orgContext = await getOrgContext();
   const organizationId = orgContext.organization?.id ?? session.user.id;
+
+  // F-022 / KEEP-747: the consent page rendered (and showed the user) a
+  // specific org and bound its id into the form. If the active org changed
+  // between viewing the page and approving (e.g. switched in another tab), the
+  // org resolved here no longer matches what the user consented to -- refuse
+  // rather than silently scope the token to a different org.
+  const consentedOrgId = formData.get("organization_id") as string | null;
+  if (isConsentOrgMismatch(consentedOrgId, organizationId)) {
+    errorRedirect(redirectUri, "access_denied", state ?? undefined);
+  }
 
   const code = crypto.randomUUID().replace(/-/g, "");
   await storeAuthCode({
@@ -240,6 +251,14 @@ export default async function AuthorizePage({
     );
   }
 
+  // F-022 / KEEP-747: resolve the org the token will be scoped to and show it,
+  // then bind its id into the approve form so the user explicitly consents to
+  // this specific org and handleApprove can reject a mid-flow org switch.
+  const consentOrgContext = await getOrgContext();
+  const consentOrgId = consentOrgContext.organization?.id ?? session.user.id;
+  const consentOrgName =
+    consentOrgContext.organization?.name ?? "your personal account";
+
   const resolvedScope = scope ?? "mcp:read mcp:write";
   const scopeList = parseScopes(resolvedScope);
 
@@ -300,6 +319,13 @@ export default async function AuthorizePage({
           </div>
 
           <p className="mt-5 text-sm text-muted-foreground">
+            Authorizing access to{" "}
+            <span className="font-medium text-foreground">
+              {consentOrgName}
+            </span>
+          </p>
+
+          <p className="mt-1 text-sm text-muted-foreground">
             Signed in as{" "}
             <span className="font-medium text-foreground">
               {session.user.email}
@@ -324,6 +350,7 @@ export default async function AuthorizePage({
           <form action={handleApprove}>
             <input name="client_id" type="hidden" value={clientId} />
             <input name="redirect_uri" type="hidden" value={redirectUri} />
+            <input name="organization_id" type="hidden" value={consentOrgId} />
             <input name="scope" type="hidden" value={resolvedScope} />
             {state && <input name="state" type="hidden" value={state} />}
             <input name="code_challenge" type="hidden" value={codeChallenge} />
