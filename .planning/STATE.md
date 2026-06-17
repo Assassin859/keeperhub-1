@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T08:26:55.816Z"
+last_updated: "2026-06-17T08:41:01.681Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
   percent: 20
 ---
 
@@ -23,7 +23,7 @@ progress:
 ## Current Position
 
 Phase: 52 (suggestion-engine-workflow-factory) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-06-17
 
@@ -31,7 +31,7 @@ Last activity: 2026-06-17
 
 - Phases planned: 5 (51-55)
 - Phases complete: 0
-- Plans complete: 7/8 (51-01, 51-02, 51-03, 51-04, 51-05, 51-06 done; 51-05 completed 2026-06-17)
+- Plans complete: 10/13 (51-01..51-06, 52-01, 52-02 done)
 - Duration 51-01: 31 minutes
 - Duration 51-02: ~20 minutes
 - Duration 51-03: 27 minutes
@@ -39,6 +39,7 @@ Last activity: 2026-06-17
 - Duration 51-05: 10 minutes
 - Duration 51-06: 7 minutes
 - Duration 52-01: 10 minutes
+- Duration 52-02: 4 minutes
 
 ## Accumulated Context
 
@@ -69,6 +70,9 @@ Last activity: 2026-06-17
 - resolveImplementationAddress takes provider directly (not chainId) for clean testability without getRpcProvider mock (51-05).
 - EIP1967_IMPLEMENTATION_SLOT exported from proxy-detection.ts rather than re-implemented as a new literal (51-05).
 - Wave 0 stubs required for type-check compliance: engine.ts / factory/index.ts / factory/validate.ts created as throw-stubs so pnpm type-check passes while RED tests land; Wave 2 replaces stubs with real implementations (52-01).
+- clampHfThreshold: returns HF_DEFAULT (1.5) when currentHf > 1.5; Math.max(currentHf - 0.1, 1.3) otherwise; hard floor 1.3 never breached (52-02).
+- hfThresholdRaw uses BigInt(Math.floor(threshold * 1e18)).toString() — safe for 1.3/1.5 because both are exactly representable IEEE 754 doubles at 1e18 scale (52-02).
+- alert category built from supply-only Aave positions (healthFactor null, protocol !== lido); Lido null-HF positions route to claim only (52-02).
 
 ### Todos
 
@@ -83,9 +87,9 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 52-01 (Wave 0 type contracts + RED test scaffold) — 2026-06-17
-- Stopped at: Plan 2 of 5 (52-02 ready to execute)
-- Next command: `/gsd:execute-phase 52 02`
+- Last completed: 52-02 (suggestion engine: buildSuggestions, ranking.ts, 27 tests GREEN) — 2026-06-17
+- Stopped at: Plan 3 of 5 (52-03 ready to execute)
+- Next command: `/gsd:execute-phase 52 03`
 
 ## Deferred Items
 
