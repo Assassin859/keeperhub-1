@@ -237,6 +237,11 @@
   --color-badge-blue-text-dark: var(--ds-blue-400, rgb(96, 165, 250));
   --color-badge-blue-border: var(--ds-blue-500-20, rgba(59, 130, 246, 0.2));
 
+  /* --- Color: Badge (health category -- Scan UI) --- */
+  --color-badge-health-bg: oklch(0.646 0.222 41.116 / 0.15);
+  --color-badge-health-text: var(--ds-chart-orange, oklch(0.646 0.222 41.116));
+  --color-badge-health-border: oklch(0.646 0.222 41.116 / 0.3);
+
   /* --- Spacing --- */
   --space-0: var(--ds-space-0, 0);
   --space-px: var(--ds-space-px, 1px);
