@@ -42,6 +42,7 @@ import {
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { workflowReachableConditions } from "@/lib/workflow/executable";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
@@ -162,6 +163,12 @@ async function prepareExecution(
           status: "running",
           input: body,
           ...attribution,
+          // Tie the run to the definition that executed, so it resolves to a
+          // workflow_history version by content hash like every other trigger.
+          executedWorkflowHash: hashWorkflowDefinition(
+            workflow.nodes,
+            workflow.edges
+          ),
         })
         .returning()
   );
