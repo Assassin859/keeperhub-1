@@ -101,7 +101,7 @@ export default function ScanPage(): React.ReactElement {
 
   return (
     <>
-      <main className="min-h-screen bg-[var(--color-hub-overlay)] pt-[var(--header-height)]">
+      <main className="pointer-events-auto min-h-screen bg-[var(--color-hub-overlay)] pt-[var(--header-height)]">
         <div className="mx-auto max-w-2xl px-4 sm:px-6">
           {isCompact ? (
             <div className="py-4">
