@@ -22,6 +22,7 @@ import "server-only";
 
 import { ethers } from "ethers";
 import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
+import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { HttpStatus } from "@/lib/http-status";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { scanAddress } from "@/lib/scan/scanner";
@@ -36,6 +37,15 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ address: string }> }
 ): Promise<Response> {
+  // HARDEN-04: fail-closed feature flag gate. Any absent/empty/non-"true"
+  // value → 404 with no validation, rate-limit, or RPC work performed.
+  if (process.env.NEXT_PUBLIC_SCAN_ENABLED !== "true") {
+    return Response.json(
+      { error: "Not found" },
+      { status: HttpStatus.NOT_FOUND }
+    );
+  }
+
   const { address } = await params;
 
   if (!ethers.isAddress(address)) {
@@ -54,6 +64,14 @@ export async function GET(
   const rate = await incrementAndCheck(`scan:${trustedIp}`, RATE_LIMIT_MAX);
 
   if (!rate.allowed) {
+    // HARDEN-01: emit abuse telemetry BEFORE returning 429 so the Sentry
+    // event fires even if the response pipeline has an edge-case failure.
+    // extra values must all be strings (Record<string, string>).
+    logAnonymousExecutionBlock("scan", null, {
+      ip: trustedIp,
+      rateLimitCount: String(rate.count),
+      address,
+    });
     return applyRateLimitHeaders(
       Response.json(
         { error: "Rate limit exceeded", retryAfter: rate.retryAfter },
