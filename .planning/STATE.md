@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T00:47:00Z"
+last_updated: "2026-06-17T08:26:55.816Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 8
-  completed_plans: 7
-  percent: 0
+  completed_phases: 1
+  total_plans: 13
+  completed_plans: 9
+  percent: 20
 ---
 
 # Project State
@@ -18,14 +18,14 @@ progress:
 ## Project Reference
 
 - **Core value:** Users can build and deploy Web3 automation workflows through a visual builder without writing code.
-- **Current focus:** Phase 51 — scanner-infrastructure
+- **Current focus:** Phase 52 — suggestion-engine-workflow-factory
 
 ## Current Position
 
-Phase: 51 (scanner-infrastructure) — EXECUTING
-Plan: 8 of 8
-Status: Executing Phase 51
-Last activity: 2026-06-17 -- Completed 51-05 (Aave V3 adapter + EIP-1967 proxy resolution)
+Phase: 52 (suggestion-engine-workflow-factory) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-06-17
 
 ## Performance Metrics
 
@@ -38,6 +38,7 @@ Last activity: 2026-06-17 -- Completed 51-05 (Aave V3 adapter + EIP-1967 proxy r
 - Duration 51-04: 7 minutes
 - Duration 51-05: 10 minutes
 - Duration 51-06: 7 minutes
+- Duration 52-01: 10 minutes
 
 ## Accumulated Context
 
@@ -67,6 +68,7 @@ Last activity: 2026-06-17 -- Completed 51-05 (Aave V3 adapter + EIP-1967 proxy r
 - decodeAaveV3Results does not check AAVE_V3_POOLS registry — decode is chainId-agnostic; registry used only in buildAaveV3Calls (51-05).
 - resolveImplementationAddress takes provider directly (not chainId) for clean testability without getRpcProvider mock (51-05).
 - EIP1967_IMPLEMENTATION_SLOT exported from proxy-detection.ts rather than re-implemented as a new literal (51-05).
+- Wave 0 stubs required for type-check compliance: engine.ts / factory/index.ts / factory/validate.ts created as throw-stubs so pnpm type-check passes while RED tests land; Wave 2 replaces stubs with real implementations (52-01).
 
 ### Todos
 
@@ -81,9 +83,9 @@ Last activity: 2026-06-17 -- Completed 51-05 (Aave V3 adapter + EIP-1967 proxy r
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 51-05 (Aave V3 adapter + EIP-1967 proxy resolution) — 2026-06-17
-- Stopped at: Plan 8 of 8 ready to execute
-- Next command: `/gsd:execute-phase 51 07`
+- Last completed: 52-01 (Wave 0 type contracts + RED test scaffold) — 2026-06-17
+- Stopped at: Plan 2 of 5 (52-02 ready to execute)
+- Next command: `/gsd:execute-phase 52 02`
 
 ## Deferred Items
 

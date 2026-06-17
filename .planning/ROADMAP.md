@@ -64,7 +64,12 @@ Plans:
   3. Every suggestion descriptor carries a required `chainId`; calling the workflow factory on any suggestion produces complete node/edge JSON in under 10ms with no AI API call, with every `{{@nodeId:Label.field}}` template reference resolving to an existing node in the output.
   4. The suggestion list is capped at 7, ranked health > yield > alert > claim (then by USD value descending within each category), and each suggestion carries a read/write label, a per-card risk note, and a global "not financial advice" disclaimer.
   5. Integration test: unauthenticated `GET /api/scan/{known-arbitrum-usdc-address}` returns HTTP 200, the response contains a stablecoin suggestion, and the prefilled workflow JSON for that suggestion carries `network: 42161` in the chain-specific node config.
-**Plans**: TBD
+**Plans**: 5 plans
+- [x] 52-01-PLAN.md — Wave 0 scaffold: SuggestionDescriptor + PrefillWorkflow types, 3 failing test files
+- [ ] 52-02-PLAN.md — Suggestion engine: 4-category builders, dust filter, cap/rank, HF clamp, disclaimer
+- [ ] 52-03-PLAN.md — Factory core: validators (template-ref + MaxUint256), dispatcher, HF-monitor + stablecoin-yield shapes
+- [ ] 52-04-PLAN.md — Factory shapes: price-alert, reward-reminder, generic fallback + dispatcher wiring
+- [ ] 52-05-PLAN.md — Scan route extension (suggestions[]) + TEST-02 integration (Arbitrum USDC → network "42161")
 
 ### Phase 53: /scan UI
 **Goal**: An anonymous visitor can paste an Ethereum address at `/scan`, see their DeFi positions and ranked suggestion cards rendered in the existing design system, click a suggestion to view a prefilled WorkflowCanvas preview in read-only mode, and reach the run/save CTAs — which gate on sign-in only when clicked.
@@ -109,7 +114,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 51. Scanner Infrastructure | 6/8 | In Progress|  |
-| 52. Suggestion Engine + Workflow Factory | 0/TBD | Not started | - |
+| 52. Suggestion Engine + Workflow Factory | 1/5 | In Progress|  |
 | 53. /scan UI | 0/TBD | Not started | - |
 | 54. Auth Round-Trip + Persistence | 0/TBD | Not started | - |
 | 55. Polish + Hardening | 0/TBD | Not started | - |
