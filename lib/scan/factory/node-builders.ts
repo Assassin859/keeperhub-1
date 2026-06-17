@@ -186,6 +186,11 @@ export function buildConditionNode(
       label: options.label,
       config: {
         actionType: "Condition",
+        // condition: expression string used by lib/workflow/codegen/sdk.ts and
+        // as a fallback in resolver.ts when conditionConfig.group is absent.
+        // The runtime evaluator (resolver.ts) always prefers conditionConfig.group
+        // when present, so this field is not evaluated at execution time.
+        // Keep both in sync to avoid drift in codegen output.
         condition: expression,
         conditionConfig: {
           group: {
