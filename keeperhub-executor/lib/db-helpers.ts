@@ -72,14 +72,16 @@ export async function updateExecutionStatus(
 export async function upgradePhantomToPending(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  executedWorkflowHash: string
 ): Promise<boolean> {
   const result = await db
     .update(workflowExecutions)
     // KEEP-693: the phantom was created billable=false (it had not run yet);
     // upgrading to pending means it is now a real execution, so it becomes
-    // billable like any owner-initiated run.
-    .set({ status: "pending", input, billable: true })
+    // billable like any owner-initiated run. Stamp the hash of the definition
+    // the executor just loaded so the run links to its workflow_history version.
+    .set({ status: "pending", input, billable: true, executedWorkflowHash })
     .where(
       and(
         eq(workflowExecutions.id, executionId),

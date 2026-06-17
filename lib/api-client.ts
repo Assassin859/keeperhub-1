@@ -971,6 +971,7 @@ export const securityApi = {
     actorUserIds?: string[];
     from?: string;
     to?: string;
+    search?: string;
     page?: number;
     limit?: number;
   }) => {
@@ -1010,6 +1011,9 @@ export const securityApi = {
     }
     if (params?.to) {
       qs.set("to", params.to);
+    }
+    if (params?.search) {
+      qs.set("q", params.search);
     }
     if (params?.page !== undefined) {
       qs.set("page", String(params.page));

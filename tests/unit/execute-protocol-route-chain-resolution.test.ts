@@ -62,6 +62,28 @@ vi.mock("@/lib/step-registry", () => ({
   PLUGIN_STEP_IMPORTERS: { "test-protocol/swap": () => Promise.resolve({}) },
 }));
 
+// KEEP-793 write-path guards: happy defaults so chain-resolution still reaches
+// writeContractCore. Behavior of these guards is covered in
+// execute-protocol-execution-guards.test.ts.
+vi.mock("@/lib/billing/execution-guard", () => ({
+  enforceExecutionLimit: vi.fn().mockResolvedValue({ blocked: false }),
+}));
+vi.mock("../../app/api/execute/_lib/wallet-check", () => ({
+  requireWallet: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("../../app/api/execute/_lib/spending-cap", () => ({
+  checkAndReserveExecution: vi
+    .fn()
+    .mockResolvedValue({ allowed: true, executionId: "exec_1" }),
+}));
+vi.mock("../../app/api/execute/_lib/execution-service", () => ({
+  markRunning: vi.fn().mockResolvedValue(undefined),
+  completeExecution: vi.fn().mockResolvedValue(undefined),
+  failExecution: vi.fn().mockResolvedValue(undefined),
+  redactInput: (x: unknown) => x,
+  withRejectedSignerOverride: (a: unknown) => a,
+}));
+
 async function postWithBody(body: Record<string, unknown>): Promise<Response> {
   const { POST } = await import("@/app/api/execute/[...slug]/route");
   const req = new Request("http://test/api/execute/test-protocol/swap", {
@@ -73,6 +95,8 @@ async function postWithBody(body: Record<string, unknown>): Promise<Response> {
     params: Promise.resolve({ slug: ["test-protocol", "swap"] }),
   });
 }
+
+const CHAIN_ID_ERROR_RE = /chainId/;
 
 describe("KEEP-490: /api/execute/[...slug] resolves chain names and chainId aliases", () => {
   it("resolves network='sepolia' to chainId 11155111 for contract address lookup", async () => {
@@ -106,7 +130,7 @@ describe("KEEP-490: /api/execute/[...slug] resolves chain names and chainId alia
     const body = (await response.json()) as { error: string };
 
     expect(response.status).toBe(400);
-    expect(body.error).toMatch(/chainId/);
+    expect(body.error).toMatch(CHAIN_ID_ERROR_RE);
   });
 
   it("returns 400 for an unknown chain name", async () => {

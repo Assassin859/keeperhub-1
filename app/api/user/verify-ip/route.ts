@@ -27,7 +27,6 @@ import {
 } from "@/lib/pending-ip-cookie";
 import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import { resolveSigninDevice } from "@/lib/security/device-trust";
-import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
 import {
   buildRiskFlagsJsonForIp,
   cacheTrustedCountry,
@@ -36,6 +35,7 @@ import {
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
+import { isVerifyIpMatch } from "./_lib/ip-match";
 
 /**
  * Completes the deferred dual-factor sign-in for a request that
@@ -228,10 +228,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // /24-or-/64 network so a user whose egress IP rotates within their
   // subnet mid-flow isn't bounced.
   const currentRawIp = resolveClientIpFromHeaders(request.headers);
-  const ipMatch =
-    !currentRawIp ||
-    normalizeIpForTrust(currentRawIp) ===
-      normalizeIpForTrust(decoded.payload.ip);
+  const ipMatch = isVerifyIpMatch(currentRawIp, decoded.payload.ip);
   logIpVerify("verify-ip:final_check", {
     userId: decoded.payload.userId,
     cookieIp: decoded.payload.ip,

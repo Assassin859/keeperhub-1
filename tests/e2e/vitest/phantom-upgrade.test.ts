@@ -34,6 +34,10 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "";
 
 const PREFIX = "test_keep693_phantom_";
 
+// Content hash the executor stamps when it claims the phantom; the test passes
+// a fixed value since it drives the helper directly without loading a workflow.
+const HASH = "test_executed_workflow_hash";
+
 type ExecutionStatus =
   | "pending"
   | "running"
@@ -125,21 +129,30 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
     const id = `${PREFIX}claim`;
     await seedExecution(id, "phantom");
 
-    const upgraded = await upgradePhantomToPending(execDb, id, {
-      triggered: 1,
-    });
+    const upgraded = await upgradePhantomToPending(
+      execDb,
+      id,
+      { triggered: 1 },
+      HASH
+    );
 
     expect(upgraded).toBe(true);
     const row = await readExecution(id);
     expect(row.status).toBe("pending");
     expect(row.input).toEqual({ triggered: 1 });
+    expect(row.executedWorkflowHash).toBe(HASH);
   });
 
   it("is a no-op (returns false) when the row is not phantom", async () => {
     const id = `${PREFIX}running`;
     await seedExecution(id, "running", { original: true });
 
-    const upgraded = await upgradePhantomToPending(execDb, id, { stamped: 2 });
+    const upgraded = await upgradePhantomToPending(
+      execDb,
+      id,
+      { stamped: 2 },
+      HASH
+    );
 
     expect(upgraded).toBe(false);
     const row = await readExecution(id);
@@ -152,7 +165,8 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
     const upgraded = await upgradePhantomToPending(
       execDb,
       `${PREFIX}missing`,
-      {}
+      {},
+      HASH
     );
     expect(upgraded).toBe(false);
   });
@@ -161,8 +175,8 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
     const id = `${PREFIX}dup`;
     await seedExecution(id, "phantom");
 
-    const first = await upgradePhantomToPending(execDb, id, { n: 1 });
-    const second = await upgradePhantomToPending(execDb, id, { n: 2 });
+    const first = await upgradePhantomToPending(execDb, id, { n: 1 }, HASH);
+    const second = await upgradePhantomToPending(execDb, id, { n: 2 }, HASH);
 
     expect(first).toBe(true);
     expect(second).toBe(false);
@@ -182,7 +196,7 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
       billable: false,
     });
 
-    const upgraded = await upgradePhantomToPending(execDb, id, {});
+    const upgraded = await upgradePhantomToPending(execDb, id, {}, HASH);
 
     expect(upgraded).toBe(true);
     const row = await readExecution(id);

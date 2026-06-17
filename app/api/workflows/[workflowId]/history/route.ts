@@ -5,15 +5,15 @@ import { users, workflowHistory, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
-import { isOrgAdmin } from "@/lib/security/org-role";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 
 /**
- * Version timeline for a workflow. Admin/owner only (history is an audit
- * trail), scoped to the workflow's org. Returns the lightweight per-version
- * metadata + diff (`change`) for the timeline; the heavy snapshot is fetched
- * on demand via GET /api/workflows/[id]?version=N. `changedBy` is enriched
- * with the actor's name/email so the UI can show "who".
+ * Version timeline for a workflow. Any current member of the workflow's org can
+ * read it -- it's the edit history of a workflow they already have full access
+ * to, not the org-wide security audit (that stays admin/owner only). Returns the
+ * lightweight per-version metadata + diff (`change`) for the timeline; the heavy
+ * snapshot is fetched on demand via GET /api/workflows/[id]?version=N.
+ * `changedBy` is enriched with the actor's name/email so the UI can show "who".
  */
 export async function GET(
   request: Request,
@@ -45,10 +45,7 @@ export async function GET(
       organizationId,
       authMethod: authContext.authMethod,
     });
-    if (
-      !(access.hasFullAccess && userId && workflow.organizationId) ||
-      !(await isOrgAdmin(userId, workflow.organizationId))
-    ) {
+    if (!(access.hasFullAccess && userId && workflow.organizationId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

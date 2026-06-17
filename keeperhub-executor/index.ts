@@ -43,6 +43,7 @@ import { withBackstopCapture } from "../lib/security/backstop-capture";
 import { buildAttribution } from "../lib/security/request-attribution";
 import { generateId } from "../lib/utils/id";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
+import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
 import { getWorkflowExecutability } from "../lib/workflow/executable";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
@@ -394,13 +395,22 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   // there is no phantom to upgrade -- a legacy message with no id, or a phantom
   // that is missing (best-effort create failed) or already advanced (a
   // duplicate SQS delivery won the upgrade) -- so a run is never dropped.
+  //
+  // Hash of the definition the executor actually loaded, so schedule / block /
+  // event runs link to their workflow_history version like manual / webhook do.
+  const executedWorkflowHash = hashWorkflowDefinition(
+    workflow.nodes,
+    workflow.edges
+  );
+
   let executionId = generateId();
   let upgraded = false;
   if (message.executionId) {
     upgraded = await upgradePhantomToPending(
       db,
       message.executionId,
-      serializedInput
+      serializedInput,
+      executedWorkflowHash
     );
     if (upgraded) {
       executionId = message.executionId;
@@ -424,6 +434,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
         status: "pending",
         input: serializedInput,
         ...attribution,
+        executedWorkflowHash,
       })
     );
   }

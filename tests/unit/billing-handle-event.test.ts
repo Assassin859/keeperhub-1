@@ -40,22 +40,32 @@ vi.mocked(db.insert).mockReturnValue({
   values: mockInsertValues,
 } as unknown as ReturnType<typeof db.insert>);
 
-vi.mocked(db.select).mockReturnValue({
-  from: vi.fn().mockReturnValue({
-    where: vi.fn().mockReturnValue({
-      limit: vi.fn().mockResolvedValue([]),
-    }),
-  }),
-} as unknown as ReturnType<typeof db.select>);
-
-function mockSelectReturning(rows: Record<string, unknown>[]): void {
+// db.select serves two query shapes in this module: subscription lookups
+// (.where().limit(1)) and markOverageRecordsPaid (.where() awaited directly).
+// The where() return value is therefore a Promise (resolving to overage rows)
+// that ALSO carries a .limit() resolving to the subscription rows, so both
+// shapes get the right data from one mock.
+function setBillingSelect(
+  limitRows: Record<string, unknown>[],
+  whereRows: Record<string, unknown>[] = []
+): void {
+  const whereResult = Object.assign(Promise.resolve(whereRows), {
+    limit: vi.fn().mockResolvedValue(limitRows),
+  });
   vi.mocked(db.select).mockReturnValue({
     from: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        limit: vi.fn().mockResolvedValue(rows),
-      }),
+      where: vi.fn().mockReturnValue(whereResult),
     }),
   } as unknown as ReturnType<typeof db.select>);
+}
+
+setBillingSelect([]);
+
+function mockSelectReturning(
+  rows: Record<string, unknown>[],
+  overageRows: Record<string, unknown>[] = []
+): void {
+  setBillingSelect(rows, overageRows);
 }
 
 function createMockProvider(
@@ -599,6 +609,66 @@ describe("handleBillingEvent", () => {
       await handleBillingEvent(event, provider);
 
       expect(mockClearDebtForInvoice).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("invoice.paid -- overage attribution (F-023 / KEEP-748)", () => {
+    function stampCount(invoiceId: string): number {
+      return mockSet.mock.calls.filter(
+        ([arg]) =>
+          (arg as Record<string, unknown>)?.providerInvoiceId === invoiceId
+      ).length;
+    }
+
+    it("attributes ONLY records whose item belongs to the paid invoice", async () => {
+      mockSelectReturning(
+        [{ organizationId: "org_1", providerSubscriptionId: "sub_1" }],
+        [
+          { id: "ov_match", providerInvoiceItemId: "item_match" },
+          { id: "ov_other", providerInvoiceItemId: "item_other" },
+        ]
+      );
+
+      const provider = createMockProvider({
+        getInvoiceForItem: vi.fn((itemId: string) =>
+          Promise.resolve(
+            itemId === "item_match"
+              ? { invoiceId: "inv_paid", status: "paid", paid: true }
+              : { invoiceId: "inv_unrelated", status: "open", paid: false }
+          )
+        ),
+      });
+      const event = makeEvent("invoice.paid", {
+        providerSubscriptionId: "sub_1",
+        invoiceId: "inv_paid",
+      });
+
+      await handleBillingEvent(event, provider);
+
+      expect(provider.getInvoiceForItem).toHaveBeenCalledWith("item_match");
+      expect(provider.getInvoiceForItem).toHaveBeenCalledWith("item_other");
+      // Only the matching record is stamped with the paid invoice; the record
+      // whose item lives on a different invoice is left untouched (the F-023
+      // laundering the old broad UPDATE allowed).
+      expect(stampCount("inv_paid")).toBe(1);
+    });
+
+    it("never attributes a record that has no invoice-item link", async () => {
+      mockSelectReturning(
+        [{ organizationId: "org_1", providerSubscriptionId: "sub_1" }],
+        [{ id: "ov_noitem", providerInvoiceItemId: null }]
+      );
+
+      const provider = createMockProvider();
+      const event = makeEvent("invoice.paid", {
+        providerSubscriptionId: "sub_1",
+        invoiceId: "inv_paid",
+      });
+
+      await handleBillingEvent(event, provider);
+
+      expect(provider.getInvoiceForItem).not.toHaveBeenCalled();
+      expect(stampCount("inv_paid")).toBe(0);
     });
   });
 
