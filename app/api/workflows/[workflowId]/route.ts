@@ -25,7 +25,6 @@ import {
 } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
-import { isOrgAdmin } from "@/lib/security/org-role";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
@@ -137,19 +136,17 @@ export async function GET(
 
     const hasFullAccess = access.hasFullAccess;
 
-    // ?version=N returns a historical snapshot instead of the live row.
-    // History is an audit trail, so it is gated to org admins/owners with
-    // full workflow access, scoped to the workflow's org.
+    // ?version=N returns a historical snapshot instead of the live row. It is
+    // the edit history of a workflow the caller already has full access to, so
+    // any current org member can read it (same gate as the /history timeline);
+    // the org-wide security audit stays admin/owner only elsewhere.
     const versionParam = new URL(request.url).searchParams.get("version");
     if (versionParam !== null) {
       const versionNumber = Number.parseInt(versionParam, 10);
       if (Number.isNaN(versionNumber)) {
         return NextResponse.json({ error: "Invalid version" }, { status: 400 });
       }
-      if (
-        !(hasFullAccess && userId && workflow.organizationId) ||
-        !(await isOrgAdmin(userId, workflow.organizationId))
-      ) {
+      if (!(hasFullAccess && userId && workflow.organizationId)) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       const [historyRow] = await db
