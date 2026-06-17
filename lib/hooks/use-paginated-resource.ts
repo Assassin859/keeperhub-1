@@ -71,6 +71,13 @@ export function usePaginatedResource<T>(
         if (active) {
           setItems(res.items);
           setMeta(res.meta);
+          // The endpoint clamps an out-of-range page (e.g. the page size grew
+          // so the current page no longer exists, or rows were deleted) to the
+          // last page. Adopt that page so we refetch its real items instead of
+          // sitting on an empty page; an in-range page is returned unchanged.
+          if (res.meta.page !== page) {
+            setPage(res.meta.page);
+          }
         }
       })
       .catch(() => {
