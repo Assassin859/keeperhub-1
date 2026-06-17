@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Ban,
   Check,
@@ -9,12 +9,14 @@ import {
   Clock,
   Copy,
   ExternalLink,
+  GitBranch,
   Loader2,
   Play,
   TriangleAlert,
   X,
 } from "lucide-react";
 import Image from "next/image";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toChecksumAddress } from "@/lib/address-utils";
@@ -36,6 +38,7 @@ import { getRelativeTime } from "@/lib/utils/time";
 import {
   currentWorkflowIdAtom,
   executionLogsAtom,
+  propertiesPanelActiveTabAtom,
   runsRefreshTriggerAtom,
   selectedExecutionIdAtom,
 } from "@/lib/workflow/store";
@@ -78,6 +81,9 @@ type WorkflowExecution = {
   lastSuccessfulNodeId: string | null;
   lastSuccessfulNodeName: string | null;
   executionTrace: string[] | null;
+  // The workflow_history version this run executed (resolved server-side from
+  // the run's content hash); null when no matching version exists.
+  ranVersion: number | null;
 };
 
 type WorkflowRunsProps = {
@@ -864,6 +870,23 @@ export function WorkflowRuns({
   );
   const [, setExecutionLogs] = useAtom(executionLogsAtom);
   const runsRefreshTrigger = useAtomValue(runsRefreshTriggerAtom);
+  const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Open the History tab on the version a run executed, highlighting it there
+  // (the History tab reads ?version=N and rings/expands/scrolls to it).
+  const openRanVersion = useCallback(
+    (version: number) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      params.set("tab", "history");
+      params.set("version", String(version));
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      setActiveTab("history");
+    },
+    [router, pathname, searchParams, setActiveTab]
+  );
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
   const [logs, setLogs] = useState<Record<string, ExecutionLog[]>>({});
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
@@ -1263,6 +1286,19 @@ export function WorkflowRuns({
                   )}
                 </div>
               </button>
+
+              {execution.ranVersion !== null && (
+                <button
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 font-medium text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={() =>
+                    openRanVersion(execution.ranVersion as number)
+                  }
+                  title={`Ran version ${execution.ranVersion} — open in History`}
+                  type="button"
+                >
+                  <GitBranch className="size-3" />v{execution.ranVersion}
+                </button>
+              )}
 
               <button
                 className="flex shrink-0 items-center justify-center rounded p-1 transition-colors hover:bg-muted"
