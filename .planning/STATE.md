@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T11:08:21.150Z"
+last_updated: "2026-06-17T11:23:34.462Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 18
-  completed_plans: 14
+  completed_plans: 15
   percent: 40
 ---
 
@@ -23,7 +23,7 @@ progress:
 ## Current Position
 
 Phase: 53 (scan-ui) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-06-17
 
@@ -42,6 +42,7 @@ Last activity: 2026-06-17
 - Duration 52-02: 4 minutes
 - Duration 52-05: 12 minutes
 - Duration 53-01: 5 minutes
+- Duration 53-02: 8 minutes
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Last activity: 2026-06-17
 - Suggestions attached in the route (not inside scanAddress) — cached scan rows pre-dating 52-05 are unaffected; route computes fresh suggestions on each response.
 - Token-first ordering: health badge tokens committed in 53-01 before any component references them, preventing token-audit failures during Wave 2 component commits (53-01).
 - Local type aliases in E2E fixtures: mirrors ScanResponse shapes without importing from server-only lib/scan/types.ts; type-check passes via locally-defined structural equivalents (53-01).
+- Kebab-case filenames used for scan components: biome useFilenamingConvention enforces kebab-case across all non-excluded linted dirs; category-badge.tsx, read-write-pill.tsx, suggestion-card.tsx, suggestion-card-skeleton.tsx (53-02).
+- role=img on CategoryBadge span: biome useAriaPropsSupportedByRole requires aria-label on elements with a supporting role; role=img is semantically appropriate for a visual category indicator (53-02).
 
 ### Todos
 
@@ -94,9 +97,9 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 53-01 (health badge tokens + scan E2E scaffold: --color-badge-health-* tokens, scan.test.ts RED scaffold, ScanResponse fixture) — 2026-06-17
-- Stopped at: Plan 1 of 5 (phase 53 plan 1 complete)
-- Next command: `/gsd:execute-phase 53 02`
+- Last completed: 53-02 (CategoryBadge, ReadWritePill, SuggestionCard, SuggestionCardSkeleton — four scan presentation components) — 2026-06-17
+- Stopped at: Plan 2 of 5 (phase 53 plan 2 complete)
+- Next command: `/gsd:execute-phase 53 03`
 
 ## Deferred Items
 
