@@ -193,3 +193,55 @@ describe("FUNNEL-02: scan intent address preservation for callbackURL", () => {
     expect(data.intent?.mode).toBe("schedule");
   });
 });
+
+// ---------------------------------------------------------------------------
+// resolveCallbackUrl: same-origin open-redirect guard (Task 2, Plan 54-02)
+// ---------------------------------------------------------------------------
+
+import { resolveCallbackUrl } from "@/lib/auth/resolve-callback-url";
+
+describe("resolveCallbackUrl: same-origin guard", () => {
+  const FALLBACK = "/";
+
+  it("returns a safe relative path as-is", () => {
+    expect(resolveCallbackUrl("/scan?address=0xabc", FALLBACK)).toBe(
+      "/scan?address=0xabc"
+    );
+  });
+
+  it("returns a plain path as-is", () => {
+    expect(resolveCallbackUrl("/workflows", FALLBACK)).toBe("/workflows");
+  });
+
+  it("rejects scheme-relative URL starting with // (open redirect)", () => {
+    expect(resolveCallbackUrl("//evil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects absolute https URL (open redirect)", () => {
+    expect(resolveCallbackUrl("https://evil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects absolute http URL (open redirect)", () => {
+    expect(resolveCallbackUrl("http://evil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects backslash after leading slash (/\\\\evil.com)", () => {
+    expect(resolveCallbackUrl("/\\evil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects bare backslash form (\\\\evil.com)", () => {
+    expect(resolveCallbackUrl("\\evil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("returns fallback when redirectTo is undefined", () => {
+    expect(resolveCallbackUrl(undefined, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("returns fallback when redirectTo is an empty string", () => {
+    expect(resolveCallbackUrl("", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("returns the custom fallback path when redirectTo is unsafe", () => {
+    expect(resolveCallbackUrl("//evil.com", "/scan")).toBe("/scan");
+  });
+});

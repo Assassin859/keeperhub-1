@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { resolveCallbackUrl } from "@/lib/auth/resolve-callback-url";
 import { authClient, signIn, signUp } from "@/lib/auth-client";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
@@ -415,11 +416,7 @@ export const AuthDialog = ({
   children,
   controlledOpen,
   onControlledOpenChange,
-  // intent prop is intentionally accepted but not yet wired to flow
-  // (Phase 43 reads redirectTo from the AuthPromptProvider's stored intent
-  // after OAuth callback). Accept-and-ignore here is the locked contract.
-  // biome-ignore lint/correctness/noUnusedFunctionParameters: forward-compat
-  intent: _intent,
+  intent,
 }: AuthDialogProps) => {
   // Internal state — used when not controlled. We always call useState to
   // keep hook order stable; the value is just ignored when controlled.
@@ -565,7 +562,13 @@ export const AuthDialog = ({
       setLoadingProvider(provider);
       const claimContext = await getClaimContext();
       storeClaimIfNeeded(claimContext);
-      await signIn.social({ provider, callbackURL: window.location.pathname });
+      await signIn.social({
+        provider,
+        callbackURL: resolveCallbackUrl(
+          intent?.redirectTo,
+          window.location.pathname
+        ),
+      });
     } catch {
       toast.error(`Failed to sign in with ${getProviderLabel(provider)}`);
       setLoadingProvider(null);
