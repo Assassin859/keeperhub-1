@@ -13,6 +13,7 @@ import { PendingTemplateRunner } from "@/components/hub/pending-template-runner"
 import { LayoutContent } from "@/components/layout-content";
 import { MobileWarningDialog } from "@/components/mobile-warning-dialog";
 import { OverlayProvider } from "@/components/overlays/overlay-provider";
+import { PendingScanRunner } from "@/components/scan/pending-scan-runner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { mono, sans } from "@/lib/fonts";
@@ -123,6 +124,7 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
             <AuthProvider>
               <FeatureSessionInvalidator />
               <PendingTemplateRunner />
+              <PendingScanRunner />
               <OverlayProvider>
                 <AppBanner />
                 <LayoutContent>{children}</LayoutContent>

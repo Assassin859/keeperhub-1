@@ -23,8 +23,13 @@ import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 // Mock next/navigation (real impl uses useRouter)
 // ---------------------------------------------------------------------------
 
-const mockPush = vi.fn();
-const mockRefresh = vi.fn();
+// vi.hoisted ensures these variables are initialized before vi.mock factories
+// run (factories are hoisted to the top of the file by Vitest).
+const { mockPush, mockRefresh, mockExecute } = vi.hoisted(() => ({
+  mockPush: vi.fn(),
+  mockRefresh: vi.fn(),
+  mockExecute: vi.fn(),
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(() => ({ push: mockPush, refresh: mockRefresh })),
@@ -33,8 +38,6 @@ vi.mock("next/navigation", () => ({
 // ---------------------------------------------------------------------------
 // Mock @/lib/api-client (real impl calls api.workflow.execute)
 // ---------------------------------------------------------------------------
-
-const mockExecute = vi.fn();
 
 vi.mock("@/lib/api-client", () => ({
   api: {

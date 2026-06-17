@@ -1,24 +1,154 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
+import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
+import { persistSuggestion } from "@/lib/scan/persist-suggestion";
+import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
+
+const SESSION_KEY_PREFIX = "pending_scan:";
+const IDEMPOTENCY_TTL_MS = 30_000; // 30s — mirrors PendingTemplateRunner
+
+type StoredFlag = { at: number };
+
+interface ScanIntent extends SuggestionDescriptor {
+  mode: string;
+  address?: string;
+}
+
+type ScanIntentResponse = { intent: ScanIntent | null };
+
+function readSessionFlag(key: string): StoredFlag | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.sessionStorage.getItem(SESSION_KEY_PREFIX + key);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as StoredFlag;
+    if (typeof parsed?.at === "number") {
+      return parsed;
+    }
+  } catch {
+    // Malformed entry — treat as absent.
+  }
+  return null;
+}
+
+function writeSessionFlag(key: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const value: StoredFlag = { at: Date.now() };
+  try {
+    window.sessionStorage.setItem(
+      SESSION_KEY_PREFIX + key,
+      JSON.stringify(value)
+    );
+  } catch {
+    // Quota / privacy mode — best-effort, OK to skip.
+  }
+}
+
+function isFlagFresh(flag: StoredFlag): boolean {
+  return Date.now() - flag.at < IDEMPOTENCY_TTL_MS;
+}
+
 /**
- * PendingScanRunner — layout-mounted client component that auto-resumes a
- * pending scan intent after sign-in.
+ * Mounts in app/layout.tsx (broadest scope). Reads the pending_scan HttpOnly
+ * cookie via GET /api/auth/scan-intent (atomically cleared on read) and, if a
+ * scan intent is present, persists the workflow and navigates to /workflows/{id}.
  *
- * Mirrors components/hub/pending-template-runner.tsx exactly:
- * - Reads the pending_scan HttpOnly cookie via GET /api/auth/scan-intent
- *   (atomically cleared on read)
- * - Builds the workflow from the stored SuggestionDescriptor via buildWorkflow
- * - Creates the workflow via POST /api/workflows/create
- * - For schedule mode: PATCHes the workflow to sync the schedule
- * - Executes the workflow immediately
- * - Redirects to /workflows/[id] with a success toast
+ * Fires in two situations:
+ *   1. Initial mount per page load — covers OAuth / magic-link round-trips that
+ *      reload the page after auth.
+ *   2. AUTH_SUCCESS_EVENT dispatched by the auth modal — covers in-place
+ *      email+password sign-in where the modal closes without a navigation.
  *
- * Idempotency: sessionStorage TTL (30s) keyed by descriptor.id + inFlight ref
- * + server-side atomic cookie clear.
+ * Three-guard idempotency (T-54-21):
+ *   (a) server atomic cookie clear — concurrent GETs after the first see null
+ *   (b) 30s sessionStorage flag keyed by descriptor.id (NOT suggestionSlug)
+ *   (c) inFlight ref suppresses overlapping calls within the same tab
  *
- * NOT mounted in app/layout.tsx until Plan 54-03.
- * Implementation lands in Plan 54-03.
+ * Mirrors components/hub/pending-template-runner.tsx structure exactly.
+ * FUNNEL-03/04.
  */
 export function PendingScanRunner(): null {
+  const router = useRouter();
+  const inFlight = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async (): Promise<void> => {
+      if (inFlight.current) {
+        return;
+      }
+      inFlight.current = true;
+
+      try {
+        let intent: ScanIntent | null = null;
+        try {
+          const res = await fetch("/api/auth/scan-intent", {
+            method: "GET",
+            credentials: "same-origin",
+          });
+          if (!res.ok) {
+            return;
+          }
+          const data = (await res.json()) as ScanIntentResponse;
+          intent = data.intent;
+        } catch {
+          return;
+        }
+
+        if (!intent || cancelled) {
+          return;
+        }
+
+        // Guard (b): sessionStorage TTL keyed on descriptor.id (FUNNEL-03, T-54-21)
+        const idempotencyKey = intent.id;
+        const existing = readSessionFlag(idempotencyKey);
+        if (existing && isFlagFresh(existing)) {
+          return;
+        }
+
+        router.refresh();
+
+        // T-54-23: anything other than "schedule" is treated as "run"
+        const mode: "run" | "schedule" =
+          intent.mode === "schedule" ? "schedule" : "run";
+
+        try {
+          const { id } = await persistSuggestion(intent, mode);
+          writeSessionFlag(idempotencyKey);
+          toast.success("Workflow saved and running");
+          router.push(`/workflows/${id}`);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Failed to save workflow";
+          toast.error(message);
+        }
+      } finally {
+        inFlight.current = false;
+      }
+    };
+
+    run();
+
+    const handler = (): void => {
+      run();
+    };
+    window.addEventListener(AUTH_SUCCESS_EVENT, handler);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_SUCCESS_EVENT, handler);
+    };
+  }, [router]);
+
   return null;
 }
