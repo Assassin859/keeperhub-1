@@ -86,7 +86,7 @@ export async function handleBillingEvent(
       break;
     }
     case "invoice.paid": {
-      await handleInvoicePaid(data);
+      await handleInvoicePaid(data, provider);
       break;
     }
     case "invoice.payment_failed": {
@@ -492,11 +492,23 @@ async function handleSubscriptionDeleted(
 
 async function markOverageRecordsPaid(
   organizationId: string,
-  invoiceId: string
+  invoiceId: string,
+  provider: BillingProvider
 ): Promise<void> {
-  await db
-    .update(overageBillingRecords)
-    .set({ providerInvoiceId: invoiceId })
+  // F-023 / KEEP-748: attribute an overage record to this invoice ONLY when the
+  // record's own invoice item actually belongs to it. The previous behavior
+  // stamped EVERY billed, unattributed record for the org with whatever invoice
+  // happened to be paid -- so an unrelated standalone/manual invoice could
+  // claim all pending overage, and the subsequent scanAndCreateDebt early-return
+  // (providerInvoiceId set + paid) silently waived it. Resolve each record's
+  // invoice via the same getInvoiceForItem path scanAndCreateDebt uses and only
+  // stamp the records whose item resolves to this exact invoice.
+  const rows = await db
+    .select({
+      id: overageBillingRecords.id,
+      providerInvoiceItemId: overageBillingRecords.providerInvoiceItemId,
+    })
+    .from(overageBillingRecords)
     .where(
       and(
         eq(overageBillingRecords.organizationId, organizationId),
@@ -504,10 +516,38 @@ async function markOverageRecordsPaid(
         isNull(overageBillingRecords.providerInvoiceId)
       )
     );
+
+  for (const row of rows) {
+    if (!row.providerInvoiceItemId) {
+      // No item link -> cannot prove this record belongs to the invoice; leave
+      // it unattributed so scanAndCreateDebt re-resolves it later.
+      continue;
+    }
+    let invoiceInfo: Awaited<ReturnType<BillingProvider["getInvoiceForItem"]>>;
+    try {
+      invoiceInfo = await provider.getInvoiceForItem(row.providerInvoiceItemId);
+    } catch (error) {
+      console.error(
+        LOG_PREFIX,
+        "markOverageRecordsPaid: getInvoiceForItem failed",
+        row.id,
+        error
+      );
+      continue;
+    }
+    if (invoiceInfo?.invoiceId !== invoiceId) {
+      continue;
+    }
+    await db
+      .update(overageBillingRecords)
+      .set({ providerInvoiceId: invoiceId })
+      .where(eq(overageBillingRecords.id, row.id));
+  }
 }
 
 async function handleInvoicePaid(
-  data: BillingWebhookEvent["data"]
+  data: BillingWebhookEvent["data"],
+  provider: BillingProvider
 ): Promise<void> {
   const { providerSubscriptionId, invoiceId, providerCustomerId } = data;
 
@@ -537,7 +577,7 @@ async function handleInvoicePaid(
       );
 
     if (sub && invoiceId) {
-      await markOverageRecordsPaid(sub.organizationId, invoiceId);
+      await markOverageRecordsPaid(sub.organizationId, invoiceId, provider);
     }
 
     getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_PAID, {
@@ -570,7 +610,7 @@ async function handleInvoicePaid(
         );
 
       if (invoiceId) {
-        await markOverageRecordsPaid(sub.organizationId, invoiceId);
+        await markOverageRecordsPaid(sub.organizationId, invoiceId, provider);
       }
 
       getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_PAID, {
