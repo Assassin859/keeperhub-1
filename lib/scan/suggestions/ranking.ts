@@ -65,9 +65,10 @@ export function clampHfThreshold(currentHf: number): number {
  * Aave's healthFactor is returned as a uint256 in 1e18 units.
  * A threshold of 1.5 becomes "1500000000000000000".
  *
- * Floating point note: for all threshold values produced by clampHfThreshold
- * (1.3, 1.4, 1.5, etc.), the multiplication 1e18 rounds to an exactly
- * representable double, so BigInt(Math.floor(...)) is safe and correct.
+ * Floating point note: only values that are exact multiples of 128 at the
+ * 1e18 scale (e.g. 1.5) are represented without rounding error.
+ * 1.4 * 1e18 = 1399999999999999872 (off by 128 units — negligible for HF
+ * comparison). Use BigInt string literals for exact values if needed in future.
  */
 export function hfThresholdRaw(threshold: number): string {
   return BigInt(Math.floor(threshold * 1e18)).toString();
