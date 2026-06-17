@@ -418,3 +418,156 @@ describe("PREFILL-03 Task 3: yield shape template refs all resolve", () => {
     expect(aIds).toEqual(bIds);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 1 (52-04): price-alert and reward-reminder shapes
+// ---------------------------------------------------------------------------
+
+const ALERT_DESCRIPTOR: SuggestionDescriptor = {
+  id: "alert-token-42161",
+  name: "Token Balance Alert",
+  description: "Alert when token balance drops below threshold on Arbitrum.",
+  category: "alert",
+  chainId: 42_161,
+  readOrWrite: "read",
+  protocol: undefined,
+  usdValue: 200,
+  riskNote:
+    "Read-only monitoring. This workflow does not make any transactions.",
+  confirmInputs: {
+    walletAddress: "Your wallet address to monitor",
+    tokenAddress: "Token contract address",
+    alertThreshold: "Alert threshold amount",
+  },
+};
+
+const CLAIM_DESCRIPTOR: SuggestionDescriptor = {
+  id: "claim-lido-1",
+  name: "Lido Staking Reward Reminder",
+  description: "Remind you to claim staking rewards from Lido on Ethereum.",
+  category: "claim",
+  chainId: 1,
+  readOrWrite: "read",
+  protocol: "lido",
+  usdValue: 300,
+  riskNote:
+    "Read-only monitoring. This workflow does not make any transactions.",
+  confirmInputs: {
+    walletAddress: "Your wallet address to monitor",
+    stakingTokenAddress: "Staking token contract address (e.g. wstETH)",
+  },
+};
+
+describe("PREFILL-02 alert: price-alert shape", () => {
+  it("alert: buildWorkflow(alertDescriptor) returns PrefillWorkflow with workflowType 'read'", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    expect(result.workflowType).toBe("read");
+    expect(result.nodes.length).toBeGreaterThan(0);
+  });
+
+  it("alert: schedule cron is '*/15 * * * *' (every 15 minutes)", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    const trigger = result.nodes.find((n) => n.data.type === "trigger");
+    expect(trigger?.data.config?.scheduleCron).toBe("*/15 * * * *");
+  });
+
+  it("alert: config.network === '42161' on all web3 nodes", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    const web3Nodes = result.nodes.filter(
+      (n) => n.data.config?.network !== undefined
+    );
+    expect(web3Nodes.length).toBeGreaterThan(0);
+    for (const node of web3Nodes) {
+      expect(node.data.config?.network).toBe("42161");
+    }
+  });
+
+  it("alert: template refs all resolve", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    const { valid, errors } = validateTemplateRefs(result.nodes, result.edges);
+    expect(errors).toEqual([]);
+    expect(valid).toBe(true);
+  });
+
+  it("alert: condition→alert edge carries sourceHandle 'true'", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    const condNode = result.nodes.find(
+      (n) => String(n.data.config?.actionType) === "Condition"
+    );
+    expect(condNode).toBeDefined();
+    const condEdge = result.edges.find((e) => e.source === condNode?.id);
+    expect(condEdge?.sourceHandle).toBe("true");
+  });
+
+  it("alert: no node has a write-type actionType (read-only)", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    for (const node of result.nodes) {
+      const actionType = String(node.data.config?.actionType ?? "");
+      expect(actionType).not.toMatch(RE_WRITE_ACTION);
+    }
+  });
+
+  it("alert: every node satisfies node.type === node.data.type", () => {
+    const result: PrefillWorkflow = buildWorkflow(ALERT_DESCRIPTOR);
+    for (const node of result.nodes) {
+      expect(node.type).toBe(node.data.type);
+    }
+  });
+});
+
+describe("PREFILL-02 claim: reward-reminder shape", () => {
+  it("claim: buildWorkflow(claimDescriptor) returns PrefillWorkflow with workflowType 'read'", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    expect(result.workflowType).toBe("read");
+    expect(result.nodes.length).toBeGreaterThan(0);
+  });
+
+  it("claim: schedule cron is '0 */6 * * *' (every 6 hours)", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    const trigger = result.nodes.find((n) => n.data.type === "trigger");
+    expect(trigger?.data.config?.scheduleCron).toBe("0 */6 * * *");
+  });
+
+  it("claim: config.network === '1' (Ethereum mainnet)", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    const web3Nodes = result.nodes.filter(
+      (n) => n.data.config?.network !== undefined
+    );
+    expect(web3Nodes.length).toBeGreaterThan(0);
+    for (const node of web3Nodes) {
+      expect(node.data.config?.network).toBe("1");
+    }
+  });
+
+  it("claim: template refs all resolve", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    const { valid, errors } = validateTemplateRefs(result.nodes, result.edges);
+    expect(errors).toEqual([]);
+    expect(valid).toBe(true);
+  });
+
+  it("claim: condition→reminder edge carries sourceHandle 'true'", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    const condNode = result.nodes.find(
+      (n) => String(n.data.config?.actionType) === "Condition"
+    );
+    expect(condNode).toBeDefined();
+    const condEdge = result.edges.find((e) => e.source === condNode?.id);
+    expect(condEdge?.sourceHandle).toBe("true");
+  });
+
+  it("claim: no node has a write-type actionType (read-only)", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    for (const node of result.nodes) {
+      const actionType = String(node.data.config?.actionType ?? "");
+      expect(actionType).not.toMatch(RE_WRITE_ACTION);
+    }
+  });
+
+  it("claim: every node satisfies node.type === node.data.type", () => {
+    const result: PrefillWorkflow = buildWorkflow(CLAIM_DESCRIPTOR);
+    for (const node of result.nodes) {
+      expect(node.type).toBe(node.data.type);
+    }
+  });
+});
