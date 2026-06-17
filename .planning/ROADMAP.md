@@ -81,7 +81,13 @@ Plans:
   3. Clicking a suggestion card opens a read-only WorkflowCanvas preview of the prefilled workflow; the preview is rendered entirely with existing hub card primitives and design tokens — `node scripts/token-audit.js` reports zero new errors introduced by the scan components.
   4. "Run" and "Save on schedule" CTAs are visible in the preview panel; clicking either one while unauthenticated opens the existing `useAuthPrompt` sign-in flow without losing the current address or selected suggestion.
   5. The results area shows a `scannedAt` timestamp, per-chain "unavailable" badges for any chains that timed out, and a depeg banner when a stablecoin depeg signal is present in the scan result.
-**Plans**: TBD
+**Plans**: 5 plans (3 waves)
+Plans:
+- [x] 53-01-PLAN.md — Foundation: health badge tokens + scan E2E scaffold + ScanResponse fixture [wave 1]
+- [ ] 53-02-PLAN.md — Suggestion card cluster: CategoryBadge + ReadWritePill + SuggestionCard + skeleton [wave 2]
+- [ ] 53-03-PLAN.md — Results metadata: scannedAt header + unavailable badges + depeg banner + disclaimer [wave 2]
+- [ ] 53-04-PLAN.md — Preview drawer: read-only WorkflowCanvas (atom hydration) + confirmInputs + auth-gated CTAs [wave 2]
+- [ ] 53-05-PLAN.md — Page wiring: ScanInput + ScanResults state machine + app/scan/page.tsx + E2E green [wave 3]
 **UI hint**: yes
 
 ### Phase 54: Auth Round-Trip + Persistence
@@ -115,6 +121,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 51. Scanner Infrastructure | 6/8 | In Progress|  |
 | 52. Suggestion Engine + Workflow Factory | 5/5 | Complete   | 2026-06-17 |
-| 53. /scan UI | 0/TBD | Not started | - |
+| 53. /scan UI | 1/5 | In Progress|  |
 | 54. Auth Round-Trip + Persistence | 0/TBD | Not started | - |
 | 55. Polish + Hardening | 0/TBD | Not started | - |
