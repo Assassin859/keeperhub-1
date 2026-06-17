@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
-status: executing
-last_updated: "2026-06-17T18:22:01.405Z"
+status: verifying
+last_updated: "2026-06-17T18:51:35.844Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 22
-  completed_plans: 21
-  percent: 60
+  completed_plans: 22
+  percent: 80
 ---
 
 # Project State
@@ -24,7 +24,7 @@ progress:
 
 Phase: 54 (auth-round-trip-persistence) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-17
 
 ## Performance Metrics
@@ -46,6 +46,7 @@ Last activity: 2026-06-17
 - Duration 53-03: 5 minutes
 - Duration 53-04: 7 minutes
 - Duration 54-03: 4 minutes
+- Duration 54-04: 25 minutes
 
 ## Accumulated Context
 
@@ -98,6 +99,10 @@ Last activity: 2026-06-17
 - Pre-existing biome issues in dialog.tsx (noUnusedVariables:router, useExhaustiveDependencies, noNestedTernary, suppressions/unused x3) deferred per SCOPE BOUNDARY rule — none introduced by 54-02 (54-02).
 - persistSuggestion uses factory re-derivation (buildWorkflow) as trust boundary; cookie confirmInputs never sent raw to create API (T-54-20) (54-03).
 - vi.hoisted required for Vitest mock variables referenced in vi.mock factories — TDZ error occurs when const declarations appear after the (hoisted) vi.mock call that references them (54-03).
+- organizationId sourced solely from getDualAuthContext in wallet-check endpoint; no org-identifying param accepted from request (T-54-31 cross-org probing guard) (54-04).
+- TEST-03 E2E uses ctx.route(glob) instead of page.route(RegExp); context-level glob routes are registered before the first network request, eliminating setup race (54-04).
+- TEST-03 signIn() utility replaced with inline dialog interaction: signIn() navigated to "/" which raced with PendingScanRunner navigating to /workflows/{id} before org-switcher appeared (54-04).
+- MFA-enrollment skip guard added to TEST-03: page.url().includes('/enroll-mfa') triggers test.skip with documented reason (54-04).
 
 ### Todos
 
@@ -112,9 +117,9 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 54-03 (FUNNEL-03/04: persistSuggestion helper + PendingScanRunner + layout mount) — 2026-06-17
-- Stopped at: Plan 3 of 4 complete in phase 54
-- Next command: `/gsd:execute-phase 54 04`
+- Last completed: 54-04 (FUNNEL-02/03/04/05: wallet-check endpoint + drawer CTA wiring + TEST-03 E2E) — 2026-06-17
+- Stopped at: Phase 54 complete (4 of 4 plans done)
+- Next command: `/gsd:execute-phase 55` (Phase 55: remaining phases of v1.13)
 
 ## Deferred Items
 

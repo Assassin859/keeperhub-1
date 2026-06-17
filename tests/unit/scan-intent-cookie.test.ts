@@ -24,6 +24,7 @@ type StoredCookie = {
   path?: string;
   sameSite?: "lax" | "strict" | "none";
   httpOnly?: boolean;
+  secure?: boolean;
   maxAge?: number;
 };
 
@@ -126,6 +127,27 @@ describe("/api/auth/scan-intent", () => {
     it("returns 400 when the request body itself is not parseable JSON", async () => {
       const res = await POST(buildPostRequest("{not-json"));
       expect(res.status).toBe(400);
+    });
+
+    it("sets secure=false in non-production environments (CR-01)", async () => {
+      const res = await POST(buildPostRequest({ intent: VALID_INTENT_JSON }));
+      expect(res.status).toBe(200);
+      const cookie = cookieStore.get(COOKIE_NAME);
+      // NODE_ENV is "test" in this environment — secure must be false.
+      expect(cookie?.secure).toBe(false);
+    });
+
+    it("sets secure=true when NODE_ENV is production (CR-01)", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      cookieStore.clear();
+      try {
+        const res = await POST(buildPostRequest({ intent: VALID_INTENT_JSON }));
+        expect(res.status).toBe(200);
+        const cookie = cookieStore.get(COOKIE_NAME);
+        expect(cookie?.secure).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
   });
 

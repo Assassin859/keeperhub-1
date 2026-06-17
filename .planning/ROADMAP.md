@@ -26,7 +26,7 @@
 - [ ] **Phase 51: Scanner Infrastructure** - Multi-protocol position scanner + Postgres cache + public rate-limited `GET /api/scan` endpoint + scanner correctness unit tests
 - [x] **Phase 52: Suggestion Engine + Workflow Factory** - 4-category deterministic rule engine + 6-template workflow factory + remaining protocol adapters + Zerion breadth fallback + integration test (completed 2026-06-17)
 - [ ] **Phase 53: /scan UI** - Address input page, suggestion card list, WorkflowCanvas read-only preview, unauthenticated run/save CTAs
-- [ ] **Phase 54: Auth Round-Trip + Persistence** - `pending_scan` cookie, `PendingScanRunner`, save-on-schedule wiring, Turnkey provision pre-flight, E2E funnel test
+- [x] **Phase 54: Auth Round-Trip + Persistence** - `pending_scan` cookie, `PendingScanRunner`, save-on-schedule wiring, Turnkey provision pre-flight, E2E funnel test (completed 2026-06-17)
 - [ ] **Phase 55: Polish + Hardening** - Abuse telemetry, cache sweeper cron, observability metrics, financial-advice disclaimer review
 
 ---
@@ -105,7 +105,7 @@ Plans:
 - [x] 54-01-PLAN.md — Wave 0: scaffold cookie/runner/wallet-check stubs + 3 RED unit tests + TEST-03 E2E
 - [x] 54-02-PLAN.md — pending_scan cookie route + dialog callbackURL same-origin fix (FUNNEL-02)
 - [x] 54-03-PLAN.md — persistSuggestion helper + PendingScanRunner + layout mount (FUNNEL-03/04)
-- [ ] 54-04-PLAN.md — drawer CTA wiring + wallet-check endpoint + TEST-03 green (FUNNEL-02/03/04/05, TEST-03)
+- [x] 54-04-PLAN.md — drawer CTA wiring + wallet-check endpoint + TEST-03 green (FUNNEL-02/03/04/05, TEST-03)
 **UI hint**: yes
 
 ### Phase 55: Polish + Hardening
@@ -127,5 +127,5 @@ Plans:
 | 51. Scanner Infrastructure | 6/8 | In Progress|  |
 | 52. Suggestion Engine + Workflow Factory | 5/5 | Complete   | 2026-06-17 |
 | 53. /scan UI | 4/5 | In Progress|  |
-| 54. Auth Round-Trip + Persistence | 3/4 | In Progress|  |
+| 54. Auth Round-Trip + Persistence | 4/4 | Complete   | 2026-06-17 |
 | 55. Polish + Hardening | 0/TBD | Not started | - |

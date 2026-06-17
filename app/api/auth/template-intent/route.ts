@@ -42,6 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     path: "/",
     sameSite: "lax",
     httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
     maxAge: 600, // 10 minutes (CONTEXT.md HUB-04)
   });
 
@@ -66,6 +67,7 @@ export async function GET(): Promise<NextResponse> {
       path: "/",
       sameSite: "lax",
       httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
       maxAge: 0,
     });
   }
