@@ -614,6 +614,37 @@ export async function PATCH(
     }
 
     if (willBeListed) {
+      // A listed workflow must always carry a non-empty slug — external callers
+      // invoke it by slug at /api/mcp/workflows/<slug>/call, so a listed-but-
+      // slugless row is discoverable in the catalog yet uncallable. The curator
+      // publish path enforces this (lib/mcp/listing.ts::listWorkflow); without
+      // the same gate on this backdoor PATCH, a caller could list a workflow
+      // with a null slug or strip the slug off one that is already listed.
+      // Checked for any willBeListed state (not field-touched-only) because the
+      // invariant holds regardless of which field the PATCH changed; unlisting
+      // already makes willBeListed false, so a PATCH setting isListed=false is
+      // exempt. Same error code as the curator route (SLUG_REQUIRED) so both
+      // surfaces reject identically.
+      const finalSlug =
+        updateData.listedSlug !== undefined
+          ? updateData.listedSlug
+          : existingWorkflow.listedSlug;
+      if (typeof finalSlug !== "string" || finalSlug.trim().length === 0) {
+        return NextResponse.json(
+          {
+            error: "SLUG_REQUIRED",
+            message:
+              "Listed workflows must have a slug. Set a non-empty `listedSlug` (lowercase letters, numbers, and hyphens), or unlist the workflow before saving these changes.",
+          },
+          { status: 422 }
+        );
+      }
+      // When the body sets the slug, persist the trimmed value so the stored
+      // slug matches what was validated (no leading/trailing whitespace).
+      if (updateData.listedSlug !== undefined) {
+        updateData.listedSlug = finalSlug.trim();
+      }
+
       const checkNodes =
         updateData.nodes !== undefined || isTransitioningToListed;
       const checkSchema =

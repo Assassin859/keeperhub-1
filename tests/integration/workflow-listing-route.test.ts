@@ -188,6 +188,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     const existing = makeWorkflow({
       isListed: false,
       listedAt: null,
+      listedSlug: "my-workflow",
       inputSchema: { type: "object" },
     });
     mockWorkflowsFindFirst.mockResolvedValue(existing);
@@ -195,6 +196,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     const updated = makeWorkflow({
       isListed: true,
       listedAt: new Date("2026-03-30T00:00:00Z"),
+      listedSlug: "my-workflow",
       inputSchema: { type: "object" },
     });
     mockUpdateReturning.mockResolvedValue([updated]);
@@ -1094,6 +1096,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     // validates the full final state, not just patched fields.
     const existing = makeWorkflow({
       isListed: false,
+      listedSlug: "live-wf",
       inputSchema: { type: "object" },
       nodes: [badNode],
     });
@@ -1111,6 +1114,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
   it("LIST-VALIDATE transition to listed with null existing inputSchema: rejects", async () => {
     const existing = makeWorkflow({
       isListed: false,
+      listedSlug: "live-wf",
       inputSchema: null,
       nodes: [goodNode],
     });
@@ -1288,6 +1292,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     const existing = makeWorkflow({
       isListed: false,
       listedAt: null,
+      listedSlug: "live-write",
       workflowType: "write",
       inputSchema: { type: "object" },
       nodes: [goodNode], // read-only node, no write-action
@@ -1370,6 +1375,161 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SLUG_REQUIRED gate: a listed workflow must always carry a slug, so this
+  // backdoor PATCH cannot create the discoverable-but-uncallable rows that
+  // appeared in /api/workflows/public. Mirrors the curator route's code.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it("SLUG-GATE transition to listed with no slug: rejects 422 SLUG_REQUIRED, does not persist", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      listedSlug: null,
+      inputSchema: { type: "object" },
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("SLUG_REQUIRED");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("SLUG-GATE transition to listed with a slug supplied in the body: succeeds", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      listedSlug: null,
+      inputSchema: { type: "object" },
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "fresh-slug",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { isListed: true, listedSlug: "fresh-slug" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.isListed).toBe(true);
+    expect(data.listedSlug).toBe("fresh-slug");
+  });
+
+  it("SLUG-GATE blank/whitespace slug while transitioning to listed: rejects 422 SLUG_REQUIRED", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      listedSlug: null,
+      inputSchema: { type: "object" },
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { isListed: true, listedSlug: "   " }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("SLUG_REQUIRED");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("SLUG-GATE trims a padded slug before persisting it", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      listedSlug: null,
+      inputSchema: { type: "object" },
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "padded-slug",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        isListed: true,
+        listedSlug: "  padded-slug  ",
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedSet.data?.listedSlug).toBe("padded-slug");
+  });
+
+  it("SLUG-GATE edit nodes on an already-listed workflow with a sticky slug: succeeds (no false reject)", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "live-wf",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+        nodes: [goodNode],
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [goodNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.listedSlug).toBe("live-wf");
+  });
+
+  it("SLUG-GATE unlist an orphaned listed-but-slugless row: succeeds (cleanup bypass)", async () => {
+    // The migration unlists these rows in bulk, but the API must also let a
+    // user unlist one directly: isListed=false makes willBeListed false, so the
+    // slug gate is skipped on the way out.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: null,
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ isListed: false, listedSlug: null }),
+    ]);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: false }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.isListed).toBe(false);
   });
 });
 

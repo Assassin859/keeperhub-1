@@ -55,7 +55,6 @@
       },
       "nursery": {
         // These are experimental rules that add friction without clear benefit
-        "noIncrementDecrement": "off",
         "useSortedClasses": "off"
       },
       "style": {
