@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { readDeviceCookie } from "@/lib/device-cookie";
 import { hasValidLoadTestBypass } from "@/lib/load-test-bypass";
 import {
@@ -248,6 +249,16 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
   // /api/user), and using them here would let a real user bypass the gate
   // by renaming themselves "Anonymous".
   if ((session.user as { isAnonymous?: boolean | null }).isAnonymous === true) {
+    return { kind: "pass", user: null };
+  }
+
+  // Wallet (SIWE) users authenticate by signing a nonce, which is itself a
+  // possession factor. There is no email channel to send an OTP to and no
+  // TOTP enrollment for them, so the mandatory-MFA gate is incoherent here.
+  // Skip both the enrollment and step-up gates - and the country gate (return
+  // user: null) - the same way anonymous sessions are passed through. This
+  // deliberately carves the MFA hole for the wallet auth class only.
+  if (isWalletEmail((session.user as { email?: string | null }).email)) {
     return { kind: "pass", user: null };
   }
 

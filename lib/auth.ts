@@ -8,12 +8,19 @@ import {
   deviceAuthorization,
   emailOTP,
   organization,
+  siwe,
   twoFactor,
 } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { generateSiweNonce } from "viem/siwe";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
+import { verifySiweSignature } from "@/lib/auth/siwe-verify";
+import {
+  isWalletEmail,
+  WALLET_EMAIL_DOMAIN,
+} from "@/lib/auth/wallet-constants";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
@@ -38,6 +45,7 @@ import {
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
+import { generateHandle } from "@/lib/utils/wallet-handle";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -55,6 +63,7 @@ import {
   twoFactor as twoFactorTable,
   users,
   verifications,
+  walletAddress,
   workflowExecutionLogs,
   workflowExecutions,
   workflowExecutionsRelations,
@@ -107,6 +116,7 @@ const schema = {
   account: accounts,
   verification: verifications,
   twoFactor: twoFactorTable,
+  walletAddress,
   deviceCode,
   workflows,
   workflowExecutions,
@@ -345,6 +355,17 @@ const plugins = [
           .where(eq(workflowExecutions.userId, fromUserId));
       });
     },
+  }),
+  // Sign-In With Ethereum. Lets any injected EOA wallet (MetaMask, Brave,
+  // Rabby, ...) authenticate by signing a nonce. The signature is the
+  // possession factor, so wallet sessions skip the TOTP step-up (see the
+  // session.create.before hook and proxy.ts). `domain` must match the host
+  // the client builds its SIWE message with (window.location.host).
+  siwe({
+    domain: new URL(getBaseURL()).host,
+    emailDomainName: WALLET_EMAIL_DOMAIN,
+    getNonce: () => Promise.resolve(generateSiweNonce()),
+    verifyMessage: verifySiweSignature,
   }),
   ...captchaPlugins,
   organization({
@@ -666,6 +687,15 @@ export const auth = betterAuth({
           // user" string.
           await Promise.resolve();
           const email = typeof user.email === "string" ? user.email : null;
+
+          // Wallet (SIWE) signups arrive with `name` set to the raw 0x
+          // address. Replace it with a friendly generated handle so the
+          // address never surfaces in the org name or the audit trail. The
+          // user confirms or edits it in the rename modal on first login.
+          if (email && isWalletEmail(email)) {
+            return { data: { name: generateHandle() } };
+          }
+
           if (email && isDisposableEmailDomain(email)) {
             logUserError(
               ErrorCategory.VALIDATION,
@@ -679,6 +709,10 @@ export const auth = betterAuth({
         after: async (user) => {
           const isAnonymous =
             user.name === "Anonymous" || user.email?.startsWith("temp-");
+          // Wallet (SIWE) accounts have a synthetic, non-deliverable email.
+          // They still get an org (below) but no signup notifications and no
+          // verification OTP -- there is no inbox to send to.
+          const isWallet = isWalletEmail(user.email);
 
           // Every account - anonymous sessions included - gets an organization
           // so the org is the single owner of every workflow/integration and
@@ -726,7 +760,7 @@ export const auth = betterAuth({
           // Anonymous accounts get an org (above) but no signup
           // notifications or verification OTP - they have no real, verified
           // email (name "Anonymous" / temp- prefixed address).
-          if (isAnonymous) {
+          if (isAnonymous || isWallet) {
             return;
           }
 
@@ -837,11 +871,19 @@ export const auth = betterAuth({
             await upsertTrustedCountry(userId, countryTrust.country);
           }
           const [userRow] = await db
-            .select({ twoFactorEnabled: users.twoFactorEnabled })
+            .select({
+              twoFactorEnabled: users.twoFactorEnabled,
+              email: users.email,
+            })
             .from(users)
             .where(eq(users.id, userId))
             .limit(1);
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
+          // Wallet (SIWE) sessions are authenticated by the signature itself,
+          // so they are MFA-satisfied at creation. The proxy fully exempts
+          // wallet users from the step-up gate; stamping mfaVerifiedAt keeps
+          // the session row consistent with the OAuth-finalize path.
+          const isWallet = isWalletEmail(userRow?.email);
           // Sessions that still need step-up get a short TTL so a stolen
           // cookie expires before a legitimate user finishes the
           // /verify-mfa flow.
@@ -852,17 +894,21 @@ export const auth = betterAuth({
           // is minted: an untrusted IP produces a signed
           // `pending_ip_verify` cookie and no session, and a trusted
           // IP mints the session as-is.
+          if (twoFactorEnabled) {
+            return {
+              data: {
+                requiresMfa: true,
+                expiresAt: new Date(Date.now() + PRE_STEPUP_TTL_MS),
+                riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
+              },
+            };
+          }
           return {
-            data: twoFactorEnabled
-              ? {
-                  requiresMfa: true,
-                  expiresAt: new Date(Date.now() + PRE_STEPUP_TTL_MS),
-                  riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
-                }
-              : {
-                  requiresMfa: false,
-                  riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
-                },
+            data: {
+              requiresMfa: false,
+              mfaVerifiedAt: isWallet ? new Date() : undefined,
+              riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
+            },
           };
         },
         after: async (session) => {
@@ -984,6 +1030,19 @@ export const auth = betterAuth({
   // silently dropped and every TOTP-enrolled user sails past the
   // step-up gate. This is the field-declaration backbone for the
   // mandatory-step-up policy in proxy.ts.
+  // Surface `display_name_confirmed` on the session user so the client can
+  // gate the wallet rename modal. `input: false` keeps it server-controlled
+  // (flipped via /api/user/display-name), not settable through signup.
+  user: {
+    additionalFields: {
+      displayNameConfirmed: {
+        type: "boolean",
+        defaultValue: false,
+        required: false,
+        input: false,
+      },
+    },
+  },
   session: {
     additionalFields: {
       requiresMfa: { type: "boolean", defaultValue: false },
@@ -1045,6 +1104,14 @@ export const auth = betterAuth({
       // 5 * pod_count) and the same E2E bypass.
       "/sign-in/anonymous": (req) =>
         rateLimitBypassRule(req, { window: 3600, max: 5 }),
+      // Per-IP SIWE gates. Nonce issuance is cheap but unauthenticated;
+      // verify is the account/session-minting step. Bound both so a single
+      // IP can't farm wallet accounts or brute nonces. Same in-memory caveat
+      // (effective limit is max * pod_count) and the same E2E bypass.
+      "/siwe/nonce": (req) =>
+        rateLimitBypassRule(req, { window: 3600, max: 20 }),
+      "/siwe/verify": (req) =>
+        rateLimitBypassRule(req, { window: 3600, max: 10 }),
       // Rate-limit bypass is gated by the same predicate as admin test
       // routes (build-time + runtime). See lib/admin-auth.ts for the gate
       // and KEEP-237 for context.

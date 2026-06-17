@@ -18,6 +18,10 @@ export const TRUSTED_ORIGINS: readonly string[] = [
   "http://localhost:*",
   // start custom keeperhub code //
   "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
+  // Local HTTPS dev (pnpm dev:https) -- needed so wallets like Brave, which
+  // require a secure origin for SIWE, can hit /api/auth over https://localhost.
+  "https://localhost:3000",
+  "https://127.0.0.1:*",
   // end keeperhub code //
   "https://*.keeperhub.com",
 ];
