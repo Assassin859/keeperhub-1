@@ -6,6 +6,8 @@ import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { verifyPassword } from "@/lib/password";
+import { resolveClientIpFromHeaders } from "@/lib/security/login-risk";
+import { checkCredentialAttemptRateLimit } from "../../_lib/credential-attempt-rate-limit";
 
 /**
  * First step of the strict atomic dual-factor sign-in.
@@ -58,6 +60,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // F-013 / KEEP-738: this route verifies the credential password and returns a
+  // distinguishable 401 vs 200 (and signs non-TOTP users straight in on a
+  // correct password), so it is an unauthenticated password oracle unless
+  // throttled. Limit per-email + per-IP before any password comparison; buckets
+  // are shared with finish-credential-signup so an attacker cannot get a fresh
+  // allowance by hopping between the two routes for the same target.
+  const clientIp = resolveClientIpFromHeaders(request.headers) ?? "unknown";
+  const rateLimit = checkCredentialAttemptRateLimit(email, clientIp);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many attempts. Wait and try again.",
+        code: "rate_limited",
+        retryAfter: rateLimit.retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      }
+    );
+  }
+
   const [user] = await db
     .select({
       id: users.id,
@@ -99,7 +123,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (user.deactivatedAt) {
     return NextResponse.json(
-      { error: "Your account has been deactivated.", code: "account_deactivated" },
+      {
+        error: "Your account has been deactivated.",
+        code: "account_deactivated",
+      },
       { status: 403 }
     );
   }
