@@ -44,7 +44,9 @@ export function ActivityPage(): ReactNode {
   )
     ? sizeParam
     : DEFAULT_AUDIT_PAGE_SIZE;
-  const activity = useAuditActivity({ initialPageSize });
+  // Seed the search box from ?q so a shared/refreshed search is honored.
+  const initialSearch = (searchParams.get("q") ?? "").slice(0, 200);
+  const activity = useAuditActivity({ initialPageSize, initialSearch });
 
   // Admin/owner only. Once auth + membership resolve, bounce anyone else home;
   // the server already 403s the data, this just keeps them off the page.

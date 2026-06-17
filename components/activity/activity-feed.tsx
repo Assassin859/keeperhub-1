@@ -536,9 +536,22 @@ export function ActivityFeed({
     } else {
       next.delete("size");
     }
+    if (search) {
+      next.set("q", search);
+    } else {
+      next.delete("q");
+    }
     const qs = next.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [syncPageToUrl, page, limit, urlPageSizeDefault, pathname, router]);
+  }, [
+    syncPageToUrl,
+    page,
+    limit,
+    search,
+    urlPageSizeDefault,
+    pathname,
+    router,
+  ]);
 
   // Capture the settled content height so the skeleton can hold it on the next
   // load. Without this the embedded feed (no fixed box) collapses to the

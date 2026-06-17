@@ -89,7 +89,10 @@ const SEARCH_DEBOUNCE_MS = 500;
  * once), and which dimensions are currently shown as chips. Exposes a derived
  * `feedParams` ready to spread into <ActivityFeed>.
  */
-export function useAuditActivity(options?: { initialPageSize?: number }) {
+export function useAuditActivity(options?: {
+  initialPageSize?: number;
+  initialSearch?: string;
+}) {
   const [people, setPeople] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
@@ -103,8 +106,8 @@ export function useAuditActivity(options?: { initialPageSize?: number }) {
   // Free-text search. `searchText` is the raw input (kept responsive); `search`
   // is the debounced value that actually drives the query, so typing doesn't
   // fire a request per keystroke.
-  const [searchText, setSearchText] = useState("");
-  const [search, setSearch] = useState("");
+  const [searchText, setSearchText] = useState(options?.initialSearch ?? "");
+  const [search, setSearch] = useState(options?.initialSearch ?? "");
   useEffect(() => {
     const id = setTimeout(
       () => setSearch(searchText.trim()),
