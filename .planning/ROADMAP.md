@@ -85,8 +85,8 @@ Plans:
 Plans:
 - [x] 53-01-PLAN.md — Foundation: health badge tokens + scan E2E scaffold + ScanResponse fixture [wave 1]
 - [x] 53-02-PLAN.md — Suggestion card cluster: CategoryBadge + ReadWritePill + SuggestionCard + skeleton [wave 2]
-- [ ] 53-03-PLAN.md — Results metadata: scannedAt header + unavailable badges + depeg banner + disclaimer [wave 2]
-- [ ] 53-04-PLAN.md — Preview drawer: read-only WorkflowCanvas (atom hydration) + confirmInputs + auth-gated CTAs [wave 2]
+- [x] 53-03-PLAN.md — Results metadata: scannedAt header + unavailable badges + depeg banner + disclaimer [wave 2]
+- [x] 53-04-PLAN.md — Preview drawer: read-only WorkflowCanvas (atom hydration) + confirmInputs + auth-gated CTAs [wave 2]
 - [ ] 53-05-PLAN.md — Page wiring: ScanInput + ScanResults state machine + app/scan/page.tsx + E2E green [wave 3]
 **UI hint**: yes
 
@@ -121,6 +121,6 @@ Plans:
 |-------|----------------|--------|-----------|
 | 51. Scanner Infrastructure | 6/8 | In Progress|  |
 | 52. Suggestion Engine + Workflow Factory | 5/5 | Complete   | 2026-06-17 |
-| 53. /scan UI | 2/5 | In Progress|  |
+| 53. /scan UI | 4/5 | In Progress|  |
 | 54. Auth Round-Trip + Persistence | 0/TBD | Not started | - |
 | 55. Polish + Hardening | 0/TBD | Not started | - |
