@@ -1211,5 +1211,4 @@ export type NewExplorerConfig = typeof explorerConfigs.$inferInsert;
 export type UserRpcPreference = typeof userRpcPreferences.$inferSelect;
 export type NewUserRpcPreference = typeof userRpcPreferences.$inferInsert;
 
-export { scanResults, type ScanResultRow } from "./schema-scan";
 export type AgentRegistration = typeof agentRegistrations.$inferSelect;

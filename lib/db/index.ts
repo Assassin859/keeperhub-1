@@ -21,7 +21,6 @@ import {
   overageBillingRecords,
   pendingTransactions,
   publicTags,
-  scanResults,
   sessions,
   tags,
   tagsRelations,
@@ -38,6 +37,7 @@ import {
   workflowSchedulesRelations,
   workflows,
 } from "./schema";
+import { scanResults } from "./schema-scan";
 
 // Construct schema object for drizzle
 const schema = {
