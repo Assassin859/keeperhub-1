@@ -5,6 +5,8 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
@@ -241,6 +243,29 @@ export async function POST(request: Request) {
         ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
       })
       .returning();
+
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "workflow.created",
+      resourceType: "workflow",
+      resourceId: newWorkflow.id,
+      after: { name: newWorkflow.name, enabled: newWorkflow.enabled },
+      metadata: buildAuditMetadata(request),
+    });
+
+    // First version snapshot for the change-history timeline.
+    await recordWorkflowSnapshot({
+      workflowId: newWorkflow.id,
+      before: null,
+      after: newWorkflow,
+      actor: { userId, organizationId, authMethod: authContext.authMethod },
+      source: "create",
+    });
 
     return recordIdempotentResponse(
       idem,

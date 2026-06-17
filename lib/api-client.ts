@@ -3,6 +3,7 @@
  * Replaces server actions with API endpoints
  */
 
+import type { Page } from "@/lib/pagination";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import type { WorkflowExportV1 } from "@/lib/workflow/export-schema";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -67,7 +68,30 @@ export type SavedWorkflow = WorkflowData & {
   userVote?: VoteDirection | null;
   canVote?: boolean;
   duplicateCount?: number;
+  // Present when loaded via getById(id, { version }).
+  isHistoricalVersion?: boolean;
+  version?: number;
+  versionCreatedAt?: string;
 };
+
+export type WorkflowVersionActor = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+};
+
+export type WorkflowVersionSummary = {
+  version: number;
+  source: "create" | "update" | "listing";
+  contentHash: string;
+  previousVersion: number | null;
+  // deep-diff change records vs the previous version (null for v1).
+  change: unknown;
+  createdAt: string;
+  changedBy: WorkflowVersionActor | null;
+};
+
+export type WorkflowHistoryResponse = Page<WorkflowVersionSummary>;
 
 export type VoteResponse = {
   userVote: VoteDirection | null;
@@ -367,9 +391,15 @@ export type Integration = {
   id: string;
   name: string;
   type: IntegrationType;
+  // Canonical EIP-55 wallet address for web3 integrations, null otherwise.
+  address?: string | null;
   isManaged?: boolean;
   createdAt: string;
   updatedAt: string;
+  // Creator identity, for the activity-history fallback.
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 };
 
 export type IntegrationWithConfig = Integration & {
@@ -525,8 +555,18 @@ export const userApi = {
 
 // Workflow API
 export const workflowApi = {
-  // Get all workflows
-  getAll: () => apiCall<SavedWorkflow[]>("/api/workflows"),
+  // Get all workflows, optionally scoped server-side to a project or tag.
+  getAll: (filter?: { projectId?: string; tagId?: string }) => {
+    const qs = new URLSearchParams();
+    if (filter?.projectId) {
+      qs.set("projectId", filter.projectId);
+    }
+    if (filter?.tagId) {
+      qs.set("tagId", filter.tagId);
+    }
+    const s = qs.toString();
+    return apiCall<SavedWorkflow[]>(`/api/workflows${s ? `?${s}` : ""}`);
+  },
   // Get public workflows (non-featured)
   getPublic: () => apiCall<SavedWorkflow[]>("/api/workflows/public"),
   // Get featured workflows
@@ -545,8 +585,28 @@ export const workflowApi = {
       body: JSON.stringify({ vote }),
     }),
 
-  // Get a specific workflow
-  getById: (id: string) => apiCall<SavedWorkflow>(`/api/workflows/${id}`),
+  // Get a specific workflow. Pass `version` to load a historical snapshot.
+  getById: (id: string, options?: { version?: number }) =>
+    apiCall<SavedWorkflow>(
+      `/api/workflows/${id}${
+        options?.version === undefined ? "" : `?version=${options.version}`
+      }`
+    ),
+
+  // Version history timeline (admin/owner only).
+  getHistory: (id: string, options?: { page?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (options?.page !== undefined) {
+      params.set("page", String(options.page));
+    }
+    if (options?.limit !== undefined) {
+      params.set("limit", String(options.limit));
+    }
+    const qs = params.toString();
+    return apiCall<Page<WorkflowVersionSummary>>(
+      `/api/workflows/${id}/history${qs ? `?${qs}` : ""}`
+    );
+  },
 
   // Create a new workflow
   create: (workflow: Omit<WorkflowData, "id">) =>
@@ -796,6 +856,9 @@ export type Tag = {
   userId: string;
   createdAt: string;
   updatedAt: string;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 };
 
 export const tagApi = {
@@ -828,6 +891,9 @@ export type Project = {
   organizationId: string;
   createdAt: string;
   updatedAt: string;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 };
 
 export const publicTagApi = {
@@ -863,6 +929,106 @@ export const projectApi = {
       method: "DELETE",
     }),
 };
+
+export type SecurityAuditEvent = {
+  id: string;
+  action: string;
+  resourceType: string | null;
+  resourceId: string | null;
+  // Human label for the affected resource (currently workflows), resolved
+  // server-side so the feed can name "which workflow" and link into it.
+  resourceName: string | null;
+  // The workflow history version this event produced, when one exists, so the
+  // feed can deep-link to that exact version. Null for events with no version.
+  version: number | null;
+  createdAt: string;
+  // biome-ignore lint/suspicious/noExplicitAny: stored deep-diff, shape varies by action
+  diff: any;
+  metadata: Record<string, unknown> | null;
+  actor: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    role?: string | null;
+  } | null;
+};
+
+export const securityApi = {
+  // Org-scoped, admin/owner-gated audit trail. Filter by resource to get a
+  // single resource's history (e.g. one API key's create/revoke events).
+  getAudit: (params?: {
+    resourceType?: string;
+    resourceTypes?: string[];
+    resourceId?: string;
+    resourceIds?: string[];
+    // Relational dimensions. The server expands a project/tag into the audit
+    // events of the workflows under it; the client never assembles that set.
+    projectIds?: string[];
+    tagIds?: string[];
+    workflowIds?: string[];
+    action?: string;
+    actorUserId?: string;
+    actorUserIds?: string[];
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    // Single (per-resource views) and multi (filter builder) collapse to a
+    // repeated query param the API reads with getAll().
+    const resourceTypes =
+      params?.resourceTypes ??
+      (params?.resourceType ? [params.resourceType] : []);
+    for (const t of resourceTypes) {
+      qs.append("resourceType", t);
+    }
+    const resourceIds =
+      params?.resourceIds ?? (params?.resourceId ? [params.resourceId] : []);
+    for (const id of resourceIds) {
+      qs.append("resourceId", id);
+    }
+    for (const id of params?.projectIds ?? []) {
+      qs.append("projectId", id);
+    }
+    for (const id of params?.tagIds ?? []) {
+      qs.append("tagId", id);
+    }
+    for (const id of params?.workflowIds ?? []) {
+      qs.append("workflowId", id);
+    }
+    const actorUserIds =
+      params?.actorUserIds ?? (params?.actorUserId ? [params.actorUserId] : []);
+    for (const id of actorUserIds) {
+      qs.append("actorUserId", id);
+    }
+    if (params?.action) {
+      qs.set("action", params.action);
+    }
+    if (params?.from) {
+      qs.set("from", params.from);
+    }
+    if (params?.to) {
+      qs.set("to", params.to);
+    }
+    if (params?.page !== undefined) {
+      qs.set("page", String(params.page));
+    }
+    if (params?.limit !== undefined) {
+      qs.set("limit", String(params.limit));
+    }
+    const s = qs.toString();
+    return apiCall<Page<SecurityAuditEvent>>(
+      `/api/security/audit${s ? `?${s}` : ""}`
+    );
+  },
+};
+
+// Follow a HATEOAS pagination link (_links.next/prev/first/last) from any
+// paginated endpoint, without reconstructing query params client-side.
+export function followPage<T>(href: string): Promise<Page<T>> {
+  return apiCall<Page<T>>(href);
+}
 // Export all APIs as a single object
 export const api = {
   ai: aiApi,
@@ -870,6 +1036,7 @@ export const api = {
   organization: organizationApi,
   project: projectApi,
   publicTag: publicTagApi,
+  security: securityApi,
   tag: tagApi,
   user: userApi,
   workflow: workflowApi,

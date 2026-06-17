@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
@@ -170,6 +171,26 @@ export async function POST(
       );
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId: admin.userId,
+        organizationId: admin.organizationId,
+        authMethod: "session",
+      },
+      action: "safe_role_allowance.created",
+      resourceType: "safe",
+      resourceId: safe.id,
+      after: {
+        protocolSlug: body.protocolSlug,
+        tokenAddress: body.tokenAddress,
+        tokenSymbol: body.tokenSymbol ?? null,
+        maxRefillWei: body.maxRefillWei,
+        refillWei: body.refillWei,
+        periodSeconds: body.periodSeconds,
+      },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       success: true,

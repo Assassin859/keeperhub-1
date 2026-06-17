@@ -48,6 +48,7 @@ import { verifyWorkflowBinding } from "@/lib/agentic-wallet/workflow-binding";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -395,6 +396,24 @@ export async function POST(request: Request): Promise<Response> {
         });
       }
     }
+    // Auto-tier signature emitted. Record the operation (never the signature)
+    // so the wallet's signing activity is auditable. Ask-tier signs only after
+    // an approval, which is audited separately on /approve.
+    await recordAuditEvent({
+      actor: { userId: null, organizationId: null, authMethod: "internal" },
+      action: "agentic_wallet.signed",
+      resourceType: "agentic_wallet",
+      resourceId: auth.subOrgId,
+      after: {
+        chain,
+        risk,
+        walletAddress,
+        amountMicro: binding.expectedAmountMicro,
+        payTo: callerPayTo,
+      },
+      metadata: buildAuditMetadata(request),
+    });
+
     return Response.json({ signature }, { status: 200 });
   } catch (error) {
     // Fix-pack-3 N-2: only refund quota on TRANSIENT upstream failures. A

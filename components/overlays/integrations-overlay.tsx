@@ -13,9 +13,14 @@ import { useOverlay } from "./overlay-provider";
 
 type IntegrationsOverlayProps = {
   overlayId: string;
+  // Highlight + scroll to this integration (e.g. opened from the activity feed).
+  highlightId?: string;
 };
 
-export function IntegrationsOverlay({ overlayId }: IntegrationsOverlayProps) {
+export function IntegrationsOverlay({
+  overlayId,
+  highlightId,
+}: IntegrationsOverlayProps) {
   const { push, closeAll } = useOverlay();
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
@@ -89,6 +94,7 @@ export function IntegrationsOverlay({ overlayId }: IntegrationsOverlayProps) {
           <div className="max-h-[300px] overflow-y-auto">
             <IntegrationsManager
               filter={filter}
+              highlightId={highlightId}
               onIntegrationChange={handleIntegrationChange}
             />
           </div>

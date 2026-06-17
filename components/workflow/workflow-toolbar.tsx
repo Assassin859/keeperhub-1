@@ -43,6 +43,7 @@ import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
+import { VersionPreviewBanner } from "./version-preview-banner";
 import { useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
@@ -1838,6 +1839,7 @@ export const WorkflowToolbar = ({
   if (persistent) {
     return (
       <div className={containerClassName}>
+        <VersionPreviewBanner />
         {/* Left side: Logo + Menu + Org Switcher */}
         <div className={leftSectionClassName}>
           {(() => {

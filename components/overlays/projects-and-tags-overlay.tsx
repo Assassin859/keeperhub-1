@@ -1,17 +1,26 @@
 "use client";
 
-import { FolderOpen, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
+import {
+  FolderOpen,
+  History,
+  Pencil,
+  Plus,
+  Tag as TagIcon,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { ResourceActivityOverlay } from "@/components/overlays/resource-activity-overlay";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import { TagFormDialog } from "@/components/tags/tag-form-dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, type Project, type Tag as TagType } from "@/lib/api-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 
 type ProjectsAndTagsOverlayProps = {
   overlayId: string;
@@ -22,13 +31,16 @@ export function ProjectsAndTagsOverlay({
   overlayId,
   initialTab = "projects",
 }: ProjectsAndTagsOverlayProps): React.ReactElement {
-  const { open: openOverlay } = useOverlay();
+  const { open: openOverlay, push } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const [projects, setProjects] = useState<Project[]>([]);
   const [tags, setTags] = useState<TagType[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingTags, setLoadingTags] = useState(true);
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showTagDialog, setShowTagDialog] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingTag, setEditingTag] = useState<TagType | null>(null);
 
   const loadProjects = useCallback(async (): Promise<void> => {
     try {
@@ -103,6 +115,40 @@ export function ProjectsAndTagsOverlay({
     setTags((prev) => [...prev, tag]);
   };
 
+  const handleProjectUpdated = (project: Project): void => {
+    setProjects((prev) =>
+      prev.map((p) => (p.id === project.id ? { ...p, ...project } : p))
+    );
+    toast.success(`Project "${project.name}" updated`);
+  };
+
+  const handleTagUpdated = (tag: TagType): void => {
+    setTags((prev) =>
+      prev.map((t) => (t.id === tag.id ? { ...t, ...tag } : t))
+    );
+    toast.success(`Tag "${tag.name}" updated`);
+  };
+
+  const openEditProject = (project: Project): void => {
+    setEditingProject(project);
+    setShowProjectDialog(true);
+  };
+
+  const openEditTag = (tag: TagType): void => {
+    setEditingTag(tag);
+    setShowTagDialog(true);
+  };
+
+  const openNewProject = (): void => {
+    setEditingProject(null);
+    setShowProjectDialog(true);
+  };
+
+  const openNewTag = (): void => {
+    setEditingTag(null);
+    setShowTagDialog(true);
+  };
+
   return (
     <>
       <Overlay
@@ -118,7 +164,7 @@ export function ProjectsAndTagsOverlay({
 
           <TabsContent className="space-y-4" value="projects">
             <div className="flex justify-end">
-              <Button onClick={() => setShowProjectDialog(true)} size="sm">
+              <Button onClick={openNewProject} size="sm">
                 <Plus className="mr-2 size-4" />
                 New Project
               </Button>
@@ -171,6 +217,41 @@ export function ProjectsAndTagsOverlay({
                           ? "workflow"
                           : "workflows"}
                       </span>
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() => openEditProject(project)}
+                          size="icon"
+                          title="Edit project"
+                          variant="ghost"
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() =>
+                            push(ResourceActivityOverlay, {
+                              title: `Activity: ${project.name}`,
+                              resourceType: "project",
+                              resourceId: project.id,
+                              createdAction: "project.created",
+                              createdAt: project.createdAt,
+                              creator: {
+                                name: project.createdByName ?? null,
+                                email: project.createdByEmail ?? null,
+                                role: project.createdByRole ?? null,
+                              },
+                            })
+                          }
+                          size="icon"
+                          title="View activity"
+                          variant="ghost"
+                        >
+                          <History className="size-4" />
+                        </Button>
+                      )}
                       {project.workflowCount === 0 && (
                         <Button
                           className="text-muted-foreground hover:text-destructive"
@@ -190,7 +271,7 @@ export function ProjectsAndTagsOverlay({
 
           <TabsContent className="space-y-4" value="tags">
             <div className="flex justify-end">
-              <Button onClick={() => setShowTagDialog(true)} size="sm">
+              <Button onClick={openNewTag} size="sm">
                 <Plus className="mr-2 size-4" />
                 New Tag
               </Button>
@@ -229,6 +310,41 @@ export function ProjectsAndTagsOverlay({
                         {tag.workflowCount}{" "}
                         {tag.workflowCount === 1 ? "workflow" : "workflows"}
                       </span>
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() => openEditTag(tag)}
+                          size="icon"
+                          title="Edit tag"
+                          variant="ghost"
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() =>
+                            push(ResourceActivityOverlay, {
+                              title: `Activity: ${tag.name}`,
+                              resourceType: "tag",
+                              resourceId: tag.id,
+                              createdAction: "tag.created",
+                              createdAt: tag.createdAt,
+                              creator: {
+                                name: tag.createdByName ?? null,
+                                email: tag.createdByEmail ?? null,
+                                role: tag.createdByRole ?? null,
+                              },
+                            })
+                          }
+                          size="icon"
+                          title="View activity"
+                          variant="ghost"
+                        >
+                          <History className="size-4" />
+                        </Button>
+                      )}
                       {tag.workflowCount === 0 && (
                         <Button
                           className="text-muted-foreground hover:text-destructive"
@@ -250,12 +366,16 @@ export function ProjectsAndTagsOverlay({
       <ProjectFormDialog
         onCreated={handleProjectCreated}
         onOpenChange={setShowProjectDialog}
+        onUpdated={handleProjectUpdated}
         open={showProjectDialog}
+        project={editingProject}
       />
       <TagFormDialog
         onCreated={handleTagCreated}
         onOpenChange={setShowTagDialog}
+        onUpdated={handleTagUpdated}
         open={showTagDialog}
+        tag={editingTag}
       />
     </>
   );

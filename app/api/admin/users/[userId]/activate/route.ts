@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import { authenticateKhAdmin } from "@/lib/kh-admin-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export async function POST(
   request: Request,
@@ -47,6 +48,19 @@ export async function POST(
       }
       return NextResponse.json({ error: "User is not deactivated" }, { status: 409 });
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: null,
+        authMethod: "kh-admin",
+        actorLabel: "KeeperHub admin",
+      },
+      action: "account.reactivated",
+      resourceType: "user",
+      resourceId: result.userId,
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json(result);
   } catch (error) {
