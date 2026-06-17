@@ -2,7 +2,9 @@
 
 import { useSetAtom } from "jotai";
 import { AlertTriangle } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +17,7 @@ import {
 } from "@/components/ui/sheet";
 import { WorkflowCanvas } from "@/components/workflow/workflow-canvas";
 import { buildWorkflow } from "@/lib/scan/factory";
+import { persistSuggestion } from "@/lib/scan/persist-suggestion";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import {
   edgesAtom,
@@ -28,6 +31,9 @@ type SuggestionPreviewDrawerProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isAuthenticated: boolean;
+  /** Scanned EVM address from the page — used to build the redirectTo URL for
+   *  the anon sign-in round-trip (FUNNEL-02). */
+  address: string;
 };
 
 export function SuggestionPreviewDrawer({
@@ -35,12 +41,16 @@ export function SuggestionPreviewDrawer({
   open,
   onOpenChange,
   isAuthenticated,
+  address,
 }: SuggestionPreviewDrawerProps): React.ReactElement | null {
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
   const setIsOwner = useSetAtom(isWorkflowOwnerAtom);
   const setRightPanelWidth = useSetAtom(rightPanelWidthAtom);
   const { openAuthPrompt } = useAuthPrompt();
+  const router = useRouter();
+  const [needsWallet, setNeedsWallet] = useState<boolean>(false);
+  const [isPersisting, setIsPersisting] = useState<boolean>(false);
 
   // Build the prefilled workflow client-side. Factory has no server-only
   // import (confirmed in RESEARCH). Guard with try/catch: buildWorkflow throws
@@ -59,6 +69,8 @@ export function SuggestionPreviewDrawer({
   // Hydrate global Jotai workflow atoms when the drawer opens.
   // CRITICAL: cleanup MUST reset atoms on close so the homepage canvas
   // is not polluted when the user navigates away (T-53-08 / Pitfall 2).
+  // Also resets the provision gate (needsWallet) so it does not carry over
+  // to a different suggestion opened in a subsequent drawer session.
   useEffect(() => {
     if (open && workflow) {
       setNodes(workflow.nodes);
@@ -80,6 +92,7 @@ export function SuggestionPreviewDrawer({
       setEdges([]);
       setIsOwner(true);
       setRightPanelWidth(null);
+      setNeedsWallet(false);
     };
   }, [open, workflow, setNodes, setEdges, setIsOwner, setRightPanelWidth]);
 
@@ -88,22 +101,109 @@ export function SuggestionPreviewDrawer({
     return null;
   }
 
-  const handleRunClick = (): void => {
-    if (!isAuthenticated) {
-      // T-53-06: gate-only; no privileged action in Phase 53.
-      openAuthPrompt({ action: "scan-run" });
+  const handleCta = async (mode: "run" | "schedule"): Promise<void> => {
+    // Guard: suggestion is always non-null here (early return above),
+    // but the closure type is SuggestionDescriptor | null.
+    if (!suggestion) {
       return;
     }
-    // Phase 54: actual run logic.
+
+    if (!isAuthenticated) {
+      // Anon path (T-54-30): set the pending_scan cookie, then open the
+      // auth prompt. No create/PATCH/execute while unauthenticated — the
+      // server APIs 401 anon regardless (defence-in-depth).
+      try {
+        await fetch("/api/auth/scan-intent", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            intent: JSON.stringify({ ...suggestion, mode }),
+          }),
+        });
+      } catch {
+        // Non-fatal: if the cookie write fails the round-trip won't auto-
+        // resume, but the user can still sign in and proceed manually.
+      }
+      openAuthPrompt({
+        action: mode === "schedule" ? "scan-schedule" : "scan-run",
+        redirectTo: `/scan?address=${encodeURIComponent(address)}`,
+      });
+      return;
+    }
+
+    // Write gate (FUNNEL-05, forward-compat): all v1.13 real suggestions are
+    // read-only; this branch is exercised only by SYNTHETIC_WRITE_DESCRIPTOR.
+    if (suggestion.readOrWrite === "write") {
+      try {
+        const res = await fetch("/api/scan/wallet-check", {
+          method: "GET",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          toast.error("Could not verify wallet status. Please try again.");
+          return;
+        }
+        const data = (await res.json()) as { hasWallet: boolean };
+        if (!data.hasWallet) {
+          // Surface the provision CTA; do NOT persist (T-54-33).
+          setNeedsWallet(true);
+          return;
+        }
+      } catch {
+        toast.error("Could not verify wallet status. Please try again.");
+        return;
+      }
+    }
+
+    // Authenticated + read suggestion (or write + wallet present): persist inline.
+    setIsPersisting(true);
+    try {
+      const { id } = await persistSuggestion(suggestion, mode);
+      toast.success("Workflow saved!");
+      router.push(`/workflows/${id}`);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to save workflow";
+      toast.error(message);
+    } finally {
+      setIsPersisting(false);
+    }
+  };
+
+  const handleRunClick = (): void => {
+    handleCta("run").catch(() => {
+      // Errors are handled inside handleCta.
+    });
   };
 
   const handleScheduleClick = (): void => {
-    if (!isAuthenticated) {
-      // T-53-06: gate-only; no privileged action in Phase 53.
-      openAuthPrompt({ action: "scan-schedule" });
-      return;
+    handleCta("schedule").catch(() => {
+      // Errors are handled inside handleCta.
+    });
+  };
+
+  const doProvision = async (): Promise<void> => {
+    try {
+      const res = await fetch("/api/agentic-wallet/provision", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (res.ok) {
+        toast.success("Wallet set up! You can now run this workflow.");
+        setNeedsWallet(false);
+      } else {
+        toast.error("Failed to set up wallet. Please try again.");
+      }
+    } catch {
+      toast.error("Failed to set up wallet. Please try again.");
     }
-    // Phase 54: save-on-schedule logic.
+  };
+
+  const handleProvisionClick = (): void => {
+    doProvision().catch(() => {
+      // Errors are handled inside doProvision.
+    });
   };
 
   const confirmEntries = Object.entries(suggestion.confirmInputs);
@@ -158,25 +258,43 @@ export function SuggestionPreviewDrawer({
             </div>
           )}
 
-          {/* CTAs — clicking while unauthenticated opens AuthDialog via
-              useAuthPrompt, without closing the drawer or clearing selection
-              (SC#4 / SCANUI-04). No create/save/run API call in Phase 53. */}
-          <div className="mt-6 flex gap-3">
-            <Button
-              className="flex-1"
-              onClick={handleRunClick}
-              variant="default"
-            >
-              Run
-            </Button>
-            <Button
-              className="flex-1"
-              onClick={handleScheduleClick}
-              variant="outline"
-            >
-              Save on schedule
-            </Button>
-          </div>
+          {/* CTAs — see FUNNEL-02/03/04/05 for the full branching logic.
+              needsWallet replaces the normal CTA pair with a provision prompt
+              (FUNNEL-05, write-type suggestion only, forward-compat). */}
+          {needsWallet ? (
+            <div className="mt-6">
+              <p className="mb-3 text-sm text-muted-foreground">
+                This workflow requires a connected wallet. Set one up to
+                continue.
+              </p>
+              <Button
+                className="w-full"
+                onClick={handleProvisionClick}
+                variant="default"
+              >
+                Set up Wallet
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-6 flex gap-3">
+              <Button
+                className="flex-1"
+                disabled={isPersisting}
+                onClick={handleRunClick}
+                variant="default"
+              >
+                Run
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={isPersisting}
+                onClick={handleScheduleClick}
+                variant="outline"
+              >
+                Save on schedule
+              </Button>
+            </div>
+          )}
 
           {/* Risk note — rendered as JSX text (T-53-07). */}
           <div className="mt-4 flex items-start gap-1.5">

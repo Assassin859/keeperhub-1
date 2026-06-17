@@ -160,6 +160,7 @@ export default function ScanPage(): React.ReactElement {
       </main>
 
       <SuggestionPreviewDrawer
+        address={address}
         isAuthenticated={isAuthenticated}
         onOpenChange={handlePreviewOpenChange}
         open={previewOpen}
