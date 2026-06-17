@@ -1,15 +1,17 @@
 /**
- * RED scaffold — Wave 0 integration test for GET /api/scan + suggestion engine.
+ * Integration tests for GET /api/scan/[address] + suggestion engine (TEST-02).
  *
- * These tests FAIL because:
- *  - lib/scan/suggestions/engine.ts does not yet exist
- *  - the scan route does not yet call buildSuggestions (Phase 52 route extension)
+ * Covers the full route → engine → factory pipeline:
+ *   - Route attaches buildSuggestions output to the 200 response (52-05)
+ *   - Arbitrum USDC fixture produces a yield suggestion with chainId 42161
+ *   - buildWorkflow on that suggestion produces nodes with config.network "42161"
  *
- * Downstream plans (Wave 2/3) implement the route extension and turn these green.
+ * FUNNEL-01: requests are unauthenticated throughout.
  *
  * Requirements covered: TEST-02
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildWorkflow } from "@/lib/scan/factory";
 
 vi.mock("server-only", () => ({}));
 
@@ -179,5 +181,32 @@ describe("TEST-02: GET /api/scan returns suggestions from suggestion engine", ()
     );
     const body = (await res.json()) as { schemaVersion: number };
     expect(body.schemaVersion).toBe(1);
+  });
+
+  it("factory: buildWorkflow on route suggestion produces nodes with config.network '42161' (string)", async () => {
+    const res = await GET(
+      makeRequest(VALID_ADDRESS),
+      makeParams(VALID_ADDRESS)
+    );
+    // Cast to SuggestionDescriptor via Parameters inference — avoids a separate
+    // import while keeping the assertion strongly typed end-to-end.
+    const body = (await res.json()) as {
+      suggestions: Parameters<typeof buildWorkflow>[0][];
+    };
+    expect(body.suggestions.length).toBeGreaterThan(0);
+    const workflow = buildWorkflow(body.suggestions[0]);
+    // Filter to web3 nodes only — trigger + condition + alert nodes carry no
+    // config.network; the check-token-balance read node carries the chain id.
+    const web3Nodes = workflow.nodes.filter(
+      (n) =>
+        (n.data.config as Record<string, unknown> | undefined)?.network !==
+        undefined
+    );
+    expect(web3Nodes.length).toBeGreaterThan(0);
+    for (const node of web3Nodes) {
+      expect((node.data.config as Record<string, unknown>).network).toBe(
+        "42161"
+      );
+    }
   });
 });
