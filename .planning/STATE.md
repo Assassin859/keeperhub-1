@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T18:05:34.540Z"
+last_updated: "2026-06-17T18:22:01.405Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 22
-  completed_plans: 20
+  completed_plans: 21
   percent: 60
 ---
 
@@ -23,7 +23,7 @@ progress:
 ## Current Position
 
 Phase: 54 (auth-round-trip-persistence) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-06-17
 
@@ -45,6 +45,7 @@ Last activity: 2026-06-17
 - Duration 53-02: 8 minutes
 - Duration 53-03: 5 minutes
 - Duration 53-04: 7 minutes
+- Duration 54-03: 4 minutes
 
 ## Accumulated Context
 
@@ -95,6 +96,8 @@ Last activity: 2026-06-17
 - resolveCallbackUrl allowlist guard: starts with single "/", not "//", no "://", no backslash — reject-by-default is correct for open-redirect mitigation (54-02).
 - Biome import sort places @/lib/auth/ before @/lib/auth- (sorts "/" before "-" in path segments); resolveCallbackUrl import placed first in the @/lib/auth* block (54-02).
 - Pre-existing biome issues in dialog.tsx (noUnusedVariables:router, useExhaustiveDependencies, noNestedTernary, suppressions/unused x3) deferred per SCOPE BOUNDARY rule — none introduced by 54-02 (54-02).
+- persistSuggestion uses factory re-derivation (buildWorkflow) as trust boundary; cookie confirmInputs never sent raw to create API (T-54-20) (54-03).
+- vi.hoisted required for Vitest mock variables referenced in vi.mock factories — TDZ error occurs when const declarations appear after the (hoisted) vi.mock call that references them (54-03).
 
 ### Todos
 
@@ -109,9 +112,9 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 54-02 (FUNNEL-02: pending_scan cookie route + resolveCallbackUrl open-redirect guard + dialog.tsx social sign-in wired) — 2026-06-17
-- Stopped at: Plan 2 of 4 complete in phase 54
-- Next command: `/gsd:execute-phase 54 03`
+- Last completed: 54-03 (FUNNEL-03/04: persistSuggestion helper + PendingScanRunner + layout mount) — 2026-06-17
+- Stopped at: Plan 3 of 4 complete in phase 54
+- Next command: `/gsd:execute-phase 54 04`
 
 ## Deferred Items
 
@@ -131,3 +134,4 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | scanner-infra | `pnpm check` Biome config error (`noIncrementDecrement` unknown key in biome.jsonc:58) — pre-existing, unrelated to plan 51-05 | deferred |
 | Phase 54-auth-round-trip-persistence P01 | 28 minutes | 3 tasks | 9 files |
 | Phase 54-auth-round-trip-persistence P02 | 6 minutes | 2 tasks | 4 files |
+| Phase 54-auth-round-trip-persistence P03 | 4 minutes | 2 tasks | 4 files |
