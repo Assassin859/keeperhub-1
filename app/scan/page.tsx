@@ -112,6 +112,19 @@ export default function ScanPage(): React.ReactElement {
   const isCompact = scanState !== "idle";
   const isLoading = scanState === "loading";
 
+  // HARDEN-04: hooks are all declared above; this branch lives in the render
+  // path (not before hooks) so biome useHookAtTopLevel is not triggered.
+  // NEXT_PUBLIC_* vars are build-time inlined — the value is constant per build.
+  if (process.env.NEXT_PUBLIC_SCAN_ENABLED !== "true") {
+    return (
+      <main className="pointer-events-auto flex min-h-screen items-center justify-center bg-[var(--color-hub-overlay)] pt-[var(--header-height)]">
+        <p className="text-muted-foreground text-sm">
+          Wallet scanning is not available yet.
+        </p>
+      </main>
+    );
+  }
+
   return (
     <>
       <main className="pointer-events-auto min-h-screen bg-[var(--color-hub-overlay)] pt-[var(--header-height)]">

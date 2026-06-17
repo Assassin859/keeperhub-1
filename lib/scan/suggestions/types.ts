@@ -51,4 +51,4 @@ export interface SuggestionDescriptor {
  * Satisfies SUGGEST-10.
  */
 export const SUGGESTION_DISCLAIMER =
-  "This is not financial advice. Automations act on live on-chain data; always verify positions and thresholds before enabling.";
+  "This is not financial advice. KeeperHub does not provide financial advice. Automations act on live on-chain data; always verify your positions and thresholds before enabling a workflow.";
