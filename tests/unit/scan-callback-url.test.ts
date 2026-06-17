@@ -33,6 +33,7 @@ type StoredCookie = {
   path?: string;
   sameSite?: "lax" | "strict" | "none";
   httpOnly?: boolean;
+  secure?: boolean;
   maxAge?: number;
 };
 
@@ -243,5 +244,37 @@ describe("resolveCallbackUrl: same-origin guard", () => {
 
   it("returns the custom fallback path when redirectTo is unsafe", () => {
     expect(resolveCallbackUrl("//evil.com", "/scan")).toBe("/scan");
+  });
+
+  // WR-02: percent-encoded bypass forms that some OAuth providers decode
+  // before issuing the redirect (e.g. "/%2f%2fevil.com" → "//evil.com").
+
+  it("rejects percent-encoded double-slash with leading slash (/%2f%2fevil.com) (WR-02)", () => {
+    expect(resolveCallbackUrl("/%2f%2fevil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects percent-encoded double-slash uppercase (/%2F%2Fevil.com) (WR-02)", () => {
+    expect(resolveCallbackUrl("/%2F%2Fevil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects percent-encoded backslash (/%5cevil.com) (WR-02)", () => {
+    expect(resolveCallbackUrl("/%5cevil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects percent-encoded backslash uppercase (/%5Cevil.com) (WR-02)", () => {
+    expect(resolveCallbackUrl("/%5Cevil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects leading whitespace before // (space before slashes) (WR-02)", () => {
+    expect(resolveCallbackUrl(" //evil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("rejects leading tab control character before path (WR-02)", () => {
+    expect(resolveCallbackUrl("\tevil.com", FALLBACK)).toBe(FALLBACK);
+  });
+
+  it("still accepts a valid path containing literal percent-encoding for other chars (WR-02)", () => {
+    const safe = `/scan?address=${encodeURIComponent("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")}`;
+    expect(resolveCallbackUrl(safe, FALLBACK)).toBe(safe);
   });
 });
