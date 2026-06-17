@@ -18,7 +18,7 @@ test.describe("scan", () => {
   test("SCANUI-01: anonymous /scan load renders address input without redirect", async ({
     page,
   }) => {
-    await page.goto("/scan", { waitUntil: "domcontentloaded" });
+    await page.goto("/scan", { waitUntil: "load" });
 
     // Page must stay on /scan — no redirect to / or /login
     await expect(page).toHaveURL(SCAN_URL_REGEX);
@@ -43,7 +43,9 @@ test.describe("scan", () => {
       }
     });
 
-    await page.goto("/scan", { waitUntil: "domcontentloaded" });
+    // waitUntil: 'load' ensures the Turbopack JS bundle is downloaded and React
+    // has hydrated before we interact — domcontentloaded fires before hydration.
+    await page.goto("/scan", { waitUntil: "load" });
     await page.locator("#scan-address").fill(INVALID_ADDRESS);
     await page.getByRole("button", { name: "Scan" }).click();
 
@@ -67,22 +69,29 @@ test.describe("scan", () => {
       });
     });
 
-    await page.goto("/scan", { waitUntil: "domcontentloaded" });
+    await page.goto("/scan", { waitUntil: "load" });
     await page.locator("#scan-address").fill(SCAN_ADDRESS);
     await page.getByRole("button", { name: "Scan" }).click();
 
     // At least one suggestion card must appear (article[role="link"] per UI-SPEC §1)
     const firstCard = page.locator("article[role='link']").first();
-    await expect(firstCard).toBeVisible({ timeout: 15_000 });
+    // 30 s gives Turbopack time to finish lazy compilation on first cold run.
+    await expect(firstCard).toBeVisible({ timeout: 30_000 });
 
     // Fixture suggestion[0]: category="health", name="Aave V3 Health Factor Alert",
-    // chainId=1 ("Ethereum"), readOrWrite="read" (pill label "read-only")
-    await expect(firstCard.getByText("Health")).toBeVisible();
+    // chainId=1 ("Ethereum"), readOrWrite="read" (pill label "read-only").
+    // exact: true avoids strict-mode violations — "Health" and "Ethereum" both
+    // appear multiple times in the card's description and heading text.
+    await expect(firstCard.getByText("Health", { exact: true })).toBeVisible();
     await expect(
-      firstCard.getByText("Aave V3 Health Factor Alert")
+      firstCard.getByText("Aave V3 Health Factor Alert", { exact: true })
     ).toBeVisible();
-    await expect(firstCard.getByText("Ethereum")).toBeVisible();
-    await expect(firstCard.getByText("read-only")).toBeVisible();
+    await expect(
+      firstCard.getByText("Ethereum", { exact: true })
+    ).toBeVisible();
+    await expect(
+      firstCard.getByText("read-only", { exact: true })
+    ).toBeVisible();
   });
 
   /**
@@ -100,7 +109,7 @@ test.describe("scan", () => {
       });
     });
 
-    await page.goto("/scan", { waitUntil: "domcontentloaded" });
+    await page.goto("/scan", { waitUntil: "load" });
     await page.locator("#scan-address").fill(SCAN_ADDRESS);
     await page.getByRole("button", { name: "Scan" }).click();
 
@@ -128,7 +137,7 @@ test.describe("scan", () => {
       });
     });
 
-    await page.goto("/scan", { waitUntil: "domcontentloaded" });
+    await page.goto("/scan", { waitUntil: "load" });
     await page.locator("#scan-address").fill(SCAN_ADDRESS);
     await page.getByRole("button", { name: "Scan" }).click();
 
@@ -164,7 +173,7 @@ test.describe("scan", () => {
       });
     });
 
-    await page.goto("/scan", { waitUntil: "domcontentloaded" });
+    await page.goto("/scan", { waitUntil: "load" });
     await page.locator("#scan-address").fill(SCAN_ADDRESS);
     await page.getByRole("button", { name: "Scan" }).click();
 
