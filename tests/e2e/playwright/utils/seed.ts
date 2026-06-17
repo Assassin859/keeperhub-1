@@ -676,7 +676,8 @@ export async function cleanupPersistentTestUsers(): Promise<void> {
     await sql`DELETE FROM organization_wallets WHERE user_id IN ${sql(userIds)}`;
 
     // 3. Integrations, API keys, preferences
-    await sql`DELETE FROM integrations WHERE user_id IN ${sql(userIds)}`;
+    // integrations uses created_by (not user_id) per schema
+    await sql`DELETE FROM integrations WHERE created_by IN ${sql(userIds)}`;
     await sql`DELETE FROM api_keys WHERE user_id IN ${sql(userIds)}`;
     await sql`DELETE FROM user_rpc_preferences WHERE user_id IN ${sql(userIds)}`;
 
