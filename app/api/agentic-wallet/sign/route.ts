@@ -72,6 +72,52 @@ const MAX_VALIDITY_SECONDS = 10 * 60;
 // Small slack on validAfter to tolerate clock skew between agent and server.
 const VALID_AFTER_FUTURE_SLACK_SECONDS = 60;
 
+type TempoChargePeek =
+  | { kind: "charge"; amountMicro: string; recipient: string }
+  | { kind: "proof" }
+  | { kind: "invalid" };
+
+/**
+ * Deserialize a Tempo MPP `serialized` challenge to recover the inner,
+ * server-signed transfer amount + recipient. For the charge intent these are
+ * the fund-moving values (`signMppTransaction` signs `request.amount` to
+ * `request.recipient`); the outer caller-supplied `paymentChallenge.amount` /
+ * `payTo` are 0/empty on Tempo and must NOT be trusted. Proof-intent
+ * challenges move no funds. Malformed input is reported as invalid so the
+ * caller gets a 400 rather than silently skipping the amount checks.
+ */
+function peekTempoCharge(serialized: string): TempoChargePeek {
+  try {
+    const input = serialized.startsWith("Payment ")
+      ? serialized
+      : `Payment ${serialized}`;
+    const parsed = Challenge.deserialize(input);
+    if (parsed.intent !== "charge") {
+      return { kind: "proof" };
+    }
+    const request = parsed.request as unknown as {
+      recipient?: unknown;
+      amount?: unknown;
+    };
+    const amount = request?.amount;
+    if (
+      typeof request?.recipient !== "string" ||
+      (typeof amount !== "string" &&
+        typeof amount !== "number" &&
+        typeof amount !== "bigint")
+    ) {
+      return { kind: "invalid" };
+    }
+    return {
+      kind: "charge",
+      amountMicro: String(amount),
+      recipient: request.recipient,
+    };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+
 function isNonNegativeSafeInt(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -249,6 +295,84 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  // KEEP-736 / KEEP-737 (F-011 / F-012): on Tempo the fund-moving amount and
+  // recipient live INSIDE the server-signed `serialized` MPP challenge, not in
+  // the outer caller-supplied fields (which are 0/empty). verifyWorkflowBinding
+  // can only equality-check the outer fields, so it skips amount/payTo on
+  // Tempo. Deserialize the challenge up front and cross-check the inner amount
+  // + recipient against the binding here -- the same equality the base/x402
+  // path enforces -- so a stolen HMAC can't pair a cheap cover-workflow slug
+  // with an expensive charge issued for a different workflow. The verified
+  // inner amount then drives the risk classifier (a $50 charge must reach the
+  // ask tier, not auto, even though the outer amount is 0).
+  let effectiveAmountMicro = amountMicro;
+  // For the ask tier, the approval binding + the row stored for /approve must
+  // carry the real recipient/amount. On Tempo those live in `serialized`, so
+  // enrich the challenge with the verified inner values; deriveApprovalBinding
+  // (and the /approve re-derivation) read them from here, while `serialized`
+  // is preserved for the eventual signing.
+  let approvalChallenge: Record<string, unknown> = challenge;
+  if (chain === "tempo") {
+    const serialized =
+      typeof challenge.serialized === "string" ? challenge.serialized : "";
+    if (!serialized) {
+      return Response.json(
+        {
+          error: "paymentChallenge.serialized is required for tempo",
+          code: "MPP_CHALLENGE_MISSING",
+        },
+        { status: 400 }
+      );
+    }
+    const peeked = peekTempoCharge(serialized);
+    if (peeked.kind === "invalid") {
+      return Response.json(
+        {
+          error: "paymentChallenge.serialized is not a valid MPP challenge",
+          code: "MPP_CHALLENGE_INVALID",
+        },
+        { status: 400 }
+      );
+    }
+    if (peeked.kind === "charge") {
+      if (
+        peeked.recipient.toLowerCase() !== binding.expectedPayTo.toLowerCase()
+      ) {
+        return Response.json(
+          {
+            error: "payTo does not match workflow creator wallet",
+            code: "PAYTO_MISMATCH",
+          },
+          { status: 403 }
+        );
+      }
+      let innerMicro: bigint;
+      try {
+        innerMicro = BigInt(peeked.amountMicro);
+      } catch {
+        return Response.json(
+          { error: "amount is not a valid integer", code: "AMOUNT_MISMATCH" },
+          { status: 403 }
+        );
+      }
+      if (innerMicro !== BigInt(binding.expectedAmountMicro)) {
+        return Response.json(
+          {
+            error: "amount does not match workflow priceUsdcPerCall",
+            code: "AMOUNT_MISMATCH",
+          },
+          { status: 403 }
+        );
+      }
+      effectiveAmountMicro = peeked.amountMicro;
+      approvalChallenge = {
+        ...challenge,
+        recipient: peeked.recipient,
+        amount: peeked.amountMicro,
+      };
+    }
+  }
+
   // Wallet address resolution from DB -- NEVER trust any caller-supplied
   // wallet value (T-33-sign-spoofwallet).
   const rows = await db
@@ -270,7 +394,7 @@ export async function POST(request: Request): Promise<Response> {
   const risk = classifyRisk({
     chain,
     challenge: {
-      amount: amountMicro,
+      amount: effectiveAmountMicro,
       payTo: callerPayTo,
       selector:
         typeof challenge.selector === "string" ? challenge.selector : undefined,
@@ -292,7 +416,7 @@ export async function POST(request: Request): Promise<Response> {
     // helper so /sign's ask-tier and /approval-request agree on recipient /
     // amount / chain / contract exactly. Tempo callers that supply
     // `recipient` instead of `payTo` bind consistently here and on /approve.
-    const binding = deriveApprovalBinding(chain, challenge);
+    const binding = deriveApprovalBinding(chain, approvalChallenge);
     if (!binding) {
       return Response.json(
         {
@@ -307,7 +431,7 @@ export async function POST(request: Request): Promise<Response> {
       const ar = await createApprovalRequest({
         subOrgId: auth.subOrgId,
         riskLevel: "ask",
-        operationPayload: { chain, paymentChallenge: challenge },
+        operationPayload: { chain, paymentChallenge: approvalChallenge },
         binding,
       });
       return Response.json(
