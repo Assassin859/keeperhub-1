@@ -119,25 +119,28 @@ const workflowExecutionsTotal = getOrCreateGauge(
   ["status", "org_slug", "error_type"]
 );
 
-// TECH-48: per-workflow error counts for managed orgs, DB-sourced so the
-// series is authoritative regardless of which finalization path wrote the
-// error row. Replaces the per-pod `keeperhub_workflow_execution_errors_by_workflow_total`
-// counter, which was only incremented on the kickoff/reaper/MCP paths and so
-// returned no data in prod for normal workflow failures (the managed-client
-// alert numerator + workflow_id dedup key read from this).
+// TECH-48: per-workflow error counts for managed orgs over a ROLLING 1-HOUR
+// window, DB-sourced so the series is authoritative regardless of which
+// finalization path wrote the error row. Replaces the per-pod
+// `keeperhub_workflow_execution_errors_by_workflow_total` counter, which was
+// only incremented on the kickoff/reaper/MCP paths and so returned no data in
+// prod for normal workflow failures.
 //
-// Gauge, not counter: it carries the all-time cumulative error count per
-// (workflow_id, org_slug, error_type), so the alert recovers a window delta as
-// value(now) - value(now offset W) — the same dedup pattern the alert already
-// uses on workflowExecutionsTotal. No `_total` suffix: that suffix on a
-// poll-driven gauge is exactly the trap KEEP-545 documents below.
+// Value = executions that errored in the last hour, per workflow (see
+// getWorkflowErrorsByWorkflowFromDb). The managed-client alert reads this gauge
+// DIRECTLY as its numerator — no offset/delta. The earlier all-time-cumulative
+// variant forced the alert into `value(now) - value(offset 1h)`, which (a) was
+// fragile when the gauge gapped and (b) made the query scan every error row
+// ever and trip the 8s metrics statement_timeout, so the gauge flapped. The
+// 1h window keeps the query an index range scan that never times out.
 //
-// Cardinality is bounded by scoping to managed orgs in the DB query: only the
-// handful of managed workflows that have ever errored emit a series.
+// No `_total` suffix: that suffix on a poll-driven gauge is the trap KEEP-545
+// documents below. Cardinality is bounded by scoping to managed orgs and the
+// 1h window: only managed workflows that errored in the last hour emit a series.
 const workflowErrorsByWorkflow = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_errors_by_workflow",
-  "All-time workflow execution errors by workflow_id for managed orgs, by org_slug and error_type",
+  "Workflow executions that errored in the last hour, by workflow_id for managed orgs, by org_slug and error_type",
   ["workflow_id", "org_slug", "error_type"]
 );
 

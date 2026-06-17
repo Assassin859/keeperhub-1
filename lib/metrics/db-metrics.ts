@@ -248,10 +248,22 @@ export type WorkflowErrorsByWorkflow = Array<{
 }>;
 
 /**
- * Per-workflow error counts for managed orgs, sourced from the DB so the
- * series is authoritative regardless of which finalization path wrote the
- * `status='error'` row. Replaces the per-pod counter that only fired on the
- * rarely-hit kickoff/reaper/MCP paths and so returned no data in prod.
+ * Per-workflow error counts for managed orgs over a ROLLING 1-HOUR window,
+ * sourced from the DB so the series is authoritative regardless of which
+ * finalization path wrote the `status='error'` row.
+ *
+ * Value semantics: count of executions that errored in the last hour
+ * (`completed_at >= now() - 1h`), per workflow. NOT an all-time cumulative
+ * count. This matches the managed-client alert's "rolling 60-minute window"
+ * definition, so the alert reads this gauge directly (no offset/delta math).
+ *
+ * Why windowed: the previous all-time variant filtered only on
+ * `status='error'`, which matches every error execution across all orgs and
+ * joins them before narrowing to managed orgs — at prod scale that blew past
+ * the 8s metrics `statement_timeout` (Postgres 57014), the catch returned [],
+ * and the gauge flapped (the series vanished on most scrapes). Bounding to the
+ * last hour keeps the row set tiny so the query is an index range scan on
+ * idx_workflow_executions_status_completed_at and finishes in milliseconds.
  *
  * Scoped to MANAGED_ORG_SLUGS to bound `workflow_id` cardinality. errorType is
  * the `workflow_executions.error_type` column, projected to "unknown" for
@@ -272,6 +284,7 @@ export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowError
       .where(
         and(
           eq(workflowExecutions.status, "error"),
+          sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`,
           inArray(organization.slug, [...MANAGED_ORG_SLUGS])
         )
       )
