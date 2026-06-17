@@ -169,17 +169,26 @@ export async function GET(request: Request) {
 
     // Free-text search across the human-meaningful fields: the denormalized
     // actor label, the action, the resource id, the actor's current name/email,
-    // matching workflow names, and the request IP. Every comparison is a
-    // parameterized ILIKE (Drizzle binds the value, so no SQL injection) with
-    // the user's wildcards escaped so the text matches literally. The IP lives
-    // in the metadata JSONB and is matched through Postgres' `->>` accessor, so
-    // the filter runs in the database rather than by scanning rows in JS.
+    // matching resource NAMES (workflows, integrations by name or type, org and
+    // personal API keys), and the request IP. Resource rows carry only ids, so
+    // names are resolved to id sets first and matched back via resourceId. Every
+    // comparison is a parameterized ILIKE (Drizzle binds the value, so no SQL
+    // injection) with the user's wildcards escaped so the text matches
+    // literally. The IP lives in the metadata JSONB and is matched through
+    // Postgres' `->>` accessor, so the filter runs in the database rather than
+    // by scanning rows in JS.
     const q = (url.searchParams.get("q") ?? "")
       .trim()
       .slice(0, MAX_SEARCH_LENGTH);
     if (q) {
       const pattern = `%${q.replace(LIKE_SPECIAL, (c) => `\\${c}`)}%`;
-      const [matchedActors, matchedWorkflows] = await Promise.all([
+      const [
+        matchedActors,
+        matchedWorkflows,
+        matchedIntegrations,
+        matchedOrgKeys,
+        matchedPersonalKeys,
+      ] = await Promise.all([
         db
           .select({ id: users.id })
           .from(users)
@@ -200,7 +209,42 @@ export async function GET(request: Request) {
               ilike(workflows.name, pattern)
             )
           ),
+        // Integrations match on the display name OR the provider type, so
+        // "discord" finds Discord connections even when left unnamed.
+        db
+          .select({ id: integrations.id })
+          .from(integrations)
+          .where(
+            and(
+              eq(integrations.organizationId, organizationId),
+              or(
+                ilike(integrations.name, pattern),
+                ilike(integrations.type, pattern)
+              )
+            )
+          ),
+        db
+          .select({ id: organizationApiKeys.id })
+          .from(organizationApiKeys)
+          .where(
+            and(
+              eq(organizationApiKeys.organizationId, organizationId),
+              ilike(organizationApiKeys.name, pattern)
+            )
+          ),
+        // Personal/webhook keys are user-scoped; the org-scoped audit query
+        // already bounds which of these ids can surface, so no org filter here.
+        db
+          .select({ id: apiKeys.id })
+          .from(apiKeys)
+          .where(ilike(apiKeys.name, pattern)),
       ]);
+      const resourceIdMatches = [
+        ...matchedWorkflows.map((w) => w.id),
+        ...matchedIntegrations.map((i) => i.id),
+        ...matchedOrgKeys.map((k) => k.id),
+        ...matchedPersonalKeys.map((k) => k.id),
+      ];
       const searchConditions = [
         ilike(securityAuditLog.actorLabel, pattern),
         ilike(securityAuditLog.action, pattern),
@@ -215,12 +259,9 @@ export async function GET(request: Request) {
           )
         );
       }
-      if (matchedWorkflows.length > 0) {
+      if (resourceIdMatches.length > 0) {
         searchConditions.push(
-          inArray(
-            securityAuditLog.resourceId,
-            matchedWorkflows.map((w) => w.id)
-          )
+          inArray(securityAuditLog.resourceId, resourceIdMatches)
         );
       }
       const searchClause = or(...searchConditions);
