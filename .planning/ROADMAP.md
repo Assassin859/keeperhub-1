@@ -27,7 +27,7 @@
 - [x] **Phase 52: Suggestion Engine + Workflow Factory** - 4-category deterministic rule engine + 6-template workflow factory + remaining protocol adapters + Zerion breadth fallback + integration test (completed 2026-06-17)
 - [ ] **Phase 53: /scan UI** - Address input page, suggestion card list, WorkflowCanvas read-only preview, unauthenticated run/save CTAs
 - [x] **Phase 54: Auth Round-Trip + Persistence** - `pending_scan` cookie, `PendingScanRunner`, save-on-schedule wiring, Turnkey provision pre-flight, E2E funnel test (completed 2026-06-17)
-- [ ] **Phase 55: Polish + Hardening** - Abuse telemetry, cache sweeper cron, observability metrics, financial-advice disclaimer review
+- [x] **Phase 55: Polish + Hardening** - Abuse telemetry, cache sweeper cron, observability metrics, financial-advice disclaimer review (completed 2026-06-17)
 
 ---
 
@@ -116,7 +116,12 @@ Plans:
   1. Scan rate-limit blocks emit a structured event via `logAnonymousExecutionBlock("scan", ...)` visible in the existing anonymous-abuse Sentry alert — rate-limit abuse is observable without a dedicated dashboard.
   2. A cron job (following the existing `/api/cron/` pattern) deletes `scan_results` rows older than 1 hour; the table does not grow unboundedly between deployments.
   3. Scan observability metrics (scan duration, cache hit rate, Zerion call count) are emitted for cost tracking; the "not financial advice" disclaimer is present on every suggestion card and its copy has been reviewed before the feature is enabled on staging.
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+Plans:
+- [x] 55-01-PLAN.md — Wave 0: 4 RED test files + sweeper throw-stub + SCAN_* MetricNames constants [wave 1]
+- [x] 55-02-PLAN.md — HARDEN-02: HMAC scan-cache-sweeper cron (fail-closed, age-predicate delete) + staging/prod values.yaml [wave 2]
+- [x] 55-03-PLAN.md — HARDEN-01/04: abuse telemetry on 429 + NEXT_PUBLIC_SCAN_ENABLED gate (API 404 + page) + reviewed disclaimer copy [wave 2]
+- [x] 55-04-PLAN.md — HARDEN-03: scanner cache hit/miss counters + route scan-duration metric + Zerion counter + Prometheus TODO [wave 3]
 
 ---
 
@@ -128,4 +133,4 @@ Plans:
 | 52. Suggestion Engine + Workflow Factory | 5/5 | Complete   | 2026-06-17 |
 | 53. /scan UI | 4/5 | In Progress|  |
 | 54. Auth Round-Trip + Persistence | 4/4 | Complete   | 2026-06-17 |
-| 55. Polish + Hardening | 0/TBD | Not started | - |
+| 55. Polish + Hardening | 4/4 | Complete   | 2026-06-17 |

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
-status: verifying
-last_updated: "2026-06-17T18:51:35.844Z"
+status: executing
+last_updated: "2026-06-17T21:25:57.240Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 22
-  percent: 80
+  completed_phases: 5
+  total_plans: 26
+  completed_plans: 26
+  percent: 100
 ---
 
 # Project State
@@ -18,14 +18,14 @@ progress:
 ## Project Reference
 
 - **Core value:** Users can build and deploy Web3 automation workflows through a visual builder without writing code.
-- **Current focus:** Phase 54 — auth-round-trip-persistence
+- **Current focus:** Phase 55 — polish-hardening
 
 ## Current Position
 
-Phase: 54 (auth-round-trip-persistence) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
-Last activity: 2026-06-17
+Phase: 55 (polish-hardening) — COMPLETE
+Plan: 4 of 4 (55-04 complete)
+Status: Phase 55 complete — v1.13 all plans done
+Last activity: 2026-06-17 -- 55-04 complete (HARDEN-03 scan observability metrics)
 
 ## Performance Metrics
 
@@ -47,6 +47,9 @@ Last activity: 2026-06-17
 - Duration 53-04: 7 minutes
 - Duration 54-03: 4 minutes
 - Duration 54-04: 25 minutes
+- Duration 55-02: 8 minutes
+- Duration 55-03: 5 minutes
+- Duration 55-04: 6 minutes
 
 ## Accumulated Context
 
@@ -103,6 +106,9 @@ Last activity: 2026-06-17
 - TEST-03 E2E uses ctx.route(glob) instead of page.route(RegExp); context-level glob routes are registered before the first network request, eliminating setup race (54-04).
 - TEST-03 signIn() utility replaced with inline dialog interaction: signIn() navigated to "/" which raced with PendingScanRunner navigating to /workflows/{id} before org-switcher appeared (54-04).
 - MFA-enrollment skip guard added to TEST-03: page.url().includes('/enroll-mfa') triggers test.skip with documented reason (54-04).
+- scan-cache-sweeper uses authenticateInternalService HMAC (no NODE_ENV bypass); agentic-wallet-sweeper Bearer pattern explicitly not mirrored for this endpoint (55-02).
+- scan-cache-sweeper CronJob schedule */30 * * * *; cluster helm apply is operator-gated and not performed in this phase (55-02).
+- Console-mode metrics only in v1.13; metricsCollector+scanTimer declared before try in route; SCAN_ZERION_CALLS_TOTAL stays 0 — TODO comment marks future increment site at maybeZerionFallback (55-04).
 
 ### Todos
 
@@ -117,9 +123,9 @@ Last activity: 2026-06-17
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 54-04 (FUNNEL-02/03/04/05: wallet-check endpoint + drawer CTA wiring + TEST-03 E2E) — 2026-06-17
-- Stopped at: Phase 54 complete (4 of 4 plans done)
-- Next command: `/gsd:execute-phase 55` (Phase 55: remaining phases of v1.13)
+- Last completed: 55-04 (HARDEN-03: scan observability metrics — cache hit/miss counters + scan-duration timer) — 2026-06-17
+- Stopped at: Phase 55 complete (4 of 4 plans done) — v1.13 all plans complete
+- Next command: ship v1.13 PR
 
 ## Deferred Items
 
@@ -140,3 +146,6 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | Phase 54-auth-round-trip-persistence P01 | 28 minutes | 3 tasks | 9 files |
 | Phase 54-auth-round-trip-persistence P02 | 6 minutes | 2 tasks | 4 files |
 | Phase 54-auth-round-trip-persistence P03 | 4 minutes | 2 tasks | 4 files |
+| Phase 55-polish-hardening P02 | 8 minutes | 2 tasks | 3 files |
+| Phase 55-polish-hardening P04 | 6 minutes | 2 tasks | 3 files |
+| testing | scan-route-suggestions.test.ts 7 tests failing — NEXT_PUBLIC_SCAN_ENABLED not set in beforeEach; pre-existing since 55-03 flag gate (commit a51139f1); fix: add `process.env.NEXT_PUBLIC_SCAN_ENABLED = "true"` in beforeEach | deferred |
