@@ -86,6 +86,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     .select({
       id: users.id,
       email: users.email,
+      emailVerified: users.emailVerified,
       twoFactorEnabled: users.twoFactorEnabled,
       deactivatedAt: users.deactivatedAt,
     })
@@ -126,6 +127,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         error: "Your account has been deactivated.",
         code: "account_deactivated",
+      },
+      { status: 403 }
+    );
+  }
+
+  // The account exists and the password matched, but the email isn't verified.
+  // Better Auth's signInEmail would throw here; surface it as a typed signal so
+  // the dialog routes to the verification view (where it re-sends the OTP)
+  // instead of treating it as a generic 500. The password already matched, so
+  // this does not widen account enumeration beyond a correct-password reveal.
+  if (!user.emailVerified) {
+    return NextResponse.json(
+      {
+        error: "Please verify your email to continue.",
+        code: "email_not_verified",
       },
       { status: 403 }
     );

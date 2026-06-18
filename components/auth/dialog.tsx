@@ -602,6 +602,24 @@ export const AuthDialog = ({
         signedIn?: boolean;
       };
       if (!startResponse.ok) {
+        // Unverified email: the account exists and the password matched, but the
+        // email isn't verified. Mirror the signup path -- (re)send the
+        // verification OTP and route to the verify view -- rather than surfacing
+        // a generic error. A send failure is non-fatal (the OTP is stored
+        // server-side and the verify view can resend), so don't block on it.
+        if (startBody.code === "email_not_verified") {
+          await authClient.emailOtp
+            .sendVerificationOtp({ email, type: "email-verification" })
+            .catch(() => undefined);
+          setVerifyEmail(email);
+          setVerifyPassword(password);
+          setView("verify");
+          setOtp("");
+          pendingVerifyEmail = email;
+          pendingVerifyPassword = password;
+          setLoading(false);
+          return;
+        }
         const message = startBody.error ?? "Sign in failed";
         if (startBody.code === "account_deactivated") {
           toast.error(message);
