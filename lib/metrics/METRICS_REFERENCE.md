@@ -84,6 +84,7 @@ Error metrics tracking failures and exceptions.
 | Metric Name | Description | Labels | Target | Source |
 |-------------|-------------|--------|--------|--------|
 | `workflow.execution.errors` | Failed workflow executions | - | < 5% | DB |
+| `workflow.errors.by_workflow` | Errored executions in the **last hour** (rolling 1h window), managed orgs only. Powers the Sky/Ajna managed-client error alerts; the alert reads it directly (no offset). Not cumulative. | `workflow_id`, `org_slug`, `error_type` | - | DB |
 | `workflow.step.errors` | Failed step executions | `step_type` | < 10% | DB |
 | `plugin.action.errors` | Failed plugin actions | `plugin_name`, `action_name`, `error_type` | < 20% | API |
 | `api.errors.total` | API errors (webhook failures) | `endpoint`, `status_code`, `error_type` | count | API |
