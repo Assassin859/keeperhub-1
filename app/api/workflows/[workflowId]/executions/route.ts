@@ -1,11 +1,11 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { db } from "@/lib/db";
-import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { workflowExecutions, workflowHistory, workflows } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 
 function parseIntOrNull(value: string | null): number | null {
@@ -65,6 +65,51 @@ export async function GET(
       limit: 50,
     });
 
+    // Resolve the workflow version each run executed: the run carries the
+    // content hash of the definition it ran (executed_workflow_hash), which
+    // joins to workflow_history.content_hash. Looked up in one batched query.
+    const ranHashes = [
+      ...new Set(
+        executions.map((e) => e.executedWorkflowHash).filter(Boolean)
+      ),
+    ] as string[];
+    const historyRows =
+      ranHashes.length > 0
+        ? await db
+            .select({
+              version: workflowHistory.version,
+              contentHash: workflowHistory.contentHash,
+              createdAt: workflowHistory.createdAt,
+            })
+            .from(workflowHistory)
+            .where(
+              and(
+                eq(workflowHistory.workflowId, workflowId),
+                inArray(workflowHistory.contentHash, ranHashes)
+              )
+            )
+        : [];
+    // A content hash usually maps to exactly one version; a revert can make two
+    // versions share it. In that case pick the version that was in effect when
+    // the run started (the highest version created at or before startedAt).
+    const resolveVersion = (
+      hash: string | null,
+      startedAt: Date | null
+    ): number | null => {
+      if (!hash) {
+        return null;
+      }
+      const candidates = historyRows.filter((h) => h.contentHash === hash);
+      if (candidates.length <= 1) {
+        return candidates[0]?.version ?? null;
+      }
+      const at = startedAt ?? new Date(0);
+      const eligible = candidates.filter((c) => c.createdAt <= at);
+      const pool = eligible.length > 0 ? eligible : candidates;
+      return pool.reduce((best, c) => (c.version > best.version ? c : best))
+        .version;
+    };
+
     // KEEP-481: `total_steps` and `completed_steps` are stored as TEXT and
     // Drizzle returns them as strings, which leaks into the response as
     // string-or-null and breaks type-checked SDK clients (Pydantic, Zod, Go).
@@ -75,6 +120,10 @@ export async function GET(
       ...execution,
       totalSteps: parseIntOrNull(execution.totalSteps),
       completedSteps: parseIntOrNull(execution.completedSteps),
+      ranVersion: resolveVersion(
+        execution.executedWorkflowHash,
+        execution.startedAt
+      ),
     }));
 
     return NextResponse.json(serialized);
