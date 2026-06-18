@@ -4,6 +4,7 @@
 name: Build Images
 
 on:
+  workflow_dispatch: {}
   workflow_call:
     outputs:
       image_tag:
@@ -31,6 +32,11 @@ jobs:
     env:
       REGION: ${{ vars.TO_REGION }}
       AWS_ECR_NAME: ${{ vars.TO_ECR_NAME }}
+      # Satellite ECR repos follow the same keeperhub-<component>-<env> convention
+      # the standalone deploy workflows used. All live in the same TechOps account.
+      EXECUTOR_ECR_NAME: keeperhub-executor-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+      SCHEDULER_ECR_NAME: keeperhub-scheduler-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+      COLLECTOR_ECR_NAME: keeperhub-metrics-collector-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       ENVIRONMENT_TAG: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       # INCLUDE_TEST_ENDPOINTS is derived from ENVIRONMENT_TAG in the
       # "Derive build flags" step below (KEEP-237).
@@ -93,14 +99,23 @@ jobs:
         run: |
           IMAGE_TAG="${{ steps.vars.outputs.sha_short }}"
           ALL_EXIST=true
-          for prefix in app migrator workflow-runner; do
+          # repo:prefix pairs for every image in the pipeline bake group.
+          for pair in \
+            "${{ env.AWS_ECR_NAME }}:app" \
+            "${{ env.AWS_ECR_NAME }}:migrator" \
+            "${{ env.AWS_ECR_NAME }}:workflow-runner" \
+            "${{ env.EXECUTOR_ECR_NAME }}:executor" \
+            "${{ env.SCHEDULER_ECR_NAME }}:schedule" \
+            "${{ env.SCHEDULER_ECR_NAME }}:block" \
+            "${{ env.COLLECTOR_ECR_NAME }}:collector"; do
+            repo="${pair%%:*}"; prefix="${pair##*:}"
             if aws ecr describe-images \
-              --repository-name "${{ env.AWS_ECR_NAME }}" \
+              --repository-name "${repo}" \
               --image-ids "imageTag=${prefix}-${IMAGE_TAG}" \
               --region "${{ env.REGION }}" >/dev/null 2>&1; then
-              echo "${prefix}-${IMAGE_TAG} exists"
+              echo "${repo}:${prefix}-${IMAGE_TAG} exists"
             else
-              echo "${prefix}-${IMAGE_TAG} not found"
+              echo "${repo}:${prefix}-${IMAGE_TAG} not found"
               ALL_EXIST=false
             fi
           done
@@ -134,6 +149,9 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPO: ${{ env.AWS_ECR_NAME }}
+          EXECUTOR_ECR_REPO: ${{ env.EXECUTOR_ECR_NAME }}
+          SCHEDULER_ECR_REPO: ${{ env.SCHEDULER_ECR_NAME }}
+          METRICS_COLLECTOR_ECR_REPO: ${{ env.COLLECTOR_ECR_NAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
           NEXT_PUBLIC_AUTH_PROVIDERS: ${{ env.NEXT_PUBLIC_AUTH_PROVIDERS }}
           NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ env.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
@@ -150,6 +168,7 @@ jobs:
           SENTRY_RELEASE: ${{ steps.vars.outputs.sha_short }}
         with:
           files: docker-bake.hcl
+          targets: pipeline
           push: true
 
       - name: Upload Sentry source maps
@@ -173,33 +192,3 @@ jobs:
         with:
           files: docker-bake.hcl
           targets: sentry-upload
-
-      # ── Copy images to TechOps ECR ──
-      - name: Configure TechOps AWS credentials
-        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.TO_REGION }}
-
-      - name: Login to TechOps ECR
-        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
-        id: login-techops-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Copy images to TechOps ECR
-        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
-        env:
-          SRC_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          DST_REGISTRY: ${{ steps.login-techops-ecr.outputs.registry }}
-          ECR_REPO: ${{ env.AWS_ECR_NAME }}
-          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
-        run: |
-          for prefix in app migrator workflow-runner; do
-            echo "Copying ${prefix}-${IMAGE_TAG} to TechOps ECR..."
-            docker buildx imagetools create \
-              --tag "${DST_REGISTRY}/${ECR_REPO}:${prefix}-${IMAGE_TAG}" \
-              "${SRC_REGISTRY}/${ECR_REPO}:${prefix}-${IMAGE_TAG}"
-          done
-          echo "TechOps ECR push complete"
