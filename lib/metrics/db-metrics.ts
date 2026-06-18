@@ -263,7 +263,7 @@ export type WorkflowErrorsByWorkflow = Array<{
  * the 8s metrics `statement_timeout` (Postgres 57014), the catch returned [],
  * and the gauge flapped (the series vanished on most scrapes). Bounding to the
  * last hour keeps the row set tiny so the query is an index range scan on
- * idx_workflow_executions_status_completed_at and finishes in milliseconds.
+ * idx_workflow_executions_error_completed_at and finishes in milliseconds.
  *
  * Scoped to MANAGED_ORG_SLUGS to bound `workflow_id` cardinality. errorType is
  * the `workflow_executions.error_type` column, projected to "unknown" for
