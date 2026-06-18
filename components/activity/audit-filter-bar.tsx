@@ -234,7 +234,7 @@ function ValueList({
                     onBack();
                   }
                 }}
-                value={opt.search}
+                value={`${opt.search} ${opt.value}`}
               >
                 {opt.node ?? <span>{opt.label}</span>}
                 {checked && <Check className="ml-auto size-4 shrink-0" />}
