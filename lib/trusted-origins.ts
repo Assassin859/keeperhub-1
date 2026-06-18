@@ -14,8 +14,15 @@
  * `https://app.keeperhub.com` and `https://app.staging.keeperhub.com` alike.
  */
 
+// Local dev servers run on an arbitrary localhost port (each worktree picks its
+// own to avoid colliding, e.g. :3001), so trust any localhost port - but only
+// in development. Production and test keep the strict origin list below.
+const DEV_ORIGINS: readonly string[] =
+  process.env.NODE_ENV === "development" ? ["http://localhost:*"] : [];
+
 export const TRUSTED_ORIGINS: readonly string[] = [
   "http://localhost:3000",
+  ...DEV_ORIGINS,
   // start custom keeperhub code //
   "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
   // end keeperhub code //

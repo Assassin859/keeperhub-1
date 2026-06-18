@@ -13,6 +13,7 @@ import {
   currentWorkflowIdAtom,
   currentWorkflowNameAtom,
   edgesAtom,
+  editorTourRequestedAtom,
   hasSidebarBeenShownAtom,
   isTransitioningFromHomepageAtom,
   nodesAtom,
@@ -74,6 +75,7 @@ const Home = () => {
   );
   const hasCreatedWorkflowRef = useRef(false);
   const currentWorkflowName = useAtomValue(currentWorkflowNameAtom);
+  const tourRequested = useAtomValue(editorTourRequestedAtom);
 
   // Reset sidebar animation state when on homepage
   useEffect(() => {
@@ -146,6 +148,15 @@ const Home = () => {
     router,
     setIsTransitioningFromHomepage,
   ]);
+
+  // Launch the editor walkthrough when "Take a tour" was requested (from the
+  // account menu or the Setup Guide): build the fresh default workflow the
+  // walkthrough controller drives. handleAddNode then navigates into the editor.
+  useEffect(() => {
+    if (tourRequested && session && !isAnonymousUser(session.user)) {
+      handleAddNode();
+    }
+  }, [tourRequested, session, handleAddNode]);
 
   // Initialize with a temporary "add" node on mount
   useEffect(() => {

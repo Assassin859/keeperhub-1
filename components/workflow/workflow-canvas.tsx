@@ -30,6 +30,7 @@ import {
   addNodeAtom,
   autoLayoutAtom,
   autosaveAtom,
+  centerNodeAtom,
   currentWorkflowIdAtom,
   edgesAtom,
   hasUnsavedChangesAtom,
@@ -175,9 +176,13 @@ export function WorkflowCanvas() {
 
   // Sidebar-aware fit view: fit then shift viewport left to account for sidebar
   const fitViewSidebarAware = useCallback(
-    (options?: { duration?: number }) => {
+    (options?: { duration?: number; nodes?: { id: string }[] }) => {
       const duration = options?.duration ?? 300;
-      fitView({ ...FIT_VIEW_DEFAULTS, duration });
+      fitView({
+        ...FIT_VIEW_DEFAULTS,
+        duration,
+        ...(options?.nodes ? { nodes: options.nodes } : {}),
+      });
 
       if (isSidebarCollapsed || !rightPanelWidth) {
         return;
@@ -200,6 +205,19 @@ export function WorkflowCanvas() {
     },
     [fitView, getViewport, setViewport, isSidebarCollapsed, rightPanelWidth]
   );
+
+  // Focus/center a node when centerNodeAtom is set (e.g. the editor tour),
+  // then clear it. WorkflowCanvas is inside ReactFlowProvider, so it owns the
+  // React Flow instance the request needs.
+  const centerNodeId = useAtomValue(centerNodeAtom);
+  const resetCenterNode = useSetAtom(centerNodeAtom);
+  useEffect(() => {
+    if (!centerNodeId) {
+      return;
+    }
+    fitViewSidebarAware({ nodes: [{ id: centerNodeId }], duration: 500 });
+    resetCenterNode(null);
+  }, [centerNodeId, fitViewSidebarAware, resetCenterNode]);
 
   const handleAutoLayout = useCallback(() => {
     setIsAnimatingLayout(true);

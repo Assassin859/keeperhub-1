@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // Anonymous storage state — the Marketplace tab is publicly browseable, and
 // the privacy assertion below MUST hold for unauthenticated visitors (the
