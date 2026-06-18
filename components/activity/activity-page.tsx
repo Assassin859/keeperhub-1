@@ -1,10 +1,12 @@
 "use client";
 
-import { Download, Search } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { type ReactNode, useEffect } from "react";
+import { Download, LogIn, Search } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import type { ReactNode } from "react";
 import { ActivityFeed } from "@/components/activity/activity-feed";
+import { ActivityMemberPreview } from "@/components/activity/activity-member-preview";
 import { AuditFilterBar } from "@/components/activity/audit-filter-bar";
+import { useAuthPrompt } from "@/components/auth/provider";
 import { ExportAuditOverlay } from "@/components/overlays/export-audit-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
@@ -25,16 +27,52 @@ import {
 import { useActiveMember } from "@/lib/hooks/use-organization";
 
 /**
- * Full-page organization activity feed. Mirrors the body of ActivityOverlay but
- * in page chrome, reachable at /activity from the left nav. Admin/owner only --
- * the read endpoint is gated the same way server-side, and anyone without that
- * role who lands here by URL is bounced home rather than shown an empty page.
+ * In-page sign-in panel for the Activity route. Signed-out users reach the page
+ * (the nav item is visible to everyone) and get a sign-in prompt here rather
+ * than being bounced home.
  */
-export function ActivityPage(): ReactNode {
-  const { data: session, isPending } = useSession();
-  const { isAdmin, isOwner, isLoading } = useActiveMember();
+function ActivityGuestGate(): ReactNode {
+  const { openAuthPrompt } = useAuthPrompt();
+  return (
+    <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+        <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
+          <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
+            <LogIn className="size-10 text-muted-foreground" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="font-semibold text-xl tracking-tight">
+              Sign in to view activity
+            </h2>
+            <p className="max-w-sm text-muted-foreground text-sm">
+              Sign in to see security-sensitive actions across your
+              organization.
+            </p>
+          </div>
+          <Button
+            onClick={() =>
+              openAuthPrompt({
+                action: "nav:activity",
+                redirectTo: "/activity",
+              })
+            }
+          >
+            Sign in
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Full activity feed for owners and admins -- the real, server-backed view.
+ * Isolated in its own component so the audit data hook only runs for the roles
+ * allowed to read it.
+ */
+function ActivityAdminView(): ReactNode {
+  const { isOwner } = useActiveMember();
   const { push } = useOverlay();
-  const router = useRouter();
   const searchParams = useSearchParams();
   // Seed page size from the URL so a shared/refreshed ?size=N is honored; an
   // out-of-range value falls back to the default.
@@ -47,21 +85,6 @@ export function ActivityPage(): ReactNode {
   // Seed the search box from ?q so a shared/refreshed search is honored.
   const initialSearch = (searchParams.get("q") ?? "").slice(0, 200);
   const activity = useAuditActivity({ initialPageSize, initialSearch });
-
-  // Admin/owner only. Once auth + membership resolve, bounce anyone else home;
-  // the server already 403s the data, this just keeps them off the page.
-  const resolved = !(isPending || isLoading);
-  const allowed =
-    Boolean(session?.user) && !session?.user?.isAnonymous && isAdmin;
-  useEffect(() => {
-    if (resolved && !allowed) {
-      router.replace("/");
-    }
-  }, [resolved, allowed, router]);
-
-  if (!(resolved && allowed)) {
-    return null;
-  }
 
   return (
     <div className="pointer-events-auto fixed inset-0 flex flex-col overflow-hidden bg-sidebar">
@@ -134,4 +157,38 @@ export function ActivityPage(): ReactNode {
       </div>
     </div>
   );
+}
+
+/**
+ * Full-page organization activity feed, reachable at /activity from the left
+ * nav (visible to everyone). What's shown depends on the viewer's role in the
+ * active org: owners/admins get the real feed, members get a labelled sample,
+ * and signed-out users get an in-page sign-in prompt. The read endpoint is
+ * gated the same way server-side, so the member/guest views never hold real
+ * audit data. Re-evaluates on org switch via useActiveMember.
+ */
+export function ActivityPage(): ReactNode {
+  const { data: session, isPending } = useSession();
+  const { isAdmin, isLoading } = useActiveMember();
+
+  if (isPending) {
+    return null;
+  }
+
+  const signedIn = Boolean(session?.user) && !session?.user?.isAnonymous;
+  if (!signedIn) {
+    return <ActivityGuestGate />;
+  }
+
+  // Wait for the active-org membership to resolve before choosing member vs
+  // admin, so a switch doesn't flash the wrong view.
+  if (isLoading) {
+    return null;
+  }
+
+  if (!isAdmin) {
+    return <ActivityMemberPreview />;
+  }
+
+  return <ActivityAdminView />;
 }

@@ -121,7 +121,12 @@ export function useAuditActivity(options?: {
   const [tagOptions, setTagOptions] = useState<ResourceOption[]>([]);
   const [workflowOptions, setWorkflowOptions] = useState<ResourceOption[]>([]);
 
-  // Projects and tags are stable pickers, loaded once.
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const activeOrgId = activeOrg?.id ?? null;
+
+  // Projects and tags pickers, reloaded when the active org changes so a switch
+  // doesn't leave the previous org's options in the filter bar.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeOrgId is the refetch trigger on org switch; the endpoints scope by the active org server-side, so it is not read in the body
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -143,10 +148,11 @@ export function useAuditActivity(options?: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeOrgId]);
 
   // Workflow picker cascades to the selected project(s)/tag(s); the scoping is
   // applied server-side by /api/workflows, never by filtering a full list here.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeOrgId is the refetch trigger on org switch; the endpoint scopes by the active org server-side, so it is not read in the body
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -181,9 +187,8 @@ export function useAuditActivity(options?: {
     return () => {
       cancelled = true;
     };
-  }, [projects, tags]);
+  }, [projects, tags, activeOrgId]);
 
-  const { data: activeOrg } = authClient.useActiveOrganization();
   const members: AuditActivityMember[] = useMemo(() => {
     const list = (activeOrg?.members ?? []) as Array<{
       userId: string;
