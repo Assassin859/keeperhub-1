@@ -144,20 +144,20 @@ const workflowErrorsByWorkflow = getOrCreateGauge(
   ["workflow_id", "org_slug", "error_type"]
 );
 
-// TECH-6544: errored executions in the last hour for managed orgs, grouped by
-// (org_slug, error_category, error_type). Sibling of workflowErrorsByWorkflow,
-// but keyed on error_category instead of workflow_id so the infra P3 alert
+// TECH-6544: errored executions in the last hour, PLATFORM-WIDE, grouped by
+// (error_category, error_type). Keyed on error_category so the infra P3 alert
 // dedups system errors by *cause* — one series per failure mode — rather than
-// fanning a single root cause out into one series per affected workflow. Same
-// 1h-window, DB-sourced, managed-org-scoped design (see
-// getSystemErrorsByCategoryFromDb); cardinality stays bounded because there is
-// no workflow_id label. Value = executions that errored in the last hour per
-// (org_slug, error_category, error_type); the alert reads it directly.
+// fanning a single root cause out into one series per affected workflow/org.
+// System faults are org-agnostic, so there is intentionally no org_slug label;
+// dropping it (and workflow_id) pins cardinality to ~categories * ~types
+// regardless of customer count. 1h-window, DB-sourced (see
+// getSystemErrorsByCategoryFromDb). Value = executions that errored in the last
+// hour per (error_category, error_type); the alert reads it directly.
 const systemErrorsByCategory = getOrCreateGauge(
   dbRegistry,
   "keeperhub_system_errors_by_category",
-  "Workflow executions that errored in the last hour for managed orgs, by org_slug, error_category and error_type",
-  ["org_slug", "error_category", "error_type"]
+  "Workflow executions that errored in the last hour, platform-wide, by error_category and error_type (system errors are org-agnostic; no org_slug label to keep cardinality fixed)",
+  ["error_category", "error_type"]
 );
 
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
@@ -1495,14 +1495,13 @@ async function refreshDbMetricsNow(): Promise<void> {
       );
     }
 
-    // TECH-6544: errored executions per (org_slug, error_category, error_type)
-    // for managed orgs. Reset before populating so a category that no longer
-    // has errors in the window clears out instead of pinning a stale value.
+    // TECH-6544: errored executions per (error_category, error_type),
+    // platform-wide. Reset before populating so a category that no longer has
+    // errors in the window clears out instead of pinning a stale value.
     systemErrorsByCategory.reset();
     for (const row of systemErrorsByCategoryRows) {
       systemErrorsByCategory.set(
         {
-          org_slug: row.orgSlug,
           error_category: row.errorCategory,
           error_type: row.errorType,
         },

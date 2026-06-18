@@ -144,10 +144,10 @@ const ERRORS_BY_WORKFLOW_SKY_RE =
   /keeperhub_workflow_errors_by_workflow\{[^}]*workflow_id="wf_sky_1"[^}]*org_slug="techops-services"[^}]*error_type="user"[^}]*\}\s+7/;
 const ERRORS_BY_WORKFLOW_AJNA_RE =
   /keeperhub_workflow_errors_by_workflow\{[^}]*workflow_id="wf_ajna_1"[^}]*org_slug="ajna"[^}]*error_type="system"[^}]*\}\s+2/;
-const ERRORS_BY_CATEGORY_SKY_RE =
-  /keeperhub_system_errors_by_category\{[^}]*org_slug="techops-services"[^}]*error_category="network_rpc"[^}]*error_type="system"[^}]*\}\s+5/;
-const ERRORS_BY_CATEGORY_AJNA_RE =
-  /keeperhub_system_errors_by_category\{[^}]*org_slug="ajna"[^}]*error_category="unknown"[^}]*error_type="user"[^}]*\}\s+3/;
+const ERRORS_BY_CATEGORY_SYSTEM_RE =
+  /keeperhub_system_errors_by_category\{[^}]*error_category="network_rpc"[^}]*error_type="system"[^}]*\}\s+5/;
+const ERRORS_BY_CATEGORY_UNKNOWN_RE =
+  /keeperhub_system_errors_by_category\{[^}]*error_category="unknown"[^}]*error_type="user"[^}]*\}\s+3/;
 
 describe("updateDbMetrics TTL cache", () => {
   const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
@@ -427,9 +427,9 @@ describe("keeperhub_workflow_errors_by_workflow gauge", () => {
 });
 
 // TECH-6544: the system-errors-by-category gauge dedups errors by cause for the
-// infra P3 alert. Like the per-workflow gauge it must be DB-sourced and
-// populated on the metrics scrape, grouped by (org_slug, error_category,
-// error_type) with no workflow_id label.
+// infra P3 alert. It must be DB-sourced and populated on the metrics scrape,
+// grouped by (error_category, error_type) only — platform-wide, with no
+// org_slug or workflow_id label.
 describe("keeperhub_system_errors_by_category gauge", () => {
   const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
 
@@ -452,16 +452,14 @@ describe("keeperhub_system_errors_by_category gauge", () => {
     }
   });
 
-  it("emits one series per (org_slug, error_category, error_type) from the DB query", async () => {
+  it("emits one series per (error_category, error_type) from the DB query", async () => {
     dbMocks.getSystemErrorsByCategoryFromDb.mockResolvedValue([
       {
-        orgSlug: "techops-services",
         errorCategory: "network_rpc",
         errorType: "system",
         count: 5,
       },
       {
-        orgSlug: "ajna",
         errorCategory: "unknown",
         errorType: "user",
         count: 3,
@@ -471,14 +469,13 @@ describe("keeperhub_system_errors_by_category gauge", () => {
     await updateDbMetrics();
     const out = await getDbMetrics();
 
-    expect(out).toMatch(ERRORS_BY_CATEGORY_SKY_RE);
-    expect(out).toMatch(ERRORS_BY_CATEGORY_AJNA_RE);
+    expect(out).toMatch(ERRORS_BY_CATEGORY_SYSTEM_RE);
+    expect(out).toMatch(ERRORS_BY_CATEGORY_UNKNOWN_RE);
   });
 
   it("clears stale series when a category stops appearing in the query", async () => {
     dbMocks.getSystemErrorsByCategoryFromDb.mockResolvedValueOnce([
       {
-        orgSlug: "ajna",
         errorCategory: "billing",
         errorType: "user",
         count: 4,
