@@ -174,6 +174,9 @@ importers:
       dotenv:
         specifier: ^17.4.1
         version: 17.4.1
+      driver.js:
+        specifier: ^1.4.0
+        version: 1.4.0
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@electric-sql/pglite@0.3.15)(@opentelemetry/api@1.9.1)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.14)(magicast@0.5.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.20.0)(kysely@0.28.17)(mysql2@3.15.3)(pg@8.20.0)(postgres@3.4.9)(prisma@7.4.2(@types/react@19.2.14)(magicast@0.5.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))
@@ -183,9 +186,6 @@ importers:
       import-in-the-middle:
         specifier: ^2.0.6
         version: 2.0.6
-      intro.js:
-        specifier: ^8.3.2
-        version: 8.3.2
       ioredis:
         specifier: 5.4.2
         version: 5.4.2
@@ -6079,6 +6079,9 @@ packages:
     resolution: {integrity: sha512-k8DaKGP6r1G30Lx8V4+pCsLzKr8vLmV2paqEj1Y55GdAgJuIqpRp5FfajGF8KtwMxCz9qJc6wUIJnm053d/WCw==}
     engines: {node: '>=12'}
 
+  driver.js@1.4.0:
+    resolution: {integrity: sha512-Gm64jm6PmcU+si21sQhBrTAM1JvUrR0QhNmjkprNLxohOBzul9+pNHXgQaT9lW84gwg9GMLB3NZGuGolsz5uew==}
+
   drizzle-kit@0.31.10:
     resolution: {integrity: sha512-7OZcmQUrdGI+DUNNsKBn1aW8qSoKuTH7d0mYgSP8bAzdFzKoovxEFnoGQp2dVs82EOJeYycqRtciopszwUf8bw==}
     hasBin: true
@@ -6837,9 +6840,6 @@ packages:
   interpret@3.1.1:
     resolution: {integrity: sha512-6xwYfHbajpoF0xLW+iwLkhwgvLoZDfjYfoFNu8ftMoXINzwuymNLd9u/KmwtdT2GbR+/Cz66otEGEVVUHX9QLQ==}
     engines: {node: '>=10.13.0'}
-
-  intro.js@8.3.2:
-    resolution: {integrity: sha512-+QsuU8P7Z/O7stAwZ8Uj6CPyKsY6xVx/7hKTVLjlIEPYHaT43XnEUUYHCln6Ehr7GlDuwczh6I8PD/HGf4EG0A==}
 
   ioredis@5.4.2:
     resolution: {integrity: sha512-0SZXGNGZ+WzISQ67QDyZ2x0+wVxjjUndtD8oSeik/4ajifeiRufed8fCb8QW8VMyi4MXcS+UO1k/0NGhvq1PAg==}
@@ -16128,6 +16128,8 @@ snapshots:
 
   dotenv@17.4.1: {}
 
+  driver.js@1.4.0: {}
+
   drizzle-kit@0.31.10:
     dependencies:
       '@drizzle-team/brocli': 0.10.2
@@ -16996,8 +16998,6 @@ snapshots:
   internmap@2.0.3: {}
 
   interpret@3.1.1: {}
-
-  intro.js@8.3.2: {}
 
   ioredis@5.4.2:
     dependencies:

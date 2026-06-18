@@ -1,9 +1,11 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import {
   Check,
   ChevronDown,
   ChevronUp,
+  Compass,
   Info,
   KeyRound,
   Wallet,
@@ -25,6 +27,7 @@ import { useSession } from "@/lib/auth-client";
 import { useOnboardingStatus } from "@/lib/hooks/use-onboarding-status";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { cn } from "@/lib/utils";
+import { editorTourRequestedAtom } from "@/lib/workflow/store";
 
 type StepConfig = {
   id: string;
@@ -156,6 +159,7 @@ export function GettingStartedChecklist({
   const { open: openOverlay } = useOverlay();
   const { data: session } = useSession();
   const authTriggerRef = useRef<HTMLButtonElement>(null);
+  const requestTour = useSetAtom(editorTourRequestedAtom);
 
   const isAnonymous = isAnonymousUser(session?.user);
 
@@ -331,6 +335,23 @@ export function GettingStartedChecklist({
             <ProgressBar completed={completedCount} total={steps.length} />
           )}
         </div>
+
+        {!isAnonymous && onCreateWorkflow ? (
+          <>
+            <div className="my-1 h-px bg-border" />
+            <button
+              className="flex w-full items-center justify-center gap-2 px-2 py-1.5 text-muted-foreground text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                onCreateWorkflow();
+                requestTour(true);
+              }}
+              type="button"
+            >
+              <Compass className="size-4" />
+              Take a tour
+            </button>
+          </>
+        ) : null}
       </div>
       {docsLink}
     </div>

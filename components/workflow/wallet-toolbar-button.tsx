@@ -75,6 +75,7 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
     return (
       <Button
         className="h-9"
+        data-tour="create-wallet"
         onClick={() => openOverlay(WalletOverlay)}
         size="sm"
         variant="outline"

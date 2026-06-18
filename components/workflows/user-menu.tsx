@@ -1,6 +1,8 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import {
+  Compass,
   CreditCard,
   FolderTree,
   Key,
@@ -43,7 +45,8 @@ import {
   useNotificationStatus,
 } from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
-import { isAnonymousUser, isNewUserSession } from "@/lib/is-new-user";
+import { isAnonymousUser, isNewUserSession } from "@/lib/is-anonymous";
+import { editorTourRequestedAtom } from "@/lib/workflow/store";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
@@ -53,7 +56,7 @@ export const UserMenu = (): React.ReactElement => {
   // Better Auth anonymous plugin creates users with name "Anonymous" and a
   // temp- email; anyone anonymous or not yet email-verified still needs the
   // Sign In surface. Shared with the onboarding tour via lib/is-new-user.
-  const isAnonymous = isAnonymousUser(session);
+  const isAnonymous = isAnonymousUser(session?.user);
   const isNewUser = isNewUserSession(session);
 
   // Wallet (SIWE) users authenticate by signature and never verify an email,
@@ -103,6 +106,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
   const { organization } = useOrganization();
   const { isOwner } = useActiveMember();
   const router = useRouter();
+  const requestTour = useSetAtom(editorTourRequestedAtom);
   const showBilling = isOwner && isBillingEnabled();
   const { status: notificationStatus, refresh: refreshNotifications } =
     useNotificationStatus(isOwner ? organization?.id : null);
@@ -236,6 +240,16 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           <DropdownMenuItem onClick={() => openOverlay(ProjectsAndTagsOverlay)}>
             <FolderTree className="size-4" />
             <span>Projects and Tags</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={() => {
+              requestTour(true);
+              router.push("/");
+            }}
+          >
+            <Compass className="size-4" />
+            <span>Take a tour</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout}>
