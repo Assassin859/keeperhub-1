@@ -821,6 +821,9 @@ function formatCodeValue(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
+  if (typeof value === "bigint") {
+    return `${value}n`;
+  }
   return JSON.stringify(value);
 }
 
