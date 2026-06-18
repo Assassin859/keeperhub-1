@@ -40,21 +40,18 @@ import {
   useNotificationStatus,
 } from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
+import { isAnonymousUser, isNewUserSession } from "@/lib/is-new-user";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
   const signInInProgress = isSingleProviderSignInInitiated();
   const authFlowInProgress = isAuthFlowInProgress();
 
-  // Check if user is anonymous
-  // Better Auth anonymous plugin creates users with name "Anonymous" and temp- email
-  const isAnonymousUser =
-    !session?.user ||
-    session.user.name === "Anonymous" ||
-    session.user.email?.startsWith("temp-");
-
-  // Check if user's email is verified
-  const isEmailVerified = session?.user?.emailVerified === true;
+  // Better Auth anonymous plugin creates users with name "Anonymous" and a
+  // temp- email; anyone anonymous or not yet email-verified still needs the
+  // Sign In surface. Shared with the onboarding tour via lib/is-new-user.
+  const isAnonymous = isAnonymousUser(session);
+  const isNewUser = isNewUserSession(session);
 
   // While the session loader is pending the visitor's identity is not yet
   // known. On a hard refresh `session` is undefined, so a signed-in user
@@ -70,8 +67,7 @@ export const UserMenu = (): React.ReactElement => {
   // or an *existing* anonymous session (session.user present) is being
   // refetched.
   if (isPending && !signInInProgress && !authFlowInProgress) {
-    const anonymousSessionRefetching =
-      Boolean(session?.user) && isAnonymousUser;
+    const anonymousSessionRefetching = Boolean(session?.user) && isAnonymous;
     if (!anonymousSessionRefetching) {
       return <Skeleton className="h-9 w-9 rounded-full" />;
     }
@@ -82,12 +78,13 @@ export const UserMenu = (): React.ReactElement => {
   // `useActiveMember`, which auto-fire protected fetches as soon as they are
   // called. Routing anonymous users through a separate sign-in surface keeps
   // the network log clean on initial load.
-  if (isAnonymousUser || !isEmailVerified) {
+  if (isNewUser) {
     return (
       <div className="flex items-center gap-2">
         <AuthDialog>
           <Button
             className="h-9 disabled:opacity-100 disabled:*:text-muted-foreground"
+            data-tour="signin-button"
             size="sm"
             variant="default"
           >

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "intro.js/introjs.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -336,3 +337,30 @@
     bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem) !important;
   }
 }
+
+/* intro.js onboarding tooltip - themed with design tokens to match the app */
+.introjs-tooltip {
+  background-color: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+}
+
+.introjs-tooltip .introjs-tooltip-title {
+  color: var(--card-foreground);
+}
+
+.introjs-arrow.top {
+  border-bottom-color: var(--card);
+}
+
+.introjs-arrow.bottom {
+  border-top-color: var(--card);
+}
+
+.introjs-tooltipbuttons .introjs-button {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid var(--border);
+  text-shadow: none;
+}
+

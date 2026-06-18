@@ -12,6 +12,7 @@ import { GlobalModals } from "@/components/global-modals";
 import { PendingTemplateRunner } from "@/components/hub/pending-template-runner";
 import { LayoutContent } from "@/components/layout-content";
 import { MobileWarningDialog } from "@/components/mobile-warning-dialog";
+import { SignInTour } from "@/components/onboarding/signin-tour";
 import { OverlayProvider } from "@/components/overlays/overlay-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
@@ -129,6 +130,7 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
                 <Toaster />
                 <GlobalModals />
                 <MobileWarningDialog />
+                <SignInTour />
               </OverlayProvider>
             </AuthProvider>
           </Provider>
