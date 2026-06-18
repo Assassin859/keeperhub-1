@@ -575,12 +575,14 @@ const NAV_ITEMS: NavItemDef[] = [
     requireAuth: true,
   },
   {
+    // Visible to everyone and routable while signed-out: the page itself shows
+    // an in-page sign-in for guests, a labelled sample for members, and the
+    // real feed for owners/admins. So this is neither requireAuth nor adminOnly.
     id: "activity",
     icon: Activity,
     label: "Activity",
     href: "/activity",
-    requireAuth: true,
-    adminOnly: true,
+    requireAuth: false,
   },
 ];
 
