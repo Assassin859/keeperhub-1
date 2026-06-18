@@ -31,6 +31,15 @@ export async function createWorkflow(
   // Navigate to homepage which has the workflow canvas
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
+  // Wait for auth to hydrate before building. If the canvas enters edit mode
+  // while the session is still resolving, the new workflow is created as
+  // anonymous and the Save button stays gated ("Sign in to save workflows")
+  // for the rest of the test. The org switcher only renders once auth has
+  // resolved, so it is the auth-ready signal.
+  await expect(page.locator('button[role="combobox"]')).toBeVisible({
+    timeout: 15_000,
+  });
+
   // Wait for canvas to load
   await waitForCanvas(page);
 

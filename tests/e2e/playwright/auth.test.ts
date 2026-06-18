@@ -45,7 +45,9 @@ test.describe("Authentication", () => {
       // Dialog should switch to verify view
       await expect(dialog).toBeVisible({ timeout: 5000 });
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
 
       // Verify OTP input is present
@@ -119,7 +121,9 @@ test.describe("Authentication", () => {
       // Wait for verify view
       const dialogTitle = dialog.locator("h2");
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
 
       // Go back and try to sign up again with same email
@@ -135,7 +139,9 @@ test.describe("Authentication", () => {
 
       // Should redirect to verification view (not show error)
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
     });
 
@@ -165,7 +171,9 @@ test.describe("Authentication", () => {
       // Wait for verify view
       const dialogTitle = dialog.locator("h2");
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
 
       // Try to enter non-numeric characters using type() to trigger onChange
@@ -202,7 +210,9 @@ test.describe("Authentication", () => {
 
       const dialogTitle = dialog.locator("h2");
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
 
       const verifyButton = dialog.locator(
@@ -292,7 +302,9 @@ test.describe("Authentication", () => {
       // Wait for verify view
       const dialogTitle = dialog.locator("h2");
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
 
       // Go back to sign in
@@ -306,7 +318,9 @@ test.describe("Authentication", () => {
 
       // Should redirect to verification view (not show error)
       await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+        // 30s tolerates the dev server's first-request route compilation, which
+        // can make the signup -> verify transition slow on a cold `next dev`.
+        timeout: 30_000,
       });
 
       // Toast should indicate verification needed (use first() to handle multiple toasts)

@@ -36,10 +36,12 @@ export async function signUp(
     .locator('button[type="submit"]:has-text("Create account")')
     .click();
 
-  // Wait for verify view
+  // Wait for verify view. 30s tolerates the dev server's first-request route
+  // compilation, which can make the signup -> verify transition slow on a cold
+  // `next dev` (the cause of the intermittent "stuck on Create account" flake).
   const dialogTitle = dialog.locator("h2");
   await expect(dialogTitle).toHaveText("Verify your email", {
-    timeout: 15_000,
+    timeout: 30_000,
   });
 
   return { email: testEmail, password: testPassword };

@@ -299,6 +299,15 @@ async function safeCleanup(handle: CleanupHandle | null): Promise<void> {
 }
 
 test.describe("Credential resolution in workflow step bundles", () => {
+  // These assertions require a workflow execution to run to completion (the
+  // step makes a real outbound call, and we inspect how it failed). Under
+  // `next dev` the Workflow DevKit worker does not advance runs -- they hang
+  // at pending and the test times out -- so this suite only runs under the
+  // production runtime, matching back-forward-hydration's NEXT_BUILD_MODE gate.
+  test.skip(
+    process.env.NEXT_BUILD_MODE !== "production",
+    "Workflow execution only completes under the production runtime (NEXT_BUILD_MODE=production)."
+  );
   for (const commsCase of COMMS_CASES) {
     test(`${commsCase.integrationType} step receives credentials via PLUGIN_CREDENTIAL_MAP, not the lossy fallback`, async ({
       apiRequest,
