@@ -48,6 +48,13 @@ group "metrics-collector" {
   targets = ["metrics-collector"]
 }
 
+# The execution pipeline deployed as one atomic keeperhub-stack release. Building
+# these together in a single bake session shares the deps/source/builder stages
+# (one pnpm build) instead of each deploy workflow rebuilding them independently.
+group "pipeline" {
+  targets = ["app", "migrator", "workflow-runner", "executor", "schedule-dispatcher", "block-dispatcher", "metrics-collector"]
+}
+
 group "all" {
   targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox", "metrics-collector"]
 }

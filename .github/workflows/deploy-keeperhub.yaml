@@ -1,5 +1,11 @@
 # Type: reusable | Called by ci-pipeline.yml
 # Pure deployer: expects images to already exist in ECR (built by build-images.yml).
+# Deploys the whole execution pipeline (app + executor + schedule + block +
+# metrics-collector) as the single atomic `keeperhub` keeperhub-stack release, so
+# all components roll together and roll back together. Supersedes the separate
+# deploy-executor / deploy-scheduler / deploy-metrics-collector workflows.
+# One-time per env: run the adopt-and-cutover runbook before the first stack
+# deploy so the existing standalone releases are adopted into this one.
 on:
   workflow_call:
     inputs:
@@ -26,7 +32,7 @@ jobs:
     environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
     runs-on: ubuntu-latest
     env:
-      HELM_FILE: deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/values.yaml
+      HELM_FILE: deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/values.yaml
       REGION: ${{ vars.TO_REGION }}
       CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
       NAMESPACE: keeperhub
@@ -109,12 +115,12 @@ jobs:
         with:
           cluster-name: ${{ env.CLUSTER_NAME }}
           config-files: ${{ env.HELM_FILE }}
-          chart-path: techops-services/common
+          chart-path: techops-services/keeperhub-stack
           namespace: ${{ env.NAMESPACE }}
-          timeout: 5m0s
+          timeout: 15m0s
           name: ${{ env.SERVICE_NAME }}
           chart-repository: https://techops-services.github.io/helm-charts
-          version: 0.2.1
+          version: 0.1.0
           atomic: true
 
       - name: Wait for deployment health check
