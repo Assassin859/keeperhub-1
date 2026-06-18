@@ -116,7 +116,18 @@ const PERSISTENT_USERS: TestUserConfig[] = [
     orgName: "E2E Analytics Organization",
     password: ANALYTICS_PASSWORD,
   },
+  {
+    // Org carries a 'pro' plan (see seedPersistentTestUsers) so tests that need
+    // feature-gated actions (HTTP Request, Send Webhook, Database Query, Code)
+    // can use them. e2e-test-org stays free for the billing/free-limit tests.
+    email: "pr-test-pro@techops.services",
+    name: "E2E Pro User",
+    orgSlug: "e2e-test-pro-org",
+    orgName: "E2E Pro Organization",
+  },
 ];
+
+const PRO_ORG_SLUG = "e2e-test-pro-org";
 
 const PERSISTENT_EMAILS = PERSISTENT_USERS.map((u) => u.email);
 
@@ -208,6 +219,31 @@ async function ensureMembership(
   `;
 }
 
+async function ensureProSubscription(
+  sql: ReturnType<typeof postgres>,
+  orgId: string
+): Promise<void> {
+  const existing = await sql`
+    SELECT id FROM organization_subscriptions
+    WHERE organization_id = ${orgId} LIMIT 1
+  `;
+  if (existing.length > 0) {
+    await sql`
+      UPDATE organization_subscriptions SET plan = 'pro', status = 'active'
+      WHERE organization_id = ${orgId}
+    `;
+    return;
+  }
+  const now = new Date();
+  await sql`
+    INSERT INTO organization_subscriptions (
+      id, organization_id, plan, status, created_at, updated_at
+    ) VALUES (
+      ${generateId()}, ${orgId}, 'pro', 'active', ${now}, ${now}
+    )
+  `;
+}
+
 // ---------------------------------------------------------------------------
 // Public: seedPersistentTestUsers
 // ---------------------------------------------------------------------------
@@ -216,6 +252,7 @@ export async function seedPersistentTestUsers(): Promise<void> {
   const sql = getDbConnection();
   try {
     const results: Array<{ userId: string; orgId: string }> = [];
+    let proOrgId: string | null = null;
 
     for (const config of PERSISTENT_USERS) {
       const userId = await ensureUser(sql, config.email, config.name);
@@ -231,12 +268,20 @@ export async function seedPersistentTestUsers(): Promise<void> {
       );
       await ensureMembership(sql, userId, orgId, "owner");
       results.push({ userId, orgId });
+      if (config.orgSlug === PRO_ORG_SLUG) {
+        proOrgId = orgId;
+      }
     }
 
     // Cross-org: member (index 2) is a member of inviter's org (index 1)
     const inviter = results[1];
     const member = results[2];
     await ensureMembership(sql, member.userId, inviter.orgId, "member");
+
+    // The pro user's org carries a 'pro' plan so feature-gated actions resolve.
+    if (proOrgId) {
+      await ensureProSubscription(sql, proOrgId);
+    }
   } finally {
     await sql.end();
   }

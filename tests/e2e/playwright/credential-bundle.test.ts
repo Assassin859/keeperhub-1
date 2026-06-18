@@ -186,9 +186,13 @@ async function createIntegration(options: {
     const id = generateId();
     const encryptedConfig = encryptConfig(options.config);
     const now = new Date();
+    // visibility must be 'organization': workflow execution authorizes as the
+    // org principal (isIntegrationUsable), and a 'private' integration -- the
+    // column default -- is never usable for the org principal, which surfaces
+    // as a 403 "invalid integration references" at the execute gate.
     await sql`
       INSERT INTO integrations (
-        id, user_id, organization_id, name, type, config, created_at, updated_at
+        id, created_by, organization_id, name, type, config, visibility, created_at, updated_at
       ) VALUES (
         ${id},
         ${options.userId},
@@ -196,6 +200,7 @@ async function createIntegration(options: {
         ${options.label},
         ${options.type},
         ${encryptedConfig},
+        'organization',
         ${now},
         ${now}
       )

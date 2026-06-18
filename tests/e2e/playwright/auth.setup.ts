@@ -3,6 +3,7 @@ import { signIn } from "./utils/auth";
 import {
   PERSISTENT_BYSTANDER_EMAIL,
   PERSISTENT_INVITER_EMAIL,
+  PERSISTENT_PRO_EMAIL,
   PERSISTENT_TEST_PASSWORD,
   PERSISTENT_TEST_USER_EMAIL,
 } from "./utils/db";
@@ -34,4 +35,13 @@ setup("authenticate as bystander", async ({ page }) => {
     timeout: 15_000,
   });
   await page.context().storageState({ path: `${authDir}/bystander.json` });
+});
+
+setup("authenticate as pro user", async ({ page }) => {
+  await signIn(page, PERSISTENT_PRO_EMAIL, PERSISTENT_TEST_PASSWORD);
+  await page.goto("/", { waitUntil: "load" });
+  await expect(page.locator('button[role="combobox"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.context().storageState({ path: `${authDir}/pro.json` });
 });
