@@ -5,7 +5,7 @@ import {
   isAnonymousUserShape,
   logAnonymousExecutionBlock,
 } from "@/lib/auth-anonymous-guard";
-import { parseScopes } from "@/lib/mcp/oauth-scopes";
+import { parseScopes, SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import {
   AUTH_CODE_TTL_MS,
   getOAuthClient,
@@ -42,11 +42,18 @@ function errorRedirect(
   redirect(url.toString());
 }
 
-async function handleApprove(formData: FormData): Promise<void> {
-  "use server";
+// Shared approval path for both the full "Approve" action and the
+// "Read-only" action. `scopeOverride`, when provided, replaces the scope the
+// client requested -- the read-only button forces `mcp:read` here rather than
+// trusting any scope value posted by the form, so the granted token can never
+// exceed read access regardless of what the request asked for.
+async function completeApproval(
+  formData: FormData,
+  scopeOverride?: string
+): Promise<void> {
   const clientId = formData.get("client_id") as string;
   const redirectUri = formData.get("redirect_uri") as string;
-  const scope = formData.get("scope") as string;
+  const scope = scopeOverride ?? (formData.get("scope") as string);
   const state = formData.get("state") as string | null;
   const codeChallenge = formData.get("code_challenge") as string;
   const codeChallengeMethod = formData.get("code_challenge_method") as string;
@@ -105,6 +112,16 @@ async function handleApprove(formData: FormData): Promise<void> {
     callbackUrl.searchParams.set("state", state);
   }
   redirect(callbackUrl.toString());
+}
+
+async function handleApprove(formData: FormData): Promise<void> {
+  "use server";
+  await completeApproval(formData);
+}
+
+async function handleApproveReadOnly(formData: FormData): Promise<void> {
+  "use server";
+  await completeApproval(formData, SCOPE_MCP_READ);
 }
 
 async function handleDeny(formData: FormData): Promise<void> {
@@ -262,6 +279,11 @@ export default async function AuthorizePage({
   const resolvedScope = scope ?? "mcp:read mcp:write";
   const scopeList = parseScopes(resolvedScope);
 
+  // The "Read-only" downgrade is only meaningful when the request asks for
+  // more than read access. If the client already requested just `mcp:read`,
+  // the read-only button would be identical to Approve, so we hide it.
+  const grantsWriteAccess = scopeList.some((s) => s !== SCOPE_MCP_READ);
+
   const scopeDescriptions: Record<string, string> = {
     "mcp:read": "Read your workflows, executions, and plugin schemas",
     "mcp:write": "Write your workflows, executions, and integrations",
@@ -346,6 +368,35 @@ export default async function AuthorizePage({
               Deny
             </button>
           </form>
+
+          {grantsWriteAccess && (
+            <form action={handleApproveReadOnly}>
+              <input name="client_id" type="hidden" value={clientId} />
+              <input name="redirect_uri" type="hidden" value={redirectUri} />
+              <input
+                name="organization_id"
+                type="hidden"
+                value={consentOrgId}
+              />
+              {state && <input name="state" type="hidden" value={state} />}
+              <input
+                name="code_challenge"
+                type="hidden"
+                value={codeChallenge}
+              />
+              <input
+                name="code_challenge_method"
+                type="hidden"
+                value={codeChallengeMethod}
+              />
+              <button
+                className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-5 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                type="submit"
+              >
+                Read-only
+              </button>
+            </form>
+          )}
 
           <form action={handleApprove}>
             <input name="client_id" type="hidden" value={clientId} />
