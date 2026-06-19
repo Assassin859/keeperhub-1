@@ -196,3 +196,7 @@ runs:
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
         SANDBOX_BACKEND: remote
         SANDBOX_URL: http://localhost:8787
+        # Present so the production captcha guard (lib/auth.ts) lets the server
+        # boot. CI=true skips the captcha plugin, so signup is never actually
+        # captcha-gated here -- this only satisfies the guard's presence check.
+        TURNSTILE_SECRET_KEY: ci-turnstile-test-secret
