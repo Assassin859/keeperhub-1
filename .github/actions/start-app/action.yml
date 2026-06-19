@@ -75,6 +75,10 @@ inputs:
     description: 'SAFE_FETCH_ENFORCE - set "false" for shadow-mode SSRF so the app can reach the localhost anvil fork (safe-roles-orchestrator-fork suite)'
     required: false
     default: ''
+  load_test_bypass_token:
+    description: 'LOAD_TEST_BYPASS_TOKEN - the app verifies the x-load-test-mfa-bypass header against it (proxy.ts), clearing the MFA-enrollment gate for playwright auth.setup'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -226,3 +230,6 @@ runs:
         # so the app can reach the localhost anvil fork (safe-roles suite).
         # Unset/empty = enforced (default), so other jobs keep full SSRF.
         SAFE_FETCH_ENFORCE: ${{ inputs.safe_fetch_enforce }}
+        # App-side verification of the x-load-test-mfa-bypass header (proxy.ts)
+        # so playwright e2e sign-in clears the mandatory-MFA enrollment gate.
+        LOAD_TEST_BYPASS_TOKEN: ${{ inputs.load_test_bypass_token }}

@@ -344,6 +344,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          load_test_bypass_token: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
 
       - name: Run Playwright tests
         run: pnpm test:e2e
@@ -359,6 +360,9 @@ jobs:
           # this var, the test defaults to dev-mode assertions and fails
           # against the prod server.
           NEXT_BUILD_MODE: production
+          # Sent as the x-load-test-mfa-bypass header by playwright.config.ts so
+          # e2e sign-in clears the mandatory-MFA enrollment gate (auth.setup).
+          LOAD_TEST_BYPASS_TOKEN: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
