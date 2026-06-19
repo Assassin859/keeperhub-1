@@ -320,7 +320,23 @@ curl http://localhost:3000/api/mcp/schemas?includeChains=false
 
 ## Writing Playwright Tests: Discovery-First Workflow
 
-Writing E2E tests requires understanding page structure before writing selectors. This project provides three complementary tools for page discovery.
+Writing and iterating on E2E tests is an agent-driven loop: discover the page, author against deterministic signals, run with capture, read the failure bundle, fix. Never write selectors from memory. The full guide -- testability signals, `data-*` aliases for reading data back, the agent loop, and the dev-vs-production rule -- lives in [tests/README.md](tests/README.md) (see the "Testability Signals" and "Agent-Driven Test Development" sections).
+
+### Running the test-development agent
+
+The loop is packaged as two project slash commands. Launch Claude Code from the repo root (or a worktree under `.worktrees/`) so the project `.claude/` is loaded, then run:
+
+```
+/test-write "<what the test should verify>"   # author a new test, discovery-first
+/test-debug <test-file | grep pattern>        # debug a failing test from probe data
+```
+
+- **`/test-write`** discovers page structure (`pnpm discover`), reads verified selectors from `.probes/elements.md`, reuses existing `utils/` helpers, writes the test importing from `./fixtures`, runs it, and self-corrects from failure probes (max 3 attempts).
+- **`/test-debug`** runs the failing test and classifies the failure from the auto-captured `tests/e2e/playwright/.probes/FAILURE-*` bundle (`elements.md`, `console-logs.txt`, `network-failures.txt`, `screenshot.png`).
+
+Prerequisites: the app and database must be running (infra via `make dev-up`, app on `http://localhost:3000`), and authored tests import from `./fixtures` to get auto-probe-on-failure for free. Develop against `pnpm dev` for the richest signals (source maps, React state); validate production-contract tests against `pnpm build && pnpm start` -- see tests/README.md "Dev vs production runtime".
+
+To investigate, the agent can also reach the app out of band -- the local database (test helpers or psql on `localhost:5433`), the `kh` CLI, and KeeperHub MCP tools (`mcp__keeperhub-dev__*` / `mcp__keeperhub-staging__*`) -- to inspect application state and mutate it to set up or reproduce a scenario. Arrange and verify ground truth out-of-band; assert what the user sees in the browser. See tests/README.md "Inspect and mutate application state".
 
 ### Tool 1: Discovery CLI (`pnpm discover`)
 
