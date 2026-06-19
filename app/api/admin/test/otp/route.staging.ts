@@ -1,4 +1,3 @@
-import { symmetricDecrypt } from "better-auth/crypto";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authenticateAdmin, validateTestEmail } from "@/lib/admin-auth";
@@ -45,18 +44,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    // emailOTP stores `<encrypted>:<keyVersion>` when storeOTP is "encrypted"
-    // (lib/auth.ts, KEEP-625). Strip the version suffix and decrypt the
-    // ciphertext with BETTER_AUTH_SECRET to return the plaintext code.
-    const secret = process.env.BETTER_AUTH_SECRET;
-    if (!secret) {
-      return NextResponse.json(
-        { error: "Server secret not configured" },
-        { status: 500 }
-      );
-    }
-    const ciphertext = result[0].value.split(":")[0];
-    const otp = await symmetricDecrypt({ key: secret, data: ciphertext });
+    const otp = result[0].value.split(":")[0];
     return NextResponse.json({ otp });
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Admin OTP lookup failed", error, {
