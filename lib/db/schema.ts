@@ -60,6 +60,14 @@ export const users = pgTable("users", {
   displayNameConfirmed: boolean("display_name_confirmed")
     .notNull()
     .default(false),
+  // Wallet-only per-action step-up policy: maps a sensitive action to the
+  // extra factors the wallet user opted into (e.g. {"wallet_withdraw":["totp"]}).
+  // Email/TOTP users always use dual-factor regardless and ignore this column.
+  stepUpPolicy: jsonb("step_up_policy"),
+  // Verified, deliverable email a wallet user added for email-OTP step-up.
+  // Only written after the user confirms it with a code; presence = verified.
+  // Distinct from `email` (the synthetic SIWE login identity).
+  stepUpEmail: text("step_up_email"),
 });
 
 export const sessions = pgTable(
