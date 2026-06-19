@@ -1,5 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
+import { symmetricDecrypt } from "better-auth/crypto";
 import postgres from "postgres";
 import { getAdminFetchHeaders } from "./admin-fetch";
 
@@ -110,7 +111,17 @@ async function getOtpViaDb(email: string): Promise<string> {
       throw new Error(`No OTP found for email: ${email}`);
     }
 
-    const otp = rawValue.split(":")[0];
+    // Better Auth's emailOTP plugin stores the value as `<encrypted>:<keyVersion>`
+    // when storeOTP is "encrypted" (lib/auth.ts, KEEP-625). Strip the version
+    // suffix and symmetric-decrypt the ciphertext with BETTER_AUTH_SECRET to
+    // recover the plaintext 6-digit code -- the same primitive the app's
+    // strict-signin verifier uses to read it back.
+    const secret = process.env.BETTER_AUTH_SECRET;
+    if (!secret) {
+      throw new Error("BETTER_AUTH_SECRET is required to decrypt the OTP");
+    }
+    const ciphertext = rawValue.split(":")[0];
+    const otp = await symmetricDecrypt({ key: secret, data: ciphertext });
     return otp;
   } finally {
     await sql.end();
