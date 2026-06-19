@@ -2,13 +2,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
@@ -101,33 +99,42 @@ export async function POST(request: Request) {
     // column to gate on, we require MFA enrolled + step-up cleared so
     // a stolen session alone can't issue a key that survives any
     // future MFA enforcement.
+    // Wallet users authenticate via signature, not TOTP enrollment, so the
+    // enrollment gate only applies to email/TOTP accounts. The step-up below
+    // is what proves identity for wallet users.
+    const isWallet = isWalletEmail(session.user.email);
     const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireMfaEnrolled(
-      session.user.id,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
+    if (!isWallet) {
+      const guard = await requireMfaEnrolled(
+        session.user.id,
+        sessionRow.requiresMfa === true
       );
+      if (!guard.ok) {
+        return NextResponse.json(
+          { error: guard.error, code: guard.code },
+          { status: guard.status }
+        );
+      }
     }
 
     const body = await request.json().catch(() => ({}));
     const name = body.name || null;
 
-    // Dual-factor at mint time. Long-lived bypass credentials warrant
-    // a fresh challenge on BOTH factors at the exact moment of issue.
-    const dual = await requireDualFactor({
+    // Step-up at mint time. Long-lived bypass credentials warrant a fresh
+    // challenge at the exact moment of issue: dual-factor for email/TOTP
+    // users, a wallet signature (plus any opted-in factors) for wallet users.
+    const stepUp = await requireStepUp({
       userId: session.user.id,
       email: session.user.email,
       action: "user_api_key_create",
       code: typeof body.code === "string" ? body.code : undefined,
       emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+      signature:
+        typeof body.signature === "string" ? body.signature : undefined,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!stepUp.ok) {
+      return stepUpErrorResponse(stepUp);
     }
 
     // Generate new API key

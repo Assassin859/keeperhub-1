@@ -8,7 +8,7 @@ import { chains } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { requireStepUp } from "@/lib/mfa/wallet-step-up";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
@@ -117,7 +117,8 @@ async function executeNativeTransfer(
 async function validateUserAndOrganization(
   request: Request,
   code: string | undefined,
-  emailOtp: string | undefined
+  emailOtp: string | undefined,
+  signature: string | undefined
 ) {
   const session = await auth.api.getSession({
     headers: request.headers,
@@ -146,20 +147,23 @@ async function validateUserAndOrganization(
     return { error: guard.error, status: guard.status, code: guard.code };
   }
 
-  const dual = await requireDualFactor({
+  const stepUp = await requireStepUp({
     userId: session.user.id,
     email: session.user.email,
     action: "wallet_withdraw",
     code,
     emailOtp,
+    signature,
     headers: request.headers,
   });
-  if (!dual.ok) {
+  if (!stepUp.ok) {
     return {
-      error: dual.error,
-      status: dual.status,
-      code: dual.code,
-      retryAfter: dual.retryAfter,
+      error: stepUp.error,
+      status: stepUp.status,
+      code: stepUp.code,
+      retryAfter: stepUp.retryAfter,
+      challenge: stepUp.challenge,
+      required: stepUp.required,
     };
   }
 
@@ -178,17 +182,22 @@ export async function POST(request: Request) {
     }
     const body = bodyValidation.data;
 
-    // 1. Validate user and permissions (includes dual-factor challenge).
+    // 1. Validate user and permissions (includes the step-up challenge).
     const validation = await validateUserAndOrganization(
       request,
       body.code,
-      body.emailOtp
+      body.emailOtp,
+      body.signature
     );
     if ("error" in validation) {
       const retryAfter =
         "retryAfter" in validation ? validation.retryAfter : undefined;
+      const challenge =
+        "challenge" in validation ? validation.challenge : undefined;
+      const required =
+        "required" in validation ? validation.required : undefined;
       return NextResponse.json(
-        { error: validation.error, code: validation.code },
+        { error: validation.error, code: validation.code, challenge, required },
         validation.status === 429 && retryAfter !== undefined
           ? {
               status: validation.status,

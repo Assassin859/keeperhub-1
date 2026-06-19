@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { exportKeyVerifySchema } from "@/lib/schemas/wallet";
@@ -88,19 +88,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       return bodyValidation.response;
     }
     const body = bodyValidation.data;
-    const dual = await requireDualFactor({
+    const stepUp = await requireStepUp({
       userId: session.user.id,
       email: session.user.email,
       action: "wallet_export_key",
       code: body.code,
       emailOtp: body.emailOtp,
+      signature: body.signature,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return NextResponse.json(
-        { error: dual.error, code: dual.code },
-        { status: dual.status }
-      );
+    if (!stepUp.ok) {
+      return stepUpErrorResponse(stepUp);
     }
 
     const wallets = await db

@@ -5,15 +5,13 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RequestBody = {
   code?: string;
   emailOtp?: string;
+  signature?: string;
 };
 
 /**
@@ -45,17 +43,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   const code = typeof body.code === "string" ? body.code.trim() : "";
   const emailOtp =
     typeof body.emailOtp === "string" ? body.emailOtp.trim() : "";
+  const signature =
+    typeof body.signature === "string" ? body.signature.trim() : undefined;
 
-  const dual = await requireDualFactor({
+  const stepUp = await requireStepUp({
     userId: session.user.id,
     email: session.user.email,
     action: "totp_disable",
     code,
     emailOtp,
+    signature,
     headers: request.headers,
   });
-  if (!dual.ok) {
-    return dualFactorErrorResponse(dual);
+  if (!stepUp.ok) {
+    return stepUpErrorResponse(stepUp);
   }
 
   const userId = session.user.id;

@@ -1,13 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -28,35 +26,40 @@ export async function DELETE(
     }
 
     // User-scoped API keys (wfb_ prefix) aren't tied to an org so the
-    // owner-role gate doesn't apply; require MFA enrolled + step-up
-    // cleared. Symmetric with creation (same gate in POST).
+    // owner-role gate doesn't apply; require step-up at revoke time. Wallet
+    // users authenticate by signature, so the TOTP-enrollment gate only
+    // applies to email/TOTP accounts. Symmetric with creation.
+    const isWallet = isWalletEmail(session.user.email);
     const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireMfaEnrolled(
-      session.user.id,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
+    if (!isWallet) {
+      const guard = await requireMfaEnrolled(
+        session.user.id,
+        sessionRow.requiresMfa === true
       );
+      if (!guard.ok) {
+        return NextResponse.json(
+          { error: guard.error, code: guard.code },
+          { status: guard.status }
+        );
+      }
     }
 
-    // Dual-factor at revoke time. Symmetric with create.
     const body = (await request.json().catch(() => ({}))) as {
       code?: string;
       emailOtp?: string;
+      signature?: string;
     };
-    const dual = await requireDualFactor({
+    const stepUp = await requireStepUp({
       userId: session.user.id,
       email: session.user.email,
       action: "user_api_key_revoke",
       code: body.code,
       emailOtp: body.emailOtp,
+      signature: body.signature,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!stepUp.ok) {
+      return stepUpErrorResponse(stepUp);
     }
 
     // Delete the key (only if it belongs to the user)
