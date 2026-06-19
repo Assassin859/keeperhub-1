@@ -258,6 +258,10 @@ jobs:
           # sandbox-run-code suite drives runRemote() against it.
           SANDBOX_BACKEND: remote
           SANDBOX_URL: http://localhost:8787
+          # safe-roles-orchestrator-fork calls reconcileSafeRoleFromChain
+          # in-process, so the vitest process (not just the app) needs shadow-mode
+          # SSRF (existing per-env opt-out) to reach the localhost anvil fork.
+          SAFE_FETCH_ENFORCE: "false"
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
