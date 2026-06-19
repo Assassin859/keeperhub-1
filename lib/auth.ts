@@ -31,6 +31,8 @@ import {
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
+import { provisionOrganizationWallet } from "@/lib/turnkey/provision-org-wallet";
+import { organizationHasWallet } from "@/lib/web3/wallet-helpers";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -542,6 +544,44 @@ async function notifyDiscordSignup(user: {
     });
 }
 
+/**
+ * Backstop for the signup-time fire-and-forget wallet provisioning. Runs on
+ * login (session.create.after): if the org still has no active wallet - because
+ * the signup attempt failed or the pod was killed mid-flight - it re-attempts
+ * provisioning in the background. Idempotent and non-fatal: skips anonymous
+ * accounts and never throws into the auth flow.
+ */
+async function backstopProvisionWallet(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  try {
+    if (await organizationHasWallet(organizationId)) {
+      return;
+    }
+
+    const [userRow] = await db
+      .select({ email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const email = userRow?.email;
+    if (!email || userRow?.name === "Anonymous" || email.startsWith("temp-")) {
+      return;
+    }
+
+    await provisionOrganizationWallet({ userId, organizationId, email });
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Auth] Backstop wallet provisioning failed on session create",
+      error,
+      { userId, organizationId }
+    );
+  }
+}
+
 export const auth = betterAuth({
   baseURL: getBaseURL(),
   database: wrapWithSessionTokenHash(
@@ -586,6 +626,7 @@ export const auth = betterAuth({
           const baseName = user.name || user.email?.split("@")[0] || "User";
           const slug = `${baseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${nanoid(6)}`;
 
+          let provisionedOrgId: string | undefined;
           try {
             const orgId = randomUUID();
             const memberId = randomUUID();
@@ -609,6 +650,8 @@ export const auth = betterAuth({
               role: "owner",
               createdAt: new Date(),
             });
+
+            provisionedOrgId = org.id;
           } catch (error) {
             logSystemError(
               ErrorCategory.AUTH,
@@ -627,6 +670,29 @@ export const auth = betterAuth({
           // email (name "Anonymous" / temp- prefixed address).
           if (isAnonymous) {
             return;
+          }
+
+          // Auto-provision the org's non-custodial wallet in the background.
+          // Fire-and-forget: the Turnkey call can take ~1-2s and must never
+          // delay or fail signup. provisionOrganizationWallet is idempotent, and
+          // session.create.after re-attempts if this misses (failed call or a
+          // pod killed mid-flight).
+          if (provisionedOrgId && user.email) {
+            const orgIdForWallet = provisionedOrgId;
+            const emailForWallet = user.email;
+            // Intentionally not awaited - see comment above.
+            provisionOrganizationWallet({
+              userId: user.id,
+              organizationId: orgIdForWallet,
+              email: emailForWallet,
+            }).catch((error) => {
+              logSystemError(
+                ErrorCategory.EXTERNAL_SERVICE,
+                "[Auth] Background wallet provisioning failed at signup",
+                error,
+                { userId: user.id, organizationId: orgIdForWallet }
+              );
+            });
           }
 
           // Notify external services for OAuth signups (already verified at creation).
@@ -818,6 +884,15 @@ export const auth = betterAuth({
               userAgent: sessionRow.userAgent ?? null,
             },
           });
+
+          // Backstop the signup-time wallet provisioning (fire-and-forget):
+          // re-provision if the org somehow has no wallet yet. Intentionally
+          // not awaited; backstopProvisionWallet handles its own errors.
+          if (orgId) {
+            backstopProvisionWallet(session.userId, orgId).catch(
+              () => undefined
+            );
+          }
         },
       },
     },

@@ -123,6 +123,17 @@ function isBase64ImageOutput(output: unknown): output is { base64: string } {
   );
 }
 
+// A sponsored on-chain step carries `sponsored: true` in its output (set by the
+// web3 step cores when Turnkey's gas station covered the gas).
+function isSponsoredOutput(output: unknown): boolean {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "sponsored" in output &&
+    (output as { sponsored?: unknown }).sponsored === true
+  );
+}
+
 // Helper to convert execution logs to a map by nodeId for the global atom.
 // For nodes that appear multiple times (e.g., For Each body nodes),
 // this intentionally keeps only the last entry -- used by template
@@ -810,6 +821,11 @@ function ExecutionLogEntry({
                 <span className="truncate font-medium text-sm transition-colors group-hover:text-foreground">
                   {log.nodeName || log.nodeType}
                 </span>
+                {isSponsoredOutput(log.output) && (
+                  <span className="shrink-0 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 font-medium text-primary text-xs">
+                    Gas sponsored
+                  </span>
+                )}
               </div>
             </div>
 
