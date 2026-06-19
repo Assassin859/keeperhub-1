@@ -7,6 +7,7 @@ import { ActiveSessionsSection } from "@/components/settings/active-sessions-sec
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
 import { TwoFactorSection } from "@/components/settings/two-factor-section";
+import { WalletSecuritySection } from "@/components/settings/wallet-security-section";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api-client";
@@ -168,8 +169,14 @@ export function SettingsOverlay({
           </TabsContent>
 
           <TabsContent className="space-y-6" value="security">
-            <TwoFactorSection />
-            <ChangePasswordSection providerId={providerId} />
+            {providerId === "siwe" ? (
+              <WalletSecuritySection />
+            ) : (
+              <>
+                <TwoFactorSection />
+                <ChangePasswordSection providerId={providerId} />
+              </>
+            )}
             <ActiveSessionsSection />
           </TabsContent>
         </Tabs>
