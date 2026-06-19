@@ -84,36 +84,38 @@ test.describe("Organization Invitations", () => {
       });
     });
 
-    test("INV-SEND-3: invite email with pending invitation shows error toast", async ({
+    test("INV-SEND-3: re-inviting a pending email re-sends the invitation", async ({
       page,
     }) => {
+      // The org plugin sets cancelPendingInvitationsOnReInvite: true
+      // (lib/auth.ts), so re-inviting an email that already has a pending
+      // invite cancels the old one and sends a fresh invite -- a success, not
+      // an "already invited" rejection (the app emits no such toast).
       await signInAsInviter(page);
       await openInviteForm(page);
 
       const dialog = page.locator('[role="dialog"]');
-      const inviteEmail = `duplicate+${Date.now()}@example.com`;
+      const inviteEmail = `reinvite+${Date.now()}@example.com`;
+      const sentToast = page
+        .locator("[data-sonner-toast]")
+        .filter({ hasText: `Invitation sent to ${inviteEmail}` });
 
+      // First invite succeeds.
       await dialog
         .locator('input[placeholder="colleague@example.com"]')
         .fill(inviteEmail);
       await dialog.locator('button:has-text("Invite")').click();
+      await expect(sentToast).toBeVisible({ timeout: 10_000 });
 
-      await expect(
-        page
-          .locator("[data-sonner-toast]")
-          .filter({ hasText: `Invitation sent to ${inviteEmail}` })
-      ).toBeVisible({ timeout: 10_000 });
+      // Let the first toast clear so the re-invite toast is unambiguous.
+      await expect(sentToast).toBeHidden({ timeout: 10_000 });
 
+      // Re-inviting the same email re-sends (success), not an error.
       await dialog
         .locator('input[placeholder="colleague@example.com"]')
         .fill(inviteEmail);
       await dialog.locator('button:has-text("Invite")').click();
-
-      await expect(
-        page
-          .locator("[data-sonner-toast]")
-          .filter({ hasText: "already invited" })
-      ).toBeVisible({ timeout: 10_000 });
+      await expect(sentToast).toBeVisible({ timeout: 10_000 });
     });
 
     test("INV-SEND-4: invite yourself shows already a member error toast", async ({
