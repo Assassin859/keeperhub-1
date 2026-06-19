@@ -236,6 +236,8 @@ jobs:
           push: false
 
   test-unit:
+    # Policy: all test jobs resolve secrets from the staging environment.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -250,6 +252,8 @@ jobs:
         run: pnpm test:unit
 
   test-unit-sandbox-remote:
+    # Policy: all test jobs resolve secrets from the staging environment.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -292,6 +296,9 @@ jobs:
         run: docker stop sandbox || true
 
   test-integration:
+    # Join the staging environment so CHAIN_RPC_CONFIG resolves to the staging
+    # value (single source of truth) rather than the repo-level fallback copy.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

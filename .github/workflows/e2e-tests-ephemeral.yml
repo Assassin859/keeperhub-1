@@ -49,7 +49,8 @@ on:
 jobs:
   should-run:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    # Always staging: e2e validates against test credentials, never prod.
+    environment: staging
     outputs:
       run-e2e: ${{ steps.check.outputs.run-e2e }}
     steps:
@@ -95,7 +96,8 @@ jobs:
     needs: should-run
     if: ${{ needs.should-run.outputs.run-e2e == 'true' }}
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    # Always staging: e2e validates against test credentials, never prod.
+    environment: staging
 
     services:
       postgres:
@@ -273,7 +275,8 @@ jobs:
     needs: [should-run, e2e-vitest-ephemeral]
     if: ${{ always() && needs.should-run.outputs.run-e2e == 'true' && !failure() }}
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    # Always staging: e2e validates against test credentials, never prod.
+    environment: staging
 
     services:
       postgres:
