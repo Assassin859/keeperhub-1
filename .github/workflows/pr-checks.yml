@@ -249,7 +249,11 @@ jobs:
           discover-plugins: "true"
 
       - name: Run unit tests
-        run: pnpm test:unit
+        # Also run colocated __tests__ suites (lib/**/__tests__) and the
+        # metrics-collector server test; both sit outside tests/unit. The
+        # __tests__ filter is a path substring, so it matches lib/**/__tests__
+        # without pulling in keeperhub-executor/lib (a bare "lib" filter would).
+        run: pnpm test:unit __tests__ keeperhub-metrics-collector
 
   test-unit-sandbox-remote:
     # Policy: all test jobs resolve secrets from the staging environment.
@@ -263,6 +267,9 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
         with:
           discover-plugins: "true"
+
+      - name: Run sandbox package unit tests
+        run: pnpm --filter @keeperhub/sandbox test
 
       - name: Build sandbox image
         run: docker build -f sandbox/Dockerfile -t keeperhub-sandbox:ci .
