@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import postgres from "postgres";
 import { getAdminFetchHeaders } from "./admin-fetch";
@@ -118,6 +118,24 @@ async function getOtpViaDb(email: string): Promise<string> {
 }
 
 /**
+ * Fill a (possibly segmented) OTP input reliably. The shadcn InputOTP component
+ * intermittently drops digits when populated with a single fill(), which leaves
+ * the submit button disabled and hangs the subsequent click. Type the code and
+ * assert it landed, retrying the whole sequence until the input holds the full
+ * value.
+ */
+export async function fillOtpInput(
+  otpInput: Locator,
+  otp: string
+): Promise<void> {
+  await expect(async () => {
+    await otpInput.fill("");
+    await otpInput.pressSequentially(otp, { delay: 25 });
+    await expect(otpInput).toHaveValue(otp);
+  }).toPass({ timeout: 15_000 });
+}
+
+/**
  * Sign up a new user and verify with OTP from database.
  * Returns authenticated user details.
  */
@@ -133,7 +151,7 @@ export async function signUpAndVerify(
   // Enter OTP
   const dialog = page.locator('[role="dialog"]');
   const otpInput = dialog.locator("#otp");
-  await otpInput.fill(otp);
+  await fillOtpInput(otpInput, otp);
 
   // Click verify
   const verifyButton = dialog.locator(

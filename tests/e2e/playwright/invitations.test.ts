@@ -1,6 +1,12 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { getOtpFromDb, signIn, signUp, signUpAndVerify } from "./utils/auth";
+import {
+  fillOtpInput,
+  getOtpFromDb,
+  signIn,
+  signUp,
+  signUpAndVerify,
+} from "./utils/auth";
 import {
   PERSISTENT_BYSTANDER_EMAIL,
   PERSISTENT_INVITER_EMAIL,
@@ -188,7 +194,7 @@ test.describe("Organization Invitations", () => {
       ).toBeVisible({ timeout: 10_000 });
 
       const otp = await getOtpFromDb(inviteeEmail);
-      await page.locator("#otp").fill(otp);
+      await fillOtpInput(page.locator("#otp"), otp);
       await page.locator('button:has-text("Verify & Join")').click();
 
       const welcomeToast = page
