@@ -37,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { truncateAddress } from "@/lib/address-utils";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
@@ -101,6 +102,12 @@ export const UserMenu = (): React.ReactElement => {
 
 const AuthenticatedUserMenu = (): React.ReactElement => {
   const { data: session } = useSession();
+  // Wallet accounts carry a synthetic `<address>@wallet...` email; show the
+  // truncated address instead so it doesn't overflow the menu.
+  const email = session?.user?.email ?? "";
+  const accountIdentifier = isWalletEmail(email)
+    ? truncateAddress(email.split("@")[0])
+    : email;
   const { open: openOverlay } = useOverlay();
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const { organization } = useOrganization();
@@ -189,12 +196,12 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel>
-            <div className="flex flex-col space-y-1">
-              <p className="font-medium text-sm leading-none">
+            <div className="flex min-w-0 flex-col space-y-1">
+              <p className="truncate font-medium text-sm leading-none">
                 {session?.user?.name || "User"}
               </p>
-              <p className="text-muted-foreground text-xs leading-none">
-                {session?.user?.email}
+              <p className="truncate text-muted-foreground text-xs leading-none">
+                {accountIdentifier}
               </p>
             </div>
           </DropdownMenuLabel>

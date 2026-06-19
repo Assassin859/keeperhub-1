@@ -1,8 +1,15 @@
 "use client";
 
-import { ChevronDown, Key, Plug, Wallet, Workflow } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Key,
+  Plug,
+  Wallet,
+  Workflow,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { ComponentType } from "react";
+import { type ComponentType, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,12 +26,80 @@ import { useOverlay } from "./overlay-provider";
 import type { OverlayComponentProps } from "./types";
 import { WalletOverlay } from "./wallet-overlay";
 
+type StepKey = "workflow" | "apiKey" | "integration" | "wallet";
+
 type Step = {
+  key: StepKey;
   icon: ComponentType<{ className?: string }>;
   title: string;
   description: string;
   cta: string;
 };
+
+type Progress = Record<StepKey, boolean>;
+
+const EMPTY_PROGRESS: Progress = {
+  workflow: false,
+  apiKey: false,
+  integration: false,
+  wallet: false,
+};
+
+function hasItems(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return ["data", "items", "keys", "results"].some(
+      (k) => Array.isArray(record[k]) && (record[k] as unknown[]).length > 0
+    );
+  }
+  return false;
+}
+
+async function fetchJson(url: string): Promise<unknown> {
+  try {
+    const response = await fetch(url);
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Marks a step done when the user already has the corresponding resource, so
+// completed steps render with a green check.
+function useGettingStartedProgress(): Progress {
+  const [progress, setProgress] = useState<Progress>(EMPTY_PROGRESS);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [workflows, keys, integrations, wallet] = await Promise.all([
+        api.workflow.getAll().catch(() => []),
+        fetchJson("/api/keys"),
+        api.integration.getAll().catch(() => []),
+        fetchJson("/api/user/wallet"),
+      ]);
+      if (cancelled) {
+        return;
+      }
+      setProgress({
+        workflow:
+          Array.isArray(workflows) &&
+          workflows.some((w) => w?.name !== "__current__"),
+        apiKey: hasItems(keys),
+        integration: Array.isArray(integrations) && integrations.length > 0,
+        wallet: Boolean((wallet as { hasWallet?: boolean })?.hasWallet),
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return progress;
+}
 
 /**
  * Quick platform intro for new users: a set of collapsible "dropdown" steps
@@ -34,8 +109,9 @@ type Step = {
 export function GettingStartedOverlay({
   overlayId,
 }: OverlayComponentProps): React.ReactElement {
-  const { open, pop } = useOverlay();
+  const { push, pop } = useOverlay();
   const router = useRouter();
+  const progress = useGettingStartedProgress();
 
   const openBuilder = async (): Promise<void> => {
     try {
@@ -54,6 +130,7 @@ export function GettingStartedOverlay({
 
   const steps: (Step & { onAction: () => void })[] = [
     {
+      key: "workflow",
       icon: Workflow,
       title: "Build your first workflow",
       description:
@@ -64,28 +141,31 @@ export function GettingStartedOverlay({
       },
     },
     {
+      key: "apiKey",
       icon: Key,
       title: "Create an API key",
       description:
         "Call your workflows and the platform API programmatically or from agents.",
       cta: "Manage API keys",
-      onAction: () => open(ApiKeysOverlay),
+      onAction: () => push(ApiKeysOverlay),
     },
     {
+      key: "integration",
       icon: Plug,
       title: "Connect an integration",
       description:
         "Link the services your workflows act on, like Discord or SendGrid.",
       cta: "Browse connections",
-      onAction: () => open(IntegrationsOverlay),
+      onAction: () => push(IntegrationsOverlay),
     },
     {
+      key: "wallet",
       icon: Wallet,
       title: "Set up your wallet",
       description:
         "Configure the organization wallet so workflows can act on-chain.",
       cta: "Open wallet",
-      onAction: () => open(WalletOverlay),
+      onAction: () => push(WalletOverlay),
     },
   ];
 
@@ -96,37 +176,54 @@ export function GettingStartedOverlay({
       title="Getting started"
     >
       <div className="flex flex-col gap-2">
-        {steps.map((step, index) => (
-          <Collapsible
-            className="rounded-lg border"
-            defaultOpen={index === 0}
-            key={step.title}
-          >
-            <CollapsibleTrigger
+        {steps.map((step, index) => {
+          const done = progress[step.key];
+          return (
+            <Collapsible
               className={cn(
-                "group flex w-full items-center gap-3 px-4 py-3 text-left",
-                "hover:bg-muted/50"
+                "rounded-lg border",
+                done && "border-keeperhub-green/40"
               )}
+              defaultOpen={index === 0}
+              key={step.title}
             >
-              <step.icon className="size-4 text-muted-foreground" />
-              <span className="flex-1 font-medium text-sm">{step.title}</span>
-              <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="px-4 pb-4">
-              <p className="mb-3 text-muted-foreground text-sm">
-                {step.description}
-              </p>
-              <Button
-                className="w-full"
-                onClick={step.onAction}
-                size="sm"
-                type="button"
+              <CollapsibleTrigger
+                className={cn(
+                  "group flex w-full items-center gap-3 px-4 py-3 text-left",
+                  "hover:bg-muted/50"
+                )}
               >
-                {step.cta}
-              </Button>
-            </CollapsibleContent>
-          </Collapsible>
-        ))}
+                {done ? (
+                  <CheckCircle2 className="size-4 text-keeperhub-green" />
+                ) : (
+                  <step.icon className="size-4 text-muted-foreground" />
+                )}
+                <span
+                  className={cn(
+                    "flex-1 font-medium text-sm",
+                    done && "text-muted-foreground line-through"
+                  )}
+                >
+                  {step.title}
+                </span>
+                <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="px-4 pb-4">
+                <p className="mb-3 text-muted-foreground text-sm">
+                  {step.description}
+                </p>
+                <Button
+                  className="w-full"
+                  onClick={step.onAction}
+                  size="sm"
+                  type="button"
+                >
+                  {step.cta}
+                </Button>
+              </CollapsibleContent>
+            </Collapsible>
+          );
+        })}
       </div>
     </Overlay>
   );
