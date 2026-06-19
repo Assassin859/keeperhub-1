@@ -120,7 +120,7 @@ jobs:
           timeout: 15m0s
           name: ${{ env.SERVICE_NAME }}
           chart-repository: https://techops-services.github.io/helm-charts
-          version: 0.1.0
+          version: 0.2.0
           atomic: true
 
       - name: Wait for deployment health check
@@ -149,6 +149,18 @@ jobs:
               echo "Deployment did not become ready in time"
               exit 1
             '
+
+      - name: Set up Helm
+        if: steps.skip.outputs.skip_deploy != 'true'
+        uses: azure/setup-helm@v4
+
+      - name: Validate IRSA credentials end-to-end
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          helm test "${SERVICE_NAME}" \
+            --namespace "${NAMESPACE}" \
+            --filter "name=${SERVICE_NAME}-common-test-irsa-auth" \
+            --logs
 
   # DISABLED: remote E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-playwright-remote:
