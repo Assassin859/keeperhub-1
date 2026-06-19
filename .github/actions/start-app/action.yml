@@ -59,6 +59,22 @@ inputs:
     description: 'TURNKEY_ORGANIZATION_ID for the Turnkey-managed org wallet path'
     required: false
     default: ''
+  ai_prompt_enabled:
+    description: 'NEXT_PUBLIC_AI_PROMPT_ENABLED - gates /api/ai/generate (e2e api-key-auth suite). Scoped per-job so AI UI is not surfaced elsewhere.'
+    required: false
+    default: ''
+  anthropic_api_key:
+    description: 'ANTHROPIC_API_KEY for /api/ai/generate'
+    required: false
+    default: ''
+  ai_model:
+    description: 'AI_MODEL - a claude-* id routes /api/ai/generate to Anthropic'
+    required: false
+    default: ''
+  safe_fetch_enforce:
+    description: 'SAFE_FETCH_ENFORCE - set "false" for shadow-mode SSRF so the app can reach the localhost anvil fork (safe-roles-orchestrator-fork suite)'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -158,6 +174,7 @@ runs:
         TEST_API_KEY: ${{ inputs.test_api_key }}
         NEXT_PUBLIC_BILLING_ENABLED: "true"
         NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "true"
+        NEXT_PUBLIC_AI_PROMPT_ENABLED: ${{ inputs.ai_prompt_enabled }}
         # Production builds assert SANDBOX_BACKEND=remote and SANDBOX_URL is set
         # (the /.well-known/workflow/v1/step route guard). Jobs that execute code
         # start a real sandbox via the start-sandbox action; others use this as a
@@ -200,3 +217,12 @@ runs:
         # boot. CI=true skips the captcha plugin, so signup is never actually
         # captcha-gated here -- this only satisfies the guard's presence check.
         TURNSTILE_SECRET_KEY: ci-turnstile-test-secret
+        # AI provider for /api/ai/generate (api-key-auth suite). Empty inputs in
+        # other jobs leave the route gated off; set, it makes real Anthropic calls.
+        NEXT_PUBLIC_AI_PROMPT_ENABLED: ${{ inputs.ai_prompt_enabled }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        AI_MODEL: ${{ inputs.ai_model }}
+        # Shadow-mode SSRF (existing per-env opt-out): safeFetch logs but allows,
+        # so the app can reach the localhost anvil fork (safe-roles suite).
+        # Unset/empty = enforced (default), so other jobs keep full SSRF.
+        SAFE_FETCH_ENFORCE: ${{ inputs.safe_fetch_enforce }}
