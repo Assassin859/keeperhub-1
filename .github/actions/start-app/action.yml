@@ -79,6 +79,14 @@ inputs:
     description: 'LOAD_TEST_BYPASS_TOKEN - the app verifies the x-load-test-mfa-bypass header against it (proxy.ts), clearing the MFA-enrollment gate for playwright auth.setup'
     required: false
     default: ''
+  include_test_endpoints:
+    description: 'INCLUDE_TEST_ENDPOINTS - build-time flag baked by next.config.ts. Enables testEndpointsEnabled(), which gates the X-Test-API-Key credential rate-limit bypass (strict-signin/start) so playwright shared-user sign-ins are not throttled. Empty elsewhere keeps prod behavior.'
+    required: false
+    default: ''
+  allow_test_endpoints:
+    description: 'ALLOW_TEST_ENDPOINTS - runtime production opt-in required alongside include_test_endpoints for testEndpointsEnabled() to return true under NODE_ENV=production.'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -185,6 +193,11 @@ runs:
         # build-guard placeholder.
         SANDBOX_BACKEND: remote
         SANDBOX_URL: http://localhost:8787
+        # Baked by next.config.ts (env block) into the bundle; runtime cannot
+        # flip it. Gates testEndpointsEnabled(), which the strict-signin/start
+        # credential rate-limit bypass checks before honoring X-Test-API-Key.
+        # Set only for jobs whose browser sign-ins must skip the throttle.
+        INCLUDE_TEST_ENDPOINTS: ${{ inputs.include_test_endpoints }}
 
     - name: Start application
       if: inputs.image_tag == ''
@@ -233,3 +246,7 @@ runs:
         # App-side verification of the x-load-test-mfa-bypass header (proxy.ts)
         # so playwright e2e sign-in clears the mandatory-MFA enrollment gate.
         LOAD_TEST_BYPASS_TOKEN: ${{ inputs.load_test_bypass_token }}
+        # Runtime production opt-in for testEndpointsEnabled(). Paired with the
+        # build-time INCLUDE_TEST_ENDPOINTS above, it lets the credential
+        # rate-limit bypass honor X-Test-API-Key under NODE_ENV=production.
+        ALLOW_TEST_ENDPOINTS: ${{ inputs.allow_test_endpoints }}

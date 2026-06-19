@@ -16,21 +16,33 @@ import {
 const ACCEPT_INVITE_URL_REGEX = /\/accept-invite/;
 
 async function signInAsInviter(page: Page): Promise<void> {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const orgSwitcher = page.locator('button[role="combobox"]');
+  // The inviter storage state usually leaves us already authenticated, so skip
+  // the sign-in round-trip when the org switcher is already present. The bounded
+  // wait avoids mistaking slow hydration for a logged-out state.
+  const alreadySignedIn = await orgSwitcher
+    .waitFor({ state: "visible", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (alreadySignedIn) {
+    return;
+  }
   await signIn(page, PERSISTENT_INVITER_EMAIL, PERSISTENT_TEST_PASSWORD);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page.locator('button[role="combobox"]')).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(orgSwitcher).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe.configure({ mode: "serial" });
 
 test.describe("Organization Invitations", () => {
-  test.describe("Sending Invites", () => {
-    test.beforeEach(async ({ context }) => {
-      await context.clearCookies();
-    });
+  // Reuse the inviter's authenticated session instead of signing in through the
+  // UI on every test. Repeated credential sign-ins would otherwise exhaust the
+  // per-email attempt budget mid-run. Tests that must act as a different
+  // identity clear cookies first (INV-SEND-2, INV-RECV-2, ORG-1, ORG-3).
+  test.use({ storageState: "tests/e2e/playwright/.auth/inviter.json" });
 
+  test.describe("Sending Invites", () => {
     test("INV-SEND-1: invite new email shows success toast and confirmation", async ({
       page,
     }) => {
@@ -60,6 +72,9 @@ test.describe("Organization Invitations", () => {
       page,
       context,
     }) => {
+      // Inviter storage state is active; sign up the new user from a logged-out
+      // state, then clear again before re-authenticating as the inviter.
+      await context.clearCookies();
       const { email: existingUserEmail } = await signUp(page);
       await context.clearCookies();
 
@@ -140,10 +155,6 @@ test.describe("Organization Invitations", () => {
   });
 
   test.describe("Receiving Invites", () => {
-    test.beforeEach(async ({ context }) => {
-      await context.clearCookies();
-    });
-
     test("INV-RECV-1: accept invite as logged-out new user via signup and OTP", async ({
       page,
       context,
@@ -203,6 +214,9 @@ test.describe("Organization Invitations", () => {
       context,
     }) => {
       const inviteeEmail = `test+${Date.now()}@techops.services`;
+      // Inviter storage state is active; create the invitee from a logged-out
+      // state first.
+      await context.clearCookies();
       await signUpAndVerify(page, { email: inviteeEmail });
       await context.clearCookies();
 
@@ -312,11 +326,13 @@ test.describe("Organization Invitations", () => {
   });
 
   test.describe("Organization Membership", () => {
-    test.beforeEach(async ({ context }) => {
+    test("ORG-1: user can switch between multiple orgs", async ({
+      page,
+      context,
+    }) => {
+      // Inviter storage state is active; sign in as the member from a
+      // logged-out state.
       await context.clearCookies();
-    });
-
-    test("ORG-1: user can switch between multiple orgs", async ({ page }) => {
       // Persistent member is already in 2 orgs (own + inviter's) from seed
       await signIn(page, PERSISTENT_MEMBER_EMAIL, PERSISTENT_TEST_PASSWORD);
       await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -396,7 +412,10 @@ test.describe("Organization Invitations", () => {
       await expect(orgItems).toHaveCount(3);
     });
 
-    test("ORG-3: user can leave an org", async ({ page }) => {
+    test("ORG-3: user can leave an org", async ({ page, context }) => {
+      // Inviter storage state is active; sign in as the member from a
+      // logged-out state.
+      await context.clearCookies();
       // Persistent member is in 2 orgs from seed
       await signIn(page, PERSISTENT_MEMBER_EMAIL, PERSISTENT_TEST_PASSWORD);
       await page.goto("/", { waitUntil: "domcontentloaded" });

@@ -345,6 +345,11 @@ jobs:
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
           load_test_bypass_token: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
+          # Enable testEndpointsEnabled() so the strict-signin/start credential
+          # rate-limit bypass honors playwright's X-Test-API-Key header (the
+          # suite signs in repeatedly as a few shared users). Scoped to this job.
+          include_test_endpoints: "true"
+          allow_test_endpoints: "true"
 
       - name: Run Playwright tests
         run: pnpm test:e2e
