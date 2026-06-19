@@ -235,6 +235,9 @@ test.describe("Organization Invitations", () => {
       await expect(page.locator("h1:has-text('Join')")).toBeVisible({
         timeout: 15_000,
       });
+      // The accept-invite page defaults to the create-account view; this
+      // invitee already has an account, so switch to the sign-in view first.
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
       await expect(
         page.locator('button:has-text("Sign In & Join")')
       ).toBeVisible();
