@@ -743,6 +743,8 @@ function getStatusLabel(status: string): string {
       return "Completed successfully";
     case "error":
       return "Failed - expand for the error";
+    case "system_error":
+      return "System error - a platform issue, expand for details";
     case "running":
       return "Running";
     case "cancelled":
@@ -1155,6 +1157,7 @@ export function WorkflowRuns({
       case "success":
         return <Check className="h-3 w-3 text-white" />;
       case "error":
+      case "system_error":
         return <X className="h-3 w-3 text-white" />;
       case "running":
         return <Loader2 className="h-3 w-3 animate-spin text-white" />;
@@ -1171,6 +1174,8 @@ export function WorkflowRuns({
         return "bg-green-600";
       case "error":
         return "bg-red-600";
+      case "system_error":
+        return "bg-amber-600";
       case "running":
         return "bg-blue-600";
       case "cancelled":

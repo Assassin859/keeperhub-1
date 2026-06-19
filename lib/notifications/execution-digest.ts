@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   workflowExecutionLogs,
@@ -170,7 +170,10 @@ export async function getOrgExecutionDigest(
     .orderBy(desc(count()))
     .limit(TOP_EXECUTED_LIMIT);
 
-  const errorFilter = and(windowFilter, eq(workflowExecutions.status, "error"));
+  const errorFilter = and(
+    windowFilter,
+    inArray(workflowExecutions.status, ["error", "system_error"])
+  );
 
   const failingRows = await db
     .select({

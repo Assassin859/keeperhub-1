@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { logOutputField } from "@/lib/db/execution-log-fields";
 import {
@@ -15,6 +15,7 @@ import {
   workflows,
 } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
+import { statusForErrorType } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
@@ -284,7 +285,7 @@ async function selfHealWorkflowAfterLateStepCommit(
     emitEarlyExit("not_finalized");
     return;
   }
-  if (execution.status !== "error") {
+  if (execution.status !== "error" && execution.status !== "system_error") {
     emitEarlyExit("status_not_error");
     return;
   }
@@ -332,7 +333,7 @@ async function selfHealWorkflowAfterLateStepCommit(
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        eq(workflowExecutions.status, "error")
+        inArray(workflowExecutions.status, ["error", "system_error"])
       )
     );
 
@@ -697,10 +698,19 @@ export async function logWorkflowCompleteDb(
   const classification =
     resolvedStatus === "error" ? classifyExecutionError(resolvedError) : null;
 
+  // KEEP-853: a system/infra-classified failure persists as system_error so it
+  // is visible and filterable apart from user/workflow errors. Step logs and
+  // the success-path stay on resolvedStatus; only the execution row's status
+  // column carries the split.
+  const executionStatus =
+    resolvedStatus === "error"
+      ? statusForErrorType(classification?.errorType ?? null)
+      : resolvedStatus;
+
   const updated = await db
     .update(workflowExecutions)
     .set({
-      status: resolvedStatus,
+      status: executionStatus,
       output: toJsonSafe(params.output),
       error: resolvedError,
       errorCategory: classification?.errorCategory ?? null,

@@ -23,7 +23,9 @@ type RunErrorInput = {
 };
 
 export function getCustomerRunErrorMessage(run: RunErrorInput): string | null {
-  if (run.status !== "error") {
+  // KEEP-853: system failures carry status='system_error'; they are exactly the
+  // coded runs whose customer message lives in the registry, so include them.
+  if (run.status !== "error" && run.status !== "system_error") {
     return null;
   }
 

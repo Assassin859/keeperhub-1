@@ -132,7 +132,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
         errorType: sql<string>`CASE
-          WHEN ${workflowExecutions.status} <> 'error' THEN 'na'
+          WHEN ${workflowExecutions.status} NOT IN ('error', 'system_error') THEN 'na'
           WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
           ELSE ${workflowExecutions.errorType}
         END`,
@@ -196,7 +196,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .from(workflowExecutions)
       .where(
         and(
-          sql`${workflowExecutions.status} IN ('success', 'error')`,
+          sql`${workflowExecutions.status} IN ('success', 'error', 'system_error')`,
           sql`${workflowExecutions.duration} IS NOT NULL`
         )
       );
@@ -283,7 +283,7 @@ export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowError
       .innerJoin(organization, eq(workflows.organizationId, organization.id))
       .where(
         and(
-          eq(workflowExecutions.status, "error"),
+          inArray(workflowExecutions.status, ["error", "system_error"]),
           sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`,
           inArray(organization.slug, [...MANAGED_ORG_SLUGS])
         )
@@ -366,7 +366,10 @@ export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByC
       .from(workflowExecutions)
       .where(
         and(
-          eq(workflowExecutions.status, "error"),
+          // KEEP-853: system errors carry status='system_error' (not 'error'),
+          // so both must be matched or every system error drops out of the gauge
+          // the infra P3 alert reads.
+          inArray(workflowExecutions.status, ["error", "system_error"]),
           sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`
         )
       )

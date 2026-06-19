@@ -23,13 +23,21 @@ export async function PATCH(
   const body = JSON.parse(rawBody);
   const { status, error, duration, errorCode } = body;
 
-  type ExecutionStatus = "running" | "success" | "error";
-  const validStatuses: ExecutionStatus[] = ["running", "success", "error"];
+  type ExecutionStatus = "running" | "success" | "error" | "system_error";
+  const validStatuses: ExecutionStatus[] = [
+    "running",
+    "success",
+    "error",
+    "system_error",
+  ];
 
   // Validate status
   if (!(status && validStatuses.includes(status))) {
     return NextResponse.json(
-      { error: "status must be 'running', 'success', or 'error'" },
+      {
+        error:
+          "status must be 'running', 'success', 'error', or 'system_error'",
+      },
       { status: 400 }
     );
   }
@@ -63,7 +71,8 @@ export async function PATCH(
   }
 
   // Build update payload
-  const isTerminal = status === "success" || status === "error";
+  const isError = status === "error" || status === "system_error";
+  const isTerminal = status === "success" || isError;
   const updateData: {
     status: ExecutionStatus;
     error?: string | null;
@@ -76,7 +85,7 @@ export async function PATCH(
     currentNodeName?: null;
   } = { status: typedStatus };
 
-  if (status === "error") {
+  if (isError) {
     updateData.error = error || "Unknown error";
     updateData.completedAt = new Date();
     if (codeEntry) {

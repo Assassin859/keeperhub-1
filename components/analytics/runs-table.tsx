@@ -86,11 +86,17 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
   success:
     "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20",
   error: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20",
+  system_error:
+    "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
   cancelled:
     "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20",
   running: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20",
   pending: "bg-gray-500/10 text-gray-700 dark:text-gray-400 border-gray-500/20",
 } as const;
+
+const STATUS_LABELS: Partial<Record<NormalizedStatus, string>> = {
+  system_error: "System Error",
+};
 
 function StatusBadge({ status }: { status: NormalizedStatus }): ReactNode {
   return (
@@ -98,7 +104,7 @@ function StatusBadge({ status }: { status: NormalizedStatus }): ReactNode {
       className={cn("capitalize", STATUS_STYLES[status])}
       variant="outline"
     >
-      {status}
+      {STATUS_LABELS[status] ?? status}
     </Badge>
   );
 }

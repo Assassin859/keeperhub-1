@@ -168,13 +168,14 @@ shows; it never reveals internal detail.
 | `E-0001` | Executor         | yes       | Execution timed out                                         | workflow_engine       | The run timed out (E-0001). Please try again. |
 | `E-0002` | Executor         | yes       | Step exceeded max retries                                   | workflow_engine       | A step failed repeatedly (E-0002). Please try again. |
 | `E-0003` | Executor         | yes       | Engine fault (unknown action, nonce lock, drain timeout)    | workflow_engine       | Internal error (E-0003). Please wait a few minutes and try again. |
+| `E-0004` | Executor         | yes       | Message processing failed (executor consumer backstop)      | infrastructure        | The run could not be processed (E-0004). Please wait a few minutes and try again. |
 | `N-0001` | Network          | yes       | RPC endpoint unavailable                                    | network_rpc           | A network provider was unavailable (N-0001). Please try again shortly. |
 | `N-0002` | Network          | yes       | Network connectivity error (DNS / reset / timeout)          | network_rpc           | Internal network error (N-0002). Please wait a few minutes and try again. |
 | `P-0001` | Pod              | yes       | Execution did not start (pending, no steps -- reaper)       | workflow_engine       | The run could not be started (P-0001). Please try again. |
 | `P-0002` | Pod              | yes       | Execution environment failed to start (k8s job create)      | infrastructure        | The run could not be started (P-0002). Please try again. |
 | `P-0003` | Pod              | yes       | Execution terminated unexpectedly (SIGTERM / OOM)           | infrastructure        | The run stopped unexpectedly (P-0003). Please try again. |
 | `P-0004` | Pod              | yes       | Dispatch failed (executor outer catch)                      | infrastructure        | The run could not be started (P-0004). Please try again. |
-| `P-0005` | Pod              | yes       | Trigger was never picked up (phantom aged out)              | workflow_engine       | The run could not be started (P-0005). Please try again. |
+| `P-0005` | Pod              | yes       | Trigger was never picked up (phantom aged out -- SQS lost)  | infrastructure        | The run could not be started (P-0005). Please try again. |
 | `CS-0001`| Cron scheduler   | yes       | Scheduled trigger failed to dispatch                        | workflow_engine       | The scheduled run could not be started (CS-0001). It will retry automatically. |
 | `BS-0001`| Block scheduler  | yes       | Block trigger failed to dispatch                            | workflow_engine       | The run could not be started (BS-0001). It will retry automatically. |
 | `ES-0001`| Event scheduler  | yes       | Event trigger failed to dispatch                            | workflow_engine       | The run could not be started (ES-0001). It will retry automatically. |

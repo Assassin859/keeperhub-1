@@ -256,7 +256,7 @@ async function getWorkflowCounts(
     .select({
       total: count(),
       success: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
-      error: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'error' THEN 1 ELSE 0 END)`,
+      error: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} IN ('error', 'system_error') THEN 1 ELSE 0 END)`,
       cancelled: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
       durationSum: sql<number>`COALESCE(SUM(${workflowExecutions.duration}), 0)`,
       durationCount: sql<number>`SUM(CASE WHEN ${workflowExecutions.duration} IS NOT NULL THEN 1 ELSE 0 END)`,
@@ -477,7 +477,7 @@ async function computeTimeSeries(
     .select({
       bucket: sql<string>`${bucketExpr(workflowExecutions.startedAt)}`,
       success: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
-      error: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'error' THEN 1 ELSE 0 END)`,
+      error: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} IN ('error', 'system_error') THEN 1 ELSE 0 END)`,
       cancelled: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
       pending: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'pending' THEN 1 ELSE 0 END)`,
       running: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'running' THEN 1 ELSE 0 END)`,

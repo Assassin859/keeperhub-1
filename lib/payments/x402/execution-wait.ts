@@ -12,7 +12,7 @@ import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 export const DEFAULT_CALL_WAIT_TIMEOUT_MS = 25_000;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
-type TerminalStatus = "success" | "error" | "cancelled";
+type TerminalStatus = "success" | "error" | "system_error" | "cancelled";
 
 type ExecutionResult = {
   status: TerminalStatus;
@@ -21,7 +21,12 @@ type ExecutionResult = {
 };
 
 function isTerminalStatus(status: string): status is TerminalStatus {
-  return status === "success" || status === "error" || status === "cancelled";
+  return (
+    status === "success" ||
+    status === "error" ||
+    status === "system_error" ||
+    status === "cancelled"
+  );
 }
 
 function loadReceiptRow(executionId: string) {
