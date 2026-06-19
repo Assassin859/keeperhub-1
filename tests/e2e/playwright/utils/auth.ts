@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import { symmetricDecrypt } from "better-auth/crypto";
@@ -146,6 +147,80 @@ export async function fillOtpInput(
   }).toPass({ timeout: 15_000 });
 }
 
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const TOTP_PERIOD_SECONDS = 30;
+
+/**
+ * Decode an RFC 4648 base32 string (no padding) to its raw bytes. The TOTP
+ * setup key the enrollment dialog renders is base32EncodeUtf8(secret); decoding
+ * it yields the exact HMAC key the server verifies against (the app stores the
+ * secret and uses it directly as the HMAC key -- see lib/security/totp-verify).
+ */
+function base32Decode(input: string): Buffer {
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (const char of input.replace(/=+$/, "").toUpperCase()) {
+    const index = BASE32_ALPHABET.indexOf(char);
+    if (index === -1) {
+      continue;
+    }
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+/**
+ * Generate the current 6-digit TOTP for a base32 setup key, matching the
+ * server's RFC 6238 implementation (HMAC-SHA1, 30s period, dynamic truncation).
+ * Validated against the app's generateTotp for byte-identical output.
+ */
+function generateTotpCode(manualEntryKey: string): string {
+  const step = Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS);
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(step));
+  const hmac = createHmac("sha1", base32Decode(manualEntryKey))
+    .update(counter)
+    .digest();
+  const offset = hmac[hmac.length - 1] & 0xf;
+  const truncated =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+  return (truncated % 1_000_000).toString().padStart(6, "0");
+}
+
+/**
+ * Complete the mandatory TOTP enrollment wizard that follows a fresh signup
+ * (components/settings/totp-setup-dialog.tsx). Reads the rendered setup key,
+ * submits a matching code, and dismisses the backup-codes step so the auth
+ * dialog closes. Assumes the enrollment step is already on screen.
+ */
+export async function completeTotpEnrollment(page: Page): Promise<void> {
+  const dialog = page.locator('[role="dialog"]');
+  const manualEntryKey = (
+    await dialog
+      .locator('button[aria-label="Copy setup key"]')
+      .first()
+      .textContent()
+  )?.replace(/\s/g, "");
+  if (!manualEntryKey) {
+    throw new Error("Could not read the TOTP setup key from the dialog");
+  }
+  await page.locator("#totp-verify-code").fill(generateTotpCode(manualEntryKey));
+  await dialog.locator('button:has-text("Continue")').click();
+  // Backup-codes step: dismiss it to finish enrollment and close the dialog.
+  const finishButton = dialog.locator('button:has-text("Skip")');
+  await expect(finishButton).toBeVisible({ timeout: 15_000 });
+  await finishButton.click();
+}
+
 /**
  * Sign up a new user and verify with OTP from database.
  * Returns authenticated user details.
@@ -169,6 +244,18 @@ export async function signUpAndVerify(
     'button[type="submit"]:has-text("Verify")'
   );
   await verifyButton.click();
+
+  // Fresh signups are forced through TOTP enrollment after email verification
+  // (components/settings/totp-setup-dialog.tsx). Complete it when it appears so
+  // the auth dialog can close; gated so any flow without it is unaffected.
+  const totpRequired = await page
+    .locator("#totp-verify-code")
+    .waitFor({ state: "visible", timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  if (totpRequired) {
+    await completeTotpEnrollment(page);
+  }
 
   // Wait for dialog to close (successful verification)
   await expect(dialog).not.toBeVisible({ timeout: 15_000 });
