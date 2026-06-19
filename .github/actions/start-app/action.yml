@@ -158,6 +158,12 @@ runs:
         TEST_API_KEY: ${{ inputs.test_api_key }}
         NEXT_PUBLIC_BILLING_ENABLED: "true"
         NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "true"
+        # Production builds assert SANDBOX_BACKEND=remote and SANDBOX_URL is set
+        # (the /.well-known/workflow/v1/step route guard). Jobs that execute code
+        # start a real sandbox via the start-sandbox action; others use this as a
+        # build-guard placeholder.
+        SANDBOX_BACKEND: remote
+        SANDBOX_URL: http://localhost:8787
 
     - name: Start application
       if: inputs.image_tag == ''
@@ -188,3 +194,5 @@ runs:
         TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
         TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
+        SANDBOX_BACKEND: remote
+        SANDBOX_URL: http://localhost:8787

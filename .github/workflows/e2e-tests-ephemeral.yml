@@ -232,6 +232,9 @@ jobs:
           done
           echo "anvil Sepolia fork ready on localhost:8547"
 
+      - name: Start code-execution sandbox
+        uses: ./.github/actions/start-sandbox
+
       - name: Run E2E Vitest tests
         run: pnpm test:e2e:vitest
         env:
@@ -247,6 +250,10 @@ jobs:
           # Funder EOA for protocol-coverage suites' ensureNativeGas top-up.
           # When unset the suites skip cleanly (see coverage.test.ts gate).
           TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
+          # Live sandbox started by the start-sandbox step above; the
+          # sandbox-run-code suite drives runRemote() against it.
+          SANDBOX_BACKEND: remote
+          SANDBOX_URL: http://localhost:8787
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
