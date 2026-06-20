@@ -15,6 +15,11 @@ const SELECTED_TEXT_REGEX = /Selected:/i;
 const IMPORT_BUTTON_NAME_REGEX = /import workflow/i;
 const WORKFLOW_URL_REGEX = /\/workflows?\/[^/]+/;
 
+// MODAL-06 imports a fixture containing an HTTP Request action, which is
+// Pro-gated (lib/features/registry.ts) and otherwise blocked at import for a
+// free org. Run as the seeded pro-plan user.
+test.use({ storageState: "tests/e2e/playwright/.auth/pro.json" });
+
 test.describe("Workflow I/O modal (MODAL-04, MODAL-05, MODAL-06, MODAL-08)", () => {
   test.beforeEach(async ({ page }) => {
     // The Playwright `chromium` project loads the persistent test user's

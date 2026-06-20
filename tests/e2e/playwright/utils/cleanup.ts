@@ -22,6 +22,11 @@ export async function cleanupTestUsers(): Promise<number> {
 
   const sql = getDbConnection();
   try {
+    // Deleting test users drives security_audit_log's FK to null actor_user_id,
+    // which the append-only trigger rejects. This cleanup connection runs as the
+    // postgres superuser (max: 1), so disable replication-role triggers on it to
+    // remove test data without tripping the guard.
+    await sql`SET session_replication_role = 'replica'`;
     const testUsers = await sql`
       SELECT id FROM users
       WHERE email LIKE ${TEST_EMAIL_PATTERN}
@@ -71,7 +76,7 @@ export async function cleanupTestUsers(): Promise<number> {
     await sql`DELETE FROM organization_wallets WHERE user_id IN ${sql(userIds)}`;
 
     // 3. Integrations, API keys, and org-scoped data
-    await sql`DELETE FROM integrations WHERE user_id IN ${sql(userIds)}`;
+    await sql`DELETE FROM integrations WHERE created_by IN ${sql(userIds)}`;
     await sql`DELETE FROM api_keys WHERE user_id IN ${sql(userIds)}`;
     await sql`DELETE FROM user_rpc_preferences WHERE user_id IN ${sql(userIds)}`;
 

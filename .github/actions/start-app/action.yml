@@ -59,6 +59,34 @@ inputs:
     description: 'TURNKEY_ORGANIZATION_ID for the Turnkey-managed org wallet path'
     required: false
     default: ''
+  ai_prompt_enabled:
+    description: 'NEXT_PUBLIC_AI_PROMPT_ENABLED - gates /api/ai/generate (e2e api-key-auth suite). Scoped per-job so AI UI is not surfaced elsewhere.'
+    required: false
+    default: ''
+  anthropic_api_key:
+    description: 'ANTHROPIC_API_KEY for /api/ai/generate'
+    required: false
+    default: ''
+  ai_model:
+    description: 'AI_MODEL - a claude-* id routes /api/ai/generate to Anthropic'
+    required: false
+    default: ''
+  safe_fetch_enforce:
+    description: 'SAFE_FETCH_ENFORCE - set "false" for shadow-mode SSRF so the app can reach the localhost anvil fork (safe-roles-orchestrator-fork suite)'
+    required: false
+    default: ''
+  load_test_bypass_token:
+    description: 'LOAD_TEST_BYPASS_TOKEN - the app verifies the x-load-test-mfa-bypass header against it (proxy.ts), clearing the MFA-enrollment gate for playwright auth.setup'
+    required: false
+    default: ''
+  include_test_endpoints:
+    description: 'INCLUDE_TEST_ENDPOINTS - build-time flag baked by next.config.ts. Enables testEndpointsEnabled(), which gates the X-Test-API-Key credential rate-limit bypass (strict-signin/start) so playwright shared-user sign-ins are not throttled. Empty elsewhere keeps prod behavior.'
+    required: false
+    default: ''
+  allow_test_endpoints:
+    description: 'ALLOW_TEST_ENDPOINTS - runtime production opt-in required alongside include_test_endpoints for testEndpointsEnabled() to return true under NODE_ENV=production.'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -158,6 +186,18 @@ runs:
         TEST_API_KEY: ${{ inputs.test_api_key }}
         NEXT_PUBLIC_BILLING_ENABLED: "true"
         NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "true"
+        NEXT_PUBLIC_AI_PROMPT_ENABLED: ${{ inputs.ai_prompt_enabled }}
+        # Production builds assert SANDBOX_BACKEND=remote and SANDBOX_URL is set
+        # (the /.well-known/workflow/v1/step route guard). Jobs that execute code
+        # start a real sandbox via the start-sandbox action; others use this as a
+        # build-guard placeholder.
+        SANDBOX_BACKEND: remote
+        SANDBOX_URL: http://localhost:8787
+        # Baked by next.config.ts (env block) into the bundle; runtime cannot
+        # flip it. Gates testEndpointsEnabled(), which the strict-signin/start
+        # credential rate-limit bypass checks before honoring X-Test-API-Key.
+        # Set only for jobs whose browser sign-ins must skip the throttle.
+        INCLUDE_TEST_ENDPOINTS: ${{ inputs.include_test_endpoints }}
 
     - name: Start application
       if: inputs.image_tag == ''
@@ -188,3 +228,25 @@ runs:
         TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
         TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
+        SANDBOX_BACKEND: remote
+        SANDBOX_URL: http://localhost:8787
+        # Present so the production captcha guard (lib/auth.ts) lets the server
+        # boot. CI=true skips the captcha plugin, so signup is never actually
+        # captcha-gated here -- this only satisfies the guard's presence check.
+        TURNSTILE_SECRET_KEY: ci-turnstile-test-secret
+        # AI provider for /api/ai/generate (api-key-auth suite). Empty inputs in
+        # other jobs leave the route gated off; set, it makes real Anthropic calls.
+        NEXT_PUBLIC_AI_PROMPT_ENABLED: ${{ inputs.ai_prompt_enabled }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        AI_MODEL: ${{ inputs.ai_model }}
+        # Shadow-mode SSRF (existing per-env opt-out): safeFetch logs but allows,
+        # so the app can reach the localhost anvil fork (safe-roles suite).
+        # Unset/empty = enforced (default), so other jobs keep full SSRF.
+        SAFE_FETCH_ENFORCE: ${{ inputs.safe_fetch_enforce }}
+        # App-side verification of the x-load-test-mfa-bypass header (proxy.ts)
+        # so playwright e2e sign-in clears the mandatory-MFA enrollment gate.
+        LOAD_TEST_BYPASS_TOKEN: ${{ inputs.load_test_bypass_token }}
+        # Runtime production opt-in for testEndpointsEnabled(). Paired with the
+        # build-time INCLUDE_TEST_ENDPOINTS above, it lets the credential
+        # rate-limit bypass honor X-Test-API-Key under NODE_ENV=production.
+        ALLOW_TEST_ENDPOINTS: ${{ inputs.allow_test_endpoints }}

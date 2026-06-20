@@ -77,8 +77,13 @@ test.describe(`back/forward hydration recovery (${buildModeLabel})`, () => {
       //    (45-RESEARCH.md Pitfall 5 — DOM internal markers like
       //    __reactContainer are properties not attributes; behavioral
       //    assertions are the contract).
-      const rehydratedButtonCount = await page.locator("button").count();
-      expect(rehydratedButtonCount).toBeGreaterThanOrEqual(baselineButtonCount);
+      // Poll instead of a single snapshot: settleClientDataFetches keys off a
+      // "Loading..." sentinel that some pages (e.g. /hub) render as skeletons
+      // instead, so the count can be read mid-hydration. Wait for it to reach
+      // the baseline.
+      await expect
+        .poll(() => page.locator("button").count(), { timeout: 10_000 })
+        .toBeGreaterThanOrEqual(baselineButtonCount);
 
       // 6. Build-mode-specific navigation-type assertion.
       const navType = await page.evaluate(() => {
