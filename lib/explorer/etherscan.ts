@@ -185,7 +185,11 @@ type EtherscanTxListResponse = {
   result: EtherscanTransaction[] | string;
 };
 
-const ETHERSCAN_TX_PAGE_SIZE = 10_000;
+// Etherscan caps txlist at 10,000 records per query and rejects any page
+// where page * offset > 10,000. A smaller offset keeps every page within that
+// window so pagination actually reaches all 10,000 records instead of being
+// stuck on page 1.
+const ETHERSCAN_TX_OFFSET = 2000;
 const MAX_PAGES = 5;
 const ETHERSCAN_PAGE_DELAY_MS = 220;
 
@@ -211,8 +215,11 @@ function buildTxListParams(
     startblock: startBlock.toString(),
     endblock: endBlock.toString(),
     page: page.toString(),
-    offset: ETHERSCAN_TX_PAGE_SIZE.toString(),
-    sort: "asc",
+    offset: ETHERSCAN_TX_OFFSET.toString(),
+    // Most-recent-first: the 10,000-record cap then keeps the newest
+    // transactions in range rather than the oldest, which is what history
+    // lookbacks want and avoids silently dropping recent activity.
+    sort: "desc",
   });
 
   if (apiKey) {
@@ -236,9 +243,17 @@ function isEmptyTxListResult(data: EtherscanTxListResponse): boolean {
   );
 }
 
+// Etherscan returns this once page * offset exceeds 10,000. It marks the end of
+// the reachable window, so stop paginating and keep what was already collected
+// rather than failing the whole fetch and discarding earlier pages.
+function isWindowExhausted(data: EtherscanTxListResponse): boolean {
+  const message = typeof data.result === "string" ? data.result : data.message;
+  return (message ?? "").toLowerCase().includes("result window is too large");
+}
+
 function parseTxListResponse(data: EtherscanTxListResponse): TxPageResult {
   if (data.status !== "1") {
-    if (isEmptyTxListResult(data)) {
+    if (isEmptyTxListResult(data) || isWindowExhausted(data)) {
       return { done: true, transactions: [] };
     }
     const errorMessage = parseEtherscanError(
@@ -251,7 +266,7 @@ function parseTxListResponse(data: EtherscanTxListResponse): TxPageResult {
     return { done: true, transactions: [] };
   }
 
-  const hasMore = data.result.length >= ETHERSCAN_TX_PAGE_SIZE;
+  const hasMore = data.result.length >= ETHERSCAN_TX_OFFSET;
   return { done: !hasMore, transactions: data.result };
 }
 

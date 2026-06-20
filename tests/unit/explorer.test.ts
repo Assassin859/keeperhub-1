@@ -672,10 +672,10 @@ describe("explorer", () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it("should paginate when first page returns 10,000 results", async () => {
+    it("should paginate when a page returns a full offset of results", async () => {
       vi.useFakeTimers();
 
-      const fullPage = Array.from({ length: 10_000 }, (_, i) => ({
+      const fullPage = Array.from({ length: 2000 }, (_, i) => ({
         hash: `0xfull${i}`,
         blockNumber: String(startBlock + i),
       }));
@@ -706,14 +706,55 @@ describe("explorer", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.transactions).toHaveLength(10_002);
-        expect(result.transactions[10_000].hash).toBe("0xlast1");
+        expect(result.transactions).toHaveLength(2002);
+        expect(result.transactions[2000].hash).toBe("0xlast1");
       }
       expect(mockFetch).toHaveBeenCalledTimes(2);
 
       // Verify the second call has page=2
       const secondCallUrl = mockFetch.mock.calls[1][0] as string;
       expect(secondCallUrl).toContain("page=2");
+
+      vi.useRealTimers();
+    });
+
+    it("should keep collected pages when the window is exhausted", async () => {
+      vi.useFakeTimers();
+
+      const fullPage = Array.from({ length: 2000 }, (_, i) => ({
+        hash: `0xwin${i}`,
+        blockNumber: String(startBlock + i),
+      }));
+
+      mockFetch.mockResolvedValueOnce(
+        mockFetchJsonResponse(createEtherscanTxResponse(fullPage))
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockFetchJsonResponse({
+          status: "0",
+          message:
+            "Result window is too large, PageNo x Offset size must be less than or equal to 10000",
+          result: null,
+        })
+      );
+
+      const resultPromise = fetchEtherscanTransactions(
+        apiUrl,
+        chainId,
+        contractAddress,
+        startBlock,
+        endBlock
+      );
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      const result = await resultPromise;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.transactions).toHaveLength(2000);
+      }
+      expect(mockFetch).toHaveBeenCalledTimes(2);
 
       vi.useRealTimers();
     });
@@ -769,7 +810,7 @@ describe("explorer", () => {
     it("should stop at MAX_PAGES (5) even if results keep coming", async () => {
       vi.useFakeTimers();
 
-      const fullPage = Array.from({ length: 10_000 }, (_, i) => ({
+      const fullPage = Array.from({ length: 2000 }, (_, i) => ({
         hash: `0xpage${i}`,
         blockNumber: String(startBlock + i),
       }));
@@ -798,7 +839,7 @@ describe("explorer", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.transactions).toHaveLength(50_000);
+        expect(result.transactions).toHaveLength(10_000);
       }
       // Should not attempt a 6th page
       expect(mockFetch).toHaveBeenCalledTimes(5);
@@ -883,8 +924,8 @@ describe("explorer", () => {
       expect(calledUrl).toContain(`startblock=${startBlock}`);
       expect(calledUrl).toContain(`endblock=${endBlock}`);
       expect(calledUrl).toContain("page=1");
-      expect(calledUrl).toContain("offset=10000");
-      expect(calledUrl).toContain("sort=asc");
+      expect(calledUrl).toContain("offset=2000");
+      expect(calledUrl).toContain("sort=desc");
       expect(calledUrl).toContain("apikey=my-key");
     });
   });
