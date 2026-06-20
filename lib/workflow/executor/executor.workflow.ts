@@ -159,6 +159,32 @@ export function recordCatchOutput(
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
 
 /**
+ * Render a resolved condition value for the logged input/output panels while
+ * preserving the null/undefined distinction. `undefined` (e.g. a reference to a
+ * branch node that never executed) is shown as the string "undefined" so it is
+ * not mistaken for `null` -- `null` JSON-serializes fine and is left as-is, but
+ * `undefined` would otherwise be dropped/collapsed and read as `null`, making a
+ * strict `=== null` (isNull) check look like it should have matched. Recurses
+ * through plain objects and arrays. Display-only; never fed back into eval.
+ */
+function formatConditionValueForDisplay(value: unknown): unknown {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatConditionValueForDisplay);
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = formatConditionValueForDisplay(nested);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
  * Spurious-max-retries recovery poll window. When the framework re-fires a
  * step after a lost completion event and throws before the step's success row
  * is committed, the real success lands ~0.3-0.5s later. The catch handler
@@ -383,8 +409,12 @@ export function evaluateConditionExpression(
             nodeMap,
             executionResults
           );
-          // Store the resolved value with a readable key (the display text from the template)
-          resolvedValues[rest] = evalContext[varName];
+          // Store the resolved value with a readable key (the display text
+          // from the template), preserving the null/undefined distinction so a
+          // strict `isNull` (=== null) check is not mistaken for a match.
+          resolvedValues[rest] = formatConditionValueForDisplay(
+            evalContext[varName]
+          );
           return varName;
         }
       );
