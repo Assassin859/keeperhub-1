@@ -268,7 +268,7 @@ For **Condition nodes** and **For Each nodes**, edges require a `sourceHandle` f
 
 Condition nodes have dual output paths with `true` and `false` source handles. Connect downstream nodes to the appropriate handle to create if/else logic in a single Condition node.
 
-Conditions support these operators: `==` (soft equals), `===` (equals), `!=` (soft not equals), `!==` (not equals), `>`, `>=`, `<`, `<=`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `isEmpty`, `isNotEmpty`, `exists`, `doesNotExist`.
+Conditions support these operators: `==` (soft equals), `===` (equals), `!=` (soft not equals), `!==` (not equals), `>`, `>=`, `<`, `<=`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `isEmpty`, `isNotEmpty`, `exists`, `doesNotExist`, `isNull`, `isNotNull`, `isUndefined`, `isNotUndefined`.
 
 Conditions reference previous node outputs using template syntax: `{{@nodeId:Label.field}}`.
 

@@ -37,6 +37,10 @@ const OPERATOR_ALIASES: Record<string, ConditionOperator> = {
   is_empty: "isEmpty",
   is_not_empty: "isNotEmpty",
   does_not_exist: "doesNotExist",
+  is_null: "isNull",
+  is_not_null: "isNotNull",
+  is_undefined: "isUndefined",
+  is_not_undefined: "isNotUndefined",
   matches_regex: "matchesRegex",
 };
 
@@ -70,6 +74,10 @@ const VALID_OPERATORS = new Set<string>([
   "isNotEmpty",
   "exists",
   "doesNotExist",
+  "isNull",
+  "isNotNull",
+  "isUndefined",
+  "isNotUndefined",
   "matchesRegex",
   "isTrue",
   "isFalse",

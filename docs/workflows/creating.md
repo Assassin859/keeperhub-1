@@ -125,6 +125,12 @@ Combine multiple rules with **AND** / **OR** logic toggles, and nest groups for 
 | `isNotEmpty` | is not empty | Existence | Value is not null, undefined, or empty string |
 | `exists` | exists | Existence | Value is not null and not undefined |
 | `doesNotExist` | does not exist | Existence | Value is null or undefined |
+| `isNull` | is null | Existence | Value is strictly null (undefined does not match) |
+| `isNotNull` | is not null | Existence | Value is anything except null (undefined still matches) |
+| `isUndefined` | is undefined | Existence | Value is strictly undefined (null does not match) |
+| `isNotUndefined` | is not undefined | Existence | Value is anything except undefined (null still matches) |
+
+**When to use `doesNotExist` vs `isNull` / `isUndefined`:** `exists` and `doesNotExist` treat null and undefined the same, which is the right choice for most checks (for example, a node output field that may or may not be present). Reach for `isNull`, `isNotNull`, `isUndefined`, or `isNotUndefined` only when you need to tell null and undefined apart, since these match one but not the other.
 
 **When to use soft vs strict equality:** Use `==` (soft equals) when comparing values that may differ in type, such as a string `"0"` against a number `0`. Use `===` (equals) when you need exact type matching. Most blockchain data arrives as strings, so soft equality is the default for new conditions.
 
