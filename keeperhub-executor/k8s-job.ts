@@ -35,8 +35,6 @@ const SECRET_ENV_SLUGS: Record<string, string> = {
   ETHERSCAN_API_KEY: "etherscan-api-key",
   METRICS_INGEST_TOKEN: "metrics-ingest-token",
   OPENAI_API_KEY: "openai-api-key",
-  PIMLICO_API_KEY: "pimlico-api-key",
-  PIMLICO_BASE_URL: "pimlico-base-url",
   SENDGRID_API_KEY: "sendgrid-api-key",
   SIMPLE_ACCOUNT_7702_ADDRESS: "simple-account-7702-address",
   TURNKEY_API_PRIVATE_KEY: "turnkey-api-private-key",
