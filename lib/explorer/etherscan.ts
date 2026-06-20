@@ -185,12 +185,15 @@ type EtherscanTxListResponse = {
   result: EtherscanTransaction[] | string;
 };
 
-// Etherscan caps txlist at 10,000 records per query and rejects any page
-// where page * offset > 10,000. A smaller offset keeps every page within that
-// window so pagination actually reaches all 10,000 records instead of being
-// stuck on page 1.
-const ETHERSCAN_TX_OFFSET = 2000;
-const MAX_PAGES = 5;
+// Etherscan caps txlist at 10,000 records per query and rejects any page where
+// page * offset > 10,000, so a single request can never return more than the
+// first 10,000 transactions of a range. To cover a wider range we walk it in
+// block-cursor windows: each request pulls up to 10,000 records ascending, then
+// the next request resumes from the highest block seen until the whole range is
+// covered. MAX_TX_WINDOWS bounds the request budget so a pathologically busy
+// range cannot loop unbounded against the API.
+const ETHERSCAN_TX_OFFSET = 10_000;
+const MAX_TX_WINDOWS = 30;
 const ETHERSCAN_PAGE_DELAY_MS = 220;
 
 type TxPageResult =
@@ -204,7 +207,6 @@ function buildTxListParams(
   contractAddress: string,
   startBlock: number,
   endBlock: number,
-  page: number,
   apiKey?: string
 ): string {
   const params = new URLSearchParams({
@@ -214,12 +216,12 @@ function buildTxListParams(
     address: contractAddress,
     startblock: startBlock.toString(),
     endblock: endBlock.toString(),
-    page: page.toString(),
+    // page=1 with a full 10,000 offset keeps every request inside Etherscan's
+    // page * offset <= 10,000 limit; the block cursor (startblock) is what
+    // advances across windows. Ascending order makes that cursor monotonic.
+    page: "1",
     offset: ETHERSCAN_TX_OFFSET.toString(),
-    // Most-recent-first: the 10,000-record cap then keeps the newest
-    // transactions in range rather than the oldest, which is what history
-    // lookbacks want and avoids silently dropping recent activity.
-    sort: "desc",
+    sort: "asc",
   });
 
   if (apiKey) {
@@ -270,11 +272,52 @@ function parseTxListResponse(data: EtherscanTxListResponse): TxPageResult {
   return { done: !hasMore, transactions: data.result };
 }
 
+async function fetchTxWindow(url: string): Promise<TxPageResult> {
+  try {
+    const response = await fetch(url);
+    const data: EtherscanTxListResponse = await response.json();
+    return parseTxListResponse(data);
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown error fetching transactions",
+    };
+  }
+}
+
+// Accumulate a window's transactions into the running list, skipping hashes
+// already collected (consecutive windows overlap on the cursor block), and
+// report the highest block seen so the next window can resume from it.
+function collectWindow(
+  transactions: EtherscanTransaction[],
+  seen: Set<string>,
+  into: EtherscanTransaction[],
+  cursorBlock: number
+): number {
+  let maxBlock = cursorBlock;
+  for (const tx of transactions) {
+    if (seen.has(tx.hash)) {
+      continue;
+    }
+    seen.add(tx.hash);
+    into.push(tx);
+    const block = Number.parseInt(tx.blockNumber, 10);
+    if (block > maxBlock) {
+      maxBlock = block;
+    }
+  }
+  return maxBlock;
+}
+
 /**
  * Fetch transaction list for a contract address from Etherscan API v2
  *
  * Uses the `account` module `txlist` action to get normal transactions.
- * Paginates automatically (max 10,000 per page, up to MAX_PAGES pages).
+ * Walks the block range in 10,000-record windows (up to MAX_TX_WINDOWS),
+ * advancing a block cursor so ranges with more than 10,000 transactions are
+ * fully covered rather than truncated at Etherscan's per-query cap.
  *
  * @param apiUrl - Base API URL (e.g., "https://api.etherscan.io/v2/api")
  * @param chainId - Chain ID for the request
@@ -295,9 +338,15 @@ export async function fetchEtherscanTransactions(
   | { success: false; error: string }
 > {
   const allTransactions: EtherscanTransaction[] = [];
+  const seenHashes = new Set<string>();
+  let cursorBlock = startBlock;
 
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    if (page > 1) {
+  for (
+    let window = 0;
+    window < MAX_TX_WINDOWS && cursorBlock <= endBlock;
+    window++
+  ) {
+    if (window > 0) {
       await new Promise((resolve) =>
         setTimeout(resolve, ETHERSCAN_PAGE_DELAY_MS)
       );
@@ -307,35 +356,32 @@ export async function fetchEtherscanTransactions(
       apiUrl,
       chainId,
       contractAddress,
-      startBlock,
+      cursorBlock,
       endBlock,
-      page,
       apiKey
     );
 
-    try {
-      const response = await fetch(url);
-      const data: EtherscanTxListResponse = await response.json();
-      const result = parseTxListResponse(data);
-
-      if ("error" in result) {
-        return { success: false, error: result.error };
-      }
-
-      allTransactions.push(...result.transactions);
-
-      if (result.done) {
-        break;
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown error fetching transactions",
-      };
+    const result = await fetchTxWindow(url);
+    if ("error" in result) {
+      return { success: false, error: result.error };
     }
+
+    const maxBlock = collectWindow(
+      result.transactions,
+      seenHashes,
+      allTransactions,
+      cursorBlock
+    );
+
+    if (result.done) {
+      break;
+    }
+
+    // Full window: resume from the highest block seen so its remaining
+    // transactions are picked up (overlap is de-duplicated by hash). If a
+    // single block fills the whole window, step past it -- Etherscan cannot
+    // page beyond 10,000 records within one block.
+    cursorBlock = maxBlock > cursorBlock ? maxBlock : cursorBlock + 1;
   }
 
   return { success: true, transactions: allTransactions };
