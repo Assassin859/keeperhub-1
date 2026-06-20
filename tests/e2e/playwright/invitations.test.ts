@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
+  completeMfaSignInDialog,
   fillOtpInput,
   getOtpFromDb,
   signIn,
@@ -221,9 +222,12 @@ test.describe("Organization Invitations", () => {
     }) => {
       const inviteeEmail = `test+${Date.now()}@techops.services`;
       // Inviter storage state is active; create the invitee from a logged-out
-      // state first.
+      // state first. The signup enrolls mandatory TOTP -- keep the setup key so
+      // we can clear the sign-in step-up later.
       await context.clearCookies();
-      await signUpAndVerify(page, { email: inviteeEmail });
+      const { password, totpKey } = await signUpAndVerify(page, {
+        email: inviteeEmail,
+      });
       await context.clearCookies();
 
       await signInAsInviter(page);
@@ -236,30 +240,26 @@ test.describe("Organization Invitations", () => {
         timeout: 15_000,
       });
       // The accept-invite page defaults to the create-account view; this
-      // invitee already has an account, so switch to the sign-in view first.
+      // invitee already has an account, so switch to the sign-in view and open
+      // the shared auth dialog, which runs the full three-factor sign-in.
       await page.getByRole("button", { name: "Sign in", exact: true }).click();
-      await expect(
-        page.locator('button:has-text("Sign In & Join")')
-      ).toBeVisible();
-
-      await page.locator("#password").fill("TestPassword123!");
       await page.locator('button:has-text("Sign In & Join")').click();
 
-      const welcomeToast = page
-        .locator("[data-sonner-toast]")
-        .filter({ hasText: "Welcome to" });
-      const navigatedAway = page.waitForURL(
-        (url) => !ACCEPT_INVITE_URL_REGEX.test(url.pathname),
-        { timeout: 20_000 }
-      );
+      await completeMfaSignInDialog(page, {
+        email: inviteeEmail,
+        password,
+        totpKey,
+      });
 
-      await Promise.race([
-        welcomeToast.waitFor({ state: "visible", timeout: 20_000 }),
-        navigatedAway,
-      ]);
+      // The dialog redirects back to the invite, now authenticated; accept it.
+      const acceptButton = page.getByRole("button", {
+        name: "Accept Invitation",
+      });
+      await expect(acceptButton).toBeVisible({ timeout: 20_000 });
+      await acceptButton.click();
 
       await expect(page).not.toHaveURL(ACCEPT_INVITE_URL_REGEX, {
-        timeout: 15_000,
+        timeout: 20_000,
       });
     });
 
