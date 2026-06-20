@@ -954,6 +954,33 @@ describe("dead-branch grace: references to nodes that never executed", () => {
     expect(result.result).toBe(true);
   });
 
+  it("reports a non-executed reference as 'undefined' in resolvedValues, not null", () => {
+    // The logged values panel must preserve the null/undefined distinction so a
+    // strict isNull (=== null) check is not mistaken for a match: a non-executed
+    // branch node is undefined, not null.
+    const expression =
+      "{{@dead:Query Transaction History.matchCount}} === undefined";
+    const result = evaluateConditionExpression(expression, {}, deadNodeMap, {});
+    expect(result.result).toBe(true);
+    expect(result.resolvedValues["Query Transaction History.matchCount"]).toBe(
+      "undefined"
+    );
+  });
+
+  it("keeps a real null value as null in resolvedValues (not 'undefined')", () => {
+    // A node that executed and produced a genuine null must stay null, so null
+    // and undefined remain distinguishable in the display.
+    const expression = "{{@ran:Check if already scheduled?.matchCount}} === null";
+    const outputs = {
+      ran: { label: "Check if already scheduled?", data: { matchCount: null } },
+    };
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+    expect(
+      result.resolvedValues["Check if already scheduled?.matchCount"]
+    ).toBeNull();
+  });
+
   it("evaluates a convergence condition when one referenced branch ran and the other did not", () => {
     const expression =
       "{{@ran:Check if already scheduled?.matchCount}} == 0 && ({{@dead:Query Transaction History.matchCount}} === null || {{@dead:Query Transaction History.matchCount}} === undefined)";
