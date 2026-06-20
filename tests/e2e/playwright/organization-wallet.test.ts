@@ -1,6 +1,8 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { signUpAndVerify as signUpAndVerifyBase } from "./utils/auth";
+import { getDbConnection } from "./utils/connection";
+import { PERSISTENT_TEST_USER_EMAIL } from "./utils/db";
 
 // Regex patterns (moved to top level for performance)
 const SLUG_PATTERN = /test-org-/;
@@ -94,6 +96,40 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("Organization Management", () => {
   test.describe("Organization Creation", () => {
+    // These tests create orgs as the shared persistent test user, which (via
+    // the afterCreateOrganization hook) flips that user's session active org
+    // and adds owner memberships. Later suites (workflow save, webhook toggle,
+    // marketplace listing) assume it acts in its seeded e2e-test-org, and a
+    // drifted active org makes their org-scoped API calls 404. Restore the
+    // session's active org to the seeded (owner, oldest) org after this block;
+    // createTestWorkflow targets that same org, so the two halves agree.
+    test.afterAll(async () => {
+      const sql = getDbConnection();
+      try {
+        const userRows = await sql`
+          SELECT id FROM users WHERE email = ${PERSISTENT_TEST_USER_EMAIL} LIMIT 1
+        `;
+        if (userRows.length === 0) {
+          return;
+        }
+        const userId = userRows[0].id as string;
+        const orgRows = await sql`
+          SELECT organization_id FROM member
+          WHERE user_id = ${userId} AND role = 'owner'
+          ORDER BY created_at ASC
+          LIMIT 1
+        `;
+        if (orgRows.length > 0) {
+          await sql`
+            UPDATE sessions SET active_organization_id = ${orgRows[0].organization_id}
+            WHERE user_id = ${userId}
+          `;
+        }
+      } finally {
+        await sql.end();
+      }
+    });
+
     test("ORG-CREATE-1: user can create a new organization", async ({
       page,
     }) => {

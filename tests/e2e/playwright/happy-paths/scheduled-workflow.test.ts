@@ -10,6 +10,11 @@ import {
 // Top-level regex for URL matching
 const WORKFLOW_URL_REGEX = /workflow/;
 
+// This suite adds a Send Webhook action, which is Pro-gated
+// (lib/features/registry.ts). Run as the seeded pro-plan user so the action is
+// available instead of the upgrade gate; e2e-test-org stays free for billing.
+test.use({ storageState: "tests/e2e/playwright/.auth/pro.json" });
+
 // Run tests serially to maintain user session state
 test.describe.configure({ mode: "serial" });
 

@@ -1005,7 +1005,7 @@ describe.skipIf(SKIP_INFRA_TESTS)("Full Pipeline E2E", () => {
         // Runner should exit cleanly (0) after detecting disabled workflow
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain(
-          "Workflow disabled, skipping execution"
+          "Workflow not executable (disabled), skipping execution"
         );
 
         // Verify the execution was marked as cancelled

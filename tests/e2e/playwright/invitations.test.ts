@@ -1,6 +1,13 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { getOtpFromDb, signIn, signUp, signUpAndVerify } from "./utils/auth";
+import {
+  completeMfaSignInDialog,
+  fillOtpInput,
+  getOtpFromDb,
+  signIn,
+  signUp,
+  signUpAndVerify,
+} from "./utils/auth";
 import {
   PERSISTENT_BYSTANDER_EMAIL,
   PERSISTENT_INVITER_EMAIL,
@@ -16,21 +23,33 @@ import {
 const ACCEPT_INVITE_URL_REGEX = /\/accept-invite/;
 
 async function signInAsInviter(page: Page): Promise<void> {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const orgSwitcher = page.locator('button[role="combobox"]');
+  // The inviter storage state usually leaves us already authenticated, so skip
+  // the sign-in round-trip when the org switcher is already present. The bounded
+  // wait avoids mistaking slow hydration for a logged-out state.
+  const alreadySignedIn = await orgSwitcher
+    .waitFor({ state: "visible", timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (alreadySignedIn) {
+    return;
+  }
   await signIn(page, PERSISTENT_INVITER_EMAIL, PERSISTENT_TEST_PASSWORD);
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page.locator('button[role="combobox"]')).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(orgSwitcher).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe.configure({ mode: "serial" });
 
 test.describe("Organization Invitations", () => {
-  test.describe("Sending Invites", () => {
-    test.beforeEach(async ({ context }) => {
-      await context.clearCookies();
-    });
+  // Reuse the inviter's authenticated session instead of signing in through the
+  // UI on every test. Repeated credential sign-ins would otherwise exhaust the
+  // per-email attempt budget mid-run. Tests that must act as a different
+  // identity clear cookies first (INV-SEND-2, INV-RECV-2, ORG-1, ORG-3).
+  test.use({ storageState: "tests/e2e/playwright/.auth/inviter.json" });
 
+  test.describe("Sending Invites", () => {
     test("INV-SEND-1: invite new email shows success toast and confirmation", async ({
       page,
     }) => {
@@ -60,6 +79,9 @@ test.describe("Organization Invitations", () => {
       page,
       context,
     }) => {
+      // Inviter storage state is active; sign up the new user from a logged-out
+      // state, then clear again before re-authenticating as the inviter.
+      await context.clearCookies();
       const { email: existingUserEmail } = await signUp(page);
       await context.clearCookies();
 
@@ -84,36 +106,38 @@ test.describe("Organization Invitations", () => {
       });
     });
 
-    test("INV-SEND-3: invite email with pending invitation shows error toast", async ({
+    test("INV-SEND-3: re-inviting a pending email re-sends the invitation", async ({
       page,
     }) => {
+      // The org plugin sets cancelPendingInvitationsOnReInvite: true
+      // (lib/auth.ts), so re-inviting an email that already has a pending
+      // invite cancels the old one and sends a fresh invite -- a success, not
+      // an "already invited" rejection (the app emits no such toast).
       await signInAsInviter(page);
       await openInviteForm(page);
 
       const dialog = page.locator('[role="dialog"]');
-      const inviteEmail = `duplicate+${Date.now()}@example.com`;
+      const inviteEmail = `reinvite+${Date.now()}@example.com`;
+      const sentToast = page
+        .locator("[data-sonner-toast]")
+        .filter({ hasText: `Invitation sent to ${inviteEmail}` });
 
+      // First invite succeeds.
       await dialog
         .locator('input[placeholder="colleague@example.com"]')
         .fill(inviteEmail);
       await dialog.locator('button:has-text("Invite")').click();
+      await expect(sentToast).toBeVisible({ timeout: 10_000 });
 
-      await expect(
-        page
-          .locator("[data-sonner-toast]")
-          .filter({ hasText: `Invitation sent to ${inviteEmail}` })
-      ).toBeVisible({ timeout: 10_000 });
+      // Let the first toast clear so the re-invite toast is unambiguous.
+      await expect(sentToast).toBeHidden({ timeout: 10_000 });
 
+      // Re-inviting the same email re-sends (success), not an error.
       await dialog
         .locator('input[placeholder="colleague@example.com"]')
         .fill(inviteEmail);
       await dialog.locator('button:has-text("Invite")').click();
-
-      await expect(
-        page
-          .locator("[data-sonner-toast]")
-          .filter({ hasText: "already invited" })
-      ).toBeVisible({ timeout: 10_000 });
+      await expect(sentToast).toBeVisible({ timeout: 10_000 });
     });
 
     test("INV-SEND-4: invite yourself shows already a member error toast", async ({
@@ -138,10 +162,6 @@ test.describe("Organization Invitations", () => {
   });
 
   test.describe("Receiving Invites", () => {
-    test.beforeEach(async ({ context }) => {
-      await context.clearCookies();
-    });
-
     test("INV-RECV-1: accept invite as logged-out new user via signup and OTP", async ({
       page,
       context,
@@ -175,7 +195,7 @@ test.describe("Organization Invitations", () => {
       ).toBeVisible({ timeout: 10_000 });
 
       const otp = await getOtpFromDb(inviteeEmail);
-      await page.locator("#otp").fill(otp);
+      await fillOtpInput(page.locator("#otp"), otp);
       await page.locator('button:has-text("Verify & Join")').click();
 
       const welcomeToast = page
@@ -201,7 +221,13 @@ test.describe("Organization Invitations", () => {
       context,
     }) => {
       const inviteeEmail = `test+${Date.now()}@techops.services`;
-      await signUpAndVerify(page, { email: inviteeEmail });
+      // Inviter storage state is active; create the invitee from a logged-out
+      // state first. The signup enrolls mandatory TOTP -- keep the setup key so
+      // we can clear the sign-in step-up later.
+      await context.clearCookies();
+      const { password, totpKey } = await signUpAndVerify(page, {
+        email: inviteeEmail,
+      });
       await context.clearCookies();
 
       await signInAsInviter(page);
@@ -213,28 +239,27 @@ test.describe("Organization Invitations", () => {
       await expect(page.locator("h1:has-text('Join')")).toBeVisible({
         timeout: 15_000,
       });
-      await expect(
-        page.locator('button:has-text("Sign In & Join")')
-      ).toBeVisible();
-
-      await page.locator("#password").fill("TestPassword123!");
+      // The accept-invite page defaults to the create-account view; this
+      // invitee already has an account, so switch to the sign-in view and open
+      // the shared auth dialog, which runs the full three-factor sign-in.
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
       await page.locator('button:has-text("Sign In & Join")').click();
 
-      const welcomeToast = page
-        .locator("[data-sonner-toast]")
-        .filter({ hasText: "Welcome to" });
-      const navigatedAway = page.waitForURL(
-        (url) => !ACCEPT_INVITE_URL_REGEX.test(url.pathname),
-        { timeout: 20_000 }
-      );
+      await completeMfaSignInDialog(page, {
+        email: inviteeEmail,
+        password,
+        totpKey,
+      });
 
-      await Promise.race([
-        welcomeToast.waitFor({ state: "visible", timeout: 20_000 }),
-        navigatedAway,
-      ]);
+      // The dialog redirects back to the invite, now authenticated; accept it.
+      const acceptButton = page.getByRole("button", {
+        name: "Accept Invitation",
+      });
+      await expect(acceptButton).toBeVisible({ timeout: 20_000 });
+      await acceptButton.click();
 
       await expect(page).not.toHaveURL(ACCEPT_INVITE_URL_REGEX, {
-        timeout: 15_000,
+        timeout: 20_000,
       });
     });
 
@@ -310,11 +335,13 @@ test.describe("Organization Invitations", () => {
   });
 
   test.describe("Organization Membership", () => {
-    test.beforeEach(async ({ context }) => {
+    test("ORG-1: user can switch between multiple orgs", async ({
+      page,
+      context,
+    }) => {
+      // Inviter storage state is active; sign in as the member from a
+      // logged-out state.
       await context.clearCookies();
-    });
-
-    test("ORG-1: user can switch between multiple orgs", async ({ page }) => {
       // Persistent member is already in 2 orgs (own + inviter's) from seed
       await signIn(page, PERSISTENT_MEMBER_EMAIL, PERSISTENT_TEST_PASSWORD);
       await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -394,7 +421,10 @@ test.describe("Organization Invitations", () => {
       await expect(orgItems).toHaveCount(3);
     });
 
-    test("ORG-3: user can leave an org", async ({ page }) => {
+    test("ORG-3: user can leave an org", async ({ page, context }) => {
+      // Inviter storage state is active; sign in as the member from a
+      // logged-out state.
+      await context.clearCookies();
       // Persistent member is in 2 orgs from seed
       await signIn(page, PERSISTENT_MEMBER_EMAIL, PERSISTENT_TEST_PASSWORD);
       await page.goto("/", { waitUntil: "domcontentloaded" });

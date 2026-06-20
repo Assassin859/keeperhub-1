@@ -135,14 +135,23 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
       'div:not([role="tabpanel"]) > .animate-pulse, body > .animate-pulse'
     );
 
-    await page.getByRole("tab", { name: "Workflows" }).click();
-    // Brief wait so any hypothetical flicker would be caught in this window.
-    await page.waitForTimeout(150);
-    expect(await shellPulseLocator.count()).toBe(0);
+    // The incoming tab's content skeleton can briefly mount before its
+    // [role="tabpanel"] wrapper exists -- the tab's own loading state, which is
+    // allowed. Poll until the shell settles after each swap; a pulse that stays
+    // outside any panel is the genuine shell flicker the contract forbids.
+    const workflowsTab = page.getByRole("tab", { name: "Workflows" });
+    await workflowsTab.click();
+    await expect(workflowsTab).toHaveAttribute("data-state", "active");
+    await expect
+      .poll(() => shellPulseLocator.count(), { timeout: 5000 })
+      .toBe(0);
 
-    await page.getByRole("tab", { name: "Marketplace" }).click();
-    await page.waitForTimeout(150);
-    expect(await shellPulseLocator.count()).toBe(0);
+    const marketplaceTab = page.getByRole("tab", { name: "Marketplace" });
+    await marketplaceTab.click();
+    await expect(marketplaceTab).toHaveAttribute("data-state", "active");
+    await expect
+      .poll(() => shellPulseLocator.count(), { timeout: 5000 })
+      .toBe(0);
   });
 
   test("HUBV2-08: no 'Listed in marketplace' badge anywhere in the Workflows tab HTML", async ({

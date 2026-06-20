@@ -170,8 +170,20 @@ export async function createTestWorkflow(
     // Get organization ID. The org owns workflows (organization_id is NOT
     // NULL), so a test user without a membership is a fixture bug - fail
     // loudly here instead of with a constraint violation at insert.
+    //
+    // Deterministic pick: prefer the user's owned org, oldest first. A shared
+    // persistent test user can accrue extra memberships during a suite run
+    // (e.g. accepting an invite to a second org). An unordered LIMIT 1 then
+    // picks an arbitrary org, which can diverge from the org the browser
+    // session is acting in (its active org is fixed at login). The workflow
+    // would land in the wrong org and every later access check (getWorkflowAccess)
+    // would 404. Ordering by owner-then-oldest stably resolves to the seeded
+    // primary org, matching the session.
     const orgResult = await sql`
-      SELECT organization_id FROM member WHERE user_id = ${userId} LIMIT 1
+      SELECT organization_id FROM member
+      WHERE user_id = ${userId}
+      ORDER BY (role = 'owner') DESC, created_at ASC
+      LIMIT 1
     `;
     if (orgResult.length === 0) {
       throw new Error(

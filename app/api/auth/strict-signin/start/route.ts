@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { testEndpointsEnabled } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { readAllSetCookies } from "@/lib/auth-cookie-chain";
 import { db } from "@/lib/db";
@@ -67,25 +68,38 @@ export async function POST(request: Request): Promise<NextResponse> {
   // are shared with finish-credential-signup so an attacker cannot get a fresh
   // allowance by hopping between the two routes for the same target.
   const clientIp = resolveClientIpFromHeaders(request.headers) ?? "unknown";
-  const rateLimit = checkCredentialAttemptRateLimit(email, clientIp);
-  if (!rateLimit.allowed) {
-    return NextResponse.json(
-      {
-        error: "Too many attempts. Wait and try again.",
-        code: "rate_limited",
-        retryAfter: rateLimit.retryAfterSeconds,
-      },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
-      }
-    );
+  // The e2e playwright suite signs in repeatedly as a handful of shared test
+  // users, which would otherwise exhaust the per-email budget mid-run. Skip the
+  // throttle only for authenticated test traffic, gated identically to
+  // Better Auth's rateLimitBypassRule (testEndpointsEnabled + a matching
+  // X-Test-API-Key) so it stays fully enforced in production.
+  const testApiKey = process.env.TEST_API_KEY;
+  const isE2eTestTraffic =
+    testEndpointsEnabled() &&
+    !!testApiKey &&
+    request.headers.get("X-Test-API-Key") === testApiKey;
+  if (!isE2eTestTraffic) {
+    const rateLimit = checkCredentialAttemptRateLimit(email, clientIp);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too many attempts. Wait and try again.",
+          code: "rate_limited",
+          retryAfter: rateLimit.retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+        }
+      );
+    }
   }
 
   const [user] = await db
     .select({
       id: users.id,
       email: users.email,
+      emailVerified: users.emailVerified,
       twoFactorEnabled: users.twoFactorEnabled,
       deactivatedAt: users.deactivatedAt,
     })
@@ -126,6 +140,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         error: "Your account has been deactivated.",
         code: "account_deactivated",
+      },
+      { status: 403 }
+    );
+  }
+
+  // The account exists and the password matched, but the email isn't verified.
+  // Better Auth's signInEmail would throw here; surface it as a typed signal so
+  // the dialog routes to the verification view (where it re-sends the OTP)
+  // instead of treating it as a generic 500. The password already matched, so
+  // this does not widen account enumeration beyond a correct-password reveal.
+  if (!user.emailVerified) {
+    return NextResponse.json(
+      {
+        error: "Please verify your email to continue.",
+        code: "email_not_verified",
       },
       { status: 403 }
     );

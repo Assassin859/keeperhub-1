@@ -20,6 +20,10 @@ const UNARY_OPERATORS: ReadonlySet<ConditionOperator> = new Set([
   "isNotEmpty",
   "exists",
   "doesNotExist",
+  "isNull",
+  "isNotNull",
+  "isUndefined",
+  "isNotUndefined",
   "isTrue",
   "isFalse",
   "arrayIsEmpty",
@@ -94,6 +98,18 @@ function ruleToExpression(rule: ConditionRule): string {
 
     case "doesNotExist":
       return `(${left} === null || ${left} === undefined)`;
+
+    case "isNull":
+      return `(${left} === null)`;
+
+    case "isNotNull":
+      return `(${left} !== null)`;
+
+    case "isUndefined":
+      return `(${left} === undefined)`;
+
+    case "isNotUndefined":
+      return `(${left} !== undefined)`;
 
     case "matchesRegex":
       return `new RegExp(${wrapOperand(rule.rightOperand)}).test(String(${left}))`;

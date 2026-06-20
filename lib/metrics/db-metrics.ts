@@ -309,6 +309,83 @@ export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowError
   }
 }
 
+// TECH-6544: per-(error_category, error_type) error counts over a ROLLING
+// 1-HOUR window, PLATFORM-WIDE (all orgs). System errors are platform faults
+// (DB, RPC, infra, workflow engine), not a managed-client concern, so this
+// dedups by *cause* (error_category) across every org rather than by which
+// workflow or org tripped. The infra P3 alert reads it filtered to
+// error_type="system" and fires once per category spike. Dropping org_slug
+// keeps cardinality FIXED (~categories * ~types) regardless of customer count.
+export type SystemErrorsByCategory = Array<{
+  errorCategory: string;
+  errorType: string;
+  count: number;
+}>;
+
+/**
+ * Per-(error_category, error_type) error counts over a ROLLING 1-HOUR window,
+ * platform-wide, sourced from the DB so the series is authoritative regardless
+ * of which finalization path wrote the `status='error'` row.
+ *
+ * Value semantics: count of executions that errored in the last hour
+ * (`completed_at >= now() - 1h`), per (error_category, error_type). NOT an
+ * all-time cumulative count. This matches the infra P3 alert's "rolling
+ * 60-minute window" definition, so the alert reads this gauge directly (no
+ * offset/delta math).
+ *
+ * Why dedup by category (not org or workflow): a system fault — e.g. an RPC
+ * outage — surfaces across many workflows and orgs at once. Grouping by cause
+ * collapses all of them into one series per (error_category, error_type), so
+ * the P3 alert pages once per distinct failure mode, not once per affected
+ * workflow/org. org_slug is intentionally NOT a label: a platform fault is
+ * org-agnostic, and omitting it pins cardinality so it can't grow with the
+ * customer base. Per-org context, if ever needed, lives on other org-labelled
+ * metrics / dashboards.
+ *
+ * Why windowed: filtering only on `status='error'` matches every error
+ * execution ever, which at prod scale blew past the 8s metrics
+ * `statement_timeout` (Postgres 57014), the catch returned [], and the gauge
+ * flapped. Bounding to the last hour keeps the row set tiny so the query is an
+ * index range scan on idx_workflow_executions_error_completed_at and finishes
+ * in milliseconds. No joins are needed — error_category/error_type live on
+ * workflow_executions directly (migration 0073).
+ *
+ * errorCategory and errorType are read from the `workflow_executions`
+ * error_category / error_type columns, projected to "unknown" for rows that
+ * predate classification so every series carries populated labels. Cardinality
+ * is bounded at roughly (~11 categories) * (~3 error types) — small and stable.
+ */
+export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByCategory> {
+  try {
+    const rows = await db
+      .select({
+        errorCategory: sql<string>`COALESCE(${workflowExecutions.errorCategory}, 'unknown')`,
+        errorType: sql<string>`COALESCE(${workflowExecutions.errorType}, 'unknown')`,
+        count: count(),
+      })
+      .from(workflowExecutions)
+      .where(
+        and(
+          eq(workflowExecutions.status, "error"),
+          sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`
+        )
+      )
+      .groupBy(workflowExecutions.errorCategory, workflowExecutions.errorType);
+
+    return rows.map((row) => ({
+      errorCategory: row.errorCategory,
+      errorType: row.errorType,
+      count: Number(row.count) || 0,
+    }));
+  } catch (error) {
+    console.error(
+      "[Metrics] Failed to query system errors by category from DB:",
+      error
+    );
+    return [];
+  }
+}
+
 export type StepStats = {
   // Counts by step type and status
   countsByType: Record<string, { success: number; error: number }>;

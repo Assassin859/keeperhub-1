@@ -144,6 +144,22 @@ const workflowErrorsByWorkflow = getOrCreateGauge(
   ["workflow_id", "org_slug", "error_type"]
 );
 
+// TECH-6544: errored executions in the last hour, PLATFORM-WIDE, grouped by
+// (error_category, error_type). Keyed on error_category so the infra P3 alert
+// dedups system errors by *cause* — one series per failure mode — rather than
+// fanning a single root cause out into one series per affected workflow/org.
+// System faults are org-agnostic, so there is intentionally no org_slug label;
+// dropping it (and workflow_id) pins cardinality to ~categories * ~types
+// regardless of customer count. 1h-window, DB-sourced (see
+// getSystemErrorsByCategoryFromDb). Value = executions that errored in the last
+// hour per (error_category, error_type); the alert reads it directly.
+const systemErrorsByCategory = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_system_errors_by_category",
+  "Workflow executions that errored in the last hour, platform-wide, by error_category and error_type (system errors are org-agnostic; no org_slug label to keep cardinality fixed)",
+  ["error_category", "error_type"]
+);
+
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
 // has been removed. It was named with the `_total` counter suffix but was
 // actually a poll-driven gauge that overwrote itself on every scrape with the
@@ -1397,6 +1413,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     const {
       getWorkflowStatsFromDb,
       getWorkflowErrorsByWorkflowFromDb,
+      getSystemErrorsByCategoryFromDb,
       getStepStatsFromDb,
       getDailyActiveUsersFromDb,
       getUserStatsFromDb,
@@ -1413,6 +1430,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     const [
       workflowStats,
       errorsByWorkflow,
+      systemErrorsByCategoryRows,
       stepStats,
       dailyActiveUsers,
       userStats,
@@ -1428,6 +1446,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     ] = await Promise.all([
       getWorkflowStatsFromDb(),
       getWorkflowErrorsByWorkflowFromDb(),
+      getSystemErrorsByCategoryFromDb(),
       getStepStatsFromDb(),
       getDailyActiveUsersFromDb(),
       getUserStatsFromDb(),
@@ -1470,6 +1489,20 @@ async function refreshDbMetricsNow(): Promise<void> {
         {
           workflow_id: row.workflowId,
           org_slug: row.orgSlug,
+          error_type: row.errorType,
+        },
+        row.count
+      );
+    }
+
+    // TECH-6544: errored executions per (error_category, error_type),
+    // platform-wide. Reset before populating so a category that no longer has
+    // errors in the window clears out instead of pinning a stale value.
+    systemErrorsByCategory.reset();
+    for (const row of systemErrorsByCategoryRows) {
+      systemErrorsByCategory.set(
+        {
+          error_category: row.errorCategory,
           error_type: row.errorType,
         },
         row.count
