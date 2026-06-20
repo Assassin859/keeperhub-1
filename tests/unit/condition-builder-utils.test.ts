@@ -170,6 +170,33 @@ describe("condition-builder-utils", () => {
           '("data" === null || "data" === undefined)'
         );
       });
+
+      it("should generate isNull expression", () => {
+        const g = group("AND", [rule("data", "isNull")]);
+        expect(visualConditionToExpression(g)).toBe('("data" === null)');
+      });
+
+      it("should generate isNotNull expression", () => {
+        const g = group("AND", [rule("data", "isNotNull")]);
+        expect(visualConditionToExpression(g)).toBe('("data" !== null)');
+      });
+
+      it("should generate isUndefined expression", () => {
+        const g = group("AND", [rule("data", "isUndefined")]);
+        expect(visualConditionToExpression(g)).toBe('("data" === undefined)');
+      });
+
+      it("should generate isNotUndefined expression", () => {
+        const g = group("AND", [rule("data", "isNotUndefined")]);
+        expect(visualConditionToExpression(g)).toBe('("data" !== undefined)');
+      });
+
+      it("treats the null/undefined operators as unary", () => {
+        expect(isUnaryOperator("isNull")).toBe(true);
+        expect(isUnaryOperator("isNotNull")).toBe(true);
+        expect(isUnaryOperator("isUndefined")).toBe(true);
+        expect(isUnaryOperator("isNotUndefined")).toBe(true);
+      });
     });
 
     describe("regex operator", () => {
@@ -497,6 +524,26 @@ describe("condition-builder-utils", () => {
       it("should parse doesNotExist", () => {
         const r = parseFirstRule('("data" === null || "data" === undefined)');
         expect(r.operator).toBe("doesNotExist");
+      });
+
+      it("should parse isNull", () => {
+        const r = parseFirstRule('("data" === null)');
+        expect(r.operator).toBe("isNull");
+      });
+
+      it("should parse isNotNull", () => {
+        const r = parseFirstRule('("data" !== null)');
+        expect(r.operator).toBe("isNotNull");
+      });
+
+      it("should parse isUndefined", () => {
+        const r = parseFirstRule('("data" === undefined)');
+        expect(r.operator).toBe("isUndefined");
+      });
+
+      it("should parse isNotUndefined", () => {
+        const r = parseFirstRule('("data" !== undefined)');
+        expect(r.operator).toBe("isNotUndefined");
       });
     });
 
