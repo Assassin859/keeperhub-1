@@ -5,7 +5,11 @@ import {
   isAnonymousUserShape,
   logAnonymousExecutionBlock,
 } from "@/lib/auth-anonymous-guard";
-import { parseScopes, SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
+import {
+  normalizeScope,
+  parseScopes,
+  SUPPORTED_SCOPES,
+} from "@/lib/mcp/oauth-scopes";
 import {
   AUTH_CODE_TTL_MS,
   getOAuthClient,
@@ -13,6 +17,7 @@ import {
 } from "@/lib/mcp/oauth-store";
 import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { ConsentForm } from "./_components/consent-form";
 import { isConsentOrgMismatch } from "./_lib/consent-binding";
 
 type AuthorizeSearchParams = {
@@ -42,18 +47,21 @@ function errorRedirect(
   redirect(url.toString());
 }
 
-// Shared approval path for both the full "Approve" action and the
-// "Read-only" action. `scopeOverride`, when provided, replaces the scope the
-// client requested -- the read-only button forces `mcp:read` here rather than
-// trusting any scope value posted by the form, so the granted token can never
-// exceed read access regardless of what the request asked for.
-async function completeApproval(
-  formData: FormData,
-  scopeOverride?: string
-): Promise<void> {
+async function handleApprove(formData: FormData): Promise<void> {
+  "use server";
   const clientId = formData.get("client_id") as string;
   const redirectUri = formData.get("redirect_uri") as string;
-  const scope = scopeOverride ?? (formData.get("scope") as string);
+  // The permissions section renders one checkbox per scope, so the granted
+  // scope is whatever the user left checked -- not a fixed value bound into a
+  // hidden field. normalizeScope drops anything unknown and falls back to
+  // mcp:read if every box was unchecked, so a token can never carry a bogus or
+  // empty scope.
+  const scope = normalizeScope(
+    formData
+      .getAll("scope")
+      .map((value) => value.toString())
+      .join(" ")
+  );
   const state = formData.get("state") as string | null;
   const codeChallenge = formData.get("code_challenge") as string;
   const codeChallengeMethod = formData.get("code_challenge_method") as string;
@@ -112,16 +120,6 @@ async function completeApproval(
     callbackUrl.searchParams.set("state", state);
   }
   redirect(callbackUrl.toString());
-}
-
-async function handleApprove(formData: FormData): Promise<void> {
-  "use server";
-  await completeApproval(formData);
-}
-
-async function handleApproveReadOnly(formData: FormData): Promise<void> {
-  "use server";
-  await completeApproval(formData, SCOPE_MCP_READ);
 }
 
 async function handleDeny(formData: FormData): Promise<void> {
@@ -276,19 +274,21 @@ export default async function AuthorizePage({
   const consentOrgName =
     consentOrgContext.organization?.name ?? "your personal account";
 
-  const resolvedScope = scope ?? "mcp:read mcp:write";
-  const scopeList = parseScopes(resolvedScope);
-
-  // The "Read-only" downgrade is only meaningful when the request asks for
-  // more than read access. If the client already requested just `mcp:read`,
-  // the read-only button would be identical to Approve, so we hide it.
-  const grantsWriteAccess = scopeList.some((s) => s !== SCOPE_MCP_READ);
+  // The scopes the client asked for become the checkboxes that are ticked by
+  // default. The user can untick any of them to narrow the grant (e.g. leave
+  // only "Read" for a read-only connection) before approving.
+  const requestedScopes = parseScopes(scope ?? "mcp:read mcp:write");
 
   const scopeDescriptions: Record<string, string> = {
     "mcp:read": "Read your workflows, executions, and plugin schemas",
     "mcp:write": "Write your workflows, executions, and integrations",
     "mcp:admin": "Full access to your KeeperHub organization",
   };
+
+  const scopeOptions = SUPPORTED_SCOPES.map((s) => ({
+    id: s,
+    label: scopeDescriptions[s] ?? s,
+  }));
 
   return (
     <main className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -306,118 +306,20 @@ export default async function AuthorizePage({
           </p>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="rounded-lg border bg-muted/30 p-5">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Permissions
-            </p>
-            <ul className="space-y-3">
-              {scopeList.map((s) => (
-                <li
-                  className="flex items-center gap-3 text-sm text-foreground"
-                  key={s}
-                >
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ds-green-accent-10)]">
-                    <svg
-                      className="h-3 w-3 text-[var(--ds-green-accent)]"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      viewBox="0 0 24 24"
-                    >
-                      <title>Included</title>
-                      <path
-                        d="M5 12l5 5L19 7"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </span>
-                  {scopeDescriptions[s] ?? s}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <p className="mt-5 text-sm text-muted-foreground">
-            Authorizing access to{" "}
-            <span className="font-medium text-foreground">
-              {consentOrgName}
-            </span>
-          </p>
-
-          <p className="mt-1 text-sm text-muted-foreground">
-            Signed in as{" "}
-            <span className="font-medium text-foreground">
-              {session.user.email}
-            </span>
-          </p>
-        </div>
-
-        {/* Footer */}
-        <div className="flex gap-3 p-8 pt-4 sm:justify-end">
-          <form action={handleDeny}>
-            <input name="client_id" type="hidden" value={clientId} />
-            <input name="redirect_uri" type="hidden" value={redirectUri} />
-            {state && <input name="state" type="hidden" value={state} />}
-            <button
-              className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-5 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-              type="submit"
-            >
-              Deny
-            </button>
-          </form>
-
-          {grantsWriteAccess && (
-            <form action={handleApproveReadOnly}>
-              <input name="client_id" type="hidden" value={clientId} />
-              <input name="redirect_uri" type="hidden" value={redirectUri} />
-              <input
-                name="organization_id"
-                type="hidden"
-                value={consentOrgId}
-              />
-              {state && <input name="state" type="hidden" value={state} />}
-              <input
-                name="code_challenge"
-                type="hidden"
-                value={codeChallenge}
-              />
-              <input
-                name="code_challenge_method"
-                type="hidden"
-                value={codeChallengeMethod}
-              />
-              <button
-                className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-5 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-                type="submit"
-              >
-                Read-only
-              </button>
-            </form>
-          )}
-
-          <form action={handleApprove}>
-            <input name="client_id" type="hidden" value={clientId} />
-            <input name="redirect_uri" type="hidden" value={redirectUri} />
-            <input name="organization_id" type="hidden" value={consentOrgId} />
-            <input name="scope" type="hidden" value={resolvedScope} />
-            {state && <input name="state" type="hidden" value={state} />}
-            <input name="code_challenge" type="hidden" value={codeChallenge} />
-            <input
-              name="code_challenge_method"
-              type="hidden"
-              value={codeChallengeMethod}
-            />
-            <button
-              className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-              type="submit"
-            >
-              Approve
-            </button>
-          </form>
-        </div>
+        <ConsentForm
+          approveAction={handleApprove}
+          clientId={clientId}
+          codeChallenge={codeChallenge}
+          codeChallengeMethod={codeChallengeMethod}
+          consentOrgId={consentOrgId}
+          consentOrgName={consentOrgName}
+          denyAction={handleDeny}
+          redirectUri={redirectUri}
+          requestedScopes={requestedScopes}
+          scopeOptions={scopeOptions}
+          state={state}
+          userEmail={session.user.email}
+        />
       </div>
     </main>
   );

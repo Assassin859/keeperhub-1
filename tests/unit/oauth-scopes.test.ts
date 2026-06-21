@@ -23,7 +23,7 @@ describe("oauth-scopes — prepare_test_pin_data (TESTWF-06)", () => {
   });
 });
 
-describe("oauth-scopes — read-only consent grant", () => {
+describe("oauth-scopes — read-only consent (only the Read box ticked)", () => {
   it("mcp:read allows read tools", () => {
     expect(isToolAllowed("list_workflows", "mcp:read")).toBe(true);
     expect(isToolAllowed("get_workflow", "mcp:read")).toBe(true);
