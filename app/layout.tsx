@@ -140,6 +140,10 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
             {ROOT_DEV_BFCACHE_RELOAD}
           </Script>
         )}
+        <Script
+          src="https://status.keeperhub.com/embed/script.js"
+          strategy="lazyOnload"
+        />
       </body>
     </html>
   );
