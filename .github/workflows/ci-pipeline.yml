@@ -41,10 +41,14 @@ jobs:
       caller_action: ${{ github.event.action }}
       has_e2e_label: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-e2e-tests-ephemeral') || false }}
       label_name: ${{ github.event.label.name || '' }}
-      image_tag: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.image_tag || '') }}
-      ecr_registry: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.ecr_registry || '') }}
-      ecr_repo: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.ecr_repo || '') }}
-      ecr_region: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.ecr_region || '') }}
+      # Only a staging push reuses the prebuilt ECR image. An empty string is
+      # falsy in Actions expressions, so the value we want to pass through (the
+      # build output) MUST sit on the `&&` side and '' must be the fallthrough;
+      # `cond && '' || build_output` would always yield build_output.
+      image_tag: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.image_tag || '') || '' }}
+      ecr_registry: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_registry || '') || '' }}
+      ecr_repo: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_repo || '') || '' }}
+      ecr_region: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_region || '') || '' }}
     secrets: inherit
 
   # Deploy runs after build-images and e2e-tests.
