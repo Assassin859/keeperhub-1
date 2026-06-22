@@ -9,9 +9,11 @@ import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
+import { runWalletStepUp } from "@/lib/wallet/step-up-client";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +91,10 @@ export function WithdrawModal({
     | undefined;
   const isOwner = role === "owner";
   const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
+  // Wallet accounts confirm by signing; they don't enroll TOTP.
+  const isWallet = isWalletEmail(
+    (session.data?.user as { email?: string | null } | undefined)?.email
+  );
 
   const [selectedAssetIndex, setSelectedAssetIndex] =
     useState(initialAssetIndex);
@@ -304,7 +310,7 @@ export function WithdrawModal({
       }
       return;
     }
-    if (!mfaEnrolled) {
+    if (!(mfaEnrolled || isWallet)) {
       setState("needs-mfa");
       return;
     }
@@ -321,11 +327,11 @@ export function WithdrawModal({
       }
       return;
     }
-    if (dual.totpCode.trim().length !== 6) {
+    if (!isWallet && dual.totpCode.trim().length !== 6) {
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
-    if (dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
+    if (!isWallet && dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
       toast.error("Enter the 6-digit code we emailed to you");
       return;
     }
@@ -342,20 +348,29 @@ export function WithdrawModal({
       maxReserveApplied && selectedAsset.type === "native";
 
     try {
-      const response = await fetch("/api/user/wallet/withdraw", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chainId: selectedAsset.chainId,
-          tokenAddress: selectedAsset.tokenAddress,
-          amount: useServerMax ? undefined : amount,
-          recipient,
-          fromMax: useServerMax,
-          safeId: source.kind === "safe" ? source.safeId : undefined,
-          code: dual.totpCode.trim(),
-          emailOtp: dual.emailOtp.trim() || undefined,
-        }),
-      });
+      const baseBody = {
+        chainId: selectedAsset.chainId,
+        tokenAddress: selectedAsset.tokenAddress,
+        amount: useServerMax ? undefined : amount,
+        recipient,
+        fromMax: useServerMax,
+        safeId: source.kind === "safe" ? source.safeId : undefined,
+      };
+      const withdrawFetch = (
+        extra: Record<string, unknown>
+      ): Promise<Response> =>
+        fetch("/api/user/wallet/withdraw", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...baseBody, ...extra }),
+        });
+      // Wallet users sign the step-up challenge; everyone else submits codes.
+      const response = isWallet
+        ? await runWalletStepUp(withdrawFetch)
+        : await withdrawFetch({
+            code: dual.totpCode.trim(),
+            emailOtp: dual.emailOtp.trim() || undefined,
+          });
 
       if (!response.ok) {
         const guarded = await handleGuardError(response, {
@@ -535,6 +550,38 @@ export function WithdrawModal({
           safeId: source.kind === "safe" ? source.safeId : undefined,
         }),
       });
+    if (isWallet) {
+      return (
+        <Overlay
+          actions={[
+            {
+              label: "Back",
+              onClick: () => setState("input"),
+              variant: "outline",
+            },
+            {
+              label: "Sign to withdraw",
+              onClick: handleSubmit,
+              variant: "destructive",
+            },
+          ]}
+          overlayId={overlayId}
+          title="Confirm withdrawal"
+        >
+          <p className="text-muted-foreground text-sm">
+            Confirm sending{" "}
+            <span className="font-medium text-foreground">
+              {amount} {selectedAsset?.symbol}
+            </span>{" "}
+            to{" "}
+            <span className="font-mono text-foreground">
+              {truncateAddress(recipient)}
+            </span>
+            . Sign with your wallet to continue.
+          </p>
+        </Overlay>
+      );
+    }
     return (
       <Overlay overlayId={overlayId} title="Confirm withdrawal">
         <DualFactorSteps
