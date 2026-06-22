@@ -626,7 +626,6 @@ export const auth = betterAuth({
           const baseName = user.name || user.email?.split("@")[0] || "User";
           const slug = `${baseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${nanoid(6)}`;
 
-          let provisionedOrgId: string | undefined;
           try {
             const orgId = randomUUID();
             const memberId = randomUUID();
@@ -650,8 +649,6 @@ export const auth = betterAuth({
               role: "owner",
               createdAt: new Date(),
             });
-
-            provisionedOrgId = org.id;
           } catch (error) {
             logSystemError(
               ErrorCategory.AUTH,
@@ -672,28 +669,11 @@ export const auth = betterAuth({
             return;
           }
 
-          // Auto-provision the org's non-custodial wallet in the background.
-          // Fire-and-forget: the Turnkey call can take ~1-2s and must never
-          // delay or fail signup. provisionOrganizationWallet is idempotent, and
-          // session.create.after re-attempts if this misses (failed call or a
-          // pod killed mid-flight).
-          if (provisionedOrgId && user.email) {
-            const orgIdForWallet = provisionedOrgId;
-            const emailForWallet = user.email;
-            // Intentionally not awaited - see comment above.
-            provisionOrganizationWallet({
-              userId: user.id,
-              organizationId: orgIdForWallet,
-              email: emailForWallet,
-            }).catch((error) => {
-              logSystemError(
-                ErrorCategory.EXTERNAL_SERVICE,
-                "[Auth] Background wallet provisioning failed at signup",
-                error,
-                { userId: user.id, organizationId: orgIdForWallet }
-              );
-            });
-          }
+          // The org's non-custodial wallet is provisioned client-side after
+          // signup via the streamed GET /api/user/wallet/provision endpoint,
+          // which awaits the Turnkey call and reports readiness to the UI.
+          // session.create.after backstops any signup that never opens that
+          // stream (API-only signup, or a tab closed mid-flight).
 
           // Notify external services for OAuth signups (already verified at creation).
           // `databaseHooks.user.create.after` only fires on actual user-row
