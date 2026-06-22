@@ -109,6 +109,9 @@ app:
 
   serviceAccount:
     create: true
+    requireRoleArn: true
+    irsaCheck:
+      enabled: true
     annotations:
       eks.amazonaws.com/role-arn: ${SERVICE_ACCOUNT_ROLE_ARN}
     name: keeperhub-prod
