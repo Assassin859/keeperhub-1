@@ -26,6 +26,12 @@ jobs:
   # - Push to staging or prod
   # - PRs with run-e2e-tests-ephemeral label
   # - Manual workflow_dispatch
+  #
+  # The e2e job always runs under the staging environment (staging creds, test
+  # endpoints). On a prod push, build-images builds and pushes to the prod ECR
+  # repo with prod creds, and the prod image strips test endpoints -- so the
+  # staging-cred e2e job can neither pull that image nor exercise it. Withhold
+  # the ECR coordinates on prod so e2e falls back to its bare-metal source build.
   e2e-tests:
     needs: [build-images]
     if: ${{ !failure() && !cancelled() }}
@@ -35,10 +41,10 @@ jobs:
       caller_action: ${{ github.event.action }}
       has_e2e_label: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-e2e-tests-ephemeral') || false }}
       label_name: ${{ github.event.label.name || '' }}
-      image_tag: ${{ needs.build-images.outputs.image_tag || '' }}
-      ecr_registry: ${{ needs.build-images.outputs.ecr_registry || '' }}
-      ecr_repo: ${{ needs.build-images.outputs.ecr_repo || '' }}
-      ecr_region: ${{ needs.build-images.outputs.ecr_region || '' }}
+      image_tag: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.image_tag || '') }}
+      ecr_registry: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.ecr_registry || '') }}
+      ecr_repo: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.ecr_repo || '') }}
+      ecr_region: ${{ github.ref_name == 'prod' && '' || (needs.build-images.outputs.ecr_region || '') }}
     secrets: inherit
 
   # Deploy runs after build-images and e2e-tests.
