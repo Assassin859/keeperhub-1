@@ -20,6 +20,7 @@ import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { hasValidLoadTestBypass } from "@/lib/load-test-bypass";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { revokeRefreshTokensForUserOrg } from "@/lib/mcp/oauth-store";
 import { recordAuditEvent } from "@/lib/security/audit-log";
@@ -141,7 +142,10 @@ function getBaseURL() {
 // exercised before prod. Note: with the plugin loaded, the X-Test-API-Key
 // signup bypass no longer applies - that environment's site/secret keys must
 // be ones the widget+server can pass (e.g. Cloudflare's always-pass test
-// keys) for any UI-driven signup E2E to keep working.
+// keys) for any UI-driven signup E2E to keep working. Headless load-test /
+// e2e clients that cannot solve a challenge present the LOAD_TEST_BYPASS_TOKEN
+// instead (see the plugin wrapper below).
+const SIGNUP_CAPTCHA_ENDPOINT = "/sign-up/email";
 const captchaSecretKey = process.env.TURNSTILE_SECRET_KEY;
 const captchaForceEnabled = process.env.TURNSTILE_ENFORCE === "true";
 const captchaSkippedForTests =
@@ -152,12 +156,17 @@ const captchaSkippedForTests =
     process.env.NODE_ENV !== "production");
 
 // Captcha is mandatory in production and in any environment that explicitly
-// opts in via TURNSTILE_ENFORCE. next build evaluates route modules during
-// the "Collecting page data" phase with NODE_ENV=production but no runtime
-// secrets injected, so skip the assertion during that phase to avoid crashing
-// the build. The assertion still fires at server boot (phase-production-server)
-// and under any custom server that doesn't set NEXT_PHASE.
+// opts in via TURNSTILE_ENFORCE. The secret is only required where the plugin
+// is actually loaded, so gate on !captchaSkippedForTests too: a production
+// build run with CI=true / NODE_ENV=test (the ephemeral e2e job boots the
+// prod image with CI=true) skips the plugin entirely, and must not crash at
+// module load demanding a secret it will never use. next build also evaluates
+// route modules during the "Collecting page data" phase with NODE_ENV=production
+// but no runtime secrets injected, so skip the assertion during that phase to
+// avoid crashing the build. The assertion still fires at server boot
+// (phase-production-server) of any environment that actually enforces captcha.
 const captchaRequired =
+  !captchaSkippedForTests &&
   (process.env.NODE_ENV === "production" || captchaForceEnabled) &&
   process.env.NEXT_PHASE !== "phase-production-build";
 if (captchaRequired && !captchaSecretKey) {
@@ -166,15 +175,35 @@ if (captchaRequired && !captchaSecretKey) {
   );
 }
 
+// Wrap the captcha plugin's onRequest so trusted load-test / e2e traffic can
+// skip the Turnstile check on signup. A real challenge cannot be solved
+// headlessly, so k6 / Playwright present the LOAD_TEST_BYPASS_TOKEN (via the
+// x-load-test-mfa-bypass header) - the same token that already clears the MFA
+// gate (proxy.ts). Production never provisions the token, so the bypass is
+// inert there and normal users always hit the real Turnstile verification.
+function buildTurnstilePlugin(secretKey: string): ReturnType<typeof captcha> {
+  const turnstile = captcha({
+    provider: "cloudflare-turnstile",
+    secretKey,
+    endpoints: [SIGNUP_CAPTCHA_ENDPOINT],
+  });
+  return {
+    ...turnstile,
+    onRequest: (request, ctx) => {
+      if (
+        request.url.includes(SIGNUP_CAPTCHA_ENDPOINT) &&
+        hasValidLoadTestBypass(request)
+      ) {
+        return Promise.resolve(undefined);
+      }
+      return turnstile.onRequest(request, ctx);
+    },
+  };
+}
+
 const captchaPlugins =
   !captchaSkippedForTests && captchaSecretKey
-    ? [
-        captcha({
-          provider: "cloudflare-turnstile",
-          secretKey: captchaSecretKey,
-          endpoints: ["/sign-up/email"],
-        }),
-      ]
+    ? [buildTurnstilePlugin(captchaSecretKey)]
     : [];
 
 // Build plugins array conditionally
