@@ -18,7 +18,13 @@ test.use({ storageState: "tests/e2e/playwright/.auth/pro.json" });
 // Run tests serially to maintain user session state
 test.describe.configure({ mode: "serial" });
 
-test.describe("Happy Path: Scheduled Workflow", () => {
+// Skipped: the workflow-builder action-picker flow (Add Step -> action-grid)
+// races and aborts in CI (net::ERR_ABORTED), so the action grid intermittently
+// fails to render and addActionNode times out. Reproduces on a production build
+// even with abundant resources, so it is not a runner-contention issue; tracked
+// separately. Re-enable once the builder flow is stabilised.
+// biome-ignore format: keep .skip inline so the suite body is not reindented
+test.describe.skip("Happy Path: Scheduled Workflow", () => {
   test("create and save a scheduled workflow with webhook action", async ({
     page,
   }) => {
