@@ -23,6 +23,21 @@ describe("oauth-scopes — prepare_test_pin_data (TESTWF-06)", () => {
   });
 });
 
+describe("oauth-scopes — read-only consent (only the Read box ticked)", () => {
+  it("mcp:read allows read tools", () => {
+    expect(isToolAllowed("list_workflows", "mcp:read")).toBe(true);
+    expect(isToolAllowed("get_workflow", "mcp:read")).toBe(true);
+  });
+
+  it("mcp:read denies write/execute tools", () => {
+    expect(isToolAllowed("create_workflow", "mcp:read")).toBe(false);
+    expect(isToolAllowed("update_workflow", "mcp:read")).toBe(false);
+    expect(isToolAllowed("delete_workflow", "mcp:read")).toBe(false);
+    expect(isToolAllowed("execute_workflow", "mcp:read")).toBe(false);
+    expect(isToolAllowed("deploy_template", "mcp:read")).toBe(false);
+  });
+});
+
 describe("oauth-scopes — scopeSatisfies (A-03)", () => {
   it("undefined granted scope passes every level (non-OAuth full access)", () => {
     expect(scopeSatisfies(undefined, "mcp:read")).toBe(true);
