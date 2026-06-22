@@ -78,6 +78,10 @@ describe("signup defenses: captcha plugin", () => {
 
   it("throws at module load in production when TURNSTILE_SECRET_KEY is missing", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    // Pin CI off: a real prod deploy never sets CI=true, so the plugin is
+    // enforced and the guard must fire. The CI runner sets CI=true ambiently,
+    // which would otherwise skip the guard (see the CI=true case below).
+    vi.stubEnv("CI", "");
     await expect(import("@/lib/auth")).rejects.toThrow(
       MISSING_CAPTCHA_SECRET_ERROR
     );
