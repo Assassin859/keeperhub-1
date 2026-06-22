@@ -441,7 +441,12 @@ export async function getStepStatsFromDb(): Promise<StepStats> {
         count: count(),
       })
       .from(workflowExecutionLogs)
-      .where(sql`${workflowExecutionLogs.status} IN ('success', 'error')`)
+      .where(
+        and(
+          sql`${workflowExecutionLogs.status} IN ('success', 'error')`,
+          gte(workflowExecutionLogs.startedAt, sql`now() - interval '1 hour'`)
+        )
+      )
       .groupBy(workflowExecutionLogs.nodeType, workflowExecutionLogs.status);
 
     const stats: StepStats = {
@@ -480,7 +485,8 @@ export async function getStepStatsFromDb(): Promise<StepStats> {
       .where(
         and(
           sql`${workflowExecutionLogs.status} IN ('success', 'error')`,
-          sql`${workflowExecutionLogs.duration} IS NOT NULL`
+          sql`${workflowExecutionLogs.duration} IS NOT NULL`,
+          gte(workflowExecutionLogs.startedAt, sql`now() - interval '1 hour'`)
         )
       );
 
