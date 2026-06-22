@@ -85,11 +85,16 @@ import {
 } from "@/lib/workflow/nodes/condition/validator";
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
+import type { SystemActionType } from "@/lib/workflow/executor/system-action-types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
-// System actions that don't have plugins - maps to module import functions
-const SYSTEM_ACTIONS: Record<string, StepImporter> = {
+// System actions that don't have plugins - maps to module import functions.
+// `satisfies Record<SystemActionType, ...>` makes the dispatch table and the
+// egress classification map (lib/features/system-action-capabilities.ts) a
+// compile-time mirror: a key here that is not in SystemActionType (or vice
+// versa) fails the build, so a new system action cannot ship unclassified.
+const SYSTEM_ACTIONS = {
   "Database Query": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
     importer: () =>
@@ -120,7 +125,7 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
       import("@/lib/workflow/nodes/collect/step") as Promise<any>,
     stepFunction: "collectStep",
   },
-};
+} satisfies Record<SystemActionType, StepImporter>;
 
 export {
   computeFinalSuccess,
@@ -551,7 +556,9 @@ async function executeActionStep(input: {
   }
 
   // Check system actions first (Database Query, HTTP Request)
-  const systemAction = SYSTEM_ACTIONS[actionType];
+  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
+    actionType
+  ];
   if (systemAction) {
     const module = await systemAction.importer();
     const stepFunction = module[systemAction.stepFunction];

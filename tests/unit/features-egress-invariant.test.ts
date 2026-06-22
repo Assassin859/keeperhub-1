@@ -15,22 +15,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   getActionEgress,
+  getFeatureForActionType,
   isFeatureEnabled,
   resolveActionFeature,
 } from "@/lib/features";
 import { SYSTEM_ACTION_EGRESS } from "@/lib/features/system-action-capabilities";
+import { SYSTEM_ACTION_TYPES } from "@/lib/workflow/executor/system-action-types";
 import { getAllActions, getAllIntegrations } from "@/plugins/registry";
-
-// Mirrors the keys of SYSTEM_ACTIONS in lib/workflow/executor/executor.workflow.ts.
-// If a built-in action is added there, it must be classified in
-// SYSTEM_ACTION_EGRESS too - this list is the drift guard.
-const EXPECTED_SYSTEM_ACTIONS = [
-  "Collect",
-  "Condition",
-  "Database Query",
-  "For Each",
-  "HTTP Request",
-];
 
 describe("egress classification completeness", () => {
   it("classifies every registered plugin action (no unknowns)", () => {
@@ -41,9 +32,13 @@ describe("egress classification completeness", () => {
     expect(unclassified).toEqual([]);
   });
 
-  it("keeps the system-action capability map in sync with the executor", () => {
+  // The executor's SYSTEM_ACTIONS and SYSTEM_ACTION_EGRESS are both keyed off
+  // SYSTEM_ACTION_TYPES via `satisfies` / `Record<SystemActionType, ...>`, so
+  // this is enforced at compile time too; the assertion documents it and
+  // catches any runtime divergence.
+  it("classifies exactly the executor's system actions", () => {
     expect(Object.keys(SYSTEM_ACTION_EGRESS).sort()).toEqual(
-      EXPECTED_SYSTEM_ACTIONS
+      [...SYSTEM_ACTION_TYPES].sort()
     );
   });
 });
@@ -73,6 +68,24 @@ describe("user-destination actions are plan gated", () => {
       }
       expect(isFeatureEnabled(feature.id, "free")).toBe(false);
     }
+  });
+});
+
+describe("fixed-host and none actions stay free", () => {
+  // The egress fallback must gate ONLY user-destination actions. A fixed-host
+  // or none action with no explicit feature must remain ungated, so branded
+  // integrations (Slack, Discord, web3, etc.) keep working on the free plan.
+  it("does not let the egress fallback gate non-user-destination actions", () => {
+    const wronglyGated = getAllActions()
+      .filter((action) => {
+        const tier = getActionEgress(action.id);
+        return tier === "fixed-host" || tier === "none";
+      })
+      .filter((action) => !getFeatureForActionType(action.id))
+      .filter((action) => resolveActionFeature(action.id) !== undefined)
+      .map((action) => action.id);
+
+    expect(wronglyGated).toEqual([]);
   });
 });
 

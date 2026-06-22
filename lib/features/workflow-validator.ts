@@ -3,9 +3,12 @@
 //
 // Gating resolves through resolveActionFeature (not the pure registry lookup)
 // so the egress-derived gate applies: any "user-destination" action is gated
-// even when it has no explicit feature entry. This is the default-deny half of
-// the fix - a new custom-destination action is blocked for free plans the
-// moment it is classified, without being added to a hand-maintained list.
+// even when it has no explicit feature entry - a new custom-destination action
+// is blocked for free plans the moment it is classified, without being added to
+// a hand-maintained list. Unknown/unclassified action types are not blocked
+// here (the executor rejects them at dispatch); the build-time invariant
+// (tests/unit/features-egress-invariant.test.ts) is what guarantees every
+// dispatchable egress action is classified and gated.
 
 import type { PlanName } from "@/lib/billing/plans";
 import { resolveActionFeature } from "./action-egress";
