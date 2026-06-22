@@ -4,6 +4,7 @@ import { MathIcon } from "./icon";
 
 const mathPlugin: IntegrationPlugin = {
   type: "math",
+  egress: "none",
   label: "Math",
   description:
     "Aggregation and arithmetic operations across array data or multiple upstream node outputs.",

@@ -26,6 +26,12 @@ const conditionNodeJson = {
   data: { config: { actionType: "Condition" } },
 };
 
+// User-destination plugin action gated solely by its egress classification.
+const blockscoutNodeJson = {
+  id: "node-bs-1",
+  data: { config: { actionType: "blockscout/get-address-balance" } },
+};
+
 const ORIGINAL_BILLING_FLAG = process.env.NEXT_PUBLIC_BILLING_ENABLED;
 
 beforeEach(() => {
@@ -94,6 +100,22 @@ describe("checkWorkflowFeaturesForExecutor", () => {
     expect(result.violations).toHaveLength(1);
     expect(result.violations[0].featureId).toBe("action.database-query");
     expect(result.violations[0].nodeIds).toEqual(["node-db-1"]);
+  });
+
+  it("blocks a user-destination plugin action (blockscout) for a free org at execute time", async () => {
+    const db = makeDb([{ plan: "free" }]);
+
+    const result = await checkWorkflowFeaturesForExecutor(db, "org_1", [
+      blockscoutNodeJson,
+    ]);
+
+    expect(result.allowed).toBe(false);
+    if (result.allowed) {
+      return;
+    }
+    expect(result.reason).toBe("upgrade_required");
+    expect(result.violations[0].featureId).toBe("action.external-request");
+    expect(result.violations[0].nodeIds).toEqual(["node-bs-1"]);
   });
 
   it("default-denies when org context is missing and a node is gated", async () => {

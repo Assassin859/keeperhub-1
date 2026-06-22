@@ -33,7 +33,7 @@ import {
 import { useFeatures } from "@/hooks/use-features";
 import { useIsTouch } from "@/hooks/use-touch";
 import type { FeatureDefinition } from "@/lib/features";
-import { getFeatureForActionType } from "@/lib/features";
+import { resolveActionFeature } from "@/lib/features";
 import { cn } from "@/lib/utils";
 import { nodesAtom } from "@/lib/workflow/store";
 import { getAllActions } from "@/plugins/registry";
@@ -242,7 +242,7 @@ export function ActionGrid({
   const getGate = (
     actionId: string
   ): { feature: FeatureDefinition | undefined; enabled: boolean } => {
-    const feature = getFeatureForActionType(actionId);
+    const feature = resolveActionFeature(actionId);
     if (!feature) {
       return { feature: undefined, enabled: true };
     }

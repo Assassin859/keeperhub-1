@@ -45,7 +45,7 @@ import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resol
 import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
 import { useFeatures } from "@/hooks/use-features";
 import type { FeatureDefinition } from "@/lib/features";
-import { getFeatureForActionType } from "@/lib/features";
+import { resolveActionFeature } from "@/lib/features";
 import {
   integrationsAtom,
   integrationsVersionAtom,
@@ -812,7 +812,7 @@ export function ActionConfig({
   );
 
   const isActionLocked = (actionId: string): FeatureDefinition | null => {
-    const feature = getFeatureForActionType(actionId);
+    const feature = resolveActionFeature(actionId);
     if (!feature) {
       return null;
     }

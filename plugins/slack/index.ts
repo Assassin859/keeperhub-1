@@ -4,6 +4,7 @@ import { SlackIcon } from "./icon";
 
 const slackPlugin: IntegrationPlugin = {
   type: "slack",
+  egress: "fixed-host",
   label: "Slack",
   description: "Send messages to Slack channels",
 

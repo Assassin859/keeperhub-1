@@ -4,6 +4,7 @@ import { DiscordIcon } from "./icon";
 
 const discordPlugin: IntegrationPlugin = {
   type: "discord",
+  egress: "fixed-host",
   label: "Discord",
   description: "Send messages to Discord channels via webhooks",
 

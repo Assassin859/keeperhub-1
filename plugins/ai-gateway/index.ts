@@ -4,6 +4,7 @@ import AiGatewayIcon from "./icon";
 
 const aiGatewayPlugin: IntegrationPlugin = {
   type: "ai-gateway",
+  egress: "fixed-host",
   label: "AI Gateway",
   description: "Generate text and images using AI models",
 

@@ -45,6 +45,22 @@ export const FEATURES: Record<FeatureId, FeatureDefinition> = {
     requiredPlan: "pro",
     actionTypes: ["webhook/send-webhook"],
   },
+  // Catch-all gate for any action that lets the user choose the destination
+  // host (a custom URL or self-hosted endpoint). It carries no `actionTypes`:
+  // membership is derived at lookup time from the action's `egress`
+  // classification (see resolveActionFeature in ./action-egress), so a new
+  // user-destination action is gated automatically without editing this list.
+  "action.external-request": {
+    id: "action.external-request",
+    name: "Custom destination actions",
+    description:
+      "Actions that send requests to a destination you control, such as a custom or self-hosted URL.",
+    category: "workflow-action",
+    enabled: true,
+    requiredPlan: "pro",
+    upgradeCta:
+      "Upgrade to use actions that call a destination of your choosing.",
+  },
   "notifications.execution-digest": {
     id: "notifications.execution-digest",
     name: "Execution digest",
