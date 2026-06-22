@@ -106,6 +106,35 @@ function toneChip(tone: "before" | "after"): string {
     : "bg-keeperhub-green-dark/10 text-keeperhub-green-dark ring-1 ring-keeperhub-green-dark/20";
 }
 
+// A small copy-to-clipboard button that flips to a check for ~1.2s on success.
+// Shared by the address chip and the generic value chip so long, trimmed values
+// can be copied in full.
+function CopyButton({
+  value,
+  label,
+}: {
+  value: string;
+  label: string;
+}): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  };
+  return (
+    <button
+      aria-label={label}
+      className="flex h-5 shrink-0 items-center opacity-70 transition-opacity hover:opacity-100"
+      onClick={copy}
+      type="button"
+    >
+      {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+    </button>
+  );
+}
+
 // An EVM address value: checksummed + shortened, with the full address on
 // hover, a copy button, and a network-aware explorer link when known.
 function AddressChip({
@@ -117,13 +146,6 @@ function AddressChip({
   label: string;
   tone: "before" | "after";
 }): React.ReactElement {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(address.full).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    });
-  };
   return (
     <TooltipProvider>
       <Tooltip>
@@ -134,18 +156,7 @@ function AddressChip({
             )}`}
           >
             {label}
-            <button
-              aria-label="Copy address"
-              className="opacity-70 transition-opacity hover:opacity-100"
-              onClick={copy}
-              type="button"
-            >
-              {copied ? (
-                <Check className="size-3" />
-              ) : (
-                <Copy className="size-3" />
-              )}
-            </button>
+            <CopyButton label="Copy address" value={address.full} />
             {address.href && (
               <a
                 aria-label="View on explorer"
@@ -182,13 +193,14 @@ function DiffValue({
   }
   if (resolved.deleted) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 leading-relaxed">
+      <span className="inline-flex items-start gap-1.5 rounded bg-muted px-1.5 py-0.5 leading-relaxed">
         <span className="break-all text-muted-foreground line-through">
           {resolved.label}
         </span>
         <span className="rounded bg-destructive/15 px-1 font-medium text-[10px] text-destructive uppercase">
           deleted
         </span>
+        <CopyButton label="Copy value" value={resolved.label} />
       </span>
     );
   }
@@ -203,11 +215,12 @@ function DiffValue({
   }
   return (
     <span
-      className={`break-all rounded px-1.5 py-0.5 font-medium text-xs leading-relaxed ${toneChip(
+      className={`inline-flex max-w-full items-start gap-1.5 rounded px-1.5 py-0.5 font-medium text-xs leading-relaxed ${toneChip(
         tone
       )}`}
     >
-      {resolved.label}
+      <span className="whitespace-pre-wrap break-all">{resolved.label}</span>
+      <CopyButton label="Copy value" value={resolved.label} />
     </span>
   );
 }
@@ -444,9 +457,22 @@ function ChangeRow({ item }: { item: ChangeItem }): React.ReactElement {
 }
 
 // Narrow a version's diff to a single node: node add/remove/config/rename/
-// enable match by id; connections match the node's current label (they're
-// stored by label, not id). Workflow-level settings are dropped -- they aren't
+// enable match by id. Connections match by endpoint node id when the diff
+// carries it, falling back to the current label for diffs recorded before ids
+// were stored -- matching by label alone drops a node's connection changes once
+// the node has been renamed. Workflow-level settings are dropped -- they aren't
 // node-specific. Used by the per-node History tab.
+function connectionTouchesNode(
+  c: VersionDiff["connectionsAdded"][number],
+  nodeId: string,
+  nodeLabel: string | null
+): boolean {
+  if (c.fromId || c.toId) {
+    return c.fromId === nodeId || c.toId === nodeId;
+  }
+  return nodeLabel ? c.from === nodeLabel || c.to === nodeLabel : false;
+}
+
 function filterDiffToNode(
   diff: VersionDiff,
   nodeId: string,
@@ -458,16 +484,12 @@ function filterDiffToNode(
     nodesAdded: diff.nodesAdded.filter((n) => n.id === nodeId),
     nodesRemoved: diff.nodesRemoved.filter((n) => n.id === nodeId),
     nodesChanged: diff.nodesChanged.filter((n) => n.id === nodeId),
-    connectionsAdded: nodeLabel
-      ? diff.connectionsAdded.filter(
-          (c) => c.from === nodeLabel || c.to === nodeLabel
-        )
-      : [],
-    connectionsRemoved: nodeLabel
-      ? diff.connectionsRemoved.filter(
-          (c) => c.from === nodeLabel || c.to === nodeLabel
-        )
-      : [],
+    connectionsAdded: diff.connectionsAdded.filter((c) =>
+      connectionTouchesNode(c, nodeId, nodeLabel)
+    ),
+    connectionsRemoved: diff.connectionsRemoved.filter((c) =>
+      connectionTouchesNode(c, nodeId, nodeLabel)
+    ),
   };
 }
 
@@ -568,6 +590,13 @@ function VersionRow({
               {relativeTime(version.createdAt)}
             </span>
           </span>
+          {/* The displayed name can be renamed, so show the immutable email too
+              when it isn't already what's shown as the name. */}
+          {version.changedBy?.name && version.changedBy.email && (
+            <span className="block truncate text-muted-foreground/70 text-xs">
+              {version.changedBy.email}
+            </span>
+          )}
         </span>
         <ChevronRight
           className={`mt-1 size-4 shrink-0 text-muted-foreground transition-transform ${

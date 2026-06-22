@@ -6,7 +6,13 @@
  * differ".
  */
 
+import { findAbiFunction } from "@/lib/abi/utils";
 import { getActionLabel } from "@/lib/step-registry";
+import {
+  type ConditionGroup,
+  type ConditionRule,
+  isConditionGroup,
+} from "@/lib/workflow/nodes/condition/builder-types";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -34,7 +40,8 @@ export type NodeFieldDelta = {
   before?: string;
   after?: string;
   configKeys?: string[];
-  // Per-field before/after for configuration changes (values truncated).
+  // Per-field before/after for configuration changes (full values, so the
+  // history UI can copy and visually compare them).
   configChanges?: ConfigChange[];
 };
 
@@ -51,7 +58,16 @@ export type NodeFieldChange = {
   deltas: NodeFieldDelta[];
 };
 
-export type ConnectionRef = { from: string; to: string };
+export type ConnectionRef = {
+  from: string;
+  to: string;
+  // Stable node ids for the endpoints, so the per-node history can match a
+  // connection to its node even after the node's label changed (labels are
+  // what the user sees; ids never change). Optional: diffs recorded before
+  // this field shipped carry only labels.
+  fromId?: string;
+  toId?: string;
+};
 
 export type VersionDiff = {
   settings: SettingChange[];
@@ -137,17 +153,124 @@ function byId(nodes: AnyRecord[]): Map<string, AnyRecord> {
   return map;
 }
 
-const MAX_VALUE_LEN = 80;
-
-function shortConfigValue(value: unknown): string {
+// The full value is kept (not truncated) so the history UI can copy and
+// visually compare long values; only node-id noise in template refs is stripped.
+function configValueText(value: unknown): string {
   if (value === undefined || value === null || value === "") {
     return "empty";
   }
   const raw = typeof value === "string" ? value : JSON.stringify(value);
-  const text = cleanTemplateRefs(raw);
-  return text.length > MAX_VALUE_LEN
-    ? `${text.slice(0, MAX_VALUE_LEN - 1)}…`
-    : text;
+  return cleanTemplateRefs(raw);
+}
+
+// A web3 contract call stores its arguments as a positional JSON array, which
+// on its own reads as `["","0333..."]`. Pair each value with its ABI parameter
+// name (resolved from the same node's `abi` + `abiFunction`) so the diff shows
+// what each argument is. Returns null when the value isn't a parseable arg
+// array, so the caller falls back to the raw text.
+function namedContractArgs(
+  config: AnyRecord,
+  argsValue: unknown
+): string | null {
+  let args: unknown;
+  try {
+    args = typeof argsValue === "string" ? JSON.parse(argsValue) : argsValue;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(args)) {
+    return null;
+  }
+  let inputs: Array<{ name?: string }> = [];
+  const abiRaw = config.abi;
+  const fnKey = config.abiFunction;
+  if (typeof abiRaw === "string" && typeof fnKey === "string") {
+    try {
+      const abi = JSON.parse(abiRaw);
+      if (Array.isArray(abi)) {
+        inputs = findAbiFunction(abi, fnKey)?.inputs ?? [];
+      }
+    } catch {
+      // Unparseable ABI: fall back to positional arg names below.
+    }
+  }
+  // Drop the trailing empty-string padding the UI appends past the real params.
+  const effective =
+    inputs.length > 0 && args.length > inputs.length
+      ? args.slice(0, inputs.length)
+      : args;
+  const named: Record<string, unknown> = {};
+  for (const [i, value] of effective.entries()) {
+    named[inputs[i]?.name?.trim() || `arg${i}`] = value;
+  }
+  // Pretty-print so the history UI shows one named argument per line.
+  return cleanTemplateRefs(JSON.stringify(named, null, 2));
+}
+
+function conditionRuleText(rule: ConditionRule): string {
+  const left = rule.leftOperand?.trim() || '""';
+  const right = rule.rightOperand?.trim();
+  // Unary operators (isEmpty, exists, ...) carry no right operand.
+  return right
+    ? `${left} ${rule.operator} ${right}`
+    : `${left} ${rule.operator}`;
+}
+
+// Append a group's rules as a numbered list with the AND/OR operator placed
+// between consecutive rules, mirroring the visual builder (where the operator
+// sits between the conditions it joins) instead of a single JSON blob.
+function appendConditionGroup(
+  lines: string[],
+  group: ConditionGroup,
+  depth: number
+): void {
+  const pad = "  ".repeat(depth);
+  const logic = group.logic ?? "AND";
+  const rules = Array.isArray(group.rules) ? group.rules : [];
+  for (const [i, item] of rules.entries()) {
+    if (i > 0) {
+      lines.push(`${pad}${logic}`);
+    }
+    if (isConditionGroup(item)) {
+      lines.push(`${pad}${i + 1}. group`);
+      appendConditionGroup(lines, item, depth + 1);
+    } else {
+      lines.push(`${pad}${i + 1}. ${conditionRuleText(item)}`);
+    }
+  }
+}
+
+// A Condition node's `conditionConfig` is the visual builder state; on its own
+// it reads as a dense JSON object. Render it as an ordered rule list so the
+// history diff is legible and the rule order is preserved.
+function namedConditionConfig(value: unknown): string | null {
+  let parsed: unknown;
+  try {
+    parsed = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    return null;
+  }
+  const group = (parsed as { group?: ConditionGroup } | null)?.group;
+  if (!(group && Array.isArray(group.rules))) {
+    return null;
+  }
+  const lines: string[] = [];
+  appendConditionGroup(lines, group, 0);
+  return cleanTemplateRefs(lines.join("\n"));
+}
+
+function configChangeValue(
+  config: AnyRecord,
+  key: string,
+  value: unknown
+): string {
+  if (key === "functionArgs") {
+    return namedContractArgs(config, value) ?? configValueText(value);
+  }
+  if (key === "conditionConfig") {
+    return namedConditionConfig(value) ?? configValueText(value);
+  }
+  return configValueText(value);
 }
 
 function changedConfigDetails(
@@ -160,8 +283,8 @@ function changedConfigDetails(
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
       changed.push({
         key,
-        before: shortConfigValue(before[key]),
-        after: shortConfigValue(after[key]),
+        before: configChangeValue(before, key, before[key]),
+        after: configChangeValue(after, key, after[key]),
       });
     }
   }
@@ -233,9 +356,14 @@ function connectionRef(
   edge: AnyRecord,
   labels: Map<string, string>
 ): ConnectionRef {
-  const from = labels.get(String(edge.source)) ?? String(edge.source);
-  const to = labels.get(String(edge.target)) ?? String(edge.target);
-  return { from, to };
+  const fromId = String(edge.source);
+  const toId = String(edge.target);
+  return {
+    from: labels.get(fromId) ?? fromId,
+    to: labels.get(toId) ?? toId,
+    fromId,
+    toId,
+  };
 }
 
 function diffSettings(
