@@ -4,6 +4,7 @@ import { HyperliquidIcon } from "./icon";
 
 const hyperliquidPlugin: IntegrationPlugin = {
   type: "hyperliquid",
+  egress: "fixed-host",
   label: "Hyperliquid",
   description:
     "Read-only wrappers over the Hyperliquid Info REST API for vault operator reporting, validator monitoring, and account state queries.",

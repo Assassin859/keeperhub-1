@@ -7,7 +7,7 @@ import type {
   FeatureId,
   FeatureSnapshotForClient,
 } from "@/lib/features";
-import { getFeatureForActionType } from "@/lib/features";
+import { resolveActionFeature } from "@/lib/features";
 
 type SnapshotResponse = FeatureSnapshotForClient & { billingEnabled: boolean };
 
@@ -167,7 +167,7 @@ type UseActionFeatureResult = {
 
 export function useActionFeature(actionType: string): UseActionFeatureResult {
   const { snapshot, loading } = useFeatures();
-  const feature = getFeatureForActionType(actionType);
+  const feature = resolveActionFeature(actionType);
 
   if (!feature) {
     return { feature: undefined, enabled: true, loading };
@@ -202,7 +202,7 @@ export function useGatedWorkflowWarning(
     const gatedNames: string[] = [];
     const seenFeatureIds = new Set<string>();
     for (const actionType of actionTypes) {
-      const feature = getFeatureForActionType(actionType);
+      const feature = resolveActionFeature(actionType);
       if (!feature) {
         continue;
       }

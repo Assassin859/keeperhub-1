@@ -20,6 +20,7 @@ const NETWORK_FIELD: ActionConfigField = {
 
 const blockscoutPlugin: IntegrationPlugin = {
   type: "blockscout",
+  egress: "user-destination",
   label: "Blockscout",
   description: "Query the Blockscout block explorer REST API",
 

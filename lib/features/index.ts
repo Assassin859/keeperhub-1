@@ -1,4 +1,9 @@
 export {
+  getActionEgress,
+  type ResolvedEgress,
+  resolveActionFeature,
+} from "./action-egress";
+export {
   buildFeatureSnapshot,
   type FeatureSnapshotForClient,
   getEnabledFeatureIdsForPlan,

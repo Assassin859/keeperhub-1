@@ -4,6 +4,7 @@ import { WebhookIcon } from "./icon";
 
 const webhookPlugin: IntegrationPlugin = {
   type: "webhook",
+  egress: "user-destination",
   label: "Webhook",
   description: "Send HTTP requests to webhook endpoints",
 

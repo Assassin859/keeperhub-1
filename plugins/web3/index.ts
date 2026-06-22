@@ -4,6 +4,7 @@ import { Web3Icon } from "./icon";
 
 const web3Plugin: IntegrationPlugin = {
   type: "web3",
+  egress: "fixed-host",
   label: "Web3",
   description: "Interact with blockchain networks using your KeeperHub wallet",
 

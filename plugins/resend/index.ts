@@ -4,6 +4,7 @@ import { ResendIcon } from "./icon";
 
 const resendPlugin: IntegrationPlugin = {
   type: "resend",
+  egress: "fixed-host",
   label: "Resend",
   description: "Send transactional emails",
 

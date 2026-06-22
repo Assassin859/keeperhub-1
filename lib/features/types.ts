@@ -12,6 +12,7 @@ export type FeatureId =
   | "action.http-request"
   | "action.code"
   | "action.webhook"
+  | "action.external-request"
   | "notifications.execution-digest";
 
 // High-level grouping used for UI ("Workflow actions", "API access", etc.)
