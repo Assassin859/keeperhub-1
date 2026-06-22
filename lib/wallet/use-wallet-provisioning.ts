@@ -66,6 +66,29 @@ async function runProvisionStream(onReady: () => void): Promise<void> {
 }
 
 /**
+ * Pure gate for whether to open the provisioning stream: a verified, org-scoped
+ * user whose org has no wallet yet and that we have not already attempted this
+ * page-session. Extracted so it can be unit-tested without rendering the hook.
+ */
+function shouldOpenProvisionStream(params: {
+  isAuthed: boolean;
+  activeOrgId: string | null;
+  isLoading: boolean;
+  hasWallet: boolean;
+  attempted: boolean;
+}): boolean {
+  const { isAuthed, activeOrgId, isLoading, hasWallet, attempted } = params;
+  if (!(isAuthed && activeOrgId)) {
+    return false;
+  }
+  // Wait for the wallet-status fetch to resolve before deciding.
+  if (isLoading || hasWallet) {
+    return false;
+  }
+  return !attempted;
+}
+
+/**
  * Drives signup-time wallet provisioning from the client: when a verified user
  * has an active org but no wallet yet, opens the streamed provisioning endpoint
  * once, awaits the Turnkey call, and refreshes wallet info when it is ready.
@@ -89,14 +112,17 @@ export function useWalletProvisioning(): { isProvisioning: boolean } {
   const activeOrgId = activeOrg?.id ?? null;
 
   useEffect(() => {
-    if (!(isAuthed && activeOrgId)) {
+    if (!activeOrgId) {
       return;
     }
-    // Wait for the wallet-status fetch to resolve before deciding.
-    if (isLoading || hasWallet) {
-      return;
-    }
-    if (attemptedOrgIds.has(activeOrgId)) {
+    const open = shouldOpenProvisionStream({
+      isAuthed,
+      activeOrgId,
+      isLoading,
+      hasWallet,
+      attempted: attemptedOrgIds.has(activeOrgId),
+    });
+    if (!open) {
       return;
     }
 
@@ -120,3 +146,9 @@ export function useWalletProvisioning(): { isProvisioning: boolean } {
 
   return { isProvisioning };
 }
+
+export {
+  parseEvent as __parseEventForTesting,
+  runProvisionStream as __runProvisionStreamForTesting,
+  shouldOpenProvisionStream as __shouldOpenProvisionStreamForTesting,
+};
