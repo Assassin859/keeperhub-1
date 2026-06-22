@@ -571,6 +571,52 @@ async function notifyDiscordSignup(user: {
     });
 }
 
+/**
+ * Backstop for the signup-time fire-and-forget wallet provisioning. Runs on
+ * login (session.create.after): if the org still has no active wallet - because
+ * the signup attempt failed or the pod was killed mid-flight - it re-attempts
+ * provisioning in the background. Idempotent and non-fatal: skips anonymous
+ * accounts and never throws into the auth flow.
+ */
+async function backstopProvisionWallet(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  try {
+    // Lazy-loaded: these wallet modules pull in `server-only` (and Turnkey /
+    // ethers). Importing them statically would drag all of that into every
+    // consumer of lib/auth.ts at module-eval - including auth plugin
+    // registration - so keep them out of the static graph and load on demand.
+    const { organizationHasWallet } = await import("@/lib/web3/wallet-helpers");
+    if (await organizationHasWallet(organizationId)) {
+      return;
+    }
+
+    const [userRow] = await db
+      .select({ email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const email = userRow?.email;
+    if (!email || userRow?.name === "Anonymous" || email.startsWith("temp-")) {
+      return;
+    }
+
+    const { provisionOrganizationWallet } = await import(
+      "@/lib/turnkey/provision-org-wallet"
+    );
+    await provisionOrganizationWallet({ userId, organizationId, email });
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Auth] Backstop wallet provisioning failed on session create",
+      error,
+      { userId, organizationId }
+    );
+  }
+}
+
 export const auth = betterAuth({
   baseURL: getBaseURL(),
   database: wrapWithSessionTokenHash(
@@ -657,6 +703,12 @@ export const auth = betterAuth({
           if (isAnonymous) {
             return;
           }
+
+          // The org's non-custodial wallet is provisioned client-side after
+          // signup via the streamed GET /api/user/wallet/provision endpoint,
+          // which awaits the Turnkey call and reports readiness to the UI.
+          // session.create.after backstops any signup that never opens that
+          // stream (API-only signup, or a tab closed mid-flight).
 
           // Notify external services for OAuth signups (already verified at creation).
           // `databaseHooks.user.create.after` only fires on actual user-row
@@ -847,6 +899,15 @@ export const auth = betterAuth({
               userAgent: sessionRow.userAgent ?? null,
             },
           });
+
+          // Backstop the signup-time wallet provisioning (fire-and-forget):
+          // re-provision if the org somehow has no wallet yet. Intentionally
+          // not awaited; backstopProvisionWallet handles its own errors.
+          if (orgId) {
+            backstopProvisionWallet(session.userId, orgId).catch(
+              () => undefined
+            );
+          }
         },
       },
     },
