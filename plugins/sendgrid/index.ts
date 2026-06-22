@@ -4,6 +4,7 @@ import { SendGridIcon } from "./icon";
 
 const sendgridPlugin: IntegrationPlugin = {
   type: "sendgrid",
+  egress: "fixed-host",
   label: "Email",
   description: "Send transactional emails",
 

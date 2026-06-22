@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Plus, Wallet } from "lucide-react";
+import { Copy, Loader2, Plus, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { WalletOverlay } from "@/components/overlays/wallet-overlay";
@@ -14,6 +14,7 @@ import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
+import { useWalletProvisioning } from "@/lib/wallet/use-wallet-provisioning";
 
 /**
  * Compact toolbar affordance for the organization wallet.
@@ -50,12 +51,27 @@ export function WalletToolbarButton(): React.ReactElement | null {
 function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
   const { open: openOverlay } = useOverlay();
   const { hasWallet, walletAddress, isLoading } = useWalletInfo();
+  const { isProvisioning } = useWalletProvisioning();
 
   if (isLoading && !walletAddress) {
     return null;
   }
 
   if (!hasWallet || !walletAddress) {
+    // Signup-time provisioning in flight: show a silent setup indicator
+    // instead of the manual "Create wallet" affordance.
+    if (isProvisioning) {
+      return (
+        <div
+          className="flex h-9 items-center gap-2 rounded-md border bg-secondary px-3 text-secondary-foreground text-sm"
+          data-testid="wallet-toolbar-provisioning"
+        >
+          <Loader2 className="size-4 animate-spin" />
+          <span className="hidden sm:inline">Setting up wallet</span>
+        </div>
+      );
+    }
+
     return (
       <Button
         className="h-9"

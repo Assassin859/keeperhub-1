@@ -45,7 +45,7 @@ describe("feature registry", () => {
 
   it("filters by category", () => {
     const workflowActions = getFeaturesByCategory("workflow-action");
-    expect(workflowActions.length).toBe(4);
+    expect(workflowActions.length).toBe(5);
     for (const feature of workflowActions) {
       expect(feature.category).toBe("workflow-action");
     }
@@ -93,6 +93,7 @@ describe("getEnabledFeatureIdsForPlan", () => {
       "action.http-request",
       "action.code",
       "action.webhook",
+      "action.external-request",
       "notifications.execution-digest",
     ];
     for (const plan of ["pro", "business", "enterprise"] as const) {

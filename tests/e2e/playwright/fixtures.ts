@@ -8,6 +8,7 @@ import type {
 } from "@playwright/test";
 import { test as base } from "@playwright/test";
 import { probe } from "./utils/discover";
+import { stubTurnstile } from "./utils/turnstile";
 
 export { expect } from "@playwright/test";
 
@@ -54,9 +55,17 @@ interface NetworkFailure {
  * Import { test, expect } from this file instead of @playwright/test.
  */
 export const test = base.extend<{
+  _turnstileStub: undefined;
   _autoFailureDiagnostics: undefined;
   apiRequest: AuthenticatedApiRequest;
 }>({
+  _turnstileStub: [
+    async ({ page }, use) => {
+      await stubTurnstile(page);
+      await use(undefined);
+    },
+    { auto: true },
+  ],
   apiRequest: async ({ page, baseURL }, use) => {
     const origin = baseURL ?? "http://localhost:3000";
     const withOrigin = (

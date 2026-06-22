@@ -54,6 +54,114 @@ describe("computeVersionDiff", () => {
     expect(delta.configKeys).toEqual(["amount"]);
   });
 
+  it("names web3 contract arguments by their ABI parameter", () => {
+    const abi = JSON.stringify([
+      {
+        type: "function",
+        name: "addPerson",
+        inputs: [
+          { name: "_name", type: "string" },
+          { name: "_favoriteNumber", type: "uint256" },
+        ],
+        outputs: [],
+      },
+    ]);
+    const cfg = (functionArgs: string) => ({
+      actionType: "web3/write-contract",
+      abi,
+      abiFunction: "addPerson",
+      functionArgs,
+    });
+    const before = {
+      nodes: [node("n1", "Write Contract", cfg(JSON.stringify(["", "7"])))],
+      edges: [],
+    };
+    const after = {
+      nodes: [node("n1", "Write Contract", cfg(JSON.stringify(["joel", "7"])))],
+      edges: [],
+    };
+    const delta = computeVersionDiff(before, after).nodesChanged[0].deltas.find(
+      (d) => d.field === "configuration"
+    );
+    const change = delta?.configChanges?.find((c) => c.key === "functionArgs");
+    expect(change?.before).toBe(
+      '{\n  "_name": "",\n  "_favoriteNumber": "7"\n}'
+    );
+    expect(change?.after).toBe(
+      '{\n  "_name": "joel",\n  "_favoriteNumber": "7"\n}'
+    );
+  });
+
+  it("renders conditionConfig as an ordered rule list", () => {
+    const conditionConfig = {
+      group: {
+        id: "g1",
+        logic: "AND",
+        rules: [
+          {
+            id: "r1",
+            leftOperand: "{{Manual.triggeredAt}}",
+            operator: "==",
+            rightOperand: "{{Write Contract.success}}",
+          },
+          {
+            id: "r2",
+            leftOperand: "{{Write Contract.success}}",
+            operator: "==",
+            rightOperand: "{{System.unixTimestamp}}",
+          },
+        ],
+      },
+    };
+    const cfg = (rightOperand: string) => ({
+      actionType: "Condition",
+      conditionConfig: JSON.stringify({
+        group: {
+          ...conditionConfig.group,
+          rules: [
+            conditionConfig.group.rules[0],
+            { ...conditionConfig.group.rules[1], rightOperand },
+          ],
+        },
+      }),
+    });
+    const before = {
+      nodes: [node("n1", "Condition", cfg(""))],
+      edges: [],
+    };
+    const after = {
+      nodes: [node("n1", "Condition", cfg("{{System.unixTimestamp}}"))],
+      edges: [],
+    };
+    const delta = computeVersionDiff(before, after).nodesChanged[0].deltas.find(
+      (d) => d.field === "configuration"
+    );
+    const change = delta?.configChanges?.find(
+      (c) => c.key === "conditionConfig"
+    );
+    expect(change?.after).toBe(
+      "1. {{Manual.triggeredAt}} == {{Write Contract.success}}\nAND\n2. {{Write Contract.success}} == {{System.unixTimestamp}}"
+    );
+    // Rule order is preserved and the empty right operand renders as a bare op.
+    expect(change?.before).toBe(
+      "1. {{Manual.triggeredAt}} == {{Write Contract.success}}\nAND\n2. {{Write Contract.success}} =="
+    );
+  });
+
+  it("tags connection refs with endpoint node ids", () => {
+    const before = {
+      nodes: [node("n1", "Trigger"), node("n2", "Send")],
+      edges: [],
+    };
+    const after = {
+      nodes: [node("n1", "Trigger"), node("n2", "Send")],
+      edges: [{ id: "e1", source: "n1", target: "n2" }],
+    };
+    expect(computeVersionDiff(before, after).connectionsAdded).toEqual([
+      { from: "Trigger", to: "Send", fromId: "n1", toId: "n2" },
+    ]);
+  });
+
   it("detects added and removed connections with node labels", () => {
     const before = {
       nodes: [node("n1", "Trigger"), node("n2", "Send")],
@@ -64,9 +172,11 @@ describe("computeVersionDiff", () => {
       edges: [{ id: "e1", source: "n1", target: "n2" }],
     };
     const diff = computeVersionDiff(before, after);
-    expect(diff.connectionsAdded).toEqual([{ from: "Trigger", to: "Send" }]);
+    expect(diff.connectionsAdded).toEqual([
+      { from: "Trigger", to: "Send", fromId: "n1", toId: "n2" },
+    ]);
     expect(computeVersionDiff(after, before).connectionsRemoved).toEqual([
-      { from: "Trigger", to: "Send" },
+      { from: "Trigger", to: "Send", fromId: "n1", toId: "n2" },
     ]);
   });
 

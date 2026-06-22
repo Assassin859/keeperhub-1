@@ -26,6 +26,8 @@ function clearTurnstileEnv(): void {
   delete process.env.NEXT_PHASE;
   // biome-ignore lint/performance/noDelete: same
   delete process.env.TURNSTILE_ENFORCE;
+  // biome-ignore lint/performance/noDelete: same
+  delete process.env.LOAD_TEST_BYPASS_TOKEN;
 }
 
 describe("signup defenses: captcha plugin", () => {
@@ -76,9 +78,24 @@ describe("signup defenses: captcha plugin", () => {
 
   it("throws at module load in production when TURNSTILE_SECRET_KEY is missing", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    // Pin CI off: a real prod deploy never sets CI=true, so the plugin is
+    // enforced and the guard must fire. The CI runner sets CI=true ambiently,
+    // which would otherwise skip the guard (see the CI=true case below).
+    vi.stubEnv("CI", "");
     await expect(import("@/lib/auth")).rejects.toThrow(
       MISSING_CAPTCHA_SECRET_ERROR
     );
+  });
+
+  it("does not throw in production when CI=true even without the secret (ephemeral e2e boots the prod image with the plugin skipped)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CI", "true");
+    const { auth } = await import("@/lib/auth");
+    expect(auth).toBeDefined();
+    const plugin = (auth.options.plugins ?? []).find(
+      (p) => (p as CaptchaPluginShape).id === "captcha"
+    );
+    expect(plugin).toBeUndefined();
   });
 
   it("does not throw during next build phase even without the secret", async () => {
@@ -127,6 +144,88 @@ describe("signup defenses: captcha plugin", () => {
     await expect(import("@/lib/auth")).rejects.toThrow(
       MISSING_CAPTCHA_SECRET_ERROR
     );
+  });
+});
+
+describe("signup defenses: captcha load-test bypass", () => {
+  const BYPASS_TOKEN = "load-test-captcha-bypass-token-32-bytes!";
+
+  type CaptchaOnRequest = (
+    request: Request,
+    ctx: unknown
+  ) => Promise<{ response?: Response } | undefined>;
+
+  const ctxStub: unknown = {
+    options: {},
+    logger: { error: () => undefined },
+  };
+
+  function signupRequest(headers: Record<string, string>): Request {
+    return new Request("http://localhost:3000/api/auth/sign-up/email", {
+      method: "POST",
+      headers,
+    });
+  }
+
+  async function loadCaptchaOnRequest(): Promise<CaptchaOnRequest | undefined> {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    const { auth } = await import("@/lib/auth");
+    const plugin = (auth.options.plugins ?? []).find(
+      (p) => (p as CaptchaPluginShape).id === "captcha"
+    ) as { onRequest?: CaptchaOnRequest } | undefined;
+    return plugin?.onRequest;
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    clearTurnstileEnv();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    clearTurnstileEnv();
+  });
+
+  it("skips Turnstile on signup when a valid LOAD_TEST_BYPASS_TOKEN is presented", async () => {
+    process.env.LOAD_TEST_BYPASS_TOKEN = BYPASS_TOKEN;
+    const onRequest = await loadCaptchaOnRequest();
+    expect(onRequest).toBeDefined();
+    const result = await onRequest?.(
+      signupRequest({ "x-load-test-mfa-bypass": BYPASS_TOKEN }),
+      ctxStub
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it("enforces Turnstile on signup without the bypass header", async () => {
+    process.env.LOAD_TEST_BYPASS_TOKEN = BYPASS_TOKEN;
+    const onRequest = await loadCaptchaOnRequest();
+    // No bypass header and no x-captcha-response -> upstream rejects with a
+    // 400 response rather than passing the request through.
+    const result = await onRequest?.(signupRequest({}), ctxStub);
+    expect(result?.response).toBeInstanceOf(Response);
+  });
+
+  it("enforces Turnstile when the bypass token does not match", async () => {
+    process.env.LOAD_TEST_BYPASS_TOKEN = BYPASS_TOKEN;
+    const onRequest = await loadCaptchaOnRequest();
+    const result = await onRequest?.(
+      signupRequest({ "x-load-test-mfa-bypass": "not-the-real-token-value!!" }),
+      ctxStub
+    );
+    expect(result?.response).toBeInstanceOf(Response);
+  });
+
+  it("does not bypass when LOAD_TEST_BYPASS_TOKEN is unset (production posture)", async () => {
+    const onRequest = await loadCaptchaOnRequest();
+    const result = await onRequest?.(
+      signupRequest({ "x-load-test-mfa-bypass": BYPASS_TOKEN }),
+      ctxStub
+    );
+    expect(result?.response).toBeInstanceOf(Response);
   });
 });
 
@@ -207,13 +306,11 @@ describe("signup defenses: /sign-in/anonymous rate limit rule", () => {
   it("returns { window: 3600, max: 5 } for anonymous sign-in attempts", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const { auth } = await import("@/lib/auth");
-    const rule = auth.options.rateLimit?.customRules?.[
-      "/sign-in/anonymous"
-    ] as RateLimitRuleFn | undefined;
+    const rule = auth.options.rateLimit?.customRules?.["/sign-in/anonymous"] as
+      | RateLimitRuleFn
+      | undefined;
     expect(typeof rule).toBe("function");
-    const req = new Request(
-      "http://localhost:3000/api/auth/sign-in/anonymous"
-    );
+    const req = new Request("http://localhost:3000/api/auth/sign-in/anonymous");
     const resolved = await rule?.(req, { window: 60, max: 100 });
     expect(resolved).toEqual({ window: 3600, max: 5 });
   });
@@ -223,9 +320,9 @@ describe("signup defenses: /sign-in/anonymous rate limit rule", () => {
     vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "true");
     process.env.TEST_API_KEY = TEST_API_KEY;
     const { auth } = await import("@/lib/auth");
-    const rule = auth.options.rateLimit?.customRules?.[
-      "/sign-in/anonymous"
-    ] as RateLimitRuleFn | undefined;
+    const rule = auth.options.rateLimit?.customRules?.["/sign-in/anonymous"] as
+      | RateLimitRuleFn
+      | undefined;
     const req = new Request(
       "http://localhost:3000/api/auth/sign-in/anonymous",
       { headers: { "X-Test-API-Key": TEST_API_KEY } }

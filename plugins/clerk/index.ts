@@ -4,6 +4,7 @@ import { ClerkIcon } from "./icon";
 
 const clerkPlugin: IntegrationPlugin = {
   type: "clerk",
+  egress: "fixed-host",
   label: "Clerk",
   description: "User authentication and management",
 

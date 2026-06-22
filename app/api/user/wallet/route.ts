@@ -1,15 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { recordWalletInAddressBook } from "@/lib/address-book/record-wallet";
-import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import {
-  buildWalletIntegrationPayload,
-  createIntegration,
-} from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
@@ -19,7 +13,7 @@ import {
 } from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
-import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-client";
+import { provisionOrganizationWallet } from "@/lib/turnkey/provision-org-wallet";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -160,55 +154,6 @@ function getErrorResponse(error: unknown): NextResponse {
   return NextResponse.json({ error: errorMessage }, { status: statusCode });
 }
 
-async function storeTurnkeyWalletAndIntegration(options: {
-  userId: string;
-  organizationId: string;
-  email: string;
-  walletAddress: string;
-  turnkeySubOrgId: string;
-  turnkeyWalletId: string;
-  turnkeyPrivateKeyId: string;
-}): Promise<{ walletAddress: string; walletId: string }> {
-  const {
-    userId,
-    organizationId,
-    email,
-    walletAddress,
-    turnkeySubOrgId,
-    turnkeyWalletId,
-    turnkeyPrivateKeyId,
-  } = options;
-
-  const normalizedWalletAddress = normalizeAddressForStorage(walletAddress);
-
-  await db.insert(organizationWallets).values({
-    userId,
-    organizationId,
-    email,
-    walletAddress: normalizedWalletAddress,
-    turnkeySubOrgId,
-    turnkeyWalletId,
-    turnkeyPrivateKeyId,
-  });
-
-  await createIntegration(
-    buildWalletIntegrationPayload(
-      userId,
-      organizationId,
-      normalizedWalletAddress
-    )
-  );
-
-  await recordWalletInAddressBook({
-    organizationId,
-    address: normalizedWalletAddress,
-    label: "Org Wallet",
-    createdBy: userId,
-  });
-
-  return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
-}
-
 export async function GET(request: Request): Promise<NextResponse> {
   let authContext: DualAuthContext | null = null;
   try {
@@ -310,34 +255,35 @@ export async function POST(request: Request) {
       );
     }
 
-    const orgName = `org-${organizationId.slice(0, 8)}`;
-    const turnkeyResult = await createTurnkeyWallet(walletEmail, orgName);
+    const result = await provisionOrganizationWallet({
+      userId: user.id,
+      organizationId,
+      email: walletEmail,
+    });
 
-    const { walletAddress: storedAddress, walletId } =
-      await storeTurnkeyWalletAndIntegration({
-        userId: user.id,
-        organizationId,
-        email: walletEmail,
-        walletAddress: turnkeyResult.walletAddress,
-        turnkeySubOrgId: turnkeyResult.subOrgId,
-        turnkeyWalletId: turnkeyResult.walletId,
-        turnkeyPrivateKeyId: turnkeyResult.privateKeyId,
-      });
+    // checkExistingWallet passed, so a non-created result means a concurrent
+    // request created the wallet first.
+    if (!result.created) {
+      return NextResponse.json(
+        { error: "A wallet already exists for this organization" },
+        { status: 409 }
+      );
+    }
 
     await recordAuditEvent({
       actor: { userId: user.id, organizationId, authMethod: "session" },
       action: "org_wallet.created",
       resourceType: "org_wallet",
-      resourceId: turnkeyResult.subOrgId,
-      after: { walletAddress: storedAddress },
+      resourceId: result.subOrgId ?? organizationId,
+      after: { walletAddress: result.walletAddress },
       metadata: buildAuditMetadata(request),
     });
 
     return NextResponse.json({
       success: true,
       wallet: {
-        address: storedAddress,
-        walletId,
+        address: result.walletAddress,
+        walletId: result.walletId,
         email: walletEmail,
         organizationId,
       },

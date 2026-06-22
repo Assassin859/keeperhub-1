@@ -87,6 +87,20 @@ app:
   deployment:
     enabled: true
     initContainers:
+      # IRSA hard gate: assume the role and run a read-only AWS probe before the
+      # main container starts, so --atomic rolls the release back if IRSA is broken.
+      # Anchored here and reused by the other components below.
+      - &irsa_preflight
+        name: irsa-preflight
+        image: amazon/aws-cli
+        command:
+          - /bin/sh
+          - -c
+        args:
+          - |
+            set -euo pipefail
+            aws sts get-caller-identity
+            aws sqs get-queue-url --queue-name keeperhub-workflow-queue-staging --region us-east-1
       - name: db-migration
         image: "${ECR_REGISTRY}/keeperhub-staging:migrator-${IMAGE_TAG}"
         command:
@@ -109,6 +123,9 @@ app:
 
   serviceAccount:
     create: true
+    requireRoleArn: true
+    irsaCheck:
+      enabled: true
     annotations:
       eks.amazonaws.com/role-arn: ${SERVICE_ACCOUNT_ROLE_ARN}
     name: keeperhub-staging
@@ -598,6 +615,8 @@ executor:
 
   deployment:
     enabled: true
+    initContainers:
+      - *irsa_preflight
 
   serviceAccount:
     create: false
@@ -798,6 +817,8 @@ schedule:
 
   deployment:
     enabled: true
+    initContainers:
+      - *irsa_preflight
 
   # Use the same service account as main app
   serviceAccount:
@@ -895,6 +916,8 @@ block:
 
   deployment:
     enabled: true
+    initContainers:
+      - *irsa_preflight
 
   # Use the same service account as main app
   serviceAccount:
@@ -1013,6 +1036,8 @@ metricsCollector:
 
   deployment:
     enabled: true
+    initContainers:
+      - *irsa_preflight
 
   serviceAccount:
     create: false
