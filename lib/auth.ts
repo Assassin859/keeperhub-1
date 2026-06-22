@@ -31,8 +31,6 @@ import {
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
-import { provisionOrganizationWallet } from "@/lib/turnkey/provision-org-wallet";
-import { organizationHasWallet } from "@/lib/web3/wallet-helpers";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -556,6 +554,11 @@ async function backstopProvisionWallet(
   organizationId: string
 ): Promise<void> {
   try {
+    // Lazy-loaded: these wallet modules pull in `server-only` (and Turnkey /
+    // ethers). Importing them statically would drag all of that into every
+    // consumer of lib/auth.ts at module-eval - including auth plugin
+    // registration - so keep them out of the static graph and load on demand.
+    const { organizationHasWallet } = await import("@/lib/web3/wallet-helpers");
     if (await organizationHasWallet(organizationId)) {
       return;
     }
@@ -571,6 +574,9 @@ async function backstopProvisionWallet(
       return;
     }
 
+    const { provisionOrganizationWallet } = await import(
+      "@/lib/turnkey/provision-org-wallet"
+    );
     await provisionOrganizationWallet({ userId, organizationId, email });
   } catch (error) {
     logSystemError(
