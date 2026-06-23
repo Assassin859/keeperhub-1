@@ -78,6 +78,7 @@ describe("createWorkflowJob", () => {
     delete process.env.METRICS_COLLECTOR;
     delete process.env.EXECUTOR_METRICS_INGEST_URL;
     delete process.env.METRICS_INGEST_TOKEN;
+    delete process.env.SAFE_FETCH_SHADOW;
   });
 
   it("forwards non-secret metrics env vars as literals when set", async () => {
@@ -277,13 +278,14 @@ describe("createWorkflowJob", () => {
     expect(getSecretRef(envVars, "CHAIN_RPC_CONFIG")?.optional).toBe(true);
   });
 
-  it("force-enables SAFE_FETCH_ENFORCE on runner pods even when unset on controller", async () => {
+  it("injects no SSRF shadow opt-in on runner pods, so they enforce by default", async () => {
     // SSRF guard must be on regardless of controller config to prevent
     // workflow runs from reaching internal hosts (cloud IMDS, RFC1918,
-    // in-cluster services). The runner pod is the actual execution path,
-    // not the controller; if the controller's env ever drifts the runner
-    // must still enforce.
-    delete process.env.SAFE_FETCH_ENFORCE;
+    // in-cluster services). The runner pod is the actual execution path.
+    // safeFetch is fail-closed by default, so the executor injects no
+    // shadow opt-in; the absence of SAFE_FETCH_SHADOW means the runner
+    // enforces.
+    delete process.env.SAFE_FETCH_SHADOW;
 
     await createWorkflowJob({
       workflowId: "wf-1",
@@ -293,13 +295,14 @@ describe("createWorkflowJob", () => {
     });
 
     const envVars = getJobEnvVars(getSubmittedJob());
-    expect(getEnvVar(envVars, "SAFE_FETCH_ENFORCE")).toBe("true");
+    expect(getEnvVar(envVars, "SAFE_FETCH_SHADOW")).toBeUndefined();
   });
 
-  it("force-enables SAFE_FETCH_ENFORCE even when controller has it set to shadow", async () => {
-    // Hardcoded `value: "true"` in k8s-job.ts wins over any controller
-    // env. Flipping shadow mode for runner pods requires a code change.
-    process.env.SAFE_FETCH_ENFORCE = "false";
+  it("does not forward the controller's SAFE_FETCH_SHADOW opt-in to runner pods", async () => {
+    // A controller-level shadow opt-in (a dev/CI escape hatch) must never
+    // propagate to the runner, which executes user workflow code. The
+    // executor neither injects nor forwards SAFE_FETCH_SHADOW.
+    process.env.SAFE_FETCH_SHADOW = "true";
 
     await createWorkflowJob({
       workflowId: "wf-1",
@@ -309,9 +312,7 @@ describe("createWorkflowJob", () => {
     });
 
     const envVars = getJobEnvVars(getSubmittedJob());
-    expect(getEnvVar(envVars, "SAFE_FETCH_ENFORCE")).toBe("true");
-    const occurrences = envVars.filter((v) => v.name === "SAFE_FETCH_ENFORCE");
-    expect(occurrences).toHaveLength(1);
+    expect(getEnvVar(envVars, "SAFE_FETCH_SHADOW")).toBeUndefined();
   });
 
   it("runs under the dedicated SA with no mounted token", async () => {

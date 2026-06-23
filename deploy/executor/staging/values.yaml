@@ -161,9 +161,6 @@ env:
   GAS_CREDITS_ENTERPRISE_CENTS:
     type: kv
     value: "10000"
-  SAFE_FETCH_ENFORCE:
-    type: kv
-    value: "true"
   SANDBOX_BACKEND:
     type: kv
     value: "remote"
