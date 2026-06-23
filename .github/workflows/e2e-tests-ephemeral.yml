@@ -283,11 +283,10 @@ jobs:
             coverage/
           retention-days: 7
 
-  # Playwright E2E tests (browser-based, single worker, serial)
-  # Runs after Vitest to avoid conflicts on shared external test accounts
-  # DISABLED: ephemeral E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
+  # Playwright E2E tests (browser-based, single worker, serial within the suite).
+  # Runs in parallel with the Vitest job (each has its own ephemeral Postgres).
   e2e-playwright-ephemeral:
-    needs: [should-run, e2e-vitest-ephemeral]
+    needs: [should-run]
     if: ${{ always() && needs.should-run.outputs.run-e2e == 'true' && !failure() }}
     runs-on: ubuntu-latest
     # Always staging: e2e validates against test credentials, never prod.
