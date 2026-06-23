@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -335,9 +335,11 @@ async function handlePostUpdateSideEffects(
       body.nodes as Parameters<typeof syncWorkflowSchedule>[1]
     );
     if (!syncResult.synced) {
-      console.warn(
-        `[Workflow] Schedule sync failed for ${workflowId}:`,
-        syncResult.error
+      logSystemWarn(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow] Schedule sync failed",
+        syncResult.error,
+        { workflow_id: workflowId }
       );
     }
   }

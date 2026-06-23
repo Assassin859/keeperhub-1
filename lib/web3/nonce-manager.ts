@@ -20,7 +20,12 @@ import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  ErrorCategory,
+  logSystemError,
+  logSystemWarn,
+  logWarn,
+} from "@/lib/logging";
 
 export type NonceSession = {
   walletAddress: string;
@@ -134,10 +139,9 @@ export class NonceManager {
       );
 
       if (validation.warnings.length > 0) {
-        console.warn(
-          "[NonceManager] Validation warnings:",
-          validation.warnings
-        );
+        logWarn("[NonceManager] Validation warnings", {
+          warnings: validation.warnings.join("; "),
+        });
       }
 
       return { session, validation };
@@ -449,10 +453,22 @@ export class NonceManager {
           const expiredAgoMs = priorExpires
             ? Date.now() - priorExpires.getTime()
             : null;
-          console.warn(
-            `[NonceManager] Lock takeover for ${walletAddress}:${chainId}, ` +
-              `priorHolder=${priorHolder}, expiredAgoMs=${expiredAgoMs}, ` +
-              `newHolder=${executionId}`
+          logSystemWarn(
+            ErrorCategory.INFRASTRUCTURE,
+            `[NonceManager] Lock takeover for ${walletAddress}:${chainId}`,
+            new Error(
+              `[NonceManager] Lock takeover for ${walletAddress}:${chainId}, ` +
+                `priorHolder=${priorHolder}, expiredAgoMs=${expiredAgoMs}, ` +
+                `newHolder=${executionId}`
+            ),
+            {
+              wallet_address: walletAddress,
+              chain_id: String(chainId),
+              prior_holder: priorHolder,
+              expired_ago_ms:
+                expiredAgoMs === null ? "unknown" : String(expiredAgoMs),
+              execution_id: executionId,
+            }
           );
         }
         console.log(

@@ -4,6 +4,12 @@ import {
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
+import {
+  ErrorCategory,
+  logSystemWarn,
+  logUserError,
+  logWarn,
+} from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { recordAuditEvent } from "@/lib/security/audit-log";
@@ -113,12 +119,18 @@ async function handleCheckoutCompleted(
   const { organizationId, providerSubscriptionId } = data;
 
   if (!organizationId) {
-    console.error("[Billing Webhook] No organizationId in checkout event");
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Billing Webhook] No organizationId in checkout event"
+    );
     return;
   }
 
   if (!providerSubscriptionId) {
-    console.error("[Billing Webhook] No subscription in checkout event");
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Billing Webhook] No subscription in checkout event"
+    );
     return;
   }
 
@@ -140,7 +152,10 @@ async function handleCheckoutCompleted(
   );
 
   if (!details.priceId) {
-    console.error(LOG_PREFIX, "No price ID found in subscription");
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `${LOG_PREFIX} No price ID found in subscription`
+    );
     return;
   }
 
@@ -149,10 +164,11 @@ async function handleCheckoutCompleted(
     price: details.priceMetadata,
   });
   if (!resolved) {
-    console.error(
-      LOG_PREFIX,
-      "Unknown priceId, cannot resolve plan:",
-      details.priceId
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `${LOG_PREFIX} Unknown priceId, cannot resolve plan`,
+      undefined,
+      { price_id: details.priceId }
     );
     return;
   }
@@ -273,10 +289,8 @@ async function handleSubscriptionUpdated(
 
   const current = await findSubscriptionByProviderId(providerSubscriptionId);
   if (!current) {
-    console.warn(
-      LOG_PREFIX,
-      "subscription.updated - no matching row for subId:",
-      providerSubscriptionId
+    logWarn(
+      `${LOG_PREFIX} subscription.updated - no matching row for subId: ${providerSubscriptionId}`
     );
     return;
   }
@@ -302,12 +316,11 @@ async function handleSubscriptionUpdated(
         current.currentPeriodEnd
       );
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        LOG_PREFIX,
-        "Failed to bill overage for org (will be retried by scan):",
-        current.organizationId,
-        message
+      logSystemWarn(
+        ErrorCategory.BILLING,
+        `${LOG_PREFIX} Failed to bill overage for org (will be retried by scan)`,
+        error,
+        { org_id: current.organizationId }
       );
     }
   }
@@ -527,11 +540,11 @@ async function markOverageRecordsPaid(
     try {
       invoiceInfo = await provider.getInvoiceForItem(row.providerInvoiceItemId);
     } catch (error) {
-      console.error(
-        LOG_PREFIX,
-        "markOverageRecordsPaid: getInvoiceForItem failed",
-        row.id,
-        error
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        `${LOG_PREFIX} markOverageRecordsPaid: getInvoiceForItem failed`,
+        error,
+        { overage_record_id: row.id }
       );
       continue;
     }
@@ -626,9 +639,8 @@ async function handleInvoicePaymentFailed(
   const { providerSubscriptionId, invoiceUrl } = data;
 
   if (!providerSubscriptionId) {
-    console.warn(
-      LOG_PREFIX,
-      "invoice.payment_failed - no subscriptionId, skipping"
+    logWarn(
+      `${LOG_PREFIX} invoice.payment_failed - no subscriptionId, skipping`
     );
     return;
   }
@@ -667,7 +679,7 @@ async function handleInvoiceOverdue(
   const { providerSubscriptionId, invoiceUrl } = data;
 
   if (!providerSubscriptionId) {
-    console.warn(LOG_PREFIX, "invoice.overdue - no subscriptionId, skipping");
+    logWarn(`${LOG_PREFIX} invoice.overdue - no subscriptionId, skipping`);
     return;
   }
 
@@ -694,9 +706,8 @@ async function handleInvoicePaymentActionRequired(
   const { providerSubscriptionId, invoiceUrl } = data;
 
   if (!providerSubscriptionId) {
-    console.warn(
-      LOG_PREFIX,
-      "invoice.payment_action_required - no subscriptionId, skipping"
+    logWarn(
+      `${LOG_PREFIX} invoice.payment_action_required - no subscriptionId, skipping`
     );
     return;
   }

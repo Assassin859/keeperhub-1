@@ -3,6 +3,8 @@
  * before storage or display in observability tools
  */
 
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+
 /**
  * List of sensitive field keys that should be redacted
  */
@@ -170,7 +172,11 @@ export function redactSensitiveData(data: any): any {
   try {
     return redactObject(data);
   } catch (error) {
-    console.error("[Redact] Error redacting data:", error);
+    logSystemError(
+      ErrorCategory.UNKNOWN,
+      "[Redact] Error redacting data",
+      error
+    );
     return "[REDACTION_ERROR]";
   }
 }

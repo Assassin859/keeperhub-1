@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { executionDebt, overageBillingRecords } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import type { BillingProvider } from "./provider";
 import { getBillingProvider } from "./providers";
 
@@ -132,11 +133,11 @@ export async function scanAndCreateDebt(): Promise<DebtScanResult> {
         skipped++;
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(
-        LOG_PREFIX,
-        `Failed to process overage record ${row.id}:`,
-        message
+      logSystemError(
+        ErrorCategory.BILLING,
+        `${LOG_PREFIX} Failed to process overage record`,
+        error,
+        { overage_record_id: row.id }
       );
       skipped++;
     }
