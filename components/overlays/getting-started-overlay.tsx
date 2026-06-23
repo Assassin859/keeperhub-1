@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  CheckCircle2,
-  ChevronDown,
-  Key,
-  Plug,
-  Wallet,
-  Workflow,
-} from "lucide-react";
+import { CheckCircle2, ChevronDown, Key, Plug, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ComponentType, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -24,9 +17,8 @@ import { IntegrationsOverlay } from "./integrations-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
 import type { OverlayComponentProps } from "./types";
-import { WalletOverlay } from "./wallet-overlay";
 
-type StepKey = "workflow" | "apiKey" | "integration" | "wallet";
+type StepKey = "workflow" | "apiKey" | "integration";
 
 type Step = {
   key: StepKey;
@@ -42,7 +34,6 @@ const EMPTY_PROGRESS: Progress = {
   workflow: false,
   apiKey: false,
   integration: false,
-  wallet: false,
 };
 
 function hasItems(value: unknown): boolean {
@@ -75,11 +66,10 @@ function useGettingStartedProgress(): Progress {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [workflows, keys, integrations, wallet] = await Promise.all([
+      const [workflows, keys, integrations] = await Promise.all([
         api.workflow.getAll().catch(() => []),
         fetchJson("/api/keys"),
         api.integration.getAll().catch(() => []),
-        fetchJson("/api/user/wallet"),
       ]);
       if (cancelled) {
         return;
@@ -90,7 +80,6 @@ function useGettingStartedProgress(): Progress {
           workflows.some((w) => w?.name !== "__current__"),
         apiKey: hasItems(keys),
         integration: Array.isArray(integrations) && integrations.length > 0,
-        wallet: Boolean((wallet as { hasWallet?: boolean })?.hasWallet),
       });
     })();
     return () => {
@@ -157,15 +146,6 @@ export function GettingStartedOverlay({
         "Link the services your workflows act on, like Discord or SendGrid.",
       cta: "Browse connections",
       onAction: () => push(IntegrationsOverlay),
-    },
-    {
-      key: "wallet",
-      icon: Wallet,
-      title: "Set up your wallet",
-      description:
-        "Configure the organization wallet so workflows can act on-chain.",
-      cta: "Open wallet",
-      onAction: () => push(WalletOverlay),
     },
   ];
 
