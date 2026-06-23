@@ -288,6 +288,13 @@ export const organization = pgTable("organization", {
   // remains) and honored as a hard access/execution gate. Reactivation clears
   // it manually, mirroring users.deactivatedAt.
   deactivatedAt: timestamp("deactivated_at"),
+  // Owner-set switch requiring every member to carry a second factor while this
+  // org is their active context. Email/TOTP members already enforce dual-factor
+  // globally; this is what makes the gate bite for wallet (SIWE) members, who
+  // are otherwise MFA-exempt. enforcedMfaFactors lists which factors satisfy it
+  // (e.g. ["totp"], ["email"], or both); null/empty means no extra requirement.
+  enforceMfa: boolean("enforce_mfa").notNull().default(false),
+  enforcedMfaFactors: jsonb("enforced_mfa_factors"),
 });
 
 export const member = pgTable(

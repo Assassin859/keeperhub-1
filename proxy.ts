@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { readDeviceCookie } from "@/lib/device-cookie";
 import { hasValidLoadTestBypass } from "@/lib/load-test-bypass";
+import { checkWalletOrgMfaCompliance } from "@/lib/mfa/org-mfa-enforcement";
 import {
   buildPendingIpSetCookie,
   encodePendingIpCookie,
@@ -160,6 +161,7 @@ const MFA_EXEMPT_PAGES = new Set<string>([
   "/terms",
   "/privacy",
   "/enroll-mfa",
+  "/enforce-mfa",
   "/verify-mfa",
   "/verify-ip",
 ]);
@@ -254,15 +256,42 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
 
   // Wallet (SIWE) users authenticate by signing a nonce, which is itself a
   // possession factor. There is no email channel to send an OTP to and no
-  // TOTP enrollment for them, so the mandatory-MFA gate is incoherent here.
-  // Skip both the enrollment and step-up gates - and the country gate (return
-  // user: null) - the same way anonymous sessions are passed through. This
-  // deliberately carves the MFA hole for the wallet auth class only.
+  // TOTP enrollment forced on them, so the global mandatory-MFA gate is
+  // incoherent here. They are MFA-exempt by default - EXCEPT when their active
+  // org's owner has switched on MFA enforcement. In that case the wallet user
+  // must carry one of the org's required factors (TOTP and/or a verified
+  // email); if not, hard-gate them to /enforce-mfa until they enroll. Outside
+  // an enforcing org they pass through like anonymous sessions (user: null
+  // also skips the country gate).
+  const apiPath = pathname.startsWith("/api/");
+
   if (isWalletEmail((session.user as { email?: string | null }).email)) {
-    return { kind: "pass", user: null };
+    const activeOrgId = (
+      session.session as { activeOrganizationId?: string | null }
+    ).activeOrganizationId;
+    const compliance = await checkWalletOrgMfaCompliance({
+      userId: session.user.id,
+      activeOrganizationId: activeOrgId,
+    });
+    if (compliance.compliant) {
+      return { kind: "pass", user: null };
+    }
+    if (apiPath) {
+      return {
+        kind: "block",
+        response: mfaApiError(
+          403,
+          "org_mfa_enrollment_required",
+          "Your organization requires two-factor authentication. Add a second factor to continue."
+        ),
+      };
+    }
+    return {
+      kind: "block",
+      response: mfaRedirect(request, "/enforce-mfa", "enroll"),
+    };
   }
 
-  const apiPath = pathname.startsWith("/api/");
   const user = session.user as {
     twoFactorEnabled?: boolean | null;
     email?: string | null;
