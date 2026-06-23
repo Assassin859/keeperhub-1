@@ -8,16 +8,19 @@
  * gas breakdown can move off the per-row input/output JSONB re-parse (the cost
  * behind the networks-endpoint 524) without the breakdown totals changing.
  *
- * Approach: set-based, one UPDATE per keyset batch of log ids (NOT one query
- * per row - this runs over millions of rows on prod). Each batch re-extracts
+ * Scope: only gas-bearing rows. The per-network breakdown reads network and
+ * gas_used_wei exclusively for rows where gas_used_wei IS NOT NULL, so those are
+ * the only historical rows that need denormalising. Gas steps are a tiny
+ * fraction of the table (most rows are reads with no on-chain gas), so this
+ * touches a handful of rows rather than the whole multi-GB table. network on
+ * non-gas rows stays null on purpose; nothing reads it.
+ *
+ * Approach: keyset batches over the gas-bearing rows, each re-extracting
  * network/gasUsed from the JSONB via the shared logInputField/logOutputField
  * builders, the same expressions the executor writer mirrors in JS and the
- * /analytics reads used to use, so all paths agree value-for-value.
- *
- * COALESCE preserves any value the live writer already set (no clobber race on
- * hot recent rows); the WHERE only touches rows that have a JSONB value to fill
- * and a still-null column, so non-web3 rows (no network, no gas) are never
- * written and re-runs are cheap. Idempotent and resumable via --after-id.
+ * /analytics reads used to use, so all paths agree value-for-value. COALESCE
+ * preserves any value the live writer already set (no clobber race on hot
+ * recent rows). Idempotent and resumable via --after-id.
  *
  * A LIVE run against a non-local DB requires --yes; dry-runs and local DBs do
  * not. This is a guard against an accidental prod write, not a security
@@ -88,7 +91,14 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-/** Keyset page of log ids; the cursor for the next batch is the last id. */
+const networkExpr = logInputField("network");
+const gasExpr = logOutputField("gasUsed");
+
+/**
+ * Keyset page of the gas-bearing log ids still needing a backfill; the cursor
+ * for the next batch is the last id. Filtering to gas rows here keeps the walk
+ * over the handful of rows that matter instead of the whole table.
+ */
 async function fetchLogIdBatch(
   afterId: string,
   batchSize: number
@@ -96,27 +106,28 @@ async function fetchLogIdBatch(
   const rows = await db
     .select({ id: workflowExecutionLogs.id })
     .from(workflowExecutionLogs)
-    .where(sql`${workflowExecutionLogs.id} > ${afterId}`)
+    .where(
+      sql`${workflowExecutionLogs.id} > ${afterId} AND ${workflowExecutionLogs.gasUsedWei} IS NULL AND ${gasExpr} IS NOT NULL`
+    )
     .orderBy(workflowExecutionLogs.id)
     .limit(batchSize);
   return rows.map((r) => r.id);
 }
 
-const networkExpr = logInputField("network");
-const gasExpr = logOutputField("gasUsed");
-
 /**
- * Backfill one keyset batch. Re-selects the same batch inside a CTE
- * (deterministic for a fixed cursor) so no id array has to be marshalled into
- * the statement. COALESCE keeps any writer-set value; the WHERE only fills a
- * null column when the JSONB actually carries a value, so non-web3 rows are
- * skipped and re-runs are no-ops. Returns the number of rows written.
+ * Backfill one keyset batch of gas-bearing rows. Re-selects the same batch
+ * inside a CTE (deterministic for a fixed cursor) so no id array has to be
+ * marshalled into the statement. COALESCE keeps any value the live writer
+ * already set; re-runs skip rows whose gas_used_wei is already populated.
+ * Returns the number of rows written.
  */
 async function applyBatch(afterId: string, batchSize: number): Promise<number> {
   const result = await db.execute(sql`
     WITH batch AS (
       SELECT id FROM workflow_execution_logs
       WHERE id > ${afterId}
+        AND gas_used_wei IS NULL
+        AND ${gasExpr} IS NOT NULL
       ORDER BY id
       LIMIT ${batchSize}
     )
@@ -128,30 +139,24 @@ async function applyBatch(afterId: string, batchSize: number): Promise<number> {
         )
     FROM batch
     WHERE workflow_execution_logs.id = batch.id
-      AND (
-        (workflow_execution_logs.network IS NULL AND ${networkExpr} IS NOT NULL)
-        OR (workflow_execution_logs.gas_used_wei IS NULL AND ${gasExpr} IS NOT NULL)
-      )
     RETURNING workflow_execution_logs.id
   `);
   // postgres-js: db.execute resolves to the RETURNING rows array.
   return result.length;
 }
 
-/** Dry-run: count how many rows in the batch WOULD be written. */
+/** Dry-run: count how many gas-bearing rows in the batch WOULD be written. */
 async function countBatch(afterId: string, batchSize: number): Promise<number> {
   const result = await db.execute(sql`
     WITH batch AS (
       SELECT id FROM workflow_execution_logs
       WHERE id > ${afterId}
+        AND gas_used_wei IS NULL
+        AND ${gasExpr} IS NOT NULL
       ORDER BY id
       LIMIT ${batchSize}
     )
-    SELECT COUNT(*) AS n
-    FROM workflow_execution_logs
-    JOIN batch ON batch.id = workflow_execution_logs.id
-    WHERE (workflow_execution_logs.network IS NULL AND ${networkExpr} IS NOT NULL)
-      OR (workflow_execution_logs.gas_used_wei IS NULL AND ${gasExpr} IS NOT NULL)
+    SELECT COUNT(*) AS n FROM batch
   `);
   // postgres-js: db.execute resolves to the rows array.
   return Number(result[0]?.n ?? 0);
