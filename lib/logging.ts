@@ -21,7 +21,8 @@
  * logSystemError(ErrorCategory.INFRASTRUCTURE, "[Para] API key missing:", error, { component: "para-service" });
  */
 
-import { captureException } from "@sentry/nextjs";
+import { captureException, captureMessage } from "@sentry/nextjs";
+import { emitLogLine, type LogLevel, type LogPayload } from "@/lib/log/core";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { getWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
@@ -36,10 +37,30 @@ const HIGH_CARDINALITY_LABELS = new Set<string>([
   "execution_id",
   "org_id",
   "owner_id",
-  // KEEP-344: wallet addresses are unbounded across users. Console and Sentry
-  // still see this label; Prometheus does not.
+  // KEEP-344: wallet addresses are unbounded across users; never sent to
+  // Prometheus. KEEP-814: also scrubbed from Sentry extras (see SENTRY_PII_LABELS).
+  // They remain in the structured console line for incident debugging.
   "wallet_address",
 ]);
+
+/**
+ * Labels scrubbed from Sentry `extra` payloads (PII / sensitive). They are kept
+ * in the structured console line (captured by Loki, access-controlled) but not
+ * shipped to Sentry, which has a broader audience and longer retention.
+ */
+const SENTRY_PII_LABELS = new Set<string>(["wallet_address"]);
+
+function scrubSentryExtra(
+  labels: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(labels)) {
+    if (!SENTRY_PII_LABELS.has(k)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 function mergeLabels(
   labels: Record<string, string> | undefined
@@ -115,8 +136,7 @@ function buildErrPayload(
  * The human-readable `msg` field retains the original message and the
  * `[org:Sky][exec:xyz]` tag so `kubectl logs` greps still work.
  */
-function serializeStructuredLogLine(args: {
-  level: "warn" | "error";
+function buildStructuredPayload(args: {
   message: string;
   tag: string;
   fullLabels: Record<string, string>;
@@ -124,11 +144,10 @@ function serializeStructuredLogLine(args: {
   context: string;
   errorType: "user" | "system" | undefined;
   error: unknown;
-}): string {
+}): LogPayload {
   const errPayload = buildErrPayload(args.error);
 
-  const payload: Record<string, unknown> = {
-    level: args.level,
+  const payload: LogPayload = {
     msg: `${args.message}${args.tag}`,
     error_category: args.category,
     error_context: args.context,
@@ -144,7 +163,7 @@ function serializeStructuredLogLine(args: {
   if (errPayload) {
     payload.err = errPayload;
   }
-  return JSON.stringify(payload);
+  return payload;
 }
 
 /**
@@ -243,9 +262,9 @@ export function logUserError(
   // error_category, execution_id, org_slug as queryable labels via `| json`.
   // User errors are logged at warn level so they don't page on-call.
   const tag = buildLogTag(fullLabels);
-  console.warn(
-    serializeStructuredLogLine({
-      level: "warn",
+  emitLogLine(
+    "warn",
+    buildStructuredPayload({
       message,
       tag,
       fullLabels,
@@ -269,20 +288,11 @@ export function logUserError(
     }
   );
 
-  // Report to Sentry as warning-level (user errors are tracked but don't alert)
-  if (error !== undefined) {
-    const sentryError =
-      error instanceof Error ? error : new Error(String(error));
-    captureException(sentryError, {
-      level: "warning",
-      tags: {
-        error_category: category,
-        error_context: context,
-        error_type: "user",
-      },
-      extra: fullLabels,
-    });
-  }
+  // User errors are tracked via the Prometheus metric above and the structured
+  // console line; they are intentionally NOT sent to Sentry. They are expected
+  // and high-volume (invalid addresses, validation failures, external-API
+  // hiccups) and would drown actionable system errors and burn Sentry quota.
+  // Alert on the user-error metric rates in Grafana instead.
 }
 
 /**
@@ -317,9 +327,9 @@ export function logSystemError(
   // KEEP-545: emit structured JSON so Loki indexes error_type,
   // error_category, execution_id, org_slug as queryable labels via `| json`.
   const tag = buildLogTag(fullLabels);
-  console.error(
-    serializeStructuredLogLine({
-      level: "error",
+  emitLogLine(
+    "error",
+    buildStructuredPayload({
       message,
       tag,
       fullLabels,
@@ -350,7 +360,7 @@ export function logSystemError(
       error_category: category,
       error_context: context,
     },
-    extra: fullLabels,
+    extra: scrubSentryExtra(fullLabels),
   });
 }
 
@@ -396,9 +406,9 @@ export function logSystemWarn(
   // alerts that filter `error_type="system"` therefore won't re-trip on
   // these events. See logSystemWarn jsdoc for full reasoning.
   const tag = buildLogTag(fullLabels);
-  console.warn(
-    serializeStructuredLogLine({
-      level: "warn",
+  emitLogLine(
+    "warn",
+    buildStructuredPayload({
       message,
       tag,
       fullLabels,
@@ -416,7 +426,7 @@ export function logSystemWarn(
       error_category: category,
       error_context: context,
     },
-    extra: fullLabels,
+    extra: scrubSentryExtra(fullLabels),
   });
 }
 
@@ -444,8 +454,7 @@ export function logInternalAuthEvent(fields: {
   reason?: string;
   latencyMs?: number;
 }): void {
-  const payload: Record<string, unknown> = {
-    level: "info",
+  const payload: LogPayload = {
     msg: `[InternalAuth] ${fields.outcome} caller=${fields.caller} scheme=${fields.scheme} route=${fields.route}`,
     event: "internal_service_auth",
     outcome: fields.outcome,
@@ -469,5 +478,105 @@ export function logInternalAuthEvent(fields: {
   // Structured audit-log sink intended to land in Grafana Loki via stdout
   // capture; no Sentry capture by design (accepts would page on every
   // internal request; rejects are better caught by a Grafana threshold).
-  console.log(JSON.stringify(payload));
+  emitLogLine("info", payload);
+}
+
+/**
+ * Structured non-error logging helpers.
+ *
+ * Emit a single canonical JSON line (no Prometheus metric, no Sentry) for
+ * informational, lifecycle, and developer-debug logs. They merge the
+ * async-local workflow context (org/owner/workflow/execution ids) and append
+ * the human-readable `[org:..][exec:..]` tag, so breadcrumbs correlate with
+ * the error lines emitted by logUserError/logSystemError.
+ *
+ * Use logInfo for lifecycle/state-transition notes, logDebug for verbose
+ * troubleshooting traces (gated by LOG_LEVEL=debug), and logWarn for benign
+ * fallbacks that are not operational failures and do not warrant a metric.
+ */
+function logAtLevel(
+  level: LogLevel,
+  message: string,
+  labels?: Record<string, string>
+): void {
+  const fullLabels = mergeLabels(labels);
+  const tag = buildLogTag(fullLabels);
+  const payload: LogPayload = { msg: `${message}${tag}` };
+  for (const [k, v] of Object.entries(fullLabels)) {
+    if (v !== undefined && !(k in payload)) {
+      payload[k] = v;
+    }
+  }
+  emitLogLine(level, payload);
+}
+
+export function logDebug(
+  message: string,
+  labels?: Record<string, string>
+): void {
+  logAtLevel("debug", message, labels);
+}
+
+export function logInfo(
+  message: string,
+  labels?: Record<string, string>
+): void {
+  logAtLevel("info", message, labels);
+}
+
+export function logWarn(
+  message: string,
+  labels?: Record<string, string>
+): void {
+  logAtLevel("warn", message, labels);
+}
+
+/**
+ * Emit a KEEP-612 `security.*` detection signal: a Sentry event (for triage
+ * pivots) plus a canonical structured stdout line (for the Loki line-filter
+ * alerts in keeperhub-security-alerts.tf). Both transports are best-effort and
+ * self-guarded so a transport failure never escapes into the caller - these
+ * fire from auth hooks and the executor hot path, where a throw would change
+ * request/execution semantics.
+ *
+ * `name` is the event suffix without the `security.` prefix (e.g.
+ * "backstop_session_blocked"); the literal `security.<name>` string is what
+ * the Loki alerts match, so it must stay verbatim in the emitted line.
+ *
+ * Sentry capture is skipped entirely when `sentry` is omitted (some signals -
+ * e.g. content_scanner_error - are log-only by design).
+ */
+export function logSecurityEvent(
+  name: string,
+  fields?: Record<string, unknown>,
+  sentry?: {
+    level?: "warning" | "error";
+    tags?: Record<string, string>;
+    user?: { id?: string };
+    extra?: Record<string, unknown>;
+    fingerprint?: string[];
+  }
+): void {
+  const event = `security.${name}`;
+
+  if (sentry) {
+    try {
+      captureMessage(event, {
+        level: sentry.level ?? "warning",
+        ...(sentry.tags ? { tags: sentry.tags } : {}),
+        ...(sentry.user ? { user: sentry.user } : {}),
+        ...(sentry.extra ? { extra: sentry.extra } : {}),
+        ...(sentry.fingerprint ? { fingerprint: sentry.fingerprint } : {}),
+      });
+    } catch {
+      // observability must never escape into the caller
+    }
+  }
+
+  try {
+    const level: LogLevel = sentry?.level === "error" ? "error" : "warn";
+    emitLogLine(level, { msg: `[Security] ${name}`, event, ...fields });
+  } catch {
+    // emission must never escape into the caller
+  }
 }
