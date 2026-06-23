@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import {
   authClient,
   signIn,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/auth-client";
 import { refetchOrganizations } from "@/lib/refetch-organizations";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
+import { acceptWalletInvite } from "@/lib/wallet/invite-accept-client";
 
 type InvitationData = {
   id: string;
@@ -122,7 +124,11 @@ function LoadingState() {
   );
 }
 
-async function trySignUp(email: string, password: string, captchaToken?: string) {
+async function trySignUp(
+  email: string,
+  password: string,
+  captchaToken?: string
+) {
   const response = await signUp.email({
     email,
     password,
@@ -199,12 +205,20 @@ function AcceptDirectState({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const isWallet = isWalletEmail(invitation.email);
 
   const handleAccept = async () => {
     setSubmitting(true);
     setError("");
 
     try {
+      // Wallet (SIWE) invites are accepted by signing the invite challenge with
+      // the connected wallet; the email-match path doesn't apply to them.
+      if (isWallet) {
+        await acceptWalletInvite(invitation.id);
+        onSuccess();
+        return;
+      }
       const result = await acceptInvitation(invitation.id);
       if (!result.success) {
         setError(result.error || "Failed to accept invitation");
@@ -236,8 +250,12 @@ function AcceptDirectState({
 
         <div className="space-y-4">
           <div className="rounded-md bg-muted/50 p-3 text-center text-sm">
-            You&apos;re signed in as{" "}
-            <span className="font-medium">{invitation.email}</span>
+            {isWallet
+              ? "Sign the challenge with your wallet to join."
+              : "You're signed in as "}
+            {!isWallet && (
+              <span className="font-medium">{invitation.email}</span>
+            )}
           </div>
 
           {error && (
@@ -252,7 +270,12 @@ function AcceptDirectState({
             onClick={handleAccept}
           >
             {submitting && <Spinner className="mr-2 size-4" />}
-            {submitting ? "Joining..." : "Accept Invitation"}
+            {(() => {
+              if (submitting) {
+                return isWallet ? "Waiting for signature..." : "Joining...";
+              }
+              return isWallet ? "Sign to join" : "Accept Invitation";
+            })()}
           </Button>
         </div>
       </div>
@@ -502,6 +525,34 @@ function VerificationFormState({
             Back
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Logged-out wallet invite: the invitee can't use email/password signup, so
+// steer them to connect their wallet (SIWE). After connecting, their session
+// email matches the invite and the page re-renders into the sign-to-join state.
+function WalletConnectState({ invitation }: { invitation: InvitationData }) {
+  const { openAuthPrompt } = useAuthPrompt();
+  return (
+    <div className="pointer-events-auto flex min-h-screen items-center justify-center p-4">
+      <div className="w-full max-w-md space-y-6 rounded-lg border bg-card p-8 text-center">
+        <div className="space-y-2">
+          <h1 className="font-semibold text-2xl">
+            Join {invitation.organizationName}
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            {invitation.inviterName} invited you to join as{" "}
+            <span className="font-medium text-foreground">
+              {invitation.role}
+            </span>
+            . Connect your wallet to continue, then sign to join.
+          </p>
+        </div>
+        <Button className="w-full" onClick={() => openAuthPrompt()}>
+          Connect your wallet
+        </Button>
       </div>
     </div>
   );
@@ -861,6 +912,14 @@ export default function AcceptInvitePage() {
           currentEmail={session.user.email}
           invitation={invitation}
         />
+      </div>
+    );
+  }
+
+  if (isWalletEmail(invitation.email)) {
+    return (
+      <div data-page-state={pageState}>
+        <WalletConnectState invitation={invitation} />
       </div>
     );
   }

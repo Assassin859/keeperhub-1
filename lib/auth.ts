@@ -381,6 +381,16 @@ const plugins = [
     async sendInvitationEmail(data) {
       const inviteLink = `${getBaseURL()}/accept-invite/${data.id}`;
 
+      // Wallet (SIWE) invitees have a synthetic, non-deliverable email. Skip the
+      // email and instead mint the sign-to-join challenge they sign on accept.
+      if (isWalletEmail(data.email)) {
+        const { mintInviteChallenge } = await import(
+          "@/lib/org/wallet-invite-challenge"
+        );
+        await mintInviteChallenge(data.id);
+        return;
+      }
+
       console.log(`[Invitation] Sending to ${data.email}`, {
         inviter: data.inviter.user.name,
         organization: data.organization.name,
