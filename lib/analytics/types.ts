@@ -66,6 +66,8 @@ export type AnalyticsSummary = {
   successRate: number;
   avgDurationMs: number | null;
   totalGasWei: string;
+  /** Subset of gas paid by KeeperHub sponsorship over the range, in wei. */
+  sponsoredGasWei: string;
   activeRuns: number;
   previousPeriod: {
     totalRuns: number;
@@ -74,6 +76,7 @@ export type AnalyticsSummary = {
     cancelledCount: number;
     avgDurationMs: number | null;
     totalGasWei: string;
+    sponsoredGasWei: string;
   } | null;
 };
 

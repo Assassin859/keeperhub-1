@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema";
 import {
   directExecutions,
+  gasCreditUsage,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
@@ -196,6 +197,7 @@ async function computeAnalyticsSummary(
     activeDirects,
     previousPeriod,
     workflowGasWei,
+    sponsoredGasWei,
   ] = await Promise.all([
     getWorkflowCounts(organizationId, rangeStart, rangeEnd, projectId),
     skipDirect
@@ -218,6 +220,7 @@ async function computeAnalyticsSummary(
       projectId
     ),
     getWorkflowGasTotal(organizationId, rangeStart, rangeEnd, projectId),
+    getSponsoredGasTotal(organizationId, rangeStart, rangeEnd, projectId),
   ]);
 
   const totalRuns = workflowStats.total + directStats.total;
@@ -241,6 +244,7 @@ async function computeAnalyticsSummary(
     successRate,
     avgDurationMs,
     totalGasWei,
+    sponsoredGasWei,
     activeRuns: activeWorkflows + activeDirects,
     previousPeriod,
   };
@@ -372,20 +376,22 @@ async function getPreviousPeriodSummary(
   const { start, end } = getPreviousPeriodStart(range, customStart, customEnd);
   const skipDirect = Boolean(projectId);
 
-  const [workflowStats, directStats, workflowGasWei] = await Promise.all([
-    getWorkflowCounts(organizationId, start, end, projectId),
-    skipDirect
-      ? {
-          total: 0,
-          success: 0,
-          error: 0,
-          durationSum: 0,
-          durationCount: 0,
-          totalGasWei: "0",
-        }
-      : getDirectCounts(organizationId, start, end),
-    getWorkflowGasTotal(organizationId, start, end, projectId),
-  ]);
+  const [workflowStats, directStats, workflowGasWei, sponsoredGasWei] =
+    await Promise.all([
+      getWorkflowCounts(organizationId, start, end, projectId),
+      skipDirect
+        ? {
+            total: 0,
+            success: 0,
+            error: 0,
+            durationSum: 0,
+            durationCount: 0,
+            totalGasWei: "0",
+          }
+        : getDirectCounts(organizationId, start, end),
+      getWorkflowGasTotal(organizationId, start, end, projectId),
+      getSponsoredGasTotal(organizationId, start, end, projectId),
+    ]);
 
   return {
     totalRuns: workflowStats.total + directStats.total,
@@ -397,7 +403,38 @@ async function getPreviousPeriodSummary(
       workflowStats.durationCount + directStats.durationCount
     ),
     totalGasWei: addBigIntStrings(directStats.totalGasWei, workflowGasWei),
+    sponsoredGasWei,
   };
+}
+
+/**
+ * Sum of gas paid by KeeperHub sponsorship over the window (in wei), read
+ * straight from the gas_credit_usage ledger. Org-level only: sponsorship is not
+ * project-attributable, so a project-scoped view returns "0" rather than
+ * leaking org-wide totals under a project filter.
+ */
+async function getSponsoredGasTotal(
+  organizationId: string,
+  rangeStart: Date,
+  rangeEnd: Date,
+  projectId?: string
+): Promise<string> {
+  if (projectId) {
+    return "0";
+  }
+  const result = await db
+    .select({
+      totalWei: sql<string>`COALESCE(SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC)), 0)::text`,
+    })
+    .from(gasCreditUsage)
+    .where(
+      and(
+        eq(gasCreditUsage.organizationId, organizationId),
+        gte(gasCreditUsage.createdAt, rangeStart),
+        lt(gasCreditUsage.createdAt, rangeEnd)
+      )
+    );
+  return result[0]?.totalWei ?? "0";
 }
 
 function computeAvgDuration(sum: number, durationCount: number): number | null {

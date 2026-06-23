@@ -110,6 +110,7 @@ type KpiCardProps = {
   delta: number | null;
   invertDeltaColor?: boolean;
   iconClassName?: string;
+  secondaryValue?: string;
 };
 
 function KpiCard({
@@ -119,6 +120,7 @@ function KpiCard({
   delta,
   invertDeltaColor = false,
   iconClassName,
+  secondaryValue,
 }: KpiCardProps): ReactNode {
   return (
     <Card>
@@ -127,6 +129,9 @@ function KpiCard({
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">{label}</p>
             <p className="text-2xl font-bold tracking-tight">{value}</p>
+            {secondaryValue ? (
+              <p className="text-xs text-muted-foreground">{secondaryValue}</p>
+            ) : null}
             <DeltaDisplay delta={delta} invertColor={invertDeltaColor} />
           </div>
           <div
@@ -212,6 +217,10 @@ export function KpiCards(): ReactNode {
         delta: gasDelta,
         invertDeltaColor: true,
         iconClassName: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+        secondaryValue:
+          summary.sponsoredGasWei && summary.sponsoredGasWei !== "0"
+            ? `${formatGasAsEth(summary.sponsoredGasWei)} sponsored`
+            : undefined,
       },
     ] as const;
   }, [summary]);
@@ -251,6 +260,9 @@ export function KpiCards(): ReactNode {
           invertDeltaColor={card.invertDeltaColor}
           key={card.key}
           label={card.label}
+          secondaryValue={
+            "secondaryValue" in card ? card.secondaryValue : undefined
+          }
           value={card.value}
         />
       ))}

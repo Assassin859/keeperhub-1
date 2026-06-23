@@ -19,9 +19,7 @@ import {
   SPONSORSHIP_TESTNET_NAMES,
 } from "@/lib/web3/sponsorship-chains-meta";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
-
-const SPONSORED_MAINNETS = ["Ethereum", "Base", "Polygon", "Arbitrum"] as const;
-const SPONSORED_TESTNETS = ["Sepolia", "Base Sepolia", "Polygon Amoy"] as const;
+import { GasSponsorshipHistory } from "./gas-sponsorship-history";
 
 type OverageCharge = {
   periodStart: string;
@@ -414,11 +412,11 @@ function ExecutionUsageBar({
             </TooltipTrigger>
             <TooltipContent className="max-w-xs">
               <p>
-                Counts billable executions for the current calendar month
-                (since the 1st, UTC) and resets on the 1st. This is your plan
-                quota usage, so it differs from the Analytics page, which counts
-                all executions over the time range you select there (for
-                example, the last 30 days).
+                Counts billable executions for the current calendar month (since
+                the 1st, UTC) and resets on the 1st. This is your plan quota
+                usage, so it differs from the Analytics page, which counts all
+                executions over the time range you select there (for example,
+                the last 30 days).
               </p>
             </TooltipContent>
           </Tooltip>
@@ -538,6 +536,7 @@ function GasCreditsBar({
         />
       </div>
       <SponsoredNetworksRow />
+      <GasSponsorshipHistory />
       {isExhausted && (
         <p className="text-xs text-muted-foreground">
           Gas credits exhausted. Transactions will use your wallet's ETH for
@@ -572,7 +571,7 @@ function SponsoredNetworksRow(): React.ReactElement {
                 <p className="text-[10px] uppercase tracking-wide opacity-70">
                   Testnets
                 </p>
-                <p>{SPONSORED_TESTNETS.join(", ")}</p>
+                <p>{SPONSORSHIP_TESTNET_NAMES.join(", ")}</p>
               </div>
               <p className="opacity-70">
                 Transactions on other chains fall back to your wallet's native
@@ -582,7 +581,7 @@ function SponsoredNetworksRow(): React.ReactElement {
           </Tooltip>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {SPONSORED_MAINNETS.map((name) => (
+          {SPONSORSHIP_MAINNET_NAMES.map((name) => (
             <Badge className="text-[10px]" key={name} variant="secondary">
               {name}
             </Badge>
