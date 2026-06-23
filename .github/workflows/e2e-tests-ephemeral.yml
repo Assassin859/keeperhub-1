@@ -327,6 +327,13 @@ jobs:
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
 
+      # The credential-bundle suite executes real workflow step bundles, which
+      # the app dispatches to a code-execution sandbox. Without it the step
+      # endpoint 500s and the run never reaches a terminal status. Mirror the
+      # vitest job, which already runs a sandbox for its execution suites.
+      - name: Start code-execution sandbox
+        uses: ./.github/actions/start-sandbox
+
       - name: Start application
         uses: ./.github/actions/start-app
         with:
@@ -350,6 +357,11 @@ jobs:
           # suite signs in repeatedly as a few shared users). Scoped to this job.
           include_test_endpoints: "true"
           allow_test_endpoints: "true"
+          # Point the app's step-bundle execution at the sandbox started above.
+          # The Docker path needs these forwarded explicitly; the bare-metal path
+          # already hardcodes the same values.
+          sandbox_backend: remote
+          sandbox_url: http://localhost:8787
 
       - name: Run Playwright tests
         run: pnpm test:e2e
