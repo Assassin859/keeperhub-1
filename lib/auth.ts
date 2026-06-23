@@ -766,7 +766,9 @@ export const auth = betterAuth({
                 ErrorCategory.AUTH,
                 "[Auth] Failed to dispatch signup verification OTP",
                 error,
-                { email: user.email ?? "", userId: user.id }
+                // No email label - PII. userId is enough to investigate; the
+                // email is derivable from it if needed.
+                { userId: user.id }
               );
             }
           }

@@ -48,7 +48,7 @@ const HIGH_CARDINALITY_LABELS = new Set<string>([
  * in the structured console line (captured by Loki, access-controlled) but not
  * shipped to Sentry, which has a broader audience and longer retention.
  */
-const SENTRY_PII_LABELS = new Set<string>(["wallet_address"]);
+const SENTRY_PII_LABELS = new Set<string>(["wallet_address", "email"]);
 
 function scrubSentryExtra(
   labels: Record<string, string>
