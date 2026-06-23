@@ -649,6 +649,18 @@ jobs:
           ENCODED_DB_PASSWORD=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
           echo "::add-mask::$ENCODED_DB_PASSWORD"
           export ENCODED_DB_PASSWORD
+          # Detect the scheduler image tags currently running on staging. The -latest
+          # floating tags (schedule-latest, block-latest) are not reliably maintained;
+          # using the pinned tag from the live staging deployment guarantees the image
+          # exists and is known-good.
+          SCHEDULE_IMAGE_TAG=$(kubectl get deployment keeperhub-schedule-common \
+            -n keeperhub \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+          BLOCK_IMAGE_TAG=$(kubectl get deployment keeperhub-block-common \
+            -n keeperhub \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+          echo "Scheduler image tags: schedule=${SCHEDULE_IMAGE_TAG}, block=${BLOCK_IMAGE_TAG}"
+          export SCHEDULE_IMAGE_TAG BLOCK_IMAGE_TAG
           envsubst < deploy/pr-environment/values.template.yaml > ${{ github.workspace }}/values-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/scheduler-dispatcher.template.yaml > ${{ github.workspace }}/schedule-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/block-dispatcher.template.yaml > ${{ github.workspace }}/block-pr-${{ env.PR_NUMBER }}.yaml
