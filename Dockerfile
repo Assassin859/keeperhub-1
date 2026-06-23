@@ -181,6 +181,7 @@ ENV NODE_ENV=production
 FROM scheduler-base AS schedule-dispatcher
 COPY --link --from=source /app/keeperhub-scheduler/schedule-dispatcher/ ./schedule-dispatcher/
 COPY --link --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --link --from=source /app/keeperhub-scheduler/log-facade.ts ./log-facade.ts
 COPY --link --from=source /app/keeperhub-scheduler/package.json ./keeperhub-scheduler/package.json
 COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./keeperhub-scheduler/tsconfig.json
 COPY --link --from=source /app/keeperhub-scheduler/package.json ./package.json
@@ -194,6 +195,7 @@ CMD ["tsx", "schedule-dispatcher/index.ts"]
 FROM scheduler-base AS block-dispatcher
 COPY --link --from=source /app/keeperhub-scheduler/block-dispatcher/ ./block-dispatcher/
 COPY --link --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --link --from=source /app/keeperhub-scheduler/log-facade.ts ./log-facade.ts
 COPY --link --from=source /app/keeperhub-scheduler/package.json ./package.json
 COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
 RUN chown -R scheduler:scheduler /app

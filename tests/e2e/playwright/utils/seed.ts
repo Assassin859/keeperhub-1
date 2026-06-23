@@ -59,11 +59,19 @@ async function hashPassword(password: string): Promise<string> {
 const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 const ID_LENGTH = 21;
 
+// Rejection sampling avoids modulo bias: 256 is not a multiple of 36, so
+// mapping raw bytes with `% 36` would over-represent the first four symbols.
+// 252 = floor(256 / 36) * 36 is the largest unbiased cutoff; reject above it.
+const ID_UNBIASED_CUTOFF = 252;
+
 function generateId(): string {
-  const bytes = randomBytes(ID_LENGTH);
   let id = "";
-  for (let i = 0; i < ID_LENGTH; i++) {
-    id += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
+  while (id.length < ID_LENGTH) {
+    const byte = randomBytes(1)[0];
+    if (byte >= ID_UNBIASED_CUTOFF) {
+      continue;
+    }
+    id += ID_ALPHABET[byte % ID_ALPHABET.length];
   }
   return id;
 }

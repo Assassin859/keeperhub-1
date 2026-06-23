@@ -38,13 +38,19 @@ vi.mock("@/lib/db/schema-extensions", () => ({
   },
 }));
 
-const { mockLogSystemError } = vi.hoisted(() => ({
-  mockLogSystemError: vi.fn(),
-}));
+const { mockLogSystemError, mockLogSystemWarn, mockLogWarn } = vi.hoisted(
+  () => ({
+    mockLogSystemError: vi.fn(),
+    mockLogSystemWarn: vi.fn(),
+    mockLogWarn: vi.fn(),
+  })
+);
 
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { INFRASTRUCTURE: "infrastructure" },
   logSystemError: mockLogSystemError,
+  logSystemWarn: mockLogSystemWarn,
+  logWarn: mockLogWarn,
 }));
 
 import {
@@ -284,10 +290,6 @@ describe("NonceManager", () => {
         }),
       });
 
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
-        // suppress test output
-      });
-
       const manager = new NonceManager();
       const provider = createMockProvider();
 
@@ -298,12 +300,11 @@ describe("NonceManager", () => {
         provider as unknown as import("ethers").Provider
       );
 
-      const takeoverLogged = warnSpy.mock.calls.some((call) =>
-        String(call[0] ?? "").includes("Lock takeover")
+      // Lock takeover is a system-level smoke signal: logSystemWarn(message).
+      const takeoverLogged = mockLogSystemWarn.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("Lock takeover")
       );
       expect(takeoverLogged).toBe(true);
-
-      warnSpy.mockRestore();
     });
   });
 

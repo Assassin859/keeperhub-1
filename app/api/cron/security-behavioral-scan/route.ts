@@ -34,11 +34,11 @@
  * to a single page), not from this endpoint.
  */
 
-import { captureMessage } from "@sentry/nextjs";
 import { and, eq, gt, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users, workflowExecutions } from "@/lib/db/schema";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
+import { logSecurityEvent } from "@/lib/logging";
 
 export const dynamic = "force-dynamic";
 
@@ -104,9 +104,17 @@ async function scanNewAccountFirstWorkflow(
     // executionId so those duplicates collapse into a single Sentry issue
     // (Loki already dedupes the page); the row's full detail still rides on
     // each event's tags/extra for triage.
-    try {
-      captureMessage("security.behavioral.new_account_first_workflow", {
-        level: "warning",
+    logSecurityEvent(
+      "behavioral.new_account_first_workflow",
+      {
+        userId: row.userId,
+        workflowId: row.workflowId,
+        executionId: row.executionId,
+        triggerSource: row.triggerSource,
+        triggeredByCountry: row.triggeredByCountry,
+        ageSecondsSinceSignup: ageSeconds,
+      },
+      {
         fingerprint: [
           "security.behavioral.new_account_first_workflow",
           row.executionId,
@@ -122,20 +130,7 @@ async function scanNewAccountFirstWorkflow(
           triggeredByCountry: row.triggeredByCountry,
           ageSecondsSinceSignup: ageSeconds,
         },
-      });
-    } catch {
-      // swallow; observability must not interrupt the scan
-    }
-    console.warn(
-      JSON.stringify({
-        event: "security.behavioral.new_account_first_workflow",
-        userId: row.userId,
-        workflowId: row.workflowId,
-        executionId: row.executionId,
-        triggerSource: row.triggerSource,
-        triggeredByCountry: row.triggeredByCountry,
-        ageSecondsSinceSignup: ageSeconds,
-      })
+      }
     );
   }
 
@@ -178,21 +173,15 @@ export async function GET(request: Request): Promise<Response> {
     // observable as its own event rather than a bare job-failure alert, then
     // surface the 500. Mirrors content-scanner's security.content_scanner_error.
     const message = error instanceof Error ? error.message : String(error);
-    try {
-      captureMessage("security.behavioral.scan_error", {
+    const durationMs = Date.now() - startedAt;
+    logSecurityEvent(
+      "behavioral.scan_error",
+      { message, durationMs },
+      {
         level: "error",
         tags: { security: "behavioral.scan_error" },
-        extra: { message, durationMs: Date.now() - startedAt },
-      });
-    } catch {
-      // never let the failure-signal emission mask the original error
-    }
-    console.error(
-      JSON.stringify({
-        event: "security.behavioral.scan_error",
-        message,
-        durationMs: Date.now() - startedAt,
-      })
+        extra: { message, durationMs },
+      }
     );
     return Response.json({ error: "scan_failed" }, { status: 500 });
   }

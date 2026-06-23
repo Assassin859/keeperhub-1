@@ -10,6 +10,9 @@ on:
     branches:
       - staging
 
+permissions:
+  contents: read
+
 jobs:
   check-cleanup:
     runs-on: ubuntu-latest
@@ -37,6 +40,9 @@ jobs:
           echo "pr-number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
   cleanup:
+    permissions:
+      contents: read
+      pull-requests: write # actions/github-script posts PR comments
     needs: check-cleanup
     if: needs.check-cleanup.outputs.should-cleanup == 'true'
     runs-on: ubuntu-latest

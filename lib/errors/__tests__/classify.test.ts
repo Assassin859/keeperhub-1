@@ -1,6 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { classifyExecutionError } from "@/lib/errors/classify";
+import {
+  classifyExecutionError,
+  isDefaultClassification,
+} from "@/lib/errors/classify";
 import { ErrorCategory } from "@/lib/logging";
+
+describe("isDefaultClassification", () => {
+  it("is true for null, empty, or unmatched messages (the catch-all default)", () => {
+    expect(isDefaultClassification(classifyExecutionError(null))).toBe(true);
+    expect(isDefaultClassification(classifyExecutionError(""))).toBe(true);
+    expect(
+      isDefaultClassification(
+        classifyExecutionError("something no rule matches")
+      )
+    ).toBe(true);
+  });
+
+  it("is false for a matched user rule", () => {
+    expect(
+      isDefaultClassification(
+        classifyExecutionError("Unresolved template reference {{x}}")
+      )
+    ).toBe(false);
+  });
+
+  it("is false for a matched system rule", () => {
+    expect(
+      isDefaultClassification(classifyExecutionError("Execution timed out"))
+    ).toBe(false);
+  });
+});
 
 describe("classifyExecutionError", () => {
   describe("empty / null / unknown inputs default to system workflow_engine", () => {

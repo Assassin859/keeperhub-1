@@ -5,14 +5,18 @@ import { init } from "@sentry/nextjs";
 
 const { SENTRY_DSN, SENTRY_ENVIRONMENT } = process.env;
 
+// Env-driven performance-trace sampling; defaults to 0.1 (errors are always
+// captured regardless). Override per environment via SENTRY_TRACES_SAMPLE_RATE.
+const tracesEnv = process.env.SENTRY_TRACES_SAMPLE_RATE;
+const tracesSampleRate =
+  tracesEnv && Number.isFinite(Number(tracesEnv)) ? Number(tracesEnv) : 0.1;
+
 if (SENTRY_DSN) {
   init({
     dsn: SENTRY_DSN,
     environment: SENTRY_ENVIRONMENT,
 
-    // Define how likely traces are sampled. Adjust this value in production, or use tracesSampler for greater control.
-    // 1 = 100% of traces are sent
-    tracesSampleRate: 1,
+    tracesSampleRate,
 
     // Enable logs to be sent to Sentry
     enableLogs: true,

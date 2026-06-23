@@ -6,6 +6,7 @@ import {
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { getPlanLimits, PLANS, parsePlanName, parseTierKey } from "./plans";
@@ -155,7 +156,11 @@ export async function billOverageForOrg(
     return { billed: true, overageCount, totalChargeCents };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(LOG_PREFIX, "Failed to create invoice item:", message);
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `${LOG_PREFIX} Failed to create invoice item`,
+      error
+    );
 
     await db
       .update(overageBillingRecords)

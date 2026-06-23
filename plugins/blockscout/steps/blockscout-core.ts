@@ -93,7 +93,7 @@ export async function blockscoutGet<T>(
   try {
     // SSRF guard: the instance URL is user-configurable (BLOCKSCOUT_API_URL on
     // the connection), so validate it before any outbound request.
-    // `assertUrlIsPublic` is always-on -- it ignores `SAFE_FETCH_ENFORCE`/
+    // `assertUrlIsPublic` is always-on -- it ignores `SAFE_FETCH_SHADOW`/
     // shadow mode -- so an instance URL pointing at an internal address is
     // blocked here even where `safeFetch` would only log-and-continue.
     // Mirrors plugins/webhook/steps/send-webhook.ts.

@@ -556,11 +556,15 @@ describe.skipIf(shouldSkip)("Graceful Shutdown E2E", () => {
       // If exit code 0, the runner successfully recorded the error
       // If exit code 1, the runner may have crashed before updating the DB
       if (result.exitCode === 0) {
-        expect(execution.status).toBe("error");
+        // KEEP-853: a SIGTERM termination classifies as a system failure, so the
+        // run lands as system_error (error covers a user-classified failure).
+        expect(["error", "system_error"]).toContain(execution.status);
         expect(execution.completedAt).not.toBeNull();
       } else {
         // Runner crashed — status may still be pending
-        expect(["pending", "running", "error"]).toContain(execution.status);
+        expect(["pending", "running", "error", "system_error"]).toContain(
+          execution.status
+        );
       }
     }, 60_000);
   });

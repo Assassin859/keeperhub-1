@@ -652,7 +652,9 @@ describe.skipIf(SKIP_INFRA_TESTS)(
           expect(result.exitCode).toBe(0);
 
           const execution = await getExecutionResult(executionId);
-          expect(execution?.status).toBe("error");
+          // KEEP-853: an RPC/network failure classifies as a system failure, so
+          // the run may land as system_error rather than error.
+          expect(["error", "system_error"]).toContain(execution?.status);
         } finally {
           // Cleanup disabled chain
           await db

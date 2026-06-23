@@ -4,6 +4,33 @@
 
 The unified logging system ensures 100% metric coverage for all errors and warnings by providing two core functions that automatically log to console AND emit Prometheus metrics.
 
+## Architecture (KEEP-814 unification)
+
+Every service emits a single canonical log-line shape so Grafana Loki `| json`
+works uniformly across the app and all satellites:
+
+```
+{ "level": "debug|info|warn|error", "ts": "<ISO-8601>", "msg": "...", ...fields }
+```
+
+- **One writer** - `lib/log/core.ts` `emitLogLine(level, payload)` stamps
+  `level`+`ts`, JSON-stringifies a single line, and writes via the original
+  (unpatched) console (`rawConsole`). It respects `LOG_LEVEL`.
+- **Facade** - `lib/logger.ts` patches `console.*` so any stray
+  `console.log/info/debug/warn/error` is normalized into the canonical JSON
+  shape instead of a freeform prefixed string. Loaded once at startup via
+  `instrumentation.ts`. (Previously it prepended `[ts] [LEVEL]` text, which
+  broke `| json`; it now *produces* JSON.)
+- **Helpers** (`lib/logging.ts`):
+  - `logUserError` / `logSystemError` - errors (JSON + Prometheus metric + Sentry where applicable).
+  - `logSystemWarn` - system warning (JSON + Sentry warning, no metric).
+  - `logInfo` / `logWarn` / `logDebug` - structured non-error logs (JSON only, no metric, no Sentry); merge async-local workflow context.
+  - `logSecurityEvent(name, fields?, sentry?)` - KEEP-612 `security.*` detection signals (canonical JSON line + optional Sentry `captureMessage`), self-guarded.
+  - `logInternalAuthEvent`, `lib/mcp/logging.ts` `logMcpEvent` - structured audit/event lines.
+- **Enforcement** - Biome `suspicious/noConsole` with `allow: ["log","info","debug"]` makes raw `console.warn`/`console.error` a lint error in server code, forcing failures through the structured helpers. Client (browser), tests, the logging infra, and the satellite packages are exempted in `biome.jsonc` `overrides`/`files`.
+- **Sentry** - `tracesSampleRate` is env-driven (`SENTRY_TRACES_SAMPLE_RATE` / `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE`, default `0.1`; errors are always captured). `logUserError` no longer sends to Sentry (expected/high-volume; tracked via metric + log). `wallet_address` is scrubbed from Sentry `extra` (kept only in the console line).
+- **Satellites** - `keeperhub-events` (the `Logger` class), `keeperhub-scheduler`, `keeperhub-executor`, and `keeperhub-metrics-collector` are separate packages that cannot import `@/lib/*`. They emit the same canonical schema via a vendored `log-facade.ts` (console patch, imported first at each entrypoint) or, for event-tracker, the updated `Logger`. Consistency is guaranteed by the shared schema, not shared code.
+
 ## API
 
 ### Core Functions
@@ -27,9 +54,10 @@ Use for errors caused by user actions or external factors (not system failures).
 - `ErrorCategory.TRANSACTION` - Transaction failures, gas estimation errors, nonce issues
 
 **Behavior:**
-- Logs to console using `console.warn` (user errors don't wake up DevOps)
+- Emits a canonical JSON line at `warn` level via `emitLogLine` (user errors don't wake up DevOps)
 - Emits Prometheus metric with `error_type: "user"`
 - Extracts context from message prefix (e.g., `"[Discord]"` becomes `"Discord"`)
+- Does NOT report to Sentry (KEEP-814): user errors are expected and high-volume; alert on the metric rate in Grafana instead
 
 #### logSystemError
 ```typescript
@@ -45,8 +73,9 @@ Use for errors caused by system failures (critical infrastructure issues).
 - `ErrorCategory.WORKFLOW_ENGINE` - Workflow execution failures, step resolution errors
 
 **Behavior:**
-- Logs to console using `console.error` (critical failures)
+- Emits a canonical JSON line at `error` level via `emitLogLine` (critical failures)
 - Emits Prometheus metric with `error_type: "system"`
+- Reports to Sentry (`wallet_address` scrubbed from `extra`)
 - Extracts context from message prefix
 
 ## Usage Examples

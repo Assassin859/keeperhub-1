@@ -557,7 +557,13 @@ export const workflowExecutions = pgTable(
     status: text("status")
       .notNull()
       .$type<
-        "pending" | "running" | "success" | "error" | "cancelled" | "phantom"
+        | "pending"
+        | "running"
+        | "success"
+        | "error"
+        | "cancelled"
+        | "phantom"
+        | "system_error"
       >(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<Record<string, any>>(),
@@ -1005,7 +1011,9 @@ export const explorerConfigs = pgTable(
     explorerApiUrl: text("explorer_api_url"), // Base URL for API calls (ABI, balance, etc.)
     backupExplorerApiType: text("backup_explorer_api_type"), // fallback API type if primary fails
     backupExplorerApiUrl: text("backup_explorer_api_url"), // fallback API URL if primary fails
-    backupExplorerApiKeyNeeded: boolean("backup_explorer_api_key_needed").notNull().default(false),
+    backupExplorerApiKeyNeeded: boolean("backup_explorer_api_key_needed")
+      .notNull()
+      .default(false),
     backupExplorerApiKey: text("backup_explorer_api_key"), // API key for backup provider (required when backupExplorerApiKeyNeeded is true)
     backupExplorerUrl: text("backup_explorer_url"), // display URL for backup provider (e.g. "https://blockscout.com")
     backupExplorerTxPath: text("backup_explorer_tx_path"), // tx link path template for backup provider

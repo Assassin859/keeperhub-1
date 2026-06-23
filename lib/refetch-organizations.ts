@@ -5,6 +5,8 @@
  * without having direct access to the React hooks.
  */
 
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+
 type RefetchCallback = () => void;
 
 const refetchCallbacks: Set<RefetchCallback> = new Set();
@@ -35,7 +37,11 @@ export function refetchOrganizations(): void {
     try {
       callback();
     } catch (error) {
-      console.error("[refetchOrganizations] Error in callback:", error);
+      logSystemError(
+        ErrorCategory.UNKNOWN,
+        "[refetchOrganizations] Error in callback",
+        error
+      );
     }
   }
 }

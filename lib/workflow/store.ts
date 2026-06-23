@@ -3,6 +3,7 @@ import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
+import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/workflow/editor/template-helpers";
 
@@ -219,7 +220,11 @@ export const autosaveAtom = atom(
         // Leave hasUnsavedChangesAtom set (only cleared on success) and tell the
         // user: a rejected save - e.g. the server refusing an out-of-org
         // connection reference - must not fail silently.
-        console.warn("Autosave failed:", error);
+        logUserError(
+          ErrorCategory.VALIDATION,
+          "[Workflow] Autosave failed",
+          error
+        );
         toast.error("Couldn't save workflow changes. Please try again.");
       } finally {
         await new Promise((resolve) => setTimeout(resolve, 800));
@@ -682,7 +687,11 @@ export const loadWorkflowAtom = atom(null, async (get, set) => {
         });
     }
   } catch (error) {
-    console.error("Failed to load workflow:", error);
+    logSystemError(
+      ErrorCategory.UNKNOWN,
+      "[Workflow] Failed to load workflow",
+      error
+    );
   } finally {
     set(isLoadingAtom, false);
   }
@@ -708,7 +717,11 @@ export const saveWorkflowAsAtom = atom(
       });
       return workflow;
     } catch (error) {
-      console.error("Failed to save workflow:", error);
+      logSystemError(
+        ErrorCategory.UNKNOWN,
+        "[Workflow] Failed to save workflow",
+        error
+      );
       throw error;
     }
   }

@@ -177,7 +177,7 @@ export async function httpRequest(
   try {
     // SSRF guard: reject private/loopback/link-local/metadata destinations
     // before any outbound request. `assertUrlIsPublic` is always-on -- it
-    // ignores `SAFE_FETCH_ENFORCE`/shadow mode -- so a user-supplied endpoint
+    // ignores `SAFE_FETCH_SHADOW`/shadow mode -- so a user-supplied endpoint
     // pointing at an internal address (e.g.
     // http://169.254.169.254/latest/meta-data/) is blocked here even in
     // environments where `safeFetch` itself would only log-and-continue.

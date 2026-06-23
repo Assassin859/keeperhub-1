@@ -1,4 +1,3 @@
-import { captureMessage } from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import {
@@ -7,6 +6,7 @@ import {
 } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
+import { logSecurityEvent } from "@/lib/logging";
 import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export type OAuthTokenPayload = {
@@ -190,26 +190,21 @@ export async function authenticateOAuthToken(
     // still-valid MCP OAuth JWT hitting MCP endpoints is exactly the
     // anomaly the detection layer wants surfaced. Best-effort; never
     // blocks the 401.
-    try {
-      captureMessage("security.deactivated_login_attempt", {
-        level: "warning",
+    logSecurityEvent(
+      "deactivated_login_attempt",
+      {
+        surface: "mcp_oauth",
+        userId: payload.sub,
+        organizationId: payload.org,
+      },
+      {
         tags: {
           security: "deactivated_login_attempt",
           surface: "mcp_oauth",
         },
         user: { id: payload.sub },
         extra: { organizationId: payload.org },
-      });
-    } catch {
-      // swallow; observability must not affect the auth response
-    }
-    console.warn(
-      JSON.stringify({
-        event: "security.deactivated_login_attempt",
-        surface: "mcp_oauth",
-        userId: payload.sub,
-        organizationId: payload.org,
-      })
+      }
     );
     return {
       authenticated: false,

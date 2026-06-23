@@ -46,6 +46,9 @@ on:
         default: ""
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   should-run:
     runs-on: ubuntu-latest
@@ -208,7 +211,7 @@ jobs:
           ai_prompt_enabled: "true"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           ai_model: claude-3-5-haiku-20241022
-          safe_fetch_enforce: "false"
+          safe_fetch_shadow: "true"
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
         run: |
@@ -260,8 +263,8 @@ jobs:
           SANDBOX_URL: http://localhost:8787
           # safe-roles-orchestrator-fork calls reconcileSafeRoleFromChain
           # in-process, so the vitest process (not just the app) needs shadow-mode
-          # SSRF (existing per-env opt-out) to reach the localhost anvil fork.
-          SAFE_FETCH_ENFORCE: "false"
+          # SSRF (dev/CI-only opt-in) to reach the localhost anvil fork.
+          SAFE_FETCH_SHADOW: "true"
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
