@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
 import {
   createTimer,
   getMetricsCollector,
@@ -15,6 +16,13 @@ import { noopMetricsCollector } from "@/lib/metrics/collectors/noop";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { createMockMetricsCollector } from "../mocks/metrics";
 
+// The console metrics collector writes via lib/log/core's rawConsole (the
+// original console methods, bypassing the facade), so spies target rawConsole.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
+
 describe("Metrics Collectors", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -28,7 +36,7 @@ describe("Metrics Collectors", () => {
 
   describe("consoleMetricsCollector", () => {
     it("should output JSON for recordLatency", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -48,7 +56,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should output JSON for incrementCounter", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -66,7 +74,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should increment counter with custom value", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -77,7 +85,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should output JSON for recordError with Error object", () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "error").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -100,7 +108,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should output JSON for recordWarning at warn level", () => {
-      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -122,7 +130,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should output JSON for recordError with ErrorContext", () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "error").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -140,7 +148,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should output JSON for setGauge", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -157,7 +165,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should handle labels with different value types", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -178,7 +186,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should handle undefined labels", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -221,10 +229,10 @@ describe("Metrics Collectors", () => {
     });
 
     it("should not output to console", () => {
-      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const infoSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {
+      const errorSpy = vi.spyOn(raw, "error").mockImplementation(() => {
         // noop - suppress console output
       });
 
@@ -240,7 +248,7 @@ describe("Metrics Collectors", () => {
 
   describe("createPrefixedConsoleCollector", () => {
     it("should prefix all metric names", () => {
-      const consoleSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      const consoleSpy = vi.spyOn(raw, "info").mockImplementation(() => {
         // noop - suppress console output
       });
       const prefixed = createPrefixedConsoleCollector("myapp");

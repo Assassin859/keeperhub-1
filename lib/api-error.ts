@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
+import { ErrorCategory, logSystemError, logWarn } from "@/lib/logging";
 
 /**
  * Standardized API error handler
  *
- * Logs the error with context and returns a consistent JSON response.
- * All errors flow through the logger which adds timestamps and
- * source locations (in staging with LOG_LEVEL=debug).
+ * Emits a canonical structured log line and returns a consistent JSON
+ * response. 5xx are treated as system failures (Prometheus metric + Sentry
+ * error) so they surface on dashboards and alerts; 4xx are logged at warn with
+ * no metric/Sentry so routine client errors do not trip system-error alerts or
+ * page on-call.
  *
  * @param error - The caught error
  * @param context - Description of what operation failed (e.g., "Failed to get workflows")
@@ -18,9 +21,14 @@ export function apiError(
 ): NextResponse {
   const message = error instanceof Error ? error.message : String(error);
   const rootCause = getRootCause(error);
-  const stack = error instanceof Error ? error.stack : undefined;
 
-  console.error(`[API] ${context}:`, message, stack ?? "");
+  if (status >= 500) {
+    logSystemError(ErrorCategory.UNKNOWN, `[API] ${context}`, error, {
+      status_code: String(status),
+    });
+  } else {
+    logWarn(`[API] ${context}: ${message}`, { status_code: String(status) });
+  }
 
   return NextResponse.json(
     {

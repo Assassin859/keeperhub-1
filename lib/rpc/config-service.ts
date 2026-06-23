@@ -12,6 +12,7 @@ import {
   type UserRpcPreference,
   userRpcPreferences,
 } from "@/lib/db/schema";
+import { logWarn } from "@/lib/logging";
 import type { ResolvedRpcConfig } from "./types";
 
 /**
@@ -135,7 +136,7 @@ function applyPrivateMempoolSwap(
   }
 
   if (!(baseConfig.usePrivateMempoolRpc && baseConfig.privateRpcUrl)) {
-    console.warn(
+    logWarn(
       `[rpc-config] Private mempool requested for chain ${baseConfig.chainId} ` +
         "but chain does not support it; proceeding with public mempool"
     );

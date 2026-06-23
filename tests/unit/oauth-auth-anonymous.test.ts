@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
+
+// logSecurityEvent writes the structured line via lib/log/core's rawConsole.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
 
 vi.mock("server-only", () => ({}));
 
@@ -63,7 +70,9 @@ describe("authenticateOAuthToken -- anonymous principal handling", () => {
 
     expect(result.authenticated).toBe(false);
     expect(result.statusCode).toBe(403);
-    expect(result.error).toBe("Anonymous accounts cannot use API access tokens");
+    expect(result.error).toBe(
+      "Anonymous accounts cannot use API access tokens"
+    );
   });
 
   it("rejects a token whose subject only matches the anonymous name/email shape", async () => {
@@ -88,7 +97,7 @@ describe("authenticateOAuthToken -- anonymous principal handling", () => {
   });
 
   it("emits the anonymous-block detection signal", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    const warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // assert against the spy, suppress noise
     });
     const token = await createAccessToken({

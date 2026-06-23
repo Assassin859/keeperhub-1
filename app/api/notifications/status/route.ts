@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { isBillingLimitReached } from "@/lib/billing/limit-status";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 
 export type NotificationType = "billing_limit_reached";
@@ -41,7 +42,8 @@ export async function GET(
 
     return NextResponse.json({ unreadCount: types.length, types });
   } catch (error) {
-    console.warn(
+    logSystemWarn(
+      ErrorCategory.INFRASTRUCTURE,
       "[notifications-status] degraded; returning empty response",
       error
     );

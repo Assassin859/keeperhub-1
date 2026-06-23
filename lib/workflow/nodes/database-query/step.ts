@@ -16,6 +16,7 @@ import {
   getPostgresConnectionOptions,
   type PostgresSslOption,
 } from "@/lib/db/connection-utils";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   type StepInput,
   withStepLogging,
@@ -169,7 +170,11 @@ async function databaseQuery(
       count: Array.isArray(result) ? result.length : 0,
     };
   } catch (error) {
-    console.error("[Database Query] Raw connection error:", error);
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Database Query] Raw connection error",
+      error
+    );
     return {
       success: false,
       error: `Database query failed: ${getDatabaseErrorMessage(error)}`,

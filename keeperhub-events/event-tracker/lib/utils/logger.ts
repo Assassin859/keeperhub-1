@@ -1,3 +1,24 @@
+/**
+ * Event-tracker structured logger.
+ *
+ * Emits canonical single-line JSON ({ level, ts, msg, ... }) matching the
+ * KeeperHub app's logging contract (lib/log/core.ts) so Grafana Loki can query
+ * across the app and all satellite services uniformly via `| json`. Previously
+ * this emitted multi-line pretty-printed JSON (`log :: <ts> - {...}`), which
+ * broke line-based aggregation. Kept dependency-free: this is a separate
+ * package and cannot import the app's `@/lib/*`.
+ */
+
+type LogLevel = "info" | "warn" | "error";
+
+function safeStringify(data: unknown): string {
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return String(data);
+  }
+}
+
 export class Logger {
   private logger: Console;
 
@@ -5,26 +26,36 @@ export class Logger {
     this.logger = loggerInstance;
   }
 
+  private emit(level: LogLevel, message: unknown): void {
+    const msg = typeof message === "string" ? message : safeStringify(message);
+    const line = JSON.stringify({
+      level,
+      ts: new Date().toISOString(),
+      msg,
+    });
+    if (level === "error") {
+      this.logger.error(line);
+    } else if (level === "warn") {
+      this.logger.warn(line);
+    } else {
+      this.logger.log(line);
+    }
+  }
+
   log(message: unknown): void {
-    this.logger.log(
-      `log :: ${new Date().toISOString()} - ${this.stringify(message)}`,
-    );
+    this.emit("info", message);
   }
 
   error(message: unknown): void {
-    this.logger.error(
-      `error :: ${new Date().toISOString()} - ${this.stringify(message)}`,
-    );
+    this.emit("error", message);
   }
 
   warn(message: unknown): void {
-    this.logger.warn(
-      `warn :: ${new Date().toISOString()} - ${this.stringify(message)}`,
-    );
+    this.emit("warn", message);
   }
 
   stringify(data: unknown): string {
-    return JSON.stringify(data, null, 2);
+    return safeStringify(data);
   }
 
   formatAddress(address: string): string {

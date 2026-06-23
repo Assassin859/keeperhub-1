@@ -21,6 +21,9 @@
  *   JOB_ACTIVE_DEADLINE - Max Job execution time in seconds (default: 300)
  */
 
+// Normalize all console.* output in this process to canonical JSON. Must be
+// the first import so the patch installs before any module logs.
+import "./log-facade";
 import { createServer, type IncomingMessage } from "node:http";
 import {
   DeleteMessageCommand,
