@@ -15,6 +15,9 @@
  *   HEALTH_PORT - Health check server port (default: 3060)
  */
 
+// Normalize all console.* output in this process to canonical JSON. Must be
+// the first import so the patch installs before any module logs.
+import "../log-facade.js";
 import express from "express";
 import { KEEPERHUB_URL, SQS_QUEUE_URL } from "../lib/config.js";
 import { dispatch } from "./dispatch.js";

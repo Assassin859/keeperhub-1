@@ -12,6 +12,9 @@
  *   PORT          HTTP port for /metrics and /health (default 9090)
  *   DATABASE_URL  Postgres connection (consumed by lib/db)
  */
+// Normalize all console.* output in this process to canonical JSON. Must be
+// the first import so the patch installs before any module logs.
+import "./log-facade";
 import type { Server } from "node:http";
 import { buildServer } from "./server";
 
