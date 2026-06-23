@@ -1020,6 +1020,86 @@ describe("validateWorkflowActionConfigs", () => {
       );
     });
   });
+
+  describe("draft state (Hub 'Use in Workflow' flow)", () => {
+    it("accepts a protocol action node with only actionType set", () => {
+      const result = validateWorkflowActionConfigs([
+        { id: "n-1", type: "action", data: { type: "action", config: { actionType: "aave-v3/supply" } } },
+      ]);
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts a protocol action node with actionType and _protocolMeta only", () => {
+      const protocolMeta = JSON.stringify({
+        protocolSlug: "aave-v3",
+        contractKey: "pool",
+        functionName: "supply",
+        actionType: "write",
+      });
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: { actionType: "aave-v3/supply", _protocolMeta: protocolMeta },
+          },
+        },
+      ]);
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts actionType combined with only reserved keys (e.g. integrationId)", () => {
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: { actionType: "discord/send-message", integrationId: "integ-abc" },
+          },
+        },
+      ]);
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("resumes required-field validation once any user param is present", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("aave-v3/supply", { network: "1" }),
+      ]);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "MISSING_REQUIRED_FIELD", field: "asset" }),
+          expect.objectContaining({ code: "MISSING_REQUIRED_FIELD", field: "amount" }),
+          expect.objectContaining({ code: "MISSING_REQUIRED_FIELD", field: "onBehalfOf" }),
+        ])
+      );
+    });
+
+    it("still reports UNKNOWN_FIELD for unrecognised keys even in draft state", () => {
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: { actionType: "aave-v3/supply", unknownKey: "value" },
+          },
+        },
+      ]);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "UNKNOWN_FIELD",
+            field: "unknownKey",
+            actionType: "aave-v3/supply",
+          }),
+        ])
+      );
+    });
+  });
 });
 
 describe("isKnownConfigKeyForAction", () => {

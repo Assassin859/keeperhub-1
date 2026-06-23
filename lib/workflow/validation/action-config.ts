@@ -358,6 +358,18 @@ export function validateWorkflowActionConfigs(
       continue;
     }
 
+    // Draft state: only actionType and internal metadata keys (starting with "_")
+    // are present — the user hasn't filled in any parameters yet. This happens
+    // when a workflow is created from the Hub "Use in Workflow" button before the
+    // user has had a chance to configure the action. Skip required-field and
+    // type validation; the UNKNOWN_FIELD check still runs below.
+    const hasUserParams = Object.keys(config).some(
+      (k) => !RESERVED_CONFIG_KEYS.has(k) && !k.startsWith("_")
+    );
+    if (!hasUserParams) {
+      continue;
+    }
+
     const fields = flattenConfigFields(action.configFields);
     const fieldsByKey = new Map(fields.map((field) => [field.key, field]));
     const aliasMap = getLegacyAliasMap(actionType);
