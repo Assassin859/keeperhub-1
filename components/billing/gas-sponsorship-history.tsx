@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronRight, Info } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
   CollapsibleContent,
@@ -17,8 +18,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { BILLING_API } from "@/lib/billing/constants";
 import { cn } from "@/lib/utils";
+import {
+  SPONSORSHIP_MAINNET_NAMES,
+  SPONSORSHIP_TESTNET_NAMES,
+} from "@/lib/web3/sponsorship-chains-meta";
 
 type ChainSponsorship = {
   chainId: number;
@@ -37,10 +47,16 @@ type MonthlySponsorship = {
 
 type HistoryResponse = { months: MonthlySponsorship[] };
 
+// Sponsored amounts are routinely sub-cent (an L2 approve is fractions of a
+// cent). Rounding to whole cents would show "$0.00" while the spend genuinely
+// accrues against the cap, so render the exact value: up to micro-dollar
+// precision (6 decimals), trailing zeros trimmed, never fewer than 2 decimals.
 function formatMicroUsd(microUsd: string): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
   }).format(Number(microUsd) / 1_000_000);
 }
 
@@ -60,14 +76,13 @@ function formatMonth(iso: string): string {
 }
 
 /**
- * Collapsible monthly sponsorship digest, embedded inside the gas-credits card.
- * The card already shows current-month used/total; this dropdown adds the
- * per-month, per-network breakdown that survives past month-end.
+ * Single sponsorship panel: the always-visible header lists the sponsored
+ * networks; expanding reveals the monthly, per-network history (retained past
+ * month-end) with a testnets toggle.
  */
-export function GasSponsorshipHistory(): React.ReactElement | null {
+export function GasSponsorshipHistory(): React.ReactElement {
   const [months, setMonths] = useState<MonthlySponsorship[]>([]);
   const [loading, setLoading] = useState(true);
-  const [available, setAvailable] = useState(true);
   const [open, setOpen] = useState(false);
   const [includeTestnets, setIncludeTestnets] = useState(false);
 
@@ -80,10 +95,6 @@ export function GasSponsorshipHistory(): React.ReactElement | null {
     const response = await fetch(
       `${BILLING_API.GAS_SPONSORSHIP}${query ? `?${query}` : ""}`
     );
-    if (response.status === 404) {
-      setAvailable(false);
-      return;
-    }
     if (!response.ok) {
       return;
     }
@@ -112,10 +123,6 @@ export function GasSponsorshipHistory(): React.ReactElement | null {
     };
   }, [fetchHistory, includeTestnets]);
 
-  if (!available || loading) {
-    return null;
-  }
-
   return (
     <Collapsible
       className="rounded-md border border-border/60 bg-muted/30"
@@ -123,42 +130,88 @@ export function GasSponsorshipHistory(): React.ReactElement | null {
       open={open}
     >
       <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <CollapsibleTrigger asChild>
-          <button
-            className="flex flex-1 items-center gap-2 text-left text-muted-foreground text-sm transition-colors hover:text-foreground"
-            type="button"
-          >
-            <ChevronDown
-              className={cn(
-                "size-4 shrink-0 transition-transform",
-                open && "rotate-180"
-              )}
-            />
-            Monthly history
-          </button>
-        </CollapsibleTrigger>
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={includeTestnets}
-            id="show-testnets"
-            onCheckedChange={setIncludeTestnets}
-          />
-          <Label
-            className="text-muted-foreground text-xs"
-            htmlFor="show-testnets"
-          >
-            Show testnets
-          </Label>
+        <div className="flex items-center gap-1.5">
+          <CollapsibleTrigger asChild>
+            <button
+              className="flex items-center gap-1.5 text-foreground text-xs font-medium transition-colors hover:text-foreground"
+              type="button"
+            >
+              <ChevronRight
+                className={cn(
+                  "size-4 shrink-0 text-muted-foreground transition-transform",
+                  open && "rotate-90"
+                )}
+              />
+              Sponsored networks
+            </button>
+          </CollapsibleTrigger>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                aria-label="Learn more about sponsored networks"
+                className="inline-flex items-center text-muted-foreground/70 transition-colors hover:text-foreground"
+                type="button"
+              >
+                <Info className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs space-y-2 px-3 py-2 text-left">
+              <p className="font-medium">Sponsored via Turnkey Gas Station</p>
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide opacity-70">
+                  Testnets
+                </p>
+                <p>{SPONSORSHIP_TESTNET_NAMES.join(", ")}</p>
+              </div>
+              <p className="opacity-70">
+                Transactions on other chains fall back to your wallet's native
+                balance for gas.
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {SPONSORSHIP_MAINNET_NAMES.map((name) => (
+            <Badge className="text-[10px]" key={name} variant="secondary">
+              {name}
+            </Badge>
+          ))}
         </div>
       </div>
       <CollapsibleContent>
-        <div className="space-y-6 px-3 pt-1 pb-3">
-          {months.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No gas has been sponsored yet.
-            </p>
-          ) : (
-            months.map((month) => (
+        <div className="space-y-4 border-border/60 border-t px-3 pt-3 pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+              Monthly history
+            </span>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={includeTestnets}
+                id="show-testnets"
+                onCheckedChange={setIncludeTestnets}
+              />
+              <Label
+                className="text-muted-foreground text-xs"
+                htmlFor="show-testnets"
+              >
+                Show testnets
+              </Label>
+            </div>
+          </div>
+          {(() => {
+            if (loading) {
+              return (
+                <p className="text-muted-foreground text-sm">Loading...</p>
+              );
+            }
+            if (months.length === 0) {
+              return (
+                <p className="text-muted-foreground text-sm">
+                  No gas has been sponsored yet.
+                </p>
+              );
+            }
+            return months.map((month) => (
               <div className="space-y-2" key={month.monthStart}>
                 <div className="flex items-baseline justify-between">
                   <h4 className="font-medium text-sm">
@@ -204,8 +257,8 @@ export function GasSponsorshipHistory(): React.ReactElement | null {
                   </TableBody>
                 </Table>
               </div>
-            ))
-          )}
+            ));
+          })()}
         </div>
       </CollapsibleContent>
     </Collapsible>

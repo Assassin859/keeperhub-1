@@ -157,8 +157,10 @@ export async function getGasCreditBalance(
       )
     );
 
+  // Round to nearest cent (not ceil) so "used" tracks real spend; the history
+  // table still renders the exact micro-USD value.
   const usedMicroUsd = Number(result[0]?.total ?? "0");
-  const usedCents = Math.ceil(usedMicroUsd / MICRO_USD_PER_CENT);
+  const usedCents = Math.round(usedMicroUsd / MICRO_USD_PER_CENT);
   const remainingCents = Math.max(0, totalCents - usedCents);
 
   return { totalCents, usedCents, remainingCents, plan: planName };
