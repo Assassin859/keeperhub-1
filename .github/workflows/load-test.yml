@@ -88,6 +88,9 @@ concurrency:
   group: load-test-${{ inputs.environment }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   load-test:
     runs-on: ubuntu-latest
