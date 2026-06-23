@@ -10,6 +10,7 @@
  */
 
 import { ethers } from "ethers";
+import { logWarn } from "@/lib/logging";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 
 export type ProxyDetectionResult = {
@@ -242,8 +243,9 @@ export async function detectProxyViaRpc(
   try {
     rpcManager = await getRpcProvider({ chainId });
   } catch {
-    console.warn(
-      `[Proxy Detection] No RPC config found for chain ${chainId}, skipping detection`
+    logWarn(
+      `[Proxy Detection] No RPC config found for chain ${chainId}, skipping detection`,
+      { chain_id: String(chainId) }
     );
     return { isProxy: false };
   }

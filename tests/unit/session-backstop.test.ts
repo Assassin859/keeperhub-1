@@ -1,4 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
+
+// logSecurityEvent writes the structured line via lib/log/core's rawConsole.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
 
 const { mockCaptureMessage } = vi.hoisted(() => ({
   mockCaptureMessage: vi.fn(),
@@ -75,16 +82,19 @@ describe("isKh001SessionBackstop", () => {
 
 describe("reportSessionBackstop (onAPIError emit wiring)", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
+  const originalLevel = process.env.LOG_LEVEL;
 
   beforeEach(() => {
+    process.env.LOG_LEVEL = "debug";
     mockCaptureMessage.mockReset();
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // assert against the spy, suppress noise
     });
   });
 
   afterEach(() => {
     warnSpy.mockRestore();
+    process.env.LOG_LEVEL = originalLevel;
   });
 
   it("emits Sentry + structured stdout and returns true on a wrapped KH001", () => {
@@ -105,7 +115,8 @@ describe("reportSessionBackstop (onAPIError emit wiring)", () => {
       surface: "session",
     });
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(warnSpy.mock.calls[0][0] as string)).toEqual({
+    expect(JSON.parse(warnSpy.mock.calls[0][0] as string)).toMatchObject({
+      level: "warn",
       event: "security.backstop_session_blocked",
     });
   });

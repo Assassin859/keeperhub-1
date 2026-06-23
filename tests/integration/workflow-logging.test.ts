@@ -78,6 +78,9 @@ vi.mock("@/lib/errors/classify", () => ({
     errorCategory: msg ? "workflow_engine" : "workflow_engine",
     errorType: "system",
   }),
+  // The stub classifier always returns a confident system classification, so the
+  // run persists as system_error (not the unknown/default fallback).
+  isDefaultClassification: () => false,
 }));
 vi.mock("@/lib/metrics/collectors/prometheus", () => ({
   recordWorkflowExecutionError: vi.fn(),
@@ -271,7 +274,7 @@ describe("logWorkflowCompleteDb", () => {
     });
 
     expect(getExecUpdate()?.set).toEqual(
-      expect.objectContaining({ status: "error", gasUsedWei: "777" })
+      expect.objectContaining({ status: "system_error", gasUsedWei: "777" })
     );
   });
 
@@ -299,7 +302,7 @@ describe("logWorkflowCompleteDb", () => {
 
     expect(getExecUpdate()?.set).toEqual(
       expect.objectContaining({
-        status: "error",
+        status: "system_error",
         error: "Step failed",
       })
     );
@@ -360,7 +363,7 @@ describe("logWorkflowCompleteDb", () => {
 
     expect(getExecUpdate()?.set).toEqual(
       expect.objectContaining({
-        status: "error",
+        status: "system_error",
         error: "worker killed",
       })
     );
@@ -435,7 +438,7 @@ describe("logWorkflowCompleteDb", () => {
 
     expect(getExecUpdate()?.set).toEqual(
       expect.objectContaining({
-        status: "error",
+        status: "system_error",
         error: "node_b failed",
       })
     );

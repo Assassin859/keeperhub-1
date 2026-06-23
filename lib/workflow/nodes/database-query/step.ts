@@ -16,6 +16,7 @@ import {
   getPostgresConnectionOptions,
   type PostgresSslOption,
 } from "@/lib/db/connection-utils";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   type StepInput,
   withStepLogging,
@@ -287,7 +288,11 @@ async function databaseQuery(
       };
     } catch (error) {
       lastError = error;
-      console.error("[Database Query] Raw connection error:", error);
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "[Database Query] Raw connection error",
+        error
+      );
       // Retry only pre-query connection failures: a query that already reached
       // the server (or a deterministic SQL error) must not be re-run.
       if (attempt < maxAttempts && isRetryableConnectionError(error)) {

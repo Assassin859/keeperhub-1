@@ -349,3 +349,16 @@ export function classifyExecutionError(
     code: DEFAULT_SYSTEM_ERROR_CODE,
   };
 }
+
+/**
+ * True when a classification is the catch-all default produced for a null,
+ * empty, or unmatched message (errorType "system", DEFAULT_SYSTEM_ERROR_CODE).
+ * Unmatched failures are deliberately treated as system for ALERTING, but they
+ * are not confidently a platform fault, so callers use this to keep the
+ * user-facing status a plain `error` rather than mislabeling it `system_error`.
+ */
+export function isDefaultClassification(
+  classification: ExecutionErrorClassification
+): boolean {
+  return classification.code === DEFAULT_SYSTEM_ERROR_CODE;
+}

@@ -1,4 +1,4 @@
-import { captureMessage } from "@sentry/nextjs";
+import { logSecurityEvent } from "@/lib/logging";
 
 /**
  * Anonymous-user gate for sensitive account operations.
@@ -41,26 +41,13 @@ export function logAnonymousExecutionBlock(
   userId: string | null | undefined,
   extra?: Record<string, string>
 ): void {
-  try {
-    captureMessage("security.anonymous_execution_blocked", {
-      level: "warning",
+  logSecurityEvent(
+    "anonymous_execution_blocked",
+    { surface, userId: userId ?? null, ...extra },
+    {
       tags: { security: "anonymous_execution_blocked", surface },
       user: userId ? { id: userId } : undefined,
       extra,
-    });
-  } catch {
-    // observability must never affect the auth response
-  }
-  try {
-    console.warn(
-      JSON.stringify({
-        event: "security.anonymous_execution_blocked",
-        surface,
-        userId: userId ?? null,
-        ...extra,
-      })
-    );
-  } catch {
-    // logging must never affect the auth response
-  }
+    }
+  );
 }

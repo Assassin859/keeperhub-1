@@ -4,6 +4,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { filterUnauthorizedIntegrationIds } from "@/lib/integrations/authorization";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   getOrganizationWallet,
   organizationHasWallet,
@@ -101,7 +102,11 @@ function decryptConfig(encryptedConfig: string): Record<string, unknown> {
     const decrypted = decrypt(encryptedConfig);
     return JSON.parse(decrypted);
   } catch (error) {
-    console.error("Failed to decrypt integration config:", error);
+    logSystemError(
+      ErrorCategory.INFRASTRUCTURE,
+      "[Integrations] Failed to decrypt integration config",
+      error
+    );
     return {};
   }
 }

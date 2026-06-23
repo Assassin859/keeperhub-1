@@ -9,7 +9,16 @@
 
 import "server-only";
 
-import { and, count, countDistinct, eq, gte, inArray, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  countDistinct,
+  eq,
+  gte,
+  inArray,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import {
   PLANS,
   type PlanName,
@@ -39,6 +48,8 @@ import {
   workflowSchedules,
   workflows,
 } from "@/lib/db/schema";
+import { ERROR_STATUSES } from "@/lib/errors/execution-status";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
@@ -132,7 +143,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
         errorType: sql<string>`CASE
-          WHEN ${workflowExecutions.status} <> 'error' THEN 'na'
+          WHEN ${notInArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 'na'
           WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
           ELSE ${workflowExecutions.errorType}
         END`,
@@ -196,7 +207,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .from(workflowExecutions)
       .where(
         and(
-          sql`${workflowExecutions.status} IN ('success', 'error')`,
+          sql`${workflowExecutions.status} IN ('success', 'error', 'system_error')`,
           sql`${workflowExecutions.duration} IS NOT NULL`
         )
       );
@@ -220,7 +231,11 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
 
     return stats;
   } catch (error) {
-    console.error("[Metrics] Failed to query workflow stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query workflow stats from DB",
+      error
+    );
     // Return zeros on error to avoid breaking metrics endpoint
     return {
       totalSuccess: 0,
@@ -283,7 +298,7 @@ export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowError
       .innerJoin(organization, eq(workflows.organizationId, organization.id))
       .where(
         and(
-          eq(workflowExecutions.status, "error"),
+          inArray(workflowExecutions.status, [...ERROR_STATUSES]),
           sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`,
           inArray(organization.slug, [...MANAGED_ORG_SLUGS])
         )
@@ -301,8 +316,9 @@ export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowError
       count: Number(row.count) || 0,
     }));
   } catch (error) {
-    console.error(
-      "[Metrics] Failed to query per-workflow errors from DB:",
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query per-workflow errors from DB",
       error
     );
     return [];
@@ -366,7 +382,10 @@ export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByC
       .from(workflowExecutions)
       .where(
         and(
-          eq(workflowExecutions.status, "error"),
+          // KEEP-853: system errors carry status='system_error' (not 'error'),
+          // so both must be matched or every system error drops out of the gauge
+          // the infra P3 alert reads.
+          inArray(workflowExecutions.status, [...ERROR_STATUSES]),
           sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`
         )
       )
@@ -378,8 +397,9 @@ export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByC
       count: Number(row.count) || 0,
     }));
   } catch (error) {
-    console.error(
-      "[Metrics] Failed to query system errors by category from DB:",
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query system errors by category from DB",
       error
     );
     return [];
@@ -499,7 +519,11 @@ export async function getStepStatsFromDb(): Promise<StepStats> {
 
     return stats;
   } catch (error) {
-    console.error("[Metrics] Failed to query step stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query step stats from DB",
+      error
+    );
     // Return zeros on error to avoid breaking metrics endpoint
     return {
       countsByType: {},
@@ -533,8 +557,9 @@ export async function getDailyActiveUsersFromDb(): Promise<number> {
 
     return Number(result[0]?.count) || 0;
   } catch (error) {
-    console.error(
-      "[Metrics] Failed to query daily active users from DB:",
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query daily active users from DB",
       error
     );
     return 0;
@@ -591,7 +616,11 @@ export async function getUserStatsFromDb(): Promise<UserStats> {
       withIntegrations: Number(withIntegrationsResult[0]?.count) || 0,
     };
   } catch (error) {
-    console.error("[Metrics] Failed to query user stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query user stats from DB",
+      error
+    );
     return {
       total: 0,
       verified: 0,
@@ -661,7 +690,11 @@ export async function getOrgStatsFromDb(): Promise<OrgStats> {
       withWorkflows: Number(withWorkflowsResult[0]?.count) || 0,
     };
   } catch (error) {
-    console.error("[Metrics] Failed to query org stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query org stats from DB",
+      error
+    );
     return {
       total: 0,
       membersTotal: 0,
@@ -698,7 +731,11 @@ export async function getUserListFromDb(): Promise<UserListEntry[]> {
       createdAt: row.createdAt,
     }));
   } catch (error) {
-    console.error("[Metrics] Failed to query user list from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query user list from DB",
+      error
+    );
     return [];
   }
 }
@@ -754,7 +791,11 @@ export async function getOrgListFromDb(): Promise<OrgListEntry[]> {
           : parseBillingStatus(row.billingStatus),
     }));
   } catch (error) {
-    console.error("[Metrics] Failed to query org list from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query org list from DB",
+      error
+    );
     return [];
   }
 }
@@ -795,8 +836,9 @@ export async function getWorkflowDefinitionStatsFromDb(): Promise<WorkflowDefini
       anonymous: Number(anonymousResult[0]?.count) || 0,
     };
   } catch (error) {
-    console.error(
-      "[Metrics] Failed to query workflow definition stats from DB:",
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query workflow definition stats from DB",
       error
     );
     return { total: 0, public: 0, private: 0, anonymous: 0 };
@@ -850,7 +892,11 @@ export async function getScheduleStatsFromDb(): Promise<ScheduleStats> {
       byLastStatus,
     };
   } catch (error) {
-    console.error("[Metrics] Failed to query schedule stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query schedule stats from DB",
+      error
+    );
     return { total: 0, enabled: 0, disabled: 0, byLastStatus: {} };
   }
 }
@@ -894,8 +940,9 @@ export async function getIntegrationStatsFromDb(): Promise<IntegrationStats> {
       byType,
     };
   } catch (error) {
-    console.error(
-      "[Metrics] Failed to query integration stats from DB:",
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query integration stats from DB",
       error
     );
     return { total: 0, managed: 0, byType: {} };
@@ -950,7 +997,11 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       sessionsActive: Number(sessionsResult[0]?.count) || 0,
     };
   } catch (error) {
-    console.error("[Metrics] Failed to query infra stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query infra stats from DB",
+      error
+    );
     return {
       apiKeysTotal: 0,
       chainsTotal: 0,
@@ -1040,7 +1091,11 @@ export async function getVoteStatsFromDb(): Promise<VoteStats> {
       })),
     };
   } catch (error) {
-    console.error("[Metrics] Failed to query vote stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query vote stats from DB",
+      error
+    );
     return {
       totalVotes: 0,
       totalUpvotes: 0,
@@ -1065,7 +1120,11 @@ export async function getEnabledChainNamesFromDb(): Promise<string[]> {
 
     return results.map((r) => r.name);
   } catch (error) {
-    console.error("[Metrics] Failed to query enabled chain names:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query enabled chain names",
+      error
+    );
     return [];
   }
 }
@@ -1259,7 +1318,11 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
 
     return stats;
   } catch (error) {
-    console.error("[Metrics] Failed to query billing stats from DB:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query billing stats from DB",
+      error
+    );
     return emptyBillingStats();
   }
 }

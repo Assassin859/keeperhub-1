@@ -5,6 +5,7 @@
  * configuration resolved from user preferences or chain defaults.
  */
 
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   createRpcProviderManager,
   type FailoverStateChangeCallback,
@@ -149,7 +150,11 @@ export async function getRpcProvider(
       try {
         failoverCallback(chain, isUsingFallback, reason);
       } catch (error) {
-        console.error("Metrics failover callback error:", error);
+        logSystemError(
+          ErrorCategory.INFRASTRUCTURE,
+          "[Metrics] Metrics failover callback error",
+          error
+        );
       }
       onFailoverStateChange?.(chain, isUsingFallback, reason);
     },
@@ -194,7 +199,11 @@ export async function getSolanaProvider(
       try {
         failoverCallback(chain, isUsingFallback, reason);
       } catch (error) {
-        console.error("Metrics failover callback error:", error);
+        logSystemError(
+          ErrorCategory.INFRASTRUCTURE,
+          "[Metrics] Metrics failover callback error",
+          error
+        );
       }
       onFailoverStateChange?.(chain, isUsingFallback, reason);
     },

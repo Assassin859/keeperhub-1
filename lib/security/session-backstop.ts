@@ -18,7 +18,7 @@
  * constructing the Better Auth config.
  */
 
-import { captureMessage } from "@sentry/nextjs";
+import { logSecurityEvent } from "@/lib/logging";
 
 export const KH001_SQLSTATE = "KH001";
 
@@ -64,14 +64,8 @@ export function reportSessionBackstop(error: unknown): boolean {
   if (!isKh001SessionBackstop(error)) {
     return false;
   }
-  try {
-    captureMessage("security.backstop_session_blocked", {
-      level: "warning",
-      tags: { security: "backstop_session_blocked", surface: "session" },
-    });
-  } catch {
-    // swallow; observability must not affect auth error handling
-  }
-  console.warn(JSON.stringify({ event: "security.backstop_session_blocked" }));
+  logSecurityEvent("backstop_session_blocked", undefined, {
+    tags: { security: "backstop_session_blocked", surface: "session" },
+  });
   return true;
 }

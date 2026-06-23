@@ -9,6 +9,7 @@ import {
 import { BlockList, isIP } from "node:net";
 import { captureException } from "@sentry/nextjs";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
+import { logWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   SSRF_BLOCKED_HOST_EXACT,
@@ -351,7 +352,12 @@ function recordBlock(ctx: BlockContext, shadow: boolean): void {
       : "";
   const pluginSuffix =
     ctx.plugin === undefined ? "" : ` [plugin=${ctx.plugin}]`;
-  console.warn(
+  // logWarn (JSON line only, NO metric, NO Sentry): the metric and Sentry
+  // capture are emitted directly above/below. Routing through
+  // logUserError/logSystemError would emit a second error metric whose fixed
+  // initial labelset rejects hostname/resolved_ip and turns shadow mode into
+  // a synchronous throw.
+  logWarn(
     `[safe-fetch] Blocked outbound request${modeSuffix}: ${ctx.hostname}${resolvedSuffix} (reason=${ctx.reason})${pluginSuffix}`
   );
 

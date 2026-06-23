@@ -17,6 +17,7 @@
  * the log.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
 
 vi.mock("server-only", () => ({}));
 
@@ -25,11 +26,18 @@ import {
   prometheusMetricsCollector,
 } from "@/lib/metrics/collectors/prometheus";
 
+// The collector's unknown-metric path logs via logWarn -> lib/log/core's
+// rawConsole, so the spy must target rawConsole, not the global console.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
+
 describe("prometheusMetricsCollector.recordError -- defensive label filtering", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // suppress
     });
   });

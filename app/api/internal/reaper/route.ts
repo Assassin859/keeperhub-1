@@ -107,7 +107,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     const reaped = await db
       .update(workflowExecutions)
       .set({
-        status: "error",
+        // KEEP-853: reaped rows are always system/infra failures (timeouts,
+        // never-started, SQS-lost), so they carry the system_error status.
+        status: "system_error",
         error: reaperErrorMessage,
         errorCategory: reaperClassification.errorCategory,
         errorType: reaperClassification.errorType,

@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
+
+// logSecurityEvent writes the structured line via lib/log/core's rawConsole.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
 
 const captureMessageMock = vi.fn();
 vi.mock("@sentry/nextjs", () => ({
@@ -197,7 +204,7 @@ describe("scanAndReport", () => {
   });
 
   it("emits a structured error signal when the scan itself throws", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    const warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // swallow the line in test
     });
     // Force a throw inside the scan: reading `.nodes` blows up, simulating a
@@ -209,7 +216,9 @@ describe("scanAndReport", () => {
         throw new Error("scanner exploded");
       },
     } as unknown as { nodes: never };
-    expect(() => scanAndReport(exploding, { workflowId: "wf_err" })).not.toThrow();
+    expect(() =>
+      scanAndReport(exploding, { workflowId: "wf_err" })
+    ).not.toThrow();
     const errorLine = warnSpy.mock.calls
       .map((call) => String(call[0]))
       .find((line) => line.includes("security.content_scanner_error"));

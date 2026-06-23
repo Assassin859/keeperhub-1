@@ -28,7 +28,7 @@
  * rethrow.
  */
 
-import { captureMessage } from "@sentry/nextjs";
+import { logSecurityEvent } from "@/lib/logging";
 import type { TriggerSource } from "./request-attribution";
 
 const PG_RAISE_INSUFFICIENT_PRIVILEGE = "42501";
@@ -76,39 +76,25 @@ export async function withBackstopCapture<T>(
     return await insert();
   } catch (err) {
     if (isBackstopRejection(err)) {
-      // Best-effort: never let a Sentry transport failure shadow the
-      // original backstop exception. Callers downstream depend on the pg
-      // error shape to render correct error responses.
-      try {
-        captureMessage("security.backstop_execution_blocked", {
-          level: "warning",
+      // Best-effort dual emit (Sentry + structured stdout); logSecurityEvent
+      // self-guards both transports so a failure never shadows the original
+      // backstop exception that downstream callers depend on.
+      logSecurityEvent(
+        "backstop_execution_blocked",
+        {
+          workflowId: context.workflowId,
+          userId: context.userId,
+          source: context.source,
+        },
+        {
           tags: {
             security: "backstop_execution_blocked",
             source: context.source,
           },
           user: { id: context.userId },
-          extra: {
-            workflowId: context.workflowId,
-            source: context.source,
-          },
-        });
-      } catch {
-        // swallow; capture is observability, not a contract
-      }
-      // Structured stdout line for Loki / log-only alerting. Independent
-      // of Sentry transport so the signal is durable.
-      try {
-        console.warn(
-          JSON.stringify({
-            event: "security.backstop_execution_blocked",
-            workflowId: context.workflowId,
-            userId: context.userId,
-            source: context.source,
-          })
-        );
-      } catch {
-        // never let log emission shadow the original error
-      }
+          extra: { workflowId: context.workflowId, source: context.source },
+        }
+      );
     }
     throw err;
   }

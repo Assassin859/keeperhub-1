@@ -29,6 +29,8 @@
       "!lib/atoms",
       "!keeperhub-events",
       "!keeperhub-scheduler",
+      "!keeperhub-executor",
+      "!keeperhub-metrics-collector",
       "!.history",
       "!tests/k6",
       "!packages/*/dist",
@@ -51,7 +53,17 @@
         // Bitwise operators are legitimate for hashing/masking
         "noBitwiseOperators": "off",
         // New rule from biome bump - pre-existing test.skip() to be addressed separately
-        "noSkippedTests": "off"
+        "noSkippedTests": "off",
+        // KEEP-814: route failures through the structured logger
+        // (logSystemError / logUserError / logSystemWarn) so they reach
+        // Prometheus + Sentry. console.log/info/debug stay allowed (the
+        // lib/logger facade normalizes them to canonical JSON); console.warn /
+        // console.error are disallowed in server code. Client (browser),
+        // tests, and the logging infra itself are exempted in `overrides`.
+        "noConsole": {
+          "level": "error",
+          "options": { "allow": ["log", "info", "debug"] }
+        }
       },
       "nursery": {
         // These are experimental rules that add friction without clear benefit
@@ -62,5 +74,29 @@
         "noSubstr": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      // noConsole is server-only. These paths legitimately use console:
+      //  - client/browser code (logs go to the browser console + client Sentry;
+      //    the server logger's ALS/Prometheus path does not apply)
+      //  - tests (console spies and scaffolding)
+      //  - the logging infra itself (captures/patches the real console)
+      //  - staging-only admin test routes
+      "includes": [
+        "components/**",
+        "app/page.tsx",
+        "app/accept-invite/**",
+        "app/workflows/**",
+        "lib/hooks/**",
+        "lib/api-client.ts",
+        "tests/**",
+        "**/*.staging.ts",
+        "lib/log/core.ts",
+        "lib/logger.ts",
+        "instrumentation.ts"
+      ],
+      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+    }
+  ]
 }

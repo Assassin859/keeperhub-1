@@ -1,4 +1,5 @@
 import { type Commitment, Connection } from "@solana/web3.js";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeFetch } from "@/lib/safe-fetch";
 import {
   RPC_CONNECTION_ERROR_PATTERNS,
@@ -274,14 +275,14 @@ export class SolanaProviderManager {
           return fallbackResult.result as T;
         }
 
-        console.warn(
-          JSON.stringify({
-            level: "warn",
+        logUserError(
+          ErrorCategory.NETWORK_RPC,
+          `[Solana RPC] Fallback RPC failed for ${this.config.chainName}, attempting primary recovery`,
+          fallbackResult.error,
+          {
             event: "SOLANA_RPC_FALLBACK_FAILED",
-            message: `Fallback RPC failed for ${this.config.chainName}, attempting primary recovery`,
             chain: this.config.chainName,
-            timestamp: new Date().toISOString(),
-          })
+          }
         );
       }
     }
@@ -340,17 +341,16 @@ export class SolanaProviderManager {
           operationType
         );
         if (!this.isUsingFallback) {
-          console.warn(
-            JSON.stringify({
-              level: "warn",
+          logUserError(
+            ErrorCategory.NETWORK_RPC,
+            `[Solana RPC] Primary RPC failed for ${this.config.chainName}, switching to fallback`,
+            primaryResult.error,
+            {
               event: "SOLANA_RPC_FAILOVER_ACTIVATED",
-              message: `Primary RPC failed for ${this.config.chainName}, switching to fallback`,
               chain: this.config.chainName,
-              previousState: "primary",
-              newState: "fallback",
-              primaryError: primaryResult.error,
-              timestamp: new Date().toISOString(),
-            })
+              previous_state: "primary",
+              new_state: "fallback",
+            }
           );
           this.isUsingFallback = true;
           this.onFailoverStateChange?.(this.config.chainName, true, "failover");
@@ -359,16 +359,14 @@ export class SolanaProviderManager {
       }
 
       this.metricsCollector.recordBothFailed(this.config.chainName);
-      console.error(
-        JSON.stringify({
-          level: "error",
+      logUserError(
+        ErrorCategory.NETWORK_RPC,
+        `[Solana RPC] Both primary and fallback RPC failed for ${this.config.chainName}`,
+        `Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`,
+        {
           event: "SOLANA_RPC_BOTH_ENDPOINTS_FAILED",
-          message: `Both primary and fallback RPC failed for ${this.config.chainName}`,
           chain: this.config.chainName,
-          primaryError: primaryResult.error,
-          fallbackError: fallbackResult.error,
-          timestamp: new Date().toISOString(),
-        })
+        }
       );
       throw new Error(
         `Solana RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`

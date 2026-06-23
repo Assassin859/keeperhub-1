@@ -89,7 +89,7 @@ describe("failPhantomExecution (event-tracker)", () => {
     expect(String(url)).toMatch(/\/api\/internal\/executions\/exec_evt$/);
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({
-      status: "error",
+      status: "system_error",
       error: "dispatch failed",
       errorCode: "ES-0001",
     });

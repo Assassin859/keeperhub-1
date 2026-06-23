@@ -168,7 +168,7 @@ describe("/api/internal/reaper", () => {
 
     expect(getExecUpdate()?.set).toEqual(
       expect.objectContaining({
-        status: "error",
+        status: "system_error",
         error: expect.stringContaining("timed out"),
         completedAt: expect.any(Date),
       })
