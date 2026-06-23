@@ -35,7 +35,7 @@ function ActivityGuestGate(): ReactNode {
   const { openAuthPrompt } = useAuthPrompt();
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
           <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
             <LogIn className="size-10 text-muted-foreground" />
@@ -88,7 +88,7 @@ function ActivityAdminView(): ReactNode {
 
   return (
     <div className="pointer-events-auto fixed inset-0 flex flex-col overflow-hidden bg-sidebar">
-      <div className="flex min-h-0 flex-1 flex-col transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="flex min-h-0 flex-1 flex-col transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="flex min-h-0 flex-1 flex-col gap-6 p-6 pt-[calc(5rem+var(--app-banner-height,0px))]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1">
