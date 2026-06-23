@@ -19,6 +19,9 @@ concurrency:
   group: pr-docs-site-build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     uses: ./.github/workflows/build-docs-image.yml

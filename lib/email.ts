@@ -5,7 +5,12 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
+import {
+  ErrorCategory,
+  logSystemError,
+  logUserError,
+  logWarn,
+} from "@/lib/logging";
 
 const isTestEnv = !!process.env.CI || process.env.NODE_ENV === "test";
 
@@ -66,9 +71,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
 
   if (!apiKey) {
     if (isTestEnv) {
-      console.warn(
-        "[Email] SENDGRID_API_KEY not configured — skipping email send"
-      );
+      logWarn("[Email] SENDGRID_API_KEY not configured — skipping email send");
     } else {
       logSystemError(
         ErrorCategory.INFRASTRUCTURE,
@@ -266,9 +269,7 @@ KeeperHub - Blockchain Workflow Automation
   if (success) {
     console.log(`[Email] OTP sent to ${email} for ${type}`);
   } else if (isTestEnv) {
-    console.warn(
-      `[Email] Failed to send OTP to ${email} — OTP is stored in DB`
-    );
+    logWarn(`[Email] Failed to send OTP to ${email} — OTP is stored in DB`);
   } else {
     logUserError(
       ErrorCategory.EXTERNAL_SERVICE,
@@ -458,7 +459,7 @@ KeeperHub - Blockchain Workflow Automation
   if (success) {
     console.log(`[Email] Invitation sent to ${inviteeEmail}`);
   } else if (isTestEnv) {
-    console.warn(
+    logWarn(
       `[Email] Failed to send invitation to ${inviteeEmail} — invitation is stored in DB`
     );
   } else {

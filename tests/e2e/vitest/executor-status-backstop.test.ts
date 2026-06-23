@@ -5,6 +5,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   type DbSchema,
+  failExecutionAsSystemError,
   updateExecutionStatus,
 } from "../../../keeperhub-executor/lib/db-helpers";
 import {
@@ -38,7 +39,9 @@ type ExecutionStatus =
   | "running"
   | "success"
   | "error"
-  | "cancelled";
+  | "cancelled"
+  | "phantom"
+  | "system_error";
 
 describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
   let queryClient: ReturnType<typeof postgres>;
@@ -173,5 +176,66 @@ describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
     const row = await readExecution(id);
     expect(row.status).toBe("cancelled");
     expect(row.error).toBeNull();
+  });
+
+  // The SQS consumer backstop: when message processing throws for a reason the
+  // inner dispatch handlers did not record, mark the in-flight row system_error
+  // immediately instead of leaving it for the reaper. The CAS only matches
+  // phantom/pending so it never clobbers a row the runtime already advanced, and
+  // the boolean return tells the caller whether the mark actually applied.
+  describe("failExecutionAsSystemError backstop CAS", () => {
+    it("marks a phantom row system_error and reports it applied", async () => {
+      const id = `${PREFIX}fail_phantom`;
+      await seedExecution(id, "phantom");
+
+      const marked = await failExecutionAsSystemError(execDb, id, {
+        error: "Message processing failed: boom",
+        errorCode: "E-0004",
+      });
+
+      expect(marked).toBe(true);
+      const row = await readExecution(id);
+      expect(row.status).toBe("system_error");
+      expect(row.errorType).toBe("system");
+      expect(row.errorCategory).toBe("infrastructure");
+      expect(row.errorCode).toBe("E-0004");
+      expect(row.completedAt).not.toBeNull();
+    });
+
+    it("marks a pending row system_error", async () => {
+      const id = `${PREFIX}fail_pending`;
+      await seedExecution(id, "pending");
+
+      const marked = await failExecutionAsSystemError(execDb, id, {
+        error: "boom",
+        errorCode: "E-0004",
+      });
+
+      expect(marked).toBe(true);
+      expect((await readExecution(id)).status).toBe("system_error");
+    });
+
+    it("is a no-op on an already-running row and reports it did not apply", async () => {
+      const id = `${PREFIX}fail_running`;
+      await seedExecution(id, "running");
+
+      const marked = await failExecutionAsSystemError(execDb, id, {
+        error: "boom",
+        errorCode: "E-0004",
+      });
+
+      // The runtime already owns this row; the backstop must leave it for the
+      // reaper rather than clobber it, and signal that it did not apply.
+      expect(marked).toBe(false);
+      expect((await readExecution(id)).status).toBe("running");
+    });
+
+    it("reports a no-op for a missing executionId", async () => {
+      const marked = await failExecutionAsSystemError(execDb, undefined, {
+        error: "boom",
+        errorCode: "E-0004",
+      });
+      expect(marked).toBe(false);
+    });
   });
 });

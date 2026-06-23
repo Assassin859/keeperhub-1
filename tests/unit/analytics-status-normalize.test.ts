@@ -32,9 +32,12 @@ describe("workflowDbStatuses", () => {
     expect(workflowDbStatuses("pending")).toEqual(["pending", "phantom"]);
   });
 
+  it("expands the error filter to also match system_error rows", () => {
+    expect(workflowDbStatuses("error")).toEqual(["error", "system_error"]);
+  });
+
   it("leaves other statuses as a single-value filter", () => {
     expect(workflowDbStatuses("success")).toEqual(["success"]);
-    expect(workflowDbStatuses("error")).toEqual(["error"]);
     expect(workflowDbStatuses("running")).toEqual(["running"]);
     expect(workflowDbStatuses("cancelled")).toEqual(["cancelled"]);
   });

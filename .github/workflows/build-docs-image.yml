@@ -19,6 +19,9 @@ on:
         description: 'ECR registry URL (only set when push=true)'
         value: ${{ jobs.build.outputs.ecr_registry }}
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest

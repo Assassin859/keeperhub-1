@@ -8,6 +8,7 @@
 import "server-only";
 
 import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
 import type { ErrorContext, MetricLabels, MetricsCollector } from "../types";
 
 // Use global singletons to prevent duplicate registration during hot reload
@@ -1141,7 +1142,7 @@ export const prometheusMetricsCollector: MetricsCollector = {
     if (histogram) {
       histogram.observe(sanitizeLabels(labels), durationMs);
     } else {
-      console.warn(`[Prometheus] Unknown latency metric: ${name}`);
+      logWarn(`[Prometheus] Unknown latency metric: ${name}`);
     }
   },
 
@@ -1154,7 +1155,7 @@ export const prometheusMetricsCollector: MetricsCollector = {
     if (counter) {
       counter.inc(sanitizeLabels(labels), value);
     } else {
-      console.warn(`[Prometheus] Unknown counter metric: ${name}`);
+      logWarn(`[Prometheus] Unknown counter metric: ${name}`);
     }
   },
 
@@ -1184,7 +1185,7 @@ export const prometheusMetricsCollector: MetricsCollector = {
     if (gauge) {
       gauge.set(sanitizeLabels(labels), value);
     } else {
-      console.warn(`[Prometheus] Unknown gauge metric: ${name}`);
+      logWarn(`[Prometheus] Unknown gauge metric: ${name}`);
     }
   },
 };
@@ -1199,7 +1200,7 @@ function recordErrorCounter(
   }
   const counter = errorCounterMap[name];
   if (!counter) {
-    console.warn(`[Prometheus] Unknown error metric: ${name}`);
+    logWarn(`[Prometheus] Unknown error metric: ${name}`);
     return;
   }
   const sanitized = sanitizeLabels(labels);
@@ -1217,7 +1218,11 @@ function recordErrorCounter(
     // Defense-in-depth: if filtering missed something or prom-client rejects
     // the label set for any other reason, never let metrics break the
     // user-facing operation that called us.
-    console.warn(`[Prometheus] Failed to record error counter ${name}:`, err);
+    logSystemWarn(
+      ErrorCategory.INFRASTRUCTURE,
+      `[Prometheus] Failed to record error counter ${name}`,
+      err
+    );
   }
 }
 
@@ -1688,7 +1693,11 @@ async function refreshDbMetricsNow(): Promise<void> {
 
     updateHubVoteMetrics(voteStats);
   } catch (error) {
-    console.error("[Prometheus] Failed to update DB metrics:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Prometheus] Failed to update DB metrics",
+      error
+    );
     // Propagate so the TTL cache wrapper evicts the failed entry instead
     // of pinning it; updateDbMetrics() catches before returning to callers,
     // preserving the previous "metrics endpoint never 500s" behavior.

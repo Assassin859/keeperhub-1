@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
 import { type ErrorCode, getErrorCodeEntry } from "@/lib/errors/error-codes";
+import { isErrorStatus } from "@/lib/errors/execution-status";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
-import type { ErrorCategory } from "@/lib/logging";
+import { ErrorCategory } from "@/lib/logging";
 
 export async function PATCH(
   request: Request,
@@ -23,13 +24,21 @@ export async function PATCH(
   const body = JSON.parse(rawBody);
   const { status, error, duration, errorCode } = body;
 
-  type ExecutionStatus = "running" | "success" | "error";
-  const validStatuses: ExecutionStatus[] = ["running", "success", "error"];
+  type ExecutionStatus = "running" | "success" | "error" | "system_error";
+  const validStatuses: ExecutionStatus[] = [
+    "running",
+    "success",
+    "error",
+    "system_error",
+  ];
 
   // Validate status
   if (!(status && validStatuses.includes(status))) {
     return NextResponse.json(
-      { error: "status must be 'running', 'success', or 'error'" },
+      {
+        error:
+          "status must be 'running', 'success', 'error', or 'system_error'",
+      },
       { status: 400 }
     );
   }
@@ -63,7 +72,8 @@ export async function PATCH(
   }
 
   // Build update payload
-  const isTerminal = status === "success" || status === "error";
+  const isError = isErrorStatus(status);
+  const isTerminal = status === "success" || isError;
   const updateData: {
     status: ExecutionStatus;
     error?: string | null;
@@ -76,13 +86,19 @@ export async function PATCH(
     currentNodeName?: null;
   } = { status: typedStatus };
 
-  if (status === "error") {
+  if (isError) {
     updateData.error = error || "Unknown error";
     updateData.completedAt = new Date();
     if (codeEntry) {
       updateData.errorCode = codeEntry.code;
       updateData.errorType = "system";
       updateData.errorCategory = codeEntry.category;
+    } else if (status === "system_error") {
+      // A system_error row must carry the system classification even when the
+      // caller did not supply a registry code, so downstream readers that
+      // assume status='system_error' implies errorType='system' stay consistent.
+      updateData.errorType = "system";
+      updateData.errorCategory = ErrorCategory.INFRASTRUCTURE;
     }
   } else if (status === "success") {
     updateData.completedAt = new Date();

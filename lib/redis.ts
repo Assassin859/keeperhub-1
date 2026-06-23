@@ -1,4 +1,5 @@
 import { Redis } from "ioredis";
+import { logWarn } from "@/lib/logging";
 
 /**
  * Best-effort Redis for the app tier: a cross-replica coordination layer,
@@ -20,7 +21,7 @@ function logRedisError(err: Error): void {
     return;
   }
   lastErrorLoggedAt = now;
-  console.warn("[redis] client error (best-effort, ignoring)", err.message);
+  logWarn(`[redis] client error (best-effort, ignoring): ${err.message}`);
 }
 
 function createClient(): Redis | null {

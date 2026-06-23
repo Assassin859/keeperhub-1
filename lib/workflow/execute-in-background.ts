@@ -2,7 +2,11 @@ import { and, eq } from "drizzle-orm";
 import { start } from "workflow/api";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
-import { classifyExecutionError } from "@/lib/errors/classify";
+import {
+  classifyExecutionError,
+  isDefaultClassification,
+} from "@/lib/errors/classify";
+import { statusForErrorType } from "@/lib/errors/execution-status";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
@@ -91,7 +95,11 @@ export async function executeWorkflowInBackground(
     const updated = await db
       .update(workflowExecutions)
       .set({
-        status: "error",
+        status: statusForErrorType(
+          isDefaultClassification(classification)
+            ? null
+            : classification.errorType
+        ),
         error: errorMessage,
         errorCategory: classification.errorCategory,
         errorType: classification.errorType,

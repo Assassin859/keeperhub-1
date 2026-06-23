@@ -240,7 +240,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!EMAIL_REGEX.test(walletEmail)) {
+    if (walletEmail.length > 254 || !EMAIL_REGEX.test(walletEmail)) {
       return NextResponse.json(
         { error: "Invalid email format" },
         { status: 400 }

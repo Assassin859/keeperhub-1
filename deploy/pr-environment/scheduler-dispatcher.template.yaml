@@ -1,6 +1,6 @@
 # Schedule Dispatcher for PR environments
 # Uses pre-built staging image
-# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}
+# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}, ${SCHEDULE_IMAGE_TAG}
 
 replicaCount: 1
 
@@ -18,7 +18,7 @@ ingress:
 
 image:
   repository: ${ECR_REGISTRY}/keeperhub-scheduler-staging
-  tag: schedule-latest
+  tag: ${SCHEDULE_IMAGE_TAG}
   pullPolicy: Always
 
 deployment:

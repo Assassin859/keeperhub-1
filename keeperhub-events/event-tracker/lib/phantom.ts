@@ -75,7 +75,9 @@ export async function failPhantomExecution(
 ): Promise<void> {
   const url = `${KEEPERHUB_API_URL}/api/internal/executions/${executionId}`;
   const body = JSON.stringify({
-    status: "error",
+    // KEEP-853: an enqueue failure is a platform/infra fault, so the run
+    // surfaces as a system error, distinct from user/workflow errors.
+    status: "system_error",
     error: errorMessage,
     errorCode,
   });

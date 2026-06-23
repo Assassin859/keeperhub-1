@@ -12,6 +12,7 @@
 import "server-only";
 
 import { Connection } from "@solana/web3.js";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { classifyRpcError } from "@/lib/rpc/providers";
 import { rpcProbeMetrics } from "./collectors/prometheus";
 import type { ProbeChainConfig } from "./db-metrics";
@@ -60,7 +61,11 @@ async function runProbeAllChains(): Promise<void> {
     const { getEnabledChainConfigsForProbe } = await import("./db-metrics");
     chainConfigs = await getEnabledChainConfigsForProbe();
   } catch (error: unknown) {
-    console.error("RPC health probe: failed to load chain configs", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[RPC Probe] Failed to load chain configs",
+      error
+    );
     return;
   }
 

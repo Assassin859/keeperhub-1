@@ -13,6 +13,9 @@ on:
       - ".github/actions/setup-events-deps/**"
       - "docker-compose.yml"
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest

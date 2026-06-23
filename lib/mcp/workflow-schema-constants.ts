@@ -73,6 +73,10 @@ export const SYSTEM_ACTIONS = {
     },
     optionalFields: {
       dbSchema: "string - JSON schema for result typing",
+      connectTimeout:
+        "number - Connection timeout in seconds (default 30, min 1, max 60). Raise for serverless databases that scale to zero and need time to wake on a cold start.",
+      retries:
+        "number - Connection retries (default 1, min 0, max 3). Retries only pre-query connection failures (e.g. a cold-start connect timeout); never re-runs a query that already started, so writes are not duplicated.",
     },
     outputFields: {
       rows: "array - Query result rows",

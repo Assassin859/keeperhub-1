@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
+
+// logSecurityEvent writes the structured line via lib/log/core's rawConsole.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
 
 vi.mock("server-only", () => ({}));
 
@@ -94,7 +101,7 @@ describe("authenticateOAuthToken -- deactivated user handling", () => {
   });
 
   it("emits the structured stdout signal alongside Sentry", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    const warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // assert against the spy, suppress noise
     });
     const token = await createAccessToken({
@@ -119,7 +126,7 @@ describe("authenticateOAuthToken -- deactivated user handling", () => {
   });
 
   it("still rejects (and logs) when Sentry capture throws", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    const warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // suppress noise
     });
     mockCaptureMessage.mockImplementationOnce(() => {

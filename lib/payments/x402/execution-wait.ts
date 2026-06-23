@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { isErrorStatus } from "@/lib/errors/execution-status";
 
 /**
  * Default timeout for waiting on read-workflow completion before falling back
@@ -12,7 +13,7 @@ import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 export const DEFAULT_CALL_WAIT_TIMEOUT_MS = 25_000;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
-type TerminalStatus = "success" | "error" | "cancelled";
+type TerminalStatus = "success" | "error" | "system_error" | "cancelled";
 
 type ExecutionResult = {
   status: TerminalStatus;
@@ -21,7 +22,9 @@ type ExecutionResult = {
 };
 
 function isTerminalStatus(status: string): status is TerminalStatus {
-  return status === "success" || status === "error" || status === "cancelled";
+  return (
+    status === "success" || isErrorStatus(status) || status === "cancelled"
+  );
 }
 
 function loadReceiptRow(executionId: string) {

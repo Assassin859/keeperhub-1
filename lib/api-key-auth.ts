@@ -18,7 +18,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { captureMessage } from "@sentry/nextjs";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import {
   isAnonymousUserShape,
@@ -26,6 +25,7 @@ import {
 } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
+import { ErrorCategory, logSecurityEvent, logSystemError } from "@/lib/logging";
 
 export type ApiKeyAuthResult = {
   authenticated: boolean;
@@ -162,32 +162,23 @@ export async function authenticateApiKey(
     if (apiKey.createdBy && apiKey.creatorDeactivatedAt) {
       // KEEP-612: signal the third deactivated-login surface (session and
       // account are handled in lib/auth.ts). Best-effort, never blocks.
-      try {
-        captureMessage("security.deactivated_login_attempt", {
-          level: "warning",
+      logSecurityEvent(
+        "deactivated_login_attempt",
+        {
+          surface: "api_key",
+          userId: apiKey.createdBy,
+          apiKeyId: apiKey.id,
+          organizationId: apiKey.organizationId,
+        },
+        {
           tags: {
             security: "deactivated_login_attempt",
             surface: "api_key",
           },
           user: { id: apiKey.createdBy },
           extra: { apiKeyId: apiKey.id, organizationId: apiKey.organizationId },
-        });
-      } catch {
-        // swallow; observability must not block auth response
-      }
-      try {
-        console.warn(
-          JSON.stringify({
-            event: "security.deactivated_login_attempt",
-            surface: "api_key",
-            userId: apiKey.createdBy,
-            apiKeyId: apiKey.id,
-            organizationId: apiKey.organizationId,
-          })
-        );
-      } catch {
-        // swallow; logging must not block auth response
-      }
+        }
+      );
       return {
         authenticated: false,
         error: "API key creator account is deactivated",
@@ -210,7 +201,11 @@ export async function authenticateApiKey(
       .where(eq(organizationApiKeys.id, apiKey.id))
       .catch((error) => {
         // Log error but don't fail the request
-        console.error("[API Key Auth] Failed to update lastUsedAt:", error);
+        logSystemError(
+          ErrorCategory.DATABASE,
+          "[API Key Auth] Failed to update lastUsedAt",
+          error
+        );
       });
 
     return {
@@ -220,7 +215,11 @@ export async function authenticateApiKey(
       userId: apiKey.createdBy ?? undefined,
     };
   } catch (error) {
-    console.error("[API Key Auth] Authentication error:", error);
+    logSystemError(
+      ErrorCategory.AUTH,
+      "[API Key Auth] Authentication error",
+      error
+    );
     return {
       authenticated: false,
       error: "Internal authentication error",

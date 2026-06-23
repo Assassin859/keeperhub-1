@@ -9,6 +9,7 @@ import {
 import { BlockList, isIP } from "node:net";
 import { captureException } from "@sentry/nextjs";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
+import { logWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   SSRF_BLOCKED_HOST_EXACT,
@@ -277,12 +278,20 @@ export function isBlockedHost(
 }
 
 export function isShadowMode(): boolean {
-  // Fail-closed by default: enforce SSRF blocking unless an environment
-  // explicitly opts into shadow mode with SAFE_FETCH_ENFORCE="false". Any
-  // other value (including unset) enforces, so an environment that forgets
-  // to set the flag still rejects private/loopback/metadata targets instead
-  // of shipping an unauthenticated SSRF primitive.
-  return process.env.SAFE_FETCH_ENFORCE === "false";
+  // Real production can never enter shadow mode, regardless of any flag. This
+  // closes the foot-gun where a stray env var silently re-enables an
+  // unauthenticated SSRF primitive in prod. CI runs the app under
+  // NODE_ENV="production" too, so it is exempted via CI to keep the
+  // localhost-anvil e2e suites (which opt into shadow) working.
+  if (process.env.NODE_ENV === "production" && process.env.CI !== "true") {
+    return false;
+  }
+  // Fail-closed by default elsewhere: SSRF blocking is enforced unless an
+  // environment explicitly opts into shadow mode with SAFE_FETCH_SHADOW="true"
+  // (any other value, including unset, enforces). Shadow mode is a dev/CI-only
+  // escape hatch for reaching localhost/private targets through safeFetch
+  // (e.g. a local anvil node).
+  return process.env.SAFE_FETCH_SHADOW === "true";
 }
 
 type BlockContext = {
@@ -343,7 +352,12 @@ function recordBlock(ctx: BlockContext, shadow: boolean): void {
       : "";
   const pluginSuffix =
     ctx.plugin === undefined ? "" : ` [plugin=${ctx.plugin}]`;
-  console.warn(
+  // logWarn (JSON line only, NO metric, NO Sentry): the metric and Sentry
+  // capture are emitted directly above/below. Routing through
+  // logUserError/logSystemError would emit a second error metric whose fixed
+  // initial labelset rejects hostname/resolved_ip and turns shadow mode into
+  // a synchronous throw.
+  logWarn(
     `[safe-fetch] Blocked outbound request${modeSuffix}: ${ctx.hostname}${resolvedSuffix} (reason=${ctx.reason})${pluginSuffix}`
   );
 
@@ -467,8 +481,9 @@ export type SafeFetchOptions = RequestInit & {
  * every redirect hop.
  *
  * Enforce mode is the default (fail-closed): blocked requests throw
- * `SsrfBlockedError`. Set `SAFE_FETCH_ENFORCE="false"` to opt into shadow
- * mode, where blocks are logged and counted but the request still proceeds.
+ * `SsrfBlockedError`. Set `SAFE_FETCH_SHADOW="true"` to opt into shadow mode
+ * (dev/CI only -- real production always enforces), where blocks are logged
+ * and counted but the request still proceeds.
  */
 export async function safeFetch(
   input: RequestInfo | URL,

@@ -1,4 +1,5 @@
 import { ethers, isError } from "ethers";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeEthersGetUrl } from "../safe-ethers-fetch";
 import { isNonRetryableError } from "./error-classification";
 
@@ -319,14 +320,14 @@ export class RpcProviderManager {
         }
 
         // Fallback failed - try primary in case it recovered
-        console.warn(
-          JSON.stringify({
-            level: "warn",
+        logUserError(
+          ErrorCategory.NETWORK_RPC,
+          `[RPC] Fallback RPC failed for ${this.config.chainName}, attempting primary recovery`,
+          fallbackResult.error,
+          {
             event: "RPC_FALLBACK_FAILED",
-            message: `Fallback RPC failed for ${this.config.chainName}, attempting primary recovery`,
             chain: this.config.chainName,
-            timestamp: new Date().toISOString(),
-          })
+          }
         );
 
         const primaryProvider = this.getPrimaryProvider();
@@ -362,16 +363,14 @@ export class RpcProviderManager {
 
         // Both failed -- throw without redundant retry
         this.metricsCollector.recordBothFailed(this.config.chainName);
-        console.error(
-          JSON.stringify({
-            level: "error",
+        logUserError(
+          ErrorCategory.NETWORK_RPC,
+          `[RPC] Both primary and fallback RPC failed for ${this.config.chainName}`,
+          `Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`,
+          {
             event: "RPC_BOTH_ENDPOINTS_FAILED",
-            message: `Both primary and fallback RPC failed for ${this.config.chainName}`,
             chain: this.config.chainName,
-            fallbackError: fallbackResult.error,
-            primaryError: primaryResult.error,
-            timestamp: new Date().toISOString(),
-          })
+          }
         );
         throw new Error(
           `RPC failed on both endpoints. Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`
@@ -412,17 +411,16 @@ export class RpcProviderManager {
       );
 
       if (fallbackResult.success) {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
+        logUserError(
+          ErrorCategory.NETWORK_RPC,
+          `[RPC] Primary RPC failed for ${this.config.chainName}, switching to fallback`,
+          primaryResult.error,
+          {
             event: "RPC_FAILOVER_ACTIVATED",
-            message: `Primary RPC failed for ${this.config.chainName}, switching to fallback`,
             chain: this.config.chainName,
-            previousState: "primary",
-            newState: "fallback",
-            primaryError: primaryResult.error,
-            timestamp: new Date().toISOString(),
-          })
+            previous_state: "primary",
+            new_state: "fallback",
+          }
         );
         this.isUsingFallback = true;
         this.onFailoverStateChange?.(this.config.chainName, true, "failover");
@@ -430,16 +428,14 @@ export class RpcProviderManager {
       }
 
       this.metricsCollector.recordBothFailed(this.config.chainName);
-      console.error(
-        JSON.stringify({
-          level: "error",
+      logUserError(
+        ErrorCategory.NETWORK_RPC,
+        `[RPC] Both primary and fallback RPC failed for ${this.config.chainName}`,
+        `Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`,
+        {
           event: "RPC_BOTH_ENDPOINTS_FAILED",
-          message: `Both primary and fallback RPC failed for ${this.config.chainName}`,
           chain: this.config.chainName,
-          primaryError: primaryResult.error,
-          fallbackError: fallbackResult.error,
-          timestamp: new Date().toISOString(),
-        })
+        }
       );
       throw new Error(
         `RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`
