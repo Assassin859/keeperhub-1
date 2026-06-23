@@ -190,7 +190,7 @@ export function KpiCards(): ReactNode {
         key: "success-rate",
         icon: <CheckCircle2 className="size-5" />,
         label: "Success Rate",
-        value: `${(summary.successRate * 100).toFixed(1)}%`,
+        value: `${(summary.successRate * 100).toFixed(2)}%`,
         delta: successRateDelta,
         invertDeltaColor: false,
         iconClassName: "bg-green-500/10 text-green-600 dark:text-green-400",
