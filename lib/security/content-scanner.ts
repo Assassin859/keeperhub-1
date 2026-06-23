@@ -24,7 +24,7 @@
  * neon_auth, refresh_token, client_secret, DATABASE_URL".
  */
 
-import { captureMessage } from "@sentry/nextjs";
+import { logSecurityEvent } from "@/lib/logging";
 
 type Pattern = {
   readonly name: string;
@@ -222,9 +222,19 @@ export function emitScanReport(
     return;
   }
   const unique = dedupeHits(hits);
-  try {
-    captureMessage("security.content_scanner_hit", {
-      level: "warning",
+  // Best-effort dual emit (Sentry + structured stdout); logSecurityEvent
+  // self-guards both so a transport failure can never escape into the
+  // executor or change workflow execution semantics.
+  logSecurityEvent(
+    "content_scanner_hit",
+    {
+      workflowId: context.workflowId,
+      executionId: context.executionId,
+      organizationId: context.organizationId,
+      hitCount: unique.length,
+      hits: unique,
+    },
+    {
       tags: { security: "content_scanner_hit" },
       extra: {
         workflowId: context.workflowId,
@@ -233,27 +243,8 @@ export function emitScanReport(
         hitCount: unique.length,
         hits: unique,
       },
-    });
-  } catch {
-    // Best-effort. Sentry transport failure must never escape into the
-    // executor or change workflow execution semantics.
-  }
-  // Structured stdout line for Loki / log-only alerting. Independent of
-  // Sentry transport so the signal lands even with SENTRY_DSN unset.
-  try {
-    console.warn(
-      JSON.stringify({
-        event: "security.content_scanner_hit",
-        workflowId: context.workflowId,
-        executionId: context.executionId,
-        organizationId: context.organizationId,
-        hitCount: unique.length,
-        hits: unique,
-      })
-    );
-  } catch {
-    // never let log emission escape into the executor
-  }
+    }
+  );
 }
 
 /**
@@ -300,18 +291,13 @@ export function scanAndReport(
     // but nobody is watching" blind spot this layer exists to remove. Emit
     // one structured line (self-guarded so the failure-signal can't escape
     // either) so a probe that quietly stopped working is itself observable.
-    try {
-      console.warn(
-        JSON.stringify({
-          event: "security.content_scanner_error",
-          workflowId: context.workflowId,
-          executionId: context.executionId,
-          organizationId: context.organizationId,
-          message: error instanceof Error ? error.message : String(error),
-        })
-      );
-    } catch {
-      // never let the failure-signal emission escape into the executor
-    }
+    // Log-only self-signal (no Sentry by design); logSecurityEvent self-guards
+    // emission so it can never escape into the executor.
+    logSecurityEvent("content_scanner_error", {
+      workflowId: context.workflowId,
+      executionId: context.executionId,
+      organizationId: context.organizationId,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
