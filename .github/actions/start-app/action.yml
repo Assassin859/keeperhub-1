@@ -71,8 +71,8 @@ inputs:
     description: 'AI_MODEL - a claude-* id routes /api/ai/generate to Anthropic'
     required: false
     default: ''
-  safe_fetch_enforce:
-    description: 'SAFE_FETCH_ENFORCE - set "false" for shadow-mode SSRF so the app can reach the localhost anvil fork (safe-roles-orchestrator-fork suite)'
+  safe_fetch_shadow:
+    description: 'SAFE_FETCH_SHADOW - set "true" for shadow-mode SSRF so the app can reach the localhost anvil fork (safe-roles-orchestrator-fork suite). CI runs under NODE_ENV=production but is CI-exempt, so the flag still takes effect.'
     required: false
     default: ''
   load_test_bypass_token:
@@ -269,10 +269,10 @@ runs:
         NEXT_PUBLIC_AI_PROMPT_ENABLED: ${{ inputs.ai_prompt_enabled }}
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         AI_MODEL: ${{ inputs.ai_model }}
-        # Shadow-mode SSRF (existing per-env opt-out): safeFetch logs but allows,
+        # Shadow-mode SSRF (dev/CI-only opt-in): safeFetch logs but allows,
         # so the app can reach the localhost anvil fork (safe-roles suite).
         # Unset/empty = enforced (default), so other jobs keep full SSRF.
-        SAFE_FETCH_ENFORCE: ${{ inputs.safe_fetch_enforce }}
+        SAFE_FETCH_SHADOW: ${{ inputs.safe_fetch_shadow }}
         # App-side verification of the x-load-test-mfa-bypass header (proxy.ts)
         # so playwright e2e sign-in clears the mandatory-MFA enrollment gate.
         LOAD_TEST_BYPASS_TOKEN: ${{ inputs.load_test_bypass_token }}

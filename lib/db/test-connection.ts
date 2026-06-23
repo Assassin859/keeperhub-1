@@ -94,7 +94,7 @@ export async function handleDatabaseTest(
  * immediately after, so the rebinding window is negligible.
  *
  * Note: `assertUrlIsPublic` is always-on; it does not honor
- * `SAFE_FETCH_ENFORCE`, matching the database-test and RPC pre-flights. So
+ * `SAFE_FETCH_SHADOW`, matching the database-test and RPC pre-flights. So
  * "Test Connection" blocks a `localhost`/private instance URL even in local
  * dev, where `safeFetch` (used by workflow execution) runs in shadow mode and
  * would allow it. If you need to test against a local explorer in dev, run the

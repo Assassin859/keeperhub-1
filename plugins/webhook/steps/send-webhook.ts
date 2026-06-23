@@ -120,7 +120,7 @@ async function stepHandler(
 
   // SSRF guard: reject private/loopback/link-local/metadata destinations
   // before any outbound request. `assertUrlIsPublic` is always-on -- it
-  // ignores `SAFE_FETCH_ENFORCE`/shadow mode -- so an attacker-supplied
+  // ignores `SAFE_FETCH_SHADOW`/shadow mode -- so an attacker-supplied
   // webhookUrl pointing at an internal address (e.g.
   // http://169.254.169.254/latest/meta-data/) is blocked here even in
   // environments where `safeFetch` itself would only log-and-continue.
