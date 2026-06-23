@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
 import {
@@ -12,6 +12,7 @@ import {
   directExecutions,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
+import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -79,6 +80,12 @@ function directDbStatuses(status: NormalizedStatus): string[] {
 export function workflowDbStatuses(status: NormalizedStatus): string[] {
   if (status === "pending") {
     return ["pending", "phantom"];
+  }
+  // The aggregate error counts include system_error, so the "error" filter must
+  // match both or the filtered runs list and the headline error count disagree.
+  // The dedicated "system_error" filter still isolates the system subset.
+  if (status === "error") {
+    return [...ERROR_STATUSES];
   }
   return [status];
 }
@@ -256,7 +263,7 @@ async function getWorkflowCounts(
     .select({
       total: count(),
       success: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
-      error: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'error' THEN 1 ELSE 0 END)`,
+      error: sql<number>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
       durationSum: sql<number>`COALESCE(SUM(${workflowExecutions.duration}), 0)`,
       durationCount: sql<number>`SUM(CASE WHEN ${workflowExecutions.duration} IS NOT NULL THEN 1 ELSE 0 END)`,
@@ -477,7 +484,7 @@ async function computeTimeSeries(
     .select({
       bucket: sql<string>`${bucketExpr(workflowExecutions.startedAt)}`,
       success: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
-      error: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'error' THEN 1 ELSE 0 END)`,
+      error: sql<string>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
       pending: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'pending' THEN 1 ELSE 0 END)`,
       running: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'running' THEN 1 ELSE 0 END)`,

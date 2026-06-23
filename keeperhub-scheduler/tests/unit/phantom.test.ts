@@ -64,7 +64,7 @@ describe("failPhantomExecution", () => {
     expect(path).toBe("/api/internal/executions/exec_123");
     expect(options.method).toBe("PATCH");
     expect(JSON.parse(options.body)).toEqual({
-      status: "error",
+      status: "system_error",
       error: "dispatch failed",
       errorCode: "CS-0001",
     });

@@ -1,11 +1,12 @@
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
   workflowSchedules,
   type workflows,
 } from "../../lib/db/schema";
+import type { ErrorCode } from "../../lib/errors/error-codes";
 import { toJsonSafe } from "./serialize";
 
 export type DbSchema = {
@@ -53,9 +54,50 @@ export async function updateExecutionStatus(
         eq(workflowExecutions.id, executionId),
         ne(workflowExecutions.status, "success"),
         ne(workflowExecutions.status, "error"),
+        ne(workflowExecutions.status, "system_error"),
         ne(workflowExecutions.status, "cancelled")
       )
     );
+}
+
+/**
+ * KEEP-853: backstop for the SQS consumer. When message processing throws for a
+ * reason the inner dispatch handlers did not already record, mark the in-flight
+ * row as a system error right away instead of leaving it for the reaper (which
+ * runs minutes later). Compare-and-set on status IN ('phantom','pending') so it
+ * never clobbers a row the runtime already advanced to running/terminal.
+ *
+ * Returns true when a row was marked, false when the CAS matched nothing (no
+ * executionId, or the row already advanced past phantom/pending). The caller
+ * surfaces the false case instead of treating the backstop as resolved, since
+ * such a row is left for the reaper rather than marked immediately.
+ */
+export async function failExecutionAsSystemError(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string | undefined,
+  fields: { error: string; errorCode: ErrorCode }
+): Promise<boolean> {
+  if (!executionId) {
+    return false;
+  }
+  const marked = await db
+    .update(workflowExecutions)
+    .set({
+      status: "system_error",
+      error: fields.error,
+      errorCode: fields.errorCode,
+      errorType: "system",
+      errorCategory: "infrastructure",
+      completedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        inArray(workflowExecutions.status, ["phantom", "pending"])
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  return marked.length > 0;
 }
 
 /**

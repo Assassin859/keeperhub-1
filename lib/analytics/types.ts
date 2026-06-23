@@ -29,6 +29,7 @@ export type NormalizedStatus =
   | "running"
   | "success"
   | "error"
+  | "system_error"
   | "cancelled";
 
 export type UnifiedRun = {

@@ -58,6 +58,7 @@ import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import {
   discardPhantomRow,
+  failExecutionAsSystemError,
   resolvePhantomToError,
   upgradePhantomToPending,
 } from "./lib/db-helpers";
@@ -70,6 +71,14 @@ import {
 import type { ExecutorMessage, ScheduleMessage } from "./types";
 
 const INGEST_MAX_BODY_BYTES = 256 * 1024;
+
+/**
+ * KEEP-853: a deliberate "leave the message on the queue and retry later"
+ * signal, distinct from a genuine processing failure. Thrown when the executor
+ * is at capacity (concurrency cap) so processMessage skips the system-error
+ * backstop and lets SQS redeliver the message after the visibility timeout.
+ */
+export class RequeueSignal extends Error {}
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -195,7 +204,7 @@ async function dispatchExecution(params: {
         await db
           .update(workflowExecutions)
           .set({
-            status: "error",
+            status: "system_error",
             error:
               error instanceof Error
                 ? `Failed to create job: ${error.message}`
@@ -383,7 +392,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   // and do it before creating the row so a requeue does not leave orphans.
   const concurrency = await checkConcurrencyLimit(db);
   if (!concurrency.allowed) {
-    throw new Error(
+    throw new RequeueSignal(
       `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
     );
   }
@@ -482,7 +491,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     await db
       .update(workflowExecutions)
       .set({
-        status: "error",
+        status: "system_error",
         error:
           error instanceof Error
             ? `Dispatch failed: ${error.message}`
@@ -502,7 +511,12 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   }
 }
 
-async function processMessage(message: Message): Promise<void> {
+export async function processMessage(
+  message: Message,
+  // The message processor is injectable so tests can drive the success and
+  // failure branches without standing up the full executor pipeline.
+  runMessage: (body: ExecutorMessage) => Promise<void> = processExecutorMessage
+): Promise<void> {
   if (!(message.Body && message.ReceiptHandle)) {
     console.error("[Executor] Invalid message:", message);
     return;
@@ -523,7 +537,7 @@ async function processMessage(message: Message): Promise<void> {
   }
 
   try {
-    await processExecutorMessage(body);
+    await runMessage(body);
 
     await sqs.send(
       new DeleteMessageCommand({
@@ -534,9 +548,43 @@ async function processMessage(message: Message): Promise<void> {
 
     console.log(`[Executor] Message deleted for workflow ${body.workflowId}`);
   } catch (error) {
+    // KEEP-853: a RequeueSignal is a deliberate back-pressure skip (executor at
+    // capacity). Leave the message on the queue so SQS redelivers it after the
+    // visibility timeout, and leave the phantom row untouched for that retry.
+    if (error instanceof RequeueSignal) {
+      console.warn(`[Executor] Requeueing workflow ${body.workflowId}:`, error);
+      return;
+    }
+
+    // Genuine processing failure. Mark the in-flight execution as a system
+    // error immediately (instead of waiting for the reaper), then delete the
+    // message so a poison payload does not redeliver forever and so the
+    // resolved row is not re-claimed into a duplicate.
     console.error(
       `[Executor] Failed to process workflow ${body.workflowId}:`,
       error
+    );
+    const marked = await failExecutionAsSystemError(db, body.executionId, {
+      error:
+        error instanceof Error
+          ? `Message processing failed: ${error.message}`
+          : "Message processing failed",
+      errorCode: "E-0004",
+    });
+    if (!marked) {
+      // The row already advanced past phantom/pending (e.g. to running) or is
+      // missing, so the immediate mark did not apply. Deleting the message below
+      // is still correct, but the row is now left for the reaper; log that so it
+      // does not look like the backstop resolved it.
+      console.warn(
+        `[Executor] Backstop did not mark execution ${body.executionId} as system_error (already advanced or missing); leaving it for the reaper`
+      );
+    }
+    await sqs.send(
+      new DeleteMessageCommand({
+        QueueUrl: CONFIG.sqsQueueUrl,
+        ReceiptHandle: message.ReceiptHandle,
+      })
     );
   }
 }
@@ -709,7 +757,11 @@ async function listen(): Promise<void> {
   }
 }
 
-listen().catch((error: unknown) => {
-  console.error("[Executor] Fatal startup error:", error);
-  process.exit(1);
-});
+// Only auto-start the poll loop when run as the executor entrypoint, not when
+// the module is imported by tests (which drive processMessage directly).
+if (!process.env.VITEST) {
+  listen().catch((error: unknown) => {
+    console.error("[Executor] Fatal startup error:", error);
+    process.exit(1);
+  });
+}
