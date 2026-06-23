@@ -412,6 +412,12 @@ async function getPreviousPeriodSummary(
  * straight from the gas_credit_usage ledger. Org-level only: sponsorship is not
  * project-attributable, so a project-scoped view returns "0" rather than
  * leaking org-wide totals under a project filter.
+ *
+ * Caveat: this sums native gas across chains and the Gas Spent KPI renders it
+ * as ETH, so a non-ETH chain's gas (e.g. Polygon's POL) is counted as ETH. It
+ * is a deliberate single-figure approximation that mirrors the existing
+ * cross-chain Gas Spent headline; the accurate per-network breakdown lives on
+ * the Billing gas-sponsorship panel and the runs table.
  */
 async function getSponsoredGasTotal(
   organizationId: string,
@@ -1210,8 +1216,11 @@ export async function getStepLogs(
       forEachNodeId: workflowExecutionLogs.forEachNodeId,
       network: sql<string | null>`${logInputField("network")}`,
       // Native gas cost this step's transaction incurred, from the sponsorship
-      // ledger (matched by execution + chain). Present only for sponsored
-      // transactions, which is also how we mark a step as sponsored.
+      // ledger. Present only for sponsored transactions, which is also how we
+      // mark a step as sponsored. Matched by (execution, chain) rather than tx
+      // hash, so a run with multiple on-chain writes on the same chain would
+      // show that chain's combined total on each of those steps; correct for
+      // the common one-tx-per-chain case.
       gasCostWei: sql<string | null>`(
         SELECT SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC))::text
         FROM ${gasCreditUsage}

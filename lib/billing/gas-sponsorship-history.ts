@@ -47,6 +47,11 @@ function monthKeyToDate(key: string): Date {
   return new Date(Date.UTC(year, month - 1, 1));
 }
 
+// Month boundaries are computed and stored as UTC midnight. The month_start
+// column is a tz-naive `timestamp`; node-postgres reads it back in the server's
+// local zone, so a non-UTC server could shift the exact-midnight value across a
+// month boundary. Production runs UTC (and the rest of the schema uses bare
+// `timestamp`), so this is consistent and safe.
 function currentMonthStart(): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -138,6 +143,13 @@ function buildMonth(
  * Per-month, per-chain sponsored-gas history for an org. Closed months are
  * rolled up into gas_sponsorship_monthly once and served from there; the
  * current (open) month is always recomputed live from the ledger.
+ *
+ * Note this read persists closed-month rollups as a side effect (lazy
+ * materialisation). The insert is idempotent via the unique constraint
+ * (ON CONFLICT DO NOTHING), so concurrent first-reads are safe. It assumes a
+ * closed month never gains new gas_credit_usage rows afterwards, which holds
+ * because sponsorship usage is recorded synchronously at execution time, so a
+ * row can never land in an already-rolled-up past month.
  *
  * Testnet chains are stored but only returned when `includeTestnets` is set;
  * their sponsored USD is 0, so the monthly USD total is mainnet-only.

@@ -55,10 +55,9 @@ function formatNetworks(networks: string[]): string {
   return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
 }
 
-const CHAIN_SYMBOL_BY_ID = new Map([
-  ["137", "POL"],
-  ["80002", "POL"],
-]);
+const CHAIN_SYMBOL_BY_ID = new Map(
+  SPONSORSHIP_CHAINS.map((c) => [String(c.chainId), c.symbol])
+);
 
 function chainSymbol(network: string | null): string {
   if (!network) {
