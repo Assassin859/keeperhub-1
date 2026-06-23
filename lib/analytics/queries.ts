@@ -1,6 +1,16 @@
 import "server-only";
 
-import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  lt,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/lib/db";
 import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
 import {
@@ -691,10 +701,16 @@ async function computeNetworkBreakdown(
             )
           )
           .groupBy(directExecutions.network),
+    // Reads the denormalised network / gas_used_wei columns instead of
+    // re-parsing the double-encoded input/output JSONB per row, which is what
+    // pushed this query past the 100s edge timeout on large orgs. The columns
+    // are populated by lib/workflow/executor/logging.ts and backfilled by
+    // scripts/backfill-exec-log-network-gas.ts; they agree value-for-value with
+    // the JSONB extraction the rest of the readers use.
     db
       .select({
-        network: sql<string>`${logInputField("network")}`,
-        totalGasWei: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+        network: workflowExecutionLogs.network,
+        totalGasWei: sql<string>`COALESCE(SUM(${workflowExecutionLogs.gasUsedWei}), 0)::text`,
         executionCount: count(),
         successCount: sql<number>`SUM(CASE WHEN ${workflowExecutionLogs.status} = 'success' THEN 1 ELSE 0 END)`,
         errorCount: sql<number>`SUM(CASE WHEN ${workflowExecutionLogs.status} = 'error' THEN 1 ELSE 0 END)`,
@@ -711,10 +727,10 @@ async function computeNetworkBreakdown(
           projectId ? eq(workflows.projectId, projectId) : undefined,
           gte(workflowExecutionLogs.startedAt, rangeStart),
           lt(workflowExecutionLogs.startedAt, rangeEnd),
-          sql`${logOutputField("gasUsed")} IS NOT NULL`
+          isNotNull(workflowExecutionLogs.gasUsedWei)
         )
       )
-      .groupBy(sql`${logInputField("network")}`),
+      .groupBy(workflowExecutionLogs.network),
   ]);
 
   const networkMap = new Map<string, NetworkBreakdown>();
