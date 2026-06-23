@@ -20,6 +20,9 @@ on:
         description: "AWS region for ECR"
         value: ${{ jobs.build.outputs.ecr_region }}
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
