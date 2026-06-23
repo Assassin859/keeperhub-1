@@ -4,12 +4,12 @@ vi.mock("server-only", () => ({}));
 
 const mockCheckGasCredits = vi.fn();
 const mockRecordGasUsage = vi.fn();
-const mockGetEthPriceUsd = vi.fn();
+const mockGetGasTokenPriceUsd = vi.fn();
 
 vi.mock("@/lib/billing/gas-credits", () => ({
   checkGasCredits: (...args: unknown[]) => mockCheckGasCredits(...args),
   recordGasUsage: (...args: unknown[]) => mockRecordGasUsage(...args),
-  getEthPriceUsd: (...args: unknown[]) => mockGetEthPriceUsd(...args),
+  getGasTokenPriceUsd: (...args: unknown[]) => mockGetGasTokenPriceUsd(...args),
 }));
 
 vi.mock("@/lib/web3/sponsorship-feature-flag", () => ({
@@ -117,7 +117,7 @@ function setupSuccessfulSponsorship(): void {
     gasUsed: BigInt(21_000),
     effectiveGasPrice: BigInt(1_000_000_000),
   });
-  mockGetEthPriceUsd.mockResolvedValue(2000);
+  mockGetGasTokenPriceUsd.mockResolvedValue(2000);
   mockRecordGasUsage.mockResolvedValue(undefined);
 }
 
@@ -248,13 +248,13 @@ describe("executeSponsoredTransaction", () => {
     expect(result?.success).toBe(true);
   });
 
-  it("passes rpcUrl and chainId to getEthPriceUsd", async () => {
+  it("passes rpcUrl and chainId to getGasTokenPriceUsd", async () => {
     setupSuccessfulSponsorship();
     const mainnetParams = { ...baseTxParams, chainId: 8453 };
 
     await executeSponsoredTransaction(mainnetParams);
 
-    expect(mockGetEthPriceUsd).toHaveBeenCalledWith(
+    expect(mockGetGasTokenPriceUsd).toHaveBeenCalledWith(
       "https://rpc.example.com",
       8453
     );
@@ -268,7 +268,7 @@ describe("executeSponsoredTransaction", () => {
 
     expect(result).not.toBeNull();
     expect(result?.success).toBe(true);
-    expect(mockGetEthPriceUsd).not.toHaveBeenCalled();
+    expect(mockGetGasTokenPriceUsd).not.toHaveBeenCalled();
     expect(mockRecordGasUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: "org_1",

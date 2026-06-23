@@ -8,7 +8,7 @@ import {
 } from "@/lib/db/schema-extensions";
 import {
   AGGREGATOR_V3_ABI,
-  getEthUsdFeedAddress,
+  getGasTokenUsdFeedAddress,
 } from "@/lib/web3/chainlink-feeds";
 import { isBillingEnabled } from "./feature-flag";
 import {
@@ -157,8 +157,10 @@ export async function getGasCreditBalance(
       )
     );
 
+  // Round to nearest cent (not ceil) so "used" tracks real spend; the history
+  // table still renders the exact micro-USD value.
   const usedMicroUsd = Number(result[0]?.total ?? "0");
-  const usedCents = Math.ceil(usedMicroUsd / MICRO_USD_PER_CENT);
+  const usedCents = Math.round(usedMicroUsd / MICRO_USD_PER_CENT);
   const remainingCents = Math.max(0, totalCents - usedCents);
 
   return { totalCents, usedCents, remainingCents, plan: planName };
@@ -239,11 +241,12 @@ const STALE_PRICE_THRESHOLD_MS = 3_600_000; // 1 hour
 const FALLBACK_ETH_PRICE_USD = 3000;
 
 /**
- * Fetch current ETH/USD price from a Chainlink oracle on the given chain.
- * Results are cached for 60 seconds per chainId.
+ * Fetch the current USD price of a chain's native gas token (ETH on the L1 and
+ * ETH L2s, POL on Polygon) from the Chainlink oracle on that chain. Results are
+ * cached for 60 seconds per chainId.
  * Fallback chain: oracle failure -> stale cache -> $3000 conservative estimate.
  */
-export async function getEthPriceUsd(
+export async function getGasTokenPriceUsd(
   rpcUrl: string,
   chainId: number
 ): Promise<number> {
@@ -254,7 +257,7 @@ export async function getEthPriceUsd(
     return cached.usd;
   }
 
-  const feedAddress = getEthUsdFeedAddress(chainId);
+  const feedAddress = getGasTokenUsdFeedAddress(chainId);
   if (feedAddress === undefined) {
     return cached?.usd ?? FALLBACK_ETH_PRICE_USD;
   }

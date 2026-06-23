@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema";
 import {
   directExecutions,
+  gasCreditUsage,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
@@ -196,6 +197,7 @@ async function computeAnalyticsSummary(
     activeDirects,
     previousPeriod,
     workflowGasWei,
+    sponsoredGasWei,
   ] = await Promise.all([
     getWorkflowCounts(organizationId, rangeStart, rangeEnd, projectId),
     skipDirect
@@ -218,6 +220,7 @@ async function computeAnalyticsSummary(
       projectId
     ),
     getWorkflowGasTotal(organizationId, rangeStart, rangeEnd, projectId),
+    getSponsoredGasTotal(organizationId, rangeStart, rangeEnd, projectId),
   ]);
 
   const totalRuns = workflowStats.total + directStats.total;
@@ -241,6 +244,7 @@ async function computeAnalyticsSummary(
     successRate,
     avgDurationMs,
     totalGasWei,
+    sponsoredGasWei,
     activeRuns: activeWorkflows + activeDirects,
     previousPeriod,
   };
@@ -372,20 +376,22 @@ async function getPreviousPeriodSummary(
   const { start, end } = getPreviousPeriodStart(range, customStart, customEnd);
   const skipDirect = Boolean(projectId);
 
-  const [workflowStats, directStats, workflowGasWei] = await Promise.all([
-    getWorkflowCounts(organizationId, start, end, projectId),
-    skipDirect
-      ? {
-          total: 0,
-          success: 0,
-          error: 0,
-          durationSum: 0,
-          durationCount: 0,
-          totalGasWei: "0",
-        }
-      : getDirectCounts(organizationId, start, end),
-    getWorkflowGasTotal(organizationId, start, end, projectId),
-  ]);
+  const [workflowStats, directStats, workflowGasWei, sponsoredGasWei] =
+    await Promise.all([
+      getWorkflowCounts(organizationId, start, end, projectId),
+      skipDirect
+        ? {
+            total: 0,
+            success: 0,
+            error: 0,
+            durationSum: 0,
+            durationCount: 0,
+            totalGasWei: "0",
+          }
+        : getDirectCounts(organizationId, start, end),
+      getWorkflowGasTotal(organizationId, start, end, projectId),
+      getSponsoredGasTotal(organizationId, start, end, projectId),
+    ]);
 
   return {
     totalRuns: workflowStats.total + directStats.total,
@@ -397,7 +403,44 @@ async function getPreviousPeriodSummary(
       workflowStats.durationCount + directStats.durationCount
     ),
     totalGasWei: addBigIntStrings(directStats.totalGasWei, workflowGasWei),
+    sponsoredGasWei,
   };
+}
+
+/**
+ * Sum of gas paid by KeeperHub sponsorship over the window (in wei), read
+ * straight from the gas_credit_usage ledger. Org-level only: sponsorship is not
+ * project-attributable, so a project-scoped view returns "0" rather than
+ * leaking org-wide totals under a project filter.
+ *
+ * Caveat: this sums native gas across chains and the Gas Spent KPI renders it
+ * as ETH, so a non-ETH chain's gas (e.g. Polygon's POL) is counted as ETH. It
+ * is a deliberate single-figure approximation that mirrors the existing
+ * cross-chain Gas Spent headline; the accurate per-network breakdown lives on
+ * the Billing gas-sponsorship panel and the runs table.
+ */
+async function getSponsoredGasTotal(
+  organizationId: string,
+  rangeStart: Date,
+  rangeEnd: Date,
+  projectId?: string
+): Promise<string> {
+  if (projectId) {
+    return "0";
+  }
+  const result = await db
+    .select({
+      totalWei: sql<string>`COALESCE(SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC)), 0)::text`,
+    })
+    .from(gasCreditUsage)
+    .where(
+      and(
+        eq(gasCreditUsage.organizationId, organizationId),
+        gte(gasCreditUsage.createdAt, rangeStart),
+        lt(gasCreditUsage.createdAt, rangeEnd)
+      )
+    );
+  return result[0]?.totalWei ?? "0";
 }
 
 function computeAvgDuration(sum: number, durationCount: number): number | null {
@@ -898,6 +941,11 @@ async function fetchWorkflowRuns(
         THEN ${logInputField("network")}
         END
       )`.as("network"),
+      networks: sql<
+        string[]
+      >`COALESCE(ARRAY_AGG(DISTINCT ${logInputField("network")}) FILTER (WHERE ${logInputField("network")} IS NOT NULL), '{}')`.as(
+        "networks"
+      ),
     })
     .from(workflowExecutionLogs)
     .where(
@@ -908,6 +956,22 @@ async function fetchWorkflowRuns(
     )
     .groupBy(workflowExecutionLogs.executionId)
     .as("log_summary");
+
+  // Total native gas cost sponsored per execution, from the sponsorship ledger.
+  // Used to show a single-network run's real total (the wallet-side gas above is
+  // ~0 for sponsored runs); multi-network runs render as "Composed" instead.
+  const gasCostSummary = db
+    .select({
+      executionId: gasCreditUsage.executionId,
+      gasCostWei:
+        sql<string>`COALESCE(SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC)), 0)::text`.as(
+          "gasCostWei"
+        ),
+    })
+    .from(gasCreditUsage)
+    .where(sql`${gasCreditUsage.executionId} IN (${pagedExecutionIds})`)
+    .groupBy(gasCreditUsage.executionId)
+    .as("gas_cost_summary");
 
   const result = await db
     .select({
@@ -922,11 +986,17 @@ async function fetchWorkflowRuns(
       completedSteps: workflowExecutions.completedSteps,
       gasUsedWei: logSummary.gasUsedWei,
       network: logSummary.network,
+      networks: logSummary.networks,
+      gasCostWei: gasCostSummary.gasCostWei,
       transactionHashes: workflowExecutions.transactionHashes,
     })
     .from(workflowExecutions)
     .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .leftJoin(logSummary, eq(workflowExecutions.id, logSummary.executionId))
+    .leftJoin(
+      gasCostSummary,
+      eq(workflowExecutions.id, gasCostSummary.executionId)
+    )
     .where(and(...conditions))
     // Secondary `id` key must match pagedExecutionIds above so the page and the
     // gas subquery resolve started_at ties to the same rows.
@@ -944,6 +1014,9 @@ async function fetchWorkflowRuns(
     workflowName: row.workflowName ?? "(Deleted)",
     directType: null,
     network: row.network ?? null,
+    networks: row.networks ?? [],
+    gasCostWei:
+      row.gasCostWei && row.gasCostWei !== "0" ? row.gasCostWei : null,
     transactionHashes: row.transactionHashes,
     gasUsedWei:
       row.gasUsedWei && row.gasUsedWei !== "0" ? row.gasUsedWei : null,
@@ -1009,6 +1082,8 @@ async function fetchDirectRuns(
     workflowName: null,
     directType: row.type as UnifiedRun["directType"],
     network: row.network,
+    networks: row.network ? [row.network] : [],
+    gasCostWei: row.gasUsedWei,
     // Direct executions are genuinely single-tx. Synthesize the entry so
     // consumers can render workflow + direct runs through the same array
     // shape; nodeId/nodeName carry sentinel values since direct executions
@@ -1139,6 +1214,19 @@ export async function getStepLogs(
       error: workflowExecutionLogs.error,
       iterationIndex: workflowExecutionLogs.iterationIndex,
       forEachNodeId: workflowExecutionLogs.forEachNodeId,
+      network: sql<string | null>`${logInputField("network")}`,
+      // Native gas cost this step's transaction incurred, from the sponsorship
+      // ledger. Present only for sponsored transactions, which is also how we
+      // mark a step as sponsored. Matched by (execution, chain) rather than tx
+      // hash, so a run with multiple on-chain writes on the same chain would
+      // show that chain's combined total on each of those steps; correct for
+      // the common one-tx-per-chain case.
+      gasCostWei: sql<string | null>`(
+        SELECT SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC))::text
+        FROM ${gasCreditUsage}
+        WHERE ${gasCreditUsage.executionId} = ${workflowExecutionLogs.executionId}
+        AND ${gasCreditUsage.chainId}::text = ${logInputField("network")}
+      )`,
     })
     .from(workflowExecutionLogs)
     .innerJoin(
@@ -1166,6 +1254,9 @@ export async function getStepLogs(
     error: row.error,
     iterationIndex: row.iterationIndex,
     forEachNodeId: row.forEachNodeId,
+    network: row.network,
+    gasCostWei: row.gasCostWei,
+    sponsored: row.gasCostWei !== null,
   }));
 }
 

@@ -3,7 +3,7 @@ import type { Hex } from "viem";
 import { createPublicClient, encodeFunctionData, http } from "viem";
 import {
   checkGasCredits,
-  getEthPriceUsd,
+  getGasTokenPriceUsd,
   recordGasUsage,
 } from "@/lib/billing/gas-credits";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -210,7 +210,7 @@ async function finalizeSponsoredTx(
   const isTestnet = isTestnetChain(chainId);
   const ethPriceUsd = isTestnet
     ? TESTNET_ETH_PRICE_USD
-    : await getEthPriceUsd(rpcUrl, chainId);
+    : await getGasTokenPriceUsd(rpcUrl, chainId);
 
   try {
     await recordGasUsage({
