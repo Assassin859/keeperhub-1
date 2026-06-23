@@ -300,4 +300,56 @@ describe("databaseQueryStep connection timeout + retry", () => {
     expect(mockPostgres).toHaveBeenCalledTimes(3);
     expect(result.error ?? "").not.toContain("93.184.216.34");
   });
+
+  it("retries a drizzle-wrapped connection error (code on error.cause)", async () => {
+    let call = 0;
+    mockPostgres.mockImplementation(() =>
+      makeClient(() => {
+        call++;
+        if (call === 1) {
+          // The non-parameterized path runs through drizzle, which wraps the
+          // driver error so the real code lands on error.cause, not the top.
+          const wrapped = new Error("Failed query: SELECT $1") as Error & {
+            cause?: unknown;
+          };
+          wrapped.cause = Object.assign(
+            new Error("connect ECONNREFUSED 10.1.2.3:5432"),
+            { code: "ECONNREFUSED" }
+          );
+          return Promise.reject(wrapped);
+        }
+        return Promise.resolve([{ ok: 1 }]);
+      })
+    );
+
+    const result = (await databaseQueryStep(PUBLIC_DB_INPUT)) as {
+      success: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    expect(mockPostgres).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a drizzle-wrapped Postgres query error (severity on cause)", async () => {
+    mockPostgres.mockImplementation(() =>
+      makeClient(() => {
+        const wrapped = new Error("Failed query: INSERT ...") as Error & {
+          cause?: unknown;
+        };
+        wrapped.cause = Object.assign(new Error("duplicate key value"), {
+          severity: "ERROR",
+          code: "23505",
+        });
+        return Promise.reject(wrapped);
+      })
+    );
+
+    const result = (await databaseQueryStep({
+      ...PUBLIC_DB_INPUT,
+      retries: 3,
+    })) as { success: boolean };
+
+    expect(result.success).toBe(false);
+    expect(mockPostgres).toHaveBeenCalledTimes(1);
+  });
 });

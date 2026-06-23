@@ -178,28 +178,41 @@ export function resolveRetries(retries: unknown): number {
  * are excluded - they can occur after the query was transmitted.
  */
 const RETRYABLE_CONNECTION_CODES = new Set(["CONNECT_TIMEOUT", "ECONNREFUSED"]);
+const MAX_CAUSE_DEPTH = 5;
 
 function isRetryableConnectionError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  // A Postgres query error carries a `severity` (ERROR/FATAL/...): the query
-  // reached the server and the failure is deterministic. Never retry it.
-  if (
-    "severity" in error &&
-    typeof (error as { severity: unknown }).severity === "string"
+  // Walk the error -> cause chain. A direct postgres.js call exposes the code
+  // at the top level (`error.code`), but the step's non-parameterized path runs
+  // through drizzle, which wraps the driver error so the real code lands on
+  // `error.cause.code`. Inspect every level so both paths are covered.
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth <= MAX_CAUSE_DEPTH && current instanceof Error;
+    depth++
   ) {
-    return false;
+    // A Postgres query error carries a `severity` (ERROR/FATAL/...): the query
+    // reached the server and the failure is deterministic. Never retry it.
+    if (
+      "severity" in current &&
+      typeof (current as { severity: unknown }).severity === "string"
+    ) {
+      return false;
+    }
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && RETRYABLE_CONNECTION_CODES.has(code)) {
+      return true;
+    }
+    // Some driver paths surface the code only in the message.
+    if (
+      current.message.includes("CONNECT_TIMEOUT") ||
+      current.message.includes("ECONNREFUSED")
+    ) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
   }
-  const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" && RETRYABLE_CONNECTION_CODES.has(code)) {
-    return true;
-  }
-  // Some driver paths surface the code only in the message.
-  const message = error.message;
-  return (
-    message.includes("CONNECT_TIMEOUT") || message.includes("ECONNREFUSED")
-  );
+  return false;
 }
 
 function delay(ms: number): Promise<void> {
