@@ -52,7 +52,7 @@ function describe(arg: unknown): string {
 function emit(
   level: LogLevel,
   write: (line: string) => void,
-  args: unknown[]
+  args: unknown[],
 ): void {
   if (LEVELS[level] < threshold()) {
     return;
