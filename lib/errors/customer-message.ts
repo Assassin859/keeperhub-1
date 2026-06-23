@@ -1,4 +1,5 @@
 import { getCustomerMessageForCode } from "@/lib/errors/error-codes";
+import { isErrorStatus } from "@/lib/errors/execution-status";
 import type { ErrorCategory } from "@/lib/logging";
 
 /**
@@ -23,9 +24,9 @@ type RunErrorInput = {
 };
 
 export function getCustomerRunErrorMessage(run: RunErrorInput): string | null {
-  // KEEP-853: system failures carry status='system_error'; they are exactly the
-  // coded runs whose customer message lives in the registry, so include them.
-  if (run.status !== "error" && run.status !== "system_error") {
+  // System failures carry status='system_error'; they are exactly the coded
+  // runs whose customer message lives in the registry, so include them.
+  if (!isErrorStatus(run.status)) {
     return null;
   }
 

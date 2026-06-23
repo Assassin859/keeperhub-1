@@ -75,7 +75,7 @@ const INGEST_MAX_BODY_BYTES = 256 * 1024;
  * is at capacity (concurrency cap) so processMessage skips the system-error
  * backstop and lets SQS redeliver the message after the visibility timeout.
  */
-class RequeueSignal extends Error {}
+export class RequeueSignal extends Error {}
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -508,7 +508,12 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   }
 }
 
-async function processMessage(message: Message): Promise<void> {
+export async function processMessage(
+  message: Message,
+  // The message processor is injectable so tests can drive the success and
+  // failure branches without standing up the full executor pipeline.
+  runMessage: (body: ExecutorMessage) => Promise<void> = processExecutorMessage
+): Promise<void> {
   if (!(message.Body && message.ReceiptHandle)) {
     console.error("[Executor] Invalid message:", message);
     return;
@@ -529,7 +534,7 @@ async function processMessage(message: Message): Promise<void> {
   }
 
   try {
-    await processExecutorMessage(body);
+    await runMessage(body);
 
     await sqs.send(
       new DeleteMessageCommand({
@@ -556,13 +561,22 @@ async function processMessage(message: Message): Promise<void> {
       `[Executor] Failed to process workflow ${body.workflowId}:`,
       error
     );
-    await failExecutionAsSystemError(db, body.executionId, {
+    const marked = await failExecutionAsSystemError(db, body.executionId, {
       error:
         error instanceof Error
           ? `Message processing failed: ${error.message}`
           : "Message processing failed",
       errorCode: "E-0004",
     });
+    if (!marked) {
+      // The row already advanced past phantom/pending (e.g. to running) or is
+      // missing, so the immediate mark did not apply. Deleting the message below
+      // is still correct, but the row is now left for the reaper; log that so it
+      // does not look like the backstop resolved it.
+      console.warn(
+        `[Executor] Backstop did not mark execution ${body.executionId} as system_error (already advanced or missing); leaving it for the reaper`
+      );
+    }
     await sqs.send(
       new DeleteMessageCommand({
         QueueUrl: CONFIG.sqsQueueUrl,
@@ -740,7 +754,11 @@ async function listen(): Promise<void> {
   }
 }
 
-listen().catch((error: unknown) => {
-  console.error("[Executor] Fatal startup error:", error);
-  process.exit(1);
-});
+// Only auto-start the poll loop when run as the executor entrypoint, not when
+// the module is imported by tests (which drive processMessage directly).
+if (!process.env.VITEST) {
+  listen().catch((error: unknown) => {
+    console.error("[Executor] Fatal startup error:", error);
+    process.exit(1);
+  });
+}

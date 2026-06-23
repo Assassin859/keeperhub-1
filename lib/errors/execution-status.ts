@@ -12,8 +12,10 @@ export const ERROR_STATUSES = ["error", "system_error"] as const;
 
 export type ErrorStatus = (typeof ERROR_STATUSES)[number];
 
-/** SQL list literal for `status IN (...)` predicates over both error statuses. */
-export const ERROR_STATUSES_SQL = "('error', 'system_error')";
+/** True when an execution status is one of the two failure statuses. */
+export function isErrorStatus(status: string): status is ErrorStatus {
+  return (ERROR_STATUSES as readonly string[]).includes(status);
+}
 
 /** Map an error_type to the execution status that should be persisted. */
 export function statusForErrorType(

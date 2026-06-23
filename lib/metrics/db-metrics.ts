@@ -9,7 +9,16 @@
 
 import "server-only";
 
-import { and, count, countDistinct, eq, gte, inArray, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  countDistinct,
+  eq,
+  gte,
+  inArray,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import {
   PLANS,
   type PlanName,
@@ -39,6 +48,7 @@ import {
   workflowSchedules,
   workflows,
 } from "@/lib/db/schema";
+import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
@@ -132,7 +142,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
         errorType: sql<string>`CASE
-          WHEN ${workflowExecutions.status} NOT IN ('error', 'system_error') THEN 'na'
+          WHEN ${notInArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 'na'
           WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
           ELSE ${workflowExecutions.errorType}
         END`,
@@ -283,7 +293,7 @@ export async function getWorkflowErrorsByWorkflowFromDb(): Promise<WorkflowError
       .innerJoin(organization, eq(workflows.organizationId, organization.id))
       .where(
         and(
-          inArray(workflowExecutions.status, ["error", "system_error"]),
+          inArray(workflowExecutions.status, [...ERROR_STATUSES]),
           sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`,
           inArray(organization.slug, [...MANAGED_ORG_SLUGS])
         )
@@ -369,7 +379,7 @@ export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByC
           // KEEP-853: system errors carry status='system_error' (not 'error'),
           // so both must be matched or every system error drops out of the gauge
           // the infra P3 alert reads.
-          inArray(workflowExecutions.status, ["error", "system_error"]),
+          inArray(workflowExecutions.status, [...ERROR_STATUSES]),
           sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`
         )
       )

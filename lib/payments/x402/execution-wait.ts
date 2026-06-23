@@ -3,6 +3,7 @@ import "server-only";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { isErrorStatus } from "@/lib/errors/execution-status";
 
 /**
  * Default timeout for waiting on read-workflow completion before falling back
@@ -22,10 +23,7 @@ type ExecutionResult = {
 
 function isTerminalStatus(status: string): status is TerminalStatus {
   return (
-    status === "success" ||
-    status === "error" ||
-    status === "system_error" ||
-    status === "cancelled"
+    status === "success" || isErrorStatus(status) || status === "cancelled"
   );
 }
 

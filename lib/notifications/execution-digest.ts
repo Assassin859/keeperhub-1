@@ -7,6 +7,7 @@ import {
   workflowExecutions,
   workflows,
 } from "@/lib/db/schema";
+import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 export type DigestCadence = "daily" | "weekly" | "monthly";
@@ -172,7 +173,7 @@ export async function getOrgExecutionDigest(
 
   const errorFilter = and(
     windowFilter,
-    inArray(workflowExecutions.status, ["error", "system_error"])
+    inArray(workflowExecutions.status, [...ERROR_STATUSES])
   );
 
   const failingRows = await db

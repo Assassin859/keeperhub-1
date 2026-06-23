@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
 import { type ErrorCode, getErrorCodeEntry } from "@/lib/errors/error-codes";
+import { isErrorStatus } from "@/lib/errors/execution-status";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
-import type { ErrorCategory } from "@/lib/logging";
+import { ErrorCategory } from "@/lib/logging";
 
 export async function PATCH(
   request: Request,
@@ -71,7 +72,7 @@ export async function PATCH(
   }
 
   // Build update payload
-  const isError = status === "error" || status === "system_error";
+  const isError = isErrorStatus(status);
   const isTerminal = status === "success" || isError;
   const updateData: {
     status: ExecutionStatus;
@@ -92,6 +93,12 @@ export async function PATCH(
       updateData.errorCode = codeEntry.code;
       updateData.errorType = "system";
       updateData.errorCategory = codeEntry.category;
+    } else if (status === "system_error") {
+      // A system_error row must carry the system classification even when the
+      // caller did not supply a registry code, so downstream readers that
+      // assume status='system_error' implies errorType='system' stay consistent.
+      updateData.errorType = "system";
+      updateData.errorCategory = ErrorCategory.INFRASTRUCTURE;
     }
   } else if (status === "success") {
     updateData.completedAt = new Date();
