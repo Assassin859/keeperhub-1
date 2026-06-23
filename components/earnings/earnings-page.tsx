@@ -19,7 +19,7 @@ function AuthGate({ error }: { error: string }): ReactNode {
 
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
           <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
             {isAuthRequired ? (
@@ -54,7 +54,7 @@ function AuthGate({ error }: { error: string }): ReactNode {
 function NoListedWorkflowsState(): ReactNode {
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
           <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
             <BarChart3 className="size-10 text-muted-foreground" />
@@ -121,7 +121,7 @@ export function EarningsPage(): ReactNode {
 
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar">
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="flex flex-col gap-6 p-6 pt-[calc(5rem+var(--app-banner-height,0px))]">
           <EarningsHeader onRefetch={refetch} />
           <EarningsKpiCards />

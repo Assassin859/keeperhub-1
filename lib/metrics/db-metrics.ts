@@ -138,6 +138,9 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
     // Postgres groups NULLs together (NULLs are equal in GROUP BY), and the
     // SELECT-side expressions render those groups as ANONYMOUS_ORG_SLUG /
     // "unknown" / "na" as appropriate.
+    //
+    // Bounded to startedAt >= now() - 1h. startedAt is used instead of
+    // completedAt so in-flight running/pending rows are included.
     const breakdown = await db
       .select({
         status: workflowExecutions.status,
@@ -152,6 +155,9 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
+      .where(
+        gte(workflowExecutions.startedAt, sql`now() - interval '1 hour'`)
+      )
       .groupBy(
         workflowExecutions.status,
         organization.slug,
@@ -208,7 +214,8 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .where(
         and(
           sql`${workflowExecutions.status} IN ('success', 'error', 'system_error')`,
-          sql`${workflowExecutions.duration} IS NOT NULL`
+          sql`${workflowExecutions.duration} IS NOT NULL`,
+          gte(workflowExecutions.startedAt, sql`now() - interval '1 hour'`)
         )
       );
 

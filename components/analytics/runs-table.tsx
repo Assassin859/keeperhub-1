@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Loader2,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
@@ -29,9 +28,76 @@ import {
   analyticsStatusFilterAtom,
 } from "@/lib/atoms/analytics";
 import { cn } from "@/lib/utils";
+import { SPONSORSHIP_CHAINS } from "@/lib/web3/sponsorship-chains-meta";
 import { ProjectDrawer } from "./project-drawer";
 
 const WHITESPACE_RE = /\s+/;
+const LEADING_ZEROS_RE = /^0+(?=\d)/;
+const TRAILING_ZEROS_RE = /0+$/;
+const NON_DIGIT_RE = /\D/;
+
+const CHAIN_NAME_BY_ID = new Map(
+  SPONSORSHIP_CHAINS.map((c) => [String(c.chainId), c.name])
+);
+
+function networkName(network: string): string {
+  return CHAIN_NAME_BY_ID.get(network) ?? network;
+}
+
+function formatNetworks(networks: string[]): string {
+  if (networks.length === 0) {
+    return "--";
+  }
+  const names = networks.map(networkName);
+  if (names.length <= 2) {
+    return names.join(", ");
+  }
+  return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+}
+
+const CHAIN_SYMBOL_BY_ID = new Map(
+  SPONSORSHIP_CHAINS.map((c) => [String(c.chainId), c.symbol])
+);
+
+function chainSymbol(network: string | null): string {
+  if (!network) {
+    return "";
+  }
+  return CHAIN_SYMBOL_BY_ID.get(network) ?? "ETH";
+}
+
+// Summary amount for the collapsed run row: up to 6 decimals (trailing zeros
+// trimmed). The exact value is shown per step when the row is expanded.
+function formatGasNative(wei: string | null, network: string | null): string {
+  const value = Number(wei);
+  if (!wei || Number.isNaN(value) || value === 0) {
+    return "--";
+  }
+  const amount = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(value / 1e18);
+  return `${amount} ${chainSymbol(network)}`;
+}
+
+// Exact native amount from the wei integer string (no float rounding), for the
+// expanded per-step rows where we show the complete gas.
+function formatWeiToDecimal(wei: string): string {
+  const padded = wei.padStart(19, "0");
+  const intPart = padded.slice(0, -18).replace(LEADING_ZEROS_RE, "");
+  const frac = padded.slice(-18).replace(TRAILING_ZEROS_RE, "");
+  return frac ? `${intPart}.${frac}` : intPart;
+}
+
+function formatGasNativeExact(
+  wei: string | null,
+  network: string | null
+): string {
+  if (!wei || wei === "0" || NON_DIGIT_RE.test(wei)) {
+    return "--";
+  }
+  return `${formatWeiToDecimal(wei)} ${chainSymbol(network)}`;
+}
 
 function formatDuration(ms: number | null): string {
   if (ms === null) {
@@ -58,6 +124,19 @@ function formatGasAsEth(weiString: string | null): string {
   }
   const eth = wei / 1e18;
   return `${eth.toFixed(4)} ETH`;
+}
+
+// Run-level gas: multi-network runs can't sum into one token, so they render
+// as "Composed" (per-network amounts live in the expanded steps). A single
+// network shows its real sponsored total in that network's token.
+function runGasDisplay(run: UnifiedRun): ReactNode {
+  if (run.networks.length > 1) {
+    return "Composed";
+  }
+  if (run.gasCostWei) {
+    return formatGasNative(run.gasCostWei, run.networks[0] ?? run.network);
+  }
+  return formatGasAsEth(run.gasUsedWei);
 }
 
 function formatTimeAgo(dateString: string): string {
@@ -164,7 +243,20 @@ function StepLogRow({ step }: StepLogRowProps): ReactNode {
       <td className="whitespace-nowrap py-1.5 pr-3 text-xs text-muted-foreground">
         {formatDuration(step.durationMs)}
       </td>
-      <td colSpan={3} />
+      <td className="whitespace-nowrap py-1.5 pr-3 text-xs text-muted-foreground">
+        {step.network ? networkName(step.network) : "--"}
+      </td>
+      <td className="whitespace-nowrap py-1.5 pr-3 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          {formatGasNativeExact(step.gasCostWei, step.network)}
+          {step.sponsored ? (
+            <span className="rounded bg-green-500/10 px-1 py-0.5 text-[10px] text-green-700 dark:text-green-400">
+              sponsored
+            </span>
+          ) : null}
+        </span>
+      </td>
+      <td />
     </tr>
   );
 }
@@ -178,11 +270,29 @@ function ExpandedStepRows({
 }): ReactNode {
   if (loadingSteps) {
     return (
-      <tr>
-        <td className="py-3 text-center" colSpan={8}>
-          <Loader2 className="mx-auto size-4 animate-spin text-muted-foreground" />
-        </td>
-      </tr>
+      <>
+        {Array.from({ length: 3 }, (_, i) => `step-skeleton-${i}`).map(
+          (key) => (
+            <tr className="border-t border-dashed border-muted" key={key}>
+              <td colSpan={4}>
+                <div className="py-2 pl-10 pr-3">
+                  <div className="h-3 w-40 animate-pulse rounded bg-muted" />
+                </div>
+              </td>
+              <td className="py-2 pr-3">
+                <div className="h-3 w-12 animate-pulse rounded bg-muted" />
+              </td>
+              <td className="py-2 pr-3">
+                <div className="h-3 w-16 animate-pulse rounded bg-muted" />
+              </td>
+              <td className="py-2 pr-3">
+                <div className="h-3 w-14 animate-pulse rounded bg-muted" />
+              </td>
+              <td />
+            </tr>
+          )
+        )}
+      </>
     );
   }
 
@@ -296,11 +406,14 @@ function ExpandableRunRow({ run }: ExpandableRunRowProps): ReactNode {
         <td className="whitespace-nowrap py-3 pr-3 text-sm text-muted-foreground">
           {formatDuration(run.durationMs)}
         </td>
-        <td className="whitespace-nowrap py-3 pr-3 text-sm text-muted-foreground">
-          {run.network ?? "--"}
+        <td
+          className="whitespace-nowrap py-3 pr-3 text-sm text-muted-foreground"
+          title={run.networks.map(networkName).join(", ")}
+        >
+          {formatNetworks(run.networks)}
         </td>
         <td className="whitespace-nowrap py-3 pr-3 text-sm text-muted-foreground">
-          {formatGasAsEth(run.gasUsedWei)}
+          {runGasDisplay(run)}
         </td>
         <td className="whitespace-nowrap py-3 pr-3 text-right text-sm text-muted-foreground">
           {formatTimeAgo(run.startedAt)}

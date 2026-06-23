@@ -717,6 +717,17 @@ export const workflowExecutionLogs = pgTable(
     timestamp: timestamp("timestamp").notNull().defaultNow(),
     iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
     forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
+    /**
+     * Per-step network + on-chain gas, denormalised out of the input/output
+     * JSONB so the /analytics per-network gas breakdown can aggregate
+     * first-class columns instead of re-parsing the double-encoded JSONB on
+     * every row (the cost behind the networks-endpoint 524). network is read
+     * from input at step start; gas_used_wei from output at step complete.
+     * Both nullable on legacy rows until backfilled
+     * (scripts/backfill-exec-log-network-gas.ts) and on non-web3 steps.
+     */
+    network: text("network"),
+    gasUsedWei: numeric("gas_used_wei"),
   },
   (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
 );
@@ -755,14 +766,17 @@ export {
   type ExecutionDebt,
   executionDebt,
   type GasCreditAllocation,
+  type GasSponsorshipMonthly,
   gasCreditAllocations,
   gasCreditUsage,
   gasSponsorshipDelegations,
+  gasSponsorshipMonthly,
   keyExportCodes,
   type NewBillingEvent,
   type NewDirectExecution,
   type NewExecutionDebt,
   type NewGasCreditAllocation,
+  type NewGasSponsorshipMonthly,
   type NewOrganizationApiKey,
   type NewOrganizationSpendCap,
   type NewOrganizationSubscription,

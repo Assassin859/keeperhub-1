@@ -44,7 +44,7 @@ function AuthGate({
       data-page-state="ready"
       data-testid="billing-page-auth-gate"
     >
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
           <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
             {isAuthRequired ? (
@@ -171,7 +171,7 @@ export function BillingPage(): React.ReactElement {
       data-page-state={planLoaded ? "ready" : "loading"}
       data-testid="billing-page"
     >
-      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
         <div className="container mx-auto max-w-7xl space-y-8 px-4 py-8 pt-[calc(5rem+var(--app-banner-height,0px))]">
           <div>
             <h1 className="text-2xl font-bold">Billing</h1>

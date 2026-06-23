@@ -752,7 +752,18 @@ export function NavigationSidebar(): React.ReactNode {
       "--nav-sidebar-width",
       `${currentWidth}px`
     );
-  }, [currentWidth]);
+    // Full left offset including any open/collapsed flyout panels, so pages
+    // that resize their main frame (e.g. analytics) sit beside the panels
+    // instead of being overlapped by them.
+    const { rightEdge } = computePanelOffsets(
+      currentWidth,
+      navState.state.panels
+    );
+    document.documentElement.style.setProperty(
+      "--nav-content-offset",
+      `${rightEdge}px`
+    );
+  }, [currentWidth, navState.state.panels]);
 
   if (isMobile || !navState.hasMounted) {
     return null;

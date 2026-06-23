@@ -1003,6 +1003,52 @@ export type GasCreditAllocation = typeof gasCreditAllocations.$inferSelect;
 export type NewGasCreditAllocation = typeof gasCreditAllocations.$inferInsert;
 
 /**
+ * Gas Sponsorship Monthly rollup table
+ *
+ * One row per (organization, calendar month, chain) summarising sponsored gas
+ * from gas_credit_usage. A closed month is immutable, so the read path
+ * aggregates each closed month once and persists it here (INSERT ... ON CONFLICT
+ * DO NOTHING), then serves history from these tiny rows instead of re-scanning
+ * the per-tx ledger on every load. The current month is always recomputed live.
+ *
+ * Amounts are BigInt strings, matching gas_credit_usage. `sponsored_wei` is in
+ * the chain's native gas token; `sponsored_micro_usd` is the frozen-at-execution
+ * USD (1/1,000,000 dollar) and is 0 for testnet chains.
+ */
+export const gasSponsorshipMonthly = pgTable(
+  "gas_sponsorship_monthly",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    chainId: integer("chain_id").notNull(),
+    monthStart: timestamp("month_start").notNull(),
+    sponsoredWei: text("sponsored_wei").notNull(),
+    sponsoredMicroUsd: text("sponsored_micro_usd").notNull(),
+    txCount: integer("tx_count").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("gas_sponsorship_monthly_org_month_chain").on(
+      table.organizationId,
+      table.monthStart,
+      table.chainId
+    ),
+    index("idx_gas_sponsorship_monthly_org_month").on(
+      table.organizationId,
+      table.monthStart
+    ),
+  ]
+);
+
+export type GasSponsorshipMonthly = typeof gasSponsorshipMonthly.$inferSelect;
+export type NewGasSponsorshipMonthly =
+  typeof gasSponsorshipMonthly.$inferInsert;
+
+/**
  * Workflow Votes table
  *
  * Stores user upvotes/downvotes on public hub workflows.

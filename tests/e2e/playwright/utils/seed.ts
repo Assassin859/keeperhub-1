@@ -388,14 +388,14 @@ function buildStepInput(nodeType: string, chainId: string): string | null {
   });
 }
 
-function buildStepOutput(nodeType: string, stepStatus: string): string | null {
-  if (nodeType !== "web3:write-contract" || stepStatus !== "success") {
+function buildStepOutput(gasUsedWei: string | null): string | null {
+  if (gasUsedWei === null) {
     return null;
   }
   return JSON.stringify({
     success: true,
     transactionHash: `0x${randomHex(64)}`,
-    gasUsed: String(randomInt(21_000, 350_000)),
+    gasUsed: gasUsedWei,
   });
 }
 
@@ -414,17 +414,22 @@ async function seedStepLogs(
     const stepStartedAt = new Date(currentTime);
     const stepStatus = resolveStepStatus(execStatus, s, stepCount);
     const isTerminal = stepStatus === "pending" || stepStatus === "running";
-    const network =
-      nodeType === "web3:write-contract"
-        ? randomChoice(ANALYTICS_NETWORKS)
-        : null;
+    const isWrite = nodeType === "web3:write-contract";
+    const network = isWrite ? randomChoice(ANALYTICS_NETWORKS) : null;
     const chainId = CHAIN_MAP[network ?? "sepolia"] ?? "11155111";
+    // Computed once and mirrored into the output JSONB and the denormalised
+    // gas_used_wei column the analytics network breakdown reads.
+    const gasUsedWei =
+      isWrite && stepStatus === "success"
+        ? String(randomInt(21_000, 350_000))
+        : null;
 
     await sql.unsafe(
       `INSERT INTO workflow_execution_logs (
         id, execution_id, node_id, node_name, node_type, status,
-        started_at, completed_at, duration, error, input, output
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)`,
+        started_at, completed_at, duration, error, input, output,
+        network, gas_used_wei
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)`,
       [
         generateId(),
         execId,
@@ -437,7 +442,9 @@ async function seedStepLogs(
         isTerminal ? null : String(stepDuration),
         stepStatus === "error" ? "Contract call reverted" : null,
         buildStepInput(nodeType, chainId),
-        buildStepOutput(nodeType, stepStatus),
+        buildStepOutput(gasUsedWei),
+        isWrite ? chainId : null,
+        gasUsedWei,
       ]
     );
     currentTime += stepDuration + randomInt(10, 100);

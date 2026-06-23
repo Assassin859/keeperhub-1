@@ -11,6 +11,7 @@ const VALID_STATUSES = new Set<NormalizedStatus>([
   "running",
   "success",
   "error",
+  "system_error",
   "cancelled",
 ]);
 

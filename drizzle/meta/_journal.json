@@ -813,6 +813,27 @@
       "when": 1781641237006,
       "tag": "0115_tech_48_error_completed_at_index",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1782648000000,
+      "tag": "0116_keep_884_gas_sponsorship_monthly",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1782648000001,
+      "tag": "0117_keep_857_exec_log_network_gas",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1782648000002,
+      "tag": "0118_keep_857_exec_log_gas_index",
+      "breakpoints": true
     }
   ]
 }
