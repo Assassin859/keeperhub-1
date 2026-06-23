@@ -935,6 +935,11 @@ async function fetchWorkflowRuns(
         THEN ${logInputField("network")}
         END
       )`.as("network"),
+      networks: sql<
+        string[]
+      >`COALESCE(ARRAY_AGG(DISTINCT ${logInputField("network")}) FILTER (WHERE ${logInputField("network")} IS NOT NULL), '{}')`.as(
+        "networks"
+      ),
     })
     .from(workflowExecutionLogs)
     .where(
@@ -945,6 +950,22 @@ async function fetchWorkflowRuns(
     )
     .groupBy(workflowExecutionLogs.executionId)
     .as("log_summary");
+
+  // Total native gas cost sponsored per execution, from the sponsorship ledger.
+  // Used to show a single-network run's real total (the wallet-side gas above is
+  // ~0 for sponsored runs); multi-network runs render as "Composed" instead.
+  const gasCostSummary = db
+    .select({
+      executionId: gasCreditUsage.executionId,
+      gasCostWei:
+        sql<string>`COALESCE(SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC)), 0)::text`.as(
+          "gasCostWei"
+        ),
+    })
+    .from(gasCreditUsage)
+    .where(sql`${gasCreditUsage.executionId} IN (${pagedExecutionIds})`)
+    .groupBy(gasCreditUsage.executionId)
+    .as("gas_cost_summary");
 
   const result = await db
     .select({
@@ -959,11 +980,17 @@ async function fetchWorkflowRuns(
       completedSteps: workflowExecutions.completedSteps,
       gasUsedWei: logSummary.gasUsedWei,
       network: logSummary.network,
+      networks: logSummary.networks,
+      gasCostWei: gasCostSummary.gasCostWei,
       transactionHashes: workflowExecutions.transactionHashes,
     })
     .from(workflowExecutions)
     .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .leftJoin(logSummary, eq(workflowExecutions.id, logSummary.executionId))
+    .leftJoin(
+      gasCostSummary,
+      eq(workflowExecutions.id, gasCostSummary.executionId)
+    )
     .where(and(...conditions))
     // Secondary `id` key must match pagedExecutionIds above so the page and the
     // gas subquery resolve started_at ties to the same rows.
@@ -981,6 +1008,9 @@ async function fetchWorkflowRuns(
     workflowName: row.workflowName ?? "(Deleted)",
     directType: null,
     network: row.network ?? null,
+    networks: row.networks ?? [],
+    gasCostWei:
+      row.gasCostWei && row.gasCostWei !== "0" ? row.gasCostWei : null,
     transactionHashes: row.transactionHashes,
     gasUsedWei:
       row.gasUsedWei && row.gasUsedWei !== "0" ? row.gasUsedWei : null,
@@ -1046,6 +1076,8 @@ async function fetchDirectRuns(
     workflowName: null,
     directType: row.type as UnifiedRun["directType"],
     network: row.network,
+    networks: row.network ? [row.network] : [],
+    gasCostWei: row.gasUsedWei,
     // Direct executions are genuinely single-tx. Synthesize the entry so
     // consumers can render workflow + direct runs through the same array
     // shape; nodeId/nodeName carry sentinel values since direct executions
@@ -1176,6 +1208,16 @@ export async function getStepLogs(
       error: workflowExecutionLogs.error,
       iterationIndex: workflowExecutionLogs.iterationIndex,
       forEachNodeId: workflowExecutionLogs.forEachNodeId,
+      network: sql<string | null>`${logInputField("network")}`,
+      // Native gas cost this step's transaction incurred, from the sponsorship
+      // ledger (matched by execution + chain). Present only for sponsored
+      // transactions, which is also how we mark a step as sponsored.
+      gasCostWei: sql<string | null>`(
+        SELECT SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC))::text
+        FROM ${gasCreditUsage}
+        WHERE ${gasCreditUsage.executionId} = ${workflowExecutionLogs.executionId}
+        AND ${gasCreditUsage.chainId}::text = ${logInputField("network")}
+      )`,
     })
     .from(workflowExecutionLogs)
     .innerJoin(
@@ -1203,6 +1245,9 @@ export async function getStepLogs(
     error: row.error,
     iterationIndex: row.iterationIndex,
     forEachNodeId: row.forEachNodeId,
+    network: row.network,
+    gasCostWei: row.gasCostWei,
+    sponsored: row.gasCostWei !== null,
   }));
 }
 

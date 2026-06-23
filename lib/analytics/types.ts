@@ -43,6 +43,10 @@ export type UnifiedRun = {
   workflowName: string | null;
   directType: DirectType | null;
   network: string | null;
+  /** Distinct networks (chain ids) the run produced on-chain writes on. */
+  networks: string[];
+  /** Total native gas cost (wei) sponsored across the run's transactions. */
+  gasCostWei: string | null;
   /**
    * KEEP-470: Ordered list of on-chain writes the run recorded.
    *
@@ -127,6 +131,12 @@ export type StepLog = {
   error: string | null;
   iterationIndex: number | null;
   forEachNodeId: string | null;
+  /** Chain id this step ran on, when it was an on-chain write. */
+  network: string | null;
+  /** Native gas cost (wei) of this step's transaction, when known. */
+  gasCostWei: string | null;
+  /** True when KeeperHub sponsored the gas for this step's transaction. */
+  sponsored: boolean;
 };
 
 export type AnalyticsStreamEvent = {
