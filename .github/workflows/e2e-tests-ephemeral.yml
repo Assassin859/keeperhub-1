@@ -49,7 +49,8 @@ on:
 jobs:
   should-run:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    # Always staging: e2e validates against test credentials, never prod.
+    environment: staging
     outputs:
       run-e2e: ${{ steps.check.outputs.run-e2e }}
     steps:
@@ -95,7 +96,8 @@ jobs:
     needs: should-run
     if: ${{ needs.should-run.outputs.run-e2e == 'true' }}
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    # Always staging: e2e validates against test credentials, never prod.
+    environment: staging
 
     services:
       postgres:
@@ -203,6 +205,10 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          ai_prompt_enabled: "true"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          ai_model: claude-3-5-haiku-20241022
+          safe_fetch_shadow: "true"
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
         run: |
@@ -230,6 +236,9 @@ jobs:
           done
           echo "anvil Sepolia fork ready on localhost:8547"
 
+      - name: Start code-execution sandbox
+        uses: ./.github/actions/start-sandbox
+
       - name: Run E2E Vitest tests
         run: pnpm test:e2e:vitest
         env:
@@ -245,6 +254,14 @@ jobs:
           # Funder EOA for protocol-coverage suites' ensureNativeGas top-up.
           # When unset the suites skip cleanly (see coverage.test.ts gate).
           TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
+          # Live sandbox started by the start-sandbox step above; the
+          # sandbox-run-code suite drives runRemote() against it.
+          SANDBOX_BACKEND: remote
+          SANDBOX_URL: http://localhost:8787
+          # safe-roles-orchestrator-fork calls reconcileSafeRoleFromChain
+          # in-process, so the vitest process (not just the app) needs shadow-mode
+          # SSRF (dev/CI-only opt-in) to reach the localhost anvil fork.
+          SAFE_FETCH_SHADOW: "true"
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
@@ -273,7 +290,8 @@ jobs:
     needs: [should-run, e2e-vitest-ephemeral]
     if: ${{ always() && needs.should-run.outputs.run-e2e == 'true' && !failure() }}
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    # Always staging: e2e validates against test credentials, never prod.
+    environment: staging
 
     services:
       postgres:
@@ -309,6 +327,13 @@ jobs:
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
 
+      # The credential-bundle suite executes real workflow step bundles, which
+      # the app dispatches to a code-execution sandbox. Without it the step
+      # endpoint 500s and the run never reaches a terminal status. Mirror the
+      # vitest job, which already runs a sandbox for its execution suites.
+      - name: Start code-execution sandbox
+        uses: ./.github/actions/start-sandbox
+
       - name: Start application
         uses: ./.github/actions/start-app
         with:
@@ -326,6 +351,17 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          load_test_bypass_token: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
+          # Enable testEndpointsEnabled() so the strict-signin/start credential
+          # rate-limit bypass honors playwright's X-Test-API-Key header (the
+          # suite signs in repeatedly as a few shared users). Scoped to this job.
+          include_test_endpoints: "true"
+          allow_test_endpoints: "true"
+          # Point the app's step-bundle execution at the sandbox started above.
+          # The Docker path needs these forwarded explicitly; the bare-metal path
+          # already hardcodes the same values.
+          sandbox_backend: remote
+          sandbox_url: http://localhost:8787
 
       - name: Run Playwright tests
         run: pnpm test:e2e
@@ -341,6 +377,9 @@ jobs:
           # this var, the test defaults to dev-mode assertions and fails
           # against the prod server.
           NEXT_BUILD_MODE: production
+          # Sent as the x-load-test-mfa-bypass header by playwright.config.ts so
+          # e2e sign-in clears the mandatory-MFA enrollment gate (auth.setup).
+          LOAD_TEST_BYPASS_TOKEN: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''

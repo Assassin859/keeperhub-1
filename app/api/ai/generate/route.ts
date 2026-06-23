@@ -4,7 +4,7 @@ import type { LanguageModelV2 } from "@ai-sdk/provider";
 import { streamText } from "ai";
 import { NextResponse } from "next/server";
 import { HttpStatus } from "@/lib/http-status";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logWarn } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
@@ -76,7 +76,9 @@ function tryParseAndEnqueueOperation(
 
     return newCount;
   } catch {
-    console.warn("[API] Skipping invalid JSON line:", trimmed.substring(0, 50));
+    logWarn("[API] Skipping invalid JSON line", {
+      line_preview: trimmed.substring(0, 50),
+    });
     return operationCount;
   }
 }

@@ -4,6 +4,7 @@ import { TelegramIcon } from "./icon";
 
 const telegramPlugin: IntegrationPlugin = {
   type: "telegram",
+  egress: "fixed-host",
   label: "Telegram",
   description: "Send messages to Telegram chats via bot API",
 

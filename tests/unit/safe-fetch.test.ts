@@ -257,58 +257,55 @@ describe("isBlockedHost", () => {
 });
 
 describe("isShadowMode", () => {
-  const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
-
   afterEach(() => {
-    if (originalEnforce === undefined) {
-      // biome-ignore lint/performance/noDelete: restore unset state
-      delete process.env.SAFE_FETCH_ENFORCE;
-    } else {
-      process.env.SAFE_FETCH_ENFORCE = originalEnforce;
-    }
+    vi.unstubAllEnvs();
   });
 
-  it("is fail-closed (enforces) when SAFE_FETCH_ENFORCE is unset", () => {
-    // biome-ignore lint/performance/noDelete: simulate an env that forgot the flag
-    delete process.env.SAFE_FETCH_ENFORCE;
+  it("is fail-closed (enforces) when SAFE_FETCH_SHADOW is unset", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("SAFE_FETCH_SHADOW", undefined);
     expect(isShadowMode()).toBe(false);
   });
 
-  it("enforces when SAFE_FETCH_ENFORCE='true'", () => {
-    process.env.SAFE_FETCH_ENFORCE = "true";
+  it("enters shadow mode on the explicit opt-in SAFE_FETCH_SHADOW='true' outside prod", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("SAFE_FETCH_SHADOW", "true");
+    expect(isShadowMode()).toBe(true);
+  });
+
+  it("enforces for any non-'true' value (e.g. '1', 'false')", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("SAFE_FETCH_SHADOW", "1");
+    expect(isShadowMode()).toBe(false);
+    vi.stubEnv("SAFE_FETCH_SHADOW", "false");
     expect(isShadowMode()).toBe(false);
   });
 
-  it("enforces for any non-'false' value (e.g. '1', 'shadow')", () => {
-    process.env.SAFE_FETCH_ENFORCE = "1";
-    expect(isShadowMode()).toBe(false);
-    process.env.SAFE_FETCH_ENFORCE = "shadow";
+  it("hard-enforces in real production (NODE_ENV=production, no CI) even with SAFE_FETCH_SHADOW='true'", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CI", undefined);
+    vi.stubEnv("SAFE_FETCH_SHADOW", "true");
     expect(isShadowMode()).toBe(false);
   });
 
-  it("only enters shadow mode on the explicit opt-in SAFE_FETCH_ENFORCE='false'", () => {
-    process.env.SAFE_FETCH_ENFORCE = "false";
+  it("honors the opt-in under CI even when NODE_ENV=production (localhost-anvil e2e suites)", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CI", "true");
+    vi.stubEnv("SAFE_FETCH_SHADOW", "true");
     expect(isShadowMode()).toBe(true);
   });
 });
 
 describe("safeFetch (enforce mode)", () => {
-  const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
-
   beforeEach(() => {
-    process.env.SAFE_FETCH_ENFORCE = "true";
+    // Unset opt-in => default enforce (fail-closed).
+    vi.stubEnv("SAFE_FETCH_SHADOW", undefined);
     incrementCounter.mockClear();
     captureException.mockClear();
   });
 
   afterEach(() => {
-    if (originalEnforce === undefined) {
-      process.env.SAFE_FETCH_ENFORCE = undefined;
-      // biome-ignore lint/performance/noDelete: ensure env var is fully removed
-      delete process.env.SAFE_FETCH_ENFORCE;
-    } else {
-      process.env.SAFE_FETCH_ENFORCE = originalEnforce;
-    }
+    vi.unstubAllEnvs();
   });
 
   const blockedSchemes = [
@@ -409,25 +406,18 @@ describe("safeFetch (enforce mode)", () => {
 });
 
 describe("safeFetch (shadow mode)", () => {
-  const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
-
   beforeEach(() => {
-    // Shadow mode is now opt-in: it requires an explicit
-    // SAFE_FETCH_ENFORCE="false". Leaving the var unset would enforce
-    // (fail-closed) and throw SsrfBlockedError, which these tests do not
-    // expect.
-    process.env.SAFE_FETCH_ENFORCE = "false";
+    // Shadow mode is opt-in via SAFE_FETCH_SHADOW="true" (honored everywhere
+    // except real production; the test runner is not real prod). Leaving it
+    // unset would enforce (fail-closed) and throw SsrfBlockedError, which
+    // these tests do not expect.
+    vi.stubEnv("SAFE_FETCH_SHADOW", "true");
     incrementCounter.mockClear();
     captureException.mockClear();
   });
 
   afterEach(() => {
-    if (originalEnforce === undefined) {
-      // biome-ignore lint/performance/noDelete: restore unset state
-      delete process.env.SAFE_FETCH_ENFORCE;
-    } else {
-      process.env.SAFE_FETCH_ENFORCE = originalEnforce;
-    }
+    vi.unstubAllEnvs();
   });
 
   it("records a block with shadow=true but does not throw SsrfBlockedError on IP literal", async () => {

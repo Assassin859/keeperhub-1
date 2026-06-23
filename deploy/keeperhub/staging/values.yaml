@@ -451,9 +451,6 @@ env:
     type: parameterStore
     name: kh-admin-secret
     parameter_name: /eks/techops-staging/keeperhub/kh-admin-secret
-  SAFE_FETCH_ENFORCE:
-    type: kv
-    value: "true"
 
 externalSecrets:
   clusterSecretStoreName: techops-staging

@@ -336,3 +336,92 @@
     bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem) !important;
   }
 }
+
+/* Statuspage embedded widget overrides */
+#statuspage-widget .sp-widget {
+  font-family: var(--font-anek-latin), sans-serif !important;
+  font-size: 0.875rem !important;
+}
+
+#statuspage-widget .sp-button {
+  background-color: var(--card) !important;
+  color: var(--card-foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow:
+    0 4px 6px -1px oklch(0 0 0 / 0.3),
+    0 2px 4px -2px oklch(0 0 0 / 0.2) !important;
+  font-family: var(--font-anek-latin), sans-serif !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+}
+
+#statuspage-widget .sp-button:hover {
+  background-color: var(--accent) !important;
+  border-color: var(--ring) !important;
+}
+
+#statuspage-widget .sp-dialog {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow:
+    0 10px 15px -3px oklch(0 0 0 / 0.3),
+    0 4px 6px -4px oklch(0 0 0 / 0.2) !important;
+  font-family: var(--font-anek-latin), sans-serif !important;
+}
+
+#statuspage-widget .sp-dialog .sp-title {
+  color: var(--foreground) !important;
+  font-weight: 600 !important;
+  font-size: 0.9375rem !important;
+}
+
+#statuspage-widget .sp-dialog .sp-status {
+  color: var(--muted-foreground) !important;
+  font-size: 0.8125rem !important;
+}
+
+#statuspage-widget .sp-dialog a,
+#statuspage-widget .sp-button a {
+  color: var(--keeperhub-green) !important;
+}
+
+#statuspage-widget .sp-dialog a:hover,
+#statuspage-widget .sp-button a:hover {
+  color: var(--keeperhub-green-dark) !important;
+}
+
+/* Operational status dot — match KeeperHub green */
+#statuspage-widget .sp-indicator.sp-operational,
+#statuspage-widget .sp-status-dot.operational {
+  background-color: #09fd67 !important;
+  box-shadow: 0 0 0 3px #09fd671a !important;
+}
+
+/* Degraded/incident status dots */
+#statuspage-widget .sp-indicator.sp-degraded,
+#statuspage-widget .sp-status-dot.degraded {
+  background-color: oklch(0.828 0.189 84.429) !important;
+}
+
+#statuspage-widget .sp-indicator.sp-incident,
+#statuspage-widget .sp-status-dot.incident,
+#statuspage-widget .sp-indicator.sp-critical {
+  background-color: var(--destructive) !important;
+}
+
+#statuspage-widget .sp-dialog hr,
+#statuspage-widget .sp-dialog .sp-separator {
+  border-color: var(--border) !important;
+}
+
+#statuspage-widget .sp-dialog .sp-component-name {
+  color: var(--foreground) !important;
+}
+
+#statuspage-widget .sp-dialog .sp-component-status {
+  color: var(--muted-foreground) !important;
+  font-size: 0.75rem !important;
+}

@@ -369,7 +369,7 @@ with `type: "url"`, e.g. a custom instance URL) is validated on the server by
 `assertUrlIsPublic` in `handlePluginTest` (`lib/db/test-connection.ts`) before
 the test runs, so a connection test still cannot reach internal hosts.
 
-That server-side guard is always-on (it does not honor `SAFE_FETCH_ENFORCE`),
+That server-side guard is always-on (it does not honor `SAFE_FETCH_SHADOW`),
 so in local dev "Test Connection" will block a `localhost`/private instance URL
 even though workflow execution against it works (`safeFetch` runs in shadow
 mode locally). To exercise a local instance in dev, run the workflow instead of

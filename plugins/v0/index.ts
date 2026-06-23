@@ -4,6 +4,7 @@ import { V0Icon } from "./icon";
 
 const v0Plugin: IntegrationPlugin = {
   type: "v0",
+  egress: "fixed-host",
   label: "v0",
   description: "Generate UI components with AI",
 

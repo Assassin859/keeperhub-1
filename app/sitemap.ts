@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { db } from "@/lib/db";
 import { publicTags } from "@/lib/db/schema";
+import { logWarn } from "@/lib/logging";
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
@@ -34,10 +35,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     if (isConfiguredProdBuild) {
       throw err;
     }
-    console.warn(
-      "[sitemap] tag DB read failed, emitting static-only sitemap:",
-      err
-    );
+    logWarn("[sitemap] tag DB read failed, emitting static-only sitemap", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   const tagEntries: MetadataRoute.Sitemap = tagRows.map((row) => ({

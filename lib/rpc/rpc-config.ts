@@ -21,6 +21,8 @@
  *   }
  */
 
+import { logWarn } from "@/lib/logging";
+
 /**
  * Public RPC defaults (no API keys required)
  * These are used as last resort when no config is provided
@@ -265,12 +267,10 @@ function getRpcConfigSingleton(): RpcConfig {
     const result = parseRpcConfigWithDetails(envValue);
 
     if (envValue && Object.keys(result.config).length === 0) {
-      console.warn(
-        "[rpc-config] Failed to parse CHAIN_RPC_CONFIG, using public RPC defaults"
+      logWarn(
+        "[rpc-config] Failed to parse CHAIN_RPC_CONFIG, using public RPC defaults",
+        result.error ? { parse_error: result.error } : undefined
       );
-      if (result.error) {
-        console.warn(`  Parse error: ${result.error}`);
-      }
     }
 
     _rpcConfigSingleton = result.config;

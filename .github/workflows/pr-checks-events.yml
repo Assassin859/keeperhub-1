@@ -33,6 +33,8 @@ jobs:
         run: pnpm typecheck
 
   test-unit:
+    # Policy: all test jobs resolve secrets from the staging environment.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

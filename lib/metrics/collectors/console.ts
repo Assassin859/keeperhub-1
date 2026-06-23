@@ -5,6 +5,7 @@
  * Use for server-side metric collection.
  */
 
+import { rawConsole } from "@/lib/log/core";
 import type {
   ErrorContext,
   MetricEvent,
@@ -102,9 +103,9 @@ function emitErrorEvent(
   const eventWithError = { ...event, error: errorContext };
 
   if (level === "error") {
-    console.error(JSON.stringify(eventWithError));
+    rawConsole.error(JSON.stringify(eventWithError));
   } else {
-    console.warn(JSON.stringify(eventWithError));
+    rawConsole.warn(JSON.stringify(eventWithError));
   }
 }
 
@@ -133,12 +134,12 @@ export const consoleMetricsCollector: MetricsCollector = {
       value: durationMs,
       labels,
     });
-    console.info(JSON.stringify(event));
+    rawConsole.info(JSON.stringify(event));
   },
 
   incrementCounter(name: string, labels?: MetricLabels, value = 1): void {
     const event = createMetricEvent({ name, type: "counter", value, labels });
-    console.info(JSON.stringify(event));
+    rawConsole.info(JSON.stringify(event));
   },
 
   recordError(
@@ -159,7 +160,7 @@ export const consoleMetricsCollector: MetricsCollector = {
 
   setGauge(name: string, value: number, labels?: MetricLabels): void {
     const event = createMetricEvent({ name, type: "gauge", value, labels });
-    console.info(JSON.stringify(event));
+    rawConsole.info(JSON.stringify(event));
   },
 };
 

@@ -672,6 +672,7 @@ export function NavigationSidebar(): React.ReactNode {
   const isHubPage = pathname === "/hub";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
+  const isActivityPage = pathname === "/activity";
 
   const expanded = navState.state.sidebar;
   const setExpanded = navState.setSidebar;
@@ -796,6 +797,9 @@ export function NavigationSidebar(): React.ReactNode {
     }
     if (id === "earnings") {
       return isEarningsPage;
+    }
+    if (id === "activity") {
+      return isActivityPage;
     }
     return false;
   }

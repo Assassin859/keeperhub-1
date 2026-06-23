@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { IntervalTooSmallError, parseIntervalSeconds } from "@/lib/cron-utils";
 import { db } from "@/lib/db";
 import { workflowSchedules } from "@/lib/db/schema";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
 import { generateId } from "@/lib/utils/id";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
@@ -239,8 +239,11 @@ export async function syncWorkflowSchedule(
 
   // Validate timezone (shared by both modes)
   if (!validateTimezone(timezone)) {
-    console.warn(
-      `[Schedule] Invalid timezone for workflow ${workflowId}: ${timezone}`
+    logUserError(
+      ErrorCategory.VALIDATION,
+      `[Schedule] Invalid timezone for workflow ${workflowId}: ${timezone}`,
+      undefined,
+      { workflow_id: workflowId }
     );
     return {
       synced: false,
@@ -256,8 +259,11 @@ export async function syncWorkflowSchedule(
       scheduleConfig.cronExpression
     );
     if (!cronValidation.valid) {
-      console.warn(
-        `[Schedule] Invalid cron for workflow ${workflowId}: ${cronValidation.error}`
+      logUserError(
+        ErrorCategory.VALIDATION,
+        `[Schedule] Invalid cron for workflow ${workflowId}: ${cronValidation.error}`,
+        undefined,
+        { workflow_id: workflowId }
       );
       return {
         synced: false,
@@ -418,7 +424,12 @@ export async function updateScheduleAfterRun(
   });
 
   if (!schedule) {
-    console.error(`[Schedule] Schedule not found: ${scheduleId}`);
+    logSystemError(
+      ErrorCategory.WORKFLOW_ENGINE,
+      "[Schedule] Schedule not found",
+      new Error(`Schedule not found: ${scheduleId}`),
+      { schedule_id: scheduleId }
+    );
     return;
   }
 

@@ -85,11 +85,16 @@ import {
 } from "@/lib/workflow/nodes/condition/validator";
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
+import type { SystemActionType } from "@/lib/workflow/executor/system-action-types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
-// System actions that don't have plugins - maps to module import functions
-const SYSTEM_ACTIONS: Record<string, StepImporter> = {
+// System actions that don't have plugins - maps to module import functions.
+// `satisfies Record<SystemActionType, ...>` makes the dispatch table and the
+// egress classification map (lib/features/system-action-capabilities.ts) a
+// compile-time mirror: a key here that is not in SystemActionType (or vice
+// versa) fails the build, so a new system action cannot ship unclassified.
+const SYSTEM_ACTIONS = {
   "Database Query": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
     importer: () =>
@@ -120,7 +125,7 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
       import("@/lib/workflow/nodes/collect/step") as Promise<any>,
     stepFunction: "collectStep",
   },
-};
+} satisfies Record<SystemActionType, StepImporter>;
 
 export {
   computeFinalSuccess,
@@ -157,6 +162,32 @@ export function recordCatchOutput(
 
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
+
+/**
+ * Render a resolved condition value for the logged input/output panels while
+ * preserving the null/undefined distinction. `undefined` (e.g. a reference to a
+ * branch node that never executed) is shown as the string "undefined" so it is
+ * not mistaken for `null` -- `null` JSON-serializes fine and is left as-is, but
+ * `undefined` would otherwise be dropped/collapsed and read as `null`, making a
+ * strict `=== null` (isNull) check look like it should have matched. Recurses
+ * through plain objects and arrays. Display-only; never fed back into eval.
+ */
+function formatConditionValueForDisplay(value: unknown): unknown {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatConditionValueForDisplay);
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = formatConditionValueForDisplay(nested);
+    }
+    return out;
+  }
+  return value;
+}
 
 /**
  * Spurious-max-retries recovery poll window. When the framework re-fires a
@@ -383,8 +414,12 @@ export function evaluateConditionExpression(
             nodeMap,
             executionResults
           );
-          // Store the resolved value with a readable key (the display text from the template)
-          resolvedValues[rest] = evalContext[varName];
+          // Store the resolved value with a readable key (the display text
+          // from the template), preserving the null/undefined distinction so a
+          // strict `isNull` (=== null) check is not mistaken for a match.
+          resolvedValues[rest] = formatConditionValueForDisplay(
+            evalContext[varName]
+          );
           return varName;
         }
       );
@@ -521,7 +556,9 @@ async function executeActionStep(input: {
   }
 
   // Check system actions first (Database Query, HTTP Request)
-  const systemAction = SYSTEM_ACTIONS[actionType];
+  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
+    actionType
+  ];
   if (systemAction) {
     const module = await systemAction.importer();
     const stepFunction = module[systemAction.stepFunction];

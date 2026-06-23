@@ -196,6 +196,25 @@ export type OutputDisplayConfig = {
 };
 
 /**
+ * Network egress classification for plan gating and SSRF posture.
+ *
+ *   "user-destination" - user-supplied input (action config or a connection
+ *     `url` formField) can determine the host/origin the runner connects to.
+ *     This is the generic "make an arbitrary request" capability: it is plan
+ *     gated (paid) and its step must route through the SSRF guard.
+ *   "fixed-host" - egresses only to a constant origin (a branded third-party
+ *     API). User input may flow into the path/query/body but never the host.
+ *     Free; still routed through `safeFetch` per the plugin egress CI check.
+ *   "none" - performs no outbound network request.
+ *
+ * Gating keys solely on host control; a fixed-host action that incorporates
+ * user input stays free and relies on `safeFetch` for SSRF safety. A
+ * misclassification therefore fails safe: the worst case is under-gating
+ * (revenue), never an unguarded egress.
+ */
+export type EgressTier = "user-destination" | "fixed-host" | "none";
+
+/**
  * Action Definition
  * Describes a single action provided by a plugin
  */
@@ -203,6 +222,12 @@ export type PluginAction = {
   // Unique slug for this action (e.g., "send-email")
   // Full action ID will be computed as `{integration}/{slug}` (e.g., "resend/send-email")
   slug: string;
+
+  // Per-action override of the plugin-level `egress` classification. Set this
+  // only when an action's network reach differs from its plugin's default
+  // (e.g. a read-only action in an otherwise fixed-host plugin). When omitted,
+  // the action inherits the plugin's `egress`.
+  egress?: EgressTier;
 
   // Human-readable label (e.g., "Send Email")
   label: string;
@@ -259,6 +284,12 @@ export type IntegrationPlugin = {
   type: IntegrationType;
   label: string;
   description: string;
+
+  // Default network egress classification for this plugin's actions. Required
+  // so every plugin (and every future one) must declare whether it lets users
+  // reach a host of their choosing. Drives plan gating: "user-destination"
+  // plugins are paid-gated. Individual actions may override via `egress`.
+  egress: EgressTier;
 
   // Icon component (should be exported from plugins/[name]/icon.tsx)
   icon: React.ComponentType<{ className?: string }>;

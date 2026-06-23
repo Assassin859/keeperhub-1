@@ -452,7 +452,11 @@ describe.skipIf(shouldSkip)("API Key Authentication", () => {
     });
   });
 
-  describe("POST /api/ai/generate", () => {
+  // Skipped: the /api/ai/generate prompt-to-workflow endpoint is no longer
+  // used by the frontend app. The deploy image ships NEXT_PUBLIC_AI_PROMPT_ENABLED
+  // false, so the route returns 503 (service unavailable) before auth, which
+  // these assertions (200 / 401) cannot satisfy.
+  describe.skip("POST /api/ai/generate", () => {
     it("should generate workflow with valid API key", async ({ skip }) => {
       if (!setupSucceeded) {
         skip();

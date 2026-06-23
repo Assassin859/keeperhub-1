@@ -4,6 +4,7 @@ import { and, count, desc, eq, inArray, isNotNull, sum } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { workflowPayments } from "@/lib/db/schema-payments";
+import { logWarn } from "@/lib/logging";
 import type {
   ChainEarnings,
   EarningsSummary,
@@ -31,7 +32,7 @@ export function parsePlatformFeePercent(envValue: string | undefined): number {
   }
   const parsed = Number.parseInt(envValue, 10);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
-    console.warn(
+    logWarn(
       `[earnings] Invalid PLATFORM_FEE_PERCENT="${envValue}", falling back to ${DEFAULT_PLATFORM_FEE_PERCENT}`
     );
     return DEFAULT_PLATFORM_FEE_PERCENT;
