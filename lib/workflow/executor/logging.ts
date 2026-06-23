@@ -6,7 +6,11 @@ import "server-only";
 
 import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { logOutputField } from "@/lib/db/execution-log-fields";
+import {
+  extractLogGasUsedWei,
+  extractLogNetwork,
+  logOutputField,
+} from "@/lib/db/execution-log-fields";
 import {
   organization,
   type TransactionHashEntry,
@@ -441,6 +445,7 @@ export async function logStepStartDb(
       nodeType: params.nodeType,
       status: "running",
       input: toJsonSafe(params.input),
+      network: extractLogNetwork(params.input),
       startedAt: new Date(),
       iterationIndex: params.iterationIndex ?? null,
       forEachNodeId: params.forEachNodeId ?? null,
@@ -500,6 +505,7 @@ export async function logStepCompleteDb(
       status: params.status,
       output: toJsonSafe(params.output),
       outputRaw: toJsonSafe(params.outputRaw),
+      gasUsedWei: extractLogGasUsedWei(params.output),
       error: errorValue,
       completedAt: new Date(),
       duration: duration.toString(),
