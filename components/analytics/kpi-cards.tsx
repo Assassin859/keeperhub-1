@@ -8,10 +8,16 @@ import {
   CheckCircle2,
   Clock,
   Fuel,
+  Info,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   analyticsLoadingAtom,
   analyticsSummaryAtom,
@@ -91,7 +97,7 @@ function SkeletonCard(): ReactNode {
   return (
     <Card>
       <CardContent className="pt-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between">
           <div className="space-y-2">
             <div className="h-3 w-20 animate-pulse rounded bg-muted" />
             <div className="h-7 w-24 animate-pulse rounded bg-muted" />
@@ -111,6 +117,7 @@ type KpiCardProps = {
   invertDeltaColor?: boolean;
   iconClassName?: string;
   secondaryValue?: string;
+  secondaryTooltip?: string;
 };
 
 function KpiCard({
@@ -121,16 +128,37 @@ function KpiCard({
   invertDeltaColor = false,
   iconClassName,
   secondaryValue,
+  secondaryTooltip,
 }: KpiCardProps): ReactNode {
   return (
     <Card>
       <CardContent className="pt-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between">
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">{label}</p>
             <p className="text-2xl font-bold tracking-tight">{value}</p>
             {secondaryValue ? (
-              <p className="text-xs text-muted-foreground">{secondaryValue}</p>
+              <div className="flex items-center gap-1">
+                <span className="font-medium text-green-600 text-xs dark:text-green-400">
+                  {secondaryValue}
+                </span>
+                {secondaryTooltip ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        aria-label="About sponsored gas"
+                        className="inline-flex items-center text-muted-foreground/70 transition-colors hover:text-foreground"
+                        type="button"
+                      >
+                        <Info className="size-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      {secondaryTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+              </div>
             ) : null}
             <DeltaDisplay delta={delta} invertColor={invertDeltaColor} />
           </div>
@@ -221,6 +249,8 @@ export function KpiCards(): ReactNode {
           summary.sponsoredGasWei && summary.sponsoredGasWei !== "0"
             ? `${formatGasAsEth(summary.sponsoredGasWei)} sponsored`
             : undefined,
+        secondaryTooltip:
+          "The portion of gas KeeperHub sponsored on your behalf on supported networks this period.",
       },
     ] as const;
   }, [summary]);
@@ -260,6 +290,9 @@ export function KpiCards(): ReactNode {
           invertDeltaColor={card.invertDeltaColor}
           key={card.key}
           label={card.label}
+          secondaryTooltip={
+            "secondaryTooltip" in card ? card.secondaryTooltip : undefined
+          }
           secondaryValue={
             "secondaryValue" in card ? card.secondaryValue : undefined
           }
