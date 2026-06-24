@@ -1030,3 +1030,60 @@ describe("A-01: condition expressions cannot execute arbitrary code", () => {
     ).toThrow(FAILED_TO_EVALUATE_RE);
   });
 });
+
+describe("resolvedExpression", () => {
+  it("substitutes resolved values into the expression, quoting strings", () => {
+    const expression =
+      '{{@n:Get owners.result[0]}} == "0x6924f2737145455bBF5B7412DfaDCB785e26f055"';
+    const outputs = {
+      n: {
+        label: "Get owners",
+        data: { result: ["0x1Ec3e8A383Cd2084E8bb404cd8999b393db80D57"] },
+      },
+    };
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(false);
+    expect(result.resolvedExpression).toBe(
+      '"0x1Ec3e8A383Cd2084E8bb404cd8999b393db80D57" == "0x6924f2737145455bBF5B7412DfaDCB785e26f055"'
+    );
+  });
+
+  it("renders numeric and boolean references without quotes", () => {
+    const expression = "{{@a:A.count}} > 10 && {{@b:B.flag}} === true";
+    const outputs = {
+      a: { label: "A", data: { count: 42 } },
+      b: { label: "B", data: { flag: true } },
+    };
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+    expect(result.resolvedExpression).toBe("42 > 10 && true === true");
+  });
+
+  it("is omitted for a boolean expression", () => {
+    const result = evaluateConditionExpression(true, {});
+    expect(result.result).toBe(true);
+    expect(result.resolvedExpression).toBeUndefined();
+  });
+
+  it("renders a genuine null reference as the null keyword", () => {
+    const expression = "{{@n:A.matchCount}} === null";
+    const outputs = { n: { label: "A", data: { matchCount: null } } };
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+    expect(result.resolvedExpression).toBe("null === null");
+  });
+
+  it("renders a non-executed reference as the undefined keyword", () => {
+    const nodeMap = new Map<string, unknown>([
+      ["dead", { id: "dead", data: { label: "Dead" } }],
+    ]);
+    const expression = "{{@dead:Dead.matchCount}} === undefined";
+
+    const result = evaluateConditionExpression(expression, {}, nodeMap, {});
+    expect(result.result).toBe(true);
+    expect(result.resolvedExpression).toBe("undefined === undefined");
+  });
+});

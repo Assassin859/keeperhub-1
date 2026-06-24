@@ -12,6 +12,8 @@ export type ConditionInput = StepInput & {
   condition: boolean;
   /** Original condition expression string for logging (e.g., "{{@nodeId:Label.field}} === 'good'") */
   expression?: string;
+  /** Expression with each reference replaced by its resolved value (e.g., "\"0x1...\" == \"0x6...\"") */
+  resolvedExpression?: string;
   /** Resolved values of template variables for logging (e.g., { "Label.field": "actual_value" }) */
   values?: Record<string, unknown>;
   /** KEEP-1284: Error from condition evaluation - if set, the step will throw */
