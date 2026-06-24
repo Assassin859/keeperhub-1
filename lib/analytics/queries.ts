@@ -1002,6 +1002,10 @@ async function fetchWorkflowRuns(
       networks: logSummary.networks,
       gasCostWei: gasCostSummary.gasCostWei,
       transactionHashes: workflowExecutions.transactionHashes,
+      error: workflowExecutions.error,
+      errorCode: workflowExecutions.errorCode,
+      errorType: workflowExecutions.errorType,
+      errorCategory: workflowExecutions.errorCategory,
     })
     .from(workflowExecutions)
     .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
@@ -1035,6 +1039,10 @@ async function fetchWorkflowRuns(
       row.gasUsedWei && row.gasUsedWei !== "0" ? row.gasUsedWei : null,
     totalSteps: row.totalSteps ? Number(row.totalSteps) : null,
     completedSteps: row.completedSteps ? Number(row.completedSteps) : null,
+    error: row.error ?? null,
+    errorCode: row.errorCode ?? null,
+    errorType: row.errorType ?? null,
+    errorCategory: row.errorCategory ?? null,
   }));
 }
 
@@ -1116,6 +1124,10 @@ async function fetchDirectRuns(
     gasUsedWei: row.gasUsedWei,
     totalSteps: null,
     completedSteps: null,
+    error: null,
+    errorCode: null,
+    errorType: null,
+    errorCategory: null,
   }));
 }
 

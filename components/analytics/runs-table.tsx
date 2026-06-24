@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
 import type {
   NormalizedStatus,
   StepLog,
@@ -263,9 +264,11 @@ function StepLogRow({ step }: StepLogRowProps): ReactNode {
 
 function ExpandedStepRows({
   loadingSteps,
+  run,
   steps,
 }: {
   loadingSteps: boolean;
+  run: UnifiedRun;
   steps: StepLog[];
 }): ReactNode {
   if (loadingSteps) {
@@ -300,10 +303,11 @@ function ExpandedStepRows({
     return steps.map((step) => <StepLogRow key={step.id} step={step} />);
   }
 
+  const errorMessage = getCustomerRunErrorMessage(run);
   return (
     <tr>
       <td className="py-2 pl-10 text-xs text-muted-foreground" colSpan={8}>
-        No step logs available
+        {errorMessage ?? "No step logs available"}
       </td>
     </tr>
   );
@@ -420,7 +424,7 @@ function ExpandableRunRow({ run }: ExpandableRunRowProps): ReactNode {
         </td>
       </tr>
       {expanded ? (
-        <ExpandedStepRows loadingSteps={loadingSteps} steps={steps} />
+        <ExpandedStepRows loadingSteps={loadingSteps} run={run} steps={steps} />
       ) : null}
     </>
   );
