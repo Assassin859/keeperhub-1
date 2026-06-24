@@ -36,6 +36,36 @@ export function buildEdgesBySource(edges: EdgeLike[]): Map<string, string[]> {
 }
 
 /**
+ * Record one arrival edge into a convergence node. Real arrivals land in
+ * `convergenceArrivals`; skip arrivals land in both maps so the skip count can
+ * be compared against the in-degree to detect an all-skipped join.
+ */
+function recordArrival(
+  nodeId: string,
+  fromSource: string,
+  isSkip: boolean,
+  convergenceArrivals: Map<string, Set<string>>,
+  convergenceSkipArrivals: Map<string, Set<string>>
+): void {
+  let arrivals = convergenceArrivals.get(nodeId);
+  if (arrivals === undefined) {
+    arrivals = new Set<string>();
+    convergenceArrivals.set(nodeId, arrivals);
+  }
+  arrivals.add(fromSource);
+
+  if (!isSkip) {
+    return;
+  }
+  let skipArrivals = convergenceSkipArrivals.get(nodeId);
+  if (skipArrivals === undefined) {
+    skipArrivals = new Set<string>();
+    convergenceSkipArrivals.set(nodeId, skipArrivals);
+  }
+  skipArrivals.add(fromSource);
+}
+
+/**
  * Signal arrival at convergence nodes (nodes with >1 incoming edge) and
  * return the IDs of any that became fully unblocked. Non-convergence nodes
  * in targetNodeIds are ignored.
@@ -104,84 +134,78 @@ export function getReadyDownstreamIds(
 }
 
 /**
- * Propagate skip signals through branches that were not taken by a condition.
- * BFS through the skipped subtree, signaling arrival at convergence nodes.
- * Returns convergence node IDs that became fully unblocked (caller handles
- * execution).
+ * Propagate skip signals from a condition's not-taken branch.
+ *
+ * Records a skip-arrival at every convergence node reached through the
+ * not-taken subtree (kept apart from real arrivals in `convergenceSkipArrivals`)
+ * and BFS-walks through fully-skipped nodes. A convergence node is released to
+ * EXECUTE only once every incoming edge has arrived AND at least one of those
+ * arrivals was a real (executed) node. When every incoming edge is a skip the
+ * node is itself skipped: it is added to `skippedNodes` and the skip continues
+ * to its downstream. This is what stops an OR-join (e.g. an alert step wired to
+ * the `false` handle of several conditions) from firing when every condition
+ * took its other branch.
+ *
+ * `skipFromId` is the node initiating the skip (the condition); it is the
+ * arrival source recorded at each direct not-taken target. Returns the
+ * convergence node IDs that became ready to execute (caller runs them).
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: BFS with convergence detection requires nested branching
 export function propagateConvergenceSkips(
+  skipFromId: string,
   skippedNodeIds: string[],
   edgesBySource: Map<string, string[]>,
   edgesByTarget: Map<string, string[]>,
   convergenceArrivals: Map<string, Set<string>>,
+  convergenceSkipArrivals: Map<string, Set<string>>,
+  skippedNodes: Set<string>,
   visited: Set<string>
 ): string[] {
-  const unblocked: string[] = [];
-  const queue = [...skippedNodeIds];
-  const seen = new Set<string>();
+  const executeReady: string[] = [];
+  const queue: Array<{ id: string; from: string }> = skippedNodeIds.map(
+    (id) => ({ id, from: skipFromId })
+  );
+  const propagated = new Set<string>();
+
+  const continueSkip = (id: string): void => {
+    skippedNodes.add(id);
+    if (propagated.has(id)) {
+      return;
+    }
+    propagated.add(id);
+    for (const downId of edgesBySource.get(id) ?? []) {
+      queue.push({ id: downId, from: id });
+    }
+  };
 
   while (queue.length > 0) {
-    const currentId = queue.shift() as string;
-    if (seen.has(currentId)) {
-      continue;
-    }
-    seen.add(currentId);
-
-    const incomingSources = edgesByTarget.get(currentId);
+    const { id, from } = queue.shift() as { id: string; from: string };
+    const incomingSources = edgesByTarget.get(id);
     const isConvergenceNode =
       incomingSources !== undefined && incomingSources.length > 1;
 
-    if (isConvergenceNode) {
-      for (const src of incomingSources) {
-        if (seen.has(src) || skippedNodeIds.includes(src)) {
-          let arrivals = convergenceArrivals.get(currentId);
-          if (arrivals === undefined) {
-            arrivals = new Set<string>();
-            convergenceArrivals.set(currentId, arrivals);
-          }
-          arrivals.add(src);
-        }
-      }
-
-      if (
-        (convergenceArrivals.get(currentId)?.size ?? 0) >=
-        incomingSources.length
-      ) {
-        // Check if any arrival came from a real (non-skip) execution.
-        // If all arrivals are from the skipped subtree, this node should
-        // also be skipped -- continue BFS instead of executing it.
-        const allFromSkipped = incomingSources.every(
-          (src) => seen.has(src) || skippedNodeIds.includes(src)
-        );
-        if (allFromSkipped) {
-          // Continue propagating skip through this convergence node
-          const downstream = edgesBySource.get(currentId) ?? [];
-          for (const downId of downstream) {
-            if (!seen.has(downId)) {
-              queue.push(downId);
-            }
-          }
-          continue;
-        }
-        if (!visited.has(currentId)) {
-          unblocked.push(currentId);
-        }
-        continue;
-      }
-      // Convergence node not fully resolved: stop BFS here. It is still
-      // awaiting arrivals from the real execution path and should not
-      // propagate skip signals to its downstream.
+    if (!isConvergenceNode) {
+      // Non-convergence node: the skip flows straight through it.
+      continueSkip(id);
       continue;
     }
 
-    const downstream = edgesBySource.get(currentId) ?? [];
-    for (const downId of downstream) {
-      if (!seen.has(downId)) {
-        queue.push(downId);
-      }
+    recordArrival(id, from, true, convergenceArrivals, convergenceSkipArrivals);
+
+    if ((convergenceArrivals.get(id)?.size ?? 0) < incomingSources.length) {
+      // Still awaiting arrivals from the real-execution path; stop here.
+      continue;
+    }
+
+    if (
+      (convergenceSkipArrivals.get(id)?.size ?? 0) >= incomingSources.length
+    ) {
+      // Every incoming edge was skipped: skip this node and keep walking.
+      continueSkip(id);
+    } else if (!visited.has(id)) {
+      // At least one arrival came from a real execution: the node runs.
+      executeReady.push(id);
     }
   }
 
-  return unblocked;
+  return executeReady;
 }

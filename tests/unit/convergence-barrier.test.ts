@@ -10,6 +10,7 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
+import { computeFinalSuccess } from "@/lib/workflow/executor/final-success";
 
 describe("convergence barrier", () => {
   describe("basic convergence: A -> [B, C, D] -> E", () => {
@@ -192,12 +193,18 @@ describe("convergence barrier", () => {
       const arrivals = new Map<string, Set<string>>();
       const visited = new Set<string>();
 
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
+
       // Condition takes true branch (B), skips false branch (C)
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["C"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
@@ -205,6 +212,7 @@ describe("convergence barrier", () => {
       expect(unblocked).toEqual([]);
       expect(arrivals.get("E")?.has("C")).toBe(true);
       expect(arrivals.get("E")?.size).toBe(1);
+      expect(skippedNodes.has("C")).toBe(true);
 
       // Now B arrives at E
       const ready = getReadyDownstreamIds(
@@ -233,11 +241,16 @@ describe("convergence barrier", () => {
       expect(arrivals.get("E")?.size).toBe(1);
 
       // C gets skipped and propagation signals its arrival
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["C"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
       expect(unblocked).toEqual(["E"]);
@@ -259,11 +272,16 @@ describe("convergence barrier", () => {
       const visited = new Set<string>();
 
       // Skip C, which chains through D to E
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["C"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
@@ -271,6 +289,8 @@ describe("convergence barrier", () => {
       // E gets arrival from D (via skip chain)
       expect(arrivals.get("E")?.has("D")).toBe(true);
       expect(unblocked).toEqual([]);
+      expect(skippedNodes.has("C")).toBe(true);
+      expect(skippedNodes.has("D")).toBe(true);
 
       // B arrives at E, completing the barrier
       const ready = getReadyDownstreamIds(
@@ -303,13 +323,17 @@ describe("convergence barrier", () => {
       const visited = new Set<string>();
 
       // Condition=true: X is taken (runs), nodeB is the direct skipped target.
-      // Caller pre-seeds condition's skip-arrival at direct skipped targets.
-      signalConvergenceArrival("Cond", ["nodeB"], targetMap, arrivals, visited);
+      // propagateConvergenceSkips self-seeds the condition's skip-arrival.
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["nodeB"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
@@ -355,15 +379,20 @@ describe("convergence barrier", () => {
       expect(arrivals.get("nodeB")?.size).toBe(1);
 
       // X is skipped; propagation walks X -> nodeB, adds X to arrivals.
-      signalConvergenceArrival("Cond", ["X"], targetMap, arrivals, visited);
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["X"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
       expect(unblocked).toEqual(["nodeB"]);
+      expect(skippedNodes.has("X")).toBe(true);
     });
 
     it("does not corrupt deeper convergence when direct-skip target is still pending", () => {
@@ -386,12 +415,16 @@ describe("convergence barrier", () => {
       const arrivals = new Map<string, Set<string>>();
       const visited = new Set<string>();
 
-      signalConvergenceArrival("Cond", ["nodeB"], targetMap, arrivals, visited);
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       propagateConvergenceSkips(
+        "Cond",
         ["nodeB"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
@@ -464,9 +497,9 @@ describe("convergence barrier", () => {
     };
 
     // End-to-end simulator that mirrors the executor's control flow:
-    //   - For condition nodes: signal taken arrival, pre-seed skip arrivals at
-    //     direct skipped convergence targets, propagate skip through not-taken
-    //     subtree.
+    //   - For condition nodes: signal taken arrival, then propagate skip through
+    //     the not-taken subtree (which self-seeds skip arrivals at direct
+    //     skipped convergence targets).
     //   - For non-condition nodes: getReadyDownstreamIds over downstream.
     // Returns the set of executed nodes in discovery order.
     function runSimulatedWorkflow(
@@ -474,8 +507,10 @@ describe("convergence barrier", () => {
       conditions: Map<string, ConditionSpec>,
       edgesBySource: Map<string, string[]>,
       edgesByTarget: Map<string, string[]>
-    ): { executed: string[]; visited: Set<string> } {
+    ): { executed: string[]; visited: Set<string>; skippedNodes: Set<string> } {
       const arrivals = new Map<string, Set<string>>();
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const visited = new Set<string>();
       const executed: string[] = [];
       const queue: string[] = [...triggerReady];
@@ -503,25 +538,17 @@ describe("convergence barrier", () => {
             arrivals,
             visited
           );
-          const preSeed = signalConvergenceArrival(
-            nodeId,
-            skipped,
-            edgesByTarget,
-            arrivals,
-            visited
-          );
           const unblockedFromSkip = propagateConvergenceSkips(
+            nodeId,
             skipped,
             edgesBySource,
             edgesByTarget,
             arrivals,
+            skipArrivals,
+            skippedNodes,
             visited
           );
-          for (const next of [
-            ...readyFromTaken,
-            ...preSeed,
-            ...unblockedFromSkip,
-          ]) {
+          for (const next of [...readyFromTaken, ...unblockedFromSkip]) {
             if (!visited.has(next)) {
               queue.push(next);
             }
@@ -544,7 +571,7 @@ describe("convergence barrier", () => {
         }
       }
 
-      return { executed, visited };
+      return { executed, visited, skippedNodes };
     }
 
     type Scenario = {
@@ -665,16 +692,23 @@ describe("convergence barrier", () => {
       const visited = new Set<string>();
 
       // Skip A (the false branch root)
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["A"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
       // D should NOT be unblocked -- all its inputs are from skipped nodes
       expect(unblocked).toEqual([]);
+      // and D is recorded as genuinely skipped.
+      expect(skippedNodes.has("D")).toBe(true);
     });
 
     it("should unblock convergence node when at least one input is from real execution", () => {
@@ -693,16 +727,22 @@ describe("convergence barrier", () => {
       signalConvergenceArrival("X", ["D"], targetMap, arrivals, visited);
 
       // B gets skipped
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["B"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
       // D should be unblocked -- X was a real arrival
       expect(unblocked).toEqual(["D"]);
+      expect(skippedNodes.has("D")).toBe(false);
     });
 
     it("should propagate skip through fully-skipped convergence nodes to downstream", () => {
@@ -726,16 +766,24 @@ describe("convergence barrier", () => {
       signalConvergenceArrival("X", ["E"], targetMap, arrivals, visited);
 
       // Skip A -- should propagate through B, C, D (all-skip), then reach E
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
       const unblocked = propagateConvergenceSkips(
+        "Cond",
         ["A"],
         sourceMap,
         targetMap,
         arrivals,
+        skipArrivals,
+        skippedNodes,
         visited
       );
 
       // E should be unblocked (X was real, D arrival was skip-propagated)
       expect(unblocked).toEqual(["E"]);
+      // D is all-skip so it is recorded skipped; E executed (real X) so it is not.
+      expect(skippedNodes.has("D")).toBe(true);
+      expect(skippedNodes.has("E")).toBe(false);
     });
   });
 
@@ -829,6 +877,186 @@ describe("convergence barrier", () => {
       const condHandles = handleMap.get("Cond");
       expect(condHandles?.get("true")).toEqual(["B"]);
       expect(condHandles?.get("false")).toEqual(["C"]);
+    });
+  });
+
+  describe("alert OR-join wired to several conditions' false handles", () => {
+    // Production shape: five health-check conditions each route their `false`
+    // handle to a single alert step. The alert fires if ANY check fails; when
+    // every check passes the alert must be skipped, and a workflow with no real
+    // failure must report success.
+    const condIds = ["c1", "c2", "c3", "c4", "c5"];
+    const alert = "alert";
+    const edges = condIds.map((id) => ({ source: id, target: alert }));
+
+    // Drive every condition's not-taken (false) branch into the alert and
+    // return the resulting execute-ready list plus the skipped-node set.
+    function runAllConditions(realFromConditions: string[]): {
+      executeReady: string[];
+      skippedNodes: Set<string>;
+      arrivals: Map<string, Set<string>>;
+    } {
+      const sourceMap = buildEdgesBySource(edges);
+      const targetMap = buildEdgesByTarget(edges);
+      const arrivals = new Map<string, Set<string>>();
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
+      const visited = new Set<string>();
+      const executeReady: string[] = [];
+
+      for (const condId of condIds) {
+        if (realFromConditions.includes(condId)) {
+          // Condition went false: it TAKES the edge to the alert (real arrival).
+          executeReady.push(
+            ...getReadyDownstreamIds(
+              condId,
+              [alert],
+              targetMap,
+              arrivals,
+              visited
+            )
+          );
+        } else {
+          // Condition went true: the alert is on its not-taken handle (skip).
+          executeReady.push(
+            ...propagateConvergenceSkips(
+              condId,
+              [alert],
+              sourceMap,
+              targetMap,
+              arrivals,
+              skipArrivals,
+              skippedNodes,
+              visited
+            )
+          );
+        }
+      }
+      return { executeReady, skippedNodes, arrivals };
+    }
+
+    it("does not execute the alert when every condition passed (all-skip)", () => {
+      const { executeReady, skippedNodes } = runAllConditions([]);
+      expect(executeReady).toEqual([]);
+      expect(skippedNodes.has(alert)).toBe(true);
+    });
+
+    it("reports success when the all-skip alert never ran (no masking needed)", () => {
+      const { skippedNodes } = runAllConditions([]);
+      // The alert never executed, so it is absent from results.
+      const results = {
+        c1: { success: true },
+        c2: { success: true },
+        c3: { success: true },
+        c4: { success: true },
+        c5: { success: true },
+      };
+      expect(computeFinalSuccess(results, skippedNodes)).toBe(true);
+    });
+
+    it("executes the alert once when a single condition failed", () => {
+      const { executeReady, skippedNodes } = runAllConditions(["c3"]);
+      expect(executeReady).toEqual([alert]);
+      // The alert genuinely ran, so it must NOT be recorded as skipped.
+      expect(skippedNodes.has(alert)).toBe(false);
+    });
+
+    it("counts an executed-and-failed alert against final success (no false success)", () => {
+      const { executeReady, skippedNodes } = runAllConditions(["c3"]);
+      expect(executeReady).toEqual([alert]);
+      // The alert ran and failed (e.g. bad webhook payload).
+      const results = {
+        c1: { success: true },
+        c2: { success: true },
+        c3: { success: true },
+        c4: { success: true },
+        c5: { success: true },
+        [alert]: { success: false, error: "HTTP 400: Invalid routing key" },
+      };
+      // Because the alert is not in skippedNodes, its failure is authoritative.
+      expect(computeFinalSuccess(results, skippedNodes)).toBe(false);
+    });
+
+    it("executes the alert when at least one of several failures arrives", () => {
+      const { executeReady, skippedNodes } = runAllConditions(["c1", "c4"]);
+      // Real arrivals from c1 and c4 plus skips from c2/c3/c5 -> one execution.
+      expect(executeReady).toEqual([alert]);
+      expect(skippedNodes.has(alert)).toBe(false);
+    });
+  });
+
+  describe("OR-join with a non-condition predecessor", () => {
+    // J converges a condition's false branch and a plain (always-run) node.
+    // The plain node's real arrival must release J even though the condition
+    // skipped its edge -- a join is skipped only when EVERY input was skipped.
+    const edges = [
+      { source: "Cond", target: "J" },
+      { source: "Plain", target: "J" },
+    ];
+
+    it("executes the join when the plain node arrives after the condition skip", () => {
+      const sourceMap = buildEdgesBySource(edges);
+      const targetMap = buildEdgesByTarget(edges);
+      const arrivals = new Map<string, Set<string>>();
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
+      const visited = new Set<string>();
+
+      // Condition skips its edge to J first.
+      const afterSkip = propagateConvergenceSkips(
+        "Cond",
+        ["J"],
+        sourceMap,
+        targetMap,
+        arrivals,
+        skipArrivals,
+        skippedNodes,
+        visited
+      );
+      expect(afterSkip).toEqual([]);
+      expect(skippedNodes.has("J")).toBe(false);
+
+      // Plain executes and arrives -> J releases.
+      const afterReal = getReadyDownstreamIds(
+        "Plain",
+        ["J"],
+        targetMap,
+        arrivals,
+        visited
+      );
+      expect(afterReal).toEqual(["J"]);
+      expect(skippedNodes.has("J")).toBe(false);
+    });
+
+    it("executes the join when the plain node arrives before the condition skip", () => {
+      const sourceMap = buildEdgesBySource(edges);
+      const targetMap = buildEdgesByTarget(edges);
+      const arrivals = new Map<string, Set<string>>();
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
+      const visited = new Set<string>();
+
+      const afterReal = getReadyDownstreamIds(
+        "Plain",
+        ["J"],
+        targetMap,
+        arrivals,
+        visited
+      );
+      expect(afterReal).toEqual([]);
+
+      const afterSkip = propagateConvergenceSkips(
+        "Cond",
+        ["J"],
+        sourceMap,
+        targetMap,
+        arrivals,
+        skipArrivals,
+        skippedNodes,
+        visited
+      );
+      expect(afterSkip).toEqual(["J"]);
+      expect(skippedNodes.has("J")).toBe(false);
     });
   });
 });
