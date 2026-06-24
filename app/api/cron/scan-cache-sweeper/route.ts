@@ -42,7 +42,7 @@ export async function GET(request: Request): Promise<Response> {
     console.warn(
       JSON.stringify({
         event: "scan.cache_sweeper.pruned",
-        count: pruned.length,
+        pruned: pruned.length,
       })
     );
     return Response.json(body);
