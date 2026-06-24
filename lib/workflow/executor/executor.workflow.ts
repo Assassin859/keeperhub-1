@@ -352,7 +352,26 @@ function replaceTemplateVariable(
 type ConditionEvalResult = {
   result: boolean;
   resolvedValues: Record<string, unknown>;
+  // The expression with each {{...}} reference replaced by its resolved value,
+  // so observability shows what was actually compared (e.g. "0x1..." == "0x6...").
+  resolvedExpression?: string;
 };
+
+// Render a resolved value as it should appear inside the resolved expression:
+// strings quoted, numbers/booleans/null bare, undefined as the keyword.
+function renderConditionLiteral(value: unknown): string {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
 /**
  * Evaluate condition expression with template variable replacement.
@@ -397,6 +416,7 @@ export function evaluateConditionExpression(
     try {
       let evalContext: Record<string, unknown> = {};
       const resolvedValues: Record<string, unknown> = {};
+      const tokenLiterals: Record<string, string> = {};
       let transformedExpression = conditionExpression;
       const templatePattern = /\{\{@([^:]+):([^}]+)\}\}/g;
       const varCounter = { value: 0 };
@@ -420,8 +440,16 @@ export function evaluateConditionExpression(
           resolvedValues[rest] = formatConditionValueForDisplay(
             evalContext[varName]
           );
+          tokenLiterals[match] = renderConditionLiteral(evalContext[varName]);
           return varName;
         }
+      );
+
+      // Mirror the substitution against the original expression so the value
+      // side keeps the author's literals (quotes, operators) intact.
+      const resolvedExpression = conditionExpression.replace(
+        templatePattern,
+        (match: string) => tokenLiterals[match] ?? match
       );
 
       // KEEP-468: any `{{...}}` token left after stored-format substitution
@@ -462,7 +490,7 @@ export function evaluateConditionExpression(
       // Only reads the resolved __v/__b values and applies allowlisted
       // operators and methods.
       const result = safeEvaluateCondition(transformedExpression, evalContext);
-      return { result: Boolean(result), resolvedValues };
+      return { result: Boolean(result), resolvedValues, resolvedExpression };
     } catch (error) {
       // KEEP-1284: Re-throw errors about missing data - these should not be silently swallowed
       if (
@@ -524,6 +552,7 @@ async function executeActionStep(input: {
     // KEEP-1284: Catch evaluation errors and pass to step so it gets logged
     let evaluatedCondition = false;
     let resolvedValues: Record<string, unknown> = {};
+    let resolvedExpression: string | undefined;
     let evaluationError: string | undefined;
 
     try {
@@ -535,6 +564,7 @@ async function executeActionStep(input: {
       );
       evaluatedCondition = result.result;
       resolvedValues = result.resolvedValues;
+      resolvedExpression = result.resolvedExpression;
     } catch (error) {
       evaluationError = error instanceof Error ? error.message : String(error);
     }
@@ -548,6 +578,7 @@ async function executeActionStep(input: {
         !evaluationError && typeof originalExpression === "string"
           ? originalExpression
           : undefined,
+      resolvedExpression: evaluationError ? undefined : resolvedExpression,
       values:
         Object.keys(resolvedValues).length > 0 ? resolvedValues : undefined,
       _evaluationError: evaluationError,
