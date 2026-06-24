@@ -14,6 +14,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { fetchContractAbi } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
+import { serializeArg } from "@/lib/web3/serialize-arg";
 
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY ?? "";
 const FOURBYTE_API_URL = "https://www.4byte.directory/api/v1/signatures/";
@@ -46,23 +47,7 @@ export type DecodeCalldataCoreInput = {
 /**
  * Serialize a decoded value to string, handling BigInt, arrays, and objects
  */
-function serializeValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return String(value);
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "boolean" || typeof value === "number") {
-    return String(value);
-  }
-  return JSON.stringify(value, (_key, v: unknown) =>
-    typeof v === "bigint" ? v.toString() : v
-  );
-}
+const serializeValue = serializeArg;
 
 /**
  * Extract named parameters from a parsed transaction fragment
