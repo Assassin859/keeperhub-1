@@ -153,6 +153,37 @@ jobs:
         if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true' && vars.USE_SELF_HOSTED_RUNNERS != 'true'
         uses: docker/setup-buildx-action@v4
 
+      # Persist the Next.js incremental-compile cache (.next/cache) across runs.
+      # BuildKit type=cache mounts are not carried by the registry layer cache,
+      # so on ephemeral runners the mount starts empty and next build runs cold
+      # every time. actions/cache stores the mount contents; buildkit-cache-dance
+      # injects them into the BuildKit builder before the build (and extracts
+      # them again in its post step, before actions/cache saves). Keyed per
+      # environment so staging and prod never share a lineage.
+      - name: Restore Next.js build cache
+        id: next-cache
+        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true' && vars.USE_SELF_HOSTED_RUNNERS != 'true'
+        uses: actions/cache@v5
+        with:
+          path: .next-cache
+          key: next-build-cache-${{ env.ENVIRONMENT_TAG }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            next-build-cache-${{ env.ENVIRONMENT_TAG }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            next-build-cache-${{ env.ENVIRONMENT_TAG }}-
+
+      - name: Inject Next.js build cache into BuildKit
+        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true' && vars.USE_SELF_HOSTED_RUNNERS != 'true'
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          cache-map: |
+            {
+              ".next-cache": {
+                "target": "/app/.next/cache",
+                "id": "nextjs-build-cache"
+              }
+            }
+          skip-extraction: ${{ steps.next-cache.outputs.cache-hit }}
+
       - name: Build and push all images to ECR
         if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
         uses: docker/bake-action@v7
