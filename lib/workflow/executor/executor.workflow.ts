@@ -76,7 +76,6 @@ import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resol
 import { safeEvaluateCondition } from "@/lib/workflow/nodes/condition/safe-eval";
 import {
   type ConditionDecision,
-  collectAllSkippedTargets,
   collectSkippedTargets,
 } from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
@@ -1829,6 +1828,13 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
 
   const edgesByTarget = buildEdgesByTarget(edges);
   const convergenceArrivals = new Map<string, Set<string>>();
+  // Skip-arrivals tracked apart from real arrivals so an OR-join whose every
+  // incoming edge was skipped is itself skipped rather than executed.
+  const convergenceSkipArrivals = new Map<string, Set<string>>();
+  // Nodes determined to be genuinely skipped (all incoming paths not taken).
+  // Authoritative input to computeFinalSuccess so a node that actually executed
+  // and failed is never masked as skipped.
+  const skippedNodes = new Set<string>();
 
   // Find trigger nodes
   const nodesWithIncoming = new Set(edges.map((e) => e.target));
@@ -2877,35 +2883,30 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             // nodes downstream receive arrival signals from skipped sources
             const skippedTargets = handleMap.get(notTakenHandle) ?? [];
             if (skippedTargets.length > 0) {
-              // Register the condition's skip-arrival at direct skipped targets
-              // that are themselves convergence nodes. Without this, a pattern
-              // like `Cond -> (skipped) -> nodeB` and `Cond -> (taken) -> X -> nodeB`
-              // stalls nodeB: the condition's not-taken edge never signals
-              // arrival, so nodeB only ever sees X's arrival (1/2).
-              const preSeedUnblocked = signalConvergenceArrival(
-                nodeId,
-                skippedTargets,
-                edgesByTarget,
-                convergenceArrivals,
-                visited
-              );
+              // Walk the not-taken subtree, recording skip-arrivals at
+              // convergence nodes. A convergence node runs only if it also got
+              // a real arrival; if every incoming edge was skipped it is added
+              // to `skippedNodes` and the skip continues downstream. This both
+              // unblocks genuine convergence (e.g. `Cond -> (skipped) -> nodeB`
+              // and `Cond -> (taken) -> X -> nodeB`) and stops an all-skipped
+              // OR-join from firing.
               const unblockedIds = propagateConvergenceSkips(
+                nodeId,
                 skippedTargets,
                 edgesBySource,
                 edgesByTarget,
                 convergenceArrivals,
+                convergenceSkipArrivals,
+                skippedNodes,
                 visited
               );
-              const allUnblocked = [
-                ...new Set([...preSeedUnblocked, ...unblockedIds]),
-              ];
-              if (allUnblocked.length > 0) {
+              if (unblockedIds.length > 0) {
                 const settled = await pendingTasks.track(
                   Promise.allSettled(
-                    allUnblocked.map((id) => executeNode(id, visited))
+                    unblockedIds.map((id) => executeNode(id, visited))
                   )
                 );
-                processSettledResults(settled, allUnblocked);
+                processSettledResults(settled, unblockedIds);
               }
             }
           } else {
@@ -3150,8 +3151,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // drained orphan nodes are reflected here. The pre-drain computation (now
     // unused) only ever saw nodes whose call-stack reached processSettledResults;
     // drained orphans land in `results` while drain awaits them.
-    const allSkippedTargets = collectAllSkippedTargets(conditionDecisions);
-    const finalSuccess = computeFinalSuccess(results, allSkippedTargets);
+    // `skippedNodes` is the authoritative set of genuinely-skipped nodes built
+    // during execution: a node only lands here when every incoming path was
+    // not taken. A node that actually executed (even one wired to a condition's
+    // not-taken handle but reached via a real arrival) is absent, so its
+    // failure is never masked as skipped.
+    const finalSuccess = computeFinalSuccess(results, skippedNodes);
 
     // Surface drained-orphan failures explicitly so prod logs make the
     // SDK-checkpoint-truncation case visible (otherwise the failure looks
@@ -3160,7 +3165,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       (id) => !resultKeysBeforeDrain.has(id)
     );
     const drainedFailures = drainedNodeIds.filter(
-      (id) => !(results[id]?.success || allSkippedTargets.has(id))
+      (id) => !(results[id]?.success || skippedNodes.has(id))
     );
     if (drainedFailures.length > 0) {
       console.log(
@@ -3185,7 +3190,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           conditionDecisions: [...conditionDecisions.entries()].map(
             ([id, d]) => ({ id, ...d })
           ),
-          skippedTargets: [...allSkippedTargets],
+          skippedTargets: [...skippedNodes],
           unexecutedNodes,
         }
       );
