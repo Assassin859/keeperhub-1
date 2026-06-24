@@ -24,6 +24,7 @@ import { ethers } from "ethers";
 import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
 import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { HttpStatus } from "@/lib/http-status";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
@@ -105,11 +106,21 @@ export async function GET(
       Response.json({ ...result, suggestions }),
       rate
     );
-  } catch {
+  } catch (error) {
     metricsCollector.recordLatency(
       MetricNames.SCAN_ADDRESS_DURATION,
       scanTimer(),
       { status: "failure" }
+    );
+    // Server-side observability: log the real cause (never returned to the
+    // client). Without this the public "Scan failed" response hides the error.
+    logSystemError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[scan] scanAddress failed",
+      error,
+      {
+        endpoint: "/api/scan/[address]",
+      }
     );
     // Never leak internal/RPC error detail on the public surface.
     return applyRateLimitHeaders(
