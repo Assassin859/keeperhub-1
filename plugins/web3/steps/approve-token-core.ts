@@ -485,6 +485,12 @@ export async function approveTokenCore(
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
+      const executedCall = await traceExecutedCallWithFailover(rpcManager, receipt.hash, {
+        target: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "approve",
+      });
+
       return {
         success: true,
         transactionHash: receipt.hash,
@@ -495,6 +501,7 @@ export async function approveTokenCore(
         approvedAmount: approvedAmountDisplay,
         spender: spenderAddress,
         symbol,
+        executedCall,
       };
     } catch (error) {
       logUserError(

@@ -81,6 +81,35 @@ describe("trace-decode", () => {
       });
       expect(flat[0].reverted).toBe(true);
     });
+
+    it("propagates revert to child frames when parent reverts", () => {
+      const tree: RawCallFrame = {
+        type: "CALL",
+        to: WRAPPER,
+        input: "0x00",
+        error: "execution reverted",
+        calls: [{ type: "CALL", to: TARGET, input: transferData }],
+      };
+      const flat = flattenCallTree(tree);
+      expect(flat[0].reverted).toBe(true);
+      expect(flat[1].reverted).toBe(true);
+    });
+
+    it("does not mark child reverted when only the child reverts, not parent", () => {
+      const tree: RawCallFrame = {
+        type: "CALL",
+        to: WRAPPER,
+        input: "0x00",
+        calls: [
+          { type: "CALL", to: TARGET, input: transferData, error: "reverted" },
+          { type: "CALL", to: TARGET, input: scheduleData },
+        ],
+      };
+      const flat = flattenCallTree(tree);
+      expect(flat[0].reverted).toBe(false);
+      expect(flat[1].reverted).toBe(true);
+      expect(flat[2].reverted).toBe(false);
+    });
   });
 
   describe("decodeFlatCall", () => {

@@ -23,6 +23,7 @@
 import "server-only";
 
 import type { ethers } from "ethers";
+import { serializeArg } from "@/lib/web3/serialize-arg";
 
 /** A node of the `callTracer` output as returned by `debug_traceTransaction`. */
 export type RawCallFrame = {
@@ -113,10 +114,20 @@ export async function traceTransactionCallTree(
 export function flattenCallTree(root: RawCallFrame | null): FlatCall[] {
   const out: FlatCall[] = [];
 
-  const walk = (node: RawCallFrame | undefined, depth: number): void => {
+  // parentReverted: true when any ancestor frame reverted. The EVM rolls back
+  // all descendants of a reverted frame, but geth's callTracer only sets
+  // `error` on the frame that reverted — not on its children. We propagate the
+  // flag top-down so child frames that completed before their parent reverted
+  // are correctly marked reverted too.
+  const walk = (
+    node: RawCallFrame | undefined,
+    depth: number,
+    parentReverted: boolean
+  ): void => {
     if (!node) {
       return;
     }
+    const reverted = parentReverted || Boolean(node.error);
     out.push({
       type: (node.type ?? "CALL").toUpperCase(),
       from: (node.from ?? "").toLowerCase(),
@@ -124,34 +135,17 @@ export function flattenCallTree(root: RawCallFrame | null): FlatCall[] {
       value: node.value ?? "0x0",
       input: node.input ?? "0x",
       depth,
-      reverted: Boolean(node.error),
+      reverted,
     });
     for (const child of node.calls ?? []) {
-      walk(child, depth + 1);
+      walk(child, depth + 1, reverted);
     }
   };
 
-  walk(root ?? undefined, 0);
+  walk(root ?? undefined, 0, false);
   return out;
 }
 
-function serializeArg(value: unknown): string {
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  if (typeof value === "string" || typeof value === "number") {
-    return value.toString();
-  }
-  if (typeof value === "boolean") {
-    return value.toString();
-  }
-  if (value === null || value === undefined) {
-    return "";
-  }
-  return JSON.stringify(value, (_key, v) =>
-    typeof v === "bigint" ? v.toString() : v
-  );
-}
 
 /**
  * Decode a single flattened call against an ABI interface.
@@ -166,7 +160,7 @@ export function decodeFlatCall(
   if (!DECODABLE_CALL_TYPES.has(call.type)) {
     return null;
   }
-  if (!call.input || call.input.length < 10) {
+  if (call.input.length < 10) {
     return null;
   }
 

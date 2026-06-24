@@ -53,14 +53,26 @@ export async function traceExecutedCallWithFailover(
   }
 
   try {
-    const executed = await rpcManager.executeWithFailover((provider) =>
-      resolveExecutedCall(provider as unknown as TraceProvider, txHash, {
-        target: options.target,
-        iface,
-        functionName: options.functionName,
-        filterArgs: options.filterArgs ?? null,
-      })
-    );
+    const executed = await rpcManager.executeWithFailover(async (provider) => {
+      const result = await resolveExecutedCall(
+        provider as unknown as TraceProvider,
+        txHash,
+        {
+          target: options.target,
+          iface,
+          functionName: options.functionName,
+          filterArgs: options.filterArgs ?? null,
+        }
+      );
+      // resolveExecutedCall returns null when the provider doesn't support
+      // debug_traceTransaction or when no matching call is found. Throwing here
+      // lets executeWithFailover retry the next provider rather than treating
+      // null as a successful empty result and stopping immediately.
+      if (result === null) {
+        throw new Error("trace unavailable");
+      }
+      return result;
+    });
     return executed ?? undefined;
   } catch {
     return;

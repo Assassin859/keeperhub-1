@@ -525,6 +525,12 @@ export async function writeContractCore(
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
+      const executedCall = await traceExecutedCallWithFailover(rpcManager, receipt.hash, {
+        target: contractAddress,
+        abi: parsedAbi,
+        functionName: abiFunction,
+      });
+
       return {
         success: true,
         transactionHash: receipt.hash,
@@ -533,6 +539,7 @@ export async function writeContractCore(
         gasUsedUnits,
         effectiveGasPrice,
         result: undefined,
+        executedCall,
       };
     } catch (error) {
       logUserError(

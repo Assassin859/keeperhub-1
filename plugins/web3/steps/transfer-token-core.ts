@@ -583,6 +583,12 @@ export async function transferTokenCore(
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
+      const executedCall = await traceExecutedCallWithFailover(rpcManager, receipt.hash, {
+        target: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "transfer",
+      });
+
       return {
         success: true,
         transactionHash: receipt.hash,
@@ -593,6 +599,7 @@ export async function transferTokenCore(
         amount,
         symbol,
         recipient: recipientAddress,
+        executedCall,
       };
     } catch (error) {
       logUserError(

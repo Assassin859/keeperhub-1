@@ -14,6 +14,7 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { serializeArg } from "@/lib/web3/serialize-arg";
 import { getErrorMessage } from "@/lib/utils";
 
 const DEFAULT_BLOCK_LOOKBACK = 6500;
@@ -204,26 +205,7 @@ async function resolveBlockRange(
   };
 }
 
-function serializeValue(value: unknown): string {
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value.toString();
-  }
-  if (typeof value === "boolean") {
-    return value.toString();
-  }
-  if (value === null || value === undefined) {
-    return "";
-  }
-  return JSON.stringify(value, (_, v) =>
-    typeof v === "bigint" ? v.toString() : v
-  );
-}
+const serializeValue = serializeArg;
 
 type TxLinkBuilder = { getTransactionUrl: (hash: string) => string };
 

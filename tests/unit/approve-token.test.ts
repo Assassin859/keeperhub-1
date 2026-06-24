@@ -186,6 +186,12 @@ vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({
   executeSponsoredContractTransaction: vi.fn().mockResolvedValue(null),
 }));
 
+const mockTraceExecutedCall = vi.fn();
+vi.mock("@/lib/web3/trace-executed-call", () => ({
+  traceExecutedCallWithFailover: (...args: unknown[]) =>
+    mockTraceExecutedCall(...args),
+}));
+
 // Mock ethers
 const mockDecimals = vi.fn();
 const mockSymbol = vi.fn();
@@ -285,8 +291,19 @@ function setupMocks(): void {
   mockGetTransactionUrl.mockResolvedValue("https://etherscan.io/tx/0xtxhash");
 }
 
+const MOCK_EXECUTED_CALL = {
+  contractAddress: "0x6b175474e89094c44da98b954eedeac495271d0f",
+  functionName: "approve",
+  functionSignature: "approve(address,uint256)",
+  args: { spender: "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", amount: "100000000000000000000" },
+  sponsored: false,
+  topLevelTo: "0x6b175474e89094c44da98b954eedeac495271d0f",
+  reverted: false,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockTraceExecutedCall.mockResolvedValue(undefined);
 });
 
 describe("approve-token - validation", () => {
@@ -420,5 +437,42 @@ describe("approve-token - error handling", () => {
         "Failed to initialize organization wallet"
       );
     }
+  });
+});
+
+describe("approve-token - executedCall on direct send", () => {
+  it("attaches executedCall when trace succeeds", async () => {
+    setupMocks();
+    mockTraceExecutedCall.mockResolvedValue(MOCK_EXECUTED_CALL);
+
+    const result = await approveTokenCore(makeInput({ amount: "100" }));
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.executedCall).toEqual(MOCK_EXECUTED_CALL);
+    }
+  });
+
+  it("omits executedCall when trace returns undefined (graceful degradation)", async () => {
+    setupMocks();
+    mockTraceExecutedCall.mockResolvedValue(undefined);
+
+    const result = await approveTokenCore(makeInput({ amount: "100" }));
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.executedCall).toBeUndefined();
+    }
+  });
+
+  it("calls traceExecutedCallWithFailover with correct args", async () => {
+    setupMocks();
+    mockTraceExecutedCall.mockResolvedValue(undefined);
+
+    await approveTokenCore(makeInput({ amount: "100" }));
+
+    expect(mockTraceExecutedCall).toHaveBeenCalledWith(
+      expect.objectContaining({ executeWithFailover: expect.any(Function) }),
+      "0xtxhash",
+      expect.objectContaining({ target: VALID_TOKEN, functionName: "approve" })
+    );
   });
 });
