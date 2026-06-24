@@ -49,13 +49,14 @@ If any of the above commands fail or show errors:
 - **No Native Dialogs**: Never use native `alert()` or `confirm()` dialogs. Always use shadcn AlertDialog, Dialog, or Sonner toast components instead
 
 ## Database Migrations
-- **Generate Migrations**: Use `pnpm db:generate` to automatically generate database migrations from schema changes
-- **Never Write Manual Migrations**: Do not manually create SQL migration files in the `drizzle/` directory
-- **Workflow**: 
-  1. Update the schema in `lib/db/schema.ts`
-  2. Run `pnpm db:generate` to generate the migration
-  3. Run `pnpm db:push` to apply the migration to the database
-- The migration generator will create properly formatted SQL files based on your schema changes
+- **File-based migrations**: production and staging deploys run `pnpm db:migrate` (file-based, `drizzle-kit migrate`), not `db:push`. Migration state is tracked in `drizzle.__drizzle_migrations`. See the "Database Migrations" section in `CLAUDE.md` for the full workflow, journal-timestamp gotcha, and dev-DB bootstrap notes.
+- **Standard workflow**:
+  1. Update the schema in `lib/db/schema.ts` (or `lib/db/schema-*.ts`)
+  2. Run `pnpm drizzle-kit generate` (or `pnpm db:generate`) to produce the migration file. Use `pnpm drizzle-kit generate --custom` to produce an empty file for a hand-written migration when the auto-generator cannot express the change.
+  3. Ensure `drizzle/meta/_journal.json` `when` timestamps are monotonically increasing.
+  4. Commit migration file, snapshot (if generated), journal, and schema change together.
+- **Local dev**: `pnpm db:push` is acceptable for fast iteration on a local dev DB only. Never push schema changes via `db:push` against shared envs.
+- **Heavy DDL (`-- @requires-db-prep` directive)**: any migration whose intended production form uses `CREATE INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY`, or another non-transactional statement must put `-- @requires-db-prep` on the first non-empty line of the SQL file. Write the SQL in its transaction-safe form (plain `CREATE INDEX IF NOT EXISTS` etc.); the directive triggers the `db-prep-check` merge gate which requires an operator to apply the lock-free form against the real target DB manually and flip the matching `db-prepped-<base-branch>` label (`db-prepped-staging`, `db-prepped-prod`). See `CLAUDE.md` "Heavy DDL Migrations" for the operator runbook and the rationale.
 
 ## Code Cleanliness
 - **Remove Unused Code**: If a variable, import, or function is unused, remove it entirely. Do not prefix with underscore unless it's intentionally unused but required (e.g., function parameters)
