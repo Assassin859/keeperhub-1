@@ -56,7 +56,7 @@ export type ActionConfigValidationResult = {
   issues: ActionConfigValidationIssue[];
 };
 
-type WorkflowNodeForValidation = {
+export type WorkflowNodeForValidation = {
   id?: string;
   type?: unknown;
   data?: {
@@ -364,7 +364,7 @@ export function validateWorkflowActionConfigs(
     // user has had a chance to configure the action. Skip required-field and
     // type validation; the UNKNOWN_FIELD check still runs below.
     const hasUserParams = Object.keys(config).some(
-      (k) => !RESERVED_CONFIG_KEYS.has(k) && !k.startsWith("_")
+      (k) => !(RESERVED_CONFIG_KEYS.has(k) || k.startsWith("_"))
     );
     if (!hasUserParams) {
       continue;
@@ -441,6 +441,41 @@ export function validateWorkflowActionConfigs(
   }
 
   return { valid: issues.length === 0, issues };
+}
+
+// Returns true if any known action node in `nodes` is in draft state — i.e.
+// its config contains only actionType, reserved keys, and underscore-prefixed
+// metadata keys with no user-supplied parameters. Used by the PATCH handler to
+// block enabling a workflow before all action nodes are configured.
+export function hasDraftActionNodes(
+  nodes: WorkflowNodeForValidation[]
+): boolean {
+  for (const node of nodes) {
+    if (!isActionNode(node)) {
+      continue;
+    }
+    const config = node.data?.config;
+    if (!isRecord(config)) {
+      continue;
+    }
+    const actionType = config.actionType;
+    if (typeof actionType !== "string" || actionType.trim() === "") {
+      continue;
+    }
+    if (SYSTEM_ACTION_TYPES.has(actionType)) {
+      continue;
+    }
+    if (!findActionById(actionType)) {
+      continue;
+    }
+    const hasUserParams = Object.keys(config).some(
+      (k) => !(RESERVED_CONFIG_KEYS.has(k) || k.startsWith("_"))
+    );
+    if (!hasUserParams) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function formatActionConfigValidationResponse(
