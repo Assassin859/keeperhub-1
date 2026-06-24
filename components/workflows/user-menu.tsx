@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ConnectButton } from "@/components/auth/connect-button";
 import {
   isAuthFlowInProgress,
@@ -21,7 +21,6 @@ import {
 } from "@/components/auth/dialog";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
-import { GettingStartedOverlay } from "@/components/overlays/getting-started-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
@@ -47,7 +46,10 @@ import {
 } from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 import { isAnonymousUser, isNewUserSession } from "@/lib/is-anonymous";
-import { editorTourRequestedAtom } from "@/lib/workflow/store";
+import {
+  editorTourRequestedAtom,
+  gettingStartedOpenAtom,
+} from "@/lib/workflow/store";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
@@ -114,6 +116,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
   const { isOwner } = useActiveMember();
   const router = useRouter();
   const requestTour = useSetAtom(editorTourRequestedAtom);
+  const openGettingStarted = useSetAtom(gettingStartedOpenAtom);
   const showBilling = isOwner && isBillingEnabled();
   const { status: notificationStatus, refresh: refreshNotifications } =
     useNotificationStatus(isOwner ? organization?.id : null);
@@ -122,22 +125,6 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
     notificationStatus,
     "billing_limit_reached"
   );
-
-  // Auto-open the getting-started intro once per account (tracked in
-  // localStorage by user id) so new users get a guided tour without it
-  // resurfacing on every visit.
-  const userId = session?.user?.id;
-  useEffect(() => {
-    if (!userId) {
-      return;
-    }
-    const key = `kh:getting-started-seen:${userId}`;
-    if (localStorage.getItem(key)) {
-      return;
-    }
-    localStorage.setItem(key, "1");
-    openOverlay(GettingStartedOverlay);
-  }, [userId, openOverlay]);
 
   const handleDropdownOpenChange = (open: boolean): void => {
     if (open) {
@@ -215,7 +202,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </div>
-          <DropdownMenuItem onClick={() => openOverlay(GettingStartedOverlay)}>
+          <DropdownMenuItem onClick={() => openGettingStarted(true)}>
             <Rocket className="size-4" />
             <span>Getting started</span>
           </DropdownMenuItem>

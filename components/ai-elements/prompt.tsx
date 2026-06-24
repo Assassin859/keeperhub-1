@@ -15,6 +15,7 @@ import {
   edgesAtom,
   isGeneratingAtom,
   nodesAtom,
+  pendingAiPromptAtom,
   selectedNodeAtom,
 } from "@/lib/workflow/store";
 
@@ -36,6 +37,7 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
   const [_currentWorkflowId, setCurrentWorkflowId] = useAtom(currentWorkflowIdAtom);
   const [_currentWorkflowName, setCurrentWorkflowName] = useAtom(currentWorkflowNameAtom);
   const [_selectedNodeId, setSelectedNodeId] = useAtom(selectedNodeAtom);
+  const [pendingAiPrompt, setPendingAiPrompt] = useAtom(pendingAiPromptAtom);
   const { fitView } = useReactFlow();
 
   // Filter out placeholder "add" nodes to get real nodes
@@ -73,11 +75,9 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
     }
   };
 
-  const handleGenerate = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-
-      if (!prompt.trim() || isGenerating) {
+  const runGenerate = useCallback(
+    async (promptText: string) => {
+      if (!promptText.trim() || isGenerating) {
         return;
       }
 
@@ -104,7 +104,7 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
 
         // Use streaming API with incremental updates
         const workflowData = await api.ai.generateStream(
-          prompt,
+          promptText,
           (partialData) => {
             // Update UI incrementally with animated edges
             const edgesWithAnimatedType = (partialData.edges || []).map((edge) => ({
@@ -274,7 +274,6 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
       }
     },
     [
-      prompt,
       isGenerating,
       workflowId,
       hasNodes,
@@ -290,6 +289,27 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
       fitView,
     ]
   );
+
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      runGenerate(prompt);
+    },
+    [runGenerate, prompt]
+  );
+
+  // A getting-started chip can seed a preset prompt then route here; consume it
+  // once on arrival, prefill the box, and generate.
+  useEffect(() => {
+    if (!pendingAiPrompt || isGenerating) {
+      return;
+    }
+    const seeded = pendingAiPrompt;
+    setPendingAiPrompt(null);
+    setPrompt(seeded);
+    setIsExpanded(true);
+    runGenerate(seeded);
+  }, [pendingAiPrompt, isGenerating, runGenerate, setPendingAiPrompt]);
 
   return (
     <>
@@ -318,7 +338,7 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
               e.preventDefault();
             }
           }}
-          onSubmit={handleGenerate}
+          onSubmit={handleSubmit}
           role="search"
         >
           {isGenerating && prompt ? (
@@ -340,7 +360,7 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  handleGenerate(e as any);
+                  runGenerate(prompt);
                 } else if (e.key === 'Escape') {
                   e.preventDefault();
                   setPrompt("");
