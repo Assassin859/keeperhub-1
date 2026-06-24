@@ -107,8 +107,9 @@ ENV SANDBOX_URL=http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787
 # Cache mount persists .next/cache across builds on the same BuildKit instance,
 # enabling Turbopack's incremental compilation. sharing=locked serialises
 # concurrent builders to prevent racing on Next.js cache writes when bake runs
-# multiple targets that share this stage.
-RUN --mount=type=cache,target=/app/.next/cache,sharing=locked pnpm build
+# multiple targets that share this stage. The stable mount id lets CI persist
+# this cache across ephemeral runners (see build-images.yml).
+RUN --mount=type=cache,id=nextjs-build-cache,target=/app/.next/cache,sharing=locked pnpm build
 
 # Stage 2.5b: Sentry source map upload (side-effect only, not consumed by other stages)
 FROM builder AS sentry-upload
