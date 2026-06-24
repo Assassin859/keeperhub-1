@@ -92,11 +92,8 @@ export function workflowDbStatuses(status: NormalizedStatus): string[] {
   if (status === "pending") {
     return ["pending", "phantom"];
   }
-  // The aggregate error counts include system_error, so the "error" filter must
-  // match both or the filtered runs list and the headline error count disagree.
-  // The dedicated "system_error" filter still isolates the system subset.
   if (status === "error") {
-    return [...ERROR_STATUSES];
+    return ["error"];
   }
   return [status];
 }

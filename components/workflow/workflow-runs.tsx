@@ -1102,7 +1102,12 @@ export function WorkflowRuns({
         setExecutions(data as WorkflowExecution[]);
 
         // Refresh logs for expanded runs: always for running, once more for newly-terminal
-        const terminalStatuses = new Set(["cancelled", "success", "error"]);
+        const terminalStatuses = new Set([
+          "cancelled",
+          "success",
+          "error",
+          "system_error",
+        ]);
         const executionMap = new Map(data.map((e) => [e.id, e]));
         for (const executionId of expandedRuns) {
           const execution = executionMap.get(executionId);
