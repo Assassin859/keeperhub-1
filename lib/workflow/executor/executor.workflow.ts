@@ -76,7 +76,6 @@ import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resol
 import { safeEvaluateCondition } from "@/lib/workflow/nodes/condition/safe-eval";
 import {
   type ConditionDecision,
-  collectAllSkippedTargets,
   collectSkippedTargets,
 } from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
@@ -352,7 +351,26 @@ function replaceTemplateVariable(
 type ConditionEvalResult = {
   result: boolean;
   resolvedValues: Record<string, unknown>;
+  // The expression with each {{...}} reference replaced by its resolved value,
+  // so observability shows what was actually compared (e.g. "0x1..." == "0x6...").
+  resolvedExpression?: string;
 };
+
+// Render a resolved value as it should appear inside the resolved expression:
+// strings quoted, numbers/booleans/null bare, undefined as the keyword.
+function renderConditionLiteral(value: unknown): string {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
 /**
  * Evaluate condition expression with template variable replacement.
@@ -397,6 +415,7 @@ export function evaluateConditionExpression(
     try {
       let evalContext: Record<string, unknown> = {};
       const resolvedValues: Record<string, unknown> = {};
+      const tokenLiterals: Record<string, string> = {};
       let transformedExpression = conditionExpression;
       const templatePattern = /\{\{@([^:]+):([^}]+)\}\}/g;
       const varCounter = { value: 0 };
@@ -420,8 +439,16 @@ export function evaluateConditionExpression(
           resolvedValues[rest] = formatConditionValueForDisplay(
             evalContext[varName]
           );
+          tokenLiterals[match] = renderConditionLiteral(evalContext[varName]);
           return varName;
         }
+      );
+
+      // Mirror the substitution against the original expression so the value
+      // side keeps the author's literals (quotes, operators) intact.
+      const resolvedExpression = conditionExpression.replace(
+        templatePattern,
+        (match: string) => tokenLiterals[match] ?? match
       );
 
       // KEEP-468: any `{{...}}` token left after stored-format substitution
@@ -462,7 +489,7 @@ export function evaluateConditionExpression(
       // Only reads the resolved __v/__b values and applies allowlisted
       // operators and methods.
       const result = safeEvaluateCondition(transformedExpression, evalContext);
-      return { result: Boolean(result), resolvedValues };
+      return { result: Boolean(result), resolvedValues, resolvedExpression };
     } catch (error) {
       // KEEP-1284: Re-throw errors about missing data - these should not be silently swallowed
       if (
@@ -524,6 +551,7 @@ async function executeActionStep(input: {
     // KEEP-1284: Catch evaluation errors and pass to step so it gets logged
     let evaluatedCondition = false;
     let resolvedValues: Record<string, unknown> = {};
+    let resolvedExpression: string | undefined;
     let evaluationError: string | undefined;
 
     try {
@@ -535,6 +563,7 @@ async function executeActionStep(input: {
       );
       evaluatedCondition = result.result;
       resolvedValues = result.resolvedValues;
+      resolvedExpression = result.resolvedExpression;
     } catch (error) {
       evaluationError = error instanceof Error ? error.message : String(error);
     }
@@ -548,6 +577,7 @@ async function executeActionStep(input: {
         !evaluationError && typeof originalExpression === "string"
           ? originalExpression
           : undefined,
+      resolvedExpression: evaluationError ? undefined : resolvedExpression,
       values:
         Object.keys(resolvedValues).length > 0 ? resolvedValues : undefined,
       _evaluationError: evaluationError,
@@ -1798,6 +1828,13 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
 
   const edgesByTarget = buildEdgesByTarget(edges);
   const convergenceArrivals = new Map<string, Set<string>>();
+  // Skip-arrivals tracked apart from real arrivals so an OR-join whose every
+  // incoming edge was skipped is itself skipped rather than executed.
+  const convergenceSkipArrivals = new Map<string, Set<string>>();
+  // Nodes determined to be genuinely skipped (all incoming paths not taken).
+  // Authoritative input to computeFinalSuccess so a node that actually executed
+  // and failed is never masked as skipped.
+  const skippedNodes = new Set<string>();
 
   // Find trigger nodes
   const nodesWithIncoming = new Set(edges.map((e) => e.target));
@@ -2846,35 +2883,30 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             // nodes downstream receive arrival signals from skipped sources
             const skippedTargets = handleMap.get(notTakenHandle) ?? [];
             if (skippedTargets.length > 0) {
-              // Register the condition's skip-arrival at direct skipped targets
-              // that are themselves convergence nodes. Without this, a pattern
-              // like `Cond -> (skipped) -> nodeB` and `Cond -> (taken) -> X -> nodeB`
-              // stalls nodeB: the condition's not-taken edge never signals
-              // arrival, so nodeB only ever sees X's arrival (1/2).
-              const preSeedUnblocked = signalConvergenceArrival(
-                nodeId,
-                skippedTargets,
-                edgesByTarget,
-                convergenceArrivals,
-                visited
-              );
+              // Walk the not-taken subtree, recording skip-arrivals at
+              // convergence nodes. A convergence node runs only if it also got
+              // a real arrival; if every incoming edge was skipped it is added
+              // to `skippedNodes` and the skip continues downstream. This both
+              // unblocks genuine convergence (e.g. `Cond -> (skipped) -> nodeB`
+              // and `Cond -> (taken) -> X -> nodeB`) and stops an all-skipped
+              // OR-join from firing.
               const unblockedIds = propagateConvergenceSkips(
+                nodeId,
                 skippedTargets,
                 edgesBySource,
                 edgesByTarget,
                 convergenceArrivals,
+                convergenceSkipArrivals,
+                skippedNodes,
                 visited
               );
-              const allUnblocked = [
-                ...new Set([...preSeedUnblocked, ...unblockedIds]),
-              ];
-              if (allUnblocked.length > 0) {
+              if (unblockedIds.length > 0) {
                 const settled = await pendingTasks.track(
                   Promise.allSettled(
-                    allUnblocked.map((id) => executeNode(id, visited))
+                    unblockedIds.map((id) => executeNode(id, visited))
                   )
                 );
-                processSettledResults(settled, allUnblocked);
+                processSettledResults(settled, unblockedIds);
               }
             }
           } else {
@@ -3119,8 +3151,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // drained orphan nodes are reflected here. The pre-drain computation (now
     // unused) only ever saw nodes whose call-stack reached processSettledResults;
     // drained orphans land in `results` while drain awaits them.
-    const allSkippedTargets = collectAllSkippedTargets(conditionDecisions);
-    const finalSuccess = computeFinalSuccess(results, allSkippedTargets);
+    // `skippedNodes` is the authoritative set of genuinely-skipped nodes built
+    // during execution: a node only lands here when every incoming path was
+    // not taken. A node that actually executed (even one wired to a condition's
+    // not-taken handle but reached via a real arrival) is absent, so its
+    // failure is never masked as skipped.
+    const finalSuccess = computeFinalSuccess(results, skippedNodes);
 
     // Surface drained-orphan failures explicitly so prod logs make the
     // SDK-checkpoint-truncation case visible (otherwise the failure looks
@@ -3129,7 +3165,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       (id) => !resultKeysBeforeDrain.has(id)
     );
     const drainedFailures = drainedNodeIds.filter(
-      (id) => !(results[id]?.success || allSkippedTargets.has(id))
+      (id) => !(results[id]?.success || skippedNodes.has(id))
     );
     if (drainedFailures.length > 0) {
       console.log(
@@ -3154,7 +3190,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           conditionDecisions: [...conditionDecisions.entries()].map(
             ([id, d]) => ({ id, ...d })
           ),
-          skippedTargets: [...allSkippedTargets],
+          skippedTargets: [...skippedNodes],
           unexecutedNodes,
         }
       );
