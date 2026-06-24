@@ -300,6 +300,29 @@ describe("condition-builder-utils", () => {
         expect(visualConditionToExpression(g)).toBe("42 === 3.14");
       });
 
+      it("should pass signed numeric values through", () => {
+        const g = group("AND", [rule("-7", ">", "-12.5")]);
+        expect(visualConditionToExpression(g)).toBe("-7 > -12.5");
+      });
+
+      it("should quote hex addresses instead of treating them as numbers", () => {
+        const g = group("AND", [
+          rule(
+            "{{@n:Get owners.result[0]}}",
+            "==",
+            "0x6924f2737145455bBF5B7412DfaDCB785e26f055"
+          ),
+        ]);
+        expect(visualConditionToExpression(g)).toBe(
+          '{{@n:Get owners.result[0]}} == "0x6924f2737145455bBF5B7412DfaDCB785e26f055"'
+        );
+      });
+
+      it("should quote exponent-style strings instead of treating them as numbers", () => {
+        const g = group("AND", [rule("code", "===", "1e5")]);
+        expect(visualConditionToExpression(g)).toBe('"code" === "1e5"');
+      });
+
       it("should pass boolean literals through", () => {
         const g = group("AND", [rule("true", "===", "false")]);
         expect(visualConditionToExpression(g)).toBe("true === false");
