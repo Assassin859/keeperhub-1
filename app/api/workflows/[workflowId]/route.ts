@@ -33,7 +33,9 @@ import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 import {
   formatActionConfigValidationResponse,
+  hasDraftActionNodes,
   validateWorkflowActionConfigs,
+  type WorkflowNodeForValidation,
 } from "@/lib/workflow/validation/action-config";
 import { findInvalidTemplateTokens } from "@/lib/workflow/validation/template-syntax";
 async function fetchWorkflowPublicTags(
@@ -594,6 +596,20 @@ export async function PATCH(
     // matches how lib/mcp/listing.ts calls the same function.
     const finalNodes =
       updateData.nodes !== undefined ? updateData.nodes : existingWorkflow.nodes;
+
+    if (
+      body.enabled === true &&
+      hasDraftActionNodes(finalNodes as WorkflowNodeForValidation[])
+    ) {
+      return NextResponse.json(
+        {
+          error: "UNCONFIGURED_ACTION_NODES",
+          message:
+            "Workflow cannot be enabled while it contains unconfigured action nodes. Open the workflow editor and configure all action nodes before enabling.",
+        },
+        { status: 422 }
+      );
+    }
 
     // Auto-derive workflowType from content via the shared helper
     // (lib/mcp/calldata.ts::deriveWorkflowType). This intentionally replaces

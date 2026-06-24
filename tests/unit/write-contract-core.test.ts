@@ -152,6 +152,12 @@ vi.mock("@/lib/safe/execute-as-safe", () => ({
   executeNativeTransferAsSafe: vi.fn(),
 }));
 
+const mockTraceExecutedCall = vi.fn();
+vi.mock("@/lib/web3/trace-executed-call", () => ({
+  traceExecutedCallWithFailover: (...args: unknown[]) =>
+    mockTraceExecutedCall(...args),
+}));
+
 // Capture txContext passed to withNonceSession
 let capturedTxContext: Record<string, unknown> | null = null;
 vi.mock("@/lib/web3/transaction-manager", () => ({
@@ -193,6 +199,58 @@ const VALID_ABI = JSON.stringify([
     outputs: [{ name: "", type: "bool" }],
   },
 ]);
+
+const MOCK_EXECUTED_CALL = {
+  contractAddress: "0x1234567890123456789012345678901234567890",
+  functionName: "transfer",
+  functionSignature: "transfer(address,uint256)",
+  args: { to: "0xrecipient", amount: "1000" },
+  sponsored: false,
+  topLevelTo: "0x1234567890123456789012345678901234567890",
+  reverted: false,
+};
+
+describe("writeContractCore executedCall on direct send", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedTxContext = null;
+    mockTraceExecutedCall.mockResolvedValue(undefined);
+  });
+
+  it("attaches executedCall when trace succeeds", async () => {
+    mockTraceExecutedCall.mockResolvedValue(MOCK_EXECUTED_CALL);
+
+    const result = await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "ethereum",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.executedCall).toEqual(MOCK_EXECUTED_CALL);
+    }
+  });
+
+  it("omits executedCall when trace returns undefined (graceful degradation)", async () => {
+    mockTraceExecutedCall.mockResolvedValue(undefined);
+
+    const result = await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "ethereum",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.executedCall).toBeUndefined();
+    }
+  });
+});
 
 describe("writeContractCore unique execution ID", () => {
   beforeEach(() => {

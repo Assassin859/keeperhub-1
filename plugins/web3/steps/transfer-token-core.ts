@@ -41,6 +41,8 @@ import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
+import type { ExecutedCall } from "@/lib/web3/trace-decode";
+import { traceExecutedCallWithFailover } from "@/lib/web3/trace-executed-call";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import { isSponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import {
@@ -82,6 +84,10 @@ export type TransferTokenResult =
       symbol: string;
       recipient: string;
       sponsored?: boolean;
+      // Normalized view of the call that actually executed, recovered by tracing
+      // the transaction. Lets sponsored sends report the same shape as direct
+      // ones. Omitted when the RPC cannot trace the transaction.
+      executedCall?: ExecutedCall;
     }
   | { success: false; error: string; rejection?: RevertKind };
 
@@ -393,6 +399,12 @@ export async function transferTokenCore(
           ? getTransactionUrl(explorerConfig, sponsoredResult.transactionHash)
           : "";
 
+        const executedCall = await traceExecutedCallWithFailover(
+          rpcManager,
+          sponsoredResult.transactionHash,
+          { target: tokenAddress, abi: ERC20_ABI, functionName: "transfer" }
+        );
+
         return {
           success: true,
           sponsored: true,
@@ -404,6 +416,7 @@ export async function transferTokenCore(
           amount,
           symbol,
           recipient: recipientAddress,
+          executedCall,
         };
       }
 
@@ -570,6 +583,12 @@ export async function transferTokenCore(
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
+      const executedCall = await traceExecutedCallWithFailover(rpcManager, receipt.hash, {
+        target: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "transfer",
+      });
+
       return {
         success: true,
         transactionHash: receipt.hash,
@@ -580,6 +599,7 @@ export async function transferTokenCore(
         amount,
         symbol,
         recipient: recipientAddress,
+        executedCall,
       };
     } catch (error) {
       logUserError(
