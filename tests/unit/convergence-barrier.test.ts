@@ -1058,5 +1058,63 @@ describe("convergence barrier", () => {
       expect(afterSkip).toEqual(["J"]);
       expect(skippedNodes.has("J")).toBe(false);
     });
+
+    it("runs the join and its continuation when several conditions skip but a normal node arrives", () => {
+      // c1, c2 both route their not-taken handle into Merge; Plain always runs
+      // and also feeds Merge; Merge -> Next continues the workflow. Merge must
+      // run on Plain's real arrival regardless of the two condition skips, and
+      // Next (downstream of Merge) must then run too.
+      const wf = [
+        { source: "c1", target: "Merge" },
+        { source: "c2", target: "Merge" },
+        { source: "Plain", target: "Merge" },
+        { source: "Merge", target: "Next" },
+      ];
+      const sourceMap = buildEdgesBySource(wf);
+      const targetMap = buildEdgesByTarget(wf);
+      const arrivals = new Map<string, Set<string>>();
+      const skipArrivals = new Map<string, Set<string>>();
+      const skippedNodes = new Set<string>();
+      const visited = new Set<string>();
+
+      // Both conditions pass: their edges into Merge are skipped (2/3 arrivals).
+      for (const cond of ["c1", "c2"]) {
+        expect(
+          propagateConvergenceSkips(
+            cond,
+            ["Merge"],
+            sourceMap,
+            targetMap,
+            arrivals,
+            skipArrivals,
+            skippedNodes,
+            visited
+          )
+        ).toEqual([]);
+      }
+      expect(skippedNodes.has("Merge")).toBe(false);
+
+      // Plain runs -> real arrival completes Merge (3/3) and releases it.
+      const readyMerge = getReadyDownstreamIds(
+        "Plain",
+        ["Merge"],
+        targetMap,
+        arrivals,
+        visited
+      );
+      expect(readyMerge).toEqual(["Merge"]);
+
+      // Execute Merge and route downstream: Next (single-incoming) runs.
+      visited.add("Merge");
+      const readyNext = getReadyDownstreamIds(
+        "Merge",
+        ["Next"],
+        targetMap,
+        arrivals,
+        visited
+      );
+      expect(readyNext).toEqual(["Next"]);
+      expect(skippedNodes.has("Next")).toBe(false);
+    });
   });
 });
