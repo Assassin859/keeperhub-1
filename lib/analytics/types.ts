@@ -60,6 +60,10 @@ export type UnifiedRun = {
   gasUsedWei: string | null;
   totalSteps: number | null;
   completedSteps: number | null;
+  error: string | null;
+  errorCode: string | null;
+  errorType: "user" | "system" | null;
+  errorCategory: string | null;
 };
 
 export type AnalyticsSummary = {
