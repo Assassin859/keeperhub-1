@@ -134,6 +134,18 @@ jobs:
           --health-start-period 15s
 
     steps:
+      # Hosted runners ship ~25GB of preinstalled toolchains (Android, .NET,
+      # Haskell) the e2e job never uses. Reclaiming it avoids the runner filling
+      # its disk mid-run (ENOSPC) under the app build + service containers.
+      - name: Free disk space
+        if: runner.environment == 'github-hosted'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: true
+          swap-storage: true
+          docker-images: false
+
       - name: Checkout code
         uses: actions/checkout@v6
 
@@ -311,6 +323,17 @@ jobs:
           --health-retries 5
 
     steps:
+      # Reclaim the ~25GB of unused preinstalled toolchains on hosted runners so
+      # the app build + Playwright browsers + service containers do not ENOSPC.
+      - name: Free disk space
+        if: runner.environment == 'github-hosted'
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          large-packages: true
+          swap-storage: true
+          docker-images: false
+
       - name: Checkout code
         uses: actions/checkout@v6
 
