@@ -983,6 +983,14 @@ describe("convergence barrier", () => {
       expect(executeReady).toEqual([alert]);
       expect(skippedNodes.has(alert)).toBe(false);
     });
+
+    it("executes the alert exactly once when every condition failed (all taken)", () => {
+      // All five conditions take their false edge -> five real arrivals. The
+      // join still fires exactly once and is never recorded as skipped.
+      const { executeReady, skippedNodes } = runAllConditions(condIds);
+      expect(executeReady).toEqual([alert]);
+      expect(skippedNodes.has(alert)).toBe(false);
+    });
   });
 
   describe("OR-join with a non-condition predecessor", () => {
