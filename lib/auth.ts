@@ -894,6 +894,22 @@ export const auth = betterAuth({
           // wallet users from the step-up gate; stamping mfaVerifiedAt keeps
           // the session row consistent with the OAuth-finalize path.
           const isWallet = isWalletEmail(userRow?.email);
+          // Short-circuit wallet sessions BEFORE the twoFactorEnabled branch.
+          // A wallet user who opts into TOTP (a per-action step-up factor, not a
+          // login gate) has twoFactorEnabled = true; without this, they'd mint a
+          // requiresMfa session with the short pre-step-up TTL below, but the
+          // proxy never routes wallet users to /verify-mfa, so the session would
+          // just expire -- repeated silent logout. For wallet users the
+          // signature is the login factor, so the session is always satisfied.
+          if (isWallet) {
+            return {
+              data: {
+                requiresMfa: false,
+                mfaVerifiedAt: new Date(),
+                riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
+              },
+            };
+          }
           // Sessions that still need step-up get a short TTL so a stolen
           // cookie expires before a legitimate user finishes the
           // /verify-mfa flow.
@@ -913,10 +929,11 @@ export const auth = betterAuth({
               },
             };
           }
+          // Non-wallet users without TOTP: no step-up needed, no mfaVerifiedAt
+          // stamp (wallet users already returned above).
           return {
             data: {
               requiresMfa: false,
-              mfaVerifiedAt: isWallet ? new Date() : undefined,
               riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
             },
           };
