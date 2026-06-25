@@ -48,8 +48,22 @@ const ALLOWED_FACTORS: ReadonlySet<StepUpFactor> = new Set([
   "email",
 ]);
 
+/**
+ * Default extra step-up factors for the highest-leverage wallet actions. A
+ * wallet user who has TOTP enrolled is asked for it on withdraw / export-key by
+ * default; a user without TOTP is never blocked (only enrolled factors are ever
+ * enforced). The user can opt any action out in settings, stored as an explicit
+ * empty array (see parseStepUpPolicy / resolveRequiredFactors).
+ */
+export const DEFAULT_STEP_UP_POLICY: StepUpPolicy = {
+  [STEP_UP_ACTIONS.walletWithdraw]: ["totp"],
+  [STEP_UP_ACTIONS.walletExportKey]: ["totp"],
+};
+
 /** Safely parse the jsonb column into a StepUpPolicy, dropping anything that
- *  doesn't match the expected shape. */
+ *  doesn't match the expected shape. An explicit empty array is PRESERVED: it
+ *  is the user's opt-out of a default-on action (distinct from an absent key,
+ *  which means "use the default"). */
 export function parseStepUpPolicy(value: unknown): StepUpPolicy {
   if (!value || typeof value !== "object") {
     return {};
@@ -61,13 +75,10 @@ export function parseStepUpPolicy(value: unknown): StepUpPolicy {
     if (!Array.isArray(factors)) {
       continue;
     }
-    const valid = factors.filter(
+    result[action] = factors.filter(
       (f): f is StepUpFactor =>
         typeof f === "string" && ALLOWED_FACTORS.has(f as StepUpFactor)
     );
-    if (valid.length > 0) {
-      result[action] = valid;
-    }
   }
   return result;
 }
@@ -85,9 +96,16 @@ export function resolveRequiredFactors(params: {
     return ["totp", "email"];
   }
 
-  // Wallet accounts: base wallet signature + any enrolled, opted-in extras.
+  // Wallet accounts: base wallet signature + extra factors. The user's explicit
+  // per-action policy wins (an empty array is a deliberate opt-out); when the
+  // action is unset, fall back to the default policy. Only enrolled factors are
+  // ever enforced, so an unconfigured user is never blocked.
+  const configured =
+    policy && action in policy
+      ? policy[action]
+      : DEFAULT_STEP_UP_POLICY[action];
   const required = new Set<StepUpFactor>(["wallet"]);
-  for (const factor of policy?.[action] ?? []) {
+  for (const factor of configured ?? []) {
     if (factor === "totp" && enrolled.totp) {
       required.add("totp");
     }
