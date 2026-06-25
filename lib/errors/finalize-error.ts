@@ -24,11 +24,12 @@ import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
 export async function recordExecutionErrorFinalized(args: {
   workflowId: string;
   errorMessage: string | null | undefined;
+  errorCategory?: string;
 }): Promise<void> {
   try {
-    const { errorCategory, errorType } = classifyExecutionError(
-      args.errorMessage
-    );
+    const classification = classifyExecutionError(args.errorMessage);
+    const errorCategory = args.errorCategory ?? classification.errorCategory;
+    const { errorType } = classification;
 
     const row = await db
       .select({ slug: organization.slug })

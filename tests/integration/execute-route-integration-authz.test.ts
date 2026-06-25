@@ -93,7 +93,9 @@ describe("execute route - per-integration authorization", () => {
       error: "Unauthorized",
       status: 401,
     });
-    mockFindWorkflow.mockResolvedValue(workflow);
+    mockOwnerLimit.mockResolvedValue([
+      { workflow, orgDeactivatedAt: null, organizationName: null },
+    ]);
     mockGetWorkflowAccess.mockResolvedValue({
       isCreatorWithCurrentAccess: false,
       isSameOrg: true,
@@ -153,14 +155,15 @@ describe("execute route - lifecycle executability gate", () => {
       error: "Unauthorized",
       status: 401,
     });
-    mockFindWorkflow.mockResolvedValue(workflow);
+    mockOwnerLimit.mockResolvedValue([
+      { workflow, orgDeactivatedAt: null, organizationName: null },
+    ]);
     mockGetWorkflowAccess.mockResolvedValue({
       isCreatorWithCurrentAccess: false,
       isSameOrg: true,
       hasFullAccess: true,
       isDeleted: false,
     });
-    mockOwnerLimit.mockResolvedValue([{ orgDeactivatedAt: null }]);
     mockGetDualAuthContext.mockResolvedValue({
       userId: "owner_a",
       organizationId: "org_1",
@@ -176,7 +179,9 @@ describe("execute route - lifecycle executability gate", () => {
       caller: "scheduler",
       scheme: "hmac",
     });
-    mockFindWorkflow.mockResolvedValue({ ...workflow, enabled: false });
+    mockOwnerLimit.mockResolvedValue([
+      { workflow: { ...workflow, enabled: false }, orgDeactivatedAt: null, organizationName: null },
+    ]);
 
     const response = await callExecute();
 
@@ -186,7 +191,9 @@ describe("execute route - lifecycle executability gate", () => {
   });
 
   it("allows a disabled workflow on the interactive path (editor test run)", async () => {
-    mockFindWorkflow.mockResolvedValue({ ...workflow, enabled: false });
+    mockOwnerLimit.mockResolvedValue([
+      { workflow: { ...workflow, enabled: false }, orgDeactivatedAt: null, organizationName: null },
+    ]);
     // Force a 403 downstream so we can prove the disabled gate did NOT short
     // -circuit: reaching the integration check means the workflow passed.
     mockValidateWorkflowIntegrations.mockResolvedValue({
@@ -201,7 +208,9 @@ describe("execute route - lifecycle executability gate", () => {
   });
 
   it("blocks a soft-deleted workflow on the interactive path with 404", async () => {
-    mockFindWorkflow.mockResolvedValue({ ...workflow, deletedAt: new Date() });
+    mockOwnerLimit.mockResolvedValue([
+      { workflow: { ...workflow, deletedAt: new Date() }, orgDeactivatedAt: null, organizationName: null },
+    ]);
 
     const response = await callExecute();
 
@@ -210,7 +219,9 @@ describe("execute route - lifecycle executability gate", () => {
   });
 
   it("blocks a deactivated-owner workflow on the interactive path with 404", async () => {
-    mockOwnerLimit.mockResolvedValue([{ orgDeactivatedAt: new Date() }]);
+    mockOwnerLimit.mockResolvedValue([
+      { workflow, orgDeactivatedAt: new Date(), organizationName: null },
+    ]);
 
     const response = await callExecute();
 

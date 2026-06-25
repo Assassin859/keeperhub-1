@@ -23,23 +23,21 @@
  *   + system credentials from runner-env.ts (ETHERSCAN_API_KEY, etc.)
  */
 
-import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
 import {
-  organization,
   workflowExecutions,
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
-import { getWorkflowExecutability } from "../lib/workflow/executable";
 import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
-import { calculateTotalSteps } from "../lib/workflow/executor/progress";
 import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
+import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import {
+  applyExecutionResult,
   initializeExecutionProgress,
   updateExecutionStatus,
   updateScheduleStatus,
@@ -176,48 +174,26 @@ async function main(): Promise<void> {
 
     await updateExecutionStatus(db, executionId, "running");
 
-    const workflow = await db.query.workflows.findFirst({
-      where: eq(workflows.id, workflowId),
-    });
-
-    if (!workflow) {
-      throw new Error(`Workflow not found: ${workflowId}`);
-    }
-
     // Defensive re-check: the dispatcher already gated lifecycle state, but the
     // workflow could have been disabled, soft-deleted, deactivated, or its
     // owning org deactivated between dispatch and pod startup. Cancel rather
     // than run. The org owns the workflow, so org deactivation is the owner gate.
-    const [org] = await db
-      .select({ deactivatedAt: organization.deactivatedAt })
-      .from(organization)
-      .where(eq(organization.id, workflow.organizationId))
-      .limit(1);
-    const executability = getWorkflowExecutability({
-      enabled: workflow.enabled,
-      deletedAt: workflow.deletedAt,
-      deactivatedAt: workflow.deactivatedAt,
-      orgDeactivatedAt: org?.deactivatedAt ?? null,
+    const loaded = await loadWorkflowForExecution(workflowId, {
+      requireEnabled: true,
     });
-    if (!executability.executable) {
+    if (loaded.status === "not_found") {
+      throw new Error(`Workflow not found: ${workflowId}`);
+    }
+    if (loaded.status === "not_executable") {
       console.log(
-        `[Runner] Workflow not executable (${executability.reason}), skipping execution: ${workflowId}`
+        `[Runner] Workflow not executable (${loaded.reason}), skipping execution: ${workflowId}`
       );
       await updateExecutionStatus(db, executionId, "cancelled");
       return;
     }
 
+    const { workflow, organizationName } = loaded;
     console.log(`[Runner] Loaded workflow: ${workflow.name || workflowId}`);
-
-    let organizationName: string | undefined;
-    if (workflow.organizationId) {
-      const [org] = await db
-        .select({ name: organization.name })
-        .from(organization)
-        .where(eq(organization.id, workflow.organizationId))
-        .limit(1);
-      organizationName = org?.name;
-    }
 
     const nodes = workflow.nodes as WorkflowNode[];
     const edges = workflow.edges as WorkflowEdge[];
@@ -232,9 +208,8 @@ async function main(): Promise<void> {
       );
     }
 
-    const totalSteps = calculateTotalSteps(nodes, edges);
-    console.log(`[Runner] Total steps: ${totalSteps}`);
-    await initializeExecutionProgress(db, executionId, totalSteps);
+    await initializeExecutionProgress(db, executionId, nodes, edges);
+    console.log(`[Runner] Initialized execution progress`);
 
     if (isShuttingDown) {
       console.log("[Runner] Shutdown requested, aborting before execution");
@@ -261,38 +236,18 @@ async function main(): Promise<void> {
     console.log(`[Runner] Success: ${result.success}`);
 
     // executeWorkflow is the authoritative writer of the terminal status (with
-    // reconciliation and richer fields). These updateExecutionStatus calls are
-    // a guarded backstop: the WHERE clause in updateExecutionStatus makes them
-    // a no-op once the engine's own write landed, and only closes the row if
+    // reconciliation and richer fields). applyExecutionResult is a guarded
+    // backstop: the WHERE clause in updateExecutionStatus makes its writes a
+    // no-op once the engine's own write landed, and only closes the row if
     // that write was lost - so a finished run is never left stuck "running".
-    if (result.success) {
-      await updateExecutionStatus(db, executionId, "success", {
-        output: result.outputs,
-      });
-
-      if (scheduleId) {
-        await updateScheduleStatus(db, scheduleId, "success");
-      }
-
-      currentExecutionId = null;
-      console.log("[Runner] Execution completed successfully");
-    } else {
-      const errorMessage =
-        result.error ||
-        Object.values(result.results || {}).find((r) => !r.success)?.error ||
-        "Unknown error";
-
-      await updateExecutionStatus(db, executionId, "error", {
-        error: errorMessage,
-        output: result.outputs,
-      });
-
-      if (scheduleId) {
-        await updateScheduleStatus(db, scheduleId, "error", errorMessage);
-      }
-
-      currentExecutionId = null;
+    const { errorMessage } = await applyExecutionResult(db, executionId, result, {
+      scheduleId,
+    });
+    currentExecutionId = null;
+    if (errorMessage) {
       console.error("[Runner] Workflow execution failed:", errorMessage);
+    } else {
+      console.log("[Runner] Execution completed successfully");
     }
   } catch (error) {
     const duration = Date.now() - startTime;

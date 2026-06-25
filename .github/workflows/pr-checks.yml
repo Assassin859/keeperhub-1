@@ -275,6 +275,11 @@ jobs:
       - name: Run sandbox package unit tests
         run: pnpm --filter @keeperhub/sandbox test
 
+      - name: Build sandbox dist and run smoke test
+        run: |
+          pnpm --filter @keeperhub/sandbox build
+          pnpm --filter @keeperhub/sandbox test:smoke
+
       - name: Build sandbox image
         run: docker build -f sandbox/Dockerfile -t keeperhub-sandbox:ci .
 

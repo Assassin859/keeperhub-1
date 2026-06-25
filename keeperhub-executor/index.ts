@@ -35,7 +35,6 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
-  organization,
   workflowExecutions,
   workflowSchedules,
   workflows,
@@ -47,7 +46,7 @@ import { buildAttribution } from "../lib/security/request-attribution";
 import { generateId } from "../lib/utils/id";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
-import { getWorkflowExecutability } from "../lib/workflow/executable";
+import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
@@ -246,39 +245,28 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
   );
 
-  // Load the workflow and its owning org's deactivation state in one round-trip.
-  const [row] = await db
-    .select()
-    .from(workflows)
-    .leftJoin(organization, eq(organization.id, workflows.organizationId))
-    .where(eq(workflows.id, workflowId))
-    .limit(1);
-  const workflow = row?.workflows;
-
-  if (!workflow) {
-    console.error(`[Executor] Workflow not found: ${workflowId}`);
-    await discardPhantomRow(db, message.executionId);
-    return;
-  }
-
+  // Load the workflow and evaluate its lifecycle state in one round-trip.
   // A soft-deleted, disabled, or deactivated workflow - or one whose owning
   // org is deactivated - must never execute, even if a stale schedule or
   // queued message still references it. The block_executions DB trigger is the
   // INSERT-time backstop; this skips the work before it gets that far. The org
   // owns the workflow, so org deactivation is the owner gate.
-  const executability = getWorkflowExecutability({
-    enabled: workflow.enabled,
-    deletedAt: workflow.deletedAt,
-    deactivatedAt: workflow.deactivatedAt,
-    orgDeactivatedAt: row?.organization?.deactivatedAt ?? null,
+  const loaded = await loadWorkflowForExecution(workflowId, {
+    requireEnabled: true,
   });
-  if (!executability.executable) {
+  if (loaded.status === "not_found") {
+    console.error(`[Executor] Workflow not found: ${workflowId}`);
+    await discardPhantomRow(db, message.executionId);
+    return;
+  }
+  if (loaded.status === "not_executable") {
     console.log(
-      `[Executor] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
+      `[Executor] Workflow not executable (${loaded.reason}), skipping: ${workflowId}`
     );
     await discardPhantomRow(db, message.executionId);
     return;
   }
+  const { workflow } = loaded;
 
   if (triggerType === "schedule") {
     const valid = await validateSchedule(
