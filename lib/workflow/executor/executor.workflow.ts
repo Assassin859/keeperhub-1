@@ -2499,8 +2499,74 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
   }
 
+  /**
+   * Continue execution downstream of a condition node, honoring the taken
+   * handle and propagating skips on the not-taken handle. Shared by the normal
+   * post-step path and the spurious-completion recovery path so a recovered
+   * condition routes exactly like one that completed normally. Routing a
+   * condition through `edgesBySource` instead fires the not-taken edge (e.g. a
+   * `false`-handle OR-join) on a branch that should have been skipped.
+   */
+  async function continueFromCondition(
+    nodeId: string,
+    conditionResult: boolean | undefined,
+    visited: Set<string>
+  ): Promise<void> {
+    const handleMap = edgesBySourceHandle.get(nodeId);
+    if (!handleMap) {
+      // Legacy fallback: no sourceHandle on edges, use old gate behavior
+      if (conditionResult === true) {
+        const nextNodes = edgesBySource.get(nodeId) ?? [];
+        await executeReadyDownstream(nodeId, nextNodes, visited);
+      }
+      return;
+    }
+
+    // Handle-aware routing: use the taken handle to determine targets
+    const handleId = conditionResult === true ? "true" : "false";
+    const notTakenHandle = conditionResult === true ? "false" : "true";
+    const handleTargets = handleMap.get(handleId) ?? [];
+
+    // Record decision for branch-aware finalSuccess
+    conditionDecisions.set(nodeId, {
+      taken: handleId,
+      skippedTargets: collectSkippedTargets(
+        nodeId,
+        notTakenHandle,
+        edgesBySourceHandle
+      ),
+      takenTargets: handleTargets,
+    });
+    await executeReadyDownstream(nodeId, handleTargets, visited);
+
+    // Propagate skip signals for the not-taken branch so convergence nodes
+    // downstream receive arrival signals from skipped sources. A convergence
+    // node runs only if it also got a real arrival; if every incoming edge was
+    // skipped it is added to `skippedNodes` and the skip continues downstream.
+    // This both unblocks genuine convergence and stops an all-skipped OR-join
+    // from firing.
+    const skippedTargets = handleMap.get(notTakenHandle) ?? [];
+    if (skippedTargets.length > 0) {
+      const unblockedIds = propagateConvergenceSkips(
+        nodeId,
+        skippedTargets,
+        edgesBySource,
+        edgesByTarget,
+        convergenceArrivals,
+        convergenceSkipArrivals,
+        skippedNodes,
+        visited
+      );
+      if (unblockedIds.length > 0) {
+        const settled = await pendingTasks.track(
+          Promise.allSettled(unblockedIds.map((id) => executeNode(id, visited)))
+        );
+        processSettledResults(settled, unblockedIds);
+      }
+    }
+  }
+
   // Helper to execute a single node
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Node execution requires type checking and error handling
   async function executeNode(nodeId: string, visited: Set<string> = new Set()) {
     console.log("[Workflow Executor] Executing node:", nodeId);
 
@@ -2856,63 +2922,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           // For condition nodes, route to true/false handle targets
           const conditionResult = (result.data as { condition?: boolean })
             ?.condition;
-
-          const handleMap = edgesBySourceHandle.get(nodeId);
-          if (handleMap) {
-            // Handle-aware routing: use sourceHandle to determine targets
-            const handleId = conditionResult === true ? "true" : "false";
-            const notTakenHandle = conditionResult === true ? "false" : "true";
-            const handleTargets = handleMap.get(handleId) ?? [];
-
-            // Record decision for branch-aware finalSuccess
-            conditionDecisions.set(nodeId, {
-              taken: handleId,
-              skippedTargets: collectSkippedTargets(
-                nodeId,
-                notTakenHandle,
-                edgesBySourceHandle
-              ),
-              takenTargets: handleTargets,
-            });
-            await executeReadyDownstream(nodeId, handleTargets, visited);
-
-            // Propagate skip signals for the not-taken branch so convergence
-            // nodes downstream receive arrival signals from skipped sources
-            const skippedTargets = handleMap.get(notTakenHandle) ?? [];
-            if (skippedTargets.length > 0) {
-              // Walk the not-taken subtree, recording skip-arrivals at
-              // convergence nodes. A convergence node runs only if it also got
-              // a real arrival; if every incoming edge was skipped it is added
-              // to `skippedNodes` and the skip continues downstream. This both
-              // unblocks genuine convergence (e.g. `Cond -> (skipped) -> nodeB`
-              // and `Cond -> (taken) -> X -> nodeB`) and stops an all-skipped
-              // OR-join from firing.
-              const unblockedIds = propagateConvergenceSkips(
-                nodeId,
-                skippedTargets,
-                edgesBySource,
-                edgesByTarget,
-                convergenceArrivals,
-                convergenceSkipArrivals,
-                skippedNodes,
-                visited
-              );
-              if (unblockedIds.length > 0) {
-                const settled = await pendingTasks.track(
-                  Promise.allSettled(
-                    unblockedIds.map((id) => executeNode(id, visited))
-                  )
-                );
-                processSettledResults(settled, unblockedIds);
-              }
-            }
-          } else {
-            // Legacy fallback: no sourceHandle on edges, use old gate behavior
-            if (conditionResult === true) {
-              const nextNodes = edgesBySource.get(nodeId) ?? [];
-              await executeReadyDownstream(nodeId, nextNodes, visited);
-            }
-          }
+          await continueFromCondition(nodeId, conditionResult, visited);
         } else {
           // For non-condition nodes, execute all next nodes in parallel
           const nextNodes = edgesBySource.get(nodeId) || [];
@@ -2993,8 +3003,24 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           label: getNodeName(node),
           data: recordedOutput,
         };
-        const nextNodes = edgesBySource.get(nodeId) ?? [];
-        await executeReadyDownstream(nodeId, nextNodes, visited);
+        // A recovered condition must route by handle, exactly like the normal
+        // path. Continuing through the handle-agnostic `edgesBySource` here
+        // fires the not-taken edge (e.g. a `false`-handle OR-join) on a branch
+        // that should have been skipped, which is what caused the join to run
+        // even though every condition evaluated true.
+        const recoveredActionType =
+          node.data.type === "action"
+            ? (node.data.config?.actionType as string | undefined)
+            : undefined;
+        if (recoveredActionType === "Condition") {
+          const recoveredCondition = (
+            recordedOutput as { condition?: boolean } | undefined
+          )?.condition;
+          await continueFromCondition(nodeId, recoveredCondition, visited);
+        } else {
+          const nextNodes = edgesBySource.get(nodeId) ?? [];
+          await executeReadyDownstream(nodeId, nextNodes, visited);
+        }
         return;
       }
 
@@ -3057,19 +3083,33 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       // Signal arrival at downstream convergence nodes to prevent deadlocks.
       // If this failure was the last arrival, execute the convergence node
       // with partial data rather than hanging forever.
-      const nextNodes = edgesBySource.get(nodeId) ?? [];
-      const unblockedIds = signalConvergenceArrival(
-        nodeId,
-        nextNodes,
-        edgesByTarget,
-        convergenceArrivals,
-        visited
-      );
-      if (unblockedIds.length > 0) {
-        const settled = await Promise.allSettled(
-          unblockedIds.map((id) => executeNode(id, visited))
+      //
+      // A genuinely-failed condition is the exception: it has no taken handle,
+      // and signaling a real arrival through the handle-agnostic `edgesBySource`
+      // would fire a not-taken OR-join (e.g. an alert on the `false` handle) on
+      // a branch that never produced a decision. Skip the signal for condition
+      // nodes; the run is already marked failed and the join is left unrun
+      // rather than mis-fired. Non-condition merges still signal so a
+      // partial-data join does not hang.
+      const failedActionType =
+        node.data.type === "action"
+          ? (node.data.config?.actionType as string | undefined)
+          : undefined;
+      if (failedActionType !== "Condition") {
+        const nextNodes = edgesBySource.get(nodeId) ?? [];
+        const unblockedIds = signalConvergenceArrival(
+          nodeId,
+          nextNodes,
+          edgesByTarget,
+          convergenceArrivals,
+          visited
         );
-        processSettledResults(settled, unblockedIds);
+        if (unblockedIds.length > 0) {
+          const settled = await Promise.allSettled(
+            unblockedIds.map((id) => executeNode(id, visited))
+          );
+          processSettledResults(settled, unblockedIds);
+        }
       }
     }
   }
