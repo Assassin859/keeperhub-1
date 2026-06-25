@@ -40,6 +40,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  issues: write
 
 concurrency:
   group: sandbox-escape-matrix-${{ inputs.environment || 'staging' }}
@@ -168,3 +169,22 @@ jobs:
             echo ""
             echo "If TEST-06..10 fail: the image/FS/network strand has regressed but the env/SA/IRSA strand is intact. Re-verify the sandbox runtime image is distroless, the NetworkPolicy is applied, and the pod has readOnlyRootFilesystem. SANDBOX_BACKEND rollback is not required unless TEST-01..05 also fail."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open GitHub issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "sandbox-escape-matrix failed on ${{ env.TARGET_ENV }}" \
+            --body "The sandbox-escape-matrix suite failed and needs investigation.
+
+          **Environment**: ${{ env.TARGET_ENV }}
+          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Triggered by**: ${{ github.event_name }}
+          **Matrix step outcome**: ${{ steps.matrix.outcome }}
+
+          If TEST-01..05 failed: the env/SA/IRSA strand has regressed. Roll the main app back to \`SANDBOX_BACKEND=local\` in Helm values immediately.
+
+          If TEST-06..10 failed: the image/FS/network strand has regressed. Re-verify the sandbox image is distroless, NetworkPolicy is applied, and \`readOnlyRootFilesystem\` is set. No rollback required unless TEST-01..05 also fail."

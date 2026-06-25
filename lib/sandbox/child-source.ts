@@ -767,7 +767,14 @@ async function resolveValidatedAddresses(hostname) {
       addresses: [{ address: hostname, family: literalFamily }],
     };
   }
-  const records = await dnsPromises.lookup(hostname, { all: true });
+  const DNS_TIMEOUT_MS = 3000;
+  const dnsTimeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("DNS lookup timed out")), DNS_TIMEOUT_MS)
+  );
+  const records = await Promise.race([
+    dnsPromises.lookup(hostname, { all: true }),
+    dnsTimeoutPromise,
+  ]);
   const validated = [];
   for (const rec of records) {
     const check = isBlockedIp(rec.address);
