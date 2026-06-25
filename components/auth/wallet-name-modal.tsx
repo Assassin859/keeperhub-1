@@ -1,5 +1,6 @@
 "use client";
 
+import { RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,19 +16,16 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
-import { generateHandlePair } from "@/lib/utils/wallet-handle";
+import { generateHandle } from "@/lib/utils/wallet-handle";
 
 /**
- * First-login rename step for wallet (SIWE) accounts. The account already has
- * a generated handle, so the audit trail never shows a 0x address; this lets
- * the user confirm it, pick the alternate suggestion, regenerate, or type
- * their own. Required: it cannot be dismissed until a name is saved.
+ * First-login rename step for wallet sign-in accounts. The account already has
+ * a randomly generated handle, so the audit trail never shows a 0x address;
+ * this lets the user keep it, regenerate a new random one, or type their own.
+ * Required: it cannot be dismissed until a name is saved.
  */
 export function WalletNameModal(): React.ReactElement | null {
   const { data: session, refetch } = useSession();
-  const [suggestions, setSuggestions] = useState<[string, string]>(() =>
-    generateHandlePair()
-  );
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -39,10 +37,11 @@ export function WalletNameModal(): React.ReactElement | null {
     (user as { displayNameConfirmed?: boolean | null }).displayNameConfirmed !==
       true;
 
-  // Seed the input with the server-assigned handle the first time we open.
+  // Seed the input with a random name the first time we open: the
+  // server-assigned handle if present, otherwise a freshly generated one.
   useEffect(() => {
-    if (needsName && user?.name) {
-      setName((current) => current || user.name || "");
+    if (needsName) {
+      setName((current) => current || user?.name || generateHandle());
     }
   }, [needsName, user?.name]);
 
@@ -51,7 +50,7 @@ export function WalletNameModal(): React.ReactElement | null {
   }
 
   const regenerate = (): void => {
-    setSuggestions(generateHandlePair());
+    setName(generateHandle());
   };
 
   const save = async (): Promise<void> => {
@@ -94,41 +93,33 @@ export function WalletNameModal(): React.ReactElement | null {
         <DialogHeader>
           <DialogTitle>Choose a display name</DialogTitle>
           <DialogDescription>
-            This is how you appear across KeeperHub and in audit history. Pick a
-            suggestion or enter your own.
+            This is how you appear across KeeperHub and in audit history. Keep
+            the random name, regenerate a new one, or enter your own.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-2">
-            {suggestions.map((suggestion) => (
-              <Button
-                key={suggestion}
-                onClick={() => setName(suggestion)}
-                size="sm"
-                type="button"
-                variant={name === suggestion ? "default" : "outline"}
-              >
-                {suggestion}
-              </Button>
-            ))}
-            <Button
-              onClick={regenerate}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              Regenerate
-            </Button>
-          </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="wallet-display-name">Display name</Label>
-            <Input
-              id="wallet-display-name"
-              maxLength={50}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Swift Falcon"
-              value={name}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                className="flex-1"
+                id="wallet-display-name"
+                maxLength={50}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="e.g. Swift Falcon"
+                value={name}
+              />
+              <Button
+                aria-label="Regenerate name"
+                onClick={regenerate}
+                size="icon"
+                title="Regenerate"
+                type="button"
+                variant="outline"
+              >
+                <RotateCw className="size-4" />
+              </Button>
+            </div>
           </div>
           <Button
             className="w-full"
