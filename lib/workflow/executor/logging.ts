@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, asc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   extractLogGasUsedWei,
@@ -527,6 +527,23 @@ export async function logStepCompleteDb(
       );
     }
   }
+}
+
+export async function updateForEachLogToError(params: {
+  executionId: string;
+  nodeId: string;
+  error: string;
+}): Promise<void> {
+  await db
+    .update(workflowExecutionLogs)
+    .set({ status: "error", error: params.error })
+    .where(
+      and(
+        eq(workflowExecutionLogs.executionId, params.executionId),
+        eq(workflowExecutionLogs.nodeId, params.nodeId),
+        isNull(workflowExecutionLogs.iterationIndex)
+      )
+    );
 }
 
 export type LogWorkflowCompleteParams = {

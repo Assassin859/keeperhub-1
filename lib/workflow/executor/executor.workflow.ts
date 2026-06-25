@@ -2349,30 +2349,27 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       concurrencyLimit
     );
 
-    // KEEP-586: Detect genuine iteration-body failures. Without this they
-    // vanish into the Collect aggregate -- the Collect node and the For Each
-    // node both report success -- so the run is silently marked success even
-    // though a node that should have run did not. The caller (executeNode)
-    // uses these fields to fail the For Each node and surface it in the run.
-    const failedIterations = iterationResults.filter(
-      (
-        r
-      ): r is {
-        __forEachBodyFailure: true;
-        error?: string;
-        nodeId?: string;
-      } =>
-        typeof r === "object" &&
+    // 5a. If any iteration failed, flip the For Each node's own log row to error
+    // so the UI can surface which step errored rather than showing all green.
+    const firstIterationFailure = iterationResults.find(
+      (r): r is { success: false; error: string } =>
         r !== null &&
-        (r as { __forEachBodyFailure?: unknown }).__forEachBodyFailure === true
+        typeof r === "object" &&
+        "success" in (r as object) &&
+        (r as { success: unknown }).success === false
     );
-    if (failedIterations.length > 0) {
-      console.log(
-        `[Workflow Executor] For Each "${getNodeName(forEachNode)}": ${failedIterations.length}/${iterationResults.length} iteration(s) failed; first failing node ${failedIterations[0].nodeId}: ${failedIterations[0].error}`
-      );
+    if (firstIterationFailure && executionId) {
+      await triggerStep({
+        triggerData: {},
+        _recordForEachError: {
+          executionId,
+          nodeId: forEachNodeId,
+          error: firstIterationFailure.error,
+        },
+      });
     }
 
-    // 5. Mark body nodes as visited in the parent scope
+    // 5b. Mark body nodes as visited in the parent scope
     for (const bodyNodeId of bodyNodeIds) {
       currentVisited.add(bodyNodeId);
     }
@@ -2452,9 +2449,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       arrayLength: resolvedArray.length,
       maxIterations,
       iterationsRan: itemsToProcess.length,
-      failedIterations: failedIterations.length,
-      firstFailureError: failedIterations[0]?.error,
-      firstFailureNodeId: failedIterations[0]?.nodeId,
+      failedIterations: firstIterationFailure !== undefined ? 1 : 0,
+      firstFailureError: firstIterationFailure?.error,
+      firstFailureNodeId: undefined,
     };
   }
 

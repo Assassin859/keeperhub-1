@@ -12,6 +12,7 @@ import "server-only";
 import {
   logStepCompleteDb,
   logStepStartDb,
+  updateForEachLogToError,
 } from "@/lib/workflow/executor/logging";
 import {
   logWorkflowComplete,
@@ -44,6 +45,17 @@ export type TriggerInput = StepInput & {
     nodeId: string;
     nodeName: string;
     nodeType: string;
+    error: string;
+  };
+  /**
+   * KEEP-894: If set, flip the For Each node's own log row to error status
+   * so the run UI shows which step errored rather than all green. Routes the
+   * DB write through this step's boundary because the workflow body forbids
+   * Node.js modules.
+   */
+  _recordForEachError?: {
+    executionId: string;
+    nodeId: string;
     error: string;
   };
 };
@@ -103,6 +115,12 @@ export async function triggerStep(input: TriggerInput): Promise<TriggerResult> {
   // KEEP-468: per-node failure log for pre-step aborts (e.g. template resolution)
   if (input._recordStepFailure) {
     await recordStepFailure(input._recordStepFailure);
+    return { success: true, data: {} };
+  }
+
+  // KEEP-894: flip For Each node's log row to error when iterations fail
+  if (input._recordForEachError) {
+    await updateForEachLogToError(input._recordForEachError);
     return { success: true, data: {} };
   }
 
