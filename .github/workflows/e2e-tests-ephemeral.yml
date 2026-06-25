@@ -48,6 +48,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   should-run:
@@ -198,8 +199,7 @@ jobs:
           ecr_registry: ${{ inputs.ecr_registry }}
           ecr_repo: ${{ inputs.ecr_repo }}
           ecr_region: ${{ inputs.ecr_region }}
-          aws_access_key_id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role_arn: ${{ vars.AWS_ROLE_ARN }}
           database_url: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           better_auth_secret: ${{ secrets.BETTER_AUTH_SECRET }}
           test_api_key: ${{ secrets.TEST_API_KEY }}
@@ -343,8 +343,7 @@ jobs:
           ecr_registry: ${{ inputs.ecr_registry }}
           ecr_repo: ${{ inputs.ecr_repo }}
           ecr_region: ${{ inputs.ecr_region }}
-          aws_access_key_id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role_arn: ${{ vars.AWS_ROLE_ARN }}
           database_url: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           better_auth_secret: ${{ secrets.BETTER_AUTH_SECRET }}
           test_api_key: ${{ secrets.TEST_API_KEY }}
