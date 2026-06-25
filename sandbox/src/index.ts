@@ -77,8 +77,7 @@ function getMaxConcurrentRuns(): number {
  * because check-and-increment happens without an intervening await. */
 let inFlightRuns = 0;
 
-/** Test/operational hook to observe current load. */
-export function getInFlightRuns(): number {
+function getInFlightRuns(): number {
   return inFlightRuns;
 }
 
@@ -154,7 +153,6 @@ async function handlePostRun(
     res.end("sandbox at capacity");
     return;
   }
-  inFlightRuns++;
 
   // If the client disconnects before we finish writing the response, we
   // cancel the child so sandbox capacity is not pinned beyond the caller's
@@ -176,6 +174,7 @@ async function handlePostRun(
   res.on("close", onResClose);
 
   try {
+    inFlightRuns++;
     const raw = await readBody(req, getMaxBodyBytes());
     if (raw.length === 0) {
       res.writeHead(400);
