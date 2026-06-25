@@ -983,6 +983,31 @@ describe("convergence barrier", () => {
       expect(executeReady).toEqual([alert]);
       expect(skippedNodes.has(alert)).toBe(false);
     });
+
+    // KEEP-895: a condition that evaluates `true` must contribute a SKIP to the
+    // OR-join even when it completes through the spurious-completion recovery
+    // path (lost `step_completed` event under heavy fan-in -> re-fire ->
+    // exceeded-max-retries -> recover). The bug was that the recovery path
+    // continued downstream through the handle-agnostic `edgesBySource`, which
+    // routes the not-taken `false` edge as a REAL arrival -- modeled here by
+    // putting a passing condition into `realFromConditions`. That single
+    // mis-routed arrival fires the alert even though every condition passed.
+    it("a true condition routed via the skip primitive keeps the alert skipped", () => {
+      // Post-fix: the recovery path routes a true condition exactly like the
+      // normal path -- propagateConvergenceSkips -- so all five are skips.
+      const { executeReady, skippedNodes } = runAllConditions([]);
+      expect(executeReady).toEqual([]);
+      expect(skippedNodes.has(alert)).toBe(true);
+    });
+
+    it("regression: routing one passing condition as a real arrival wrongly fires the alert", () => {
+      // Pin the exact pre-fix failure mode: c3 passed (its output was
+      // `condition: true`) but was mis-routed as a real arrival. The four
+      // genuine skips plus that one bogus real arrival fire the alert.
+      const { executeReady, skippedNodes } = runAllConditions(["c3"]);
+      expect(executeReady).toEqual([alert]);
+      expect(skippedNodes.has(alert)).toBe(false);
+    });
   });
 
   describe("OR-join with a non-condition predecessor", () => {
@@ -1115,6 +1140,164 @@ describe("convergence barrier", () => {
       );
       expect(readyNext).toEqual(["Next"]);
       expect(skippedNodes.has("Next")).toBe(false);
+    });
+  });
+
+  describe("OR-join: a plain node parallel to all-false conditions whose taken branch is a dead end", () => {
+    // Topology: each condition feeds the join J on its `true` handle; the
+    // condition's `false` handle (the branch TAKEN when it evaluates false) has
+    // no edge -- a dead end. A plain, always-run node also feeds J. So a
+    // condition that goes false never reaches J through the dead-end handle; it
+    // instead skips its not-taken `true` edge into J. J is an OR-join: it runs
+    // once if any real arrival lands (the plain node, or a condition that went
+    // true) and is skipped only when EVERY incoming edge was a skip.
+    const condIds = ["c1", "c2", "c3"];
+    const plain = "Plain";
+    const join = "J";
+
+    type Barrier = {
+      arrivals: Map<string, Set<string>>;
+      skipArrivals: Map<string, Set<string>>;
+      skippedNodes: Set<string>;
+      visited: Set<string>;
+    };
+
+    function freshBarrier(): Barrier {
+      return {
+        arrivals: new Map<string, Set<string>>(),
+        skipArrivals: new Map<string, Set<string>>(),
+        skippedNodes: new Set<string>(),
+        visited: new Set<string>(),
+      };
+    }
+
+    function withPlainEdges(): { source: string; target: string }[] {
+      return [
+        ...condIds.map((id) => ({ source: id, target: join })),
+        { source: plain, target: join },
+      ];
+    }
+
+    function condOnlyEdges(): { source: string; target: string }[] {
+      return condIds.map((id) => ({ source: id, target: join }));
+    }
+
+    // A false condition takes its disconnected `false` handle (nothing happens
+    // downstream) and skips its not-taken `true` edge into J. A true condition
+    // takes the connected `true` edge -> real arrival.
+    function driveCondition(
+      condId: string,
+      truthy: boolean,
+      edges: { source: string; target: string }[],
+      b: Barrier
+    ): string[] {
+      const sourceMap = buildEdgesBySource(edges);
+      const targetMap = buildEdgesByTarget(edges);
+      if (truthy) {
+        return getReadyDownstreamIds(
+          condId,
+          [join],
+          targetMap,
+          b.arrivals,
+          b.visited
+        );
+      }
+      return propagateConvergenceSkips(
+        condId,
+        [join],
+        sourceMap,
+        targetMap,
+        b.arrivals,
+        b.skipArrivals,
+        b.skippedNodes,
+        b.visited
+      );
+    }
+
+    function drivePlain(
+      edges: { source: string; target: string }[],
+      b: Barrier
+    ): string[] {
+      const targetMap = buildEdgesByTarget(edges);
+      return getReadyDownstreamIds(
+        plain,
+        [join],
+        targetMap,
+        b.arrivals,
+        b.visited
+      );
+    }
+
+    it("fires the join once via the plain node when every condition went false", () => {
+      const b = freshBarrier();
+      const edges = withPlainEdges();
+      const ready: string[] = [];
+      for (const c of condIds) {
+        ready.push(...driveCondition(c, false, edges, b));
+      }
+      // Three skips, no real arrival yet: J is neither released nor skipped
+      // because the plain edge has not landed.
+      expect(ready).toEqual([]);
+      expect(b.skippedNodes.has(join)).toBe(false);
+
+      // The plain node arrives -> real arrival completes the OR-join (4/4) and
+      // runs it exactly once.
+      expect(drivePlain(edges, b)).toEqual([join]);
+      expect(b.skippedNodes.has(join)).toBe(false);
+    });
+
+    it("fires the join once when the plain node arrives before the false conditions", () => {
+      const b = freshBarrier();
+      const edges = withPlainEdges();
+      // Plain lands first (1/4) -> not enough arrivals yet.
+      expect(drivePlain(edges, b)).toEqual([]);
+
+      const releases: string[] = [];
+      for (const c of condIds) {
+        releases.push(...driveCondition(c, false, edges, b));
+      }
+      // The last skip completes 4/4 with a real arrival already present, so the
+      // join releases exactly once and is not marked skipped.
+      expect(releases).toEqual([join]);
+      expect(b.skippedNodes.has(join)).toBe(false);
+    });
+
+    it("skips the join when all-false conditions have a dead-end branch and there is no plain node", () => {
+      const b = freshBarrier();
+      const edges = condOnlyEdges();
+      const ready: string[] = [];
+      for (const c of condIds) {
+        ready.push(...driveCondition(c, false, edges, b));
+      }
+      // Every incoming edge was a skip -> the join is skipped, never executed.
+      expect(ready).toEqual([]);
+      expect(b.skippedNodes.has(join)).toBe(true);
+    });
+
+    it("fires the join once when a condition goes true alongside the plain node", () => {
+      const b = freshBarrier();
+      const edges = withPlainEdges();
+      const ready: string[] = [];
+      ready.push(...driveCondition("c1", false, edges, b)); // skip 1/4
+      ready.push(...driveCondition("c2", true, edges, b)); // real 2/4
+      ready.push(...driveCondition("c3", false, edges, b)); // skip 3/4
+      ready.push(...drivePlain(edges, b)); // real 4/4 -> release
+      expect(ready).toEqual([join]);
+      expect(b.skippedNodes.has(join)).toBe(false);
+    });
+
+    it("does not double-fire the join when both a true condition and the plain node real-arrive", () => {
+      const b = freshBarrier();
+      const edges = withPlainEdges();
+      const ready: string[] = [];
+      ready.push(...driveCondition("c1", false, edges, b)); // skip 1/4
+      ready.push(...driveCondition("c2", false, edges, b)); // skip 2/4
+      ready.push(...drivePlain(edges, b)); // real 3/4, still pending
+      expect(ready).toEqual([]);
+      ready.push(...driveCondition("c3", true, edges, b)); // real 4/4 -> release
+      // The join appears exactly once in the ready list across all arrivals.
+      expect(ready).toEqual([join]);
+      expect(b.skippedNodes.has(join)).toBe(false);
     });
   });
 });
