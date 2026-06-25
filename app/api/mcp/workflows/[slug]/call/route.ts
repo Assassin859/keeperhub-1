@@ -5,7 +5,7 @@ import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit"
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
-import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import { resolveExecutionOrgMetadata } from "@/lib/db/org-helpers";
 import {
   organization,
   tags,
@@ -185,10 +185,8 @@ async function startExecutionInBackground(
   body: Record<string, unknown>,
   executionId: string
 ): Promise<void> {
-  const [organizationSlug, organizationPlan] = await Promise.all([
-    getOrgSlug(workflow.organizationId),
-    getOrgPlanLabel(workflow.organizationId),
-  ]);
+  const { slug: organizationSlug, plan: organizationPlan } =
+    await resolveExecutionOrgMetadata(workflow.organizationId);
   start(executeWorkflow, [
     buildExecutorInput(workflow, {
       triggerInput: body,

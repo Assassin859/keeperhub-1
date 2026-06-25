@@ -1,14 +1,12 @@
-import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
-import { organization, workflows } from "../lib/db/schema";
-import { getWorkflowExecutability } from "../lib/workflow/executable";
 import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
-import { calculateTotalSteps } from "../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
+import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { DbSchema } from "./lib/db-helpers";
 import {
+  applyExecutionResult,
   initializeExecutionProgress,
   updateExecutionStatus,
   updateScheduleStatus,
@@ -36,47 +34,25 @@ export async function executeInProcess(params: {
   try {
     await updateExecutionStatus(db, executionId, "running");
 
-    const workflow = await db.query.workflows.findFirst({
-      where: eq(workflows.id, workflowId),
-    });
-
-    if (!workflow) {
-      throw new Error(`Workflow not found: ${workflowId}`);
-    }
-
     // Defensive re-check: the dispatcher already gated lifecycle state, but the
     // workflow could have been disabled, soft-deleted, deactivated, or its
     // owning org deactivated between dispatch and execution. Cancel rather than
     // run. The org owns the workflow, so org deactivation is the owner gate.
-    const [org] = await db
-      .select({ deactivatedAt: organization.deactivatedAt })
-      .from(organization)
-      .where(eq(organization.id, workflow.organizationId))
-      .limit(1);
-    const executability = getWorkflowExecutability({
-      enabled: workflow.enabled,
-      deletedAt: workflow.deletedAt,
-      deactivatedAt: workflow.deactivatedAt,
-      orgDeactivatedAt: org?.deactivatedAt ?? null,
+    const loaded = await loadWorkflowForExecution(workflowId, {
+      requireEnabled: true,
     });
-    if (!executability.executable) {
+    if (loaded.status === "not_found") {
+      throw new Error(`Workflow not found: ${workflowId}`);
+    }
+    if (loaded.status === "not_executable") {
       console.log(
-        `[Executor:InProcess] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
+        `[Executor:InProcess] Workflow not executable (${loaded.reason}), skipping: ${workflowId}`
       );
       await updateExecutionStatus(db, executionId, "cancelled");
       return;
     }
 
-    let organizationName: string | undefined;
-    if (workflow.organizationId) {
-      const [org] = await db
-        .select({ name: organization.name })
-        .from(organization)
-        .where(eq(organization.id, workflow.organizationId))
-        .limit(1);
-      organizationName = org?.name;
-    }
-
+    const { workflow, organizationName } = loaded;
     const nodes = workflow.nodes as WorkflowNode[];
     const edges = workflow.edges as WorkflowEdge[];
     const validation = await validateWorkflowIntegrations(
@@ -90,8 +66,7 @@ export async function executeInProcess(params: {
       );
     }
 
-    const totalSteps = calculateTotalSteps(nodes, edges);
-    await initializeExecutionProgress(db, executionId, totalSteps);
+    await initializeExecutionProgress(db, executionId, nodes, edges);
 
     console.log("[Executor:InProcess] Executing workflow...");
     // Intentional direct call (not start() from workflow/api): the executor and
@@ -112,39 +87,17 @@ export async function executeInProcess(params: {
     console.log(`[Executor:InProcess] Completed in ${duration}ms`);
 
     // executeWorkflow is the authoritative writer of the terminal status (with
-    // reconciliation and richer fields). These updateExecutionStatus calls are
-    // a guarded backstop: the WHERE clause in updateExecutionStatus makes them
-    // a no-op once the engine's own write landed, and only closes the row if
+    // reconciliation and richer fields). applyExecutionResult is a guarded
+    // backstop: the WHERE clause in updateExecutionStatus makes its writes a
+    // no-op once the engine's own write landed, and only closes the row if
     // that write was lost - so a finished run is never left stuck "running".
-    if (result.success) {
-      await updateExecutionStatus(db, executionId, "success", {
-        output: result.outputs,
-      });
-
-      if (scheduleId) {
-        await updateScheduleStatus(db, scheduleId, "success");
-      }
-
-      console.log("[Executor:InProcess] Execution completed successfully");
+    const { errorMessage } = await applyExecutionResult(db, executionId, result, {
+      scheduleId,
+    });
+    if (errorMessage) {
+      console.error("[Executor:InProcess] Workflow execution failed:", errorMessage);
     } else {
-      const errorMessage =
-        result.error ||
-        Object.values(result.results || {}).find((r) => !r.success)?.error ||
-        "Unknown error";
-
-      await updateExecutionStatus(db, executionId, "error", {
-        error: errorMessage,
-        output: result.outputs,
-      });
-
-      if (scheduleId) {
-        await updateScheduleStatus(db, scheduleId, "error", errorMessage);
-      }
-
-      console.error(
-        "[Executor:InProcess] Workflow execution failed:",
-        errorMessage
-      );
+      console.log("[Executor:InProcess] Execution completed successfully");
     }
   } catch (error) {
     const duration = Date.now() - startTime;
