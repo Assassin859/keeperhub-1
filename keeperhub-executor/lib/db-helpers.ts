@@ -7,6 +7,9 @@ import {
   type workflows,
 } from "../../lib/db/schema";
 import type { ErrorCode } from "../../lib/errors/error-codes";
+import { calculateTotalSteps } from "../../lib/workflow/executor/progress";
+import type { WorkflowEdge, WorkflowNode } from "../../lib/workflow/store";
+import type { executeWorkflow } from "../../lib/workflow/executor/executor.workflow";
 import { toJsonSafe } from "./serialize";
 
 export type DbSchema = {
@@ -193,8 +196,10 @@ export async function resolvePhantomToError(
 export async function initializeExecutionProgress(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
-  totalSteps: number
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[]
 ): Promise<void> {
+  const totalSteps = calculateTotalSteps(nodes, edges);
   await db
     .update(workflowExecutions)
     .set({
@@ -207,6 +212,47 @@ export async function initializeExecutionProgress(
       lastSuccessfulNodeName: null,
     })
     .where(eq(workflowExecutions.id, executionId));
+}
+
+type ExecuteWorkflowResult = Awaited<ReturnType<typeof executeWorkflow>>;
+
+/**
+ * Write the terminal execution status (success or error) and optionally update
+ * the associated schedule row. Replaces the identical if/else block that
+ * workflow-runner.ts and in-process.ts both maintained after executeWorkflow().
+ *
+ * Returns the error message string on failure (null on success) so callers can
+ * use it for their own logging without re-deriving it.
+ */
+export async function applyExecutionResult(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string,
+  result: ExecuteWorkflowResult,
+  opts: { scheduleId?: string }
+): Promise<{ errorMessage: string | null }> {
+  if (result.success) {
+    await updateExecutionStatus(db, executionId, "success", {
+      output: result.outputs,
+    });
+    if (opts.scheduleId) {
+      await updateScheduleStatus(db, opts.scheduleId, "success");
+    }
+    return { errorMessage: null };
+  }
+
+  const errorMessage =
+    result.error ||
+    Object.values(result.results || {}).find((r) => !r.success)?.error ||
+    "Unknown error";
+
+  await updateExecutionStatus(db, executionId, "error", {
+    error: errorMessage,
+    output: result.outputs,
+  });
+  if (opts.scheduleId) {
+    await updateScheduleStatus(db, opts.scheduleId, "error", errorMessage);
+  }
+  return { errorMessage };
 }
 
 export function computeNextRunTime(

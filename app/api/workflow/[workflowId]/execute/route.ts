@@ -27,16 +27,12 @@ import {
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
-import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import {
-  organization,
-  workflowExecutions,
-  workflows,
-} from "@/lib/db/schema";
+import { resolveExecutionOrgMetadata } from "@/lib/db/org-helpers";
+import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
-import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
+import { loadWorkflowForExecution } from "@/lib/workflow/load-for-execution";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Workflow execution requires complex error handling and validation
@@ -58,10 +54,24 @@ export async function POST(
     const isInternalExecution = internalAuth.authenticated;
 
     let userId: string;
-    let workflow: typeof workflows.$inferSelect | undefined;
     let orgApiKeyId: string | null = null;
     let credentialType: ExecutionCredentialType | null = null;
     let credentialLabel: string | null = null;
+
+    // Load workflow + evaluate lifecycle in one round-trip. requireEnabled maps
+    // to the dispatch context: internal callers (scheduler/executor routing back
+    // through this route) must not run a disabled workflow, but interactive
+    // callers (the editor "Run" button) may test a not-yet-enabled workflow.
+    const loaded = await loadWorkflowForExecution(workflowId, {
+      requireEnabled: isInternalExecution,
+    });
+    if (loaded.status === "not_found" || loaded.status === "not_executable") {
+      return NextResponse.json(
+        { error: "Workflow not found" },
+        { status: HttpStatus.NOT_FOUND }
+      );
+    }
+    const { workflow } = loaded;
 
     if (isInternalExecution) {
       // Internal execution from authenticated service
@@ -72,22 +82,11 @@ export async function POST(
       credentialType = "internal";
       credentialLabel = internalAuth.caller ?? null;
 
-      workflow = await db.query.workflows.findFirst({
-        where: eq(workflows.id, workflowId),
-      });
-
-      if (!workflow) {
-        return NextResponse.json(
-          { error: "Workflow not found" },
-          { status: HttpStatus.NOT_FOUND }
-        );
-      }
-
       // Internal service auth already verified by authenticateInternalService.
       // Org membership check would require organizationId but internal callers
       // have no session org — and all workflows are NOT NULL on organizationId
       // post-migration, so passing null here would always 404. Lifecycle checks
-      // (deleted, deactivated) are handled by getWorkflowExecutability below.
+      // (deleted, deactivated) are handled by loadWorkflowForExecution above.
       userId = workflow.userId;
     } else {
       const authContext = await getDualAuthContext(request);
@@ -116,17 +115,6 @@ export async function POST(
         return scopeError;
       }
 
-      workflow = await db.query.workflows.findFirst({
-        where: eq(workflows.id, workflowId),
-      });
-
-      if (!workflow) {
-        return NextResponse.json(
-          { error: "Workflow not found" },
-          { status: HttpStatus.NOT_FOUND }
-        );
-      }
-
       const access = await getWorkflowAccess(workflow, {
         userId: authContext.userId,
         organizationId: authContext.organizationId,
@@ -152,31 +140,6 @@ export async function POST(
       } else {
         credentialType = "session";
       }
-    }
-
-    // Gate on workflow lifecycle using the shared executability predicate so
-    // this route cannot drift from the scheduler/executor. A soft-deleted or
-    // deactivated-owner workflow is never runnable. The `enabled` flag gates
-    // automated dispatch only: interactive callers (the editor "Run" button)
-    // must still be able to test a not-yet-enabled workflow, so a disabled
-    // workflow is allowed through the dual-auth branch.
-    const [gate] = await db
-      .select({ orgDeactivatedAt: organization.deactivatedAt })
-      .from(workflows)
-      .leftJoin(organization, eq(organization.id, workflows.organizationId))
-      .where(eq(workflows.id, workflow.id))
-      .limit(1);
-    const executability = getWorkflowExecutability({
-      enabled: workflow.enabled,
-      deletedAt: workflow.deletedAt,
-      deactivatedAt: workflow.deactivatedAt,
-      orgDeactivatedAt: gate?.orgDeactivatedAt ?? null,
-    });
-    const blockedByExecutability =
-      !executability.executable &&
-      (isInternalExecution || executability.reason !== "disabled");
-    if (blockedByExecutability) {
-      return NextResponse.json({ error: "Workflow not found" }, { status: HttpStatus.NOT_FOUND });
     }
 
     // Validate integration references as the ORG principal: the org owns the
@@ -349,10 +312,10 @@ export async function POST(
     }
 
     // Resolve org slug + plan for log labels (cached per request)
-    const [organizationSlug, organizationPlan] = await Promise.all([
-      getOrgSlug(workflow.organizationId),
-      getOrgPlanLabel(workflow.organizationId),
-    ]);
+    const {
+      slug: organizationSlug,
+      plan: organizationPlan,
+    } = await resolveExecutionOrgMetadata(workflow.organizationId);
 
     // Execute the workflow in the background (don't await)
     executeWorkflowInBackground(

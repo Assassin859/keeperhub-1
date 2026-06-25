@@ -29,11 +29,10 @@ import {
 } from "@/lib/features/route-guard";
 import {
   apiKeys,
-  organization,
   workflowExecutions,
   workflows,
 } from "@/lib/db/schema";
-import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import { resolveExecutionOrgMetadata } from "@/lib/db/org-helpers";
 import { webhookPayloadSchema } from "@/lib/schemas/webhook";
 import { validateData } from "@/lib/validate-request";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
@@ -43,8 +42,8 @@ import {
   isUserMemberOfOrganization,
 } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
-import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
+import { loadWorkflowForExecution } from "@/lib/workflow/load-for-execution";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
   valid: boolean;
@@ -193,38 +192,21 @@ export async function POST(
   try {
     const { workflowId } = await context.params;
 
-    // Get workflow
-    const workflow = await db.query.workflows.findFirst({
-      where: eq(workflows.id, workflowId),
+    // Load workflow + evaluate lifecycle before API-key validation so a
+    // non-executable workflow never triggers an auth round-trip.
+    const loaded = await loadWorkflowForExecution(workflowId, {
+      requireEnabled: true,
     });
-
-    if (!workflow) {
+    if (loaded.status === "not_found") {
       return failResponse(workflowId, timer, HttpStatus.NOT_FOUND, "Workflow not found");
     }
-
-    // Gate on workflow lifecycle (enabled, not soft-deleted, owner active)
-    // using the shared executability predicate, before API-key
-    // validation so a non-executable workflow never triggers an auth round-trip.
-    // A disabled workflow stays a 410; a deleted or deactivated-owner workflow
-    // is reported as gone (404).
-    const [gate] = await db
-      .select({ orgDeactivatedAt: organization.deactivatedAt })
-      .from(workflows)
-      .leftJoin(organization, eq(organization.id, workflows.organizationId))
-      .where(eq(workflows.id, workflow.id))
-      .limit(1);
-    const executability = getWorkflowExecutability({
-      enabled: workflow.enabled,
-      deletedAt: workflow.deletedAt,
-      deactivatedAt: workflow.deactivatedAt,
-      orgDeactivatedAt: gate?.orgDeactivatedAt ?? null,
-    });
-    if (!executability.executable) {
-      if (executability.reason === "disabled") {
+    if (loaded.status === "not_executable") {
+      if (loaded.reason === "disabled") {
         return failResponse(workflowId, timer, HttpStatus.GONE, "Workflow is disabled");
       }
       return failResponse(workflowId, timer, HttpStatus.NOT_FOUND, "Workflow not found");
     }
+    const { workflow } = loaded;
 
     // Validate API key - must belong to the workflow owner
     const authHeader = request.headers.get("Authorization");
@@ -441,10 +423,8 @@ export async function POST(
     });
 
     // Resolve org slug + plan for log labels (cached per request)
-    const [organizationSlug, organizationPlan] = await Promise.all([
-      getOrgSlug(workflow.organizationId),
-      getOrgPlanLabel(workflow.organizationId),
-    ]);
+    const { slug: organizationSlug, plan: organizationPlan } =
+      await resolveExecutionOrgMetadata(workflow.organizationId);
 
     // Execute the workflow in the background (don't await)
     executeWorkflowInBackground(

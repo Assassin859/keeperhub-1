@@ -200,13 +200,14 @@ function createContext(workflowId: string): {
 }
 
 function setupHappyPath(): void {
-  mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+  mockOrgGateLimit.mockResolvedValue([
+    { workflow: webhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+  ]);
   mockApiKeysFindFirst.mockResolvedValue({
     id: "key-1",
     userId: OWNER_USER_ID,
     keyHash: VALID_KEY_HASH,
   });
-  mockOrgGateLimit.mockResolvedValue([{ orgDeactivatedAt: null }]);
   mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   mockValidateIntegrations.mockResolvedValue({ valid: true });
   mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });
@@ -219,13 +220,19 @@ function setupHappyPath(): void {
 describe("POST /api/workflows/:workflowId/webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockOrgGateLimit.mockResolvedValue([{ orgDeactivatedAt: null }]);
+    // loadWorkflowForExecution now returns the workflow + org data in a single
+    // left-join query (db.select().from(workflows).leftJoin(organization)).
+    // The mock for that chain is mockOrgGateLimit; it must include the workflow
+    // field so the helper recognises a found row.
+    mockOrgGateLimit.mockResolvedValue([
+      { workflow: webhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+    ]);
     mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   describe("workflow lookup", () => {
     it("should return 404 when workflow not found", async () => {
-      mockWorkflowsFindFirst.mockResolvedValue(null);
+      mockOrgGateLimit.mockResolvedValue([]);
 
       const response = await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -239,7 +246,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
 
   describe("disabled workflow", () => {
     it("should return 410 Gone when workflow.enabled is false", async () => {
-      mockWorkflowsFindFirst.mockResolvedValue(disabledWebhookWorkflow);
+      mockOrgGateLimit.mockResolvedValue([
+        { workflow: disabledWebhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+      ]);
 
       const response = await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -251,7 +260,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
     });
 
     it("should not validate API key for a disabled workflow", async () => {
-      mockWorkflowsFindFirst.mockResolvedValue(disabledWebhookWorkflow);
+      mockOrgGateLimit.mockResolvedValue([
+        { workflow: disabledWebhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+      ]);
 
       await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -264,10 +275,10 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
 
   describe("deactivated owner", () => {
     it("should return 404 when the workflow owner is deactivated", async () => {
-      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
-      // The org gate is the first db.select() the route makes; return a
-      // deactivated org so the executability gate rejects before auth.
-      mockOrgGateLimit.mockResolvedValue([{ orgDeactivatedAt: new Date() }]);
+      // Return a deactivated org so the executability gate rejects before auth.
+      mockOrgGateLimit.mockResolvedValue([
+        { workflow: webhookWorkflow, orgDeactivatedAt: new Date(), organizationName: null },
+      ]);
 
       const response = await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -382,7 +393,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
 
   describe("webhook trigger validation", () => {
     it("should return 400 when workflow is not webhook-triggered", async () => {
-      mockWorkflowsFindFirst.mockResolvedValue(manualWorkflow);
+      mockOrgGateLimit.mockResolvedValue([
+        { workflow: manualWorkflow, orgDeactivatedAt: null, organizationName: null },
+      ]);
       mockApiKeysFindFirst.mockResolvedValue({
         id: "key-1",
         userId: OWNER_USER_ID,
