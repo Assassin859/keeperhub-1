@@ -204,12 +204,18 @@ function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
   }
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive spawner with timeout + stream aggregation + graceful teardown
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive spawner with timeout + stream aggregation + graceful teardown + signal wiring
 async function runInChild(
   code: string,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<ChildOutcome> {
   return await new Promise<ChildOutcome>((resolve) => {
+    if (signal?.aborted) {
+      resolve({ ok: false, errorMessage: "ABORTED", logs: [] });
+      return;
+    }
+
     // fd 3 is the dedicated result channel (F-010). stdout/stderr stay
     // user-facing diagnostics and are never deserialized.
     const child = spawn(process.execPath, ["-e", CHILD_SOURCE], {
@@ -227,6 +233,7 @@ async function runInChild(
       }
       settled = true;
       clearTimeout(killTimer);
+      signal?.removeEventListener("abort", onAbort);
       if (!child.killed) {
         try {
           child.kill("SIGKILL");
@@ -240,6 +247,11 @@ async function runInChild(
     const killTimer = setTimeout(() => {
       finish({ ok: false, errorMessage: "WALL_CLOCK_TIMEOUT", logs: [] });
     }, timeoutMs + 1000);
+
+    const onAbort = (): void => {
+      finish({ ok: false, errorMessage: "ABORTED", logs: [] });
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     // Drain stdout so a sandbox escape that writes there cannot fill the pipe
     // and block the child; the bytes are intentionally discarded (never a
@@ -336,9 +348,10 @@ function validateInput(input: RunCodeCoreInput): RunCodeResult | null {
 async function runLocal(
   input: RunCodeCoreInput,
   timeoutSeconds: number,
+  signal?: AbortSignal,
 ): Promise<RunCodeResult> {
   const timeoutMs = timeoutSeconds * 1000;
-  const outcome = await runInChild(input.code, timeoutMs);
+  const outcome = await runInChild(input.code, timeoutMs, signal);
 
   if (outcome.ok) {
     return { success: true, result: outcome.result, logs: outcome.logs };
