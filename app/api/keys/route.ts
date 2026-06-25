@@ -5,10 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
@@ -174,20 +171,22 @@ export async function POST(request: Request) {
     // Parse request body
     const body = await request.json().catch(() => ({}));
 
-    // Dual-factor challenge — minting a forever-bypass credential
-    // warrants both a fresh TOTP from the authenticator AND a fresh
-    // email OTP from the user's inbox. Symmetric with withdraw /
-    // export-key.
-    const dual = await requireDualFactor({
+    // Step-up challenge at mint time — minting a forever-bypass credential
+    // warrants a fresh proof of identity: dual factor (TOTP + email OTP) for
+    // email/TOTP accounts, a wallet signature (plus any opted-in factors) for
+    // wallet accounts. Symmetric with withdraw / export-key.
+    const stepUp = await requireStepUp({
       userId: session.user.id,
       email: session.user.email,
       action: "org_api_key_create",
       code: typeof body.code === "string" ? body.code : undefined,
       emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+      signature:
+        typeof body.signature === "string" ? body.signature : undefined,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!stepUp.ok) {
+      return stepUpErrorResponse(stepUp);
     }
     const name = body.name || null;
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
@@ -220,7 +219,8 @@ export async function POST(request: Request) {
 
     // Out-of-band alert + durable audit record, symmetric with user keys.
     notifyApiKeyChange({
-      email: session.user.email,
+      userId: session.user.id,
+      loginEmail: session.user.email,
       action: "created",
       tokenName: newKey.name,
       keyPrefix: newKey.keyPrefix,

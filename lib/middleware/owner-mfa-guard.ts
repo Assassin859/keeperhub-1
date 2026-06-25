@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
 import { member, users } from "@/lib/db/schema";
 
@@ -105,6 +106,7 @@ export async function requireAdminOrOwnerWithMfa(
   const [row] = await db
     .select({
       role: member.role,
+      email: users.email,
       twoFactorEnabled: users.twoFactorEnabled,
     })
     .from(member)
@@ -123,7 +125,10 @@ export async function requireAdminOrOwnerWithMfa(
     };
   }
 
-  if (row.twoFactorEnabled !== true) {
+  // Wallet (SIWE) accounts authenticate by signature and never enroll TOTP, so
+  // the enrollment gate is email/TOTP-only. Wallet users prove identity for this
+  // action through the wallet step-up challenge the caller runs next.
+  if (!isWalletEmail(row.email) && row.twoFactorEnabled !== true) {
     return {
       ok: false,
       error:

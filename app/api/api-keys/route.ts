@@ -159,7 +159,8 @@ export async function POST(request: Request) {
     // Out-of-band alert so the owner learns a long-lived bypass credential
     // was minted, even if their own session did it. Non-blocking.
     notifyApiKeyChange({
-      email: session.user.email,
+      userId: session.user.id,
+      loginEmail: session.user.email,
       action: "created",
       tokenName: newKey.name,
       keyPrefix: newKey.keyPrefix,

@@ -5,10 +5,7 @@ import { db } from "@/lib/db";
 import { organizationApiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -60,23 +57,26 @@ export async function DELETE(
       );
     }
 
-    // Dual-factor at revoke time. Same rationale as the create leg:
-    // a stolen session must not be able to rotate keys (revoke + mint
-    // elsewhere) without re-challenging on both factors.
+    // Step-up at revoke time. Same rationale as the create leg: a stolen
+    // session must not rotate keys (revoke + mint elsewhere) without a fresh
+    // identity proof — dual factor for email/TOTP accounts, a wallet signature
+    // for wallet accounts.
     const body = (await request.json().catch(() => ({}))) as {
       code?: string;
       emailOtp?: string;
+      signature?: string;
     };
-    const dual = await requireDualFactor({
+    const stepUp = await requireStepUp({
       userId: session.user.id,
       email: session.user.email,
       action: "org_api_key_revoke",
       code: body.code,
       emailOtp: body.emailOtp,
+      signature: body.signature,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!stepUp.ok) {
+      return stepUpErrorResponse(stepUp);
     }
 
     // Revoke the key (soft delete) - only if it belongs to the organization
@@ -105,7 +105,8 @@ export async function DELETE(
 
     // Out-of-band alert + durable audit record, symmetric with user keys.
     notifyApiKeyChange({
-      email: session.user.email,
+      userId: session.user.id,
+      loginEmail: session.user.email,
       action: "revoked",
       tokenName: revoked.name,
       keyPrefix: revoked.keyPrefix,

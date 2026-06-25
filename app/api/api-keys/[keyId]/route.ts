@@ -79,7 +79,8 @@ export async function DELETE(
     // Out-of-band alert symmetric with creation: the owner learns a bypass
     // credential was revoked even if their own session did it. Non-blocking.
     notifyApiKeyChange({
-      email: session.user.email,
+      userId: session.user.id,
+      loginEmail: session.user.email,
       action: "revoked",
       tokenName: deleted.name,
       keyPrefix: deleted.keyPrefix,
