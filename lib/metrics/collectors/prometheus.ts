@@ -116,7 +116,7 @@ function getOrCreateGauge(
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug and error_type (all-time)",
+  "Workflow executions by status, broken down by org_slug and error_type (rolling 30-day window)",
   ["status", "org_slug", "error_type"]
 );
 
@@ -1525,7 +1525,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     workflowDurationBucket.set(
       { le: "+Inf" },
       workflowStats.durationBuckets[WORKFLOW_DURATION_BUCKETS.length] ??
-        workflowStats.durationCount
+      workflowStats.durationCount
     );
 
     // Update workflow duration sum and count
@@ -1560,7 +1560,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     stepDurationBucket.set(
       { le: "+Inf" },
       stepStats.durationBuckets[STEP_DURATION_BUCKETS.length] ??
-        stepStats.durationCount
+      stepStats.durationCount
     );
 
     // Update step duration sum and count
