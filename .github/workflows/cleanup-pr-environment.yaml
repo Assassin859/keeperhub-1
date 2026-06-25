@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   check-cleanup:
@@ -42,6 +43,7 @@ jobs:
   cleanup:
     permissions:
       contents: read
+      id-token: write
       pull-requests: write # actions/github-script posts PR comments
     needs: check-cleanup
     if: needs.check-cleanup.outputs.should-cleanup == 'true'
@@ -57,8 +59,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Configure kubectl
