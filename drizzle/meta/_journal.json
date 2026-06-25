@@ -834,6 +834,13 @@
       "when": 1782648000002,
       "tag": "0118_keep_857_exec_log_gas_index",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1782648000003,
+      "tag": "0119_api_key_scope",
+      "breakpoints": true
     }
   ]
 }

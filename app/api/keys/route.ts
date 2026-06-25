@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { normalizeScope } from "@/lib/mcp/oauth-scopes";
 import {
   dualFactorErrorResponse,
   requireDualFactor,
@@ -191,6 +192,13 @@ export async function POST(request: Request) {
     }
     const name = body.name || null;
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    let scopeInput: string | null = null;
+    if (Array.isArray(body.scopes)) {
+      scopeInput = (body.scopes as string[]).join(" ");
+    } else if (typeof body.scopes === "string") {
+      scopeInput = body.scopes;
+    }
+    const scope = scopeInput ? normalizeScope(scopeInput) : null;
 
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();
@@ -205,6 +213,7 @@ export async function POST(request: Request) {
         keyPrefix: prefix,
         createdBy: session.user.id,
         expiresAt,
+        scope,
       })
       .returning({
         id: organizationApiKeys.id,

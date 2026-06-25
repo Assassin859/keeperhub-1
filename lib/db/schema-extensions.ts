@@ -385,6 +385,7 @@ export const organizationApiKeys = pgTable(
     lastUsedAt: timestamp("last_used_at"), // Track usage for audit
     expiresAt: timestamp("expires_at"), // Optional expiration
     revokedAt: timestamp("revoked_at"), // Soft delete via revocation
+    scope: text("scope"), // Space-separated OAuth scopes; null means full access
   },
   (table) => [
     index("idx_org_api_keys_org_id").on(table.organizationId),
