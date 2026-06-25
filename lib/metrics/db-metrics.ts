@@ -139,8 +139,13 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
     // SELECT-side expressions render those groups as ANONYMOUS_ORG_SLUG /
     // "unknown" / "na" as appropriate.
     //
-    // Bounded to startedAt >= now() - 1h. startedAt is used instead of
-    // completedAt so in-flight running/pending rows are included.
+    // Bounded to startedAt >= now() - 30 days so the query is an index range
+    // scan rather than a full-table scan that trips the 8s metrics
+    // statement_timeout. startedAt is used instead of completedAt so in-flight
+    // running/pending executions started within the window are included. The
+    // 30-day window matches what the Grafana managed-client and system-error
+    // alerts expect: both read keeperhub_workflow_executions_total directly
+    // (no offset subtraction) as their 30-day volume denominator.
     const breakdown = await db
       .select({
         status: workflowExecutions.status,
@@ -156,7 +161,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
       .where(
-        gte(workflowExecutions.startedAt, sql`now() - interval '1 hour'`)
+        gte(workflowExecutions.startedAt, sql`now() - interval '30 days'`)
       )
       .groupBy(
         workflowExecutions.status,
@@ -215,7 +220,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
         and(
           sql`${workflowExecutions.status} IN ('success', 'error', 'system_error')`,
           sql`${workflowExecutions.duration} IS NOT NULL`,
-          gte(workflowExecutions.startedAt, sql`now() - interval '1 hour'`)
+          gte(workflowExecutions.startedAt, sql`now() - interval '30 days'`)
         )
       );
 
