@@ -77,10 +77,6 @@ function getMaxConcurrentRuns(): number {
  * because check-and-increment happens without an intervening await. */
 let inFlightRuns = 0;
 
-function getInFlightRuns(): number {
-  return inFlightRuns;
-}
-
 async function readBody(
   req: IncomingMessage,
   maxBytes: number
