@@ -54,18 +54,37 @@ export type Chip = {
   prompt: string;
 };
 
+/**
+ * Structured content for the per-step "more info" dialog: a one-line summary
+ * plus titled sections of bullet points, so the dialog scans as headings and
+ * lists rather than a wall of prose. `{credit}` in any string is replaced with
+ * the live sponsored-gas amount at render time.
+ */
+export type InfoSection = {
+  heading: string;
+  points: string[];
+};
+
+export type StepInfo = {
+  summary: string;
+  sections: InfoSection[];
+};
+
 export type Step = {
   key: string;
   title: string;
   description: string;
+  /** Longer explanation shown in the per-step "more info" dialog. */
+  info: StepInfo;
   /** Completion signal; `always` renders pre-checked. */
   signal: SignalId;
-  /** Primary CTA; omitted for `always` confirmation steps. */
+  /** Primary action triggered by clicking the step row or the info dialog CTA. */
   action?: StepAction;
-  ctaLabel?: string;
+  /** Label for the info-dialog action button (e.g. "Open wallet"). */
+  actionLabel?: string;
   /** Optional inline chips (each seeds the AI generator). */
   chips?: Chip[];
-  /** Render struck-through / muted (e.g. "wallet not needed"). */
+  /** Render muted (e.g. a "not needed" confirmation step). */
   muted?: boolean;
 };
 
@@ -140,31 +159,89 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
         {
           key: "wallet-ready",
           title: "Wallet ready",
-          description: "Non-custodial Turnkey - gas-sponsored - Sepolia ready.",
+          description:
+            "Non-custodial Turnkey wallet. First runs are gas-sponsored.",
+          info: {
+            summary:
+              "Every account gets its own on-chain wallet, secured by Turnkey, that your workflows use to sign transactions.",
+            sections: [
+              {
+                heading: "How it differs from your login",
+                points: [
+                  "How you sign in only identifies your account. It never signs transactions or holds your funds.",
+                  "This KeeperHub Turnkey wallet is the only one that executes on-chain actions in your workflows.",
+                  "It is non-custodial: Turnkey enforces your policies and we never hold the keys.",
+                ],
+              },
+              {
+                heading: "Monthly sponsored gas",
+                points: [
+                  "Every account receives {credit} of sponsored gas on mainnet.",
+                  "It refreshes at the start of every month, so a baseline of runs is always covered.",
+                  "It only pays network fees up to that amount. It is not a transferable balance and cannot be withdrawn, sent, or spent on anything else.",
+                ],
+              },
+              {
+                heading: "Going beyond the allowance",
+                points: [
+                  "For write actions past the monthly amount, add funds to the wallet address from the wallet panel.",
+                  "To try things out without real value, switch to a supported test network and use testnet funds.",
+                ],
+              },
+            ],
+          },
           signal: "walletReady",
           action: { kind: "deeplink", target: "wallet-fund" },
-          ctaLabel: "Fund / Get testnet ETH",
+          actionLabel: "Open wallet",
         },
         {
           key: "connect-agent",
           title: "Connect your agent",
           description:
             "Add KeeperHub to Claude or Cursor, then run `list my workflows` to confirm.",
+          info: {
+            summary:
+              "Connect KeeperHub to your AI agent over MCP so it can read and run your workflows.",
+            sections: [
+              {
+                heading: "What you can do",
+                points: [
+                  "Generate an API key for your account.",
+                  "Add KeeperHub as an MCP server in Claude, Cursor, or any MCP client.",
+                  "Ask your agent to `list my workflows` to confirm the connection.",
+                ],
+              },
+            ],
+          },
           signal: "agentConnected",
           action: { kind: "deeplink", target: "api-keys" },
-          ctaLabel: "Get your key",
+          actionLabel: "Get your key",
         },
         {
           key: "run-workflow",
           title: "Run your first workflow",
           description: "Pick a template or describe it in a sentence.",
+          info: {
+            summary:
+              "A workflow is a trigger plus a sequence of actions that run automatically.",
+            sections: [
+              {
+                heading: "What you can do",
+                points: [
+                  "Start from a blank canvas and add a trigger and actions yourself.",
+                  "Or describe what you want in plain language and let the builder scaffold it.",
+                  "Mix on-chain and off-chain actions in the same workflow.",
+                ],
+              },
+            ],
+          },
           signal: "ranWorkflow",
           action: {
             kind: "ai-prompt",
             prompt:
               "Create a simple workflow that runs on a schedule and sends me a Discord message.",
           },
-          ctaLabel: "Describe it",
+          actionLabel: "Open the builder",
         },
       ],
     },
@@ -177,6 +254,26 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           key: "pick-watch",
           title: "Pick what to watch",
           description: "Health factor, large withdrawals, governance.",
+          info: {
+            summary:
+              "Track an on-chain signal and get notified. Monitoring is read-only, so no wallet is needed.",
+            sections: [
+              {
+                heading: "What you can watch",
+                points: [
+                  "A position's health factor, alerting below a threshold.",
+                  "Large withdrawals or transfers from an address.",
+                  "Governance activity on the protocols you follow.",
+                ],
+              },
+              {
+                heading: "How",
+                points: [
+                  "Pick one of the options on the step. It scaffolds a read-only workflow with the right trigger and condition.",
+                ],
+              },
+            ],
+          },
           signal: "ranWorkflow",
           chips: getMonitorTargets(ctx),
         },
@@ -184,16 +281,24 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           key: "connect-alerts",
           title: "Connect alerts",
           description: "Discord, Telegram, or email.",
+          info: {
+            summary: "Choose where your alerts are delivered.",
+            sections: [
+              {
+                heading: "Supported channels",
+                points: ["A Discord webhook.", "A Telegram bot.", "Email."],
+              },
+              {
+                heading: "How",
+                points: [
+                  "Connect a channel, then reference it from any workflow step that sends an alert.",
+                ],
+              },
+            ],
+          },
           signal: "alertsConnected",
           action: { kind: "deeplink", target: "integrations" },
-          ctaLabel: "Connect alerts",
-        },
-        {
-          key: "monitor-no-wallet",
-          title: "Wallet - not needed",
-          description: "Monitoring is read-only - gas-free.",
-          signal: "always",
-          muted: true,
+          actionLabel: "Connect alerts",
         },
       ],
     },
@@ -206,15 +311,54 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           key: "fund-wallet",
           title: "Fund your wallet",
           description:
-            "Turnkey wallet created - add funds for write actions, or use Sepolia.",
+            "Add funds for write actions, or use testnet funds to try it out.",
+          info: {
+            summary:
+              "Yield strategies sign transactions with your KeeperHub Turnkey wallet, so it needs a balance to act on.",
+            sections: [
+              {
+                heading: "Monthly sponsored gas",
+                points: [
+                  "Every account gets {credit} of sponsored gas on mainnet, refreshed at the start of every month.",
+                  "It covers network fees only. It is not a transferable balance and cannot be withdrawn.",
+                ],
+              },
+              {
+                heading: "Adding funds",
+                points: [
+                  "For write actions beyond the monthly amount, send funds to the wallet address from the wallet panel.",
+                  "To try the flow without real value, switch to a supported test network and use testnet funds.",
+                ],
+              },
+            ],
+          },
           signal: "walletFunded",
           action: { kind: "deeplink", target: "wallet-fund" },
-          ctaLabel: "Fund wallet",
+          actionLabel: "Open wallet",
         },
         {
           key: "pick-strategy",
           title: "Pick a yield strategy",
           description: "Based on what your wallet holds.",
+          info: {
+            summary: "Scaffold a workflow around a yield protocol action.",
+            sections: [
+              {
+                heading: "Strategy types",
+                points: [
+                  "Staking optimizers.",
+                  "Vault deposits.",
+                  "LP positions.",
+                ],
+              },
+              {
+                heading: "How",
+                points: [
+                  "Pick one of the options on the step. It builds the workflow around that protocol action.",
+                ],
+              },
+            ],
+          },
           signal: "ranWorkflow",
           chips: getYieldStrategies(ctx),
         },
@@ -222,13 +366,25 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           key: "run-automate",
           title: "Run & automate",
           description: "Compound weekly, rebalance on threshold.",
+          info: {
+            summary: "Put the strategy on autopilot.",
+            sections: [
+              {
+                heading: "What you can automate",
+                points: [
+                  "Compound on a schedule, for example weekly.",
+                  "Rebalance only when your position drifts past a threshold.",
+                ],
+              },
+            ],
+          },
           signal: "ranWorkflow",
           action: {
             kind: "ai-prompt",
             prompt:
               "Automate my yield strategy: compound weekly and rebalance when it drifts past a threshold.",
           },
-          ctaLabel: "Automate it",
+          actionLabel: "Open the builder",
         },
       ],
     },

@@ -55,14 +55,16 @@ test.describe("getting-started launcher", () => {
     await expect(page.getByTestId("gs-step-fund-wallet")).toBeVisible();
   });
 
-  test("wallet-ready step is pre-checked from real state", async ({ page }) => {
-    // The Turnkey wallet is auto-provisioned at signup, so the agent branch's
-    // first step resolves complete without any user action.
+  test("a step completes when its action is taken", async ({ page }) => {
+    // Completion is click-driven: taking the step's action marks it done.
     await page.getByTestId("gs-launcher-pill").click();
     const walletStep = page.getByTestId("gs-step-wallet-ready");
-    await expect(walletStep).toBeVisible();
+    await expect(walletStep).toHaveAttribute("data-complete", "false");
+
+    // The first button in the row is the step action (the second is "more info").
+    await walletStep.getByRole("button").first().click();
     await expect(walletStep).toHaveAttribute("data-complete", "true", {
-      timeout: 15_000,
+      timeout: 10_000,
     });
   });
 

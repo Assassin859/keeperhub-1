@@ -1,15 +1,23 @@
 "use client";
 
-import { useAtom, useSetAtom } from "jotai";
-import { Check, ChevronDown, Sparkles, X } from "lucide-react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { Check, ChevronDown, Info, Sparkles, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { WalletOverlay } from "@/components/overlays/wallet-overlay";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api-client";
 import {
@@ -21,13 +29,14 @@ import {
   type DeepLinkTarget,
   getBranches,
   type Step,
-  type StepAction,
 } from "@/lib/onboarding/getting-started-config";
 import { cn } from "@/lib/utils";
 import {
   editorTourRequestedAtom,
   gettingStartedOpenAtom,
+  isSidebarCollapsedAtom,
   pendingAiPromptAtom,
+  rightPanelWidthAtom,
 } from "@/lib/workflow/store";
 
 const SUPPRESSED_PATHS = new Set([
@@ -43,21 +52,15 @@ const AI_ENABLED = process.env.NEXT_PUBLIC_AI_PROMPT_ENABLED === "true";
 function ProgressRing({
   done,
   total,
-  className,
 }: {
   done: number;
   total: number;
-  className?: string;
 }): React.ReactElement {
   const r = 8;
   const c = 2 * Math.PI * r;
   const pct = total > 0 ? done / total : 0;
   return (
-    <svg
-      aria-hidden="true"
-      className={cn("size-5 -rotate-90", className)}
-      viewBox="0 0 20 20"
-    >
+    <svg aria-hidden="true" className="-rotate-90 size-5" viewBox="0 0 20 20">
       <circle
         className="text-muted-foreground/30"
         cx="10"
@@ -83,90 +86,183 @@ function ProgressRing({
   );
 }
 
+function StepCheck({ complete }: { complete: boolean }): React.ReactElement {
+  return (
+    <span
+      className={cn(
+        "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
+        complete
+          ? "border-emerald-500 bg-emerald-500 text-white"
+          : "border-muted-foreground/40"
+      )}
+    >
+      {complete && <Check aria-hidden="true" className="size-3" />}
+    </span>
+  );
+}
+
 function StepRow({
   step,
   complete,
   onAction,
   onChip,
+  onInfo,
 }: {
   step: Step;
   complete: boolean;
-  onAction: (action: StepAction, stepKey: string) => void;
-  onChip: (prompt: string) => void;
+  onAction: (step: Step) => void;
+  onChip: (step: Step, prompt: string) => void;
+  onInfo: (step: Step) => void;
 }): React.ReactElement {
+  const clickable = Boolean(step.action) && !step.muted;
+  const body = (
+    <div className="flex-1 space-y-1.5 text-left">
+      <div
+        className={cn(
+          "font-medium text-sm",
+          step.muted && "text-muted-foreground"
+        )}
+      >
+        {step.title}
+      </div>
+      <p className="text-muted-foreground text-xs">{step.description}</p>
+    </div>
+  );
+
   return (
     <div
-      className="flex gap-3 py-2"
+      className="rounded-md transition-colors hover:bg-muted/40"
       data-complete={complete}
       data-testid={`gs-step-${step.key}`}
     >
-      <span
-        className={cn(
-          "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
-          complete
-            ? "border-emerald-500 bg-emerald-500 text-white"
-            : "border-muted-foreground/40"
-        )}
-      >
-        {complete && <Check aria-hidden="true" className="size-3" />}
-      </span>
-      <div className="flex-1 space-y-1.5">
-        <div
-          className={cn(
-            "font-medium text-sm",
-            complete && "text-muted-foreground line-through",
-            step.muted && "text-muted-foreground line-through"
-          )}
-        >
-          {step.title}
-        </div>
-        <p className="text-muted-foreground text-xs">{step.description}</p>
-        {step.chips && (
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {step.chips.map((chip) => (
-              <button
-                className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs transition-colors hover:bg-muted"
-                key={chip.id}
-                onClick={() => onChip(chip.prompt)}
-                type="button"
-              >
-                {chip.label}
-              </button>
-            ))}
+      <div className="flex items-start gap-2 p-2">
+        {clickable && step.action ? (
+          <button
+            className="flex flex-1 items-start gap-3"
+            onClick={() => onAction(step)}
+            type="button"
+          >
+            <StepCheck complete={complete} />
+            {body}
+          </button>
+        ) : (
+          <div className="flex flex-1 items-start gap-3">
+            <StepCheck complete={complete} />
+            {body}
           </div>
         )}
-        {step.action && !complete && (
-          <Button
-            className="h-7 px-2 text-xs"
-            onClick={() => step.action && onAction(step.action, step.key)}
-            size="sm"
-            variant="outline"
-          >
-            {step.ctaLabel ?? "Open"}
-          </Button>
-        )}
+        <button
+          aria-label={`More info about ${step.title}`}
+          className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={() => onInfo(step)}
+          title="More info"
+          type="button"
+        >
+          <Info aria-hidden="true" className="size-3.5" />
+        </button>
       </div>
+      {step.chips && (
+        <div className="flex flex-wrap gap-1.5 px-2 pb-2 pl-9">
+          {step.chips.map((chip) => (
+            <button
+              className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs transition-colors hover:bg-muted"
+              key={chip.id}
+              onClick={() => onChip(step, chip.prompt)}
+              type="button"
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function StepInfoDialog({
+  step,
+  creditLabel,
+  onAction,
+  onClose,
+}: {
+  step: Step | null;
+  creditLabel: string;
+  onAction: (step: Step) => void;
+  onClose: () => void;
+}): React.ReactElement {
+  const action = step?.action;
+  const fill = (text: string): string =>
+    text.replaceAll("{credit}", creditLabel);
+  return (
+    <Dialog onOpenChange={(next) => !next && onClose()} open={step !== null}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{step?.title}</DialogTitle>
+          <DialogDescription>
+            {step ? fill(step.info.summary) : ""}
+          </DialogDescription>
+        </DialogHeader>
+        {step ? (
+          <div className="flex flex-col gap-4">
+            {step.info.sections.map((section) => (
+              <div className="flex flex-col gap-1.5" key={section.heading}>
+                <p className="font-medium text-foreground text-sm">
+                  {section.heading}
+                </p>
+                <ul className="flex flex-col gap-1.5">
+                  {section.points.map((point) => (
+                    <li
+                      className="flex gap-2 text-muted-foreground text-sm"
+                      key={point}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="mt-1.5 size-1 shrink-0 rounded-full bg-muted-foreground/60"
+                      />
+                      <span>{fill(point)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {step && action && step.actionLabel ? (
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                onAction(step);
+                onClose();
+              }}
+              type="button"
+            >
+              {step.actionLabel}
+            </Button>
+          </DialogFooter>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function ExpandedCard({
   gs,
+  creditLabel,
   onAction,
   onChip,
   onTakeTour,
 }: {
   gs: GettingStarted;
-  onAction: (action: StepAction, stepKey: string) => void;
-  onChip: (prompt: string) => void;
+  creditLabel: string;
+  onAction: (step: Step) => void;
+  onChip: (step: Step, prompt: string) => void;
   onTakeTour: () => void;
 }): React.ReactElement {
+  const [infoStep, setInfoStep] = useState<Step | null>(null);
   const branches = getBranches();
   const active = branches.find((b) => b.key === gs.branch) ?? branches[0];
   const total = active.steps.length;
-  const done = active.steps.filter((s) =>
-    gs.isComplete(s.signal, s.key)
-  ).length;
+  const done = active.steps.filter((s) => gs.isStepComplete(s)).length;
 
   return (
     <div
@@ -222,13 +318,14 @@ function ExpandedCard({
         </TabsList>
       </Tabs>
 
-      <div className="max-h-[60vh] overflow-y-auto px-4 py-2">
+      <div className="max-h-[60vh] space-y-1 overflow-y-auto px-2 py-2">
         {active.steps.map((step) => (
           <StepRow
-            complete={gs.isComplete(step.signal, step.key)}
+            complete={gs.isStepComplete(step)}
             key={step.key}
             onAction={onAction}
             onChip={onChip}
+            onInfo={setInfoStep}
             step={step}
           />
         ))}
@@ -244,6 +341,13 @@ function ExpandedCard({
           Take a tour
         </button>
       </div>
+
+      <StepInfoDialog
+        creditLabel={creditLabel}
+        onAction={onAction}
+        onClose={() => setInfoStep(null)}
+        step={infoStep}
+      />
     </div>
   );
 }
@@ -256,6 +360,11 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   const [, setPendingAiPrompt] = useAtom(pendingAiPromptAtom);
   const [forceOpen, setForceOpen] = useAtom(gettingStartedOpenAtom);
   const requestTour = useSetAtom(editorTourRequestedAtom);
+  // Read-only triggers: re-measure the panel whenever its open/width state changes.
+  const isSidebarCollapsed = useAtomValue(isSidebarCollapsedAtom);
+  const rightPanelWidth = useAtomValue(rightPanelWidthAtom);
+  const [creditLabel, setCreditLabel] = useState("$1");
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // The user-menu "Getting started" entry flips this to reopen the launcher.
   useEffect(() => {
@@ -265,7 +374,46 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     }
   }, [forceOpen, gs, setForceOpen]);
 
-  const isBuilder = pathname?.startsWith("/workflows/") ?? false;
+  // Fetch the env-driven free gas sponsorship amount for the wallet info copy.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/gas-sponsorship")
+      .then((r) => r.json())
+      .then((data: { label?: string }) => {
+        if (!cancelled && data?.label) {
+          setCreditLabel(data.label);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Detect whether the builder's right Properties panel is actually on screen by
+  // measuring its live DOM rect (when collapsed it slides off the right edge).
+  // The pill then anchors to the opposite bottom corner so it never overlaps the
+  // panel at any viewport width. The atoms/pathname below are read only to
+  // re-trigger this measurement, never written.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname and the panel atoms are intentional re-measure triggers, not values read in the effect body
+  useEffect(() => {
+    const measure = (): void => {
+      const rect = document
+        .querySelector('[data-testid="properties-panel"]')
+        ?.getBoundingClientRect();
+      setPanelOpen(
+        Boolean(rect && rect.width > 0 && rect.left < window.innerWidth - 8)
+      );
+    };
+    measure();
+    // Re-measure after the panel's 300ms open/close slide settles.
+    const timer = setTimeout(measure, 320);
+    window.addEventListener("resize", measure);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", measure);
+    };
+  }, [pathname, isSidebarCollapsed, rightPanelWidth]);
 
   if (!gs.isAuthenticated || SUPPRESSED_PATHS.has(pathname ?? "")) {
     return null;
@@ -288,14 +436,66 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   // staging. When enabled, seed the prompt so the builder auto-generates; when
   // not, just open a fresh builder with the prompt kept as the description so
   // the user still has the context of what they set out to build.
-  const runAiPrompt = async (prompt: string): Promise<void> => {
+  //
+  // The workflow is created once per (step, prompt) and remembered: taking the
+  // step again reopens that same draft instead of spawning another Untitled
+  // Workflow. If the user deleted it, a fresh one is created.
+  const runAiPrompt = async (step: Step, prompt: string): Promise<void> => {
+    const key = `${step.key}:${prompt}`;
+    const existingId = gs.getStepWorkflowId(key);
+    if (existingId) {
+      try {
+        await api.workflow.getById(existingId);
+        router.push(`/workflows/${existingId}`);
+        return;
+      } catch {
+        // The remembered workflow was deleted; fall through to create a new one.
+      }
+    }
     try {
+      // Seed a starting Manual trigger + action (the builder's own "Start
+      // building" shape) so the draft opens with a usable canvas instead of a
+      // blank one with an empty properties panel.
+      const stamp = Date.now();
+      const triggerId = `trigger-${stamp}`;
+      const actionId = `action-${stamp}`;
       const workflow = await api.workflow.create({
         name: "Untitled Workflow",
         description: prompt,
-        nodes: [],
-        edges: [],
+        nodes: [
+          {
+            id: triggerId,
+            type: "trigger" as const,
+            position: { x: 400, y: 200 },
+            data: {
+              label: "",
+              type: "trigger" as const,
+              config: { triggerType: "Manual" },
+              status: "idle" as const,
+            },
+          },
+          {
+            id: actionId,
+            type: "action" as const,
+            position: { x: 672, y: 200 },
+            data: {
+              label: "",
+              type: "action" as const,
+              config: {},
+              status: "idle" as const,
+            },
+          },
+        ],
+        edges: [
+          {
+            id: `edge-${stamp}`,
+            source: triggerId,
+            target: actionId,
+            type: "animated",
+          },
+        ],
       });
+      gs.setStepWorkflowId(key, workflow.id);
       if (AI_ENABLED) {
         setPendingAiPrompt(prompt);
       }
@@ -305,29 +505,36 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     }
   };
 
-  const onAction = (action: StepAction, stepKey: string): void => {
-    if (action.kind === "deeplink") {
-      // Funding has no auto-detectable signal yet; mark it done locally.
-      if (action.target === "wallet-fund") {
-        gs.markStepDone(stepKey);
-      }
+  // Taking a step's action opens the relevant surface. Outcome steps only
+  // complete once the real state changes (refetched here and on focus); the
+  // informational "open your wallet" steps complete on open via markStepActioned.
+  const onAction = (step: Step): void => {
+    gs.markStepActioned(step);
+    const { action } = step;
+    if (action?.kind === "deeplink") {
       openDeepLink(action.target);
-    } else if (action.kind === "ai-prompt") {
-      runAiPrompt(action.prompt);
+    } else if (action?.kind === "ai-prompt") {
+      runAiPrompt(step, action.prompt);
     }
+    gs.refetch();
   };
 
-  // Position bottom-right; on the builder route shift to bottom-left so it never
-  // overlaps the right-side Properties panel.
-  const anchor = isBuilder ? "left-4" : "right-4";
+  const onChip = (step: Step, prompt: string): void => {
+    gs.markStepActioned(step);
+    runAiPrompt(step, prompt);
+  };
 
+  // Panel open -> bottom-left (clears it on any width); closed -> bottom-right.
   return (
-    <div className={cn("fixed bottom-4 z-50", anchor)}>
+    <div
+      className={cn("fixed bottom-4 z-50", panelOpen ? "left-4" : "right-4")}
+    >
       {gs.state === "expanded" ? (
         <ExpandedCard
+          creditLabel={creditLabel}
           gs={gs}
           onAction={onAction}
-          onChip={runAiPrompt}
+          onChip={onChip}
           onTakeTour={() => requestTour(true)}
         />
       ) : (
@@ -358,5 +565,5 @@ function launcherDone(gs: GettingStarted): number {
   if (!branch) {
     return 0;
   }
-  return branch.steps.filter((s) => gs.isComplete(s.signal, s.key)).length;
+  return branch.steps.filter((s) => gs.isStepComplete(s)).length;
 }
