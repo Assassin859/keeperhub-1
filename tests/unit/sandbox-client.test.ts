@@ -466,6 +466,55 @@ describe("lib/sandbox-client runRemote", () => {
       expect(outcome.error).toContain("500");
     }
   });
+
+  it("returns success:false when the server resets the socket mid-response-body", async () => {
+    const resetSockets: IncomingMessage[] = [];
+    const resetServer = createServer(
+      (req: IncomingMessage, res: ServerResponse): void => {
+        resetSockets.push(req);
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+          "Transfer-Encoding": "chunked",
+        });
+        res.write("RESULT{\"ok\":tr");
+        // Destroy the socket before the body is complete.
+        req.socket.destroy();
+      }
+    );
+    await new Promise<void>((resolve, reject) => {
+      resetServer.once("error", reject);
+      resetServer.listen(0, "127.0.0.1", () => {
+        resetServer.off("error", reject);
+        resolve();
+      });
+    });
+    const resetPort = (resetServer.address() as AddressInfo).port;
+    const savedUrl = process.env.SANDBOX_URL;
+    process.env.SANDBOX_URL = `http://127.0.0.1:${resetPort}`;
+    try {
+      vi.resetModules();
+      const { runRemote } = await import("@/lib/sandbox/client");
+      const outcome = await runRemote({ code: "return 1;", timeoutMs: 5000 });
+      expect(outcome.success).toBe(false);
+      if (!outcome.success) {
+        expect(outcome.error).toContain("sandbox client error");
+      }
+    } finally {
+      for (const req of resetSockets) {
+        req.socket.destroy();
+      }
+      if (savedUrl === undefined) {
+        delete process.env.SANDBOX_URL;
+      } else {
+        process.env.SANDBOX_URL = savedUrl;
+      }
+      await new Promise<void>((resolve) => {
+        resetServer.close(() => resolve());
+      });
+      vi.resetModules();
+    }
+  });
 });
 
 describe("lib/sandbox-client runRemote untrusted-shape hardening", () => {

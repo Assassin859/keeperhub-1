@@ -69,9 +69,6 @@ serviceAccount:
   create: false
   name: keeperhub-sandbox
 
-podAnnotations:
-  reloader.stakater.com/auto: "true"
-
 resources:
   requests:
     cpu: 100m
