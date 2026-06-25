@@ -16,31 +16,34 @@ export async function signUp(
   const testEmail = options?.email ?? `test+${Date.now()}@techops.services`;
   const testPassword = options?.password ?? "TestPassword123!";
 
+  // Suppress the driver.js tour so its backdrop doesn't intercept modal clicks.
+  await page
+    .context()
+    .addCookies([
+      { name: "kh_disable_tours", value: "1", url: "http://localhost:3000" },
+    ]);
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
-  const signInButton = page.locator('button:has-text("Sign In")').first();
-  await expect(signInButton).toBeVisible({ timeout: 15_000 });
-  await signInButton.click();
-
-  const dialog = page.locator('[role="dialog"]');
+  // Open the Connect modal (replaced the bare "Sign In" button), switch to the
+  // email panel, then to the sign-up view.
+  await page
+    .getByRole("button", { name: "Connect", exact: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Connect to KeeperHub" });
   await expect(dialog).toBeVisible({ timeout: 5000 });
 
-  // Switch to signup view
-  const createAccountLink = dialog.locator('button:has-text("Create account")');
-  await createAccountLink.click();
+  await dialog.getByRole("button", { name: "Continue with email" }).click();
+  await dialog.getByRole("button", { name: "Create an account" }).click();
 
-  // Fill in signup form
-  await dialog.locator("#signup-email").fill(testEmail);
-  await dialog.locator("#signup-password").fill(testPassword);
-
-  // Submit the form
+  await dialog.locator("#auth-email").fill(testEmail);
+  await dialog.locator("#auth-password").fill(testPassword);
   await dialog
-    .locator('button[type="submit"]:has-text("Create account")')
+    .getByRole("button", { name: "Create account", exact: true })
     .click();
 
-  // Wait for verify view
-  const dialogTitle = dialog.locator("h2");
-  await expect(dialogTitle).toHaveText("Verify your email", {
+  // Wait for verify view.
+  await expect(dialog.locator("h2")).toHaveText("Verify your email", {
     timeout: 15_000,
   });
 
@@ -180,6 +183,7 @@ export async function fillContentEditableOtp(
 }
 
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const BASE32_PAD_REGEX = /=+$/;
 const TOTP_PERIOD_SECONDS = 30;
 
 /**
@@ -192,7 +196,7 @@ function base32Decode(input: string): Buffer {
   let bits = 0;
   let value = 0;
   const out: number[] = [];
-  for (const char of input.replace(/=+$/, "").toUpperCase()) {
+  for (const char of input.replace(BASE32_PAD_REGEX, "").toUpperCase()) {
     const index = BASE32_ALPHABET.indexOf(char);
     if (index === -1) {
       continue;
@@ -219,7 +223,7 @@ function generateTotpCode(manualEntryKey: string): string {
   const hmac = createHmac("sha1", base32Decode(manualEntryKey))
     .update(counter)
     .digest();
-  const offset = hmac[hmac.length - 1] & 0xf;
+  const offset = (hmac.at(-1) ?? 0) & 0xf;
   const truncated =
     ((hmac[offset] & 0x7f) << 24) |
     ((hmac[offset + 1] & 0xff) << 16) |
@@ -246,7 +250,9 @@ export async function completeTotpEnrollment(page: Page): Promise<string> {
   if (!manualEntryKey) {
     throw new Error("Could not read the TOTP setup key from the dialog");
   }
-  await page.locator("#totp-verify-code").fill(generateTotpCode(manualEntryKey));
+  await page
+    .locator("#totp-verify-code")
+    .fill(generateTotpCode(manualEntryKey));
   await dialog.locator('button:has-text("Continue")').click();
   // Backup-codes step: dismiss it to finish enrollment and close the dialog.
   const finishButton = dialog.locator('button:has-text("Skip")');
@@ -347,18 +353,35 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<void> {
+  // Suppress the driver.js onboarding tour so its backdrop doesn't intercept
+  // clicks inside the Connect modal (auth.setup doesn't load the fixture that
+  // sets this cookie).
+  await page.context().addCookies([
+    {
+      name: "kh_disable_tours",
+      value: "1",
+      url: "http://localhost:3000",
+    },
+  ]);
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
-  const signInButton = page.locator('button:has-text("Sign In")').first();
-  await expect(signInButton).toBeVisible({ timeout: 15_000 });
-  await signInButton.click();
+  // The Connect modal replaced the bare "Sign In" button: open it, switch to
+  // the email panel, then sign in with credentials.
+  const connectButton = page
+    .getByRole("button", { name: "Connect", exact: true })
+    .first();
+  await expect(connectButton).toBeVisible({ timeout: 15_000 });
+  await connectButton.click();
 
-  const dialog = page.locator('[role="dialog"]');
+  // Scope to the Connect modal by name; the driver.js sign-in tour is also a
+  // role="dialog", so a bare [role="dialog"] would be ambiguous.
+  const dialog = page.getByRole("dialog", { name: "Connect to KeeperHub" });
   await expect(dialog).toBeVisible({ timeout: 5000 });
 
-  await dialog.locator("#email").fill(email);
-  await dialog.locator("#password").fill(password);
-  await dialog.locator('button[type="submit"]:has-text("Sign in")').click();
+  await dialog.getByRole("button", { name: "Continue with email" }).click();
+  await dialog.locator("#auth-email").fill(email);
+  await dialog.locator("#auth-password").fill(password);
+  await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
 
   // Wait for dialog to close (successful sign in)
   await expect(dialog).not.toBeVisible({ timeout: 15_000 });
@@ -388,12 +411,15 @@ export async function signOut(page: Page): Promise<void> {
  * Check if user is currently authenticated.
  */
 export async function isAuthenticated(page: Page): Promise<boolean> {
-  // Check for authenticated UI elements
-  const signInButton = page.locator('button:has-text("Sign In")').first();
+  // Check for authenticated UI elements. Logged-out users see the Connect
+  // button (which replaced the bare "Sign In" button).
+  const connectButton = page
+    .getByRole("button", { name: "Connect", exact: true })
+    .first();
   const userMenu = page.locator('[data-testid="user-menu"]');
 
-  // If sign in button is visible, user is not authenticated
-  if (await signInButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+  // If the Connect button is visible, user is not authenticated
+  if (await connectButton.isVisible({ timeout: 2000 }).catch(() => false)) {
     return false;
   }
 
