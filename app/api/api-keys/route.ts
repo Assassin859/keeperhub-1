@@ -2,12 +2,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
-import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -82,60 +81,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check if user is anonymous
-    const isAnonymous =
-      session.user.name === "Anonymous" ||
-      session.user.email?.startsWith("temp-");
-
-    if (isAnonymous) {
-      return NextResponse.json(
-        { error: "Anonymous users cannot create API keys" },
-        { status: 403 }
-      );
-    }
-
-    // User-scoped key creation is the highest-leverage forever-bypass
-    // a session can mint. Even though the apiKeys table has no org
-    // column to gate on, we require MFA enrolled + step-up cleared so
-    // a stolen session alone can't issue a key that survives any
-    // future MFA enforcement.
-    // Wallet users authenticate via signature, not TOTP enrollment, so the
-    // enrollment gate only applies to email/TOTP accounts. The step-up below
-    // is what proves identity for wallet users.
-    const isWallet = isWalletEmail(session.user.email);
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    if (!isWallet) {
-      const guard = await requireMfaEnrolled(
-        session.user.id,
-        sessionRow.requiresMfa === true
-      );
-      if (!guard.ok) {
-        return NextResponse.json(
-          { error: guard.error, code: guard.code },
-          { status: guard.status }
-        );
-      }
-    }
-
     const body = await request.json().catch(() => ({}));
-    const name = body.name || null;
 
-    // Step-up at mint time. Long-lived bypass credentials warrant a fresh
-    // challenge at the exact moment of issue: dual-factor for email/TOTP
-    // users, a wallet signature (plus any opted-in factors) for wallet users.
-    const stepUp = await requireStepUp({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "user_api_key_create",
-      code: typeof body.code === "string" ? body.code : undefined,
-      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
-      signature:
-        typeof body.signature === "string" ? body.signature : undefined,
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.apiKeyCreate,
+      roleFloor: "none",
+      body,
       headers: request.headers,
     });
-    if (!stepUp.ok) {
-      return stepUpErrorResponse(stepUp);
+    if (!authorized.ok) {
+      return authorized.response;
     }
+
+    const name = body.name || null;
 
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();

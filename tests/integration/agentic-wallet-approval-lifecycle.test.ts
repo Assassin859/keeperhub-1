@@ -96,8 +96,7 @@ const {
   mockGetApprovalRequest,
   mockResolveApprovalRequest,
   mockCheckApprovalForResolve,
-  mockRequireMfaEnrolled,
-  mockRequireDualFactor,
+  mockAuthorizeAction,
 } = vi.hoisted(() => {
   const store = new Map<string, unknown>();
   return {
@@ -113,8 +112,7 @@ const {
     mockGetApprovalRequest: vi.fn(),
     mockResolveApprovalRequest: vi.fn(),
     mockCheckApprovalForResolve: vi.fn(),
-    mockRequireMfaEnrolled: vi.fn(),
-    mockRequireDualFactor: vi.fn(),
+    mockAuthorizeAction: vi.fn(),
   };
 });
 
@@ -151,12 +149,10 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
-  requireMfaEnrolled: mockRequireMfaEnrolled,
-}));
-
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: mockRequireDualFactor,
+// The unified guard's internals are covered by tests/unit/authorize-action.test.ts;
+// mock it here so the lifecycle tests focus on approval/rejection behavior.
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: mockAuthorizeAction,
 }));
 
 // The `.where()` return value must support BOTH shapes: `.limit(1)` (used by
@@ -406,10 +402,12 @@ describe("agentic-wallet approval-request lifecycle", () => {
     mockLookupHmacSecret.mockReset();
     mockDbSelectLimit.mockReset();
     mockDbSelectWhereAwait.mockReset();
-    mockRequireMfaEnrolled.mockReset();
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockReset();
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockReset();
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: {},
+      accountKind: "wallet",
+    });
     // Default secret resolver: SUB_ORG -> HMAC_SECRET, OTHER_SUB_ORG -> OTHER_HMAC_SECRET.
     mockLookupHmacSecret.mockImplementation(async (subOrgId: string) => {
       if (subOrgId === SUB_ORG) {

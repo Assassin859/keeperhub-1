@@ -5,10 +5,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { getOrgContext } from "@/lib/middleware/org-context";
-import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -138,55 +138,22 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check if user is anonymous
-    const isAnonymous =
-      session.user.name === "Anonymous" ||
-      session.user.email?.startsWith("temp-");
-
-    if (isAnonymous) {
-      return NextResponse.json(
-        { error: "Anonymous users cannot create API keys" },
-        { status: 403 }
-      );
-    }
-
-    // Creating an org API key mints a long-lived credential that
-    // bypasses session MFA forever afterward, so gate the act of
-    // minting with admin/owner role + MFA enrolled + step-up cleared.
-    // Once issued the key itself is not MFA-aware; the time to enforce
-    // is at creation.
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireAdminOrOwnerWithMfa(
-      session.user.id,
-      activeOrgId,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
-      );
-    }
-
-    // Parse request body
+    // Parse the body once: step-up codes plus the key fields used below.
     const body = await request.json().catch(() => ({}));
 
-    // Step-up challenge at mint time — minting a forever-bypass credential
-    // warrants a fresh proof of identity: dual factor (TOTP + email OTP) for
-    // email/TOTP accounts, a wallet signature (plus any opted-in factors) for
-    // wallet accounts. Symmetric with withdraw / export-key.
-    const stepUp = await requireStepUp({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "org_api_key_create",
-      code: typeof body.code === "string" ? body.code : undefined,
-      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
-      signature:
-        typeof body.signature === "string" ? body.signature : undefined,
+    // Minting an org API key creates a long-lived credential that bypasses
+    // session MFA forever, so gate it with admin role + a fresh step-up
+    // (dual-factor for email/OAuth, a wallet signature for wallet accounts).
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.orgApiKeyCreate,
+      roleFloor: "admin",
+      organizationId: activeOrgId,
+      body,
       headers: request.headers,
     });
-    if (!stepUp.ok) {
-      return stepUpErrorResponse(stepUp);
+    if (!authorized.ok) {
+      return authorized.response;
     }
     const name = body.name || null;
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;

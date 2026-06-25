@@ -5,9 +5,9 @@ import { db } from "@/lib/db";
 import { organizationApiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
-import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -44,39 +44,22 @@ export async function DELETE(
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireAdminOrOwnerWithMfa(
-      session.user.id,
-      activeOrgId,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
-      );
-    }
 
-    // Step-up at revoke time. Same rationale as the create leg: a stolen
-    // session must not rotate keys (revoke + mint elsewhere) without a fresh
-    // identity proof — dual factor for email/TOTP accounts, a wallet signature
-    // for wallet accounts.
     const body = (await request.json().catch(() => ({}))) as {
       code?: string;
       emailOtp?: string;
       signature?: string;
     };
-    const stepUp = await requireStepUp({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "org_api_key_revoke",
-      code: body.code,
-      emailOtp: body.emailOtp,
-      signature: body.signature,
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.orgApiKeyRevoke,
+      roleFloor: "admin",
+      organizationId: activeOrgId,
+      body,
       headers: request.headers,
     });
-    if (!stepUp.ok) {
-      return stepUpErrorResponse(stepUp);
+    if (!authorized.ok) {
+      return authorized.response;
     }
 
     // Revoke the key (soft delete) - only if it belongs to the organization

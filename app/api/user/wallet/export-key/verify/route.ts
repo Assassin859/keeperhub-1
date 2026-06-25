@@ -6,9 +6,9 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
-import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { exportKeyVerifySchema } from "@/lib/schemas/wallet";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
@@ -21,22 +21,14 @@ import { checkVerifyRateLimit } from "../_lib/rate-limit";
  * Exports a Turnkey wallet's private key in plaintext. Authorization
  * stack (every check must pass):
  *
- *   1. requireOwnerWithMfa  — org role = owner, users.two_factor_enabled
- *                              = true, sessions.requires_mfa = false.
- *   2. Wallet-creator check  — wallet.userId === session.user.id. The
- *                               TOTP secret belongs to the user, but the
- *                               wallet might have been created by a
- *                               different owner of the same org.
- *   3. Fresh TOTP challenge  — auth.api.verifyTOTP validates the code
- *                               the user just typed into the dialog.
- *                               This is the "step up at action time"
- *                               factor; passive session MFA is not
- *                               enough for an action that exfiltrates
- *                               signing material in plaintext.
- *
- * Replaces the previous wallet-inbox email-OTP factor. The old
- * /request endpoint that emailed a 6-digit code is gone; the UI now
- * prompts directly for a TOTP code from the user's authenticator.
+ *   1. authorizeAction — owner role floor, MFA enrolled, session step-up
+ *                        cleared, and action step-up challenge (TOTP + email
+ *                        for email/OAuth users; wallet signature for wallet
+ *                        accounts).
+ *   2. Wallet-creator check — wallet.userId === session.user.id. The TOTP
+ *                              secret belongs to the user, but the wallet
+ *                              might have been created by a different owner
+ *                              of the same org.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
@@ -53,19 +45,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { error: "No active organization" },
         { status: 400 }
-      );
-    }
-
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireOwnerWithMfa(
-      session.user.id,
-      activeOrgId,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
       );
     }
 
@@ -88,17 +67,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       return bodyValidation.response;
     }
     const body = bodyValidation.data;
-    const stepUp = await requireStepUp({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "wallet_export_key",
-      code: body.code,
-      emailOtp: body.emailOtp,
-      signature: body.signature,
+
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.walletExportKey,
+      roleFloor: "owner",
+      organizationId: activeOrgId,
+      body,
       headers: request.headers,
     });
-    if (!stepUp.ok) {
-      return stepUpErrorResponse(stepUp);
+    if (!authorized.ok) {
+      return authorized.response;
     }
 
     const wallets = await db

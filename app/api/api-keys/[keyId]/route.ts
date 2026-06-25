@@ -1,12 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
-import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
@@ -25,41 +24,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // User-scoped API keys (wfb_ prefix) aren't tied to an org so the
-    // owner-role gate doesn't apply; require step-up at revoke time. Wallet
-    // users authenticate by signature, so the TOTP-enrollment gate only
-    // applies to email/TOTP accounts. Symmetric with creation.
-    const isWallet = isWalletEmail(session.user.email);
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    if (!isWallet) {
-      const guard = await requireMfaEnrolled(
-        session.user.id,
-        sessionRow.requiresMfa === true
-      );
-      if (!guard.ok) {
-        return NextResponse.json(
-          { error: guard.error, code: guard.code },
-          { status: guard.status }
-        );
-      }
-    }
-
     const body = (await request.json().catch(() => ({}))) as {
       code?: string;
       emailOtp?: string;
       signature?: string;
     };
-    const stepUp = await requireStepUp({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "user_api_key_revoke",
-      code: body.code,
-      emailOtp: body.emailOtp,
-      signature: body.signature,
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.apiKeyRevoke,
+      roleFloor: "none",
+      body,
       headers: request.headers,
     });
-    if (!stepUp.ok) {
-      return stepUpErrorResponse(stepUp);
+    if (!authorized.ok) {
+      return authorized.response;
     }
 
     // Delete the key (only if it belongs to the user)
