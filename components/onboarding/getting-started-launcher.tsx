@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import { Check, ChevronDown, Sparkles, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/onboarding/getting-started-config";
 import { cn } from "@/lib/utils";
 import {
+  editorTourRequestedAtom,
   gettingStartedOpenAtom,
   pendingAiPromptAtom,
 } from "@/lib/workflow/store";
@@ -94,7 +95,11 @@ function StepRow({
   onChip: (prompt: string) => void;
 }): React.ReactElement {
   return (
-    <div className="flex gap-3 py-2">
+    <div
+      className="flex gap-3 py-2"
+      data-complete={complete}
+      data-testid={`gs-step-${step.key}`}
+    >
       <span
         className={cn(
           "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
@@ -149,10 +154,12 @@ function ExpandedCard({
   gs,
   onAction,
   onChip,
+  onTakeTour,
 }: {
   gs: GettingStarted;
   onAction: (action: StepAction, stepKey: string) => void;
   onChip: (prompt: string) => void;
+  onTakeTour: () => void;
 }): React.ReactElement {
   const branches = getBranches();
   const active = branches.find((b) => b.key === gs.branch) ?? branches[0];
@@ -162,11 +169,19 @@ function ExpandedCard({
   ).length;
 
   return (
-    <div className="w-80 overflow-hidden rounded-xl border bg-popover shadow-xl">
+    <div
+      className="w-80 overflow-hidden rounded-xl border bg-popover shadow-xl"
+      data-testid="gs-launcher-card"
+    >
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm">Get started</span>
-          <span className="text-muted-foreground text-xs">
+          <span
+            className="text-muted-foreground text-xs"
+            data-done={done}
+            data-testid="gs-progress"
+            data-total={total}
+          >
             {done} of {total}
           </span>
         </div>
@@ -219,8 +234,15 @@ function ExpandedCard({
         ))}
       </div>
 
-      <div className="border-t px-4 py-2 text-muted-foreground text-xs">
-        Reopen anytime from your account menu.
+      <div className="flex items-center justify-between border-t px-4 py-2 text-muted-foreground text-xs">
+        <span>Reopen anytime from your account menu.</span>
+        <button
+          className="font-medium text-foreground underline-offset-2 hover:underline"
+          onClick={onTakeTour}
+          type="button"
+        >
+          Take a tour
+        </button>
       </div>
     </div>
   );
@@ -233,6 +255,7 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   const { open } = useOverlay();
   const [, setPendingAiPrompt] = useAtom(pendingAiPromptAtom);
   const [forceOpen, setForceOpen] = useAtom(gettingStartedOpenAtom);
+  const requestTour = useSetAtom(editorTourRequestedAtom);
 
   // The user-menu "Getting started" entry flips this to reopen the launcher.
   useEffect(() => {
@@ -301,10 +324,16 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   return (
     <div className={cn("fixed bottom-4 z-50", anchor)}>
       {gs.state === "expanded" ? (
-        <ExpandedCard gs={gs} onAction={onAction} onChip={runAiPrompt} />
+        <ExpandedCard
+          gs={gs}
+          onAction={onAction}
+          onChip={runAiPrompt}
+          onTakeTour={() => requestTour(true)}
+        />
       ) : (
         <button
           className="flex items-center gap-2 rounded-full border bg-popover py-2 pr-4 pl-3 shadow-lg transition-colors hover:bg-muted"
+          data-testid="gs-launcher-pill"
           onClick={() => gs.setState("expanded")}
           type="button"
         >

@@ -123,7 +123,11 @@ export function MfaEnforcementSection({
             can continue.
           </p>
         </div>
-        <Switch checked={enforce} onCheckedChange={setEnforce} />
+        <Switch
+          checked={enforce}
+          data-testid="org-mfa-enforce-toggle"
+          onCheckedChange={setEnforce}
+        />
       </div>
 
       {enforce && (
@@ -142,6 +146,7 @@ export function MfaEnforcementSection({
               </div>
               <Switch
                 checked={factors.has(option.factor)}
+                data-testid={`org-mfa-factor-${option.factor}`}
                 onCheckedChange={(checked) =>
                   toggleFactor(option.factor, checked)
                 }
@@ -152,7 +157,12 @@ export function MfaEnforcementSection({
       )}
 
       <div className="flex justify-end">
-        <Button disabled={saving} onClick={save} size="sm">
+        <Button
+          data-testid="org-mfa-save"
+          disabled={saving}
+          onClick={save}
+          size="sm"
+        >
           {saving ? <Spinner className="size-4" /> : "Save"}
         </Button>
       </div>

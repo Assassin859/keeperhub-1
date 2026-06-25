@@ -110,6 +110,7 @@ export function ConnectButton(): React.ReactElement {
                 {wallets.map((wallet) => (
                   <button
                     className="flex items-center gap-3 rounded-lg border border-border p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted disabled:opacity-60"
+                    data-testid={`connect-wallet-${wallet.info.rdns}`}
                     disabled={connecting !== null}
                     key={wallet.info.rdns}
                     onClick={() => handleConnect(wallet)}
