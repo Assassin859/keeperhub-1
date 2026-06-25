@@ -407,6 +407,6 @@ export async function getCurrentNonce(
   const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
   return await rpcManager.executeWithFailover(
     (provider) => provider.getTransactionCount(walletAddress, "pending"),
-    "write"
+    "read"
   );
 }
