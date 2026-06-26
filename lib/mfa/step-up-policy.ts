@@ -27,6 +27,7 @@ export const STEP_UP_ACTIONS = {
   auditExport: "audit_export",
   agenticWalletApprove: "agentic_wallet_approve",
   agenticWalletReject: "agentic_wallet_reject",
+  sessionRevoke: "session_revoke",
 } as const;
 
 /** Per-action extra factors a wallet user opted into (beyond the base wallet

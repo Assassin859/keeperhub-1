@@ -1,11 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RequestBody = {
@@ -23,11 +23,10 @@ type RequestBody = {
  * they no longer trust) without affecting the device they're
  * currently using.
  *
- * Gated by `requireDualFactor` so a stolen session cookie alone
- * cannot weaponise this endpoint to nuke a user's other devices.
- * The current session cannot be revoked here; the regular sign-out
- * flow handles that and leaves no surprises about how the dialog
- * closes.
+ * Gated by step-up so a stolen session cookie alone cannot weaponise
+ * this endpoint to nuke a user's other devices. The current session
+ * cannot be revoked here; the regular sign-out flow handles that and
+ * leaves no surprises about how the dialog closes.
  */
 export async function POST(
   request: Request,
@@ -36,12 +35,6 @@ export async function POST(
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (isAnonymousUserShape(session.user)) {
-    return NextResponse.json(
-      { error: "Sign in with a real account" },
-      { status: 403 }
-    );
   }
 
   const { sessionId } = await params;
@@ -65,23 +58,16 @@ export async function POST(
   }
 
   const body = (await request.json().catch(() => ({}))) as RequestBody;
-  const code = typeof body.code === "string" ? body.code.trim() : "";
-  const emailOtp =
-    typeof body.emailOtp === "string" ? body.emailOtp.trim() : "";
-  const signature =
-    typeof body.signature === "string" ? body.signature.trim() : undefined;
 
-  const stepUp = await requireStepUp({
-    userId: session.user.id,
-    email: session.user.email,
-    action: "session_revoke",
-    code,
-    emailOtp,
-    signature,
+  const authorized = await authorizeAction({
+    session,
+    action: STEP_UP_ACTIONS.sessionRevoke,
+    roleFloor: "none",
+    body,
     headers: request.headers,
   });
-  if (!stepUp.ok) {
-    return stepUpErrorResponse(stepUp);
+  if (!authorized.ok) {
+    return authorized.response;
   }
 
   try {
