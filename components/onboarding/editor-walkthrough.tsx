@@ -585,19 +585,13 @@ export function EditorWalkthrough(): null {
 
     const nextId = steps[index + 1]?.id;
 
-    // Entering the field steps: bring the node into focus (center it, open the
-    // properties tab) so the Network / Address fields the cards point at are on
-    // screen. The user fills them in themselves.
+    // Entering the network field step: open the Properties tab so the Network /
+    // Address fields the cards point at are on screen. The balance action is
+    // already selected from the pick step, so its config is what the panel
+    // shows. Do NOT pan the canvas here: these steps point at the right-hand
+    // panel, and a canvas pan drags the spotlight onto the node instead.
     if (nextId === "select-network") {
-      const action = nodesRef.current.find(
-        (node) =>
-          node.data.type === "action" &&
-          node.data.config?.actionType === BALANCE_ACTION
-      );
-      if (action) {
-        setActiveTab("properties");
-        setCenterNode(action.id);
-      }
+      setActiveTab("properties");
     }
 
     // Entering results: surface the run output in the Runs tab.
@@ -606,24 +600,27 @@ export function EditorWalkthrough(): null {
     }
 
     const nextStep = steps[index + 1];
-    instance.moveNext();
 
     // The next step's target can render a tick later (the config form, with the
-    // Network / Address fields, appears just after the action is added). If it
-    // isn't on screen yet, wait for it and re-anchor the spotlight so the
-    // popover doesn't float detached.
+    // Network / Address fields, appears just after the Properties tab is shown).
+    // Advancing before it exists makes the driver float a detached popover, so
+    // wait for the element and only then move on -- the current card stays put
+    // until its successor has something real to point at.
     const signal = abortRef.current?.signal;
     if (nextStep && signal && !document.querySelector(nextStep.selector)) {
       waitForAnchor(nextStep.selector, signal)
         .then((anchor) => {
           if (anchor) {
-            driverRef.current?.refresh();
+            driverRef.current?.moveNext();
           }
         })
         .catch(() => {
-          // Anchor never appeared; leave the spotlight where it is.
+          driverRef.current?.moveNext();
         });
+      return;
     }
+
+    instance.moveNext();
   }, [
     selectedActionType,
     selectedNetwork,
@@ -631,7 +628,6 @@ export function EditorWalkthrough(): null {
     isExecuting,
     setNodeData,
     setActiveTab,
-    setCenterNode,
   ]);
 
   // Tear down a running tour if the controller unmounts.
