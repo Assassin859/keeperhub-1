@@ -49,9 +49,10 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
-      - name: Connect to EKS via SSM jump
+      - name: Connect to EKS
         uses: ./.github/actions/eks-connect
         with:
+          instance-id: ${{ vars.TO_EKS_CONNECT_INSTANCE_ID }}
           cluster-name: ${{ env.CLUSTER_NAME }}
           region: ${{ env.REGION }}
 
