@@ -1385,10 +1385,13 @@ jobs:
       - name: Seed load-test users
         env:
           LOAD_TEST_USER_PASSWORD: ${{ secrets.LOAD_TEST_USER_PASSWORD }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           set -euo pipefail
-          IMAGE_TAG=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
+          # Derive the migrator image from the running deployment initContainer rather
+          # than the HEAD SHA — the image may have been built on an earlier commit if
+          # only CI/test files changed and build-images was skipped this run.
+          MIGRATOR_IMAGE=$(kubectl get deployment keeperhub-pr-${PR_NUMBER}-common -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.template.spec.initContainers[0].image}')
           DB_PASSWORD=$(kubectl get secret keeperhub-pr-${PR_NUMBER}-db-credentials -n "${NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)
           ENCODED_PASSWORD=$(DB_PASSWORD="${DB_PASSWORD}" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
           DB_URL="postgresql://keeperhub:${ENCODED_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.${NAMESPACE}.svc.cluster.local:5432/keeperhub"
@@ -1406,7 +1409,7 @@ jobs:
                 restartPolicy: Never
                 containers:
                   - name: load-test-seed
-                    image: ${ECR_REGISTRY}/keeperhub-staging:migrator-${IMAGE_TAG}
+                    image: ${MIGRATOR_IMAGE}
                     command: ["/bin/sh", "-c"]
                     args:
                       - 'pnpm tsx scripts/seed-load-test-users.ts'
