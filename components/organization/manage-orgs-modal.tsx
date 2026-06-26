@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   Check,
+  Copy,
   LogOut,
   Mail,
   Pencil,
@@ -371,22 +372,40 @@ function MembersListContent({
               </>
             )}
             {entry.kind === "invite" && canInvite && !entry.expired && (
-              <Button
-                disabled={cancellingInvite === entry.id}
-                onClick={() =>
-                  setPendingAction({
-                    type: "revoke",
-                    id: entry.id,
-                    email: entry.email,
-                    role: entry.role,
-                  })
-                }
-                size="sm"
-                variant="ghost"
-              >
-                <X className="mr-1 h-4 w-4" />
-                Revoke Invitation
-              </Button>
+              <>
+                <Button
+                  onClick={async () => {
+                    const link = `${window.location.origin}/accept-invite/${entry.id}`;
+                    try {
+                      await navigator.clipboard.writeText(link);
+                      toast.success("Invite link copied");
+                    } catch {
+                      toast.error("Could not copy the invite link");
+                    }
+                  }}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Copy className="mr-1 h-4 w-4" />
+                  Copy link
+                </Button>
+                <Button
+                  disabled={cancellingInvite === entry.id}
+                  onClick={() =>
+                    setPendingAction({
+                      type: "revoke",
+                      id: entry.id,
+                      email: entry.email,
+                      role: entry.role,
+                    })
+                  }
+                  size="sm"
+                  variant="ghost"
+                >
+                  <X className="mr-1 h-4 w-4" />
+                  Revoke Invitation
+                </Button>
+              </>
             )}
             {entry.kind === "member" &&
               canInvite &&
