@@ -148,6 +148,14 @@ jobs:
 
           echo "$SUMMARY"
 
+          # Defensive guard against Discord's embed description limit (4096).
+          # The aggregate message is tiny today, but keep this so a future edit
+          # that adds detail cannot produce a 400 from an over-length payload.
+          MAX_DESC_LENGTH=4000
+          if [ ${#SUMMARY} -gt $MAX_DESC_LENGTH ]; then
+            SUMMARY="${SUMMARY:0:$MAX_DESC_LENGTH}"
+          fi
+
           if [ -n "${DISCORD_WEBHOOK:-}" ]; then
             jq -n \
               --arg title "Post-deploy verification failed" \
