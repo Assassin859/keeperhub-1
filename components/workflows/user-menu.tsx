@@ -3,6 +3,7 @@
 import { useSetAtom } from "jotai";
 import {
   Compass,
+  Copy,
   CreditCard,
   FolderTree,
   Key,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 import { ConnectButton } from "@/components/auth/connect-button";
 import {
   isAuthFlowInProgress,
@@ -36,7 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { truncateAddress } from "@/lib/address-utils";
+import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
@@ -107,9 +109,26 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
   // Wallet accounts carry a synthetic `<address>@wallet...` email; show the
   // truncated address instead so it doesn't overflow the menu.
   const email = session?.user?.email ?? "";
-  const accountIdentifier = isWalletEmail(email)
-    ? truncateAddress(email.split("@")[0])
+  // The full sign-in wallet address, checksummed, copyable from the menu
+  // (wallet users only). Checksum before truncating so the shown short form
+  // carries the correct EIP-55 casing too.
+  const signinAddress = isWalletEmail(email)
+    ? toChecksumAddress(email.split("@")[0])
+    : null;
+  const accountIdentifier = signinAddress
+    ? truncateAddress(signinAddress)
     : email;
+  const copySigninAddress = async (): Promise<void> => {
+    if (!signinAddress) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(signinAddress);
+      toast.success("Address copied");
+    } catch {
+      toast.error("Could not copy address");
+    }
+  };
   const { open: openOverlay } = useOverlay();
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const { organization } = useOrganization();
@@ -187,9 +206,24 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
               <p className="truncate font-medium text-sm leading-none">
                 {session?.user?.name || "User"}
               </p>
-              <p className="truncate text-muted-foreground text-xs leading-none">
-                {accountIdentifier}
-              </p>
+              {signinAddress ? (
+                <button
+                  aria-label="Copy address"
+                  className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs leading-none transition-colors hover:text-foreground"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    copySigninAddress();
+                  }}
+                  type="button"
+                >
+                  <span className="truncate">{accountIdentifier}</span>
+                  <Copy aria-hidden="true" className="size-3 shrink-0" />
+                </button>
+              ) : (
+                <p className="truncate text-muted-foreground text-xs leading-none">
+                  {accountIdentifier}
+                </p>
+              )}
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
