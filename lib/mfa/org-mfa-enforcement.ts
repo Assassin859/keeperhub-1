@@ -1,10 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import {
-  organization,
-  twoFactor as twoFactorTable,
-  users,
-} from "@/lib/db/schema";
+import { organization, users } from "@/lib/db/schema";
 import type { StepUpFactor } from "@/lib/mfa/step-up-policy";
 
 /**
@@ -82,19 +78,20 @@ export async function getOrgMfaEnforcement(
 export async function getEnrolledFactors(
   userId: string
 ): Promise<{ totp: boolean; email: boolean }> {
-  const [[tf], [user]] = await Promise.all([
-    db
-      .select({ id: twoFactorTable.id })
-      .from(twoFactorTable)
-      .where(eq(twoFactorTable.userId, userId))
-      .limit(1),
-    db
-      .select({ stepUpEmail: users.stepUpEmail })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1),
-  ]);
-  return { totp: Boolean(tf), email: Boolean(user?.stepUpEmail) };
+  const [user] = await db
+    .select({
+      stepUpEmail: users.stepUpEmail,
+      twoFactorEnabled: users.twoFactorEnabled,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  // TOTP counts as enrolled only once confirmed (twoFactorEnabled), not when a
+  // setup row exists but the code was never verified.
+  return {
+    totp: user?.twoFactorEnabled === true,
+    email: Boolean(user?.stepUpEmail),
+  };
 }
 
 /** A member satisfies enforcement when they have at least one of the org's

@@ -3,11 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
-import {
-  twoFactor as twoFactorTable,
-  users,
-  walletAddress,
-} from "@/lib/db/schema";
+import { users, walletAddress } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   parseStepUpPolicy,
@@ -24,21 +20,23 @@ async function loadEnrolled(
   userId: string,
   stepUpEmail: string | null
 ): Promise<EnrolledFactors> {
-  const [[wallet], [tf]] = await Promise.all([
+  const [[wallet], [user]] = await Promise.all([
     db
       .select({ id: walletAddress.id })
       .from(walletAddress)
       .where(eq(walletAddress.userId, userId))
       .limit(1),
     db
-      .select({ id: twoFactorTable.id })
-      .from(twoFactorTable)
-      .where(eq(twoFactorTable.userId, userId))
+      .select({ twoFactorEnabled: users.twoFactorEnabled })
+      .from(users)
+      .where(eq(users.id, userId))
       .limit(1),
   ]);
   return {
     wallet: Boolean(wallet),
-    totp: Boolean(tf),
+    // TOTP counts as enrolled only once confirmed (twoFactorEnabled), not when
+    // a setup row exists but the code was never verified.
+    totp: user?.twoFactorEnabled === true,
     email: Boolean(stepUpEmail),
   };
 }
