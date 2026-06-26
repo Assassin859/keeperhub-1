@@ -4,6 +4,7 @@ import "driver.js/dist/driver.css";
 import type { Alignment, Driver, Side } from "driver.js";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
@@ -25,6 +26,9 @@ import {
 
 const SEEN_KEY = "keeperhub-editor-tour-seen";
 const TOUR_WORKFLOW_NAME = "Workflow Editor Tour";
+// Sonner toast id for the "preparing the tour" loader shown during the async
+// startup (wallet provisioning, anchor waits, driver.js dynamic import).
+const TOUR_TOAST = "kh-tour-loading";
 // The action grid stores an action's registry id (computeActionId = plugin/slug)
 // in config.actionType, NOT its human label - so we match on the id here while
 // the popover copy still says "Get Native Token Balance".
@@ -295,98 +299,106 @@ export function EditorWalkthrough(): null {
     abortRef.current = controller;
 
     const launch = async (): Promise<void> => {
-      const context = await resolveTourContext(controller.signal);
-      if (controller.signal.aborted) {
-        stateRef.current = "idle";
-        return;
-      }
-      addressRef.current = context.address;
-      let hasWallet = context.hasWallet;
-
-      // No wallet yet: an admin can create one via the standalone Create Wallet
-      // sub-path before we continue. Non-admins keep the public fallback address
-      // (they can't provision a wallet), so the tour never dead-ends.
-      if (!hasWallet && (await canCreateWallet())) {
-        const result = await runCreateWalletPath({
-          signal: controller.signal,
-          closeOverlays: () => closeAllRef.current(),
-        });
+      toast.loading("Preparing your tour", { id: TOUR_TOAST });
+      try {
+        const context = await resolveTourContext(controller.signal);
         if (controller.signal.aborted) {
           stateRef.current = "idle";
           return;
         }
-        if (result === "done") {
-          hasWallet = true;
-          addressRef.current = await resolveWalletAddress(
-            controller.signal,
-            addressRef.current
-          );
+        addressRef.current = context.address;
+        let hasWallet = context.hasWallet;
+
+        // No wallet yet: an admin can create one via the standalone Create Wallet
+        // sub-path before we continue. Non-admins keep the public fallback address
+        // (they can't provision a wallet), so the tour never dead-ends.
+        if (!hasWallet && (await canCreateWallet())) {
+          const result = await runCreateWalletPath({
+            signal: controller.signal,
+            closeOverlays: () => closeAllRef.current(),
+          });
+          if (controller.signal.aborted) {
+            stateRef.current = "idle";
+            return;
+          }
+          if (result === "done") {
+            hasWallet = true;
+            addressRef.current = await resolveWalletAddress(
+              controller.signal,
+              addressRef.current
+            );
+          }
         }
-      }
 
-      const steps = buildSteps(hasWallet);
-      stepsRef.current = steps;
+        const steps = buildSteps(hasWallet);
+        stepsRef.current = steps;
 
-      // Name the tour workflow (display + persist; best-effort).
-      setWorkflowName(TOUR_WORKFLOW_NAME);
-      api.workflow
-        .update(currentWorkflowId, { name: TOUR_WORKFLOW_NAME })
-        .catch(() => {
-          // Non-fatal: the tour still works with the default name.
+        // Name the tour workflow (display + persist; best-effort).
+        setWorkflowName(TOUR_WORKFLOW_NAME);
+        api.workflow
+          .update(currentWorkflowId, { name: TOUR_WORKFLOW_NAME })
+          .catch(() => {
+            // Non-fatal: the tour still works with the default name.
+          });
+
+        // Center the trigger node so the opening spotlight is well-framed.
+        const triggerNode = nodesRef.current.find(
+          (node) => node.data.type === "trigger"
+        );
+        if (triggerNode) {
+          setCenterNode(triggerNode.id);
+        }
+
+        const anchor = await waitForAnchor(
+          steps[0].selector,
+          controller.signal
+        );
+        if (controller.signal.aborted || !anchor) {
+          stateRef.current = "idle";
+          return;
+        }
+
+        // Let the center animation settle so the spotlight aligns to the node.
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        if (controller.signal.aborted) {
+          stateRef.current = "idle";
+          return;
+        }
+
+        const { driver } = await import("driver.js");
+        if (controller.signal.aborted) {
+          stateRef.current = "idle";
+          return;
+        }
+
+        const instance = driver({
+          allowClose: true,
+          showProgress: false,
+          doneBtnText: "Finish",
+          nextBtnText: "Next",
+          onDestroyed: () => {
+            driverRef.current = null;
+            stateRef.current = "idle";
+            markSeen();
+          },
+          steps: steps.map((step) => ({
+            element: step.selector,
+            popover: {
+              title: step.popover.title,
+              description: step.popover.description,
+              side: step.popover.side,
+              align: step.popover.align,
+              showButtons: buttonsFor(step.mode),
+            },
+          })),
         });
 
-      // Center the trigger node so the opening spotlight is well-framed.
-      const triggerNode = nodesRef.current.find(
-        (node) => node.data.type === "trigger"
-      );
-      if (triggerNode) {
-        setCenterNode(triggerNode.id);
+        driverRef.current = instance;
+        stateRef.current = "running";
+        instance.drive();
+      } finally {
+        toast.dismiss(TOUR_TOAST);
       }
-
-      const anchor = await waitForAnchor(steps[0].selector, controller.signal);
-      if (controller.signal.aborted || !anchor) {
-        stateRef.current = "idle";
-        return;
-      }
-
-      // Let the center animation settle so the spotlight aligns to the node.
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      if (controller.signal.aborted) {
-        stateRef.current = "idle";
-        return;
-      }
-
-      const { driver } = await import("driver.js");
-      if (controller.signal.aborted) {
-        stateRef.current = "idle";
-        return;
-      }
-
-      const instance = driver({
-        allowClose: true,
-        showProgress: false,
-        doneBtnText: "Finish",
-        nextBtnText: "Next",
-        onDestroyed: () => {
-          driverRef.current = null;
-          stateRef.current = "idle";
-          markSeen();
-        },
-        steps: steps.map((step) => ({
-          element: step.selector,
-          popover: {
-            title: step.popover.title,
-            description: step.popover.description,
-            side: step.popover.side,
-            align: step.popover.align,
-            showButtons: buttonsFor(step.mode),
-          },
-        })),
-      });
-
-      driverRef.current = instance;
-      stateRef.current = "running";
-      instance.drive();
     };
 
     launch().catch(() => {
