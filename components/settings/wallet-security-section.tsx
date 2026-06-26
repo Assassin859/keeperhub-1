@@ -201,6 +201,7 @@ export function WalletSecuritySection(): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [addEmailOpen, setAddEmailOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/user/step-up/policy");
@@ -296,6 +297,18 @@ export function WalletSecuritySection(): React.ReactElement {
     );
   }
 
+  const enrolledData = data;
+  const noFactors = !(enrolledData.enrolled.totp || enrolledData.enrolled.email);
+
+  // A factor only counts as "required" when it is both selected and enrolled --
+  // an unenrolled factor cannot be enforced, so it must not read as active.
+  const requiredCount = CONFIGURABLE_ACTIONS.filter(({ action }) => {
+    const selected = new Set(effectiveFactors(enrolledData.policy, action));
+    return (["totp", "email"] as const).some(
+      (factor) => enrolledData.enrolled[factor] && selected.has(factor)
+    );
+  }).length;
+
   return (
     <div className="space-y-6">
       <div>
@@ -351,45 +364,74 @@ export function WalletSecuritySection(): React.ReactElement {
         </CardContent>
       </Card>
 
-      <div className="space-y-2">
-        <h3 className="font-medium text-sm">Require for specific actions</h3>
-        <p className="text-muted-foreground text-sm">
-          Turning a factor on is instant; turning one off asks you to sign
-          first.
-        </p>
-        <div className="space-y-2">
-          {CONFIGURABLE_ACTIONS.map(({ action, label }) => {
-            const selected = new Set(effectiveFactors(data.policy, action));
-            return (
-              <Card className="border py-0 shadow-none" key={action}>
-                <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
-                  <span className="font-medium text-sm">{label}</span>
-                  <div className="flex items-center gap-5">
-                    {(["totp", "email"] as const).map((factor) => {
-                      const enrolled = data.enrolled[factor];
-                      const active = selected.has(factor);
-                      return (
-                        <div className="flex items-center gap-2" key={factor}>
-                          <span className="text-muted-foreground text-xs">
-                            {FACTOR_LABELS[factor]}
-                          </span>
-                          <Switch
-                            checked={active}
-                            disabled={busy || !enrolled}
-                            onCheckedChange={() =>
-                              toggleActionFactor(action, factor)
-                            }
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
+      <Card className="border py-0 shadow-none">
+        <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+          <div>
+            <p className="font-medium text-sm">Require for specific actions</p>
+            <p className="text-muted-foreground text-xs">
+              {requiredCount > 0
+                ? `Extra factor required on ${requiredCount} action${
+                    requiredCount === 1 ? "" : "s"
+                  }.`
+                : "Add an extra factor to sensitive actions."}
+            </p>
+          </div>
+          <Button
+            disabled={noFactors}
+            onClick={() => setActionsOpen(true)}
+            size="sm"
+            variant="outline"
+          >
+            Configure
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Dialog onOpenChange={setActionsOpen} open={actionsOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Require factors per action</DialogTitle>
+            <DialogDescription>
+              Your wallet signature always applies. Turning a factor on is
+              instant; turning one off asks you to sign first.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="-mr-2 max-h-[60vh] space-y-2 overflow-y-auto pr-2">
+            {CONFIGURABLE_ACTIONS.map(({ action, label }) => {
+              const selected = new Set(effectiveFactors(data.policy, action));
+              return (
+                <Card className="border py-0 shadow-none" key={action}>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-4 p-3">
+                    <span className="font-medium text-sm">{label}</span>
+                    <div className="flex items-center gap-5">
+                      {(["totp", "email"] as const).map((factor) => {
+                        const enrolled = data.enrolled[factor];
+                        // Only show on when enrolled: an unenrolled factor is
+                        // never enforced, so a green toggle would be a lie.
+                        const active = enrolled && selected.has(factor);
+                        return (
+                          <div className="flex items-center gap-2" key={factor}>
+                            <span className="text-muted-foreground text-xs">
+                              {FACTOR_LABELS[factor]}
+                            </span>
+                            <Switch
+                              checked={active}
+                              disabled={busy || !enrolled}
+                              onCheckedChange={() =>
+                                toggleActionFactor(action, factor)
+                              }
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <TotpSetupDialog
         onEnrolled={load}
