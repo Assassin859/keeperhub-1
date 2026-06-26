@@ -50,6 +50,7 @@ import {
 } from "@/lib/db/schema";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn } from "@/lib/logging";
+import { MANAGED_ORG_SLUGS as MANAGED_ORG_SLUGS_SOURCE } from "@/lib/orgs/managed-clients";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
@@ -59,13 +60,12 @@ import type { BillingStatus } from "./types";
 // workflows still produce a series rather than silently dropping increments.
 export const ANONYMOUS_ORG_SLUG = "_anonymous";
 
-// Org slugs for the managed clients (Sky, Ajna) whose per-workflow error series
-// power the managed-client user-error alerts. The per-workflow gauge is scoped
-// to these slugs so `workflow_id` never becomes an unbounded label across the
-// whole user base — only managed workflows that have errored emit a series.
-// Mirrors `local.managed_org_slugs_regex` in the infra Grafana alert config;
-// adding a managed org requires updating both lists.
-export const MANAGED_ORG_SLUGS = ["techops-services", "ajna"] as const;
+// Re-exported from the dependency-free source of truth so the metrics scraper,
+// the post-deploy verification route, and scripts all read the same list. The
+// per-workflow error gauge is scoped to these slugs so `workflow_id` never
+// becomes an unbounded label across the whole user base — only managed
+// workflows that have errored emit a series.
+export const MANAGED_ORG_SLUGS = MANAGED_ORG_SLUGS_SOURCE;
 
 // Histogram bucket boundaries in milliseconds (must match prometheus.ts)
 const WORKFLOW_DURATION_BUCKETS = [

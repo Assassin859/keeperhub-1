@@ -1,0 +1,176 @@
+# Type: standalone | Triggered by the CI Pipeline finishing successfully.
+#
+# This is a SEPARATE pipeline from the deploy. It fires only after the entire
+# "CI Pipeline" run (build -> e2e -> deploy -> release -> docs-sync) completes
+# with conclusion == success on prod -- not after any single step. It then
+# verifies that managed + enterprise orgs are executing workflows correctly on
+# the just-shipped build.
+#
+# It runs INSIDE the cluster: the /api/internal/* routes are HMAC-authed and
+# WAF-blocked through the public hostname, so it signs the request the same way
+# deploy/scripts/digest-cron.sh does and curls the in-pod service URL via a
+# one-shot pod -- mirroring the deploy health check.
+name: post-deploy-verification
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  id-token: write
+
+# One verification per target at a time. cancel-in-progress is false so a second
+# pipeline's verification queues rather than killing an in-flight check.
+concurrency:
+  group: post-deploy-verification-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # Only when the whole CI Pipeline went green on prod. A failed/cancelled CI
+    # run, or a successful run on any other branch, is skipped entirely.
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'prod'
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      REGION: ${{ vars.TO_REGION }}
+      CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
+      NAMESPACE: keeperhub
+      SERVICE_NAME: keeperhub
+      SSM_ENV_PREFIX: techops-prod
+      # Window and thresholds the verification reads recent executions against.
+      # An org is flagged when it has any system_error, or when it ran at least
+      # MIN_EXECUTIONS and its error rate exceeds MAX_ERROR_RATE over the window.
+      LOOKBACK_MINUTES: "60"
+      MIN_EXECUTIONS: "1"
+      MAX_ERROR_RATE: "0.5"
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${REGION}"
+
+      - name: Fetch internal-service HMAC secret
+        run: |
+          SECRET=$(aws ssm get-parameter \
+            --name "/eks/${SSM_ENV_PREFIX}/keeperhub/internal-service-hmac-secret" \
+            --with-decryption --query "Parameter.Value" --output text \
+            --region "${REGION}")
+          echo "::add-mask::$SECRET"
+          echo "INTERNAL_SERVICE_HMAC_SECRET=$SECRET" >> "$GITHUB_ENV"
+
+      - name: Run post-deploy verification (in-cluster)
+        id: verify
+        run: |
+          set -euo pipefail
+
+          CALLER="scheduler"
+          METHOD="GET"
+          PATHNAME="/api/internal/post-deploy-verification"
+          QUERY="lookbackMinutes=${LOOKBACK_MINUTES}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
+          TIMESTAMP=$(date +%s)
+
+          # The verifier signs over url.pathname only (no query string), so the
+          # thresholds ride in the query without affecting the signature.
+          BODY_DIGEST=$(printf '' | openssl dgst -sha256 | awk '{print $2}')
+          SIGNING_STRING=$(printf '%s\n%s\n%s\n%s\n%s' "$METHOD" "$PATHNAME" "$CALLER" "$BODY_DIGEST" "$TIMESTAMP")
+          SIGNATURE=$(printf '%s' "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$INTERNAL_SERVICE_HMAC_SECRET" | awk '{print $2}')
+
+          URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?${QUERY}"
+          echo "Verifying ${PATHNAME} over a ${LOOKBACK_MINUTES}m window (in-cluster)..."
+
+          # The secret never enters the pod -- only the precomputed signature does.
+          RESPONSE=$(kubectl run "post-deploy-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --namespace "${NAMESPACE}" \
+            --restart=Never \
+            --attach \
+            --rm \
+            --quiet \
+            --image=curlimages/curl:8.11.0 \
+            --env="URL=${URL}" \
+            --env="CALLER=${CALLER}" \
+            --env="TIMESTAMP=${TIMESTAMP}" \
+            --env="SIGNATURE=${SIGNATURE}" \
+            --command -- sh -c '
+              curl -sS --max-time 30 \
+                -H "X-KH-Caller: ${CALLER}" \
+                -H "X-KH-Timestamp: ${TIMESTAMP}" \
+                -H "X-KH-Signature: ${SIGNATURE}" \
+                "$URL"
+            ')
+
+          echo "$RESPONSE" > /tmp/verification.json
+
+          # This is a PUBLIC repo: Actions logs are world-readable. Surface only
+          # non-identifying aggregates here. Per-org slugs, names, and sample
+          # error text stay in the app's internal logs (Loki) -- never printed to
+          # CI or sent to Discord. The raw endpoint error (which could carry
+          # sensitive detail) is also never echoed.
+          OK=$(jq -r '.ok // false' /tmp/verification.json 2>/dev/null || echo false)
+          CHECKED=$(jq -r '.checkedOrgs // "?"' /tmp/verification.json 2>/dev/null || echo "?")
+          PROBLEMS=$(jq -r '.problemCount // "?"' /tmp/verification.json 2>/dev/null || echo "?")
+          echo "Verification: ok=${OK}, checkedOrgs=${CHECKED}, problemCount=${PROBLEMS}"
+
+          {
+            echo "ok=$OK"
+            echo "checked=$CHECKED"
+            echo "problems=$PROBLEMS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Alert and fail on verification problems
+        if: always() && steps.verify.outputs.ok != 'true'
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_DEPLOY_ALERTS }}
+          CHECKED: ${{ steps.verify.outputs.checked }}
+          PROBLEMS: ${{ steps.verify.outputs.problems }}
+        run: |
+          REPO_URL="https://github.com/${{ github.repository }}"
+          RUN_URL="${REPO_URL}/actions/runs/${{ github.run_id }}"
+
+          # Aggregate-only message. No org slugs/names/error text -- those live in
+          # internal logs (Loki: "Post-deploy verification flagged ..."). Safe to
+          # post to a chat channel without leaking customer data.
+          if [ -n "${PROBLEMS:-}" ] && [ "${PROBLEMS}" != "?" ]; then
+            SUMMARY="Flagged ${PROBLEMS} of ${CHECKED} managed/enterprise org(s) erroring on the new build. Details are in internal logs (search: post-deploy verification flagged)."
+          else
+            SUMMARY="Post-deploy verification could not complete. See the Actions run and internal logs."
+          fi
+
+          echo "$SUMMARY"
+
+          if [ -n "${DISCORD_WEBHOOK:-}" ]; then
+            jq -n \
+              --arg title "Post-deploy verification failed" \
+              --arg url "$RUN_URL" \
+              --arg desc "$SUMMARY" \
+              '{
+                username: "KeeperHub Deploy Verifier",
+                embeds: [{
+                  title: $title,
+                  url: $url,
+                  description: $desc,
+                  color: 15548997
+                }]
+              }' > /tmp/discord-payload.json
+
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Content-Type: application/json" \
+              -d @/tmp/discord-payload.json \
+              "$DISCORD_WEBHOOK")
+            echo "Discord notification HTTP ${HTTP_STATUS}"
+          else
+            echo "DISCORD_WEBHOOK_DEPLOY_ALERTS not set; skipping Discord notification (failure still surfaces via the red job and internal logs)."
+          fi
+
+          echo "::error::Post-deploy verification flagged managed/enterprise org errors (count only; see internal logs for specifics)."
+          exit 1
