@@ -240,11 +240,23 @@ async function verifyWalletSignature(
   } catch {
     return false;
   }
-  if (!isAddressEqual(recovered, walletAddressValue as `0x${string}`)) {
-    return false;
-  }
-  await db.delete(verifications).where(eq(verifications.id, row.id));
-  return true;
+  return isAddressEqual(recovered, walletAddressValue as `0x${string}`);
+}
+
+async function consumeWalletNonce(
+  userId: string,
+  action: string
+): Promise<boolean> {
+  const deleted = await db
+    .delete(verifications)
+    .where(
+      and(
+        eq(verifications.identifier, nonceIdentifier(userId, action)),
+        gt(verifications.expiresAt, new Date())
+      )
+    )
+    .returning({ id: verifications.id });
+  return deleted.length > 0;
 }
 
 async function verifyEmailOtp(
@@ -383,7 +395,7 @@ async function requireWalletStepUp(args: {
     };
   }
 
-  // Verify every required factor; all must pass.
+  // Verify every required factor; all must pass before consuming the nonce.
   if (needWallet) {
     const ok = await verifyWalletSignature(
       userId,
@@ -422,6 +434,20 @@ async function requireWalletStepUp(args: {
         status: 401,
         error: "Invalid email code",
         code: "email_code_invalid",
+      };
+    }
+  }
+
+  // All factors verified. Atomically consume the wallet nonce via
+  // DELETE...RETURNING so concurrent requests cannot double-succeed.
+  if (needWallet) {
+    const consumed = await consumeWalletNonce(userId, action);
+    if (!consumed) {
+      return {
+        ok: false,
+        status: 401,
+        error: "Invalid wallet signature.",
+        code: "wallet_signature_invalid",
       };
     }
   }
