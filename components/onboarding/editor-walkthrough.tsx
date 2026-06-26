@@ -430,6 +430,35 @@ export function EditorWalkthrough(): null {
       return;
     }
     const step = steps[index];
+
+    // Recovery: on the pick step, adding a different action unmounts the grid
+    // and breaks the spotlight, leaving the tour stuck. Clear the wrong action
+    // so the grid returns, nudge the user to the right one, and re-anchor.
+    if (
+      step?.id === "pick-balance" &&
+      selectedActionType &&
+      selectedActionType !== BALANCE_ACTION
+    ) {
+      const wrong = nodesRef.current.find(
+        (node) =>
+          node.data.type === "action" &&
+          node.data.config?.actionType === selectedActionType
+      );
+      if (wrong) {
+        const config = (wrong.data.config ?? {}) as Record<string, unknown>;
+        setNodeData({
+          id: wrong.id,
+          data: { config: { ...config, actionType: "" } },
+        });
+        setActiveTab("properties");
+        toast.message("Pick Get Native Token Balance to continue the tour.", {
+          id: "kh-tour-pick-hint",
+        });
+        setTimeout(() => driverRef.current?.refresh(), 120);
+      }
+      return;
+    }
+
     if (step?.mode !== "auto" || !step.isComplete) {
       return;
     }
