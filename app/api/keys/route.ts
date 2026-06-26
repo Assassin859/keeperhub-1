@@ -180,10 +180,6 @@ export async function POST(request: Request) {
         expiresAt: organizationApiKeys.expiresAt,
       });
 
-    console.log(
-      `[API Keys] Created new API key for organization ${activeOrgId}: ${newKey.id}`
-    );
-
     // Out-of-band alert + durable audit record, symmetric with user keys.
     notifyApiKeyChange({
       userId: session.user.id,
