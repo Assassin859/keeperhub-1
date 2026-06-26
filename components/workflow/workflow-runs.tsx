@@ -649,14 +649,74 @@ function ForEachLogGroup({
 
   const hasContent = iterations.length > 0 || collectLog !== null;
 
+  const hasAnyIterationError = iterations.some((iteration) =>
+    iteration.logs.some((l) => l.status === "error")
+  );
+  const displayLog: ExecutionLog =
+    hasAnyIterationError && forEachLog.status !== "error"
+      ? { ...forEachLog, status: "error" as const }
+      : forEachLog;
+
+  const iterationsContent =
+    iterations.length > 0 ? (
+      <div className="space-y-1">
+        {iterations.map((iteration) => {
+          const isIterExpanded = expandedIterations.has(iteration.iterationIndex);
+          return (
+            <div key={iteration.iterationIndex}>
+              <IterationHeader
+                durationMs={computeIterationDuration(iteration.logs)}
+                hasError={iteration.logs.some((l) => l.status === "error")}
+                isExpanded={isIterExpanded}
+                iterationIndex={iteration.iterationIndex}
+                onToggle={() => toggleIteration(iteration.iterationIndex)}
+              />
+              {isIterExpanded && (
+                <div className="ml-4 border-border border-l pl-2">
+                  {groupLogsByIteration(iteration.logs, lookup).map(
+                    (subEntry, subIdx, subEntries) => {
+                      if (subEntry.type === FOR_EACH_GROUP_TYPE) {
+                        return (
+                          <ForEachLogGroup
+                            collectLog={subEntry.collectLog}
+                            expandedLogs={expandedLogs}
+                            forEachLog={subEntry.forEachLog}
+                            getStatusDotClass={getStatusDotClass}
+                            getStatusIcon={getStatusIcon}
+                            isFirst={subIdx === 0}
+                            isLast={subIdx === subEntries.length - 1}
+                            iterations={subEntry.iterations}
+                            key={subEntry.forEachLog.id}
+                            lookup={lookup}
+                            onToggleLog={onToggleLog}
+                          />
+                        );
+                      }
+                      return (
+                        <ExecutionLogEntry
+                          getStatusDotClass={getStatusDotClass}
+                          getStatusIcon={getStatusIcon}
+                          isExpanded={expandedLogs.has(subEntry.log.id)}
+                          isFirst={subIdx === 0}
+                          isLast={subIdx === subEntries.length - 1}
+                          key={subEntry.log.id}
+                          log={subEntry.log}
+                          onToggle={() => onToggleLog(subEntry.log.id)}
+                        />
+                      );
+                    }
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <div className="relative">
-      {/* Continuous timeline line from For Each dot through expanded
-          iterations down to Collect (or the group bottom). Without this,
-          the line breaks because expanded content sits between two
-          ExecutionLogEntry siblings whose internal lines don't span
-          across intervening DOM nodes. */}
-      {hasContent && (!isLast || collectLog !== null) && (
+      {collectLog !== null && (
         <div
           className="absolute w-px bg-border"
           style={{ left: "9px", top: "calc(0.5rem + 1.25rem)", bottom: 0 }}
@@ -667,70 +727,11 @@ function ForEachLogGroup({
         getStatusIcon={getStatusIcon}
         isExpanded={expandedLogs.has(forEachLog.id)}
         isFirst={isFirst}
-        isLast={isLast && !hasContent}
-        log={forEachLog}
+        isLast={isLast && collectLog === null}
+        log={displayLog}
+        middleContent={iterationsContent}
         onToggle={() => onToggleLog(forEachLog.id)}
       />
-
-      {expandedLogs.has(forEachLog.id) && (
-        <div className="ml-6 pl-2">
-          {iterations.map((iteration) => {
-            const isIterExpanded = expandedIterations.has(
-              iteration.iterationIndex
-            );
-
-            return (
-              <div key={iteration.iterationIndex}>
-                <IterationHeader
-                  durationMs={computeIterationDuration(iteration.logs)}
-                  hasError={iteration.logs.some((l) => l.status === "error")}
-                  isExpanded={isIterExpanded}
-                  iterationIndex={iteration.iterationIndex}
-                  onToggle={() => toggleIteration(iteration.iterationIndex)}
-                />
-
-                {isIterExpanded && (
-                  <div className="ml-4 border-border border-l pl-2">
-                    {groupLogsByIteration(iteration.logs, lookup).map(
-                      (subEntry, subIdx, subEntries) => {
-                        if (subEntry.type === FOR_EACH_GROUP_TYPE) {
-                          return (
-                            <ForEachLogGroup
-                              collectLog={subEntry.collectLog}
-                              expandedLogs={expandedLogs}
-                              forEachLog={subEntry.forEachLog}
-                              getStatusDotClass={getStatusDotClass}
-                              getStatusIcon={getStatusIcon}
-                              isFirst={subIdx === 0}
-                              isLast={subIdx === subEntries.length - 1}
-                              iterations={subEntry.iterations}
-                              key={subEntry.forEachLog.id}
-                              lookup={lookup}
-                              onToggleLog={onToggleLog}
-                            />
-                          );
-                        }
-                        return (
-                          <ExecutionLogEntry
-                            getStatusDotClass={getStatusDotClass}
-                            getStatusIcon={getStatusIcon}
-                            isExpanded={expandedLogs.has(subEntry.log.id)}
-                            isFirst={subIdx === 0}
-                            isLast={subIdx === subEntries.length - 1}
-                            key={subEntry.log.id}
-                            log={subEntry.log}
-                            onToggle={() => onToggleLog(subEntry.log.id)}
-                          />
-                        );
-                      }
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {collectLog && (
         <ExecutionLogEntry
@@ -774,6 +775,7 @@ function ExecutionLogEntry({
   getStatusDotClass,
   isFirst,
   isLast,
+  middleContent,
 }: {
   log: ExecutionLog;
   isExpanded: boolean;
@@ -782,6 +784,7 @@ function ExecutionLogEntry({
   getStatusDotClass: (status: string) => string;
   isFirst: boolean;
   isLast: boolean;
+  middleContent?: React.ReactNode;
 }) {
   return (
     <div className="relative flex gap-3" key={log.id}>
@@ -850,6 +853,7 @@ function ExecutionLogEntry({
                 </pre>
               </CollapsibleSection>
             )}
+            {middleContent}
             {log.output !== null && log.output !== undefined && (
               <OutputDisplay input={log.input} output={log.output} />
             )}
@@ -865,7 +869,7 @@ function ExecutionLogEntry({
                 </pre>
               </CollapsibleSection>
             )}
-            {!(log.input || log.output || log.error) && (
+            {!(log.input || log.output || log.error || middleContent) && (
               <div className="rounded-lg border bg-muted/30 py-4 text-center text-muted-foreground text-xs">
                 No data recorded
               </div>
