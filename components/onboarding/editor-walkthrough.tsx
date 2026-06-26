@@ -605,7 +605,25 @@ export function EditorWalkthrough(): null {
       setActiveTab("runs");
     }
 
+    const nextStep = steps[index + 1];
     instance.moveNext();
+
+    // The next step's target can render a tick later (the config form, with the
+    // Network / Address fields, appears just after the action is added). If it
+    // isn't on screen yet, wait for it and re-anchor the spotlight so the
+    // popover doesn't float detached.
+    const signal = abortRef.current?.signal;
+    if (nextStep && signal && !document.querySelector(nextStep.selector)) {
+      waitForAnchor(nextStep.selector, signal)
+        .then((anchor) => {
+          if (anchor) {
+            driverRef.current?.refresh();
+          }
+        })
+        .catch(() => {
+          // Anchor never appeared; leave the spotlight where it is.
+        });
+    }
   }, [
     selectedActionType,
     selectedNetwork,
