@@ -381,6 +381,23 @@ export function EditorWalkthrough(): null {
             stateRef.current = "idle";
             markSeen();
           },
+          onHighlightStarted: (element?: Element) => {
+            // On the "choose an action" step, auto-expand the Web3 group so the
+            // target action is visible and the user can't get lost expanding a
+            // different integration.
+            if (element?.getAttribute("data-testid") !== "action-grid") {
+              return;
+            }
+            const visible = document.querySelector(
+              `[data-testid="action-option-${BALANCE_ACTION.toLowerCase()}"]`
+            );
+            if (!visible) {
+              const web3 = document.querySelector(
+                '[data-testid="action-group-web3"]'
+              );
+              (web3 as HTMLElement | null)?.click();
+            }
+          },
           steps: steps.map((step) => ({
             element: step.selector,
             popover: {
