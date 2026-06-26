@@ -45,13 +45,17 @@ type StepSnapshot = {
   isExecuting: boolean;
 };
 
-type StepMode = "next" | "auto" | "finish";
+// "next": manual Next button. "auto": advances on an atom signal (isComplete).
+// "dom-auto": advances when a DOM condition holds (isCompleteDom), e.g. a
+// collapsible group has expanded. "finish": last step.
+type StepMode = "next" | "auto" | "dom-auto" | "finish";
 
 type StepDef = {
   id: string;
   selector: string;
   mode: StepMode;
   isComplete?: (snap: StepSnapshot) => boolean;
+  isCompleteDom?: () => boolean;
   popover: { title: string; description: string; side: Side; align: Alignment };
 };
 
@@ -81,15 +85,47 @@ const WALLET_STEP: StepDef = {
   },
 };
 
+const BALANCE_OPTION_SELECTOR = `[data-testid="action-option-${BALANCE_ACTION.toLowerCase()}"]`;
+
+// 1) Orient the user to the whole action list (all the integrations).
+const ACTIONS_INTRO_STEP: StepDef = {
+  id: "actions-intro",
+  selector: '[data-testid="action-grid"]',
+  mode: "next",
+  popover: {
+    title: "Your connections",
+    description:
+      "These are the integrations you can act on, like Web3, Aave and Lido. Each one groups the actions it supports. Expand a group to see its actions, then click one to add it to this step.",
+    side: "left",
+    align: "start",
+  },
+};
+
+// 2) Highlight only the Web3 group; advance once the user expands it (its
+//    actions, including the target, appear in the DOM).
+const OPEN_WEB3_STEP: StepDef = {
+  id: "open-web3",
+  selector: '[data-testid="action-group-web3"]',
+  mode: "dom-auto",
+  isCompleteDom: () => Boolean(document.querySelector(BALANCE_OPTION_SELECTOR)),
+  popover: {
+    title: "Open the Web3 group",
+    description: "Click Web3 to expand it and reveal its actions.",
+    side: "left",
+    align: "start",
+  },
+};
+
+// 3) Highlight the specific action; advance once it is added to the step.
 const PICK_BALANCE_STEP: StepDef = {
   id: "pick-balance",
-  selector: '[data-testid="action-grid"]',
+  selector: BALANCE_OPTION_SELECTOR,
   mode: "auto",
   isComplete: (snap) => snap.selectedActionType === BALANCE_ACTION,
   popover: {
-    title: "Choose an action",
+    title: "Add the action",
     description:
-      "This is the actions list. Pick Get Native Token Balance - it reads an on-chain balance - to add it to your step.",
+      "Click Get Native Token Balance to add it to your step. It reads an on-chain balance.",
     side: "left",
     align: "start",
   },
@@ -139,7 +175,14 @@ function buildSteps(hasWallet: boolean): StepDef[] {
   if (hasWallet) {
     steps.push(WALLET_STEP);
   }
-  steps.push(PICK_BALANCE_STEP, CONFIGURE_STEP, RUN_STEP, RESULTS_STEP);
+  steps.push(
+    ACTIONS_INTRO_STEP,
+    OPEN_WEB3_STEP,
+    PICK_BALANCE_STEP,
+    CONFIGURE_STEP,
+    RUN_STEP,
+    RESULTS_STEP
+  );
   return steps;
 }
 
@@ -152,8 +195,9 @@ function markSeen(): void {
 }
 
 function buttonsFor(mode: StepMode): Array<"next" | "close"> {
-  // Action steps advance programmatically, so only offer a way out (Skip).
-  return mode === "auto" ? ["close"] : ["next", "close"];
+  // Steps that advance programmatically (atom or DOM signal) only offer a way
+  // out (Skip); manual steps also get Next.
+  return mode === "auto" || mode === "dom-auto" ? ["close"] : ["next", "close"];
 }
 
 // Resolve the address to check: the user's first saved address book entry (their
@@ -270,6 +314,8 @@ export function EditorWalkthrough(): null {
   // The step list and resolved address are fixed once the tour starts.
   const stepsRef = useRef<StepDef[]>([]);
   const addressRef = useRef(FALLBACK_ADDRESS);
+  // Advances "dom-auto" steps (e.g. waiting for the Web3 group to expand).
+  const domObserverRef = useRef<MutationObserver | null>(null);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   const rawActionType = selectedNode?.data.config?.actionType;
@@ -378,24 +424,21 @@ export function EditorWalkthrough(): null {
           nextBtnText: "Next",
           onDestroyed: () => {
             driverRef.current = null;
+            domObserverRef.current?.disconnect();
+            domObserverRef.current = null;
             stateRef.current = "idle";
             markSeen();
           },
-          onHighlightStarted: (element?: Element) => {
-            // On the "choose an action" step, auto-expand the Web3 group so the
-            // target action is visible and the user can't get lost expanding a
-            // different integration.
-            if (element?.getAttribute("data-testid") !== "action-grid") {
-              return;
-            }
-            const visible = document.querySelector(
-              `[data-testid="action-option-${BALANCE_ACTION.toLowerCase()}"]`
-            );
-            if (!visible) {
-              const web3 = document.querySelector(
-                '[data-testid="action-group-web3"]'
-              );
-              (web3 as HTMLElement | null)?.click();
+          onHighlighted: () => {
+            // If a dom-auto step's condition already holds on entry (the group
+            // was already expanded), advance without waiting for a mutation.
+            const active = driverRef.current;
+            const index = active?.getActiveIndex();
+            if (active && index !== undefined) {
+              const current = stepsRef.current[index];
+              if (current?.mode === "dom-auto" && current.isCompleteDom?.()) {
+                setTimeout(() => driverRef.current?.moveNext(), 0);
+              }
             }
           },
           steps: steps.map((step) => ({
@@ -413,6 +456,26 @@ export function EditorWalkthrough(): null {
         driverRef.current = instance;
         stateRef.current = "running";
         instance.drive();
+
+        // Advance "dom-auto" steps off DOM changes (atom signals don't fire for
+        // a collapsible group expanding). The active step is re-read each time.
+        domObserverRef.current?.disconnect();
+        const observer = new MutationObserver(() => {
+          const active = driverRef.current;
+          if (!active) {
+            return;
+          }
+          const index = active.getActiveIndex();
+          if (index === undefined) {
+            return;
+          }
+          const current = stepsRef.current[index];
+          if (current?.mode === "dom-auto" && current.isCompleteDom?.()) {
+            active.moveNext();
+          }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        domObserverRef.current = observer;
       } finally {
         toast.dismiss(TOUR_TOAST);
       }
@@ -531,6 +594,7 @@ export function EditorWalkthrough(): null {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      domObserverRef.current?.disconnect();
       driverRef.current?.destroy();
     };
   }, []);
