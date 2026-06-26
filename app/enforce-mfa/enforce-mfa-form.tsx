@@ -10,9 +10,11 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { authClient } from "@/lib/auth-client";
 import {
   Dialog,
   DialogContent,
@@ -141,19 +143,42 @@ export function EnforceMfaForm({
   required,
   enrolled,
   orgName,
+  otherOrgs,
   next,
 }: {
   required: StepUpFactor[];
   enrolled: Enrolled;
   orgName: string;
+  otherOrgs: { id: string; name: string }[];
   next: string;
 }): React.ReactElement {
   const router = useRouter();
   const [totpOpen, setTotpOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   const acceptsTotp = required.includes("totp");
   const acceptsEmail = required.includes("email");
+
+  // The gate keys off the active org, so switching to another org (or signing
+  // out) is a legitimate way to leave without enrolling. Force a full reload so
+  // the proxy re-evaluates compliance against the new active context.
+  const switchTo = async (organizationId: string): Promise<void> => {
+    setLeaving(true);
+    try {
+      await authClient.organization.setActive({ organizationId });
+      window.location.assign("/");
+    } catch {
+      toast.error("Could not switch organization.");
+      setLeaving(false);
+    }
+  };
+
+  const signOut = async (): Promise<void> => {
+    setLeaving(true);
+    await authClient.signOut();
+    window.location.assign("/");
+  };
 
   // Enrolling any accepted factor satisfies the gate; bounce back to where they
   // were headed and let the proxy re-check (it will now pass them through).
@@ -173,8 +198,10 @@ export function EnforceMfaForm({
         </div>
         <CardTitle>Two-factor required</CardTitle>
         <CardDescription>
-          {orgName} requires every member to secure their account with a second
-          factor. Add one of the options below to continue.
+          {orgName} requires every member to secure their account.{" "}
+          {required.length > 1
+            ? "Add both factors below to continue."
+            : "Add the factor below to continue."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -224,6 +251,32 @@ export function EnforceMfaForm({
           </button>
         )}
       </CardContent>
+
+      <CardFooter className="flex-col items-stretch gap-2 border-t pt-4">
+        <p className="text-center text-muted-foreground text-xs">
+          Don&apos;t want to add a factor? Switch to another organization or
+          sign out.
+        </p>
+        {otherOrgs.map((org) => (
+          <Button
+            disabled={leaving}
+            key={org.id}
+            onClick={() => switchTo(org.id)}
+            size="sm"
+            variant="outline"
+          >
+            Switch to {org.name}
+          </Button>
+        ))}
+        <Button
+          disabled={leaving}
+          onClick={signOut}
+          size="sm"
+          variant="ghost"
+        >
+          Sign out
+        </Button>
+      </CardFooter>
 
       <TotpSetupDialog
         onEnrolled={onEnrolled}

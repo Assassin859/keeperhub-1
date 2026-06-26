@@ -1,10 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
-import { organization } from "@/lib/db/schema";
+import { member, organization } from "@/lib/db/schema";
 import {
   checkWalletOrgMfaCompliance,
   getEnrolledFactors,
@@ -46,7 +46,7 @@ export default async function EnforceMfaPage({
     redirect(next || "/");
   }
 
-  const [[org], enrolled] = await Promise.all([
+  const [[org], enrolled, otherOrgs] = await Promise.all([
     activeOrganizationId
       ? db
           .select({ name: organization.name })
@@ -55,6 +55,20 @@ export default async function EnforceMfaPage({
           .limit(1)
       : Promise.resolve([]),
     getEnrolledFactors(session.user.id),
+    // The gate is per active org, so switching context is a valid escape from
+    // enforcement -- list the user's other orgs so they aren't forced to enroll.
+    activeOrganizationId
+      ? db
+          .select({ id: organization.id, name: organization.name })
+          .from(member)
+          .innerJoin(organization, eq(member.organizationId, organization.id))
+          .where(
+            and(
+              eq(member.userId, session.user.id),
+              ne(member.organizationId, activeOrganizationId)
+            )
+          )
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -63,6 +77,7 @@ export default async function EnforceMfaPage({
         enrolled={enrolled}
         next={next || "/"}
         orgName={org?.name ?? "your organization"}
+        otherOrgs={otherOrgs}
         required={required}
       />
     </main>
