@@ -45,6 +45,7 @@ type ExportBody = {
   resourceTypes?: unknown;
   code?: string;
   emailOtp?: string;
+  signature?: string;
 };
 
 export async function POST(request: Request): Promise<Response> {
