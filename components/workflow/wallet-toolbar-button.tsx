@@ -11,6 +11,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
@@ -41,7 +42,13 @@ export function WalletToolbarButton(): React.ReactElement | null {
     return null;
   }
 
-  if (session.user.emailVerified !== true) {
+  // Wallet (SIWE) accounts have a synthetic email that is never verified, but
+  // they authenticate by signature and own a wallet, so the unverified gate is
+  // email/OAuth only and never hides the wallet button from wallet users.
+  if (
+    session.user.emailVerified !== true &&
+    !isWalletEmail(session.user.email)
+  ) {
     return null;
   }
 
