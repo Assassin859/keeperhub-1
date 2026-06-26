@@ -24,6 +24,7 @@ jobs:
       should-deploy-events-only: ${{ steps.check.outputs.should-deploy-events-only }}
       should-build-executor: ${{ steps.check.outputs.should-build-executor }}
       should-deploy-collector: ${{ steps.check.outputs.should-deploy-collector }}
+      should-load-test: ${{ steps.check.outputs.should-load-test }}
     steps:
       - name: Checkout code (for change detection)
         if: github.event.action == 'synchronize'
@@ -40,6 +41,7 @@ jobs:
           echo "should-deploy-events-only=false" >> $GITHUB_OUTPUT
           echo "should-build-executor=false" >> $GITHUB_OUTPUT
           echo "should-deploy-collector=false" >> $GITHUB_OUTPUT
+          echo "should-load-test=false" >> $GITHUB_OUTPUT
 
           HAS_DEPLOY_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'deploy-pr-environment') }}"
           HAS_TEST_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'run-e2e-tests-pr-deploy') }}"
@@ -60,6 +62,7 @@ jobs:
           # satellite so the PR's collector code can be exercised against the
           # PR's DB. ServiceMonitors are off in PR envs - verify via curl.
           HAS_METRICS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'deploy-pr-metrics') }}"
+          HAS_LOAD_TEST_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'run-load-test') }}"
           ACTION="${{ github.event.action }}"
           ADDED_LABEL="${{ github.event.label.name }}"
 
@@ -78,8 +81,17 @@ jobs:
               if [[ "$HAS_METRICS_LABEL" == "true" ]]; then
                 echo "should-deploy-collector=true" >> $GITHUB_OUTPUT
               fi
+              if [[ "$HAS_LOAD_TEST_LABEL" == "true" ]]; then
+                echo "should-load-test=true" >> $GITHUB_OUTPUT
+              fi
             elif [[ "$ADDED_LABEL" == "run-e2e-tests-pr-deploy" ]]; then
               echo "should-test=true" >> $GITHUB_OUTPUT
+            elif [[ "$ADDED_LABEL" == "run-load-test" ]]; then
+              # Load-test-only path: PR env is already deployed. Only meaningful
+              # when deploy-pr-environment is also present — no env, no target.
+              if [[ "$HAS_DEPLOY_LABEL" == "true" ]]; then
+                echo "should-load-test=true" >> $GITHUB_OUTPUT
+              fi
             elif [[ "$ADDED_LABEL" == "deploy-pr-executor" ]]; then
               # Executor-only path: PR env is already deployed. Build a PR
               # executor image and redeploy just that satellite. Cheaper than
@@ -161,6 +173,9 @@ jobs:
             # Run tests if both labels present (even without deploy)
             if [[ "$HAS_DEPLOY_LABEL" == "true" && "$HAS_TEST_LABEL" == "true" ]]; then
               echo "should-test=true" >> $GITHUB_OUTPUT
+            fi
+            if [[ "$HAS_DEPLOY_LABEL" == "true" && "$HAS_LOAD_TEST_LABEL" == "true" ]]; then
+              echo "should-load-test=true" >> $GITHUB_OUTPUT
             fi
           fi
 
@@ -1335,3 +1350,14 @@ jobs:
                 body,
               });
             }
+
+  load-test:
+    needs: [check-labels, deploy]
+    if: >-
+      !cancelled() &&
+      needs.check-labels.outputs.should-load-test == 'true' &&
+      (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
+    uses: ./.github/workflows/load-test.yml
+    with:
+      target_url: https://app-pr-${{ github.event.pull_request.number }}.keeperhub.com
+    secrets: inherit
