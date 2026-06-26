@@ -140,6 +140,9 @@ function csrfBlock(request: NextRequest): NextResponse | null {
 const MFA_EXEMPT_API_PREFIXES: readonly string[] = [
   "/api/auth/",
   "/api/user/totp/",
+  // The wallet enforce-mfa enrollment flow adds a verified email here; without
+  // this the gate would block the very call needed to satisfy it (a lockout).
+  "/api/user/step-up/email",
   "/api/user/verify-ip",
   "/api/user/forgot-password",
   "/api/og/",
