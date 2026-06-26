@@ -8,6 +8,13 @@
  * runs inside the cluster against the in-pod service URL (the public hostname
  * is WAF-blocked for /api/internal/*).
  *
+ * The cohort is gated to orgs that actually have work due in the window: an
+ * enabled, non-deleted, non-deactivated workflow with an enabled schedule whose
+ * next run falls inside [`since`, `until`]. Idle orgs (no live workflow, or
+ * schedules that won't fire in the window) are excluded so a deploy is not
+ * judged against orgs that were never going to run. Execution counting covers
+ * every trigger type (scheduled, block, webhook, event, manual).
+ *
  * An org is flagged as a problem when:
  *   - it produced any `system_error` executions in the window (platform/infra
  *     faults are the strongest signal of a deploy regression), OR
@@ -15,17 +22,18 @@
  *
  * This is a stateless single check (one query per request); the CI job owns the
  * timing and polls it. Window and thresholds are query-param overridable so the
- * job can tune them without a redeploy: `since` (unix seconds, the window
- * anchor), `lookbackMinutes` (fallback when `since` is absent), `minExecutions`,
- * and `maxErrorRate`.
+ * job can tune them without a redeploy: `since`/`until` (unix seconds, the
+ * window bounds), `lookbackMinutes` (fallback when `since`/`until` are absent),
+ * `minExecutions`, and `maxErrorRate`.
  */
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   organization,
   organizationSubscriptions,
   workflowExecutions,
+  workflowSchedules,
   workflows,
 } from "@/lib/db/schema";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
@@ -70,9 +78,17 @@ function parseNumberParam(value: string | null, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-async function resolveTargetOrgs(): Promise<TargetOrg[]> {
+async function resolveTargetOrgs(
+  windowStart: Date,
+  windowEnd: Date
+): Promise<TargetOrg[]> {
+  // Only verify orgs that actually have something due to run during the
+  // monitoring window: an enabled, non-deleted, non-deactivated workflow with
+  // an enabled schedule whose next run lands inside [windowStart, windowEnd].
+  // Without this an idle org (no live workflow, or schedules that won't fire in
+  // our window) is either dead weight or a false-positive source.
   const rows = await db
-    .select({
+    .selectDistinct({
       id: organization.id,
       slug: organization.slug,
       name: organization.name,
@@ -83,13 +99,24 @@ async function resolveTargetOrgs(): Promise<TargetOrg[]> {
       organizationSubscriptions,
       eq(organizationSubscriptions.organizationId, organization.id)
     )
+    .innerJoin(workflows, eq(workflows.organizationId, organization.id))
+    .innerJoin(
+      workflowSchedules,
+      eq(workflowSchedules.workflowId, workflows.id)
+    )
     .where(
       and(
         isNull(organization.deactivatedAt),
         or(
           inArray(organization.slug, [...MANAGED_ORG_SLUGS]),
           eq(organizationSubscriptions.plan, "enterprise")
-        )
+        ),
+        eq(workflows.enabled, true),
+        isNull(workflows.deletedAt),
+        isNull(workflows.deactivatedAt),
+        eq(workflowSchedules.enabled, true),
+        gte(workflowSchedules.nextRunAt, windowStart),
+        lte(workflowSchedules.nextRunAt, windowEnd)
       )
     );
 
@@ -172,24 +199,33 @@ export async function GET(request: Request): Promise<NextResponse> {
   );
 
   // Stateless single check: one query per request. The CI job owns the timing
-  // (it polls this endpoint). `since` (unix seconds) is the window anchor the
-  // caller passes so a poll counts only executions that started after the
-  // deploy -- i.e. runs on the new build. Falls back to the backward lookback
-  // window when omitted.
+  // (it polls this endpoint). `since`/`until` (unix seconds) bound the
+  // monitoring window the caller is watching: executions are counted from
+  // `since` (so a poll sees only runs on the new build), and the cohort is
+  // gated to orgs with a schedule firing within [`since`, `until`]. Both fall
+  // back to the backward lookback window when omitted.
   const sinceParam = url.searchParams.get("since");
   const sinceEpoch = sinceParam ? Number.parseInt(sinceParam, 10) : Number.NaN;
   const since = Number.isFinite(sinceEpoch)
     ? new Date(sinceEpoch * 1000)
     : new Date(Date.now() - lookbackMinutes * 60 * 1000);
 
+  const untilParam = url.searchParams.get("until");
+  const untilEpoch = untilParam ? Number.parseInt(untilParam, 10) : Number.NaN;
+  const until = Number.isFinite(untilEpoch)
+    ? new Date(untilEpoch * 1000)
+    : new Date(since.getTime() + lookbackMinutes * 60 * 1000);
+
   try {
     const windowStart = since.toISOString();
-    const targetOrgs = await resolveTargetOrgs();
+    const windowEnd = until.toISOString();
+    const targetOrgs = await resolveTargetOrgs(since, until);
 
     if (targetOrgs.length === 0) {
       return NextResponse.json({
         ok: true,
         windowStart,
+        windowEnd,
         minExecutions,
         maxErrorRate,
         checkedOrgs: 0,
@@ -314,6 +350,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({
       ok: problems.length === 0,
       windowStart,
+      windowEnd,
       minExecutions,
       maxErrorRate,
       checkedOrgs: orgs.length,

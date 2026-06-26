@@ -104,7 +104,7 @@ jobs:
             SIGNING_STRING=$(printf '%s\n%s\n%s\n%s\n%s' "$METHOD" "$PATHNAME" "$CALLER" "$BODY_DIGEST" "$TIMESTAMP")
             SIGNATURE=$(printf '%s' "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$INTERNAL_SERVICE_HMAC_SECRET" | awk '{print $2}')
 
-            URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?since=${SINCE}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
+            URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?since=${SINCE}&until=${DEADLINE}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
 
             # The secret never enters the pod -- only the precomputed signature does.
             RESPONSE=$(kubectl run "post-deploy-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ATTEMPT}" \
