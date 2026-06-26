@@ -74,7 +74,9 @@ async function main(): Promise<void> {
   console.log("[Dispatcher] Starting schedule dispatcher...");
   console.log(`[Dispatcher] KeeperHub URL: ${KEEPERHUB_URL}`);
   console.log(`[Dispatcher] SQS Queue URL: ${SQS_QUEUE_URL}`);
-  console.log(`[Dispatcher] Tick offset: ${TICK_OFFSET_MS}ms past minute boundary`);
+  console.log(
+    `[Dispatcher] Tick offset: ${TICK_OFFSET_MS}ms past minute boundary`,
+  );
 
   const healthApp = express();
   const HEALTH_PORT = process.env.HEALTH_PORT || 3060;

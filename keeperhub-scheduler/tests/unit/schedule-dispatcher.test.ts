@@ -966,7 +966,9 @@ describe("intervalOccurrencesBetween", () => {
     const badAnchor = new Date("not-a-date");
     const from = new Date("2026-05-18T10:00:00Z");
     const to = new Date("2026-05-18T12:00:00Z");
-    expect(intervalOccurrencesBetween(3300, badAnchor, from, to)).toHaveLength(0);
+    expect(
+      intervalOccurrencesBetween(3300, badAnchor, from, to),
+    ).toHaveLength(0);
   });
 
   it("returns empty array when from >= to", () => {

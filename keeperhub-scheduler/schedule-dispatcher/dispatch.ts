@@ -226,7 +226,12 @@ function scheduleOccurrencesBetween(
       to,
     );
   }
-  return cronOccurrencesBetween(schedule.cronExpression, schedule.timezone, from, to);
+  return cronOccurrencesBetween(
+    schedule.cronExpression,
+    schedule.timezone,
+    from,
+    to,
+  );
 }
 
 function describeSchedule(schedule: Schedule): string {
@@ -270,7 +275,9 @@ export async function sendToQueue(message: ScheduleMessage): Promise<void> {
  * `now` is stamped at the very top of this function, before the DB fetch,
  * so DB latency cannot shrink the window and cause a missed trigger.
  */
-export async function dispatch(lastTickAt?: Date | null): Promise<DispatchResult> {
+export async function dispatch(
+  lastTickAt?: Date | null,
+): Promise<DispatchResult> {
   const runId = crypto.randomUUID().slice(0, 8);
 
   // Stamp now before any I/O so DB latency cannot push it past the window.
