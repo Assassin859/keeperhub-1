@@ -135,6 +135,7 @@ const PATTERNS = [
 
 // Per-VU state
 let myEmail = "";
+let authenticated = false;
 let allWfIds = [];
 let manualWfIds = [];
 let completedTiers = 0;
@@ -154,7 +155,7 @@ function authenticate() {
   myEmail = `k6-loadtest-vu${v}@techops.services`;
   const sr = retryPost(`${BASE_URL}/api/auth/sign-in/email`,
     JSON.stringify({ email: myEmail, password: PASSWORD }), 5);
-  if (sr.status !== 200) { console.error(`VU${v}: signin ${sr.status}`); return false; }
+  if (sr.status !== 200) { console.error(`VU${v}: signin ${sr.status} body=${sr.body}`); return false; }
   return true;
 }
 
@@ -205,9 +206,10 @@ function triggerManuals() {
 
 // Main loop
 export default function () {
-  if (!myEmail || completedTiers > 0) {
+  if (!authenticated || completedTiers > 0) {
     const ok = authenticate();
     if (!ok) { sleep(30); return; }
+    authenticated = true;
     if (completedTiers === 0) {
       usersCreated.add(1);
       console.log(`VU${exec.vu.idInTest}: authenticated`);
