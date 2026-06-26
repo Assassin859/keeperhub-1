@@ -63,6 +63,12 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
+      - name: Connect to EKS via SSM jump
+        uses: ./.github/actions/eks-connect
+        with:
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          region: ${{ env.REGION }}
+
       - name: Login to AWS ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2

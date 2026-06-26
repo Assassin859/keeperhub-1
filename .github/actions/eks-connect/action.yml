@@ -1,0 +1,76 @@
+name: Connect to EKS via SSM jump
+description: >
+  Opens an AWS Systems Manager port-forward through the in-VPC eks-jump host to
+  the cluster API endpoint so a hosted runner can reach it. The API hostname is
+  mapped to localhost so kubectl, helm and the deploy action use the tunnel
+  transparently; TLS SNI is unchanged so the API server certificate still
+  validates. No-op when the target cluster has no eks-jump configured. Requires
+  AWS credentials to already be configured in the job.
+
+inputs:
+  cluster-name:
+    description: EKS cluster name (e.g. techops-staging).
+    required: true
+  region:
+    description: AWS region of the cluster.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Open SSM port-forward to the EKS endpoint
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster-name }}
+        REGION: ${{ inputs.region }}
+      run: |
+        set -euo pipefail
+        PARAM="/eks/${CLUSTER_NAME}/eks-jump/instance-id"
+
+        # Per-cluster lookup. Absent parameter => this cluster has no jump
+        # configured => reach the endpoint directly.
+        if ! INSTANCE_ID=$(aws ssm get-parameter --region "$REGION" --name "$PARAM" \
+              --query 'Parameter.Value' --output text 2>/dev/null); then
+          echo "No eks-jump configured for ${CLUSTER_NAME} (${PARAM} absent); using the endpoint directly."
+          exit 0
+        fi
+        echo "eks-jump host for ${CLUSTER_NAME}: ${INSTANCE_ID}"
+
+        ENDPOINT=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" \
+          --query 'cluster.endpoint' --output text)
+        HOST=${ENDPOINT#https://}
+        echo "cluster API endpoint host: ${HOST}"
+
+        # The Session Manager plugin is not present on GitHub-hosted runners.
+        if ! command -v session-manager-plugin >/dev/null 2>&1; then
+          curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o /tmp/session-manager-plugin.deb
+          sudo dpkg -i /tmp/session-manager-plugin.deb
+        fi
+
+        # Resolve the API hostname to localhost so every kube client uses the
+        # tunnel without kubeconfig changes. The cert is validated against the
+        # SNI, which stays the real hostname.
+        echo "127.0.0.1 ${HOST}" | sudo tee -a /etc/hosts >/dev/null
+
+        # Forward localhost:443 -> jump -> ${HOST}:443, backgrounded for the rest
+        # of the job. Binding the privileged local port needs root, so the AWS
+        # environment credentials are preserved into the sudo'd process with -E.
+        sudo -E env "PATH=$PATH" aws ssm start-session \
+          --region "$REGION" \
+          --target "$INSTANCE_ID" \
+          --document-name AWS-StartPortForwardingSessionToRemoteHost \
+          --parameters "{\"host\":[\"${HOST}\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"443\"]}" \
+          >/tmp/eks-jump-tunnel.log 2>&1 &
+
+        # A configured tunnel that does not come up aborts the job.
+        for i in $(seq 1 30); do
+          if timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/443" 2>/dev/null; then
+            echo "tunnel up after ${i}s"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::error::SSM tunnel to ${HOST} via ${INSTANCE_ID} did not come up within 30s"
+        cat /tmp/eks-jump-tunnel.log || true
+        exit 1
