@@ -702,7 +702,18 @@ export const auth = betterAuth({
           // address. Replace it with a friendly generated handle so the
           // address never surfaces in the org name or the audit trail. The
           // user confirms or edits it in the rename modal on first login.
+          //
+          // The SIWE plugin always mints emails as `0x<40-hex>@wallet.keeperhub.com`.
+          // Block any other local-part so attackers cannot self-register with
+          // the wallet domain via the email+password flow and get classified
+          // as a wallet account everywhere (bypassing TOTP enrollment gates).
           if (email && isWalletEmail(email)) {
+            const localPart = email.split("@")[0] ?? "";
+            if (!/^0x[0-9a-f]{40}$/i.test(localPart)) {
+              throw new APIError("BAD_REQUEST", {
+                message: "This email domain is reserved.",
+              });
+            }
             return { data: { name: generateHandle() } };
           }
 
