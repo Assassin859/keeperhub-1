@@ -176,7 +176,6 @@ export function TotpSetupDialog({
       const data = (await response.json()) as EnrollResponse;
       setBackupCodes(data.backupCodes);
       setPhase("codes");
-      onEnrolled();
     } finally {
       setBusy(false);
     }
@@ -205,6 +204,9 @@ export function TotpSetupDialog({
 
   const handleDone = (): void => {
     toast.success("Two-factor authentication is enabled");
+    // Signal the parent only now: in the enforce-mfa gate onEnrolled closes the
+    // dialog and redirects, so firing it at verify would skip the backup codes.
+    onEnrolled();
     closeAndReset();
   };
 
@@ -316,7 +318,7 @@ export function TotpSetupDialog({
                 className="bg-keeperhub-green text-foreground hover:bg-keeperhub-green-dark dark:text-background"
                 onClick={handleDone}
               >
-                Skip
+                Done
               </Button>
             </DialogFooter>
           </div>
