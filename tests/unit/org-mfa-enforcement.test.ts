@@ -23,9 +23,15 @@ describe("parseEnforcedFactors", () => {
 });
 
 describe("satisfiesEnforcement", () => {
-  it("passes a member carrying one of the required factors", () => {
+  it("fails a member missing any required factor when both are required", () => {
     expect(
       satisfiesEnforcement(["totp", "email"], { totp: false, email: true })
+    ).toBe(false);
+  });
+
+  it("passes a member carrying every required factor", () => {
+    expect(
+      satisfiesEnforcement(["totp", "email"], { totp: true, email: true })
     ).toBe(true);
   });
 

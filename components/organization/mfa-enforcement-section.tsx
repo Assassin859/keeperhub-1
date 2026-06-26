@@ -137,7 +137,7 @@ export function MfaEnforcementSection({
       {enforce && (
         <div className="space-y-2">
           <p className="text-muted-foreground text-xs">
-            Accepted factors (members need at least one):
+            Required factors (members must add every one selected):
           </p>
           {FACTOR_OPTIONS.map((option) => (
             <div

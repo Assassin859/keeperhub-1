@@ -23,7 +23,7 @@ const ENFORCEABLE_FACTORS: ReadonlySet<StepUpFactor> = new Set([
 
 export type OrgMfaEnforcement = {
   enforce: boolean;
-  /** Factors that satisfy enforcement; a member needs at least one of them. */
+  /** Factors enforcement requires; a member must carry every one of them. */
   factors: StepUpFactor[];
 };
 
@@ -94,14 +94,15 @@ export async function getEnrolledFactors(
   };
 }
 
-/** A member satisfies enforcement when they have at least one of the org's
- *  required factors. (Owner selects "totp", "email", or both; any one suffices
- *  so a member who lost a device can still get in via the other.) */
+/** A member satisfies enforcement only when they carry every factor the org
+ *  requires. (Owner selects "totp", "email", or both; selecting both means the
+ *  member must enroll both -- the selection is the exact requirement, not a
+ *  menu of alternatives.) */
 export function satisfiesEnforcement(
   required: StepUpFactor[],
   enrolled: { totp: boolean; email: boolean }
 ): boolean {
-  return required.some(
+  return required.every(
     (factor) =>
       (factor === "totp" && enrolled.totp) ||
       (factor === "email" && enrolled.email)
