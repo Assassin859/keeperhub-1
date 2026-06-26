@@ -24,7 +24,22 @@ type SIWEVerifyMessageArgs = {
  * The Better Auth SIWE plugin only checks that a nonce exists in storage; it
  * does not bind that nonce to the signed message. Binding it here (via
  * `cacao.p.nonce`/`domain`) is what makes the signature non-replayable.
+ *
+ * For standard EIP-1193 browser wallets (MetaMask, Brave, etc.) the `cacao`
+ * envelope is absent. We fall back to the server's own origin as the expected
+ * domain so cross-domain phishing signatures (signed for evil.com using a
+ * KeeperHub-issued nonce) are rejected even without WalletConnect 2.0.
  */
+function getExpectedDomain(): string | undefined {
+  const raw =
+    process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
+  try {
+    return new URL(raw).host || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function verifySiweSignature(
   args: SIWEVerifyMessageArgs
 ): Promise<boolean> {
@@ -35,9 +50,14 @@ export async function verifySiweSignature(
     return false;
   }
 
+  const expectedDomain = cacao?.p.domain ?? getExpectedDomain();
+  if (!expectedDomain) {
+    return false;
+  }
+
   const structurallyValid = validateSiweMessage({
     address: address as `0x${string}`,
-    domain: cacao?.p.domain,
+    domain: expectedDomain,
     message: fields,
     nonce: cacao?.p.nonce,
   });
