@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
+  DEFAULT_STEP_UP_POLICY,
   STEP_UP_ACTIONS,
   type StepUpFactor,
 } from "@/lib/mfa/step-up-policy";
@@ -34,12 +35,46 @@ type PolicyResponse = {
 };
 
 // Actions a wallet user can harden, with friendly labels. Wallet signature is
-// always required; these toggles add TOTP / email on top.
+// always required; these toggles add TOTP / email on top. Withdraw and export
+// default to requiring TOTP when it is enrolled (DEFAULT_STEP_UP_POLICY).
 const CONFIGURABLE_ACTIONS: { action: string; label: string }[] = [
   { action: STEP_UP_ACTIONS.walletWithdraw, label: "Withdraw funds" },
   { action: STEP_UP_ACTIONS.walletExportKey, label: "Export wallet key" },
   { action: STEP_UP_ACTIONS.apiKeyCreate, label: "Create an API key" },
+  { action: STEP_UP_ACTIONS.apiKeyRevoke, label: "Revoke an API key" },
+  {
+    action: STEP_UP_ACTIONS.orgApiKeyCreate,
+    label: "Create an org API key",
+  },
+  {
+    action: STEP_UP_ACTIONS.orgApiKeyRevoke,
+    label: "Revoke an org API key",
+  },
+  {
+    action: STEP_UP_ACTIONS.agenticWalletApprove,
+    label: "Approve an agent transaction",
+  },
+  {
+    action: STEP_UP_ACTIONS.agenticWalletReject,
+    label: "Reject an agent transaction",
+  },
+  { action: STEP_UP_ACTIONS.auditExport, label: "Export the audit log" },
+  {
+    action: STEP_UP_ACTIONS.accountDeactivate,
+    label: "Deactivate your account",
+  },
 ];
+
+// The factors shown for an action: the user's explicit policy if set, otherwise
+// the default (so withdraw / export-key show TOTP on until the user opts out).
+function effectiveFactors(
+  policy: Record<string, StepUpFactor[]>,
+  action: string
+): StepUpFactor[] {
+  return action in policy
+    ? policy[action]
+    : (DEFAULT_STEP_UP_POLICY[action] ?? []);
+}
 
 const FACTOR_LABELS: Record<Exclude<StepUpFactor, "wallet">, string> = {
   totp: "Authenticator",
@@ -227,7 +262,7 @@ export function WalletSecuritySection(): React.ReactElement {
     if (!data) {
       return;
     }
-    const current = new Set(data.policy[action] ?? []);
+    const current = new Set(effectiveFactors(data.policy, action));
     if (current.has(factor)) {
       current.delete(factor);
     } else {
@@ -324,7 +359,7 @@ export function WalletSecuritySection(): React.ReactElement {
         </p>
         <div className="space-y-2">
           {CONFIGURABLE_ACTIONS.map(({ action, label }) => {
-            const selected = new Set(data.policy[action] ?? []);
+            const selected = new Set(effectiveFactors(data.policy, action));
             return (
               <Card className="border py-0 shadow-none" key={action}>
                 <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">

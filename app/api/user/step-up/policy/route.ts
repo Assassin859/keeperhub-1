@@ -154,12 +154,11 @@ export async function PUT(request: Request): Promise<NextResponse> {
       }
     }
 
-    const updated: StepUpPolicy = { ...policy };
-    if (next.size > 0) {
-      updated[action] = [...next];
-    } else {
-      delete updated[action];
-    }
+    // Always store the resolved factor list, including an empty array: for a
+    // default-on action (withdraw / export-key) an empty array is the user's
+    // explicit opt-out, which must persist instead of falling back to the
+    // default. For other actions an empty array is equivalent to absent.
+    const updated: StepUpPolicy = { ...policy, [action]: [...next] };
     await db
       .update(users)
       .set({ stepUpPolicy: updated, updatedAt: new Date() })
