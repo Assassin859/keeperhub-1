@@ -778,6 +778,51 @@ jobs:
           echo "--- hmac-seed job logs ---"
           kubectl logs -n "${NAMESPACE}" job/keeperhub-pr-${PR_NUMBER}-hmac-seed --tail=30 || true
 
+      - name: Seed load-test users
+        if: needs.check-labels.outputs.should-load-test == 'true'
+        env:
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          NAMESPACE: ${{ env.NAMESPACE }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
+          LOAD_TEST_USER_PASSWORD: ${{ secrets.LOAD_TEST_USER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DB_PASSWORD=$(kubectl get secret keeperhub-pr-${PR_NUMBER}-db-credentials -n "${NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)
+          ENCODED_PASSWORD=$(DB_PASSWORD="${DB_PASSWORD}" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
+          DB_URL="postgresql://keeperhub:${ENCODED_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.${NAMESPACE}.svc.cluster.local:5432/keeperhub"
+          kubectl delete job keeperhub-pr-${PR_NUMBER}-load-test-seed -n "${NAMESPACE}" --ignore-not-found
+          kubectl apply -n "${NAMESPACE}" -f - <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: keeperhub-pr-${PR_NUMBER}-load-test-seed
+          spec:
+            backoffLimit: 2
+            ttlSecondsAfterFinished: 600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: load-test-seed
+                    image: ${ECR_REGISTRY}/keeperhub-staging:migrator-${IMAGE_TAG}
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - 'pnpm tsx scripts/seed-load-test-users.ts'
+                    env:
+                      - name: DATABASE_URL
+                        value: "${DB_URL}"
+                      - name: ALLOW_REMOTE
+                        value: "1"
+                      - name: LOAD_TEST_USER_PASSWORD
+                        value: "${LOAD_TEST_USER_PASSWORD}"
+                      - name: SEED_COUNT
+                        value: "50"
+          EOF
+          kubectl wait --for=condition=complete job/keeperhub-pr-${PR_NUMBER}-load-test-seed -n "${NAMESPACE}" --timeout=120s || true
+          echo "--- load-test-seed job logs ---"
+          kubectl logs -n "${NAMESPACE}" job/keeperhub-pr-${PR_NUMBER}-load-test-seed --tail=30 || true
+
       # Opt-in (deploy-pr-metrics label). Deploys the metrics-collector
       # satellite against the PR DB so its /metrics can be curled directly
       # (ServiceMonitors are off in PR envs). TECH-6484.
