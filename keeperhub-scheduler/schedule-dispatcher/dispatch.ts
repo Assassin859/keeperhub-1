@@ -21,6 +21,12 @@ import {
 } from "../lib/phantom.js";
 import { sqs } from "../lib/sqs-client.js";
 import type { Schedule, ScheduleMessage } from "../lib/types.js";
+import {
+  errorsTotal,
+  runDurationSeconds,
+  runsTotal,
+  triggeredTotal,
+} from "./metrics.js";
 
 export type DispatchResult = {
   evaluated: number;
@@ -36,9 +42,91 @@ export async function fetchSchedules(): Promise<Schedule[]> {
 }
 
 /**
+ * Returns all cron occurrences in the half-open interval (from, to].
+ * Returns an empty array on parse failure (logs the error) or if there are
+ * no occurrences in the window.
+ */
+export function cronOccurrencesBetween(
+  cronExpression: string,
+  timezone: string,
+  from: Date,
+  to: Date,
+): Date[] {
+  const occurrences: Date[] = [];
+  let interval: ReturnType<typeof CronExpressionParser.parse>;
+  try {
+    interval = CronExpressionParser.parse(cronExpression, {
+      currentDate: from,
+      tz: timezone,
+    });
+  } catch (error) {
+    console.error(`Invalid cron expression: ${cronExpression}`, error);
+    return occurrences;
+  }
+  for (;;) {
+    let next: Date;
+    try {
+      next = interval.next().toDate();
+    } catch (_e) {
+      break; // bounded expression exhausted; treat as end of range
+    }
+    if (next > to) break;
+    occurrences.push(next);
+  }
+  return occurrences;
+}
+
+/**
+ * Returns all interval-mode occurrences in the half-open interval (from, to].
+ *
+ * The k-th occurrence is at anchorAt + k * intervalSeconds (k >= 1). The
+ * first fire is at anchor + 1 * interval — creating a schedule does not
+ * cause an immediate run (mirrors shouldTriggerInterval and syncWorkflowSchedule).
+ */
+export function intervalOccurrencesBetween(
+  intervalSeconds: number,
+  anchorAt: Date,
+  from: Date,
+  to: Date,
+): Date[] {
+  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+    return [];
+  }
+  const anchorMs = anchorAt.getTime();
+  if (!Number.isFinite(anchorMs)) {
+    return [];
+  }
+
+  const intervalMs = intervalSeconds * 1000;
+  const fromMs = from.getTime();
+  const toMs = to.getTime();
+
+  // Largest k where anchorMs + k * intervalMs <= fromMs. All k > kFloor
+  // produce occurrences strictly after `from`, satisfying (from, to].
+  const kFloor = Math.floor((fromMs - anchorMs) / intervalMs);
+  const kStart = Math.max(1, kFloor + 1);
+  const kEnd = Math.floor((toMs - anchorMs) / intervalMs);
+
+  if (kEnd < kStart) {
+    return [];
+  }
+
+  const occurrences: Date[] = [];
+  for (let k = kStart; k <= kEnd; k++) {
+    occurrences.push(new Date(anchorMs + k * intervalMs));
+  }
+  return occurrences;
+}
+
+/**
+ * @deprecated Use cronOccurrencesBetween / intervalOccurrencesBetween.
+ *
  * Returns true when the cron expression's most recent occurrence is within
  * the current minute (now - prev < 60_000ms). Returns false on invalid
  * expressions and logs the error.
+ *
+ * Kept for the direct unit tests that exercise it; dispatch() uses the
+ * occurrence-based path.
  */
 export function shouldTriggerNow(
   cronExpression: string,
@@ -67,19 +155,13 @@ export function shouldTriggerNow(
 }
 
 /**
+ * @deprecated Use cronOccurrencesBetween / intervalOccurrencesBetween.
+ *
  * KEEP-575: returns true when an interval schedule's k-th fire (anchorAt +
- * k * intervalSeconds, k >= 1) lands within the current minute. Mirrors the
- * 60s window used by the cron path so the dispatcher's per-minute polling
- * can fire each occurrence exactly once.
+ * k * intervalSeconds, k >= 1) lands within the current minute.
  *
- * The first fire is at `anchor + 1 * interval`, not at the anchor itself —
- * saving a schedule must not cause an immediate run before the user's
- * intended interval has elapsed. This also keeps `shouldTriggerInterval`
- * consistent with the `next_run_at` value `syncWorkflowSchedule` writes on
- * create.
- *
- * Returns false (without firing) if the schedule hasn't reached its first
- * fire yet, or if the inputs are unusable.
+ * Kept for the direct unit tests that exercise it; dispatch() uses the
+ * occurrence-based path.
  */
 export function shouldTriggerInterval(
   intervalSeconds: number,
@@ -91,12 +173,6 @@ export function shouldTriggerInterval(
   }
 
   const anchorMs = anchorAt.getTime();
-  // KEEP-575: anchorAt arrives as `new Date(schedule.anchorAt)` where
-  // schedule.anchorAt is a string from the JSON API. Invalid strings
-  // produce Invalid Date and getTime() = NaN, which would make every
-  // comparison below silently false — looking like "schedule isn't due
-  // yet" forever. Treat a bad anchor as a non-firing input, same as a
-  // bad interval.
   if (!Number.isFinite(anchorMs)) {
     return false;
   }
@@ -105,7 +181,6 @@ export function shouldTriggerInterval(
   const intervalMs = intervalSeconds * 1000;
   const elapsedMs = nowMs - anchorMs;
 
-  // First fire is at anchor + 1*interval. Anything before that is "waiting".
   if (elapsedMs < intervalMs) {
     return false;
   }
@@ -135,20 +210,23 @@ function isIntervalMode(
 }
 
 /**
- * KEEP-575: pick interval vs cron dispatch based on whether the schedule
- * has an `intervalSeconds` populated. Interval rows synthesize a placeholder
- * cron expression for legacy readers — the dispatcher must NOT parse that
- * when intervalSeconds is set.
+ * Returns all occurrences of this schedule in the half-open interval (from, to].
+ * KEEP-575: routes interval vs cron based on whether intervalSeconds is set.
  */
-function scheduleShouldTrigger(schedule: Schedule, now: Date): boolean {
+function scheduleOccurrencesBetween(
+  schedule: Schedule,
+  from: Date,
+  to: Date,
+): Date[] {
   if (isIntervalMode(schedule)) {
-    return shouldTriggerInterval(
+    return intervalOccurrencesBetween(
       schedule.intervalSeconds,
       new Date(schedule.anchorAt),
-      now,
+      from,
+      to,
     );
   }
-  return shouldTriggerNow(schedule.cronExpression, schedule.timezone, now);
+  return cronOccurrencesBetween(schedule.cronExpression, schedule.timezone, from, to);
 }
 
 function describeSchedule(schedule: Schedule): string {
@@ -178,33 +256,55 @@ export async function sendToQueue(message: ScheduleMessage): Promise<void> {
 }
 
 /**
- * One dispatch pass: fetch schedules, evaluate each against the current
- * time, enqueue triggers for matching ones. Per-schedule failures are
- * logged and counted but do not abort the pass.
+ * One dispatch pass: stamp now before any I/O, fetch schedules, evaluate
+ * each against the window (from, now], enqueue a trigger for every matching
+ * occurrence. Per-schedule failures are logged and counted but do not abort
+ * the pass.
+ *
+ * `lastTickAt` is the `now` value from the previous pass. When provided,
+ * the window covers every cron occurrence since the last tick (catch-up).
+ * When null/undefined the window falls back to a synthetic
+ * (now - 60_000ms, now] which is equivalent to the previous single-minute
+ * check and is always safe on a fresh startup.
+ *
+ * `now` is stamped at the very top of this function, before the DB fetch,
+ * so DB latency cannot shrink the window and cause a missed trigger.
  */
-export async function dispatch(): Promise<DispatchResult> {
+export async function dispatch(lastTickAt?: Date | null): Promise<DispatchResult> {
   const runId = crypto.randomUUID().slice(0, 8);
+
+  // Stamp now before any I/O so DB latency cannot push it past the window.
+  const now = new Date();
+  const from = lastTickAt ?? new Date(now.getTime() - 60_000);
+
   console.log(
-    `[${runId}] Starting dispatch run at ${new Date().toISOString()}`,
+    `[${runId}] Starting dispatch run at ${now.toISOString()}, window: (${from.toISOString()}, ${now.toISOString()}]`,
   );
 
-  const schedules = await fetchSchedules();
+  const startMs = Date.now();
+  let schedules: Schedule[];
+
+  try {
+    schedules = await fetchSchedules();
+  } catch (error) {
+    runDurationSeconds.observe((Date.now() - startMs) / 1000);
+    throw error;
+  }
 
   console.log(`[${runId}] Found ${schedules.length} enabled schedules`);
 
-  const now = new Date();
   let triggered = 0;
   let errors = 0;
 
   for (const schedule of schedules) {
     try {
-      const shouldTrigger = scheduleShouldTrigger(schedule, now);
+      const occurrences = scheduleOccurrencesBetween(schedule, from, now);
 
-      if (shouldTrigger) {
+      for (const occurrence of occurrences) {
         const description = describeSchedule(schedule);
         console.log(
           `[${runId}] Triggering workflow ${schedule.workflowId} ` +
-            `(${description}, tz: ${schedule.timezone})`,
+            `(${description}, tz: ${schedule.timezone}, occurrence: ${occurrence.toISOString()})`,
         );
 
         // KEEP-693: pre-create a phantom row (best-effort) so the run is
@@ -219,12 +319,12 @@ export async function dispatch(): Promise<DispatchResult> {
           await sendToQueue({
             workflowId: schedule.workflowId,
             scheduleId: schedule.id,
-            triggerTime: now.toISOString(),
+            triggerTime: occurrence.toISOString(),
             triggerType: "schedule",
             executionId,
           });
         } catch (sendError) {
-          // The enqueue failed after the phantom was created -- resolve it to a
+          // The enqueue failed after the phantom was created — resolve it to a
           // coded failure so it surfaces in the run logs, then re-throw so the
           // outer handler counts the error.
           if (executionId) {
@@ -240,6 +340,7 @@ export async function dispatch(): Promise<DispatchResult> {
         }
 
         triggered += 1;
+        triggeredTotal.inc();
       }
     } catch (error) {
       console.error(
@@ -247,11 +348,16 @@ export async function dispatch(): Promise<DispatchResult> {
         error,
       );
       errors += 1;
+      errorsTotal.inc();
     }
   }
 
+  const durationSecs = (Date.now() - startMs) / 1000;
+  runDurationSeconds.observe(durationSecs);
+  runsTotal.inc();
+
   console.log(
-    `[${runId}] Dispatch complete: evaluated=${schedules.length}, triggered=${triggered}, errors=${errors}`,
+    `[${runId}] Dispatch complete: evaluated=${schedules.length}, triggered=${triggered}, errors=${errors}, duration=${durationSecs.toFixed(2)}s`,
   );
 
   return {

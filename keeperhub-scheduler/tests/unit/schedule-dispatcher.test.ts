@@ -35,8 +35,10 @@ vi.mock("../../lib/phantom.js", () => ({
 
 import { sqs } from "../../lib/sqs-client.js";
 import {
+  cronOccurrencesBetween,
   dispatch,
   fetchSchedules,
+  intervalOccurrencesBetween,
   sendToQueue,
   shouldTriggerInterval,
   shouldTriggerNow,
@@ -787,5 +789,188 @@ describe("dispatch", () => {
       "executionId",
     );
     expect(failPhantomExecution).not.toHaveBeenCalled();
+  });
+
+  it("catch-up: fires multiple occurrences when lastTickAt is provided and window spans multiple cron hits", async () => {
+    // Two hourly occurrences at 09:00 and 10:00 land in (08:30, 10:01].
+    vi.setSystemTime(new Date("2024-01-15T10:00:01Z"));
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 * * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
+
+    const lastTickAt = new Date("2024-01-15T08:30:00Z");
+    const result = await dispatch(lastTickAt);
+
+    // window (08:30, 10:00:01] contains 09:00:00 and 10:00:00
+    expect(result).toEqual({ evaluated: 1, triggered: 2, errors: 0 });
+    expect(mockedSqsSend).toHaveBeenCalledTimes(2);
+    const bodies = mockedSqsSend.mock.calls.map((c) =>
+      JSON.parse((c[0] as SendMessageCommand).input.MessageBody ?? ""),
+    );
+    expect(bodies[0].triggerTime).toBe("2024-01-15T09:00:00.000Z");
+    expect(bodies[1].triggerTime).toBe("2024-01-15T10:00:00.000Z");
+  });
+
+  it("triggerTime is the occurrence timestamp, not now", async () => {
+    // now = 09:00:30, occurrence = 09:00:00 — these differ by 30s.
+    vi.setSystemTime(new Date("2024-01-15T09:00:30Z"));
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
+
+    await dispatch();
+
+    const body = JSON.parse(
+      (mockedSqsSend.mock.calls[0][0] as SendMessageCommand).input
+        .MessageBody ?? "",
+    );
+    expect(body.triggerTime).toBe("2024-01-15T09:00:00.000Z");
+  });
+});
+
+describe("cronOccurrencesBetween", () => {
+  it("returns the occurrence when it falls at the exact upper bound (to)", () => {
+    const from = new Date("2024-01-15T08:59:00Z");
+    const to = new Date("2024-01-15T09:00:00Z");
+    const result = cronOccurrencesBetween("0 9 * * *", "UTC", from, to);
+    expect(result).toHaveLength(1);
+    expect(result[0].toISOString()).toBe("2024-01-15T09:00:00.000Z");
+  });
+
+  it("excludes occurrences at or before the lower bound (from)", () => {
+    // from = 09:00:00 exactly; the 09:00:00 occurrence must not be returned
+    // because the window is (from, to], not [from, to].
+    const from = new Date("2024-01-15T09:00:00Z");
+    const to = new Date("2024-01-15T09:00:30Z");
+    const result = cronOccurrencesBetween("0 9 * * *", "UTC", from, to);
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns multiple occurrences across a wide window", () => {
+    const from = new Date("2024-01-15T00:00:00Z");
+    const to = new Date("2024-01-15T03:00:00Z");
+    // every hour: 01:00, 02:00, 03:00
+    const result = cronOccurrencesBetween("0 * * * *", "UTC", from, to);
+    expect(result).toHaveLength(3);
+    expect(result.map((d) => d.toISOString())).toEqual([
+      "2024-01-15T01:00:00.000Z",
+      "2024-01-15T02:00:00.000Z",
+      "2024-01-15T03:00:00.000Z",
+    ]);
+  });
+
+  it("returns empty array when no occurrence falls in the window", () => {
+    const from = new Date("2024-01-15T09:01:00Z");
+    const to = new Date("2024-01-15T09:59:00Z");
+    const result = cronOccurrencesBetween("0 9 * * *", "UTC", from, to);
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns empty array and logs on an invalid cron expression", () => {
+    const from = new Date("2024-01-15T08:59:00Z");
+    const to = new Date("2024-01-15T09:01:00Z");
+    const result = cronOccurrencesBetween("not-a-cron", "UTC", from, to);
+    expect(result).toHaveLength(0);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Invalid cron expression: not-a-cron"),
+      expect.anything(),
+    );
+  });
+
+  it("respects timezone: NY 9am occurrence inside UTC window", () => {
+    // 2024-01-15 09:00 EST = 14:00 UTC (January = EST = UTC-5)
+    const from = new Date("2024-01-15T13:59:00Z");
+    const to = new Date("2024-01-15T14:01:00Z");
+    const result = cronOccurrencesBetween(
+      "0 9 * * *",
+      "America/New_York",
+      from,
+      to,
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].toISOString()).toBe("2024-01-15T14:00:00.000Z");
+  });
+
+  it("returns empty array when from >= to", () => {
+    const t = new Date("2024-01-15T09:00:00Z");
+    expect(cronOccurrencesBetween("* * * * *", "UTC", t, t)).toHaveLength(0);
+  });
+});
+
+describe("intervalOccurrencesBetween", () => {
+  const anchor = new Date("2026-05-18T10:00:00Z"); // k=0; k=1 fires at 10:55
+
+  it("returns the first occurrence (k=1) when it falls in the window", () => {
+    const from = new Date("2026-05-18T10:54:00Z");
+    const to = new Date("2026-05-18T10:55:00Z");
+    const result = intervalOccurrencesBetween(3300, anchor, from, to);
+    expect(result).toHaveLength(1);
+    expect(result[0].toISOString()).toBe("2026-05-18T10:55:00.000Z");
+  });
+
+  it("excludes occurrence at the exact lower bound (from is exclusive)", () => {
+    const from = new Date("2026-05-18T10:55:00Z"); // exactly k=1
+    const to = new Date("2026-05-18T11:00:00Z");
+    const result = intervalOccurrencesBetween(3300, anchor, from, to);
+    // k=1 is at 10:55 == from, so excluded. k=2 is at 11:50 > to.
+    expect(result).toHaveLength(0);
+  });
+
+  it("does not fire before k=1 (the anchor itself is not an occurrence)", () => {
+    const from = new Date("2026-05-18T09:59:00Z");
+    const to = new Date("2026-05-18T10:00:30Z"); // anchor at 10:00 is within this
+    const result = intervalOccurrencesBetween(3300, anchor, from, to);
+    expect(result).toHaveLength(0);
+  });
+
+  it("returns multiple occurrences across a wide window", () => {
+    const from = new Date("2026-05-18T10:00:00Z"); // anchor excluded
+    const to = new Date("2026-05-18T12:05:00Z"); // covers k=1 (10:55) and k=2 (11:50)
+    const result = intervalOccurrencesBetween(3300, anchor, from, to);
+    expect(result).toHaveLength(2);
+    expect(result[0].toISOString()).toBe("2026-05-18T10:55:00.000Z");
+    expect(result[1].toISOString()).toBe("2026-05-18T11:50:00.000Z");
+  });
+
+  it("returns empty array for non-positive interval", () => {
+    const from = new Date("2026-05-18T10:00:00Z");
+    const to = new Date("2026-05-18T12:00:00Z");
+    expect(intervalOccurrencesBetween(0, anchor, from, to)).toHaveLength(0);
+    expect(intervalOccurrencesBetween(-60, anchor, from, to)).toHaveLength(0);
+  });
+
+  it("returns empty array for non-finite interval", () => {
+    const from = new Date("2026-05-18T10:00:00Z");
+    const to = new Date("2026-05-18T12:00:00Z");
+    expect(
+      intervalOccurrencesBetween(Number.NaN, anchor, from, to),
+    ).toHaveLength(0);
+    expect(
+      intervalOccurrencesBetween(Number.POSITIVE_INFINITY, anchor, from, to),
+    ).toHaveLength(0);
+  });
+
+  it("returns empty array for an Invalid Date anchor", () => {
+    const badAnchor = new Date("not-a-date");
+    const from = new Date("2026-05-18T10:00:00Z");
+    const to = new Date("2026-05-18T12:00:00Z");
+    expect(intervalOccurrencesBetween(3300, badAnchor, from, to)).toHaveLength(0);
+  });
+
+  it("returns empty array when from >= to", () => {
+    const t = new Date("2026-05-18T10:55:00Z");
+    expect(intervalOccurrencesBetween(3300, anchor, t, t)).toHaveLength(0);
   });
 });
