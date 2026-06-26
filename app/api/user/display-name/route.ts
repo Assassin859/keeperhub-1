@@ -7,7 +7,7 @@ import { users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 const MAX_NAME_LENGTH = 50;
-const WALLET_ADDRESS_NAME = /^0x[a-f0-9]/i;
+const WALLET_ADDRESS_NAME = /^0x/i;
 
 /**
  * Sets the display name for a wallet (SIWE) account and marks it confirmed so
