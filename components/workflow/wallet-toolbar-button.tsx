@@ -128,6 +128,7 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
           <button
             aria-label="Copy wallet address"
             className="flex h-full items-center rounded-r-md px-2 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+            data-testid="wallet-toolbar-copy"
             onClick={handleCopy}
             type="button"
           >

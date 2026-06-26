@@ -33,8 +33,6 @@ const TOUR_TOAST = "kh-tour-loading";
 // in config.actionType, NOT its human label - so we match on the id here while
 // the popover copy still says "Get Native Token Balance".
 const BALANCE_ACTION = "web3/check-balance";
-// Ethereum Mainnet chainId (Check Balance resolves a numeric network string).
-const BALANCE_NETWORK = "1";
 // A funded public mainnet address, so the run is green even when the user has
 // no wallet of their own.
 const FALLBACK_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
@@ -42,6 +40,8 @@ const WALLET_ANCHOR = '[data-testid="wallet-toolbar-address"]';
 
 type StepSnapshot = {
   selectedActionType: string | undefined;
+  selectedNetwork: string | undefined;
+  selectedAddress: string | undefined;
   isExecuting: boolean;
 };
 
@@ -131,14 +131,31 @@ const PICK_BALANCE_STEP: StepDef = {
   },
 };
 
-const CONFIGURE_STEP: StepDef = {
-  id: "configure",
-  selector: '[data-testid="properties-panel"]',
-  mode: "next",
+// Guide the user to fill the two required fields themselves, so they learn what
+// the step needs, instead of silently pre-filling them.
+const SELECT_NETWORK_STEP: StepDef = {
+  id: "select-network",
+  selector: "#network",
+  mode: "auto",
+  isComplete: (snap) => Boolean(snap.selectedNetwork),
   popover: {
-    title: "Configure the step",
+    title: "Pick a network",
     description:
-      "We filled in Ethereum Mainnet and the wallet address for you. This panel is where every step is configured - inputs, connections, and outputs.",
+      "Choose the chain to read the balance on. Ethereum Mainnet is a good default for this step.",
+    side: "left",
+    align: "start",
+  },
+};
+
+const FILL_ADDRESS_STEP: StepDef = {
+  id: "fill-address",
+  selector: "#address",
+  mode: "auto",
+  isComplete: (snap) => Boolean(snap.selectedAddress),
+  popover: {
+    title: "Add a wallet address",
+    description:
+      "Paste the wallet to check. Copy your own address with the copy button next to the wallet in the top bar, then paste it here.",
     side: "left",
     align: "start",
   },
@@ -179,7 +196,8 @@ function buildSteps(hasWallet: boolean): StepDef[] {
     ACTIONS_INTRO_STEP,
     OPEN_WEB3_STEP,
     PICK_BALANCE_STEP,
-    CONFIGURE_STEP,
+    SELECT_NETWORK_STEP,
+    FILL_ADDRESS_STEP,
     RUN_STEP,
     RESULTS_STEP
   );
@@ -318,9 +336,21 @@ export function EditorWalkthrough(): null {
   const domObserverRef = useRef<MutationObserver | null>(null);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
-  const rawActionType = selectedNode?.data.config?.actionType;
+  const selectedConfig = selectedNode?.data.config as
+    | { actionType?: unknown; network?: unknown; address?: unknown }
+    | undefined;
   const selectedActionType =
-    typeof rawActionType === "string" ? rawActionType : undefined;
+    typeof selectedConfig?.actionType === "string"
+      ? selectedConfig.actionType
+      : undefined;
+  const selectedNetwork =
+    typeof selectedConfig?.network === "string" && selectedConfig.network
+      ? selectedConfig.network
+      : undefined;
+  const selectedAddress =
+    typeof selectedConfig?.address === "string" && selectedConfig.address
+      ? selectedConfig.address
+      : undefined;
 
   // Start the tour once a fresh default workflow is loaded and the user is
   // eligible. Consumes the request so it fires exactly once.
@@ -542,35 +572,29 @@ export function EditorWalkthrough(): null {
     if (step?.mode !== "auto" || !step.isComplete) {
       return;
     }
-    if (!step.isComplete({ selectedActionType, isExecuting })) {
+    if (
+      !step.isComplete({
+        selectedActionType,
+        selectedNetwork,
+        selectedAddress,
+        isExecuting,
+      })
+    ) {
       return;
     }
 
     const nextId = steps[index + 1]?.id;
 
-    // Entering configure: pre-fill the balance network + address so it runs
-    // green, then bring the node into focus - center it on the canvas and open
-    // the properties tab so the panel shows the config the card points at.
-    if (nextId === "configure") {
+    // Entering the field steps: bring the node into focus (center it, open the
+    // properties tab) so the Network / Address fields the cards point at are on
+    // screen. The user fills them in themselves.
+    if (nextId === "select-network") {
       const action = nodesRef.current.find(
         (node) =>
           node.data.type === "action" &&
           node.data.config?.actionType === BALANCE_ACTION
       );
       if (action) {
-        const config = (action.data.config ?? {}) as Record<string, unknown>;
-        if (!config.network) {
-          setNodeData({
-            id: action.id,
-            data: {
-              config: {
-                ...config,
-                network: BALANCE_NETWORK,
-                address: addressRef.current,
-              },
-            },
-          });
-        }
         setActiveTab("properties");
         setCenterNode(action.id);
       }
@@ -584,6 +608,8 @@ export function EditorWalkthrough(): null {
     instance.moveNext();
   }, [
     selectedActionType,
+    selectedNetwork,
+    selectedAddress,
     isExecuting,
     setNodeData,
     setActiveTab,
