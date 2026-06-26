@@ -43,10 +43,14 @@ jobs:
       NAMESPACE: keeperhub
       SERVICE_NAME: keeperhub
       SSM_ENV_PREFIX: techops-prod
-      # Window and thresholds the verification reads recent executions against.
-      # An org is flagged when it has any system_error, or when it ran at least
-      # MIN_EXECUTIONS and its error rate exceeds MAX_ERROR_RATE over the window.
-      LOOKBACK_MINUTES: "60"
+      # The job polls the stateless check endpoint once a minute for at most
+      # MONITOR_MINUTES, watching only executions on the new build (anchored at
+      # the loop start). It stops early the moment an org is flagged, so the
+      # common green path costs ~1 poll, and the worst case is capped at 5 min
+      # of runner time. An org is flagged when it has any system_error, or when
+      # it ran at least MIN_EXECUTIONS and its error rate exceeds MAX_ERROR_RATE.
+      MONITOR_MINUTES: "5"
+      POLL_INTERVAL_SECONDS: "60"
       MIN_EXECUTIONS: "1"
       MAX_ERROR_RATE: "0.5"
     steps:
@@ -69,60 +73,100 @@ jobs:
           echo "::add-mask::$SECRET"
           echo "INTERNAL_SERVICE_HMAC_SECRET=$SECRET" >> "$GITHUB_ENV"
 
-      - name: Run post-deploy verification (in-cluster)
+      - name: Monitor the new build (in-cluster, poll once a minute)
         id: verify
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           CALLER="scheduler"
           METHOD="GET"
           PATHNAME="/api/internal/post-deploy-verification"
-          QUERY="lookbackMinutes=${LOOKBACK_MINUTES}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
-          TIMESTAMP=$(date +%s)
 
-          # The verifier signs over url.pathname only (no query string), so the
-          # thresholds ride in the query without affecting the signature.
-          BODY_DIGEST=$(printf '' | openssl dgst -sha256 | awk '{print $2}')
-          SIGNING_STRING=$(printf '%s\n%s\n%s\n%s\n%s' "$METHOD" "$PATHNAME" "$CALLER" "$BODY_DIGEST" "$TIMESTAMP")
-          SIGNATURE=$(printf '%s' "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$INTERNAL_SERVICE_HMAC_SECRET" | awk '{print $2}')
+          # Anchor the window at the loop start so every poll counts only
+          # executions that began after the deploy -- i.e. runs on the new build.
+          SINCE=$(date +%s)
+          DEADLINE=$(( SINCE + MONITOR_MINUTES * 60 ))
 
-          URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?${QUERY}"
-          echo "Verifying ${PATHNAME} over a ${LOOKBACK_MINUTES}m window (in-cluster)..."
+          ATTEMPT=0
+          PROBLEM_FOUND=0
+          GOT_SIGNAL=0
+          CHECKED="?"
+          PROBLEMS="?"
 
-          # The secret never enters the pod -- only the precomputed signature does.
-          RESPONSE=$(kubectl run "post-deploy-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --namespace "${NAMESPACE}" \
-            --restart=Never \
-            --attach \
-            --rm \
-            --quiet \
-            --image=curlimages/curl:8.11.0 \
-            --env="URL=${URL}" \
-            --env="CALLER=${CALLER}" \
-            --env="TIMESTAMP=${TIMESTAMP}" \
-            --env="SIGNATURE=${SIGNATURE}" \
-            --command -- sh -c '
-              curl -sS --max-time 30 \
-                -H "X-KH-Caller: ${CALLER}" \
-                -H "X-KH-Timestamp: ${TIMESTAMP}" \
-                -H "X-KH-Signature: ${SIGNATURE}" \
-                "$URL"
-            ')
+          while true; do
+            ATTEMPT=$(( ATTEMPT + 1 ))
 
-          echo "$RESPONSE" > /tmp/verification.json
+            # Re-sign per poll: X-KH-Timestamp must be within the verifier's
+            # replay window. The verifier signs over url.pathname only, so the
+            # query (since/thresholds) does not affect the signature.
+            TIMESTAMP=$(date +%s)
+            BODY_DIGEST=$(printf '' | openssl dgst -sha256 | awk '{print $2}')
+            SIGNING_STRING=$(printf '%s\n%s\n%s\n%s\n%s' "$METHOD" "$PATHNAME" "$CALLER" "$BODY_DIGEST" "$TIMESTAMP")
+            SIGNATURE=$(printf '%s' "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$INTERNAL_SERVICE_HMAC_SECRET" | awk '{print $2}')
 
-          # This is a PUBLIC repo: Actions logs are world-readable. Surface only
-          # non-identifying aggregates here. Per-org slugs, names, and sample
-          # error text stay in the app's internal logs (Loki) -- never printed to
-          # CI or sent to Discord. The raw endpoint error (which could carry
-          # sensitive detail) is also never echoed.
-          OK=$(jq -r '.ok // false' /tmp/verification.json 2>/dev/null || echo false)
-          CHECKED=$(jq -r '.checkedOrgs // "?"' /tmp/verification.json 2>/dev/null || echo "?")
-          PROBLEMS=$(jq -r '.problemCount // "?"' /tmp/verification.json 2>/dev/null || echo "?")
-          echo "Verification: ok=${OK}, checkedOrgs=${CHECKED}, problemCount=${PROBLEMS}"
+            URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?since=${SINCE}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
+
+            # The secret never enters the pod -- only the precomputed signature does.
+            RESPONSE=$(kubectl run "post-deploy-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ATTEMPT}" \
+              --namespace "${NAMESPACE}" \
+              --restart=Never \
+              --attach \
+              --rm \
+              --quiet \
+              --image=curlimages/curl:8.11.0 \
+              --env="URL=${URL}" \
+              --env="CALLER=${CALLER}" \
+              --env="TIMESTAMP=${TIMESTAMP}" \
+              --env="SIGNATURE=${SIGNATURE}" \
+              --command -- sh -c '
+                curl -sS --max-time 30 \
+                  -H "X-KH-Caller: ${CALLER}" \
+                  -H "X-KH-Timestamp: ${TIMESTAMP}" \
+                  -H "X-KH-Signature: ${SIGNATURE}" \
+                  "$URL"
+              ' 2>/dev/null) || true
+
+            # PUBLIC repo: Actions logs are world-readable. Surface only
+            # non-identifying aggregates. Per-org slugs/names/error text stay in
+            # internal logs (Loki); the raw endpoint error is never echoed.
+            OK=$(printf '%s' "$RESPONSE" | jq -r '.ok // empty' 2>/dev/null)
+            PC=$(printf '%s' "$RESPONSE" | jq -r '.problemCount // empty' 2>/dev/null)
+            CO=$(printf '%s' "$RESPONSE" | jq -r '.checkedOrgs // empty' 2>/dev/null)
+            TE=$(printf '%s' "$RESPONSE" | jq -r '.totalExecutions // empty' 2>/dev/null)
+
+            if [ -n "$OK" ]; then
+              GOT_SIGNAL=1
+              CHECKED="$CO"
+              PROBLEMS="$PC"
+              echo "Attempt ${ATTEMPT}: ok=${OK}, checkedOrgs=${CO}, problemCount=${PC}, totalExecutions=${TE}"
+              if [ "$OK" != "true" ]; then
+                PROBLEM_FOUND=1
+                echo "Problem detected on the new build; stopping monitoring early."
+                break
+              fi
+            else
+              echo "Attempt ${ATTEMPT}: no valid response (transient); will retry."
+            fi
+
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "Monitored ${MONITOR_MINUTES}m with no problems."
+              break
+            fi
+            sleep "${POLL_INTERVAL_SECONDS}"
+          done
+
+          if [ "$PROBLEM_FOUND" -eq 1 ]; then
+            RESULT="false"
+          elif [ "$GOT_SIGNAL" -eq 1 ]; then
+            RESULT="true"
+          else
+            # Never got a parseable response in the whole window -- cannot
+            # confirm health, so do not greenlight.
+            RESULT="error"
+          fi
 
           {
-            echo "ok=$OK"
+            echo "ok=$RESULT"
             echo "checked=$CHECKED"
             echo "problems=$PROBLEMS"
           } >> "$GITHUB_OUTPUT"

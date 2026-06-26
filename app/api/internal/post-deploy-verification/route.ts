@@ -13,8 +13,11 @@
  *     faults are the strongest signal of a deploy regression), OR
  *   - it ran at least `minExecutions` and its error rate exceeds `maxErrorRate`.
  *
- * Window and thresholds are query-param overridable so the CI job can tune them
- * without a redeploy: `lookbackMinutes`, `minExecutions`, `maxErrorRate`.
+ * This is a stateless single check (one query per request); the CI job owns the
+ * timing and polls it. Window and thresholds are query-param overridable so the
+ * job can tune them without a redeploy: `since` (unix seconds, the window
+ * anchor), `lookbackMinutes` (fallback when `since` is absent), `minExecutions`,
+ * and `maxErrorRate`.
  */
 import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -168,18 +171,30 @@ export async function GET(request: Request): Promise<NextResponse> {
     DEFAULT_MAX_ERROR_RATE
   );
 
+  // Stateless single check: one query per request. The CI job owns the timing
+  // (it polls this endpoint). `since` (unix seconds) is the window anchor the
+  // caller passes so a poll counts only executions that started after the
+  // deploy -- i.e. runs on the new build. Falls back to the backward lookback
+  // window when omitted.
+  const sinceParam = url.searchParams.get("since");
+  const sinceEpoch = sinceParam ? Number.parseInt(sinceParam, 10) : Number.NaN;
+  const since = Number.isFinite(sinceEpoch)
+    ? new Date(sinceEpoch * 1000)
+    : new Date(Date.now() - lookbackMinutes * 60 * 1000);
+
   try {
-    const since = new Date(Date.now() - lookbackMinutes * 60 * 1000);
+    const windowStart = since.toISOString();
     const targetOrgs = await resolveTargetOrgs();
 
     if (targetOrgs.length === 0) {
       return NextResponse.json({
         ok: true,
-        lookbackMinutes,
+        windowStart,
         minExecutions,
         maxErrorRate,
         checkedOrgs: 0,
         problemCount: 0,
+        totalExecutions: 0,
         orgs: [],
         problems: [],
         generatedAt: new Date().toISOString(),
@@ -266,6 +281,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const problems = orgs.filter((org) => org.isProblem);
+    const totalExecutions = orgs.reduce((sum, org) => sum + org.total, 0);
 
     // The per-org detail (slugs, names, sample error text) is customer data and
     // must not surface in the public-repo CI logs or an external Discord channel.
@@ -279,7 +295,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         {
           problem_count: String(problems.length),
           checked_orgs: String(orgs.length),
-          lookback_minutes: String(lookbackMinutes),
+          window_start: windowStart,
           problems: JSON.stringify(
             problems.map((org) => ({
               slug: org.slug,
@@ -297,11 +313,12 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({
       ok: problems.length === 0,
-      lookbackMinutes,
+      windowStart,
       minExecutions,
       maxErrorRate,
       checkedOrgs: orgs.length,
       problemCount: problems.length,
+      totalExecutions,
       orgs,
       problems,
       generatedAt: new Date().toISOString(),
