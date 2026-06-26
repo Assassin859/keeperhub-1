@@ -21,9 +21,10 @@ type OwnerErr = { ok: false; status: number; error: string };
 
 // MFA enforcement is a security-critical org setting, so only the owner may
 // read or change it (stricter than the owner+admin digest settings).
-async function requireOrgOwner(
+async function requireOrgRole(
   request: Request,
-  organizationId: string
+  organizationId: string,
+  allowedRoles: ReadonlySet<string> = new Set(["owner"])
 ): Promise<OwnerOk | OwnerErr> {
   const authContext = await getDualAuthContext(request);
   if ("error" in authContext) {
@@ -45,7 +46,7 @@ async function requireOrgOwner(
     )
     .limit(1);
 
-  if (membership?.role !== "owner") {
+  if (!(membership && allowedRoles.has(membership.role))) {
     return { ok: false, status: 403, error: "Forbidden" };
   }
   return {
@@ -63,11 +64,16 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     const { organizationId } = await context.params;
-    const owner = await requireOrgOwner(request, organizationId);
-    if (!owner.ok) {
+    // Admins may read the enforcement status (read-only); only the owner writes.
+    const access = await requireOrgRole(
+      request,
+      organizationId,
+      new Set(["owner", "admin"])
+    );
+    if (!access.ok) {
       return NextResponse.json(
-        { error: owner.error },
-        { status: owner.status }
+        { error: access.error },
+        { status: access.status }
       );
     }
 
@@ -109,7 +115,7 @@ export async function PUT(
 ): Promise<NextResponse> {
   try {
     const { organizationId } = await context.params;
-    const owner = await requireOrgOwner(request, organizationId);
+    const owner = await requireOrgRole(request, organizationId);
     if (!owner.ok) {
       return NextResponse.json(
         { error: owner.error },

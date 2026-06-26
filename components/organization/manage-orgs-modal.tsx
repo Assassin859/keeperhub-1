@@ -1817,7 +1817,7 @@ export function ManageOrgsModal({
             </TabsContent>
 
             <TabsContent className="space-y-4" value="security">
-              {organization && isActiveOrgOwner ? (
+              {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
                 <>
                   <p className="text-muted-foreground text-sm">
                     Security for{" "}
@@ -1826,13 +1826,15 @@ export function ManageOrgsModal({
                     </span>
                   </p>
                   <MfaEnforcementSection
+                    canEdit={isActiveOrgOwner}
                     key={organization.id}
                     organizationId={organization.id}
                   />
                 </>
               ) : (
                 <div className="py-8 text-center text-muted-foreground">
-                  Only the organization owner can manage security settings.
+                  Only organization admins and owners can view security
+                  settings.
                 </div>
               )}
             </TabsContent>

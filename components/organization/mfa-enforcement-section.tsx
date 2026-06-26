@@ -32,8 +32,11 @@ const FACTOR_OPTIONS: {
 
 export function MfaEnforcementSection({
   organizationId,
+  canEdit = true,
 }: {
   organizationId: string;
+  /** Admins see the status read-only; only the owner can change it. */
+  canEdit?: boolean;
 }): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -126,6 +129,7 @@ export function MfaEnforcementSection({
         <Switch
           checked={enforce}
           data-testid="org-mfa-enforce-toggle"
+          disabled={!canEdit}
           onCheckedChange={setEnforce}
         />
       </div>
@@ -147,6 +151,7 @@ export function MfaEnforcementSection({
               <Switch
                 checked={factors.has(option.factor)}
                 data-testid={`org-mfa-factor-${option.factor}`}
+                disabled={!canEdit}
                 onCheckedChange={(checked) =>
                   toggleFactor(option.factor, checked)
                 }
@@ -156,16 +161,22 @@ export function MfaEnforcementSection({
         </div>
       )}
 
-      <div className="flex justify-end">
-        <Button
-          data-testid="org-mfa-save"
-          disabled={saving}
-          onClick={save}
-          size="sm"
-        >
-          {saving ? <Spinner className="size-4" /> : "Save"}
-        </Button>
-      </div>
+      {canEdit ? (
+        <div className="flex justify-end">
+          <Button
+            data-testid="org-mfa-save"
+            disabled={saving}
+            onClick={save}
+            size="sm"
+          >
+            {saving ? <Spinner className="size-4" /> : "Save"}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-muted-foreground text-xs">
+          Only the organization owner can change this setting.
+        </p>
+      )}
     </div>
   );
 }
