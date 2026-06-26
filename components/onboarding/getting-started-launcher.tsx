@@ -1,7 +1,7 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Check, ChevronDown, Info, Sparkles, X } from "lucide-react";
+import { Check, ChevronDown, Compass, Info, Sparkles, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -106,12 +106,14 @@ function StepRow({
   complete,
   onAction,
   onChip,
+  onTour,
   onInfo,
 }: {
   step: Step;
   complete: boolean;
   onAction: (step: Step) => void;
   onChip: (step: Step, prompt: string) => void;
+  onTour: (step: Step) => void;
   onInfo: (step: Step) => void;
 }): React.ReactElement {
   const clickable = Boolean(step.action) && !step.muted;
@@ -175,6 +177,18 @@ function StepRow({
           ))}
         </div>
       )}
+      {step.offerTour && (
+        <div className="px-2 pb-2 pl-9">
+          <button
+            className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-medium text-primary text-xs transition-colors hover:bg-primary/20"
+            onClick={() => onTour(step)}
+            type="button"
+          >
+            <Compass aria-hidden="true" className="size-3.5" />
+            Take a guided tour
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -183,11 +197,13 @@ function StepInfoDialog({
   step,
   creditLabel,
   onAction,
+  onTour,
   onClose,
 }: {
   step: Step | null;
   creditLabel: string;
   onAction: (step: Step) => void;
+  onTour: (step: Step) => void;
   onClose: () => void;
 }): React.ReactElement {
   const action = step?.action;
@@ -228,7 +244,19 @@ function StepInfoDialog({
           </div>
         ) : null}
         {step && action && step.actionLabel ? (
-          <DialogFooter>
+          <DialogFooter className="sm:justify-between sm:gap-2">
+            {step.offerTour ? (
+              <Button
+                onClick={() => {
+                  onTour(step);
+                  onClose();
+                }}
+                type="button"
+                variant="outline"
+              >
+                Take a guided tour
+              </Button>
+            ) : null}
             <Button
               onClick={() => {
                 onAction(step);
@@ -250,12 +278,14 @@ function ExpandedCard({
   creditLabel,
   onAction,
   onChip,
+  onTour,
   onTakeTour,
 }: {
   gs: GettingStarted;
   creditLabel: string;
   onAction: (step: Step) => void;
   onChip: (step: Step, prompt: string) => void;
+  onTour: (step: Step) => void;
   onTakeTour: () => void;
 }): React.ReactElement {
   const [infoStep, setInfoStep] = useState<Step | null>(null);
@@ -326,6 +356,7 @@ function ExpandedCard({
             onAction={onAction}
             onChip={onChip}
             onInfo={setInfoStep}
+            onTour={onTour}
             step={step}
           />
         ))}
@@ -346,6 +377,7 @@ function ExpandedCard({
         creditLabel={creditLabel}
         onAction={onAction}
         onClose={() => setInfoStep(null)}
+        onTour={onTour}
         step={infoStep}
       />
     </div>
@@ -440,69 +472,78 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   // The workflow is created once per (step, prompt) and remembered: taking the
   // step again reopens that same draft instead of spawning another Untitled
   // Workflow. If the user deleted it, a fresh one is created.
-  const runAiPrompt = async (step: Step, prompt: string): Promise<void> => {
+  // Open the step's draft workflow: reuse the one created for this (step,
+  // prompt) if it still exists, otherwise create a fresh trigger+action draft.
+  // In tour mode it requests the guided editor tour instead of seeding the AI
+  // prompt, so the tour runs on the same draft.
+  const startStepWorkflow = async (
+    step: Step,
+    prompt: string,
+    opts?: { tour?: boolean }
+  ): Promise<void> => {
     const key = `${step.key}:${prompt}`;
-    const existingId = gs.getStepWorkflowId(key);
-    if (existingId) {
+    let id = gs.getStepWorkflowId(key);
+    if (id) {
       try {
-        await api.workflow.getById(existingId);
-        router.push(`/workflows/${existingId}`);
-        return;
+        await api.workflow.getById(id);
       } catch {
-        // The remembered workflow was deleted; fall through to create a new one.
+        id = undefined;
       }
     }
-    try {
-      // Seed a starting Manual trigger + action (the builder's own "Start
-      // building" shape) so the draft opens with a usable canvas instead of a
-      // blank one with an empty properties panel.
-      const stamp = Date.now();
-      const triggerId = `trigger-${stamp}`;
-      const actionId = `action-${stamp}`;
-      const workflow = await api.workflow.create({
-        name: "Untitled Workflow",
-        description: prompt,
-        nodes: [
-          {
-            id: triggerId,
-            type: "trigger" as const,
-            position: { x: 400, y: 200 },
-            data: {
-              label: "",
+    if (!id) {
+      try {
+        const stamp = Date.now();
+        const triggerId = `trigger-${stamp}`;
+        const actionId = `action-${stamp}`;
+        const workflow = await api.workflow.create({
+          name: "Untitled Workflow",
+          description: prompt,
+          nodes: [
+            {
+              id: triggerId,
               type: "trigger" as const,
-              config: { triggerType: "Manual" },
-              status: "idle" as const,
+              position: { x: 400, y: 200 },
+              data: {
+                label: "",
+                type: "trigger" as const,
+                config: { triggerType: "Manual" },
+                status: "idle" as const,
+              },
             },
-          },
-          {
-            id: actionId,
-            type: "action" as const,
-            position: { x: 672, y: 200 },
-            data: {
-              label: "",
+            {
+              id: actionId,
               type: "action" as const,
-              config: {},
-              status: "idle" as const,
+              position: { x: 672, y: 200 },
+              data: {
+                label: "",
+                type: "action" as const,
+                config: {},
+                status: "idle" as const,
+              },
             },
-          },
-        ],
-        edges: [
-          {
-            id: `edge-${stamp}`,
-            source: triggerId,
-            target: actionId,
-            type: "animated",
-          },
-        ],
-      });
-      gs.setStepWorkflowId(key, workflow.id);
-      if (AI_ENABLED) {
-        setPendingAiPrompt(prompt);
+          ],
+          edges: [
+            {
+              id: `edge-${stamp}`,
+              source: triggerId,
+              target: actionId,
+              type: "animated",
+            },
+          ],
+        });
+        id = workflow.id;
+        gs.setStepWorkflowId(key, id);
+      } catch {
+        toast.error("Could not start a workflow.");
+        return;
       }
-      router.push(`/workflows/${workflow.id}`);
-    } catch {
-      toast.error("Could not start a workflow.");
     }
+    if (opts?.tour) {
+      requestTour(true);
+    } else if (AI_ENABLED) {
+      setPendingAiPrompt(prompt);
+    }
+    router.push(`/workflows/${id}`);
   };
 
   // Taking a step's action opens the relevant surface. Outcome steps only
@@ -514,14 +555,22 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     if (action?.kind === "deeplink") {
       openDeepLink(action.target);
     } else if (action?.kind === "ai-prompt") {
-      runAiPrompt(step, action.prompt);
+      startStepWorkflow(step, action.prompt);
     }
     gs.refetch();
   };
 
   const onChip = (step: Step, prompt: string): void => {
     gs.markStepActioned(step);
-    runAiPrompt(step, prompt);
+    startStepWorkflow(step, prompt);
+  };
+
+  // "Take a guided tour": open the step's draft and launch the editor tour,
+  // which walks the user through building and running the workflow.
+  const onTour = (step: Step): void => {
+    gs.markStepActioned(step);
+    const prompt = step.action?.kind === "ai-prompt" ? step.action.prompt : "";
+    startStepWorkflow(step, prompt, { tour: true });
   };
 
   // Panel open -> bottom-left (clears it on any width); closed -> bottom-right.
@@ -536,6 +585,7 @@ export function GettingStartedLauncher(): React.ReactElement | null {
           onAction={onAction}
           onChip={onChip}
           onTakeTour={() => requestTour(true)}
+          onTour={onTour}
         />
       ) : (
         <button

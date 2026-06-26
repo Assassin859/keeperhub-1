@@ -82,6 +82,8 @@ export type Step = {
   action?: StepAction;
   /** Label for the info-dialog action button (e.g. "Open wallet"). */
   actionLabel?: string;
+  /** Offer a "Take a guided tour" button that launches the editor walkthrough. */
+  offerTour?: boolean;
   /** Optional inline chips (each seeds the AI generator). */
   chips?: Chip[];
   /** Render muted (e.g. a "not needed" confirmation step). */
@@ -242,6 +244,7 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
               "Create a simple workflow that runs on a schedule and sends me a Discord message.",
           },
           actionLabel: "Open the builder",
+          offerTour: true,
         },
       ],
     },
