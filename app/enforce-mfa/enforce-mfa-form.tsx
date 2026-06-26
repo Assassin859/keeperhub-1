@@ -1,7 +1,6 @@
 "use client";
 
 import { Check, Mail, ShieldCheck, Smartphone } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { TotpSetupDialog } from "@/components/settings/totp-setup-dialog";
@@ -152,7 +151,6 @@ export function EnforceMfaForm({
   otherOrgs: { id: string; name: string }[];
   next: string;
 }): React.ReactElement {
-  const router = useRouter();
   const [totpOpen, setTotpOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -180,14 +178,15 @@ export function EnforceMfaForm({
     window.location.assign("/");
   };
 
-  // Enrolling any accepted factor satisfies the gate; bounce back to where they
-  // were headed and let the proxy re-check (it will now pass them through).
+  // A factor was just added. Hard-reload to where they were headed so the proxy
+  // re-checks compliance against fresh state (rotated session + flipped flag)
+  // and the UI reflects enrollment; if another factor is still required the
+  // proxy bounces them back here showing only what's left.
   const onEnrolled = (): void => {
     setTotpOpen(false);
     setEmailOpen(false);
     toast.success("Second factor added.");
-    router.replace(next);
-    router.refresh();
+    window.location.assign(next);
   };
 
   return (
