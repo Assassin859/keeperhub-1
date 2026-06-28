@@ -8,8 +8,10 @@ import {
 } from "@/lib/trusted-origins";
 
 describe("isTrustedOrigin", () => {
-  it("matches exact entries", () => {
+  it("matches any localhost port (worktree dev servers can run on any port)", () => {
     expect(isTrustedOrigin("http://localhost:3000")).toBe(true);
+    expect(isTrustedOrigin("http://localhost:3001")).toBe(true);
+    expect(isTrustedOrigin("http://localhost:4000")).toBe(true);
   });
 
   it("matches subdomains via *.keeperhub.com", () => {
@@ -26,7 +28,6 @@ describe("isTrustedOrigin", () => {
   it("rejects untrusted origins", () => {
     expect(isTrustedOrigin("https://evil.example.com")).toBe(false);
     expect(isTrustedOrigin("https://keeperhub.com.evil.example")).toBe(false);
-    expect(isTrustedOrigin("http://localhost:4000")).toBe(false);
   });
 
   it("rejects scheme mismatches", () => {

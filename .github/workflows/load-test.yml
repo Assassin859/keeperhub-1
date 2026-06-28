@@ -1,3 +1,4 @@
+# Type: reusable | Called by deploy-pr-environment.yaml + ad-hoc
 name: k6 Load Test
 
 on:
@@ -7,6 +8,33 @@ on:
   # weekly traffic window (results ready Sunday morning).
   schedule:
     - cron: '0 4 * * 0'
+  workflow_call:
+    inputs:
+      target_url:
+        description: 'Target URL to load test (e.g. https://app-pr-42.keeperhub.com)'
+        type: string
+        required: true
+      test_mode:
+        description: 'Test mode'
+        type: string
+        required: false
+        default: 'execution'
+      target_vus:
+        type: string
+        required: false
+        default: '5'
+      wf_per_vu:
+        type: string
+        required: false
+        default: '30'
+      duration:
+        type: string
+        required: false
+        default: '60s'
+      threshold:
+        type: string
+        required: false
+        default: '95'
   workflow_dispatch:
     inputs:
       test_mode:
@@ -85,7 +113,7 @@ on:
         default: '500'
 
 concurrency:
-  group: load-test-${{ inputs.environment }}
+  group: load-test-${{ inputs.target_url || inputs.environment || 'scheduled' }}
   cancel-in-progress: false
 
 permissions:
@@ -111,7 +139,9 @@ jobs:
 
       - name: Resolve target URL
         run: |
-          if [[ "${{ inputs.environment }}" == "custom" ]]; then
+          if [[ -n "${{ inputs.target_url }}" ]]; then
+            BASE_URL="${{ inputs.target_url }}"
+          elif [[ "${{ inputs.environment }}" == "custom" ]]; then
             BASE_URL="${{ inputs.custom_url }}"
             if [[ -z "$BASE_URL" ]]; then
               echo "::error::custom_url is required when environment=custom"
@@ -121,7 +151,7 @@ jobs:
             BASE_URL="${{ vars.TO_HEALTH_URL }}"
           fi
           echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
-          echo "Target: $BASE_URL (mode: ${{ inputs.test_mode }})"
+          echo "Target: $BASE_URL (mode: ${{ inputs.test_mode || 'execution' }})"
 
       - name: Create results directory
         run: mkdir -p /tmp/k6-results
