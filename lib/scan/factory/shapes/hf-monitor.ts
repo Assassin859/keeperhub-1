@@ -39,6 +39,14 @@ const AAVE_V3_POOL_ADDRESSES: Readonly<Record<number, string>> = {
   8453: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", // Base
 } as const;
 
+// Inline copy of SparkLend Pool addresses (PREFILL-08).
+// protocol-registry.ts has `import "server-only"` and cannot be imported here
+// without breaking Vitest tests that run factory shapes in a plain Node context.
+// [VERIFIED etherscan.io/address/0xC13e21B648A5Ee794902342038FF3aDAB66BE987 + docs.spark.fi 2026-06-29]
+const SPARK_POOL_ADDRESSES: Readonly<Record<number, string>> = {
+  1: "0xC13e21B648A5Ee794902342038FF3aDAB66BE987", // Ethereum mainnet
+} as const;
+
 // ---------------------------------------------------------------------------
 // ABI
 // ---------------------------------------------------------------------------
@@ -103,10 +111,12 @@ export function buildHfMonitor(
   const slug = descriptor.id;
   const network = String(descriptor.chainId);
 
-  const poolAddress = AAVE_V3_POOL_ADDRESSES[descriptor.chainId];
+  const isSpark = descriptor.protocol === "spark";
+  const poolAddresses = isSpark ? SPARK_POOL_ADDRESSES : AAVE_V3_POOL_ADDRESSES;
+  const poolAddress = poolAddresses[descriptor.chainId];
   if (!poolAddress) {
     throw new Error(
-      `No Aave V3 Pool address for chainId ${descriptor.chainId}. Add it to AAVE_V3_POOL_ADDRESSES in hf-monitor.ts.`
+      `No ${isSpark ? "Spark" : "Aave V3"} Pool address for chainId ${descriptor.chainId}.`
     );
   }
 
@@ -116,8 +126,17 @@ export function buildHfMonitor(
   const conditionId = `${slug}-condition`;
   const alertId = `${slug}-alert`;
 
-  // Template ref for the healthFactor output field
-  const hfRef = `{{@${readId}:Read Health Factor.result.healthFactor}}`;
+  // Read node label/description are protocol-specific and single-sourced into
+  // hfRef so the template ref in the condition leftOperand stays in sync with
+  // the actual node label (T-56-07 / PREFILL-08).
+  const readLabel = isSpark ? "Read Spark Health Factor" : "Read Health Factor";
+  const readDescription = isSpark
+    ? "Read SparkLend getUserAccountData"
+    : "Read Aave V3 getUserAccountData";
+
+  // Template ref for the healthFactor output field — derives from readLabel
+  // so that validateTemplateRefs can resolve it against the read node.
+  const hfRef = `{{@${readId}:${readLabel}.result.healthFactor}}`;
 
   // Threshold in Aave's 1e18 base units.
   // Prefer the clamped value pre-computed by the engine (confirmInputs.threshold),
@@ -132,8 +151,8 @@ export function buildHfMonitor(
     buildReadContractNode(
       readId,
       {
-        label: "Read Health Factor",
-        description: "Read Aave V3 getUserAccountData",
+        label: readLabel,
+        description: readDescription,
         network,
         contractAddress: poolAddress,
         abi: GET_USER_ACCOUNT_DATA_ABI,
