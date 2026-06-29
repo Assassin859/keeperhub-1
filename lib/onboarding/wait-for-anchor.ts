@@ -8,6 +8,15 @@ export function waitForAnchor(
   timeoutMs = 5000
 ): Promise<HTMLElement | null> {
   return new Promise((resolve) => {
+    // The abort event fires once when the signal transitions from not-aborted
+    // to aborted. Adding a listener after that point never fires it, so check
+    // upfront. Without this, a component that unmounts before waitForAnchor
+    // runs waits the full timeoutMs (up to 120 s in create-wallet paths).
+    if (signal.aborted) {
+      resolve(null);
+      return;
+    }
+
     const existing = document.querySelector<HTMLElement>(selector);
     if (existing) {
       resolve(existing);
