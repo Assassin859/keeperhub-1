@@ -5,6 +5,7 @@ import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 const MAX_NAME_LENGTH = 50;
 const WALLET_ADDRESS_NAME = /^0x/i;
@@ -47,6 +48,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       .update(users)
       .set({ name, displayNameConfirmed: true, updatedAt: new Date() })
       .where(eq(users.id, session.user.id));
+
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "user.display_name_updated",
+      resourceType: "user",
+      resourceId: session.user.id,
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ success: true, name });
   } catch (error) {
