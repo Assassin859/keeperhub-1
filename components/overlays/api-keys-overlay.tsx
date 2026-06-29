@@ -393,11 +393,10 @@ function ApiKeysList({
         <div className="space-y-2">
           {apiKeys.map((apiKey) => (
             <div
-              className={`flex items-center justify-between rounded-md border p-3 ${
-                apiKey.id === highlightId
-                  ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
-                  : ""
-              }`}
+              className={`flex items-center justify-between rounded-md border p-3 ${apiKey.id === highlightId
+                ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
+                : ""
+                }`}
               key={apiKey.id}
               ref={apiKey.id === highlightId ? highlightedRef : undefined}
             >
@@ -406,12 +405,15 @@ function ApiKeysList({
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                     {apiKey.keyPrefix}...
                   </code>
-                  {apiKey.name && (
-                    <span className="truncate text-sm">{apiKey.name}</span>
-                  )}
                 </div>
+                {apiKey.name && (
+                  <p className="mt-2 mb-2 text-sm">
+                    {"Name: "}
+                    <span className="truncate text-sm">{apiKey.name}</span>
+                  </p>
+                )}
                 {apiKey.scope && (
-                  <p className="mt-1 text-sm">
+                  <p className="mt-2 mb-2 text-sm">
                     {"Scope: "}
                     {apiKey.scope.split(" ").map((s) => (
                       <span key={s}>
