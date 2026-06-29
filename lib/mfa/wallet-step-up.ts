@@ -234,6 +234,9 @@ async function verifyWalletSignature(
     );
     return false;
   }
+  if (!signature.startsWith("0x") || !walletAddressValue.startsWith("0x")) {
+    return false;
+  }
   const message = buildStepUpMessage(action, nonce);
   let recovered: `0x${string}`;
   try {
