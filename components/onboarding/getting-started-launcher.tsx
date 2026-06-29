@@ -374,7 +374,7 @@ function ExpandedCard({
           <StepRow
             complete={gs.isStepComplete(step)}
             isChipCloned={(chip) =>
-              Boolean(gs.getStepWorkflowId(`${step.key}:${chip.id}`))
+              gs.hasLiveStepWorkflow(`${step.key}:${chip.id}`)
             }
             key={step.key}
             onAction={onAction}
@@ -600,7 +600,8 @@ export function GettingStartedLauncher(): React.ReactElement | null {
         return;
       }
     }
-    gs.completeStep(step);
+    // The step/chip mark themselves complete by deriving from this live clone
+    // (see hasLiveStepWorkflow / isStepComplete) -- no separate latch to clobber.
     router.push(`/workflows/${id}`);
   };
 

@@ -41,6 +41,14 @@ type OnboardingStatus = {
   hasIntegration: boolean;
   /** Launcher-created workflows that have at least one execution. */
   executedWorkflowIds: string[];
+  /** Launcher-created workflows that still exist (not deleted) in the org. */
+  existingWorkflowIds: string[];
+  /**
+   * The workflow ids this status was computed for (client-augmented). Lets the
+   * UI distinguish "checked and confirmed deleted" from "not yet checked", so a
+   * just-cloned id reads as live until the next fetch proves otherwise.
+   */
+  checkedWorkflowIds: string[];
 };
 
 type Persisted = {
@@ -151,9 +159,10 @@ export type GettingStarted = {
   branch: BranchKey;
   setBranch: (next: BranchKey) => void;
   markStepActioned: (step: Step) => void;
-  completeStep: (step: Step) => void;
   getStepWorkflowId: (key: string) => string | undefined;
   setStepWorkflowId: (key: string, workflowId: string) => void;
+  /** Whether the workflow stored under `key` still exists in the org. */
+  hasLiveStepWorkflow: (key: string) => boolean;
   refetch: () => void;
   isAuthenticated: boolean;
 };
@@ -202,11 +211,12 @@ export function useGettingStarted(): GettingStarted {
     const query = workflowIds
       ? `?workflowIds=${encodeURIComponent(workflowIds)}`
       : "";
+    const checked = workflowIds ? workflowIds.split(",") : [];
     fetch(`/api/onboarding/status${query}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: OnboardingStatus | null) => {
+      .then((data: Omit<OnboardingStatus, "checkedWorkflowIds"> | null) => {
         if (data) {
-          setStatus(data);
+          setStatus({ ...data, checkedWorkflowIds: checked });
         }
       })
       .catch(() => undefined);
@@ -268,22 +278,47 @@ export function useGettingStarted(): GettingStarted {
     },
     [persist]
   );
-  // Latch a step done regardless of its signal. Used when an action is itself
-  // the completion (e.g. cloning a curated starter workflow from a chip): the
-  // user still configures it, but picking it satisfies the step.
-  const completeStep = useCallback(
-    (step: Step) => {
-      persist((prev) =>
-        prev.done.includes(step.key)
-          ? prev
-          : { ...prev, done: [...prev.done, step.key] }
+  // A launcher-tracked workflow id is "live" when it still exists in the org.
+  // Optimistic before the first status fetch and for ids not yet checked (so a
+  // just-cloned workflow reads as live immediately); only an id confirmed
+  // deleted by a status response reads as not-live. This is what makes a chip
+  // un-mark itself when its clone is deleted, instead of trusting a stale
+  // localStorage pointer.
+  const isWorkflowLive = useCallback(
+    (id: string | undefined): boolean => {
+      if (!id) {
+        return false;
+      }
+      if (!status) {
+        return true;
+      }
+      return !(
+        status.checkedWorkflowIds.includes(id) &&
+        !status.existingWorkflowIds.includes(id)
       );
     },
-    [persist]
+    [status]
+  );
+  const hasLiveStepWorkflow = useCallback(
+    (key: string): boolean => isWorkflowLive(persisted.workflows[key]),
+    [isWorkflowLive, persisted.workflows]
   );
   const isStepComplete = useCallback(
     (step: Step): boolean => {
-      if (step.signal === "always" || persisted.done.includes(step.key)) {
+      if (step.signal === "always") {
+        return true;
+      }
+      // Chip steps complete on a LIVE starter clone (or once one has run).
+      // Derived, not latched, so deleting the clone cleanly un-completes it.
+      if (step.chips && step.chips.length > 0) {
+        const hasLiveClone = step.chips.some((chip) =>
+          isWorkflowLive(persisted.workflows[`${step.key}:${chip.id}`])
+        );
+        return (
+          hasLiveClone || resolveRealSignal(step, status, persisted.workflows)
+        );
+      }
+      if (persisted.done.includes(step.key)) {
         return true;
       }
       if (CLICK_DRIVEN.has(step.signal)) {
@@ -291,7 +326,7 @@ export function useGettingStarted(): GettingStarted {
       }
       return resolveRealSignal(step, status, persisted.workflows);
     },
-    [persisted.done, persisted.workflows, status]
+    [persisted.done, persisted.workflows, status, isWorkflowLive]
   );
   const getStepWorkflowId = useCallback(
     (key: string): string | undefined => persisted.workflows[key],
@@ -313,9 +348,9 @@ export function useGettingStarted(): GettingStarted {
     branch: persisted.branch,
     setBranch,
     markStepActioned,
-    completeStep,
     getStepWorkflowId,
     setStepWorkflowId,
+    hasLiveStepWorkflow,
     refetch: fetchStatus,
     isAuthenticated,
   };

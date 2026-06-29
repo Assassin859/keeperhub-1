@@ -16,11 +16,16 @@ import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
  * Each is an org-scoped existence check, so an outcome step only turns green
  * once the user has actually done it.
  *
- * `workflowIds` are the drafts the launcher itself created for its "run a
- * workflow" steps. We return only the subset that has at least one execution,
- * so a step completes when *that* workflow has been run, never because some
- * other pre-existing workflow in the org has historical runs. Informational
- * steps ("open your wallet") complete client-side and are not reported here.
+ * `workflowIds` are the drafts/clones the launcher itself created for its "run
+ * a workflow" / "pick a starter" steps. We return:
+ *   - `executedWorkflowIds`: the subset that has at least one execution, so a
+ *     step completes when *that* workflow has been run, never because some
+ *     other pre-existing workflow in the org has historical runs.
+ *   - `existingWorkflowIds`: the subset that still exists (not deleted) in the
+ *     org, so the launcher can tell a live clone from a stale localStorage
+ *     pointer to a workflow that was since deleted.
+ * Informational steps ("open your wallet") complete client-side and are not
+ * reported here.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const authCtx = await resolveOrganizationId(request);
@@ -38,7 +43,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     ? idsParam.split(",").filter((id) => id.length > 0)
     : [];
 
-  const [apiKey, integration, executed] = await Promise.all([
+  const [apiKey, integration, executed, existing] = await Promise.all([
     db
       .select({ one: sql<number>`1` })
       .from(organizationApiKeys)
@@ -66,11 +71,24 @@ export async function GET(request: Request): Promise<NextResponse> {
               inArray(workflowExecutions.workflowId, workflowIds)
             )
           ),
+    workflowIds.length === 0
+      ? Promise.resolve([] as { id: string }[])
+      : db
+          .select({ id: workflows.id })
+          .from(workflows)
+          .where(
+            and(
+              eq(workflows.organizationId, orgId),
+              inArray(workflows.id, workflowIds),
+              isNull(workflows.deletedAt)
+            )
+          ),
   ]);
 
   return NextResponse.json({
     hasApiKey: apiKey.length > 0,
     hasIntegration: integration.length > 0,
     executedWorkflowIds: executed.map((row) => row.workflowId),
+    existingWorkflowIds: existing.map((row) => row.id),
   });
 }
