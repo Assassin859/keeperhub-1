@@ -212,6 +212,34 @@ const YEARN_V3_VAULT_ABI = JSON.stringify([
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    name: "role_manager",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    name: "use_default_queue",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    name: "minimum_total_idle",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "decimals",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }],
+  },
 ]);
 
 export default defineAbiProtocol({
@@ -317,6 +345,43 @@ export default defineAbiProtocol({
             "Get the maximum total deposit limit for the vault (0 means deposits are closed)",
           outputs: {
             result: { name: "depositLimit", label: "Deposit Limit" },
+          },
+        },
+        role_manager: {
+          slug: "get-role-manager",
+          label: "Role Manager",
+          description: "Get the address of the vault role manager contract",
+          outputs: {
+            result: { name: "roleManager", label: "Role Manager Address" },
+          },
+        },
+        use_default_queue: {
+          slug: "get-use-default-queue",
+          label: "Use Default Queue",
+          description:
+            "Check whether the vault uses the default withdrawal queue order",
+          outputs: {
+            result: { name: "useDefaultQueue", label: "Use Default Queue" },
+          },
+        },
+        minimum_total_idle: {
+          slug: "get-minimum-total-idle",
+          label: "Minimum Total Idle",
+          description:
+            "Get the minimum amount of underlying assets the vault keeps liquid",
+          outputs: {
+            result: {
+              name: "minimumTotalIdle",
+              label: "Minimum Total Idle (wei)",
+            },
+          },
+        },
+        decimals: {
+          slug: "get-vault-decimals",
+          label: "Vault Decimals",
+          description: "Get the number of decimals for the vault share token",
+          outputs: {
+            result: { name: "decimals", label: "Decimals" },
           },
         },
       },

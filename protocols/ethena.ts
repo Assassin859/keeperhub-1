@@ -3,10 +3,14 @@ import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
 import { wallet, native } from "@/lib/test-data/types";
 import sUsdeAbi from "./abis/ethena-susde.json";
 
-// Minimal ABI: only the 18 standard ERC-4626 functions + 5 Ethena-specific functions.
-// The full ethena-susde.json is used so that ABI fragment matching for writes works
-// correctly; the overrides below prune the visible action set to the 23 we want.
-const SUSDE_ABI = JSON.stringify(sUsdeAbi);
+const SUSDE_ALLOWED = new Set<string>([
+  "asset", "totalAssets", "totalSupply", "balanceOf", "convertToShares", "convertToAssets",
+  "previewDeposit", "previewMint", "previewWithdraw", "previewRedeem",
+  "maxDeposit", "maxMint", "maxWithdraw", "maxRedeem",
+  "deposit", "mint", "withdraw", "redeem",
+  "cooldownAssets", "cooldownShares", "cooldownDuration", "cooldowns", "unstake",
+]);
+const SUSDE_ABI = JSON.stringify(sUsdeAbi.filter((fn) => SUSDE_ALLOWED.has(fn.name)));
 
 const ERC20_MINIMAL_ABI = JSON.stringify([
   {
@@ -25,6 +29,16 @@ const ERC20_MINIMAL_ABI = JSON.stringify([
       { name: "amount", type: "uint256" },
     ],
     outputs: [{ name: "", type: "bool" }],
+  },
+]);
+
+const ERC20_BALANCE_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
   },
 ]);
 
@@ -175,7 +189,7 @@ export default defineAbiProtocol({
     },
     ena: {
       label: "ENA Governance Token",
-      abi: ERC20_MINIMAL_ABI,
+      abi: ERC20_BALANCE_ABI,
       addresses: {
         "1": "0x57e114B691Db790C35207b2e685D4A43181e6061",
       },
@@ -187,15 +201,6 @@ export default defineAbiProtocol({
           inputs: { account: { label: "Wallet Address" } },
           outputs: {
             result: { name: "balance", label: "ENA Balance (wei)", decimals: 18 },
-          },
-        },
-        approve: {
-          slug: "approve-ena",
-          label: "Approve ENA Spending",
-          description: "Approve a spender to transfer ENA on your behalf",
-          inputs: {
-            spender: { label: "Spender Address" },
-            amount: { label: "Approval Amount (wei)" },
           },
         },
       },
