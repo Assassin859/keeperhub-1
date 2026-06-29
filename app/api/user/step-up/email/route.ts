@@ -11,6 +11,7 @@ import { sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkDualFactorRateLimit } from "@/lib/mfa/dual-factor-rate-limit";
 import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { generateId } from "@/lib/utils/id";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -158,6 +159,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       .update(users)
       .set({ stepUpEmail: email, updatedAt: new Date() })
       .where(eq(users.id, session.user.id));
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "step_up_email.added",
+      resourceType: "user",
+      resourceId: session.user.id,
+      metadata: buildAuditMetadata(request),
+    });
     return NextResponse.json({ ok: true, email });
   } catch (error) {
     logSystemError(
@@ -212,6 +224,17 @@ export async function DELETE(request: Request): Promise<NextResponse> {
       .update(users)
       .set({ stepUpEmail: null, updatedAt: new Date() })
       .where(eq(users.id, session.user.id));
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "step_up_email.removed",
+      resourceType: "user",
+      resourceId: session.user.id,
+      metadata: buildAuditMetadata(request),
+    });
     return NextResponse.json({ ok: true });
   } catch (error) {
     logSystemError(

@@ -11,6 +11,7 @@ import {
   type StepUpFactor,
   type StepUpPolicy,
 } from "@/lib/mfa/step-up-policy";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 const KNOWN_ACTIONS = new Set<string>(Object.values(STEP_UP_ACTIONS));
 import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
@@ -180,6 +181,23 @@ export async function PUT(request: Request): Promise<NextResponse> {
       .update(users)
       .set({ stepUpPolicy: updated, updatedAt: new Date() })
       .where(eq(users.id, session.user.id));
+
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "step_up_policy.updated",
+      resourceType: "user",
+      resourceId: session.user.id,
+      metadata: {
+        ...buildAuditMetadata(request),
+        stepUpAction: action,
+        factors: [...next],
+        weakened: isWeakening,
+      },
+    });
 
     return NextResponse.json({ success: true, policy: updated });
   } catch (error) {
