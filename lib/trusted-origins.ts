@@ -14,18 +14,19 @@
  * `https://app.keeperhub.com` and `https://app.staging.keeperhub.com` alike.
  */
 
-// Local dev servers run on an arbitrary localhost port (each worktree picks its
-// own to avoid colliding, e.g. :3001), so trust any localhost port - but only
-// in development. Production and test keep the strict origin list below.
-// HTTPS variants are also gated here: Brave / SIWE wallets require a secure
-// origin so local HTTPS dev (pnpm dev:https) needs https://localhost:*.
-const DEV_ORIGINS: readonly string[] =
+// HTTPS localhost variants are dev-only: Brave / SIWE wallets require a secure
+// origin so local HTTPS dev (pnpm dev:https) needs https://localhost:*, but
+// these must not be trusted in production or CI (no real HTTPS localhost cert).
+const DEV_HTTPS_ORIGINS: readonly string[] =
   process.env.NODE_ENV === "development"
-    ? ["http://localhost:*", "https://localhost:*", "https://127.0.0.1:*"]
+    ? ["https://localhost:*", "https://127.0.0.1:*"]
     : [];
 
 export const TRUSTED_ORIGINS: readonly string[] = [
+  // HTTP localhost poses no CSRF risk (same machine only) and must work in
+  // all environments including CI (NODE_ENV=test) so worktrees on any port pass.
   "http://localhost:*",
+  ...DEV_HTTPS_ORIGINS,
   // start custom keeperhub code //
   "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
   // end keeperhub code //
