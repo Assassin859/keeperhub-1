@@ -206,6 +206,9 @@ export function WorkflowCanvas() {
     [fitView, getViewport, setViewport, isSidebarCollapsed, rightPanelWidth]
   );
 
+  const fitViewSidebarAwareRef = useRef(fitViewSidebarAware);
+  fitViewSidebarAwareRef.current = fitViewSidebarAware;
+
   // Focus/center a node when centerNodeAtom is set (e.g. the editor tour),
   // then clear it. WorkflowCanvas is inside ReactFlowProvider, so it owns the
   // React Flow instance the request needs.
@@ -215,9 +218,9 @@ export function WorkflowCanvas() {
     if (!centerNodeId) {
       return;
     }
-    fitViewSidebarAware({ nodes: [{ id: centerNodeId }], duration: 500 });
+    fitViewSidebarAwareRef.current({ nodes: [{ id: centerNodeId }], duration: 500 });
     resetCenterNode(null);
-  }, [centerNodeId, fitViewSidebarAware, resetCenterNode]);
+  }, [centerNodeId, resetCenterNode]);
 
   const handleAutoLayout = useCallback(() => {
     setIsAnimatingLayout(true);
