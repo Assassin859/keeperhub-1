@@ -1,5 +1,4 @@
-import { defineProtocol } from "@/lib/protocol-registry";
-import { erc4626VaultActions } from "@/lib/web3/standards/erc4626";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
   amount,
   contract,
@@ -154,7 +153,27 @@ export const TEST_DATA: ProtocolTestData = {
   },
 };
 
-export default defineProtocol({
+const MARKET_PARAMS_TUPLE = {
+  name: "marketParams",
+  type: "tuple",
+  components: [
+    { name: "loanToken", type: "address" },
+    { name: "collateralToken", type: "address" },
+    { name: "oracle", type: "address" },
+    { name: "irm", type: "address" },
+    { name: "lltv", type: "uint256" },
+  ],
+};
+
+const MARKET_PARAMS_INPUT_OVERRIDES = {
+  loanToken: { label: "Loan Token Address" },
+  collateralToken: { label: "Collateral Token Address" },
+  oracle: { label: "Oracle Address" },
+  irm: { label: "IRM Address" },
+  lltv: { label: "Liquidation LTV" },
+};
+
+export default defineAbiProtocol({
   name: "Morpho",
   slug: "morpho",
   description:
@@ -174,437 +193,668 @@ export default defineProtocol({
         // Sepolia
         "11155111": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      abi: JSON.stringify([
+        {
+          type: "function",
+          name: "position",
+          stateMutability: "view",
+          inputs: [
+            { name: "id", type: "bytes32" },
+            { name: "user", type: "address" },
+          ],
+          outputs: [
+            { name: "supplyShares", type: "uint256" },
+            { name: "borrowShares", type: "uint128" },
+            { name: "collateral", type: "uint128" },
+          ],
+        },
+        {
+          type: "function",
+          name: "market",
+          stateMutability: "view",
+          inputs: [{ name: "id", type: "bytes32" }],
+          outputs: [
+            { name: "totalSupplyAssets", type: "uint128" },
+            { name: "totalSupplyShares", type: "uint128" },
+            { name: "totalBorrowAssets", type: "uint128" },
+            { name: "totalBorrowShares", type: "uint128" },
+            { name: "lastUpdate", type: "uint128" },
+            { name: "fee", type: "uint128" },
+          ],
+        },
+        {
+          type: "function",
+          name: "idToMarketParams",
+          stateMutability: "view",
+          inputs: [{ name: "id", type: "bytes32" }],
+          outputs: [
+            { name: "loanToken", type: "address" },
+            { name: "collateralToken", type: "address" },
+            { name: "oracle", type: "address" },
+            { name: "irm", type: "address" },
+            { name: "lltv", type: "uint256" },
+          ],
+        },
+        {
+          type: "function",
+          name: "isAuthorized",
+          stateMutability: "view",
+          inputs: [
+            { name: "authorizer", type: "address" },
+            { name: "authorized", type: "address" },
+          ],
+          outputs: [{ name: "isAuthorized", type: "bool" }],
+        },
+        {
+          type: "function",
+          name: "setAuthorization",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "authorized", type: "address" },
+            { name: "newIsAuthorized", type: "bool" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "flashLoan",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "token", type: "address" },
+            { name: "assets", type: "uint256" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "supply",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "shares", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "withdraw",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "shares", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "receiver", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "borrow",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "shares", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "receiver", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "repay",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "shares", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "supplyCollateral",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "withdrawCollateral",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "receiver", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "liquidate",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "borrower", type: "address" },
+            { name: "seizedAssets", type: "uint256" },
+            { name: "repaidShares", type: "uint256" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "accrueInterest",
+          stateMutability: "nonpayable",
+          inputs: [MARKET_PARAMS_TUPLE],
+          outputs: [],
+        },
+      ]),
+      overrides: {
+        position: {
+          slug: "get-position",
+          label: "Get Position",
+          description:
+            "Check a user's supply shares, borrow shares, and collateral in a Morpho market",
+          inputs: {
+            id: { label: "Market ID" },
+            user: { label: "User Address" },
+          },
+        },
+        market: {
+          slug: "get-market",
+          label: "Get Market",
+          description:
+            "Check total supply, borrows, last update time, and fee for a Morpho market",
+          inputs: {
+            id: { label: "Market ID" },
+          },
+          outputs: {
+            lastUpdate: { label: "Last Update Timestamp" },
+          },
+        },
+        idToMarketParams: {
+          slug: "get-market-params",
+          label: "Get Market Params",
+          description:
+            "Resolve a market ID to its parameters: loan token, collateral token, oracle, IRM, and LLTV",
+          inputs: {
+            id: { label: "Market ID" },
+          },
+          outputs: {
+            irm: { label: "Interest Rate Model" },
+            lltv: { label: "Liquidation LTV" },
+          },
+        },
+        isAuthorized: {
+          label: "Check Authorization",
+          description:
+            "Check if an address is authorized to act on behalf of another in Morpho",
+          inputs: {
+            authorizer: { label: "Authorizer Address" },
+            authorized: { label: "Authorized Address" },
+          },
+        },
+        setAuthorization: {
+          description:
+            "Grant or revoke authorization for another address to act on your behalf in Morpho",
+          inputs: {
+            authorized: { label: "Authorized Address" },
+            newIsAuthorized: { label: "Authorize" },
+          },
+        },
+        flashLoan: {
+          description:
+            "Borrow tokens and repay within the same transaction via Morpho flash loan",
+          inputs: {
+            token: { label: "Token Address" },
+            assets: { label: "Amount (wei)", decimals: true },
+            data: { label: "Callback Data", default: "0x" },
+          },
+        },
+        supply: {
+          description:
+            "Supply loan tokens to a Morpho market. Specify amount in assets or shares (set the other to 0)",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            assets: { label: "Asset Amount", decimals: true },
+            shares: { label: "Share Amount", default: "0" },
+            onBehalf: { label: "On Behalf Of" },
+            data: { label: "Callback Data", default: "0x" },
+          },
+        },
+        withdraw: {
+          description:
+            "Withdraw supplied loan tokens from a Morpho market. Specify amount in assets or shares (set the other to 0)",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            assets: { label: "Asset Amount", decimals: true },
+            shares: { label: "Share Amount", default: "0" },
+            onBehalf: { label: "On Behalf Of" },
+            receiver: { label: "Receiver Address" },
+          },
+        },
+        borrow: {
+          description:
+            "Borrow loan tokens from a Morpho market against deposited collateral",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            assets: { label: "Asset Amount", decimals: true },
+            shares: { label: "Share Amount", default: "0" },
+            onBehalf: { label: "On Behalf Of" },
+            receiver: { label: "Receiver Address" },
+          },
+        },
+        repay: {
+          description:
+            "Repay borrowed loan tokens to a Morpho market. Specify amount in assets or shares (set the other to 0)",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            assets: { label: "Asset Amount", decimals: true },
+            shares: { label: "Share Amount", default: "0" },
+            onBehalf: { label: "On Behalf Of" },
+            data: { label: "Callback Data", default: "0x" },
+          },
+        },
+        supplyCollateral: {
+          description:
+            "Deposit collateral tokens into a Morpho market for borrowing",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            assets: { label: "Collateral Amount", decimals: true },
+            onBehalf: { label: "On Behalf Of" },
+            data: { label: "Callback Data", default: "0x" },
+          },
+        },
+        withdrawCollateral: {
+          description: "Remove collateral tokens from a Morpho market position",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            assets: { label: "Collateral Amount", decimals: true },
+            onBehalf: { label: "On Behalf Of" },
+            receiver: { label: "Receiver Address" },
+          },
+        },
+        liquidate: {
+          description:
+            "Liquidate an undercollateralized position in a Morpho market",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+            borrower: { label: "Borrower Address" },
+            seizedAssets: { label: "Seized Collateral Amount", decimals: true },
+            repaidShares: { label: "Repaid Shares", default: "0" },
+            data: { label: "Callback Data", default: "0x" },
+          },
+        },
+        accrueInterest: {
+          description:
+            "Trigger interest accrual for a Morpho market to update supply and borrow indices",
+          inputs: {
+            ...MARKET_PARAMS_INPUT_OVERRIDES,
+          },
+        },
+      },
     },
     vault: {
       label: "MetaMorpho Vault",
       addresses: {},
       userSpecifiedAddress: true,
+      abi: JSON.stringify([
+        {
+          type: "function",
+          name: "deposit",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "assets", type: "uint256" },
+            { name: "receiver", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "mint",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "shares", type: "uint256" },
+            { name: "receiver", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "withdraw",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "assets", type: "uint256" },
+            { name: "receiver", type: "address" },
+            { name: "owner", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "redeem",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "shares", type: "uint256" },
+            { name: "receiver", type: "address" },
+            { name: "owner", type: "address" },
+          ],
+          outputs: [],
+        },
+        {
+          type: "function",
+          name: "asset",
+          stateMutability: "view",
+          inputs: [],
+          outputs: [{ name: "asset", type: "address" }],
+        },
+        {
+          type: "function",
+          name: "totalAssets",
+          stateMutability: "view",
+          inputs: [],
+          outputs: [{ name: "totalAssets", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "totalSupply",
+          stateMutability: "view",
+          inputs: [],
+          outputs: [{ name: "totalSupply", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "balanceOf",
+          stateMutability: "view",
+          inputs: [{ name: "account", type: "address" }],
+          outputs: [{ name: "balance", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "convertToAssets",
+          stateMutability: "view",
+          inputs: [{ name: "shares", type: "uint256" }],
+          outputs: [{ name: "assets", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "convertToShares",
+          stateMutability: "view",
+          inputs: [{ name: "assets", type: "uint256" }],
+          outputs: [{ name: "shares", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "previewDeposit",
+          stateMutability: "view",
+          inputs: [{ name: "assets", type: "uint256" }],
+          outputs: [{ name: "shares", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "previewMint",
+          stateMutability: "view",
+          inputs: [{ name: "shares", type: "uint256" }],
+          outputs: [{ name: "assets", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "previewWithdraw",
+          stateMutability: "view",
+          inputs: [{ name: "assets", type: "uint256" }],
+          outputs: [{ name: "shares", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "previewRedeem",
+          stateMutability: "view",
+          inputs: [{ name: "shares", type: "uint256" }],
+          outputs: [{ name: "assets", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "maxDeposit",
+          stateMutability: "view",
+          inputs: [{ name: "receiver", type: "address" }],
+          outputs: [{ name: "maxAssets", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "maxMint",
+          stateMutability: "view",
+          inputs: [{ name: "receiver", type: "address" }],
+          outputs: [{ name: "maxShares", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "maxWithdraw",
+          stateMutability: "view",
+          inputs: [{ name: "owner", type: "address" }],
+          outputs: [{ name: "maxAssets", type: "uint256" }],
+        },
+        {
+          type: "function",
+          name: "maxRedeem",
+          stateMutability: "view",
+          inputs: [{ name: "owner", type: "address" }],
+          outputs: [{ name: "maxShares", type: "uint256" }],
+        },
+      ]),
+      overrides: {
+        deposit: {
+          slug: "vault-deposit",
+          label: "Vault Deposit",
+          description:
+            "Deposit assets into the ERC-4626 vault and receive shares",
+          inputs: {
+            assets: { label: "Asset Amount (wei)" },
+            receiver: { label: "Receiver Address" },
+          },
+        },
+        mint: {
+          slug: "vault-mint",
+          label: "Vault Mint",
+          description:
+            "Mint exact vault shares by depositing the required amount of assets",
+          inputs: {
+            shares: { label: "Shares Amount (wei)" },
+            receiver: { label: "Receiver Address" },
+          },
+        },
+        withdraw: {
+          slug: "vault-withdraw",
+          label: "Vault Withdraw",
+          description:
+            "Withdraw assets from the ERC-4626 vault by specifying asset amount",
+          inputs: {
+            assets: { label: "Asset Amount (wei)" },
+            receiver: { label: "Receiver Address" },
+            owner: { label: "Share Owner Address" },
+          },
+        },
+        redeem: {
+          slug: "vault-redeem",
+          label: "Vault Redeem",
+          description:
+            "Redeem shares from the ERC-4626 vault for underlying assets",
+          inputs: {
+            shares: { label: "Shares Amount (wei)" },
+            receiver: { label: "Receiver Address" },
+            owner: { label: "Share Owner Address" },
+          },
+        },
+        asset: {
+          slug: "vault-asset",
+          label: "Vault Underlying Asset",
+          description:
+            "Get the address of the underlying asset token for this vault",
+          outputs: {
+            asset: { label: "Underlying Asset Address" },
+          },
+        },
+        totalAssets: {
+          slug: "vault-total-assets",
+          label: "Vault Total Assets",
+          description:
+            "Get the total amount of underlying assets held by the vault",
+          outputs: {
+            totalAssets: { label: "Total Assets (wei)", decimals: 18 },
+          },
+        },
+        totalSupply: {
+          slug: "vault-total-supply",
+          label: "Vault Total Supply",
+          description: "Get the total supply of vault shares",
+          outputs: {
+            totalSupply: { label: "Total Shares (wei)", decimals: 18 },
+          },
+        },
+        balanceOf: {
+          slug: "vault-balance",
+          label: "Vault Share Balance",
+          description: "Get the vault share balance of an address",
+          inputs: {
+            account: { label: "Wallet Address" },
+          },
+          outputs: {
+            balance: { label: "Share Balance (wei)", decimals: 18 },
+          },
+        },
+        convertToAssets: {
+          slug: "vault-convert-to-assets",
+          label: "Convert Shares to Assets",
+          description:
+            "Convert a vault share amount to its underlying asset value at the current rate",
+          inputs: {
+            shares: { label: "Shares Amount (wei)" },
+          },
+          outputs: {
+            assets: { label: "Asset Value (wei)", decimals: 18 },
+          },
+        },
+        convertToShares: {
+          slug: "vault-convert-to-shares",
+          label: "Convert Assets to Shares",
+          description:
+            "Convert an asset amount to the equivalent vault shares at the current rate",
+          inputs: {
+            assets: { label: "Asset Amount (wei)" },
+          },
+          outputs: {
+            shares: { label: "Shares Amount (wei)", decimals: 18 },
+          },
+        },
+        previewDeposit: {
+          slug: "vault-preview-deposit",
+          label: "Preview Vault Deposit",
+          description:
+            "Preview how many shares a given asset deposit would yield",
+          inputs: {
+            assets: { label: "Asset Amount (wei)" },
+          },
+          outputs: {
+            shares: { label: "Shares Received (wei)", decimals: 18 },
+          },
+        },
+        previewMint: {
+          slug: "vault-preview-mint",
+          label: "Preview Vault Mint",
+          description:
+            "Preview how many assets are needed to mint a given number of shares",
+          inputs: {
+            shares: { label: "Shares Amount (wei)" },
+          },
+          outputs: {
+            assets: { label: "Assets Required (wei)", decimals: 18 },
+          },
+        },
+        previewWithdraw: {
+          slug: "vault-preview-withdraw",
+          label: "Preview Vault Withdraw",
+          description:
+            "Preview how many shares must be burned to withdraw a given asset amount",
+          inputs: {
+            assets: { label: "Asset Amount (wei)" },
+          },
+          outputs: {
+            shares: { label: "Shares Burned (wei)", decimals: 18 },
+          },
+        },
+        previewRedeem: {
+          slug: "vault-preview-redeem",
+          label: "Preview Vault Redeem",
+          description:
+            "Preview how many assets a given share redemption would yield",
+          inputs: {
+            shares: { label: "Shares Amount (wei)" },
+          },
+          outputs: {
+            assets: { label: "Assets Received (wei)", decimals: 18 },
+          },
+        },
+        maxDeposit: {
+          slug: "vault-max-deposit",
+          label: "Max Vault Deposit",
+          description:
+            "Get the maximum amount of assets that can be deposited for a receiver",
+          inputs: {
+            receiver: { label: "Receiver Address" },
+          },
+          outputs: {
+            maxAssets: { label: "Max Deposit (wei)", decimals: 18 },
+          },
+        },
+        maxMint: {
+          slug: "vault-max-mint",
+          label: "Max Vault Mint",
+          description:
+            "Get the maximum number of shares that can be minted for a receiver",
+          inputs: {
+            receiver: { label: "Receiver Address" },
+          },
+          outputs: {
+            maxShares: { label: "Max Mint (wei)", decimals: 18 },
+          },
+        },
+        maxWithdraw: {
+          slug: "vault-max-withdraw",
+          label: "Max Vault Withdraw",
+          description:
+            "Get the maximum amount of assets that can be withdrawn by an owner",
+          inputs: {
+            owner: { label: "Owner Address" },
+          },
+          outputs: {
+            maxAssets: { label: "Max Withdraw (wei)", decimals: 18 },
+          },
+        },
+        maxRedeem: {
+          slug: "vault-max-redeem",
+          label: "Max Vault Redeem",
+          description:
+            "Get the maximum number of shares that can be redeemed by an owner",
+          inputs: {
+            owner: { label: "Owner Address" },
+          },
+          outputs: {
+            maxShares: { label: "Max Redeem (wei)", decimals: 18 },
+          },
+        },
+      },
     },
   },
-
-  actions: [
-    // MetaMorpho ERC-4626 vault actions (user-specified vault address)
-    ...erc4626VaultActions("vault"),
-
-    // Morpho Blue lending market actions
-    {
-      slug: "get-position",
-      label: "Get Position",
-      description:
-        "Check a user's supply shares, borrow shares, and collateral in a Morpho market",
-      type: "read",
-      contract: "morpho",
-      function: "position",
-      inputs: [
-        { name: "id", type: "bytes32", label: "Market ID" },
-        { name: "user", type: "address", label: "User Address" },
-      ],
-      outputs: [
-        {
-          name: "supplyShares",
-          type: "uint256",
-          label: "Supply Shares",
-        },
-        {
-          name: "borrowShares",
-          type: "uint128",
-          label: "Borrow Shares",
-        },
-        {
-          name: "collateral",
-          type: "uint128",
-          label: "Collateral",
-        },
-      ],
-    },
-    {
-      slug: "get-market",
-      label: "Get Market",
-      description:
-        "Check total supply, borrows, last update time, and fee for a Morpho market",
-      type: "read",
-      contract: "morpho",
-      function: "market",
-      inputs: [{ name: "id", type: "bytes32", label: "Market ID" }],
-      outputs: [
-        {
-          name: "totalSupplyAssets",
-          type: "uint128",
-          label: "Total Supply Assets",
-        },
-        {
-          name: "totalSupplyShares",
-          type: "uint128",
-          label: "Total Supply Shares",
-        },
-        {
-          name: "totalBorrowAssets",
-          type: "uint128",
-          label: "Total Borrow Assets",
-        },
-        {
-          name: "totalBorrowShares",
-          type: "uint128",
-          label: "Total Borrow Shares",
-        },
-        {
-          name: "lastUpdate",
-          type: "uint128",
-          label: "Last Update Timestamp",
-        },
-        {
-          name: "fee",
-          type: "uint128",
-          label: "Fee",
-        },
-      ],
-    },
-    {
-      slug: "get-market-params",
-      label: "Get Market Params",
-      description:
-        "Resolve a market ID to its parameters: loan token, collateral token, oracle, IRM, and LLTV",
-      type: "read",
-      contract: "morpho",
-      function: "idToMarketParams",
-      inputs: [{ name: "id", type: "bytes32", label: "Market ID" }],
-      outputs: [
-        {
-          name: "loanToken",
-          type: "address",
-          label: "Loan Token",
-        },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token",
-        },
-        {
-          name: "oracle",
-          type: "address",
-          label: "Oracle",
-        },
-        {
-          name: "irm",
-          type: "address",
-          label: "Interest Rate Model",
-        },
-        {
-          name: "lltv",
-          type: "uint256",
-          label: "Liquidation LTV",
-        },
-      ],
-    },
-    {
-      slug: "is-authorized",
-      label: "Check Authorization",
-      description:
-        "Check if an address is authorized to act on behalf of another in Morpho",
-      type: "read",
-      contract: "morpho",
-      function: "isAuthorized",
-      inputs: [
-        {
-          name: "authorizer",
-          type: "address",
-          label: "Authorizer Address",
-        },
-        {
-          name: "authorized",
-          type: "address",
-          label: "Authorized Address",
-        },
-      ],
-      outputs: [
-        {
-          name: "isAuthorized",
-          type: "bool",
-          label: "Is Authorized",
-        },
-      ],
-    },
-    {
-      slug: "set-authorization",
-      label: "Set Authorization",
-      description:
-        "Grant or revoke authorization for another address to act on your behalf in Morpho",
-      type: "write",
-      contract: "morpho",
-      function: "setAuthorization",
-      inputs: [
-        {
-          name: "authorized",
-          type: "address",
-          label: "Authorized Address",
-        },
-        { name: "newIsAuthorized", type: "bool", label: "Authorize" },
-      ],
-    },
-    {
-      slug: "flash-loan",
-      label: "Flash Loan",
-      description:
-        "Borrow tokens and repay within the same transaction via Morpho flash loan",
-      type: "write",
-      contract: "morpho",
-      function: "flashLoan",
-      inputs: [
-        { name: "token", type: "address", label: "Token Address" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Amount (wei)",
-          decimals: true,
-        },
-        { name: "data", type: "bytes", label: "Callback Data" },
-      ],
-    },
-    {
-      slug: "supply",
-      label: "Supply",
-      description:
-        "Supply loan tokens to a Morpho market. Specify amount in assets or shares (set the other to 0)",
-      type: "write",
-      contract: "morpho",
-      function: "supply",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Asset Amount",
-          decimals: true,
-        },
-        {
-          name: "shares",
-          type: "uint256",
-          label: "Share Amount",
-          default: "0",
-        },
-        { name: "onBehalf", type: "address", label: "On Behalf Of" },
-        { name: "data", type: "bytes", label: "Callback Data", default: "0x" },
-      ],
-    },
-    {
-      slug: "withdraw",
-      label: "Withdraw",
-      description:
-        "Withdraw supplied loan tokens from a Morpho market. Specify amount in assets or shares (set the other to 0)",
-      type: "write",
-      contract: "morpho",
-      function: "withdraw",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Asset Amount",
-          decimals: true,
-        },
-        {
-          name: "shares",
-          type: "uint256",
-          label: "Share Amount",
-          default: "0",
-        },
-        { name: "onBehalf", type: "address", label: "On Behalf Of" },
-        { name: "receiver", type: "address", label: "Receiver Address" },
-      ],
-    },
-    {
-      slug: "borrow",
-      label: "Borrow",
-      description:
-        "Borrow loan tokens from a Morpho market against deposited collateral",
-      type: "write",
-      contract: "morpho",
-      function: "borrow",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Asset Amount",
-          decimals: true,
-        },
-        {
-          name: "shares",
-          type: "uint256",
-          label: "Share Amount",
-          default: "0",
-        },
-        { name: "onBehalf", type: "address", label: "On Behalf Of" },
-        { name: "receiver", type: "address", label: "Receiver Address" },
-      ],
-    },
-    {
-      slug: "repay",
-      label: "Repay",
-      description:
-        "Repay borrowed loan tokens to a Morpho market. Specify amount in assets or shares (set the other to 0)",
-      type: "write",
-      contract: "morpho",
-      function: "repay",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Asset Amount",
-          decimals: true,
-        },
-        {
-          name: "shares",
-          type: "uint256",
-          label: "Share Amount",
-          default: "0",
-        },
-        { name: "onBehalf", type: "address", label: "On Behalf Of" },
-        { name: "data", type: "bytes", label: "Callback Data", default: "0x" },
-      ],
-    },
-    {
-      slug: "supply-collateral",
-      label: "Supply Collateral",
-      description:
-        "Deposit collateral tokens into a Morpho market for borrowing",
-      type: "write",
-      contract: "morpho",
-      function: "supplyCollateral",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Collateral Amount",
-          decimals: true,
-        },
-        { name: "onBehalf", type: "address", label: "On Behalf Of" },
-        { name: "data", type: "bytes", label: "Callback Data", default: "0x" },
-      ],
-    },
-    {
-      slug: "withdraw-collateral",
-      label: "Withdraw Collateral",
-      description: "Remove collateral tokens from a Morpho market position",
-      type: "write",
-      contract: "morpho",
-      function: "withdrawCollateral",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        {
-          name: "assets",
-          type: "uint256",
-          label: "Collateral Amount",
-          decimals: true,
-        },
-        { name: "onBehalf", type: "address", label: "On Behalf Of" },
-        { name: "receiver", type: "address", label: "Receiver Address" },
-      ],
-    },
-    {
-      slug: "liquidate",
-      label: "Liquidate",
-      description:
-        "Liquidate an undercollateralized position in a Morpho market",
-      type: "write",
-      contract: "morpho",
-      function: "liquidate",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-        { name: "borrower", type: "address", label: "Borrower Address" },
-        {
-          name: "seizedAssets",
-          type: "uint256",
-          label: "Seized Collateral Amount",
-          decimals: true,
-        },
-        {
-          name: "repaidShares",
-          type: "uint256",
-          label: "Repaid Shares",
-          default: "0",
-        },
-        { name: "data", type: "bytes", label: "Callback Data", default: "0x" },
-      ],
-    },
-    {
-      slug: "accrue-interest",
-      label: "Accrue Interest",
-      description:
-        "Trigger interest accrual for a Morpho market to update supply and borrow indices",
-      type: "write",
-      contract: "morpho",
-      function: "accrueInterest",
-      inputs: [
-        { name: "loanToken", type: "address", label: "Loan Token Address" },
-        {
-          name: "collateralToken",
-          type: "address",
-          label: "Collateral Token Address",
-        },
-        { name: "oracle", type: "address", label: "Oracle Address" },
-        { name: "irm", type: "address", label: "IRM Address" },
-        { name: "lltv", type: "uint256", label: "Liquidation LTV" },
-      ],
-    },
-  ],
 });
