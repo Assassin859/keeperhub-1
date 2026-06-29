@@ -1,4 +1,5 @@
 import { sendApiKeyChangeEmail } from "@/lib/email";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDeliverableEmail } from "@/lib/security/notification-email";
 
 /**
@@ -39,7 +40,12 @@ export function notifyApiKeyChange(
       when: notification.when,
     });
   };
-  deliver().catch(() => {
-    // best-effort; sendApiKeyChangeEmail already logs delivery failures
+  deliver().catch((err: unknown) => {
+    logSystemError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "API key change notification failed",
+      err,
+      { userId: notification.userId, action: notification.action }
+    );
   });
 }
