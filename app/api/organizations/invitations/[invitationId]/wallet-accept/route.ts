@@ -179,31 +179,35 @@ export async function POST(
     }
 
     // Verified the invited wallet signed the live challenge while signed in as
-    // that account; complete the join. Idempotent if they're already a member.
-    const [existing] = await db
-      .select({ id: member.id })
-      .from(member)
-      .where(
-        and(
-          eq(member.organizationId, loaded.invite.organizationId),
-          eq(member.userId, loaded.userId)
+    // that account; complete the join. Wrapped in a transaction so the existence
+    // check, member insert, and invitation update are atomic — concurrent POSTs
+    // that both pass signature verification cannot both insert a member row.
+    await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ id: member.id })
+        .from(member)
+        .where(
+          and(
+            eq(member.organizationId, loaded.invite.organizationId),
+            eq(member.userId, loaded.userId)
+          )
         )
-      )
-      .limit(1);
+        .limit(1);
 
-    if (!existing) {
-      await db.insert(member).values({
-        id: generateId(),
-        organizationId: loaded.invite.organizationId,
-        userId: loaded.userId,
-        role: loaded.invite.role ?? "member",
-        createdAt: new Date(),
-      });
-    }
-    await db
-      .update(invitation)
-      .set({ status: "accepted" })
-      .where(eq(invitation.id, invitationId));
+      if (!existing) {
+        await tx.insert(member).values({
+          id: generateId(),
+          organizationId: loaded.invite.organizationId,
+          userId: loaded.userId,
+          role: loaded.invite.role ?? "member",
+          createdAt: new Date(),
+        });
+      }
+      await tx
+        .update(invitation)
+        .set({ status: "accepted" })
+        .where(eq(invitation.id, invitationId));
+    });
 
     await recordAuditEvent({
       actor: {
