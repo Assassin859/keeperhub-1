@@ -23,6 +23,9 @@ const RE_HF_VALUE = /1\.8/;
 const RE_HF_BELOW_FLOOR = /1\.[012]\d/;
 const RE_NOT_FINANCIAL_ADVICE = /not financial advice/i;
 
+// Spark/Sky routing tests (SCAN-03 + SCAN-04)
+const SUDS_TOKEN_ADDRESS = "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD";
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -346,6 +349,197 @@ describe("SUGGEST-10: disclaimer and risk notes", () => {
     for (const s of result) {
       expect(["read", "write"]).toContain(s.readOrWrite);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spark + Sky fixtures (SCAN-03 + SCAN-04)
+// ---------------------------------------------------------------------------
+
+const SPARK_POSITION_ACTIVE = {
+  chainId: 1,
+  protocol: "spark" as const,
+  healthFactor: 1.65,
+  noActiveLoan: false,
+  totalCollateralUsd: 8000,
+  totalDebtUsd: 4000,
+  suppliedAssets: [
+    {
+      symbol: "WETH",
+      tokenAddress: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      amount: "3000000000000000000",
+      decimals: 18,
+      usdValue: 8000,
+    },
+  ],
+  borrowedAssets: [
+    {
+      symbol: "USDC",
+      tokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      amount: "4000000000",
+      decimals: 6,
+      usdValue: 4000,
+    },
+  ],
+};
+
+const SPARK_POSITION_SUPPLY_ONLY = {
+  chainId: 1,
+  protocol: "spark" as const,
+  healthFactor: null,
+  noActiveLoan: true,
+  totalCollateralUsd: 2000,
+  totalDebtUsd: null,
+  suppliedAssets: [
+    {
+      symbol: "WETH",
+      tokenAddress: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      amount: "1000000000000000000",
+      decimals: 18,
+      usdValue: 2000,
+    },
+  ],
+  borrowedAssets: [],
+};
+
+const SKY_POSITION = {
+  chainId: 1,
+  protocol: "sky" as const,
+  healthFactor: null,
+  noActiveLoan: true,
+  totalCollateralUsd: 500,
+  totalDebtUsd: null,
+  suppliedAssets: [
+    {
+      symbol: "sUSDS",
+      tokenAddress: SUDS_TOKEN_ADDRESS,
+      amount: "450000000000000000000",
+      decimals: 18,
+      usdValue: 500,
+    },
+  ],
+  borrowedAssets: [],
+};
+
+// ---------------------------------------------------------------------------
+// SCAN-03: Spark routing
+// ---------------------------------------------------------------------------
+
+describe("SCAN-03: Spark suggestion routing", () => {
+  it("spark active loan: produces a health suggestion", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SPARK_POSITION_ACTIVE],
+    });
+    const health = result.filter(
+      (s: SuggestionDescriptor) => s.category === "health"
+    );
+    expect(health.length).toBeGreaterThan(0);
+  });
+
+  it("spark active loan: health description references 'Spark'", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SPARK_POSITION_ACTIVE],
+    });
+    const health = result.find(
+      (s: SuggestionDescriptor) => s.category === "health"
+    );
+    expect(health?.description).toContain("Spark");
+  });
+
+  it("spark supply-only: produces an alert suggestion", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SPARK_POSITION_SUPPLY_ONLY],
+    });
+    const alert = result.filter(
+      (s: SuggestionDescriptor) => s.category === "alert"
+    );
+    expect(alert.length).toBeGreaterThan(0);
+  });
+
+  it("spark supply-only: does NOT produce a claim suggestion", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SPARK_POSITION_SUPPLY_ONLY],
+    });
+    const claim = result.filter(
+      (s: SuggestionDescriptor) => s.category === "claim"
+    );
+    expect(claim.length).toBe(0);
+  });
+
+  it("spark supply-only: alert description references 'Spark'", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SPARK_POSITION_SUPPLY_ONLY],
+    });
+    const alert = result.find(
+      (s: SuggestionDescriptor) => s.category === "alert"
+    );
+    expect(alert?.description).toContain("Spark");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SCAN-04: Sky routing
+// ---------------------------------------------------------------------------
+
+describe("SCAN-04: Sky suggestion routing", () => {
+  it("sky null-HF: produces a claim suggestion (NOT alert)", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SKY_POSITION],
+    });
+    const claim = result.filter(
+      (s: SuggestionDescriptor) => s.category === "claim"
+    );
+    expect(claim.length).toBeGreaterThan(0);
+  });
+
+  it("sky null-HF: does NOT produce an alert suggestion", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SKY_POSITION],
+    });
+    const alert = result.filter(
+      (s: SuggestionDescriptor) => s.category === "alert"
+    );
+    expect(alert.length).toBe(0);
+  });
+
+  it("sky claim: card name is savings copy ('Sky Savings Balance Monitor')", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SKY_POSITION],
+    });
+    const claim = result.find(
+      (s: SuggestionDescriptor) => s.category === "claim"
+    );
+    expect(claim?.name).toBe("Sky Savings Balance Monitor");
+  });
+
+  it("sky claim: description references 'Sky'", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SKY_POSITION],
+    });
+    const claim = result.find(
+      (s: SuggestionDescriptor) => s.category === "claim"
+    );
+    expect(claim?.description).toContain("Sky");
+  });
+
+  it("sky claim: confirmInputs.stakingTokenAddress equals the sUSDS token address from the position", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      positions: [SKY_POSITION],
+    });
+    const claim = result.find(
+      (s: SuggestionDescriptor) => s.category === "claim"
+    );
+    expect(claim?.confirmInputs?.stakingTokenAddress).toBe(SUDS_TOKEN_ADDRESS);
   });
 });
 
