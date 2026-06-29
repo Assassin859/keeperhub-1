@@ -106,6 +106,7 @@ function StepCheck({ complete }: { complete: boolean }): React.ReactElement {
 function StepRow({
   step,
   complete,
+  isChipCloned,
   onAction,
   onChip,
   onTour,
@@ -113,6 +114,7 @@ function StepRow({
 }: {
   step: Step;
   complete: boolean;
+  isChipCloned: (chip: Chip) => boolean;
   onAction: (step: Step) => void;
   onChip: (step: Step, chip: Chip) => void;
   onTour: (step: Step) => void;
@@ -167,16 +169,23 @@ function StepRow({
       </div>
       {step.chips && (
         <div className="flex flex-wrap gap-1.5 px-2 pb-2 pl-9">
-          {step.chips.map((chip) => (
-            <button
-              className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs transition-colors hover:bg-muted"
-              key={chip.id}
-              onClick={() => onChip(step, chip)}
-              type="button"
-            >
-              {chip.label}
-            </button>
-          ))}
+          {step.chips.map((chip) => {
+            const cloned = isChipCloned(chip);
+            return (
+              <button
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2.5 py-1 text-xs transition-colors hover:bg-muted",
+                  cloned && "border-keeperhub-green text-keeperhub-green"
+                )}
+                key={chip.id}
+                onClick={() => onChip(step, chip)}
+                type="button"
+              >
+                {cloned && <Check aria-hidden="true" className="size-3" />}
+                {chip.label}
+              </button>
+            );
+          })}
         </div>
       )}
       {step.offerTour && (
@@ -364,6 +373,9 @@ function ExpandedCard({
         {active.steps.map((step) => (
           <StepRow
             complete={gs.isStepComplete(step)}
+            isChipCloned={(chip) =>
+              Boolean(gs.getStepWorkflowId(`${step.key}:${chip.id}`))
+            }
             key={step.key}
             onAction={onAction}
             onChip={onChip}
@@ -575,8 +587,10 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     gs.refetch();
   };
 
-  // Clone a curated public HUB workflow into the user's org. The clone is the
-  // step's completion -- the user still configures it afterwards in the builder.
+  // Clone a curated public HUB workflow into the user's org, ONCE per chip.
+  // If this chip was already cloned and that copy still exists, reopen it
+  // instead of cloning again (otherwise every click spawns another copy). The
+  // clone is the step's completion -- the user configures it after in the builder.
   const cloneStarterWorkflow = async (
     step: Step,
     chip: Chip
@@ -584,14 +598,28 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     if (!chip.workflowId) {
       return;
     }
-    try {
-      const workflow = await api.workflow.duplicate(chip.workflowId);
-      gs.setStepWorkflowId(`${step.key}:${chip.id}`, workflow.id);
-      gs.completeStep(step);
-      router.push(`/workflows/${workflow.id}`);
-    } catch {
-      toast.error("Could not add that workflow.");
+    const key = `${step.key}:${chip.id}`;
+    let id = gs.getStepWorkflowId(key);
+    if (id) {
+      try {
+        await api.workflow.getById(id);
+      } catch {
+        // The earlier clone was deleted; fall through and re-clone.
+        id = undefined;
+      }
     }
+    if (!id) {
+      try {
+        const workflow = await api.workflow.duplicate(chip.workflowId);
+        id = workflow.id;
+        gs.setStepWorkflowId(key, id);
+      } catch {
+        toast.error("Could not add that workflow.");
+        return;
+      }
+    }
+    gs.completeStep(step);
+    router.push(`/workflows/${id}`);
   };
 
   // Chips with a configured starter workflow clone it; otherwise fall back to
