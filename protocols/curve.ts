@@ -1,6 +1,107 @@
-import { defineProtocol } from "@/lib/protocol-registry";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
 
-export default defineProtocol({
+// Vyper-style snake_case function names mean camelToKebab produces "get_dy",
+// not "get-dy". Every function therefore needs an explicit slug override.
+// Input param names match the current action definitions for backward compat.
+const POOL_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "get_dy",
+    stateMutability: "view",
+    inputs: [
+      { name: "i", type: "int128" },
+      { name: "j", type: "int128" },
+      { name: "dx", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "get_virtual_price",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "coins",
+    stateMutability: "view",
+    inputs: [{ name: "arg0", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "balances",
+    stateMutability: "view",
+    inputs: [{ name: "arg0", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "calc_withdraw_one_coin",
+    stateMutability: "view",
+    inputs: [
+      { name: "_token_amount", type: "uint256" },
+      { name: "i", type: "int128" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "exchange",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "i", type: "int128" },
+      { name: "j", type: "int128" },
+      { name: "dx", type: "uint256" },
+      { name: "min_dy", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "remove_liquidity_one_coin",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "_token_amount", type: "uint256" },
+      { name: "i", type: "int128" },
+      { name: "_min_amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+]);
+
+const CRV_TOKEN_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+]);
+
+export default defineAbiProtocol({
   name: "Curve",
   slug: "curve",
   description:
@@ -11,9 +112,8 @@ export default defineProtocol({
   contracts: {
     pool: {
       label: "Curve Pool",
+      abi: POOL_ABI,
       userSpecifiedAddress: true,
-      // Reference addresses for chain-availability metadata.
-      // Runtime address comes from user input via the contractAddress config field.
       addresses: {
         // Ethereum Mainnet (3pool)
         "1": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
@@ -24,9 +124,93 @@ export default defineProtocol({
         // Optimism (3pool)
         "10": "0x1337BedC9D22ecbe766dF105c9623922A27963EC",
       },
+      overrides: {
+        get_dy: {
+          slug: "get-dy",
+          label: "Get Expected Output",
+          description:
+            "Get the expected output amount for a token exchange in a Curve pool",
+          inputs: {
+            i: { label: "Input Coin Index" },
+            j: { label: "Output Coin Index" },
+            dx: { label: "Input Amount (wei)" },
+          },
+          outputs: {
+            result: { name: "dy", label: "Expected Output (wei)" },
+          },
+        },
+        get_virtual_price: {
+          slug: "get-virtual-price",
+          label: "Get Virtual Price",
+          description: "Get the virtual price of the pool's LP token",
+          outputs: {
+            result: {
+              name: "virtualPrice",
+              label: "Virtual Price",
+              decimals: 18,
+            },
+          },
+        },
+        coins: {
+          slug: "get-coin",
+          label: "Get Coin Address",
+          description: "Get the token address at a specific index in the pool",
+          inputs: {
+            arg0: { label: "Coin Index" },
+          },
+          outputs: {
+            result: { name: "coin", label: "Token Address" },
+          },
+        },
+        balances: {
+          slug: "get-pool-balance",
+          label: "Get Pool Balance",
+          description: "Get the pool's balance of a specific coin by index",
+          inputs: {
+            arg0: { label: "Coin Index" },
+          },
+          outputs: {
+            result: { name: "balance", label: "Coin Balance (wei)" },
+          },
+        },
+        calc_withdraw_one_coin: {
+          slug: "calc-withdraw-one-coin",
+          label: "Calculate Withdraw One Coin",
+          description:
+            "Calculate the amount received when withdrawing a single coin from the pool",
+          inputs: {
+            _token_amount: { label: "LP Token Amount (wei)" },
+            i: { label: "Output Coin Index" },
+          },
+          outputs: {
+            result: { name: "amount", label: "Withdraw Amount (wei)" },
+          },
+        },
+        exchange: {
+          label: "Exchange Tokens",
+          description: "Swap tokens in a Curve pool",
+          inputs: {
+            i: { label: "Input Coin Index" },
+            j: { label: "Output Coin Index" },
+            dx: { label: "Input Amount (wei)" },
+            min_dy: { label: "Minimum Output (wei)" },
+          },
+        },
+        remove_liquidity_one_coin: {
+          slug: "remove-liquidity-one-coin",
+          label: "Remove Liquidity (Single Coin)",
+          description: "Withdraw liquidity from a Curve pool as a single token",
+          inputs: {
+            _token_amount: { label: "LP Token Amount (wei)" },
+            i: { label: "Output Coin Index" },
+            _min_amount: { label: "Minimum Output (wei)" },
+          },
+        },
+      },
     },
     crvToken: {
       label: "CRV Token",
+      abi: CRV_TOKEN_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0xD533a949740bb3306d119CC777fa900bA034cd52",
@@ -35,181 +219,35 @@ export default defineProtocol({
         // Optimism
         "10": "0x0994206dfE8De6Ec6920FF4D779B0d950605Fb53",
       },
+      overrides: {
+        balanceOf: {
+          slug: "crv-balance-of",
+          label: "Get CRV Balance",
+          description: "Check CRV token balance of an address",
+          inputs: { account: { label: "Wallet Address" } },
+          outputs: {
+            result: { name: "balance", label: "CRV Balance", decimals: 18 },
+          },
+        },
+        approve: {
+          slug: "crv-approve",
+          label: "Approve CRV",
+          description: "Approve an address to spend CRV tokens",
+          inputs: {
+            spender: { label: "Spender Address" },
+            amount: { label: "Amount (wei)" },
+          },
+        },
+        transfer: {
+          slug: "crv-transfer",
+          label: "Transfer CRV",
+          description: "Transfer CRV tokens to an address",
+          inputs: {
+            to: { label: "Recipient Address" },
+            amount: { label: "Amount (wei)" },
+          },
+        },
+      },
     },
   },
-
-  actions: [
-    // Pool Reads
-
-    {
-      slug: "get-dy",
-      label: "Get Expected Output",
-      description:
-        "Get the expected output amount for a token exchange in a Curve pool",
-      type: "read",
-      contract: "pool",
-      function: "get_dy",
-      inputs: [
-        { name: "i", type: "int128", label: "Input Coin Index" },
-        { name: "j", type: "int128", label: "Output Coin Index" },
-        { name: "dx", type: "uint256", label: "Input Amount (wei)" },
-      ],
-      outputs: [
-        {
-          name: "dy",
-          type: "uint256",
-          label: "Expected Output (wei)",
-        },
-      ],
-    },
-    {
-      slug: "get-virtual-price",
-      label: "Get Virtual Price",
-      description: "Get the virtual price of the pool's LP token",
-      type: "read",
-      contract: "pool",
-      function: "get_virtual_price",
-      inputs: [],
-      outputs: [
-        {
-          name: "virtualPrice",
-          type: "uint256",
-          label: "Virtual Price",
-          decimals: 18,
-        },
-      ],
-    },
-    {
-      slug: "get-coin",
-      label: "Get Coin Address",
-      description: "Get the token address at a specific index in the pool",
-      type: "read",
-      contract: "pool",
-      function: "coins",
-      inputs: [{ name: "arg0", type: "uint256", label: "Coin Index" }],
-      outputs: [{ name: "coin", type: "address", label: "Token Address" }],
-    },
-    {
-      slug: "get-pool-balance",
-      label: "Get Pool Balance",
-      description: "Get the pool's balance of a specific coin by index",
-      type: "read",
-      contract: "pool",
-      function: "balances",
-      inputs: [{ name: "arg0", type: "uint256", label: "Coin Index" }],
-      outputs: [
-        {
-          name: "balance",
-          type: "uint256",
-          label: "Coin Balance (wei)",
-        },
-      ],
-    },
-
-    {
-      slug: "calc-withdraw-one-coin",
-      label: "Calculate Withdraw One Coin",
-      description:
-        "Calculate the amount received when withdrawing a single coin from the pool",
-      type: "read",
-      contract: "pool",
-      function: "calc_withdraw_one_coin",
-      inputs: [
-        {
-          name: "_token_amount",
-          type: "uint256",
-          label: "LP Token Amount (wei)",
-        },
-        { name: "i", type: "int128", label: "Output Coin Index" },
-      ],
-      outputs: [
-        {
-          name: "amount",
-          type: "uint256",
-          label: "Withdraw Amount (wei)",
-        },
-      ],
-    },
-
-    // Pool Writes
-
-    {
-      slug: "exchange",
-      label: "Exchange Tokens",
-      description: "Swap tokens in a Curve pool",
-      type: "write",
-      contract: "pool",
-      function: "exchange",
-      inputs: [
-        { name: "i", type: "int128", label: "Input Coin Index" },
-        { name: "j", type: "int128", label: "Output Coin Index" },
-        { name: "dx", type: "uint256", label: "Input Amount (wei)" },
-        { name: "min_dy", type: "uint256", label: "Minimum Output (wei)" },
-      ],
-    },
-    {
-      slug: "remove-liquidity-one-coin",
-      label: "Remove Liquidity (Single Coin)",
-      description: "Withdraw liquidity from a Curve pool as a single token",
-      type: "write",
-      contract: "pool",
-      function: "remove_liquidity_one_coin",
-      inputs: [
-        {
-          name: "_token_amount",
-          type: "uint256",
-          label: "LP Token Amount (wei)",
-        },
-        { name: "i", type: "int128", label: "Output Coin Index" },
-        { name: "_min_amount", type: "uint256", label: "Minimum Output (wei)" },
-      ],
-    },
-
-    // CRV Token Reads
-
-    {
-      slug: "crv-balance-of",
-      label: "Get CRV Balance",
-      description: "Check CRV token balance of an address",
-      type: "read",
-      contract: "crvToken",
-      function: "balanceOf",
-      inputs: [{ name: "account", type: "address", label: "Wallet Address" }],
-      outputs: [
-        {
-          name: "balance",
-          type: "uint256",
-          label: "CRV Balance",
-          decimals: 18,
-        },
-      ],
-    },
-
-    // CRV Token Writes
-
-    {
-      slug: "crv-approve",
-      label: "Approve CRV",
-      description: "Approve an address to spend CRV tokens",
-      type: "write",
-      contract: "crvToken",
-      function: "approve",
-      inputs: [
-        { name: "spender", type: "address", label: "Spender Address" },
-        { name: "amount", type: "uint256", label: "Amount (wei)" },
-      ],
-    },
-    {
-      slug: "crv-transfer",
-      label: "Transfer CRV",
-      description: "Transfer CRV tokens to an address",
-      type: "write",
-      contract: "crvToken",
-      function: "transfer",
-      inputs: [
-        { name: "to", type: "address", label: "Recipient Address" },
-        { name: "amount", type: "uint256", label: "Amount (wei)" },
-      ],
-    },
-  ],
 });

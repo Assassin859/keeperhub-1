@@ -1,7 +1,251 @@
-import { defineProtocol } from "@/lib/protocol-registry";
-import { erc4626VaultActions } from "@/lib/web3/standards/erc4626";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
 
-export default defineProtocol({
+// Minimal SparkLend Pool ABI. Named Aave V3 outputs are preserved so the
+// derived output names match the existing action output keys.
+const SPARK_POOL_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "supply",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "onBehalfOf", type: "address" },
+      { name: "referralCode", type: "uint16" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "to", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "borrow",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "interestRateMode", type: "uint256" },
+      { name: "referralCode", type: "uint16" },
+      { name: "onBehalfOf", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "repay",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "interestRateMode", type: "uint256" },
+      { name: "onBehalfOf", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "setUserUseReserveAsCollateral",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "useAsCollateral", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "getUserAccountData",
+    stateMutability: "view",
+    inputs: [{ name: "user", type: "address" }],
+    outputs: [
+      { name: "totalCollateralBase", type: "uint256" },
+      { name: "totalDebtBase", type: "uint256" },
+      { name: "availableBorrowsBase", type: "uint256" },
+      { name: "currentLiquidationThreshold", type: "uint256" },
+      { name: "ltv", type: "uint256" },
+      { name: "healthFactor", type: "uint256" },
+    ],
+  },
+]);
+
+const POOL_DATA_PROVIDER_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "getUserReserveData",
+    stateMutability: "view",
+    inputs: [
+      { name: "asset", type: "address" },
+      { name: "user", type: "address" },
+    ],
+    outputs: [
+      { name: "currentATokenBalance", type: "uint256" },
+      { name: "currentStableDebtTokenBalance", type: "uint256" },
+      { name: "currentVariableDebtTokenBalance", type: "uint256" },
+      { name: "principalStableDebt", type: "uint256" },
+      { name: "scaledVariableDebt", type: "uint256" },
+      { name: "stableBorrowRate", type: "uint256" },
+      { name: "liquidityRate", type: "uint256" },
+      { name: "stableRateLastUpdated", type: "uint40" },
+      { name: "usageAsCollateralEnabled", type: "bool" },
+    ],
+  },
+]);
+
+// Standard ERC-4626 vault interface for sDAI.
+const ERC4626_VAULT_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "deposit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "assets", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "mint",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "shares", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "assets", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "owner", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "redeem",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "shares", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "owner", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "asset",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "totalAssets",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "convertToAssets",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "convertToShares",
+    stateMutability: "view",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewDeposit",
+    stateMutability: "view",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewMint",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewWithdraw",
+    stateMutability: "view",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewRedeem",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxDeposit",
+    stateMutability: "view",
+    inputs: [{ name: "receiver", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxMint",
+    stateMutability: "view",
+    inputs: [{ name: "receiver", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxWithdraw",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxRedeem",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+]);
+
+export default defineAbiProtocol({
   name: "Spark",
   slug: "spark",
   description:
@@ -12,264 +256,155 @@ export default defineProtocol({
   contracts: {
     pool: {
       label: "SparkLend Pool",
+      abi: SPARK_POOL_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
         // Gnosis Chain
         "100": "0x2Dae5307c5E3FD1CF5A72Cb6F698f915860607e0",
       },
-      // Proxy contract -- ABI auto-resolved via abi-cache
+      overrides: {
+        supply: {
+          label: "Supply Asset",
+          description:
+            "Supply an asset to the SparkLend lending pool to earn interest",
+          inputs: {
+            asset: { label: "Asset Token Address" },
+            amount: { label: "Amount (wei)" },
+            onBehalfOf: { label: "On Behalf Of Address" },
+            referralCode: { label: "Referral Code", default: "0" },
+          },
+        },
+        withdraw: {
+          label: "Withdraw Asset",
+          description:
+            "Withdraw a supplied asset from the SparkLend lending pool",
+          inputs: {
+            asset: { label: "Asset Token Address" },
+            amount: { label: "Amount (wei)" },
+            to: { label: "Recipient Address" },
+          },
+        },
+        borrow: {
+          label: "Borrow Asset",
+          description:
+            "Borrow an asset from SparkLend against supplied collateral",
+          inputs: {
+            asset: { label: "Asset Token Address" },
+            amount: { label: "Amount (wei)" },
+            interestRateMode: {
+              label: "Interest Rate Mode (2=Variable)",
+              default: "2",
+            },
+            referralCode: { label: "Referral Code", default: "0" },
+            onBehalfOf: { label: "On Behalf Of Address" },
+          },
+        },
+        repay: {
+          label: "Repay Debt",
+          description: "Repay a borrowed asset to the SparkLend lending pool",
+          inputs: {
+            asset: { label: "Asset Token Address" },
+            amount: { label: "Amount (wei)" },
+            interestRateMode: {
+              label: "Interest Rate Mode (2=Variable)",
+              default: "2",
+            },
+            onBehalfOf: { label: "On Behalf Of Address" },
+          },
+        },
+        setUserUseReserveAsCollateral: {
+          slug: "set-collateral",
+          label: "Set Asset as Collateral",
+          description:
+            "Enable or disable a supplied asset as collateral in SparkLend",
+          inputs: {
+            asset: { label: "Asset Token Address" },
+            useAsCollateral: {
+              label: "Use as Collateral",
+              helpTip:
+                "Toggles the entire supplied balance of this asset as collateral. There is no partial collateral in Aave V3/Spark.",
+            },
+          },
+        },
+        getUserAccountData: {
+          slug: "get-user-account-data",
+          label: "Get User Account Data",
+          description:
+            "Get overall account health including collateral, debt, borrow power, and health factor",
+          inputs: {
+            user: { label: "User Address" },
+          },
+          outputs: {
+            totalCollateralBase: {
+              label: "Total Collateral (base currency)",
+              decimals: 8,
+            },
+            totalDebtBase: {
+              label: "Total Debt (base currency)",
+              decimals: 8,
+            },
+            availableBorrowsBase: {
+              label: "Available Borrows (base currency)",
+              decimals: 8,
+            },
+            currentLiquidationThreshold: {
+              label: "Liquidation Threshold (basis points)",
+            },
+            ltv: { label: "Loan-to-Value (basis points)" },
+            healthFactor: { label: "Health Factor", decimals: 18 },
+          },
+        },
+      },
     },
     poolDataProvider: {
       label: "Spark Pool Data Provider",
+      abi: POOL_DATA_PROVIDER_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0xFc21d6d146E6086B8359705C8b28512a983db0cb",
         // Gnosis Chain
         "100": "0x2a002054A06546bB5a264D57A81347e23Af91D18",
       },
-      // ABI auto-resolved via abi-cache
+      overrides: {
+        getUserReserveData: {
+          slug: "get-user-reserve-data",
+          label: "Get User Reserve Data",
+          description:
+            "Get per-asset position data including supplied balance, debt, and rates",
+          inputs: {
+            asset: { label: "Asset Token Address" },
+            user: { label: "User Address" },
+          },
+          outputs: {
+            currentATokenBalance: { label: "Supplied Balance (spToken)" },
+            currentStableDebtTokenBalance: { label: "Stable Debt Balance" },
+            currentVariableDebtTokenBalance: {
+              label: "Variable Debt Balance",
+            },
+            principalStableDebt: { label: "Principal Stable Debt" },
+            scaledVariableDebt: { label: "Scaled Variable Debt" },
+            stableBorrowRate: {
+              label: "Stable Borrow Rate (ray)",
+              decimals: 27,
+            },
+            liquidityRate: { label: "Supply APY (ray)", decimals: 27 },
+            stableRateLastUpdated: {
+              label: "Stable Rate Last Updated (timestamp)",
+            },
+            usageAsCollateralEnabled: { label: "Used as Collateral" },
+          },
+        },
+      },
     },
     sdai: {
       label: "sDAI (Savings DAI)",
+      abi: ERC4626_VAULT_ABI,
       addresses: {
-        // Ethereum Mainnet
+        // Ethereum Mainnet -- proxy
         "1": "0x83F20F44975D03b1b09e64809B757c47f942BEeA",
       },
-      // Proxy contract -- ABI auto-resolved via abi-cache
+      overrides: erc4626AbiOverrides(),
     },
   },
-
-  actions: [
-    // Supply / Withdraw
-
-    {
-      slug: "supply",
-      label: "Supply Asset",
-      description:
-        "Supply an asset to the SparkLend lending pool to earn interest",
-      type: "write",
-      contract: "pool",
-      function: "supply",
-      inputs: [
-        { name: "asset", type: "address", label: "Asset Token Address" },
-        { name: "amount", type: "uint256", label: "Amount (wei)" },
-        {
-          name: "onBehalfOf",
-          type: "address",
-          label: "On Behalf Of Address",
-        },
-        {
-          name: "referralCode",
-          type: "uint16",
-          label: "Referral Code",
-          default: "0",
-        },
-      ],
-    },
-    {
-      slug: "withdraw",
-      label: "Withdraw Asset",
-      description: "Withdraw a supplied asset from the SparkLend lending pool",
-      type: "write",
-      contract: "pool",
-      function: "withdraw",
-      inputs: [
-        { name: "asset", type: "address", label: "Asset Token Address" },
-        { name: "amount", type: "uint256", label: "Amount (wei)" },
-        { name: "to", type: "address", label: "Recipient Address" },
-      ],
-    },
-
-    // Borrow / Repay
-
-    {
-      slug: "borrow",
-      label: "Borrow Asset",
-      description: "Borrow an asset from SparkLend against supplied collateral",
-      type: "write",
-      contract: "pool",
-      function: "borrow",
-      inputs: [
-        { name: "asset", type: "address", label: "Asset Token Address" },
-        { name: "amount", type: "uint256", label: "Amount (wei)" },
-        {
-          name: "interestRateMode",
-          type: "uint256",
-          label: "Interest Rate Mode (2=Variable)",
-          default: "2",
-        },
-        {
-          name: "referralCode",
-          type: "uint16",
-          label: "Referral Code",
-          default: "0",
-        },
-        {
-          name: "onBehalfOf",
-          type: "address",
-          label: "On Behalf Of Address",
-        },
-      ],
-    },
-    {
-      slug: "repay",
-      label: "Repay Debt",
-      description: "Repay a borrowed asset to the SparkLend lending pool",
-      type: "write",
-      contract: "pool",
-      function: "repay",
-      inputs: [
-        { name: "asset", type: "address", label: "Asset Token Address" },
-        { name: "amount", type: "uint256", label: "Amount (wei)" },
-        {
-          name: "interestRateMode",
-          type: "uint256",
-          label: "Interest Rate Mode (2=Variable)",
-          default: "2",
-        },
-        {
-          name: "onBehalfOf",
-          type: "address",
-          label: "On Behalf Of Address",
-        },
-      ],
-    },
-
-    // Collateral Management
-
-    {
-      slug: "set-collateral",
-      label: "Set Asset as Collateral",
-      description:
-        "Enable or disable a supplied asset as collateral in SparkLend",
-      type: "write",
-      contract: "pool",
-      function: "setUserUseReserveAsCollateral",
-      inputs: [
-        { name: "asset", type: "address", label: "Asset Token Address" },
-        {
-          name: "useAsCollateral",
-          type: "bool",
-          label: "Use as Collateral",
-          helpTip:
-            "Toggles the entire supplied balance of this asset as collateral. There is no partial collateral in Aave V3/Spark.",
-        },
-      ],
-    },
-
-    // ERC-4626 Vault (sDAI Savings)
-    ...erc4626VaultActions("sdai"),
-
-    // Read Actions
-
-    {
-      slug: "get-user-account-data",
-      label: "Get User Account Data",
-      description:
-        "Get overall account health including collateral, debt, borrow power, and health factor",
-      type: "read",
-      contract: "pool",
-      function: "getUserAccountData",
-      inputs: [{ name: "user", type: "address", label: "User Address" }],
-      outputs: [
-        {
-          name: "totalCollateralBase",
-          type: "uint256",
-          label: "Total Collateral (base currency)",
-          decimals: 8,
-        },
-        {
-          name: "totalDebtBase",
-          type: "uint256",
-          label: "Total Debt (base currency)",
-          decimals: 8,
-        },
-        {
-          name: "availableBorrowsBase",
-          type: "uint256",
-          label: "Available Borrows (base currency)",
-          decimals: 8,
-        },
-        {
-          name: "currentLiquidationThreshold",
-          type: "uint256",
-          label: "Liquidation Threshold (basis points)",
-        },
-        {
-          name: "ltv",
-          type: "uint256",
-          label: "Loan-to-Value (basis points)",
-        },
-        {
-          name: "healthFactor",
-          type: "uint256",
-          label: "Health Factor",
-          decimals: 18,
-        },
-      ],
-    },
-    {
-      slug: "get-user-reserve-data",
-      label: "Get User Reserve Data",
-      description:
-        "Get per-asset position data including supplied balance, debt, and rates",
-      type: "read",
-      contract: "poolDataProvider",
-      function: "getUserReserveData",
-      inputs: [
-        { name: "asset", type: "address", label: "Asset Token Address" },
-        { name: "user", type: "address", label: "User Address" },
-      ],
-      outputs: [
-        {
-          name: "currentATokenBalance",
-          type: "uint256",
-          label: "Supplied Balance (spToken)",
-        },
-        {
-          name: "currentStableDebtTokenBalance",
-          type: "uint256",
-          label: "Stable Debt Balance",
-        },
-        {
-          name: "currentVariableDebtTokenBalance",
-          type: "uint256",
-          label: "Variable Debt Balance",
-        },
-        {
-          name: "principalStableDebt",
-          type: "uint256",
-          label: "Principal Stable Debt",
-        },
-        {
-          name: "scaledVariableDebt",
-          type: "uint256",
-          label: "Scaled Variable Debt",
-        },
-        {
-          name: "stableBorrowRate",
-          type: "uint256",
-          label: "Stable Borrow Rate (ray)",
-          decimals: 27,
-        },
-        {
-          name: "liquidityRate",
-          type: "uint256",
-          label: "Supply APY (ray)",
-          decimals: 27,
-        },
-        {
-          name: "stableRateLastUpdated",
-          type: "uint40",
-          label: "Stable Rate Last Updated (timestamp)",
-        },
-        {
-          name: "usageAsCollateralEnabled",
-          type: "bool",
-          label: "Used as Collateral",
-        },
-      ],
-    },
-  ],
 });

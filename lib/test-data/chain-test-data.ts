@@ -67,6 +67,16 @@ export const TOKEN_REGISTRY: Record<
       decimals: 18,
       symbol: "WSTETH",
     },
+    USDS: {
+      address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+      decimals: 18,
+      symbol: "USDS",
+    },
+    DAI: {
+      address: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      decimals: 18,
+      symbol: "DAI",
+    },
   },
   // Ethereum Sepolia
   "11155111": {
@@ -190,6 +200,10 @@ export const FORK_WHALES: Record<
     WSTETH: { address: "0x0B925eD163218f6662a35e0f0371Ac234f9E9371" },
     // Circle's USDC reserve / bridge account holds large USDC balance.
     USDC: { address: "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341" },
+    // Sky/MakerDAO: PSM USDS holding (verified via Etherscan token-holder).
+    USDS: { address: "0x3Ba23D309F6e88f0a9Ac0bEe797AfaCa93B78b78" },
+    // MakerDAO MCD_JOIN_DAI: large DAI holder.
+    DAI: { address: "0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643" },
   },
 };
 
