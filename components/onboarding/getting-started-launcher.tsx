@@ -3,7 +3,7 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Check, ChevronDown, Compass, Info, Sparkles, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
@@ -386,6 +386,8 @@ function ExpandedCard({
 
 export function GettingStartedLauncher(): React.ReactElement | null {
   const gs = useGettingStarted();
+  const gsRef = useRef(gs);
+  gsRef.current = gs;
   const pathname = usePathname();
   const router = useRouter();
   const { open } = useOverlay();
@@ -399,12 +401,13 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   const [panelOpen, setPanelOpen] = useState(false);
 
   // The user-menu "Getting started" entry flips this to reopen the launcher.
+  // gsRef avoids including the unstable `gs` object in deps.
   useEffect(() => {
     if (forceOpen) {
-      gs.setState("expanded");
+      gsRef.current.setState("expanded");
       setForceOpen(false);
     }
-  }, [forceOpen, gs, setForceOpen]);
+  }, [forceOpen, setForceOpen]);
 
   // Fetch the env-driven free gas sponsorship amount for the wallet info copy.
   useEffect(() => {
@@ -555,14 +558,14 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     if (action?.kind === "deeplink") {
       openDeepLink(action.target);
     } else if (action?.kind === "ai-prompt") {
-      startStepWorkflow(step, action.prompt);
+      void startStepWorkflow(step, action.prompt);
     }
     gs.refetch();
   };
 
   const onChip = (step: Step, prompt: string): void => {
     gs.markStepActioned(step);
-    startStepWorkflow(step, prompt);
+    void startStepWorkflow(step, prompt);
   };
 
   // "Take a guided tour": open the step's draft and launch the editor tour,
@@ -570,7 +573,7 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   const onTour = (step: Step): void => {
     gs.markStepActioned(step);
     const prompt = step.action?.kind === "ai-prompt" ? step.action.prompt : "";
-    startStepWorkflow(step, prompt, { tour: true });
+    void startStepWorkflow(step, prompt, { tour: true });
   };
 
   // Panel open -> bottom-left (clears it on any width); closed -> bottom-right.
