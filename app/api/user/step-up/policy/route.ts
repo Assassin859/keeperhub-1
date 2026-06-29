@@ -161,7 +161,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
       const stepUp = await requireStepUp({
         userId: session.user.id,
         email: session.user.email,
-        action: "step_up_policy_change",
+        action: STEP_UP_ACTIONS.stepUpPolicyChange,
         signature: body.signature,
         code: body.code,
         emailOtp: body.emailOtp,

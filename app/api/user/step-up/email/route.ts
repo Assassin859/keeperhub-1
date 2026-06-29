@@ -10,13 +10,13 @@ import { users, verifications } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkDualFactorRateLimit } from "@/lib/mfa/dual-factor-rate-limit";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { generateId } from "@/lib/utils/id";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_TTL_MINUTES = 10;
-const ENROLL_ACTION = "step_up_email_enroll";
 
 function identifierFor(userId: string): string {
   return `stepupemail:${userId}`;
@@ -56,7 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const rateLimit = checkDualFactorRateLimit(session.user.id, ENROLL_ACTION);
+    const rateLimit = checkDualFactorRateLimit(session.user.id, STEP_UP_ACTIONS.stepUpEmailEnroll);
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Too many attempts. Wait and try again." },
@@ -210,7 +210,7 @@ export async function DELETE(request: Request): Promise<NextResponse> {
     const stepUp = await requireStepUp({
       userId: session.user.id,
       email: session.user.email,
-      action: "step_up_email_remove",
+      action: STEP_UP_ACTIONS.stepUpEmailRemove,
       signature: body.signature,
       code: body.code,
       emailOtp: body.emailOtp,

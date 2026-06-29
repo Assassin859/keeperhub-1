@@ -5,6 +5,7 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
@@ -49,7 +50,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const stepUp = await requireStepUp({
     userId: session.user.id,
     email: session.user.email,
-    action: "totp_disable",
+    action: STEP_UP_ACTIONS.totpDisable,
     code,
     emailOtp,
     signature,

@@ -13,8 +13,14 @@
 export type StepUpFactor = "wallet" | "totp" | "email";
 
 /** Sensitive actions gated by step-up. Values match the `action` strings
- *  passed to requireStepUp / requireDualFactor across the route handlers. */
+ *  passed to requireStepUp / requireDualFactor across the route handlers.
+ *
+ *  User-configurable actions (shown in wallet-security-section) live at the
+ *  top. Internal-only actions (wallet security settings management, TOTP
+ *  lifecycle) follow — they require step-up but are not user-configurable
+ *  and therefore not surfaced in the policy UI. */
 export const STEP_UP_ACTIONS = {
+  // User-configurable via the security settings panel.
   walletWithdraw: "wallet_withdraw",
   walletExportKey: "wallet_export_key",
   apiKeyCreate: "user_api_key_create",
@@ -28,6 +34,11 @@ export const STEP_UP_ACTIONS = {
   agenticWalletApprove: "agentic_wallet_approve",
   agenticWalletReject: "agentic_wallet_reject",
   sessionRevoke: "session_revoke",
+  // Internal — not user-configurable.
+  stepUpEmailEnroll: "step_up_email_enroll",
+  stepUpEmailRemove: "step_up_email_remove",
+  stepUpPolicyChange: "step_up_policy_change",
+  totpDisable: "totp_disable",
 } as const;
 
 /** Per-action extra factors a wallet user opted into (beyond the base wallet
