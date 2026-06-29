@@ -89,6 +89,19 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps): Reac
           ? { nodes: realNodes, edges, name: _currentWorkflowName }
           : undefined;
 
+        console.log("[AI Prompt] Generating workflow");
+        console.log("[AI Prompt] Has nodes:", hasNodes);
+        console.log("[AI Prompt] Sending existing workflow:", !!existingWorkflow);
+        if (existingWorkflow) {
+          console.log(
+            "[AI Prompt] Existing workflow:",
+            existingWorkflow.nodes.length,
+            "nodes,",
+            existingWorkflow.edges.length,
+            "edges"
+          );
+        }
+
         // Use streaming API with incremental updates
         const workflowData = await api.ai.generateStream(
           promptText,
@@ -138,6 +151,10 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps): Reac
           existingWorkflow
         );
 
+        console.log("[AI Prompt] Received final workflow data");
+        console.log("[AI Prompt] Nodes:", workflowData.nodes?.length || 0);
+        console.log("[AI Prompt] Edges:", workflowData.edges?.length || 0);
+
         // Use edges from workflow data with animated type; dedupe before
         // persisting so AI hallucinations don't leak duplicates into the DB.
         const finalEdges = dedupeEdges(
@@ -148,9 +165,17 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps): Reac
         );
 
         // Validate: check for blank/incomplete nodes
+        console.log("[AI Prompt] Validating nodes:", workflowData.nodes);
         const incompleteNodes = (workflowData.nodes || []).filter((node) => {
           const nodeType = node.data?.type;
           const config = node.data?.config || {};
+
+          console.log(`[AI Prompt] Checking node ${node.id}:`, {
+            type: nodeType,
+            config,
+            hasActionType: !!config.actionType,
+            hasTriggerType: !!config.triggerType,
+          });
 
           // Check trigger nodes
           if (nodeType === "trigger") {
@@ -167,6 +192,14 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps): Reac
         });
 
         if (incompleteNodes.length > 0) {
+          console.error(
+            "[AI Prompt] AI generated incomplete nodes:",
+            incompleteNodes
+          );
+          console.error(
+            "[AI Prompt] Full workflow data:",
+            JSON.stringify(workflowData, null, 2)
+          );
           throw new Error(
             `Cannot create workflow: The AI tried to create ${incompleteNodes.length} incomplete node(s). The requested action type may not be supported. Please try a different description using supported actions: Send Email, Send Slack Message, Create Ticket, Database Query, HTTP Request, Generate Text, Generate Image, Scrape, or Search.`
           );
@@ -193,8 +226,21 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps): Reac
         } else {
           setCurrentWorkflowId(workflowId);
 
+          console.log("[AI Prompt] Updating existing workflow:", workflowId);
+          console.log("[AI Prompt] Has existingWorkflow context:", !!existingWorkflow);
+
           // State already updated by streaming callback
-          if (!existingWorkflow) {
+          if (existingWorkflow) {
+            console.log("[AI Prompt] REPLACING workflow with AI response");
+            console.log(
+              "[AI Prompt] Replacing",
+              realNodes.length,
+              "nodes with",
+              workflowData.nodes?.length || 0,
+              "nodes"
+            );
+          } else {
+            console.log("[AI Prompt] Setting workflow for empty canvas");
             toast.success("Generated workflow");
           }
 
@@ -220,6 +266,7 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps): Reac
         setIsFocused(false);
         inputRef.current?.blur();
       } catch (error) {
+        console.error("Failed to generate workflow:", error);
         toast.error("Failed to generate workflow");
       } finally {
         setIsGenerating(false);
