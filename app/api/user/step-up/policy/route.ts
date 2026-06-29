@@ -44,27 +44,40 @@ async function loadEnrolled(
 // GET: current per-action policy + which factors the user has enrolled, so the
 // settings UI can render the toggles.
 export async function GET(request: Request): Promise<NextResponse> {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const [row] = await db
+      .select({
+        stepUpPolicy: users.stepUpPolicy,
+        stepUpEmail: users.stepUpEmail,
+      })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+    const enrolled = await loadEnrolled(
+      session.user.id,
+      row?.stepUpEmail ?? null
+    );
+    return NextResponse.json({
+      walletUser: isWalletEmail(session.user.email),
+      policy: parseStepUpPolicy(row?.stepUpPolicy),
+      enrolled,
+    });
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "Failed to load step-up policy",
+      error,
+      { endpoint: "/api/user/step-up/policy" }
+    );
+    return NextResponse.json(
+      { error: "Failed to load step-up policy." },
+      { status: 500 }
+    );
   }
-  const [row] = await db
-    .select({
-      stepUpPolicy: users.stepUpPolicy,
-      stepUpEmail: users.stepUpEmail,
-    })
-    .from(users)
-    .where(eq(users.id, session.user.id))
-    .limit(1);
-  const enrolled = await loadEnrolled(
-    session.user.id,
-    row?.stepUpEmail ?? null
-  );
-  return NextResponse.json({
-    walletUser: isWalletEmail(session.user.email),
-    policy: parseStepUpPolicy(row?.stepUpPolicy),
-    enrolled,
-  });
 }
 
 // PUT: set the extra factors for one action. Adding a factor (strengthening)
