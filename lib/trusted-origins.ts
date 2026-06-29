@@ -15,7 +15,7 @@
  */
 
 export const TRUSTED_ORIGINS: readonly string[] = [
-  "http://localhost:3000",
+  "http://localhost:*",
   // start custom keeperhub code //
   "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
   // end keeperhub code //
