@@ -1,10 +1,21 @@
 import "server-only";
 
+import { ethers } from "ethers";
+import ERC4626_SAVINGS_ABI from "@/lib/scan/abis/erc4626-savings.json";
+import { SKY_SAVINGS } from "@/lib/scan/adapters/protocol-registry";
 import type {
   AdapterCallDescriptor,
   MulticallResult,
   ProtocolPosition,
 } from "@/lib/scan/types";
+
+/**
+ * sUSDS ERC-4626 vault interface — provides balanceOf (shares) and
+ * maxWithdraw (USDS underlying for pricing in scanOneChain).
+ */
+const savingsIface = new ethers.Interface(
+  ERC4626_SAVINGS_ABI as unknown as ethers.InterfaceAbi
+);
 
 /**
  * Build Multicall3 aggregate3 call descriptors for Sky savings balances.
@@ -14,14 +25,27 @@ import type {
  *   [1] maxWithdraw(account) -> USDS underlying (for USD pricing in scanOneChain)
  *
  * Returns an empty array when the chain has no registered SKY_SAVINGS entry.
- *
- * Implementation: see plan 56-02 (GREEN).
  */
 export function buildSkyCalls(
-  _userAddress: string,
-  _chainId: number
+  userAddress: string,
+  chainId: number
 ): AdapterCallDescriptor[] {
-  throw new Error("not implemented — see plan 56-02");
+  const savings = SKY_SAVINGS[chainId];
+  if (!savings) {
+    return [];
+  }
+  return [
+    {
+      target: savings.sUSDS,
+      allowFailure: true,
+      callData: savingsIface.encodeFunctionData("balanceOf", [userAddress]),
+    },
+    {
+      target: savings.sUSDS,
+      allowFailure: true,
+      callData: savingsIface.encodeFunctionData("maxWithdraw", [userAddress]),
+    },
+  ];
 }
 
 /**
@@ -33,13 +57,64 @@ export function buildSkyCalls(
  * pricing via resolveUsdPrice (USDS -> DefiLlama fallback).
  *
  * Returns an empty array when balanceOf is zero or the call failed (soft-miss).
- *
- * Implementation: see plan 56-02 (GREEN).
  */
 export function decodeSkyResults(
-  _results: MulticallResult[],
+  results: MulticallResult[],
   _address: string,
-  _chainId: number
+  chainId: number
 ): ProtocolPosition[] {
-  throw new Error("not implemented — see plan 56-02");
+  const savings = SKY_SAVINGS[chainId];
+  if (!savings) {
+    return [];
+  }
+
+  const balanceOfResult = results[0];
+  if (!balanceOfResult?.success) {
+    return [];
+  }
+
+  const shares = decodeUint256(balanceOfResult.returnData);
+  if (shares === null || shares <= BigInt(0)) {
+    return [];
+  }
+
+  return [
+    {
+      chainId,
+      protocol: "sky",
+      healthFactor: null,
+      noActiveLoan: true,
+      totalCollateralUsd: null,
+      totalDebtUsd: null,
+      suppliedAssets: [
+        {
+          symbol: "sUSDS",
+          tokenAddress: savings.sUSDS,
+          amount: String(shares),
+          decimals: 18,
+          usdValue: null,
+        },
+      ],
+      borrowedAssets: [],
+    },
+  ];
+}
+
+/**
+ * Decode a single uint256 from ABI-encoded return data.
+ * Returns null on decode failure (malformed data, empty returnData "0x").
+ */
+function decodeUint256(returnData: string): bigint | null {
+  if (!returnData || returnData === "0x") {
+    return null;
+  }
+  try {
+    const [value] = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["uint256"],
+      returnData
+    );
+    return value as bigint;
+  } catch {
+    return null;
+  }
 }
