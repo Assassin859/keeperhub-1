@@ -172,8 +172,18 @@ export function useGettingStarted(): GettingStarted {
     setPersisted(readPersisted(userId));
   }, [userId]);
 
+  const persistedRef = useRef(persisted);
+  persistedRef.current = persisted;
+
+  // Functional updater over a synchronously-maintained ref. Reading the latest
+  // value from the ref (not the render closure) lets two mutations fired in the
+  // same tick compose -- e.g. setStepWorkflowId + completeStep on a chip clone --
+  // instead of the second clobbering the first. localStorage is written
+  // synchronously so the value survives an immediate navigation.
   const persist = useCallback(
-    (next: Persisted) => {
+    (update: (prev: Persisted) => Persisted) => {
+      const next = update(persistedRef.current);
+      persistedRef.current = next;
       setPersisted(next);
       try {
         localStorage.setItem(storageKey(userId), JSON.stringify(next));
@@ -183,9 +193,6 @@ export function useGettingStarted(): GettingStarted {
     },
     [userId]
   );
-
-  const persistedRef = useRef(persisted);
-  persistedRef.current = persisted;
 
   const workflowIds = Object.values(persisted.workflows).join(",");
   const fetchStatus = useCallback(() => {
@@ -231,42 +238,48 @@ export function useGettingStarted(): GettingStarted {
     if (!status) {
       return;
     }
-    const current = persistedRef.current;
-    const fresh = newlyCompletedSteps(status, current.done, current.workflows);
-    if (fresh.length > 0) {
-      persist({ ...current, done: [...current.done, ...fresh] });
-    }
+    persist((prev) => {
+      const fresh = newlyCompletedSteps(status, prev.done, prev.workflows);
+      return fresh.length > 0
+        ? { ...prev, done: [...prev.done, ...fresh] }
+        : prev;
+    });
   }, [status, persist]);
 
   const setState = useCallback(
-    (next: LauncherState) => persist({ ...persisted, state: next }),
-    [persist, persisted]
+    (next: LauncherState) => persist((prev) => ({ ...prev, state: next })),
+    [persist]
   );
   const setBranch = useCallback(
-    (next: BranchKey) => persist({ ...persisted, branch: next }),
-    [persist, persisted]
+    (next: BranchKey) => persist((prev) => ({ ...prev, branch: next })),
+    [persist]
   );
   const markStepActioned = useCallback(
     (step: Step) => {
       // Outcome steps complete from real state, not from being opened.
-      if (!CLICK_DRIVEN.has(step.signal) || persisted.done.includes(step.key)) {
+      if (!CLICK_DRIVEN.has(step.signal)) {
         return;
       }
-      persist({ ...persisted, done: [...persisted.done, step.key] });
+      persist((prev) =>
+        prev.done.includes(step.key)
+          ? prev
+          : { ...prev, done: [...prev.done, step.key] }
+      );
     },
-    [persist, persisted]
+    [persist]
   );
   // Latch a step done regardless of its signal. Used when an action is itself
   // the completion (e.g. cloning a curated starter workflow from a chip): the
   // user still configures it, but picking it satisfies the step.
   const completeStep = useCallback(
     (step: Step) => {
-      if (persisted.done.includes(step.key)) {
-        return;
-      }
-      persist({ ...persisted, done: [...persisted.done, step.key] });
+      persist((prev) =>
+        prev.done.includes(step.key)
+          ? prev
+          : { ...prev, done: [...prev.done, step.key] }
+      );
     },
-    [persist, persisted]
+    [persist]
   );
   const isStepComplete = useCallback(
     (step: Step): boolean => {
@@ -286,11 +299,11 @@ export function useGettingStarted(): GettingStarted {
   );
   const setStepWorkflowId = useCallback(
     (key: string, workflowId: string) =>
-      persist({
-        ...persisted,
-        workflows: { ...persisted.workflows, [key]: workflowId },
-      }),
-    [persist, persisted]
+      persist((prev) => ({
+        ...prev,
+        workflows: { ...prev.workflows, [key]: workflowId },
+      })),
+    [persist]
   );
 
   return {
