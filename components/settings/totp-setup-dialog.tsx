@@ -105,6 +105,7 @@ export function TotpSetupDialog({
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [keyJustCopied, setKeyJustCopied] = useState(false);
+  const [didEnroll, setDidEnroll] = useState(false);
 
   useEffect(() => {
     if (!open || setupData) {
@@ -152,6 +153,7 @@ export function TotpSetupDialog({
     setCode("");
     setBackupCodes(null);
     setBusy(false);
+    setDidEnroll(false);
   };
 
   const closeAndReset = (): void => {
@@ -177,6 +179,7 @@ export function TotpSetupDialog({
       const data = (await response.json()) as EnrollResponse;
       setBackupCodes(data.backupCodes);
       setPhase("codes");
+      setDidEnroll(true);
     } finally {
       setBusy(false);
     }
@@ -219,6 +222,13 @@ export function TotpSetupDialog({
     <Dialog
       onOpenChange={(next) => {
         if (!next) {
+          // If the user enrolled but closed via X instead of the Done button,
+          // still fire onEnrolled so the parent updates its state.
+          if (didEnroll) {
+            flushSync(() => {
+              onEnrolled();
+            });
+          }
           closeAndReset();
           return;
         }
