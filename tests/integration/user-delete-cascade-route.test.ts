@@ -28,6 +28,7 @@ vi.mock("@/lib/db/schema", () => ({
   sessions: sessionsTable,
   organizationApiKeys: orgApiKeysTable,
   securityAuditLog: { __table: "security_audit_log" },
+  walletAddress: { userId: "user_id" },
 }));
 
 const mockFindFirst = vi.fn();
@@ -76,6 +77,11 @@ function makeTx() {
     .fn()
     .mockResolvedValue([{ id: "k1", organizationId: "o1" }]);
   return {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([{ count: 1 }]),
+      }),
+    }),
     update: vi.fn((table: unknown) => ({
       set: vi.fn(() => ({
         where:

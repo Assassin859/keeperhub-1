@@ -40,6 +40,11 @@ function whereWithReturning() {
 // for each schema table. This is sturdier than routing-by-table-string and
 // catches unexpected extra writes.
 const txStub = {
+  select: vi.fn().mockReturnValue({
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue([{ count: 0 }]),
+    }),
+  }),
   update: vi.fn((table: unknown) => ({
     set: vi.fn((value: unknown) => {
       txUpdateCalls.push({ table, value });
@@ -69,6 +74,7 @@ vi.mock("@/lib/db/schema", () => ({
     createdBy: "created_by",
     revokedAt: "revoked_at",
   },
+  walletAddress: { userId: "user_id" },
 }));
 
 vi.mock("@/lib/logging", () => ({

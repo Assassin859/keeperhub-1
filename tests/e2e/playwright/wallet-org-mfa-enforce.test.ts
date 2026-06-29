@@ -70,7 +70,6 @@ test.describe("wallet org-MFA enforcement gate", () => {
 
   test("redirects to /enforce-mfa when org requires a factor the wallet user lacks", async ({
     page,
-    apiRequest,
   }) => {
     const orgId = await getWalletOrgId();
     if (!orgId) {
@@ -86,7 +85,7 @@ test.describe("wallet org-MFA enforcement gate", () => {
     await expect(page.getByText(/requires.*factor|two-factor/i)).toBeVisible();
 
     // API requests are also gated: the proxy returns 403 with the correct code.
-    const apiRes = await apiRequest.get("/api/api-keys");
+    const apiRes = await page.request.get("/api/api-keys");
     expect(apiRes.status()).toBe(403);
     const body = (await apiRes.json()) as { code?: string };
     expect(body.code).toBe("org_mfa_enrollment_required");
@@ -94,7 +93,6 @@ test.describe("wallet org-MFA enforcement gate", () => {
 
   test("gate lifts after enrolling the required factor", async ({
     page,
-    apiRequest,
   }) => {
     const orgId = await getWalletOrgId();
     if (!orgId) {
@@ -127,7 +125,7 @@ test.describe("wallet org-MFA enforcement gate", () => {
     await expect(page).not.toHaveURL(/\/enforce-mfa/, { timeout: 10_000 });
 
     // API is also unblocked.
-    const apiRes = await apiRequest.get("/api/api-keys");
+    const apiRes = await page.request.get("/api/api-keys");
     expect(apiRes.status()).toBe(200);
   });
 });
