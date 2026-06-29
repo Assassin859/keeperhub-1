@@ -7,9 +7,12 @@ import { users, walletAddress } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   parseStepUpPolicy,
+  STEP_UP_ACTIONS,
   type StepUpFactor,
   type StepUpPolicy,
 } from "@/lib/mfa/step-up-policy";
+
+const KNOWN_ACTIONS = new Set<string>(Object.values(STEP_UP_ACTIONS));
 import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 
 const VALID_FACTORS: StepUpFactor[] = ["totp", "email"];
@@ -108,6 +111,9 @@ export async function PUT(request: Request): Promise<NextResponse> {
     const action = typeof body.action === "string" ? body.action : "";
     if (!action) {
       return NextResponse.json({ error: "Missing action" }, { status: 400 });
+    }
+    if (!KNOWN_ACTIONS.has(action)) {
+      return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
     const nextFactors = Array.isArray(body.factors)
       ? (body.factors.filter(
