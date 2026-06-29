@@ -76,6 +76,7 @@ const Home = () => {
   const hasCreatedWorkflowRef = useRef(false);
   const currentWorkflowName = useAtomValue(currentWorkflowNameAtom);
   const tourRequested = useAtomValue(editorTourRequestedAtom);
+  const setTourRequested = useSetAtom(editorTourRequestedAtom);
 
   // Reset sidebar animation state when on homepage
   useEffect(() => {
@@ -139,6 +140,7 @@ const Home = () => {
       console.error("Failed to create workflow:", error);
       toast.error("Failed to create workflow");
       hasCreatedWorkflowRef.current = false;
+      setTourRequested(false);
     }
   }, [
     session,
@@ -147,16 +149,20 @@ const Home = () => {
     ensureSession,
     router,
     setIsTransitioningFromHomepage,
+    setTourRequested,
   ]);
 
   // Launch the editor walkthrough when "Take a tour" was requested (from the
   // account menu or the Setup Guide): build the fresh default workflow the
   // walkthrough controller drives. handleAddNode then navigates into the editor.
+  const handleAddNodeRef = useRef(handleAddNode);
+  handleAddNodeRef.current = handleAddNode;
+
   useEffect(() => {
     if (tourRequested && session && !isAnonymousUser(session.user)) {
-      handleAddNode();
+      void handleAddNodeRef.current();
     }
-  }, [tourRequested, session, handleAddNode]);
+  }, [tourRequested, session]);
 
   // Initialize with a temporary "add" node on mount
   useEffect(() => {
@@ -167,7 +173,7 @@ const Home = () => {
       data: {
         label: "",
         type: "add",
-        onClick: handleAddNode,
+        onClick: () => void handleAddNodeRef.current(),
       },
       draggable: false,
       selectable: false,
@@ -182,7 +188,6 @@ const Home = () => {
     setEdges,
     setCurrentWorkflowId,
     setCurrentWorkflowName,
-    handleAddNode,
   ]);
 
   // Canvas and toolbar are rendered by PersistentCanvas in the layout
