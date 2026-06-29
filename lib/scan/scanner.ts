@@ -181,21 +181,33 @@ async function scanOneChain(
   if (
     firstSkyPos !== undefined &&
     firstSkyAsset !== undefined &&
-    skyResults[1]?.success === true
+    skyResults[1]?.success === true &&
+    skyResults[1].returnData !== "0x"
   ) {
-    const [rawMaxWithdraw] = ethers.AbiCoder.defaultAbiCoder().decode(
-      ["uint256"],
-      skyResults[1].returnData
-    );
-    const usdsAmount = rawMaxWithdraw as bigint;
-    const skySavingsEntry = SKY_SAVINGS[chainId];
-    const usdsPrice = skySavingsEntry
-      ? await resolveUsdPrice(chainId, skySavingsEntry.usds, "USDS", {})
-      : null;
-    const usdValue =
-      usdsPrice === null ? null : (Number(usdsAmount) / 1e18) * usdsPrice;
-    firstSkyAsset.usdValue = usdValue;
-    firstSkyPos.totalCollateralUsd = usdValue;
+    // Defensive decode/price: a non-conformant vault can report success with
+    // malformed maxWithdraw data, and pricing can reject. A throw here would
+    // propagate through scanOneChain and mark the WHOLE chain unavailable
+    // (losing Aave/Lido/Spark/stablecoin data too), violating the never-throws
+    // contract. Swallow any failure and leave usdValue null — the Sky position
+    // is still emitted (T-56-04 guard).
+    try {
+      const [rawMaxWithdraw] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["uint256"],
+        skyResults[1].returnData
+      );
+      const usdsAmount = rawMaxWithdraw as bigint;
+      const skySavingsEntry = SKY_SAVINGS[chainId];
+      const usdsPrice = skySavingsEntry
+        ? await resolveUsdPrice(chainId, skySavingsEntry.usds, "USDS", {})
+        : null;
+      const usdValue =
+        usdsPrice === null ? null : (Number(usdsAmount) / 1e18) * usdsPrice;
+      firstSkyAsset.usdValue = usdValue;
+      firstSkyPos.totalCollateralUsd = usdValue;
+    } catch {
+      // Malformed maxWithdraw data or pricing failure — leave usdValue null
+      // and keep the position rather than failing the entire chain scan.
+    }
   }
 
   const positions: ProtocolPosition[] = [

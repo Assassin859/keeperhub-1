@@ -433,5 +433,41 @@ describe("scan orchestrator", () => {
         1
       );
     });
+
+    it('resilient: Sky maxWithdraw returns [true, "0x"] — emits unpriced Sky position without sinking the chain (CR-01)', async () => {
+      setupCacheMissDb();
+
+      mockGetEnabledChains.mockResolvedValue([
+        { id: "eth-1", chainId: 1, name: "Ethereum", isEnabled: true },
+      ]);
+
+      const skyShares = BigInt("1000000000000000000000"); // 1000 sUSDS
+
+      // Slot 7 (Sky maxWithdraw) reports success but returns empty "0x" data —
+      // a non-conformant vault. The pricing decode must NOT throw and mark the
+      // whole chain unavailable; the Sky position is still emitted, unpriced.
+      mockAggregate3StaticCall.mockResolvedValueOnce([
+        [true, encodeNoPositionAccountData()], // Aave: no position
+        [true, encodeEMode()],
+        [true, encodeUint256(BigInt(0))], // stETH: 0
+        [true, encodeUint256(BigInt(0))], // wstETH: 0
+        [true, encodeNoPositionAccountData()], // Spark: no position
+        [true, encodeEMode()],
+        [true, encodeUint256(skyShares)], // Sky balanceOf: non-zero → position
+        [true, "0x"], // Sky maxWithdraw: malformed empty data
+      ]);
+
+      const { scanAddress } = await import("@/lib/scan/scanner");
+      const result = await scanAddress(TEST_RAW);
+
+      // Chain 1 was NOT marked unavailable — the decode failure was swallowed.
+      expect(result.unavailableChains.some((c) => c.chainId === 1)).toBe(false);
+
+      // The Sky position is still emitted, with no USD value.
+      const skyPos = result.positions.find((p) => p.protocol === "sky");
+      expect(skyPos).toBeDefined();
+      expect(skyPos?.suppliedAssets[0]?.usdValue).toBeNull();
+      expect(skyPos?.totalCollateralUsd).toBeNull();
+    });
   });
 });
