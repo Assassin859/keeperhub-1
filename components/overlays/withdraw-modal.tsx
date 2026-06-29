@@ -92,9 +92,7 @@ export function WithdrawModal({
   const isOwner = role === "owner";
   const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   // Wallet accounts confirm by signing; they don't enroll TOTP.
-  const isWallet = isWalletEmail(
-    (session.data?.user as { email?: string | null } | undefined)?.email
-  );
+  const isWallet = isWalletEmail(session.data?.user?.email);
 
   const [selectedAssetIndex, setSelectedAssetIndex] =
     useState(initialAssetIndex);
