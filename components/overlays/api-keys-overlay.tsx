@@ -29,6 +29,7 @@ type ApiKey = {
   keyPrefix: string;
   createdAt: string;
   lastUsedAt: string | null;
+  scope?: string | null;
   createdByName?: string | null;
   createdByEmail?: string | null;
   createdByRole?: string | null;
@@ -409,6 +410,19 @@ function ApiKeysList({
                     <span className="truncate text-sm">{apiKey.name}</span>
                   )}
                 </div>
+                {apiKey.scope && (
+                  <p className="mt-1 text-sm">
+                    {"Scope: "}
+                    {apiKey.scope.split(" ").map((s) => (
+                      <span key={s}>
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                          {s}
+                        </code>
+                        {" "}
+                      </span>
+                    ))}
+                  </p>
+                )}
                 <p className="mt-1 text-muted-foreground text-xs">
                   Created {formatDate(apiKey.createdAt)}
                   {showCreator &&

@@ -52,6 +52,7 @@ export async function GET(request: Request) {
         keyPrefix: true,
         createdAt: true,
         lastUsedAt: true,
+        scope: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
       limit: req.pageSize,

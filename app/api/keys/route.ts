@@ -60,6 +60,7 @@ export async function GET(request: Request) {
         createdAt: true,
         lastUsedAt: true,
         expiresAt: true,
+        scope: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
       limit: req.pageSize,
