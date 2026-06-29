@@ -262,7 +262,14 @@ let pendingVerifyPassword: string | null = null;
 // regains focus, so leaving to grab the code from the email tab does not drop
 // the modal.
 let authFlowInProgress = false;
-export const isAuthFlowInProgress = () => authFlowInProgress;
+// Separately tracked by ConnectAuthPanel (the Connect modal's email panel):
+// covers the loading state during signUp.email() and the verify-OTP step.
+// Kept here so user-menu.tsx only needs to import from one place.
+let connectPanelActive = false;
+export const setConnectPanelActive = (active: boolean): void => {
+  connectPanelActive = active;
+};
+export const isAuthFlowInProgress = () => authFlowInProgress || connectPanelActive;
 
 type SingleProviderButtonProps = {
   provider: Provider;

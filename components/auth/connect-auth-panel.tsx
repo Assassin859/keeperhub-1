@@ -3,7 +3,7 @@
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { Mail } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +20,7 @@ import { authClient, signIn, signUp } from "@/lib/auth-client";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 import { getEnabledAuthProviders } from "@/lib/auth-providers";
+import { setConnectPanelActive } from "@/components/auth/dialog";
 
 type View = "chooser" | "signin" | "signup" | "forgot" | "reset" | "verify";
 
@@ -255,6 +256,18 @@ export function ConnectAuthPanel(): React.ReactElement {
     email: string;
     password: string;
   } | null>(null);
+
+  // Prevent UserMenu from swapping ConnectButton for a skeleton during the
+  // signUp.email() network call or while the verify-OTP step is shown. Without
+  // this guard, the brief isPending=true window that Better Auth's session
+  // refetch fires on signup completion unmounts the ConnectButton dialog before
+  // the user ever sees the OTP input. isAuthFlowInProgress() already covers
+  // the standalone AuthDialog; this flag extends that check to the connect panel.
+  useEffect(() => {
+    const active = loading || view === "verify";
+    setConnectPanelActive(active);
+    return () => setConnectPanelActive(false);
+  }, [loading, view]);
 
   // Animate the real (px) height of the list so the modal box grows/shrinks
   // smoothly. framer's `layout` only transforms, which leaves the actual box
