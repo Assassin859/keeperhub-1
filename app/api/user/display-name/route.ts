@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const body = (await request.json()) as { name?: unknown };
+    const body = (await request.json().catch(() => ({}))) as { name?: unknown };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (name.length === 0 || name.length > MAX_NAME_LENGTH) {
       return NextResponse.json(
