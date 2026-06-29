@@ -1,8 +1,8 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
+import { organizationApiKeys, sessions, users, walletAddress } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { authorizeAction } from "@/lib/middleware/authorize-action";
@@ -126,6 +126,16 @@ export async function POST(request: Request): Promise<NextResponse> {
             organizationId: organizationApiKeys.organizationId,
           });
 
+        // Count wallet addresses without removing them: deactivation is a
+        // soft delete so the user row stays and the FK cascade does not fire.
+        // The addresses are deliberately retained so the identity remains
+        // reserved and cannot be re-registered. The audit event records the
+        // count so auditors have a complete picture of the account state.
+        const [walletCount] = await tx
+          .select({ count: count() })
+          .from(walletAddress)
+          .where(eq(walletAddress.userId, userId));
+
         // Record the cascade atomically with the writes that produced it: a
         // root event plus one row per affected resource, all sharing the
         // correlation id. Passing `tx` makes a failed audit write roll the
@@ -145,6 +155,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               ...metadata,
               sessionsRevoked: revokedSessions.length,
               apiKeysRevoked: revokedKeys.length,
+              walletAddressesRetained: walletCount?.count ?? 0,
             },
           },
           {
