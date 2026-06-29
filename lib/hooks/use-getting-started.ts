@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
   type BranchKey,
@@ -183,6 +183,9 @@ export function useGettingStarted(): GettingStarted {
     [userId]
   );
 
+  const persistedRef = useRef(persisted);
+  persistedRef.current = persisted;
+
   const workflowIds = Object.values(persisted.workflows).join(",");
   const fetchStatus = useCallback(() => {
     if (!isAuthenticated) {
@@ -221,20 +224,18 @@ export function useGettingStarted(): GettingStarted {
   }, [persisted.state, fetchStatus]);
 
   // Latch satisfied real signals into `done` so completion survives the user
-  // later deleting the workflow / key that produced it.
+  // later deleting the workflow / key that produced it. Read persisted via ref
+  // so this effect only reacts to status changes, not to every launcher action.
   useEffect(() => {
     if (!status) {
       return;
     }
-    const fresh = newlyCompletedSteps(
-      status,
-      persisted.done,
-      persisted.workflows
-    );
+    const current = persistedRef.current;
+    const fresh = newlyCompletedSteps(status, current.done, current.workflows);
     if (fresh.length > 0) {
-      persist({ ...persisted, done: [...persisted.done, ...fresh] });
+      persist({ ...current, done: [...current.done, ...fresh] });
     }
-  }, [status, persisted, persist]);
+  }, [status, persist]);
 
   const setState = useCallback(
     (next: LauncherState) => persist({ ...persisted, state: next }),
