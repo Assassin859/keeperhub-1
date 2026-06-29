@@ -2,6 +2,7 @@
 
 import { Copy } from "lucide-react";
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { TotpBackupCodesPanel } from "@/components/settings/totp-backup-codes-panel";
 import { TotpQr } from "@/components/settings/totp-qr";
@@ -204,9 +205,13 @@ export function TotpSetupDialog({
 
   const handleDone = (): void => {
     toast.success("Two-factor authentication is enabled");
-    // Signal the parent only now: in the enforce-mfa gate onEnrolled closes the
-    // dialog and redirects, so firing it at verify would skip the backup codes.
-    onEnrolled();
+    // flushSync ensures the parent's setEnrolled(true) is applied before
+    // closeAndReset calls onOpenChange(false). Without it, React batches the
+    // update and the parent's handleOpenChange sees enrolled=false (stale
+    // closure) and refuses to close the dialog.
+    flushSync(() => {
+      onEnrolled();
+    });
     closeAndReset();
   };
 
