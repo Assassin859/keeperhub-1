@@ -46,14 +46,16 @@ export async function mintInviteChallenge(
     data: nonce,
   });
   const id = identifier(invitationId);
-  await db.delete(verifications).where(eq(verifications.identifier, id));
-  await db.insert(verifications).values({
-    id: generateId(),
-    identifier: id,
-    value: encrypted,
-    expiresAt: new Date(Date.now() + TTL_DAYS * 24 * 60 * 60 * 1000),
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  await db.transaction(async (tx) => {
+    await tx.delete(verifications).where(eq(verifications.identifier, id));
+    await tx.insert(verifications).values({
+      id: generateId(),
+      identifier: id,
+      value: encrypted,
+      expiresAt: new Date(Date.now() + TTL_DAYS * 24 * 60 * 60 * 1000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   });
   return buildMessage(invitationId, nonce);
 }
@@ -120,8 +122,13 @@ export async function verifyInviteChallenge(
   if (!isAddressEqual(recovered, invitedAddress as `0x${string}`)) {
     return false;
   }
-  await db
+  // Use .returning() so we know whether the DELETE actually removed a row.
+  // Under concurrent POST requests both could pass the signature check; the
+  // first to delete wins and the second gets an empty array, returning false
+  // and preventing a duplicate member insert.
+  const deleted = await db
     .delete(verifications)
-    .where(eq(verifications.identifier, identifier(invitationId)));
-  return true;
+    .where(eq(verifications.identifier, identifier(invitationId)))
+    .returning({ id: verifications.id });
+  return deleted.length > 0;
 }
