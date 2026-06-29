@@ -645,6 +645,7 @@ export function ManageOrgsModal({
   // Invitations state (received by current user)
   type Invitation = {
     id: string;
+    email?: string;
     organizationId?: string;
     organizationName?: string;
     organization?: { name?: string };
@@ -1153,9 +1154,10 @@ export function ManageOrgsModal({
   const handleAcceptInvitation = async (invitationId: string) => {
     setProcessingInvite(invitationId);
     try {
-      // Wallet (SIWE) users prove ownership by signing the invite challenge;
-      // the email-match accept path doesn't apply to them.
-      if (isWalletEmail(session?.user?.email)) {
+      // Route by the invitation's target email: wallet invites (sent to a
+      // synthetic wallet email) require a signed challenge, not email-match.
+      const invitation = userInvitations.find((inv) => inv.id === invitationId);
+      if (isWalletEmail(invitation?.email)) {
         await acceptWalletInvite(invitationId);
       } else {
         const result = await authClient.organization.acceptInvitation({
