@@ -230,6 +230,8 @@ export function WalletSecuritySection(): React.ReactElement {
       }
       toast.success("Step-up email removed.");
       await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
       setBusy(false);
     }
@@ -251,6 +253,8 @@ export function WalletSecuritySection(): React.ReactElement {
       }
       toast.success("Authenticator disabled.");
       await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
       setBusy(false);
     }
@@ -284,6 +288,8 @@ export function WalletSecuritySection(): React.ReactElement {
         return;
       }
       await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
       setBusy(false);
     }
