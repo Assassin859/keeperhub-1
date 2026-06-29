@@ -263,6 +263,53 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
   }
 }
 
+/**
+ * Seconds since the most recent workflow execution reached a terminal state
+ * (anything with a non-NULL completed_at: success / error / cancelled), across
+ * ALL trigger types and chains.
+ *
+ * Value = EXTRACT(EPOCH FROM now() - max(completed_at)). This is the freshness
+ * signal behind the fast "zero finished executions" alert: under normal load
+ * something finishes every few seconds, so the value sits well under a minute;
+ * if the whole pipeline stalls (executor wedged, runner Jobs hanging, DB writes
+ * failing) nothing updates completed_at and the value climbs without bound.
+ *
+ * Sourced from the DB so it is authoritative regardless of which (often
+ * short-lived) pod finalized the execution - the same reason the rest of this
+ * module reads the DB instead of per-pod counters. `completed_at IS NOT NULL`
+ * matches the partial index idx_workflow_executions_completed_at, so this is an
+ * index scan for max() rather than a full-table scan that would trip the 8s
+ * metrics statement_timeout.
+ *
+ * Returns null when the table has no finished executions yet (max is NULL) or
+ * on query error; the caller leaves the gauge unset in that case so Prometheus
+ * staleness / the alert's no_data_state governs rather than a misleading 0.
+ */
+export async function getLastFinishedExecutionAgeSecondsFromDb(): Promise<
+  number | null
+> {
+  try {
+    const rows = await db
+      .select({
+        ageSeconds: sql<
+          number | null
+        >`EXTRACT(EPOCH FROM (now() - max(${workflowExecutions.completedAt})))`,
+      })
+      .from(workflowExecutions)
+      .where(sql`${workflowExecutions.completedAt} IS NOT NULL`);
+
+    const raw = rows[0]?.ageSeconds;
+    return raw == null ? null : Number(raw);
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query last finished execution age from DB",
+      error
+    );
+    return null;
+  }
+}
+
 // One cumulative all-time error count per (workflow_id, org_slug, error_type)
 // for managed orgs. Mirrors the gauge semantics of
 // executionsByStatusAndOrgSlug: a point-in-time snapshot the alert reads as

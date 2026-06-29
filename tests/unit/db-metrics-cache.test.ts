@@ -26,6 +26,7 @@ const DEFAULT_DB_RETURNS: Record<string, unknown> = {
     durationSum: 0,
     durationCount: 0,
   },
+  getLastFinishedExecutionAgeSecondsFromDb: null,
   getWorkflowErrorsByWorkflowFromDb: [],
   getSystemErrorsByCategoryFromDb: [],
   getStepStatsFromDb: {
@@ -148,6 +149,13 @@ const ERRORS_BY_CATEGORY_SYSTEM_RE =
   /keeperhub_system_errors_by_category\{[^}]*error_category="network_rpc"[^}]*error_type="system"[^}]*\}\s+5/;
 const ERRORS_BY_CATEGORY_UNKNOWN_RE =
   /keeperhub_system_errors_by_category\{[^}]*error_category="unknown"[^}]*error_type="user"[^}]*\}\s+3/;
+// Unlabeled gauge: name followed by the value, no `{...}` block.
+const FINISHED_AGE_42_RE =
+  /keeperhub_workflow_executions_finished_age_seconds\s+42(\s|$)/m;
+const FINISHED_AGE_17_RE =
+  /keeperhub_workflow_executions_finished_age_seconds\s+17(\s|$)/m;
+const FINISHED_AGE_ZERO_RE =
+  /keeperhub_workflow_executions_finished_age_seconds\s+0(\s|$)/m;
 
 describe("updateDbMetrics TTL cache", () => {
   const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
@@ -488,5 +496,59 @@ describe("keeperhub_system_errors_by_category gauge", () => {
     dbMocks.getSystemErrorsByCategoryFromDb.mockResolvedValue([]);
     await updateDbMetrics();
     expect(await getDbMetrics()).not.toContain('error_category="billing"');
+  });
+});
+
+// KEEP-855: the finished-age gauge powers the fast "zero finished executions"
+// alert. It must be DB-sourced, populated on the metrics scrape, and -
+// critically - must NOT report a misleading 0 when the query can't produce a
+// value (empty table / query error), which would mask a real stall. On null it
+// holds the previous value so Prometheus staleness / the alert's no_data_state
+// governs instead.
+describe("keeperhub_workflow_executions_finished_age_seconds gauge", () => {
+  const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
+
+  beforeEach(() => {
+    __resetDbMetricsCacheForTest();
+    for (const fn of Object.values(dbMocks)) {
+      fn.mockReset();
+    }
+    rebindDefaultDbMockImplementations();
+    // No caching so each updateDbMetrics() re-reads the (overridden) mocks.
+    process.env.DB_METRICS_CACHE_TTL_MS = "0";
+  });
+
+  afterEach(() => {
+    if (originalTtl === undefined) {
+      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
+      delete process.env.DB_METRICS_CACHE_TTL_MS;
+    } else {
+      process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
+    }
+  });
+
+  it("emits the age in seconds returned by the DB query", async () => {
+    dbMocks.getLastFinishedExecutionAgeSecondsFromDb.mockResolvedValue(42);
+
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+
+    expect(out).toMatch(FINISHED_AGE_42_RE);
+  });
+
+  it("holds the last value (not 0) when the query returns null", async () => {
+    // First scrape: real value populates the gauge.
+    dbMocks.getLastFinishedExecutionAgeSecondsFromDb.mockResolvedValue(17);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toMatch(FINISHED_AGE_17_RE);
+
+    // Second scrape: query returns null (empty table or error). The gauge must
+    // retain 17 rather than resetting to 0, so the alert never sees a false
+    // "just finished" signal during a metrics-DB hiccup.
+    dbMocks.getLastFinishedExecutionAgeSecondsFromDb.mockResolvedValue(null);
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+    expect(out).toMatch(FINISHED_AGE_17_RE);
+    expect(out).not.toMatch(FINISHED_AGE_ZERO_RE);
   });
 });

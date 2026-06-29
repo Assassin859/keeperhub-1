@@ -161,6 +161,21 @@ const systemErrorsByCategory = getOrCreateGauge(
   ["error_category", "error_type"]
 );
 
+// KEEP-855: seconds since the most recent execution reached a terminal state
+// (non-NULL completed_at), across all trigger types and chains. Powers the fast
+// "zero finished executions" alert: it sits well under a minute under normal
+// load and climbs without bound if the whole pipeline stops finishing work.
+// DB-sourced (see getLastFinishedExecutionAgeSecondsFromDb) so it is correct no
+// matter which short-lived pod finalized the execution. No labels - this is a
+// single global freshness signal. No `_total` suffix: it is a gauge, not a
+// counter (see the KEEP-545 note below).
+const workflowExecutionsFinishedAgeSeconds = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_workflow_executions_finished_age_seconds",
+  "Seconds since the most recent workflow execution reached a terminal state (success/error/cancelled), across all trigger types and chains",
+  []
+);
+
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
 // has been removed. It was named with the `_total` counter suffix but was
 // actually a poll-driven gauge that overwrote itself on every scrape with the
@@ -1417,6 +1432,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const {
       getWorkflowStatsFromDb,
+      getLastFinishedExecutionAgeSecondsFromDb,
       getWorkflowErrorsByWorkflowFromDb,
       getSystemErrorsByCategoryFromDb,
       getStepStatsFromDb,
@@ -1434,6 +1450,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     } = await import("../db-metrics");
     const [
       workflowStats,
+      lastFinishedAgeSeconds,
       errorsByWorkflow,
       systemErrorsByCategoryRows,
       stepStats,
@@ -1450,6 +1467,7 @@ async function refreshDbMetricsNow(): Promise<void> {
       billingStats,
     ] = await Promise.all([
       getWorkflowStatsFromDb(),
+      getLastFinishedExecutionAgeSecondsFromDb(),
       getWorkflowErrorsByWorkflowFromDb(),
       getSystemErrorsByCategoryFromDb(),
       getStepStatsFromDb(),
@@ -1479,6 +1497,13 @@ async function refreshDbMetricsNow(): Promise<void> {
         },
         row.count
       );
+    }
+
+    // KEEP-855: only set the finished-age gauge when we have a real value.
+    // On null (empty table or query error) leave it untouched so Prometheus
+    // staleness / the alert's no_data_state governs instead of a misleading 0.
+    if (lastFinishedAgeSeconds !== null) {
+      workflowExecutionsFinishedAgeSeconds.set(lastFinishedAgeSeconds);
     }
 
     // KEEP-545: the per-org error gauge that used to live here was removed.
