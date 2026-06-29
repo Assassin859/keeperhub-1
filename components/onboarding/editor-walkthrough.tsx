@@ -265,33 +265,6 @@ async function canCreateWallet(): Promise<boolean> {
   }
 }
 
-// Read the freshly created org wallet's address so the balance step checks the
-// user's own wallet; fall back to the address we already resolved if the lookup
-// fails or the wallet isn't readable yet.
-async function resolveWalletAddress(
-  signal: AbortSignal,
-  fallback: string
-): Promise<string> {
-  try {
-    const response = await fetch("/api/user/wallet", {
-      credentials: "same-origin",
-      signal,
-    });
-    if (response.ok) {
-      const data = (await response.json()) as { walletAddress?: unknown };
-      if (
-        typeof data.walletAddress === "string" &&
-        data.walletAddress.length > 0
-      ) {
-        return data.walletAddress;
-      }
-    }
-  } catch {
-    // Keep the fallback address.
-  }
-  return fallback;
-}
-
 /**
  * Opt-in interactive walkthrough of the workflow editor. Launched by the
  * "Take a tour" button (which sets editorTourRequestedAtom and creates a fresh
@@ -331,7 +304,6 @@ export function EditorWalkthrough(): null {
   nodesRef.current = nodes;
   // The step list and resolved address are fixed once the tour starts.
   const stepsRef = useRef<StepDef[]>([]);
-  const addressRef = useRef(FALLBACK_ADDRESS);
   // Advances "dom-auto" steps (e.g. waiting for the Web3 group to expand).
   const domObserverRef = useRef<MutationObserver | null>(null);
 
@@ -382,7 +354,6 @@ export function EditorWalkthrough(): null {
           stateRef.current = "idle";
           return;
         }
-        addressRef.current = context.address;
         let hasWallet = context.hasWallet;
 
         // No wallet yet: an admin can create one via the standalone Create Wallet
@@ -399,10 +370,6 @@ export function EditorWalkthrough(): null {
           }
           if (result === "done") {
             hasWallet = true;
-            addressRef.current = await resolveWalletAddress(
-              controller.signal,
-              addressRef.current
-            );
           }
         }
 
