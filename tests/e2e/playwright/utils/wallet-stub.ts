@@ -15,7 +15,7 @@ import { privateKeyToAccount } from "viem/accounts";
  */
 
 // Hardhat account #0 - a well-known throwaway key, never used for real funds.
-export const TEST_WALLET_PRIVATE_KEY =
+export const TEST_WALLET_PRIVATE_KEY: `0x${string}` =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 export const TEST_WALLET_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 
@@ -27,7 +27,7 @@ export const TEST_WALLET_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
  */
 export function signWithTestWallet(
   message: string,
-  privateKey: `0x${string}` = TEST_WALLET_PRIVATE_KEY as `0x${string}`
+  privateKey: `0x${string}` = TEST_WALLET_PRIVATE_KEY
 ): Promise<string> {
   return privateKeyToAccount(privateKey).signMessage({ message });
 }
@@ -51,7 +51,7 @@ export async function installWalletStub(
   opts: StubOptions = {}
 ): Promise<{ address: string }> {
   const account = privateKeyToAccount(
-    opts.privateKey ?? (TEST_WALLET_PRIVATE_KEY as `0x${string}`)
+    opts.privateKey ?? TEST_WALLET_PRIVATE_KEY
   );
   const chainIdHex = `0x${(opts.chainId ?? 1).toString(16)}`;
 
