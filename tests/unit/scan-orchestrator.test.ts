@@ -9,6 +9,8 @@
  *   B — cache-miss: assembles ScanResponse with schemaVersion:1, checksummed
  *       address, detected positions[], and writes a cache row with a future
  *       expiresAt (~5-min TTL)
+ *   C — positive Spark+Sky: Spark active loan + sUSDS holding produce a
+ *       spark position and a priced sky position (usdValue non-null)
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +24,7 @@ const mockDbSelectFn = vi.fn();
 const mockDbInsertFn = vi.fn();
 const mockGetRpcProvider = vi.fn();
 const mockGetEnabledChains = vi.fn();
+const mockFetchDefillamaPrice = vi.fn().mockResolvedValue(null);
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -45,10 +48,10 @@ vi.mock("@/lib/scan/zerion-fallback", () => ({
   isZerionEnabled: vi.fn().mockReturnValue(false),
 }));
 
-// Prevent HTTP calls from DefiLlama during tests (no stablecoins in these tests,
-// but belt-and-suspenders guard in case the pricing layer is invoked).
+// Configurable DefiLlama mock — default null (no price). Override per-test
+// with mockFetchDefillamaPrice.mockResolvedValueOnce(price) for Sky pricing.
 vi.mock("@/lib/scan/price/defillama", () => ({
-  fetchDefillamaPrice: vi.fn().mockResolvedValue(null),
+  fetchDefillamaPrice: mockFetchDefillamaPrice,
 }));
 
 // Mock ethers.Contract only — all other ethers methods (Interface, AbiCoder,
@@ -146,14 +149,45 @@ function encodeSupplyOnlyAccountData(): string {
   ]);
 }
 
+/**
+ * ABI-encode a getUserAccountData result with zero collateral and zero debt.
+ * Used for Spark (and Aave) no-position case: both totals zero causes the
+ * adapter to return [] (user has never interacted with the pool).
+ */
+function encodeNoPositionAccountData(): string {
+  return getPoolIface().encodeFunctionResult("getUserAccountData", [
+    BigInt(0), // totalCollateralBase: 0 (no position)
+    BigInt(0), // totalDebtBase: 0 (no position)
+    BigInt(0), // availableBorrowsBase
+    BigInt(0), // currentLiquidationThreshold
+    BigInt(0), // ltv
+    BigInt(0), // healthFactor
+  ]);
+}
+
+/**
+ * ABI-encode a getUserAccountData result for an active Spark loan.
+ * totalCollateralBase > 0, totalDebtBase > 0, healthFactor = 1.8 WAD.
+ */
+function encodeActiveLoanAccountData(): string {
+  return getPoolIface().encodeFunctionResult("getUserAccountData", [
+    BigInt(1_000_000_000), // totalCollateralBase: $10 in 8-decimal USD
+    BigInt(500_000_000), // totalDebtBase: $5 in 8-decimal USD
+    BigInt(0), // availableBorrowsBase
+    BigInt(8000), // currentLiquidationThreshold
+    BigInt(7500), // ltv
+    BigInt("1800000000000000000"), // healthFactor: 1.8 WAD
+  ]);
+}
+
 /** ABI-encode a getUserEMode result (eMode category = 0 → no eMode). */
 function encodeEMode(): string {
   return ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(0)]);
 }
 
-/** ABI-encode a uint256 zero — used for ERC20 balanceOf = 0. */
-function encodeZeroBalance(): string {
-  return ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(0)]);
+/** ABI-encode a uint256 value — used for ERC20 balanceOf and maxWithdraw. */
+function encodeUint256(n: bigint): string {
+  return ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [n]);
 }
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
@@ -163,7 +197,9 @@ describe("scan orchestrator", () => {
     vi.clearAllMocks();
 
     // Default db.insert mock — overridden per-test as needed.
-    const mockValues = vi.fn().mockResolvedValue(undefined);
+    const mockValues = vi.fn().mockReturnValue({
+      onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+    });
     mockDbInsertFn.mockReturnValue({ values: mockValues });
 
     // Default RPC provider — overridden per-test as needed.
@@ -172,6 +208,9 @@ describe("scan orchestrator", () => {
         .fn()
         .mockImplementation((fn: (p: unknown) => unknown) => fn({})),
     });
+
+    // Default DefiLlama: no price (null) unless overridden per-test.
+    mockFetchDefillamaPrice.mockResolvedValue(null);
   });
 
   // ─── Test A: cache-hit ─────────────────────────────────────────────────────
@@ -207,15 +246,16 @@ describe("scan orchestrator", () => {
   // ─── Test B: cache-miss assembles ─────────────────────────────────────────
 
   describe("cache-miss assembles", () => {
-    it("returns schemaVersion:1, checksummed address, Aave position, and writes cache row with future expiresAt", async () => {
-      // db.select call sequence:
-      //   1st: cache check    → miss (empty array)
-      //   2nd: stablecoin query for chain 1 → empty (simplifies pricing)
+    /**
+     * Shared mock DB setup for cache-miss tests:
+     *   1st select: cache check → miss (empty array)
+     *   2nd select: stablecoin query → empty (no stablecoins simplifies pricing)
+     */
+    function setupCacheMissDb(): void {
       let selectIdx = 0;
       mockDbSelectFn.mockImplementation(() => {
         selectIdx += 1;
         if (selectIdx === 1) {
-          // Cache check — miss
           return {
             from: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnValue({
@@ -224,33 +264,48 @@ describe("scan orchestrator", () => {
             }),
           };
         }
-        // Stablecoin query — no tokens (avoids pricing complexity)
         return {
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([]),
           }),
         };
       });
+    }
 
-      // Chains: Ethereum only (chainId 1 is in both AAVE_V3_POOLS and LIDO_TOKENS).
+    it("returns schemaVersion:1, checksummed address, Aave position, and writes cache row with future expiresAt", async () => {
+      setupCacheMissDb();
+
+      // Chains: Ethereum only (chainId 1 is in AAVE_V3_POOLS, LIDO_TOKENS,
+      // SPARK_POOLS, and SKY_SAVINGS).
       mockGetEnabledChains.mockResolvedValue([
         { id: "eth-1", chainId: 1, name: "Ethereum", isEnabled: true },
       ]);
 
-      // aggregate3 returns 4 results for chain 1:
-      //   [0] getUserAccountData  (Aave — supply-only user)
-      //   [1] getUserEMode        (Aave — eMode = 0)
-      //   [2] stETH balanceOf     (Lido — 0, no position)
-      //   [3] wstETH balanceOf    (Lido — 0, no position)
+      // aggregate3 returns 8 results for chain 1 in the new batch order:
+      //   [aave, lido, spark, sky, stablecoin, chainlink]
+      //   [0] Aave getUserAccountData  (supply-only user)
+      //   [1] Aave getUserEMode        (eMode = 0)
+      //   [2] Lido stETH balanceOf     (0 — no position)
+      //   [3] Lido wstETH balanceOf    (0 — no position)
+      //   [4] Spark getUserAccountData (no position: both totals zero)
+      //   [5] Spark getUserEMode       (eMode = 0)
+      //   [6] Sky sUSDS balanceOf      (0 — no position)
+      //   [7] Sky sUSDS maxWithdraw    (0 — irrelevant when balanceOf = 0)
       mockAggregate3StaticCall.mockResolvedValue([
         [true, encodeSupplyOnlyAccountData()],
         [true, encodeEMode()],
-        [true, encodeZeroBalance()], // stETH
-        [true, encodeZeroBalance()], // wstETH
+        [true, encodeUint256(BigInt(0))], // stETH
+        [true, encodeUint256(BigInt(0))], // wstETH
+        [true, encodeNoPositionAccountData()], // Spark: no position
+        [true, encodeEMode()], // Spark eMode
+        [true, encodeUint256(BigInt(0))], // Sky balanceOf: 0
+        [true, encodeUint256(BigInt(0))], // Sky maxWithdraw: 0
       ]);
 
       // Cache write spy.
-      const mockInsertValues = vi.fn().mockResolvedValue(undefined);
+      const mockInsertValues = vi.fn().mockReturnValue({
+        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+      });
       mockDbInsertFn.mockReturnValue({ values: mockInsertValues });
 
       const { scanAddress } = await import("@/lib/scan/scanner");
@@ -276,6 +331,20 @@ describe("scan orchestrator", () => {
         )
       ).toHaveLength(0);
 
+      // No Spark position (both totals zero → no position)
+      expect(
+        result.positions.filter(
+          (p: { protocol: string }) => p.protocol === "spark"
+        )
+      ).toHaveLength(0);
+
+      // No Sky position (balanceOf = 0)
+      expect(
+        result.positions.filter(
+          (p: { protocol: string }) => p.protocol === "sky"
+        )
+      ).toHaveLength(0);
+
       // No stablecoins (empty token registry for chain 1 in this test)
       expect(result.stablecoins).toHaveLength(0);
 
@@ -293,6 +362,76 @@ describe("scan orchestrator", () => {
         Date.now() + 4 * 60 * 1000
       );
       expect(writeRow.resultJson.schemaVersion).toBe(SCAN_SCHEMA_VERSION);
+    });
+
+    it("positive: Spark active loan + sUSDS holding produce a spark position and a priced sky position", async () => {
+      setupCacheMissDb();
+
+      mockGetEnabledChains.mockResolvedValue([
+        { id: "eth-1", chainId: 1, name: "Ethereum", isEnabled: true },
+      ]);
+
+      // Sky position amounts (18-decimal):
+      //   sharesBalance: 1000 sUSDS shares held
+      //   maxWithdraw:   500 USDS underlying redeemable
+      const skyShares = BigInt("1000000000000000000000"); // 1000 sUSDS
+      const skyMaxWithdraw = BigInt("500000000000000000000"); // 500 USDS
+
+      // DefiLlama returns a live USDS price for the Sky pricing call.
+      // USDS has no Chainlink feed so resolveUsdPrice falls through to DefiLlama.
+      const usdsPrice = 0.9997;
+      mockFetchDefillamaPrice.mockResolvedValueOnce(usdsPrice);
+
+      // 8-slot batch: [aave x2, lido x2, spark x2, sky x2] (no stablecoins).
+      //   [0] Aave getUserAccountData  (no position: both totals zero)
+      //   [1] Aave getUserEMode        (eMode = 0)
+      //   [2] Lido stETH balanceOf     (0 — no Lido position)
+      //   [3] Lido wstETH balanceOf    (0 — no Lido position)
+      //   [4] Spark getUserAccountData (active loan: HF = 1.8)
+      //   [5] Spark getUserEMode       (eMode = 0)
+      //   [6] Sky sUSDS balanceOf      (1000 shares — non-zero → position emitted)
+      //   [7] Sky sUSDS maxWithdraw    (500 USDS — decoded by scanner for pricing)
+      mockAggregate3StaticCall.mockResolvedValueOnce([
+        [true, encodeNoPositionAccountData()], // Aave: no position
+        [true, encodeEMode()],
+        [true, encodeUint256(BigInt(0))], // stETH: 0
+        [true, encodeUint256(BigInt(0))], // wstETH: 0
+        [true, encodeActiveLoanAccountData()], // Spark: active loan → spark position
+        [true, encodeEMode()],
+        [true, encodeUint256(skyShares)], // Sky balanceOf: non-zero
+        [true, encodeUint256(skyMaxWithdraw)], // Sky maxWithdraw: USDS amount
+      ]);
+
+      const { scanAddress } = await import("@/lib/scan/scanner");
+      const result = await scanAddress(TEST_RAW);
+
+      // Two positions: spark (active loan) + sky (priced sUSDS savings).
+      expect(result.positions).toHaveLength(2);
+
+      // Spark position
+      const sparkPos = result.positions.find((p) => p.protocol === "spark");
+      expect(sparkPos).toBeDefined();
+      expect(sparkPos?.chainId).toBe(1);
+      // normalizeHealthFactor: 1.8 WAD → 1.8 (4-decimal float)
+      expect(sparkPos?.healthFactor).toBeCloseTo(1.8, 3);
+      expect(sparkPos?.noActiveLoan).toBeFalsy();
+
+      // Sky position
+      const skyPos = result.positions.find((p) => p.protocol === "sky");
+      expect(skyPos).toBeDefined();
+      expect(skyPos?.chainId).toBe(1);
+      expect(skyPos?.healthFactor).toBeNull();
+      expect(skyPos?.noActiveLoan).toBe(true);
+
+      // Sky usdValue: (Number(skyMaxWithdraw) / 1e18) * usdsPrice
+      // = (500000000000000000000 / 1e18) * 0.9997 = 500 * 0.9997 = 499.85
+      const expectedUsdValue = (Number(skyMaxWithdraw) / 1e18) * usdsPrice;
+      expect(skyPos?.totalCollateralUsd).not.toBeNull();
+      expect(skyPos?.totalCollateralUsd).toBeCloseTo(expectedUsdValue, 1);
+      expect(skyPos?.suppliedAssets[0]?.usdValue).toBeCloseTo(
+        expectedUsdValue,
+        1
+      );
     });
   });
 });

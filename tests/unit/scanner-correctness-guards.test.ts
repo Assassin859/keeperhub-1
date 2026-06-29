@@ -4,7 +4,7 @@
  * Guard ownership:
  *   HF MAX_UINT256  — filled by Plan 05 (Wave 3)
  *   soft-miss       — filled by Plan 03 (Wave 2)
- *   proxy           — filled by Plan 05 (Wave 3)
+ *   proxy           — filled by Plan 03 (Wave 2)
  *   unavailable     — filled by Plan 03 (Wave 2)
  *
  * Sibling files own the remaining guards:
@@ -13,9 +13,13 @@
  *
  * Shared helpers exported here (`encodeAccountData`, `AAVE_V3_POOL_ABI_FRAGMENT`)
  * are imported by sibling test files so encoding is consistent across the suite.
+ *
+ * Plan 05 additions:
+ *   DAI exclusion (SCAN-15) — SCAN_EXCLUDED_STABLECOINS constant assertions +
+ *   full scanAddress path asserts USDC + USDS surface, DAI absent.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { decodeAaveV3Results } from "@/lib/scan/adapters/aave-v3";
 import { executeMulticallBatch } from "@/lib/scan/multicall-batch";
@@ -27,16 +31,18 @@ import type { AdapterCallDescriptor, ChainScanOutput } from "@/lib/scan/types";
 
 vi.mock("server-only", () => ({}));
 
+// Mock function handles for DAI exclusion tests (declared before vi.mock so
+// factories close over them — pattern from scan-orchestrator.test.ts).
+const mockDbSelectFnForDai = vi.fn();
+const mockDbInsertFnForDai = vi.fn();
+const mockGetEnabledChainsForDai = vi.fn();
+const mockFetchDefillamaPriceForDai = vi.fn().mockResolvedValue(null);
+
 vi.mock("@/lib/db", () => ({
   db: {
     execute: vi.fn(),
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          limit: vi.fn(() => Promise.resolve([])),
-        })),
-      })),
-    })),
+    select: mockDbSelectFnForDai,
+    insert: mockDbInsertFnForDai,
   },
 }));
 
@@ -47,6 +53,22 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
       .mockImplementation((fn: (provider: unknown) => unknown) => fn({})),
     getProvider: vi.fn().mockReturnValue({}),
   }),
+}));
+
+// Chain service: default no-op. Configured per-test in the DAI exclusion suite.
+vi.mock("@/lib/rpc/chain-service", () => ({
+  getEnabledChains: mockGetEnabledChainsForDai,
+}));
+
+// Zerion fallback: always returns empty (no-op stub in v1.13).
+vi.mock("@/lib/scan/zerion-fallback", () => ({
+  maybeZerionFallback: vi.fn().mockResolvedValue([]),
+  isZerionEnabled: vi.fn().mockReturnValue(false),
+}));
+
+// DefiLlama price: configurable per-test. Default null (price unavailable).
+vi.mock("@/lib/scan/price/defillama", () => ({
+  fetchDefillamaPrice: mockFetchDefillamaPriceForDai,
 }));
 
 // Settable mock for aggregate3.staticCall.
@@ -347,5 +369,123 @@ describe("scanner correctness guards", () => {
       chainOutputs: [],
       unavailableChains: [{ chainId: 2 }],
     });
+  });
+});
+
+// ─── DAI exclusion (SCAN-15) ─────────────────────────────────────────────────
+
+describe("DAI exclusion (SCAN-15)", () => {
+  // Fake token addresses for the stablecoin DB query mock.
+  // These are clearly test-only values — no collisions with real registry addresses.
+  const USDC_ADDR = "0x0000000000000000000000000000000000000011";
+  const DAI_ADDR = "0x0000000000000000000000000000000000000012";
+  const USDS_ADDR = "0x0000000000000000000000000000000000000013";
+
+  const TEST_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Ethereum mainnet is the only scannable chain in these tests.
+    mockGetEnabledChainsForDai.mockResolvedValue([
+      { id: "eth-1", chainId: 1, name: "Ethereum", isEnabled: true },
+    ]);
+
+    // Cache writes are best-effort and wrapped in try-catch — just resolve.
+    mockDbInsertFnForDai.mockReturnValue({
+      values: vi.fn().mockReturnValue({
+        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+
+    // DefiLlama returns $1.00 for any token (USDC + USDS pricing).
+    mockFetchDefillamaPriceForDai.mockResolvedValue(1.0);
+  });
+
+  it("SCAN_EXCLUDED_STABLECOINS contains DAI but not USDS or USDC", async () => {
+    const { SCAN_EXCLUDED_STABLECOINS } = await import("@/lib/scan/scanner");
+    expect(SCAN_EXCLUDED_STABLECOINS.has("DAI")).toBe(true);
+    expect(SCAN_EXCLUDED_STABLECOINS.has("USDS")).toBe(false);
+    expect(SCAN_EXCLUDED_STABLECOINS.has("USDC")).toBe(false);
+  });
+
+  it("scanAddress excludes DAI from stablecoin results when registry returns [USDC, DAI, USDS]", async () => {
+    // Encode helpers (lazy to avoid calling mocked ethers before hoisting).
+    const { ethers } = await import("ethers");
+    const encodeUint256 = (n: bigint): string =>
+      ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [n]);
+
+    // no-position account data: totalCollateralBase=0 + totalDebtBase=0 → []
+    const [, noPositionReturnData] = encodeAccountData({
+      totalCollateralBase: BigInt(0),
+      totalDebtBase: BigInt(0),
+    });
+    const eModeData = getPoolIface().encodeFunctionResult("getUserEMode", [
+      BigInt(0),
+    ]);
+
+    // DB call sequence:
+    //   1st: cache check → miss (empty)
+    //   2nd: stablecoin query → [USDC, DAI, USDS] (scanner filters DAI out)
+    let selectCallCount = 0;
+    mockDbSelectFnForDai.mockImplementation(() => {
+      selectCallCount += 1;
+      if (selectCallCount === 1) {
+        // Cache check: miss
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        };
+      }
+      // Stablecoin query: return all three — scanner applies the exclusion filter
+      return {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { tokenAddress: USDC_ADDR, symbol: "USDC", decimals: 6 },
+            { tokenAddress: DAI_ADDR, symbol: "DAI", decimals: 18 },
+            { tokenAddress: USDS_ADDR, symbol: "USDS", decimals: 18 },
+          ]),
+        }),
+      };
+    });
+
+    // Batch order: [aave x2, lido x2, spark x2, sky x2, stablecoins x2, chainlink x1]
+    // After DAI exclusion chainStablecoins = [USDC, USDS] (2 calls).
+    // On chain 1, USDC has a Chainlink feed; USDS does not → 1 Chainlink call.
+    // Total: 2 + 2 + 2 + 2 + 2 + 1 = 11 slots.
+    mockAggregate3StaticCall.mockResolvedValueOnce([
+      // Aave: no position (both totals zero)
+      [true, noPositionReturnData],
+      [true, eModeData],
+      // Lido: zero balance — no position
+      [true, encodeUint256(BigInt(0))], // stETH
+      [true, encodeUint256(BigInt(0))], // wstETH
+      // Spark: no position (both totals zero)
+      [true, noPositionReturnData],
+      [true, eModeData],
+      // Sky: zero balance — no position
+      [true, encodeUint256(BigInt(0))], // sUSDS balanceOf
+      [true, encodeUint256(BigInt(0))], // sUSDS maxWithdraw
+      // Stablecoins (USDC at index 0, USDS at index 1 — DAI excluded):
+      [true, encodeUint256(BigInt("1000000"))], // USDC: 1 USDC (6 dec)
+      [true, encodeUint256(BigInt("1000000000000000000"))], // USDS: 1 USDS (18 dec)
+      // Chainlink for USDC (fails → DefiLlama fallback):
+      [false, "0x"],
+    ]);
+
+    const { scanAddress } = await import("@/lib/scan/scanner");
+    const result = await scanAddress(TEST_ADDRESS);
+
+    const symbols = result.stablecoins.map((s) => s.symbol);
+
+    // USDC and USDS surface in the scan output.
+    expect(symbols).toContain("USDC");
+    expect(symbols).toContain("USDS");
+
+    // DAI is excluded by SCAN_EXCLUDED_STABLECOINS — must NOT appear.
+    expect(symbols).not.toContain("DAI");
   });
 });

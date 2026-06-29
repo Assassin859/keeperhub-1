@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, gt } from "drizzle-orm";
+import { ethers } from "ethers";
 import {
   normalizeAddressForStorage,
   toChecksumAddress,
@@ -18,9 +19,12 @@ import {
 } from "@/lib/scan/adapters/aave-v3";
 import { buildLidoCalls, decodeLidoResults } from "@/lib/scan/adapters/lido";
 import {
+  SKY_SAVINGS,
   STABLECOIN_CHAINLINK_FEEDS,
   scannableChainIds,
 } from "@/lib/scan/adapters/protocol-registry";
+import { buildSkyCalls, decodeSkyResults } from "@/lib/scan/adapters/sky";
+import { buildSparkCalls, decodeSparkResults } from "@/lib/scan/adapters/spark";
 import {
   buildStablecoinCalls,
   decodeStablecoinResults,
@@ -44,16 +48,32 @@ import { maybeZerionFallback } from "@/lib/scan/zerion-fallback";
 /** Cache TTL in milliseconds — 5 minutes (SCAN-13). */
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Stablecoin symbols excluded from scan coverage (scan-path-local only).
+ *
+ * Tokens in this set are filtered from the chainStablecoins list after the
+ * DB query and before buildStablecoinCalls and the Chainlink loop. The global
+ * supported_tokens registry and workflow builder token pickers are unaffected.
+ *
+ * DAI is excluded in favour of USDS / sUSDS (Sky Protocol successor token).
+ */
+export const SCAN_EXCLUDED_STABLECOINS = new Set(["DAI"]);
+
 // ─── Internal: single-chain scan ─────────────────────────────────────────────
 
 /**
  * Scan one EVM chain for the target address.
  *
- * Concatenates Aave V3, Lido, and stablecoin Multicall3 call descriptors into
- * a single `aggregate3.staticCall`, then decodes results per-adapter. Stablecoin
- * USD prices are resolved via Chainlink (when a feed is registered for the
- * chain) or DefiLlama HTTP fallback, and depeg status is flagged. Never throws —
- * let the `scanChains` fan-out caller handle errors (per-chain isolation).
+ * Concatenates Aave V3, Lido, Spark, Sky, stablecoin, and Chainlink Multicall3
+ * call descriptors into a single `aggregate3.staticCall`, then decodes results
+ * per-adapter in the consistent order [aave, lido, spark, sky, stablecoin,
+ * chainlink]. Stablecoin USD prices are resolved via Chainlink (when a feed is
+ * registered for the chain) or DefiLlama HTTP fallback, and depeg status is
+ * flagged. Sky positions are priced by decoding the maxWithdraw (USDS
+ * underlying) result and resolving the USDS USD price via resolveUsdPrice.
+ * DAI is excluded from scanned stablecoins via SCAN_EXCLUDED_STABLECOINS.
+ * Never throws — let the `scanChains` fan-out caller handle errors (per-chain
+ * isolation).
  */
 async function scanOneChain(
   chainId: number,
@@ -62,7 +82,7 @@ async function scanOneChain(
   const rpcManager = await getRpcProvider({ chainId });
 
   // Stablecoins registered for this chain (isStablecoin = true).
-  const chainStablecoins: StablecoinToken[] = await db
+  const rawChainStablecoins: StablecoinToken[] = await db
     .select({
       tokenAddress: supportedTokens.tokenAddress,
       symbol: supportedTokens.symbol,
@@ -76,9 +96,17 @@ async function scanOneChain(
       )
     );
 
+  // Apply scan-local exclusion before buildStablecoinCalls and the Chainlink
+  // loop so DAI neither generates a balance call nor a Chainlink feed call.
+  const chainStablecoins = rawChainStablecoins.filter(
+    (t) => !SCAN_EXCLUDED_STABLECOINS.has(t.symbol)
+  );
+
   // ── Build calls ─────────────────────────────────────────────────────────────
   const aaveCalls = buildAaveV3Calls(userAddress, chainId);
   const lidoCalls = buildLidoCalls(userAddress, chainId);
+  const sparkCalls = buildSparkCalls(userAddress, chainId);
+  const skyCalls = buildSkyCalls(userAddress, chainId);
   const stablecoinCalls = buildStablecoinCalls(userAddress, chainStablecoins);
 
   // One Chainlink latestRoundData call per stablecoin that has a registered
@@ -94,9 +122,13 @@ async function scanOneChain(
     }
   }
 
+  // Consistent batch order: [aave, lido, spark, sky, stablecoin, chainlink].
+  // The slice math below must match this order exactly (T-56-02 guard).
   const allCalls = [
     ...aaveCalls,
     ...lidoCalls,
+    ...sparkCalls,
+    ...skyCalls,
     ...stablecoinCalls,
     ...chainlinkCallDescriptors,
   ];
@@ -114,20 +146,63 @@ async function scanOneChain(
   // ── Slice results per adapter (must match build order above) ───────────────
   const aaveLen = aaveCalls.length;
   const lidoLen = lidoCalls.length;
+  const sparkLen = sparkCalls.length;
+  const skyLen = skyCalls.length;
   const stableLen = stablecoinCalls.length;
 
   const aaveResults = results.slice(0, aaveLen);
   const lidoResults = results.slice(aaveLen, aaveLen + lidoLen);
-  const stablecoinResults = results.slice(
+  const sparkResults = results.slice(
     aaveLen + lidoLen,
-    aaveLen + lidoLen + stableLen
+    aaveLen + lidoLen + sparkLen
   );
-  const chainlinkResults = results.slice(aaveLen + lidoLen + stableLen);
+  const skyResults = results.slice(
+    aaveLen + lidoLen + sparkLen,
+    aaveLen + lidoLen + sparkLen + skyLen
+  );
+  const stablecoinResults = results.slice(
+    aaveLen + lidoLen + sparkLen + skyLen,
+    aaveLen + lidoLen + sparkLen + skyLen + stableLen
+  );
+  const chainlinkResults = results.slice(
+    aaveLen + lidoLen + sparkLen + skyLen + stableLen
+  );
 
   // ── Decode positions ────────────────────────────────────────────────────────
+  const sparkPositions = decodeSparkResults(sparkResults, userAddress, chainId);
+  const skyPositions = decodeSkyResults(skyResults, userAddress, chainId);
+
+  // Price Sky position: decode maxWithdraw (skyResults[1]) to get USDS
+  // underlying amount, then resolve the USDS USD price via DefiLlama fallback
+  // (USDS has no Chainlink feed). Sets usdValue + totalCollateralUsd in-place.
+  // A price miss leaves usdValue null but keeps the position (T-56-04 guard).
+  const firstSkyPos = skyPositions[0];
+  const firstSkyAsset = firstSkyPos?.suppliedAssets[0];
+  if (
+    firstSkyPos !== undefined &&
+    firstSkyAsset !== undefined &&
+    skyResults[1]?.success === true
+  ) {
+    const [rawMaxWithdraw] = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["uint256"],
+      skyResults[1].returnData
+    );
+    const usdsAmount = rawMaxWithdraw as bigint;
+    const skySavingsEntry = SKY_SAVINGS[chainId];
+    const usdsPrice = skySavingsEntry
+      ? await resolveUsdPrice(chainId, skySavingsEntry.usds, "USDS", {})
+      : null;
+    const usdValue =
+      usdsPrice === null ? null : (Number(usdsAmount) / 1e18) * usdsPrice;
+    firstSkyAsset.usdValue = usdValue;
+    firstSkyPos.totalCollateralUsd = usdValue;
+  }
+
   const positions: ProtocolPosition[] = [
     ...decodeAaveV3Results(aaveResults, userAddress, chainId),
     ...decodeLidoResults(lidoResults, userAddress, chainId),
+    ...sparkPositions,
+    ...skyPositions,
   ];
 
   // ── Decode stablecoin balances + apply pricing ──────────────────────────────
