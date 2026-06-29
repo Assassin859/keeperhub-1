@@ -12,8 +12,7 @@ const {
   mockCreatorsWhere,
   mockInsertReturning,
   mockUpdateReturning,
-  mockRequireAdminOrOwnerWithMfa,
-  mockRequireDualFactor,
+  mockAuthorizeAction,
 } = vi.hoisted(() => ({
   mockResolveOrganizationId: vi.fn(),
   mockGetSession: vi.fn(),
@@ -23,8 +22,7 @@ const {
   mockCreatorsWhere: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockUpdateReturning: vi.fn(),
-  mockRequireAdminOrOwnerWithMfa: vi.fn(),
-  mockRequireDualFactor: vi.fn(),
+  mockAuthorizeAction: vi.fn(),
 }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
@@ -39,16 +37,21 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
-  requireAdminOrOwnerWithMfa: mockRequireAdminOrOwnerWithMfa,
-}));
-
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: mockRequireDualFactor,
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: mockAuthorizeAction,
 }));
 
 vi.mock("@/lib/middleware/org-context", () => ({
   getOrgContext: mockGetOrgContext,
+}));
+
+vi.mock("@/lib/security/api-key-notification", () => ({
+  notifyApiKeyChange: vi.fn(),
+}));
+
+vi.mock("@/lib/security/audit-log", () => ({
+  recordAuditEvent: vi.fn().mockResolvedValue(undefined),
+  buildAuditMetadata: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -226,6 +229,7 @@ describe("GET /api/keys", () => {
 describe("POST /api/keys", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuthorizeAction.mockResolvedValue({ ok: true });
   });
 
   it("should return 401 when no session", async () => {
@@ -248,6 +252,13 @@ describe("POST /api/keys", () => {
   });
 
   it("should return 403 for anonymous user by name", async () => {
+    mockAuthorizeAction.mockResolvedValue({
+      ok: false,
+      response: new Response(
+        JSON.stringify({ error: "Anonymous users cannot perform this action" }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      ),
+    });
     mockGetSession.mockResolvedValue({
       user: { id: "anon-1", name: "Anonymous", email: "real@test.com" },
     });
@@ -258,10 +269,17 @@ describe("POST /api/keys", () => {
     const response = await POST(createRequest("POST", { name: "Test" }));
     expect(response.status).toBe(403);
     const data = await response.json();
-    expect(data.error).toBe("Anonymous users cannot create API keys");
+    expect(data.error).toBe("Anonymous users cannot perform this action");
   });
 
   it("should return 403 for anonymous user by temp email", async () => {
+    mockAuthorizeAction.mockResolvedValue({
+      ok: false,
+      response: new Response(
+        JSON.stringify({ error: "Anonymous users cannot perform this action" }),
+        { status: 403 }
+      ),
+    });
     mockGetSession.mockResolvedValue({
       user: { id: "anon-2", name: "Some User", email: "temp-abc@test.com" },
     });
@@ -281,8 +299,6 @@ describe("POST /api/keys", () => {
     mockGetOrgContext.mockResolvedValue({
       organization: { id: ORG_ID },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -312,8 +328,6 @@ describe("POST /api/keys", () => {
     mockGetOrgContext.mockResolvedValue({
       organization: { id: ORG_ID },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -345,8 +359,6 @@ describe("POST /api/keys", () => {
     mockGetOrgContext.mockResolvedValue({
       organization: { id: ORG_ID },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockRejectedValue(new Error("Insert failed"));
 
     const response = await POST(
@@ -361,6 +373,7 @@ describe("POST /api/keys", () => {
 describe("DELETE /api/keys/:keyId (revoke)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuthorizeAction.mockResolvedValue({ ok: true });
   });
 
   it("should return 401 when not authenticated", async () => {
@@ -384,8 +397,6 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       user: { id: USER_ID },
       session: { requiresMfa: false },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([{ id: "key-1" }]);
 
     const response = await DELETE(
@@ -405,8 +416,6 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       user: { id: USER_ID },
       session: { requiresMfa: false },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([]);
 
     const response = await DELETE(
@@ -426,8 +435,6 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       user: { id: USER_ID },
       session: { requiresMfa: false },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([]);
 
     const response = await DELETE(
@@ -445,8 +452,6 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       user: { id: USER_ID },
       session: { requiresMfa: false },
     });
-    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockRejectedValue(new Error("Update failed"));
 
     const response = await DELETE(
