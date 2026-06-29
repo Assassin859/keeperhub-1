@@ -7,13 +7,13 @@ const USER_ID = "user-1";
 const {
   mockGetSession,
   mockUsersFindFirst,
-  mockRequireDualFactor,
+  mockAuthorizeAction,
   txUpdateCalls,
   txDeleteCalls,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockUsersFindFirst: vi.fn(),
-  mockRequireDualFactor: vi.fn(),
+  mockAuthorizeAction: vi.fn(),
   txUpdateCalls: [] as Array<{ table: unknown; value: unknown }>,
   txDeleteCalls: [] as Array<{ table: unknown }>,
 }));
@@ -22,8 +22,8 @@ vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: mockGetSession } },
 }));
 
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: mockRequireDualFactor,
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: mockAuthorizeAction,
 }));
 
 // A `.where()` result that is awaitable (for the users update, which awaits it
@@ -99,7 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   txUpdateCalls.length = 0;
   txDeleteCalls.length = 0;
-  mockRequireDualFactor.mockResolvedValue({ ok: true });
+  mockAuthorizeAction.mockResolvedValue({ ok: true });
 });
 
 describe("POST /api/user/delete", () => {

@@ -10,9 +10,9 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-const mockRequireDualFactor = vi.fn();
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: (...args: unknown[]) => mockRequireDualFactor(...args),
+const mockAuthorizeAction = vi.fn();
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: (...args: unknown[]) => mockAuthorizeAction(...args),
 }));
 
 // Identifiable schema table references so the tx mock can branch on which
@@ -100,7 +100,7 @@ beforeEach(() => {
     isAnonymous: false,
     deactivatedAt: null,
   });
-  mockRequireDualFactor.mockResolvedValue({ ok: true });
+  mockAuthorizeAction.mockResolvedValue({ ok: true });
 });
 
 describe("POST /api/user/delete cascade audit", () => {
