@@ -32,6 +32,7 @@ import {
   getBranches,
   type Step,
 } from "@/lib/onboarding/getting-started-config";
+import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { cn } from "@/lib/utils";
 import {
   editorTourRequestedAtom,
@@ -560,6 +561,8 @@ export function GettingStartedLauncher(): React.ReactElement | null {
         });
         id = workflow.id;
         gs.setStepWorkflowId(key, id);
+        // Surface the freshly created workflow in the sidebar list immediately.
+        refetchSidebar();
       } catch {
         toast.error("Could not start a workflow.");
         return;
@@ -613,6 +616,8 @@ export function GettingStartedLauncher(): React.ReactElement | null {
         const workflow = await api.workflow.duplicate(chip.workflowId);
         id = workflow.id;
         gs.setStepWorkflowId(key, id);
+        // The new clone won't appear in the sidebar list until it refetches.
+        refetchSidebar();
       } catch {
         toast.error("Could not add that workflow.");
         return;
