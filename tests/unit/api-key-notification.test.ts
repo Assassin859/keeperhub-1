@@ -86,7 +86,8 @@ describe("notifyApiKeyChange", () => {
     await vi.waitFor(() =>
       expect(mockGetDeliverableEmail).toHaveBeenCalledTimes(1)
     );
-    await Promise.resolve();
+    // Use a macrotask to flush all pending microtasks before the negative assertion.
+    await new Promise((res) => setTimeout(res, 0));
     expect(mockSendApiKeyChangeEmail).not.toHaveBeenCalled();
   });
 
