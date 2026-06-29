@@ -40,6 +40,13 @@ export { SUGGESTION_DISCLAIMER } from "@/lib/scan/suggestions/types";
 const RISK_NOTE_READ_ONLY =
   "Read-only monitoring. This workflow does not make any transactions.";
 
+/**
+ * Protocols that behave like savings/staking products (no active loan, no HF).
+ * These route to the `claim` builder instead of the `alert` builder when
+ * healthFactor is null.
+ */
+const SAVINGS_PROTOCOLS = new Set(["lido", "sky"]);
+
 // ---------------------------------------------------------------------------
 // Label helpers
 // ---------------------------------------------------------------------------
@@ -50,6 +57,10 @@ function protocolLabel(protocol: string): string {
       return "Aave V3";
     case "lido":
       return "Lido";
+    case "spark":
+      return "Spark";
+    case "sky":
+      return "Sky";
     default:
       return protocol;
   }
@@ -145,7 +156,8 @@ function buildYieldSuggestion(stable: StablecoinBalance): SuggestionDescriptor {
  * SUGGEST-04: Price/balance threshold alert for supply-only lending positions.
  *
  * Called for positions with healthFactor === null (no active loan) and
- * protocol !== "lido" — i.e. users who have collateral deposited without debt.
+ * protocol not in SAVINGS_PROTOCOLS — i.e. users who have collateral deposited
+ * without debt on a lending protocol (e.g. Aave, Spark).
  */
 function buildAlertSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
   const asset = pos.suppliedAssets[0];
@@ -176,29 +188,40 @@ function buildAlertSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
 }
 
 /**
- * SUGGEST-05: Staking reward / claim reminder for Lido positions.
+ * SUGGEST-05: Staking reward / claim reminder for savings-protocol positions.
  *
- * Only called for positions where protocol === "lido".
+ * Called for all positions whose protocol is in SAVINGS_PROTOCOLS (Lido, Sky).
+ * Sky gets savings-appropriate copy and prefills the actual sUSDS token address
+ * from the position (sourced from suppliedAssets[0].tokenAddress set by the
+ * Sky adapter — no server-only registry import required).
  */
 function buildRewardSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
   const slug = `reward-reminder-${pos.protocol}-${pos.chainId}`;
   const protName = protocolLabel(pos.protocol);
   const chain = chainLabel(pos.chainId);
   const bal = pos.suppliedAssets[0]?.usdValue ?? pos.totalCollateralUsd ?? 0;
+  const isSky = pos.protocol === "sky";
+
+  const name = isSky
+    ? "Sky Savings Balance Monitor"
+    : `${protName} Staking Reward Reminder`;
+  const description = isSky
+    ? `Monitor your Sky Savings (sUSDS) balance ($${Math.round(bal)}) on ${chain}.`
+    : `Remind yourself to check ${protName} staking rewards on ${chain}. Staked balance: $${Math.round(bal)}.`;
+  const stakingTokenAddress = isSky
+    ? (pos.suppliedAssets[0]?.tokenAddress ?? "sUSDS token address")
+    : "Staking token contract address (e.g. wstETH on Ethereum)";
 
   return {
     id: slug,
-    name: `${protName} Staking Reward Reminder`,
-    description:
-      `Remind yourself to check ${protName} staking rewards on ${chain}. ` +
-      `Staked balance: $${Math.round(bal)}.`,
+    name,
+    description,
     category: "claim",
     chainId: pos.chainId,
     readOrWrite: "read",
     confirmInputs: {
       walletAddress: "Your wallet address to monitor",
-      stakingTokenAddress:
-        "Staking token contract address (e.g. wstETH on Ethereum)",
+      stakingTokenAddress,
     },
     riskNote: RISK_NOTE_READ_ONLY,
     protocol: pos.protocol,
@@ -224,8 +247,9 @@ export function buildSuggestions(scan: ScanResponse): SuggestionDescriptor[] {
   // SUGGEST-04: Price alert for supply-only positions (healthFactor null, not lido).
   for (const pos of scan.positions) {
     if (pos.healthFactor === null) {
-      // Supply-only (no debt): alert path for non-Lido protocols.
-      if (pos.protocol !== "lido") {
+      // Supply-only (no debt): alert path for lending-collateral protocols;
+      // savings protocols (lido, sky) fall through to the claim loop below.
+      if (!SAVINGS_PROTOCOLS.has(pos.protocol)) {
         const collat =
           pos.totalCollateralUsd ?? pos.suppliedAssets[0]?.usdValue ?? 0;
         if (collat >= DUST_THRESHOLD_USD) {
@@ -253,9 +277,9 @@ export function buildSuggestions(scan: ScanResponse): SuggestionDescriptor[] {
     raw.push(buildYieldSuggestion(stable));
   }
 
-  // SUGGEST-05: Staking reward reminders for Lido positions.
+  // SUGGEST-05: Staking reward reminders for savings-protocol positions (Lido, Sky).
   for (const pos of scan.positions) {
-    if (pos.protocol !== "lido") {
+    if (!SAVINGS_PROTOCOLS.has(pos.protocol)) {
       continue;
     }
     const bal = pos.suppliedAssets[0]?.usdValue ?? pos.totalCollateralUsd ?? 0;
