@@ -100,6 +100,15 @@ function AddEmailDialog({
   const [phase, setPhase] = useState<"email" | "code">("email");
   const [loading, setLoading] = useState(false);
 
+  const handleOpenChange = (next: boolean): void => {
+    if (!next) {
+      setEmail("");
+      setCode("");
+      setPhase("email");
+    }
+    onOpenChange(next);
+  };
+
   const send = async (body: Record<string, string>): Promise<Response> =>
     fetch("/api/user/step-up/email", {
       method: "POST",
@@ -132,17 +141,14 @@ function AddEmailDialog({
       }
       toast.success("Email added.");
       onAdded();
-      onOpenChange(false);
-      setEmail("");
-      setCode("");
-      setPhase("email");
+      handleOpenChange(false);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Add a step-up email</DialogTitle>
