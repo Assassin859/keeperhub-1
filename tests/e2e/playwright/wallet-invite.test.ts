@@ -34,7 +34,13 @@ async function walletInviteId(): Promise<string> {
       join wallet_address w on w.user_id = u.id
       where lower(w.address) = ${TEST_WALLET_ADDRESS.toLowerCase()}
       limit 1`;
-    email = rows[0]?.email as string;
+    const emailValue = rows[0]?.email;
+    if (!emailValue) {
+      throw new Error(
+        `No wallet_address row found for ${TEST_WALLET_ADDRESS} — has the wallet user signed in yet?`
+      );
+    }
+    email = emailValue;
   } finally {
     await sql.end();
   }
@@ -69,34 +75,36 @@ test.describe("wallet org invite", () => {
     // 1. The wallet user signs in once so the account + wallet_address row
     //    exist for the owner's address lookup.
     const walletCtx = await newBypassContext(browser);
-    const walletPage = await walletCtx.newPage();
-    await stubTurnstile(walletPage);
-    await installWalletStub(walletPage);
-    await completeWalletLogin(walletPage);
+    try {
+      const walletPage = await walletCtx.newPage();
+      await stubTurnstile(walletPage);
+      await installWalletStub(walletPage);
+      await completeWalletLogin(walletPage);
 
-    // 2. Owner invites that sign-in address.
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await openInviteForm(page);
-    const dialog = page.locator('[role="dialog"]');
-    await dialog.getByRole("button", { name: "Wallet", exact: true }).click();
-    await dialog.getByPlaceholder(ADDRESS_INPUT).fill(TEST_WALLET_ADDRESS);
-    await dialog.getByRole("button", { name: "Invite" }).click();
-    await expect(page.locator("[data-sonner-toast]")).toContainText(
-      INVITE_CREATED_REGEX,
-      { timeout: 15_000 }
-    );
+      // 2. Owner invites that sign-in address.
+      await page.goto("/", { waitUntil: "domcontentloaded" });
+      await openInviteForm(page);
+      const dialog = page.locator('[role="dialog"]');
+      await dialog.getByRole("button", { name: "Wallet", exact: true }).click();
+      await dialog.getByPlaceholder(ADDRESS_INPUT).fill(TEST_WALLET_ADDRESS);
+      await dialog.getByRole("button", { name: "Invite" }).click();
+      await expect(page.locator("[data-sonner-toast]")).toContainText(
+        INVITE_CREATED_REGEX,
+        { timeout: 15_000 }
+      );
 
-    // 3. Wallet user opens the shared accept-invite link and signs to join;
-    //    acceptance signs the invite challenge with the stub wallet.
-    const inviteId = await walletInviteId();
-    await gotoAcceptInvite(walletPage, inviteId);
-    await walletPage.getByRole("button", { name: SIGN_TO_JOIN_REGEX }).click();
-    await expect(walletPage.locator("[data-sonner-toast]")).toContainText(
-      WELCOME_REGEX,
-      { timeout: 20_000 }
-    );
-
-    await walletCtx.close();
+      // 3. Wallet user opens the shared accept-invite link and signs to join;
+      //    acceptance signs the invite challenge with the stub wallet.
+      const inviteId = await walletInviteId();
+      await gotoAcceptInvite(walletPage, inviteId);
+      await walletPage.getByRole("button", { name: SIGN_TO_JOIN_REGEX }).click();
+      await expect(walletPage.locator("[data-sonner-toast]")).toContainText(
+        WELCOME_REGEX,
+        { timeout: 20_000 }
+      );
+    } finally {
+      await walletCtx.close();
+    }
   });
 
   test("inviting an unknown wallet address is rejected", async ({ page }) => {
