@@ -17,6 +17,6 @@ CREATE TABLE "wallet_address" (
 --> statement-breakpoint
 CREATE INDEX "idx_wallet_address_user_id" ON "wallet_address" ("user_id");
 --> statement-breakpoint
-CREATE INDEX "idx_wallet_address_address" ON "wallet_address" ("address");
+CREATE UNIQUE INDEX "idx_wallet_address_address_unique" ON "wallet_address" ("address");
 --> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "display_name_confirmed" boolean DEFAULT false NOT NULL;

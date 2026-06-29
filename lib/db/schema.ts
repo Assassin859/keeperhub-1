@@ -113,7 +113,7 @@ export const walletAddress = pgTable(
   },
   (table) => [
     index("idx_wallet_address_user_id").on(table.userId),
-    index("idx_wallet_address_address").on(table.address),
+    uniqueIndex("idx_wallet_address_address_unique").on(table.address),
   ]
 );
 
