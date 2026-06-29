@@ -37,7 +37,6 @@ import { cn } from "@/lib/utils";
 import {
   editorTourRequestedAtom,
   gettingStartedOpenAtom,
-  isSidebarCollapsedAtom,
   pendingAiPromptAtom,
   rightPanelWidthAtom,
 } from "@/lib/workflow/store";
@@ -419,11 +418,14 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   const [, setPendingAiPrompt] = useAtom(pendingAiPromptAtom);
   const [forceOpen, setForceOpen] = useAtom(gettingStartedOpenAtom);
   const requestTour = useSetAtom(editorTourRequestedAtom);
-  // Read-only triggers: re-measure the panel whenever its open/width state changes.
-  const isSidebarCollapsed = useAtomValue(isSidebarCollapsedAtom);
+  // The builder's right Properties panel is on-screen exactly when the page
+  // sets a width on it (open, not collapsed, not mobile -- see the
+  // rightPanelWidthAtom effect in the workflow page); it's null otherwise.
+  // Deriving the pill side from this atom flips it in lockstep with the panel,
+  // instead of racing the panel's open/close animation with a DOM measurement.
   const rightPanelWidth = useAtomValue(rightPanelWidthAtom);
+  const panelOpen = rightPanelWidth !== null;
   const [creditLabel, setCreditLabel] = useState("$1");
-  const [panelOpen, setPanelOpen] = useState(false);
 
   // The user-menu "Getting started" entry flips this to reopen the launcher.
   // gsRef avoids including the unstable `gs` object in deps.
@@ -449,31 +451,6 @@ export function GettingStartedLauncher(): React.ReactElement | null {
       cancelled = true;
     };
   }, []);
-
-  // Detect whether the builder's right Properties panel is actually on screen by
-  // measuring its live DOM rect (when collapsed it slides off the right edge).
-  // The pill then anchors to the opposite bottom corner so it never overlaps the
-  // panel at any viewport width. The atoms/pathname below are read only to
-  // re-trigger this measurement, never written.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname and the panel atoms are intentional re-measure triggers, not values read in the effect body
-  useEffect(() => {
-    const measure = (): void => {
-      const rect = document
-        .querySelector('[data-testid="properties-panel"]')
-        ?.getBoundingClientRect();
-      setPanelOpen(
-        Boolean(rect && rect.width > 0 && rect.left < window.innerWidth - 8)
-      );
-    };
-    measure();
-    // Re-measure after the panel's 300ms open/close slide settles.
-    const timer = setTimeout(measure, 320);
-    window.addEventListener("resize", measure);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("resize", measure);
-    };
-  }, [pathname, isSidebarCollapsed, rightPanelWidth]);
 
   if (!gs.isAuthenticated || SUPPRESSED_PATHS.has(pathname ?? "")) {
     return null;
