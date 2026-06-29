@@ -39,12 +39,14 @@ export function MfaEnforcementSection({
   canEdit?: boolean;
 }): React.ReactElement {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [enforce, setEnforce] = useState(false);
   const [factors, setFactors] = useState<Set<StepUpFactor>>(new Set());
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await fetch(
         `/api/organizations/${organizationId}/mfa-enforcement`,
@@ -52,11 +54,15 @@ export function MfaEnforcementSection({
       );
       if (!res.ok) {
         toast.error("Couldn't load MFA enforcement settings.");
+        setLoadError(true);
         return;
       }
       const data = (await res.json()) as EnforcementState;
       setEnforce(data.enforce);
-      setFactors(new Set(data.factors));
+      setFactors(new Set(data.factors ?? []));
+    } catch {
+      toast.error("Couldn't load MFA enforcement settings.");
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -109,6 +115,21 @@ export function MfaEnforcementSection({
     return (
       <div className="flex items-center justify-center py-6">
         <Spinner />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="py-6 text-center text-muted-foreground text-sm">
+        Failed to load MFA settings.{" "}
+        <button
+          className="underline"
+          onClick={() => load()}
+          type="button"
+        >
+          Retry
+        </button>
       </div>
     );
   }
