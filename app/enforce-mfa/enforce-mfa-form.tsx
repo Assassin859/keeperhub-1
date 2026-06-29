@@ -63,6 +63,8 @@ function AddEmailDialog({
       }
       setPhase("code");
       toast.success("Verification code sent.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send code.");
     } finally {
       setLoading(false);
     }
@@ -78,6 +80,10 @@ function AddEmailDialog({
       }
       toast.success("Email added.");
       onAdded();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Verification failed."
+      );
     } finally {
       setLoading(false);
     }
@@ -174,8 +180,13 @@ export function EnforceMfaForm({
 
   const signOut = async (): Promise<void> => {
     setLeaving(true);
-    await authClient.signOut();
-    window.location.assign("/");
+    try {
+      await authClient.signOut();
+      window.location.assign("/");
+    } catch {
+      toast.error("Sign out failed. Please try again.");
+      setLeaving(false);
+    }
   };
 
   // A factor was just added. Hard-reload to where they were headed so the proxy
