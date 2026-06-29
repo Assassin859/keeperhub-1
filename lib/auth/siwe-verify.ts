@@ -59,7 +59,12 @@ export async function verifySiweSignature(
     address: address as `0x${string}`,
     domain: expectedDomain,
     message: fields,
-    nonce: cacao?.p.nonce,
+    // For WalletConnect the nonce comes from the cacao envelope; for standard
+    // EIP-1193 wallets (MetaMask, Rabby, Brave) there is no cacao, so fall
+    // back to the nonce embedded in the signed SIWE message itself. Without
+    // this fallback, validateSiweMessage receives nonce=undefined and skips
+    // the nonce field check entirely, leaving signed messages replayable.
+    nonce: cacao?.p.nonce ?? fields.nonce,
   });
   if (!structurallyValid) {
     return false;
