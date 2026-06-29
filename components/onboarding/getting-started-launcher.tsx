@@ -2,6 +2,7 @@
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Check, ChevronDown, Compass, Info, Sparkles, X } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -71,7 +72,7 @@ function ProgressRing({
         strokeWidth="2"
       />
       <circle
-        className="text-emerald-500 transition-[stroke-dashoffset] duration-500"
+        className="text-keeperhub-green transition-[stroke-dashoffset] duration-500"
         cx="10"
         cy="10"
         fill="none"
@@ -92,7 +93,7 @@ function StepCheck({ complete }: { complete: boolean }): React.ReactElement {
       className={cn(
         "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
         complete
-          ? "border-emerald-500 bg-emerald-500 text-white"
+          ? "border-keeperhub-green bg-keeperhub-green text-white"
           : "border-muted-foreground/40"
       )}
     >
@@ -276,6 +277,7 @@ function StepInfoDialog({
 function ExpandedCard({
   gs,
   creditLabel,
+  panelOpen,
   onAction,
   onChip,
   onTour,
@@ -283,6 +285,7 @@ function ExpandedCard({
 }: {
   gs: GettingStarted;
   creditLabel: string;
+  panelOpen: boolean;
   onAction: (step: Step) => void;
   onChip: (step: Step, prompt: string) => void;
   onTour: (step: Step) => void;
@@ -295,9 +298,17 @@ function ExpandedCard({
   const done = active.steps.filter((s) => gs.isStepComplete(s)).length;
 
   return (
-    <div
+    // Grow in height (and scale in from the pill corner) on open; shrink height
+    // and width back toward the pill on close. overflow-hidden clips the rows as
+    // the height animates; the card's own shadow is not clipped by it.
+    <motion.div
+      animate={{ height: "auto", opacity: 1, scale: 1 }}
       className="w-80 overflow-hidden rounded-xl border bg-popover shadow-xl"
       data-testid="gs-launcher-card"
+      exit={{ height: 0, opacity: 0, scale: 0.5 }}
+      initial={{ height: 0, opacity: 0, scale: 0.5 }}
+      style={{ transformOrigin: panelOpen ? "bottom left" : "bottom right" }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
     >
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
@@ -380,7 +391,7 @@ function ExpandedCard({
         onTour={onTour}
         step={infoStep}
       />
-    </div>
+    </motion.div>
   );
 }
 
@@ -577,33 +588,46 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   };
 
   // Panel open -> bottom-left (clears it on any width); closed -> bottom-right.
+  // The pill stays mounted in every state so the expanded card floats above it;
+  // when open the pill carries a brand-green border to signal the active state.
+  const expanded = gs.state === "expanded";
   return (
     <div
-      className={cn("fixed bottom-4 z-50", panelOpen ? "left-4" : "right-4")}
-    >
-      {gs.state === "expanded" ? (
-        <ExpandedCard
-          creditLabel={creditLabel}
-          gs={gs}
-          onAction={onAction}
-          onChip={onChip}
-          onTakeTour={() => requestTour(true)}
-          onTour={onTour}
-        />
-      ) : (
-        <button
-          className="flex items-center gap-2 rounded-full border bg-popover py-2 pr-4 pl-3 shadow-lg transition-colors hover:bg-muted"
-          data-testid="gs-launcher-pill"
-          onClick={() => gs.setState("expanded")}
-          type="button"
-        >
-          <ProgressRing done={launcherDone(gs)} total={launcherTotal(gs)} />
-          <Sparkles aria-hidden="true" className="size-3.5 text-primary" />
-          <span className="font-medium text-sm">
-            Getting started {launcherDone(gs)}/{launcherTotal(gs)}
-          </span>
-        </button>
+      className={cn(
+        "fixed bottom-4 z-50 flex flex-col gap-2",
+        panelOpen ? "left-4 items-start" : "right-4 items-end"
       )}
+    >
+      <AnimatePresence>
+        {expanded && (
+          <ExpandedCard
+            creditLabel={creditLabel}
+            gs={gs}
+            key="gs-card"
+            onAction={onAction}
+            onChip={onChip}
+            onTakeTour={() => requestTour(true)}
+            onTour={onTour}
+            panelOpen={panelOpen}
+          />
+        )}
+      </AnimatePresence>
+      <button
+        className={cn(
+          "flex items-center gap-2 rounded-full border bg-popover py-2 pr-4 pl-3 shadow-lg transition-colors hover:bg-muted",
+          expanded && "border-keeperhub-green"
+        )}
+        data-open={expanded}
+        data-testid="gs-launcher-pill"
+        onClick={() => gs.setState(expanded ? "collapsed" : "expanded")}
+        type="button"
+      >
+        <ProgressRing done={launcherDone(gs)} total={launcherTotal(gs)} />
+        <Sparkles aria-hidden="true" className="size-3.5 text-primary" />
+        <span className="font-medium text-sm">
+          Getting started {launcherDone(gs)}/{launcherTotal(gs)}
+        </span>
+      </button>
     </div>
   );
 }
