@@ -1,6 +1,6 @@
 import { randomInt, timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
@@ -78,6 +78,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { error: "Enter a valid, non-disposable email." },
         { status: 400 }
+      );
+    }
+
+    // Reject if the email is already the primary login address for any other
+    // account. Step-up emails must be distinct from login identities: sharing
+    // an inbox between a login account and a wallet step-up address would
+    // route security OTPs to a third-party inbox and create confusing audit
+    // state. The check is on users.email (the login email column), not
+    // stepUpEmail, so two wallet users sharing a step-up inbox remains
+    // possible but is blocked from colliding with a real login identity.
+    const [existing] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.email, email), ne(users.id, session.user.id)))
+      .limit(1);
+    if (existing) {
+      return NextResponse.json(
+        { error: "This email is already registered with another account." },
+        { status: 409 }
       );
     }
 
