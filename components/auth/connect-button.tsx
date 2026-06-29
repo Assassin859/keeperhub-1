@@ -143,7 +143,7 @@ export function ConnectButton(): React.ReactElement {
                       className="flex items-center gap-3 rounded-lg border border-border p-3 text-left transition-colors hover:bg-muted"
                       href={w.installUrl}
                       key={w.rdns}
-                      rel="noopener"
+                      rel="noopener noreferrer"
                       target="_blank"
                     >
                       <WalletIcon alt={w.name} src={w.icon} />
