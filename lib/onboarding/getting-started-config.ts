@@ -52,6 +52,29 @@ export type Chip = {
   label: string;
   /** Preset prompt the chip seeds into the AI generator. */
   prompt: string;
+  /**
+   * Public HUB workflow id this chip clones into the user's org when set
+   * (from env, see ONBOARDING_WORKFLOW_IDS). When present the chip duplicates
+   * that curated workflow instead of seeding the AI prompt; the prompt is kept
+   * as the fallback for when no starter workflow is configured.
+   */
+  workflowId?: string;
+};
+
+/**
+ * Chip id -> public HUB workflow id to clone, sourced from env so the curated
+ * starter workflows can be swapped per environment without a code change.
+ * Empty/unset falls back to the chip's `prompt` (AI-builder) behaviour.
+ * The source workflows live in a KeeperHub-owned org and must be `public` +
+ * enabled on the HUB for a non-owner onboarding user to duplicate them.
+ */
+const ONBOARDING_WORKFLOW_IDS: Record<string, string | undefined> = {
+  "aave-health": process.env.NEXT_PUBLIC_ONBOARDING_WF_AAVE_HEALTH,
+  "whale-withdrawal": process.env.NEXT_PUBLIC_ONBOARDING_WF_LARGE_WITHDRAWAL,
+  governance: process.env.NEXT_PUBLIC_ONBOARDING_WF_GOVERNANCE,
+  "sky-staking": process.env.NEXT_PUBLIC_ONBOARDING_WF_SKY_STAKING,
+  "steth-wrap": process.env.NEXT_PUBLIC_ONBOARDING_WF_STETH_WRAP,
+  "usds-savings": process.env.NEXT_PUBLIC_ONBOARDING_WF_USDS_SAVINGS,
 };
 
 /**
@@ -111,18 +134,21 @@ export function getMonitorTargets(_ctx: ChipContext = {}): Chip[] {
       label: "Aave health factor",
       prompt:
         "Monitor my Aave v3 health factor every hour and alert me when it drops below 1.5.",
+      workflowId: ONBOARDING_WORKFLOW_IDS["aave-health"],
     },
     {
       id: "whale-withdrawal",
       label: "Large withdrawal",
       prompt:
         "Watch for large withdrawals from my tracked address and alert me when one exceeds a threshold.",
+      workflowId: ONBOARDING_WORKFLOW_IDS["whale-withdrawal"],
     },
     {
       id: "governance",
       label: "Governance",
       prompt:
         "Notify me when a new governance proposal is created for the protocols I follow.",
+      workflowId: ONBOARDING_WORKFLOW_IDS.governance,
     },
   ];
 }
@@ -136,17 +162,20 @@ export function getYieldStrategies(_ctx: ChipContext = {}): Chip[] {
       label: "SKY staking optimizer",
       prompt:
         "Stake my SKY into the sUSDS vault and compound the rewards weekly.",
+      workflowId: ONBOARDING_WORKFLOW_IDS["sky-staking"],
     },
     {
       id: "steth-wrap",
       label: "stETH wrap",
       prompt: "Wrap my stETH into wstETH and hold it for yield.",
+      workflowId: ONBOARDING_WORKFLOW_IDS["steth-wrap"],
     },
     {
       id: "usds-savings",
       label: "USDS savings",
       prompt:
         "Deposit my USDS into the sUSDS savings vault and rebalance monthly.",
+      workflowId: ONBOARDING_WORKFLOW_IDS["usds-savings"],
     },
   ];
 }

@@ -27,6 +27,7 @@ import {
 } from "@/lib/hooks/use-getting-started";
 import {
   type BranchKey,
+  type Chip,
   type DeepLinkTarget,
   getBranches,
   type Step,
@@ -113,7 +114,7 @@ function StepRow({
   step: Step;
   complete: boolean;
   onAction: (step: Step) => void;
-  onChip: (step: Step, prompt: string) => void;
+  onChip: (step: Step, chip: Chip) => void;
   onTour: (step: Step) => void;
   onInfo: (step: Step) => void;
 }): React.ReactElement {
@@ -170,7 +171,7 @@ function StepRow({
             <button
               className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs transition-colors hover:bg-muted"
               key={chip.id}
-              onClick={() => onChip(step, chip.prompt)}
+              onClick={() => onChip(step, chip)}
               type="button"
             >
               {chip.label}
@@ -287,7 +288,7 @@ function ExpandedCard({
   creditLabel: string;
   panelOpen: boolean;
   onAction: (step: Step) => void;
-  onChip: (step: Step, prompt: string) => void;
+  onChip: (step: Step, chip: Chip) => void;
   onTour: (step: Step) => void;
   onTakeTour: () => void;
 }): React.ReactElement {
@@ -574,9 +575,34 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     gs.refetch();
   };
 
-  const onChip = (step: Step, prompt: string): void => {
+  // Clone a curated public HUB workflow into the user's org. The clone is the
+  // step's completion -- the user still configures it afterwards in the builder.
+  const cloneStarterWorkflow = async (
+    step: Step,
+    chip: Chip
+  ): Promise<void> => {
+    if (!chip.workflowId) {
+      return;
+    }
+    try {
+      const workflow = await api.workflow.duplicate(chip.workflowId);
+      gs.setStepWorkflowId(`${step.key}:${chip.id}`, workflow.id);
+      gs.completeStep(step);
+      router.push(`/workflows/${workflow.id}`);
+    } catch {
+      toast.error("Could not add that workflow.");
+    }
+  };
+
+  // Chips with a configured starter workflow clone it; otherwise fall back to
+  // seeding the AI builder with the chip's preset prompt.
+  const onChip = (step: Step, chip: Chip): void => {
     gs.markStepActioned(step);
-    void startStepWorkflow(step, prompt);
+    if (chip.workflowId) {
+      void cloneStarterWorkflow(step, chip);
+    } else {
+      void startStepWorkflow(step, chip.prompt);
+    }
   };
 
   // "Take a guided tour": open the step's draft and launch the editor tour,

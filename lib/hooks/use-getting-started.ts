@@ -151,6 +151,7 @@ export type GettingStarted = {
   branch: BranchKey;
   setBranch: (next: BranchKey) => void;
   markStepActioned: (step: Step) => void;
+  completeStep: (step: Step) => void;
   getStepWorkflowId: (key: string) => string | undefined;
   setStepWorkflowId: (key: string, workflowId: string) => void;
   refetch: () => void;
@@ -255,6 +256,18 @@ export function useGettingStarted(): GettingStarted {
     },
     [persist, persisted]
   );
+  // Latch a step done regardless of its signal. Used when an action is itself
+  // the completion (e.g. cloning a curated starter workflow from a chip): the
+  // user still configures it, but picking it satisfies the step.
+  const completeStep = useCallback(
+    (step: Step) => {
+      if (persisted.done.includes(step.key)) {
+        return;
+      }
+      persist({ ...persisted, done: [...persisted.done, step.key] });
+    },
+    [persist, persisted]
+  );
   const isStepComplete = useCallback(
     (step: Step): boolean => {
       if (step.signal === "always" || persisted.done.includes(step.key)) {
@@ -287,6 +300,7 @@ export function useGettingStarted(): GettingStarted {
     branch: persisted.branch,
     setBranch,
     markStepActioned,
+    completeStep,
     getStepWorkflowId,
     setStepWorkflowId,
     refetch: fetchStatus,
