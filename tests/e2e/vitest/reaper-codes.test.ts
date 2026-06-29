@@ -139,16 +139,19 @@ describe.skipIf(SKIP)("reaper error codes", () => {
     expect(response.status).toBe(200);
 
     const running = await read(`${PREFIX}running`);
-    expect(running.status).toBe("error");
+    expect(running.status).toBe("system_error");
     expect(running.errorCode).toBe("E-0001");
+    expect(running.errorCategory).toBe("workflow_engine");
 
     const pending = await read(`${PREFIX}pending`);
-    expect(pending.status).toBe("error");
+    expect(pending.status).toBe("system_error");
     expect(pending.errorCode).toBe("P-0001");
+    expect(pending.errorCategory).toBe("infrastructure");
 
     const phantom = await read(`${PREFIX}phantom`);
-    expect(phantom.status).toBe("error");
+    expect(phantom.status).toBe("system_error");
     expect(phantom.errorCode).toBe("P-0005");
+    expect(phantom.errorCategory).toBe("infrastructure");
   });
 
   it("leaves a fresh phantom untouched (not yet aged out)", async () => {

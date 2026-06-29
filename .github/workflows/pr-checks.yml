@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: ['**']
 
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+
 jobs:
   migrate-check:
     runs-on: ubuntu-latest
@@ -209,8 +214,7 @@ jobs:
         if: steps.changes.outputs.relevant == 'true' && github.actor != 'dependabot[bot]'
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.TO_REGION }}
 
       - name: Login to AWS ECR
@@ -236,6 +240,8 @@ jobs:
           push: false
 
   test-unit:
+    # Policy: all test jobs resolve secrets from the staging environment.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -247,9 +253,15 @@ jobs:
           discover-plugins: "true"
 
       - name: Run unit tests
-        run: pnpm test:unit
+        # Also run colocated __tests__ suites (lib/**/__tests__) and the
+        # metrics-collector server test; both sit outside tests/unit. The
+        # __tests__ filter is a path substring, so it matches lib/**/__tests__
+        # without pulling in keeperhub-executor/lib (a bare "lib" filter would).
+        run: pnpm test:unit __tests__ keeperhub-metrics-collector
 
   test-unit-sandbox-remote:
+    # Policy: all test jobs resolve secrets from the staging environment.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -259,6 +271,14 @@ jobs:
         uses: ./.github/actions/setup-node-pnpm
         with:
           discover-plugins: "true"
+
+      - name: Run sandbox package unit tests
+        run: pnpm --filter @keeperhub/sandbox test
+
+      - name: Build sandbox dist and run smoke test
+        run: |
+          pnpm --filter @keeperhub/sandbox build
+          pnpm --filter @keeperhub/sandbox test:smoke
 
       - name: Build sandbox image
         run: docker build -f sandbox/Dockerfile -t keeperhub-sandbox:ci .
@@ -292,6 +312,9 @@ jobs:
         run: docker stop sandbox || true
 
   test-integration:
+    # Join the staging environment so CHAIN_RPC_CONFIG resolves to the staging
+    # value (single source of truth) rather than the repo-level fallback copy.
+    environment: staging
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

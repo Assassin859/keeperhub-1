@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs } from "@/lib/db/schema";
+import { isErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
@@ -65,16 +66,15 @@ export async function GET(
     };
 
     // Build error context (only when failed)
-    const errorContext =
-      execution.status === "error"
-        ? {
-            failedNodeId: execution.currentNodeId,
-            lastSuccessfulNodeId: execution.lastSuccessfulNodeId,
-            lastSuccessfulNodeName: execution.lastSuccessfulNodeName,
-            executionTrace: execution.executionTrace,
-            error: execution.error,
-          }
-        : null;
+    const errorContext = isErrorStatus(execution.status)
+      ? {
+          failedNodeId: execution.currentNodeId,
+          lastSuccessfulNodeId: execution.lastSuccessfulNodeId,
+          lastSuccessfulNodeName: execution.lastSuccessfulNodeName,
+          executionTrace: execution.executionTrace,
+          error: execution.error,
+        }
+      : null;
 
     recordStatusPollMetrics({
       executionId,

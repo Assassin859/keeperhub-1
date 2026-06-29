@@ -5,7 +5,7 @@ import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit"
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
-import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import { resolveExecutionOrgMetadata } from "@/lib/db/org-helpers";
 import {
   organization,
   tags,
@@ -42,6 +42,7 @@ import {
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { workflowReachableConditions } from "@/lib/workflow/executable";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
@@ -162,6 +163,12 @@ async function prepareExecution(
           status: "running",
           input: body,
           ...attribution,
+          // Tie the run to the definition that executed, so it resolves to a
+          // workflow_history version by content hash like every other trigger.
+          executedWorkflowHash: hashWorkflowDefinition(
+            workflow.nodes,
+            workflow.edges
+          ),
         })
         .returning()
   );
@@ -178,10 +185,8 @@ async function startExecutionInBackground(
   body: Record<string, unknown>,
   executionId: string
 ): Promise<void> {
-  const [organizationSlug, organizationPlan] = await Promise.all([
-    getOrgSlug(workflow.organizationId),
-    getOrgPlanLabel(workflow.organizationId),
-  ]);
+  const { slug: organizationSlug, plan: organizationPlan } =
+    await resolveExecutionOrgMetadata(workflow.organizationId);
   start(executeWorkflow, [
     buildExecutorInput(workflow, {
       triggerInput: body,

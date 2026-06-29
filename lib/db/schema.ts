@@ -557,7 +557,13 @@ export const workflowExecutions = pgTable(
     status: text("status")
       .notNull()
       .$type<
-        "pending" | "running" | "success" | "error" | "cancelled" | "phantom"
+        | "pending"
+        | "running"
+        | "success"
+        | "error"
+        | "cancelled"
+        | "phantom"
+        | "system_error"
       >(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<Record<string, any>>(),
@@ -648,10 +654,33 @@ export const workflowExecutions = pgTable(
     triggeredByIp: text("triggered_by_ip"),
     triggeredByCountry: text("triggered_by_country"),
     triggerSource: text("trigger_source"),
+    /**
+     * Durable credential descriptor captured at trigger time. The
+     * `triggered_by_*_api_key_id` FKs above are nulled when a key is revoked
+     * (user keys are hard-deleted), which erases "what did this credential
+     * run" exactly when an investigation needs it. These two columns survive
+     * revocation: `type` is the credential class (webhook_key | org_api_key |
+     * oauth | session | internal) and `label` is a stable, non-secret handle
+     * (e.g. the key prefix `wfb_abc1234`, or the internal caller name).
+     */
+    triggeredByCredentialType: text("triggered_by_credential_type"),
+    triggeredByCredentialLabel: text("triggered_by_credential_label"),
+    /**
+     * sha256 of the workflow definition (nodes + edges) as it existed when
+     * this run was triggered -- see lib/workflow/content-hash.ts. Ties a run
+     * to the exact definition that produced it even after the workflow is
+     * later edited, and joins to `workflow_history.content_hash` to resolve
+     * the full stored snapshot without duplicating the graph per execution.
+     */
+    executedWorkflowHash: text("executed_workflow_hash"),
   },
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
     index("idx_workflow_executions_user_id").on(table.userId),
+    // Resolve "which runs executed this snapshot" / join to workflow_history.
+    index("idx_workflow_executions_executed_hash").on(
+      table.executedWorkflowHash
+    ),
   ]
 );
 
@@ -688,6 +717,17 @@ export const workflowExecutionLogs = pgTable(
     timestamp: timestamp("timestamp").notNull().defaultNow(),
     iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
     forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
+    /**
+     * Per-step network + on-chain gas, denormalised out of the input/output
+     * JSONB so the /analytics per-network gas breakdown can aggregate
+     * first-class columns instead of re-parsing the double-encoded JSONB on
+     * every row (the cost behind the networks-endpoint 524). network is read
+     * from input at step start; gas_used_wei from output at step complete.
+     * Both nullable on legacy rows until backfilled
+     * (scripts/backfill-exec-log-network-gas.ts) and on non-web3 steps.
+     */
+    network: text("network"),
+    gasUsedWei: numeric("gas_used_wei"),
   },
   (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
 );
@@ -726,14 +766,17 @@ export {
   type ExecutionDebt,
   executionDebt,
   type GasCreditAllocation,
+  type GasSponsorshipMonthly,
   gasCreditAllocations,
   gasCreditUsage,
   gasSponsorshipDelegations,
+  gasSponsorshipMonthly,
   keyExportCodes,
   type NewBillingEvent,
   type NewDirectExecution,
   type NewExecutionDebt,
   type NewGasCreditAllocation,
+  type NewGasSponsorshipMonthly,
   type NewOrganizationApiKey,
   type NewOrganizationSpendCap,
   type NewOrganizationSubscription,
@@ -745,7 +788,9 @@ export {
   type NewSafeRoleDirectRule,
   type NewSafeRoleProtocol,
   type NewSafeWallet,
+  type NewSecurityAuditLog,
   type NewSupportedToken,
+  type NewWorkflowHistory,
   type NewWorkflowPublicTag,
   type OrganizationApiKey,
   type OrganizationSpendCap,
@@ -768,16 +813,20 @@ export {
   type SafeRoleDirectRule,
   type SafeRoleProtocol,
   type SafeWallet,
+  type SecurityAuditLog,
   type SupportedToken,
   safeRoleAllowances,
   safeRoleDirectRules,
   safeRoleProtocols,
   safeRoles,
   safeWallets,
+  securityAuditLog,
   supportedTokens,
   type WalletLock,
+  type WorkflowHistory,
   type WorkflowPublicTag,
   walletLocks,
+  workflowHistory,
   workflowPublicTags,
   workflowRatings,
 } from "./schema-extensions";
@@ -976,6 +1025,14 @@ export const explorerConfigs = pgTable(
     explorerApiUrl: text("explorer_api_url"), // Base URL for API calls (ABI, balance, etc.)
     backupExplorerApiType: text("backup_explorer_api_type"), // fallback API type if primary fails
     backupExplorerApiUrl: text("backup_explorer_api_url"), // fallback API URL if primary fails
+    backupExplorerApiKeyNeeded: boolean("backup_explorer_api_key_needed")
+      .notNull()
+      .default(false),
+    backupExplorerApiKey: text("backup_explorer_api_key"), // API key for backup provider (required when backupExplorerApiKeyNeeded is true)
+    backupExplorerUrl: text("backup_explorer_url"), // display URL for backup provider (e.g. "https://blockscout.com")
+    backupExplorerTxPath: text("backup_explorer_tx_path"), // tx link path template for backup provider
+    backupExplorerAddressPath: text("backup_explorer_address_path"), // address link path template for backup provider
+    backupExplorerContractPath: text("backup_explorer_contract_path"), // contract link path template for backup provider
     explorerTxPath: text("explorer_tx_path").default("/tx/{hash}"),
     explorerAddressPath: text("explorer_address_path").default(
       "/address/{address}"

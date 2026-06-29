@@ -33,6 +33,7 @@ export function SettingsOverlay({
   const dual = useDualFactorState();
 
   const session = useSession();
+
   const sessionUser = session.data?.user as
     | { twoFactorEnabled?: boolean | null }
     | undefined;

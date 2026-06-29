@@ -17,6 +17,7 @@ import {
 import { sendOAuthPasswordResetEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { hashPassword } from "@/lib/password";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { resolveTrustedClientIp } from "@/lib/security/trusted-proxies";
 import { generateId } from "@/lib/utils/id";
@@ -108,7 +109,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         normalizedEmail,
         body.otp,
         body.newPassword,
-        body.code
+        body.code,
+        request
       );
     }
 
@@ -237,7 +239,8 @@ async function handleReset(
   email: string,
   otp: string | undefined,
   newPassword: string | undefined,
-  code: string | undefined
+  code: string | undefined,
+  request: Request
 ): Promise<NextResponse> {
   if (!(otp && newPassword)) {
     return NextResponse.json(
@@ -400,6 +403,14 @@ async function handleReset(
       .delete(mcpOauthAuthCodes)
       .where(eq(mcpOauthAuthCodes.userId, user.id));
     await tx.delete(deviceCode).where(eq(deviceCode.userId, user.id));
+  });
+
+  await recordAuditEvent({
+    actor: { userId: user.id, organizationId: null, authMethod: "unknown" },
+    action: "password.reset",
+    resourceType: "user",
+    resourceId: user.id,
+    metadata: buildAuditMetadata(request),
   });
 
   return NextResponse.json({

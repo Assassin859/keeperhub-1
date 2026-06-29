@@ -1,18 +1,15 @@
 // Structured event logger for MCP operations.
-// Emits structured JSON lines to stdout so they are captured by the host log
-// aggregator (CloudWatch). Do NOT log tokens, API keys, or other secrets.
+// Emits canonical single-line JSON (via lib/log/core) so events are captured
+// by the host log aggregator and queryable in Loki via `| json`. Do NOT log
+// tokens, API keys, or other secrets.
+
+import { emitLogLine } from "@/lib/log/core";
 
 export function logMcpEvent(
   event: string,
   data: Record<string, unknown>
 ): void {
-  const entry = {
-    level: "info",
-    event,
-    ts: new Date().toISOString(),
-    ...data,
-  };
-  console.log(JSON.stringify(entry));
+  emitLogLine("info", { msg: event, event, ...data });
 }
 
 /**

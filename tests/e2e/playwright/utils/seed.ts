@@ -59,11 +59,19 @@ async function hashPassword(password: string): Promise<string> {
 const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 const ID_LENGTH = 21;
 
+// Rejection sampling avoids modulo bias: 256 is not a multiple of 36, so
+// mapping raw bytes with `% 36` would over-represent the first four symbols.
+// 252 = floor(256 / 36) * 36 is the largest unbiased cutoff; reject above it.
+const ID_UNBIASED_CUTOFF = 252;
+
 function generateId(): string {
-  const bytes = randomBytes(ID_LENGTH);
   let id = "";
-  for (let i = 0; i < ID_LENGTH; i++) {
-    id += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
+  while (id.length < ID_LENGTH) {
+    const byte = randomBytes(1)[0];
+    if (byte >= ID_UNBIASED_CUTOFF) {
+      continue;
+    }
+    id += ID_ALPHABET[byte % ID_ALPHABET.length];
   }
   return id;
 }
@@ -116,7 +124,18 @@ const PERSISTENT_USERS: TestUserConfig[] = [
     orgName: "E2E Analytics Organization",
     password: ANALYTICS_PASSWORD,
   },
+  {
+    // Org carries a 'pro' plan (see seedPersistentTestUsers) so tests that need
+    // feature-gated actions (HTTP Request, Send Webhook, Database Query, Code)
+    // can use them. e2e-test-org stays free for the billing/free-limit tests.
+    email: "pr-test-pro@techops.services",
+    name: "E2E Pro User",
+    orgSlug: "e2e-test-pro-org",
+    orgName: "E2E Pro Organization",
+  },
 ];
+
+const PRO_ORG_SLUG = "e2e-test-pro-org";
 
 const PERSISTENT_EMAILS = PERSISTENT_USERS.map((u) => u.email);
 
@@ -208,6 +227,31 @@ async function ensureMembership(
   `;
 }
 
+async function ensureProSubscription(
+  sql: ReturnType<typeof postgres>,
+  orgId: string
+): Promise<void> {
+  const existing = await sql`
+    SELECT id FROM organization_subscriptions
+    WHERE organization_id = ${orgId} LIMIT 1
+  `;
+  if (existing.length > 0) {
+    await sql`
+      UPDATE organization_subscriptions SET plan = 'pro', status = 'active'
+      WHERE organization_id = ${orgId}
+    `;
+    return;
+  }
+  const now = new Date();
+  await sql`
+    INSERT INTO organization_subscriptions (
+      id, organization_id, plan, status, created_at, updated_at
+    ) VALUES (
+      ${generateId()}, ${orgId}, 'pro', 'active', ${now}, ${now}
+    )
+  `;
+}
+
 // ---------------------------------------------------------------------------
 // Public: seedPersistentTestUsers
 // ---------------------------------------------------------------------------
@@ -216,6 +260,7 @@ export async function seedPersistentTestUsers(): Promise<void> {
   const sql = getDbConnection();
   try {
     const results: Array<{ userId: string; orgId: string }> = [];
+    let proOrgId: string | null = null;
 
     for (const config of PERSISTENT_USERS) {
       const userId = await ensureUser(sql, config.email, config.name);
@@ -231,12 +276,20 @@ export async function seedPersistentTestUsers(): Promise<void> {
       );
       await ensureMembership(sql, userId, orgId, "owner");
       results.push({ userId, orgId });
+      if (config.orgSlug === PRO_ORG_SLUG) {
+        proOrgId = orgId;
+      }
     }
 
     // Cross-org: member (index 2) is a member of inviter's org (index 1)
     const inviter = results[1];
     const member = results[2];
     await ensureMembership(sql, member.userId, inviter.orgId, "member");
+
+    // The pro user's org carries a 'pro' plan so feature-gated actions resolve.
+    if (proOrgId) {
+      await ensureProSubscription(sql, proOrgId);
+    }
   } finally {
     await sql.end();
   }
@@ -335,14 +388,14 @@ function buildStepInput(nodeType: string, chainId: string): string | null {
   });
 }
 
-function buildStepOutput(nodeType: string, stepStatus: string): string | null {
-  if (nodeType !== "web3:write-contract" || stepStatus !== "success") {
+function buildStepOutput(gasUsedWei: string | null): string | null {
+  if (gasUsedWei === null) {
     return null;
   }
   return JSON.stringify({
     success: true,
     transactionHash: `0x${randomHex(64)}`,
-    gasUsed: String(randomInt(21_000, 350_000)),
+    gasUsed: gasUsedWei,
   });
 }
 
@@ -361,17 +414,22 @@ async function seedStepLogs(
     const stepStartedAt = new Date(currentTime);
     const stepStatus = resolveStepStatus(execStatus, s, stepCount);
     const isTerminal = stepStatus === "pending" || stepStatus === "running";
-    const network =
-      nodeType === "web3:write-contract"
-        ? randomChoice(ANALYTICS_NETWORKS)
-        : null;
+    const isWrite = nodeType === "web3:write-contract";
+    const network = isWrite ? randomChoice(ANALYTICS_NETWORKS) : null;
     const chainId = CHAIN_MAP[network ?? "sepolia"] ?? "11155111";
+    // Computed once and mirrored into the output JSONB and the denormalised
+    // gas_used_wei column the analytics network breakdown reads.
+    const gasUsedWei =
+      isWrite && stepStatus === "success"
+        ? String(randomInt(21_000, 350_000))
+        : null;
 
     await sql.unsafe(
       `INSERT INTO workflow_execution_logs (
         id, execution_id, node_id, node_name, node_type, status,
-        started_at, completed_at, duration, error, input, output
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)`,
+        started_at, completed_at, duration, error, input, output,
+        network, gas_used_wei
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)`,
       [
         generateId(),
         execId,
@@ -384,7 +442,9 @@ async function seedStepLogs(
         isTerminal ? null : String(stepDuration),
         stepStatus === "error" ? "Contract call reverted" : null,
         buildStepInput(nodeType, chainId),
-        buildStepOutput(nodeType, stepStatus),
+        buildStepOutput(gasUsedWei),
+        isWrite ? chainId : null,
+        gasUsedWei,
       ]
     );
     currentTime += stepDuration + randomInt(10, 100);
@@ -632,6 +692,11 @@ export async function seedAnalyticsData(): Promise<void> {
 export async function cleanupPersistentTestUsers(): Promise<void> {
   const sql = getDbConnection();
   try {
+    // Deleting test users drives security_audit_log's FK to null actor_user_id,
+    // which the append-only trigger rejects. This cleanup connection runs as the
+    // postgres superuser (max: 1), so disable replication-role triggers on it to
+    // remove test data without tripping the guard.
+    await sql`SET session_replication_role = 'replica'`;
     const testUsers = await sql`
       SELECT id FROM users WHERE email IN ${sql(PERSISTENT_EMAILS)}
     `;

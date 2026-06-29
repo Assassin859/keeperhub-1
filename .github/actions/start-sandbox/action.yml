@@ -1,0 +1,33 @@
+# Builds and starts the code-execution sandbox container for e2e jobs that
+# exercise the remote sandbox backend (SANDBOX_BACKEND=remote). Mirrors the
+# build+run+health pattern used by pr-checks.yml:test-unit-sandbox-remote.
+name: Start Sandbox
+description: Build and start the code-execution sandbox container for e2e tests
+
+inputs:
+  port:
+    description: Host port to publish the sandbox on (reach it at http://localhost:<port>)
+    required: false
+    default: "8787"
+
+runs:
+  using: composite
+  steps:
+    - name: Build sandbox image
+      shell: bash
+      run: docker build -f sandbox/Dockerfile -t keeperhub-sandbox:ci .
+
+    - name: Start sandbox container
+      shell: bash
+      run: |
+        docker run -d --name sandbox -p ${{ inputs.port }}:8787 keeperhub-sandbox:ci
+        for i in $(seq 1 30); do
+          if curl -sf "http://localhost:${{ inputs.port }}/healthz" >/dev/null; then
+            echo "sandbox ready on :${{ inputs.port }}"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "sandbox did not become ready"
+        docker logs sandbox
+        exit 1

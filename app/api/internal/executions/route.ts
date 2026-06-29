@@ -12,6 +12,7 @@ import {
   buildAttribution,
   type TriggerSource,
 } from "@/lib/security/request-attribution";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 
 const VALID_TRIGGER_SOURCES: readonly TriggerSource[] = [
   "manual",
@@ -72,6 +73,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       organizationId: true,
       deletedAt: true,
       nodes: true,
+      edges: true,
       userId: true,
     },
   });
@@ -123,6 +125,13 @@ export async function POST(request: Request): Promise<NextResponse> {
           billable: !isPhantom,
           input: input || {},
           ...attribution,
+          // Tie the run to the workflow version that fired it. For phantoms the
+          // executor restamps this with the definition it actually loads at run
+          // time; this value links the row even if that restamp never lands.
+          executedWorkflowHash: hashWorkflowDefinition(
+            workflow.nodes,
+            workflow.edges
+          ),
         })
         .returning({ id: workflowExecutions.id })
   );

@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { organizationApiKeys, users } from "@/lib/db/schema";
+import { member, organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   dualFactorErrorResponse,
@@ -12,6 +12,9 @@ import {
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import { buildPage, parsePageRequest } from "@/lib/pagination";
+import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // Generate a secure API key with KeeperHub prefix
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -34,12 +37,20 @@ export async function GET(request: Request) {
     }
     const { organizationId: activeOrgId } = authCtx;
 
-    // List all non-revoked API keys for the organization
+    const url = new URL(request.url);
+    const req = parsePageRequest(url);
+    const where = and(
+      eq(organizationApiKeys.organizationId, activeOrgId),
+      isNull(organizationApiKeys.revokedAt)
+    );
+
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(organizationApiKeys)
+      .where(where);
+
     const keys = await db.query.organizationApiKeys.findMany({
-      where: and(
-        eq(organizationApiKeys.organizationId, activeOrgId),
-        isNull(organizationApiKeys.revokedAt)
-      ),
+      where,
       columns: {
         id: true,
         name: true,
@@ -50,31 +61,48 @@ export async function GET(request: Request) {
         expiresAt: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
+      limit: req.pageSize,
+      offset: req.offset,
     });
 
-    // Get unique creator IDs and fetch their names
+    // Enrich creators with name + email + org role so the key-activity
+    // fallback can identify them as fully as a real audit event.
     const creatorIds = [
       ...new Set(keys.map((k) => k.createdBy).filter(Boolean)),
     ] as string[];
     const creators =
       creatorIds.length > 0
-        ? await db.query.users.findMany({
-            where: inArray(users.id, creatorIds),
-            columns: { id: true, name: true },
-          })
+        ? await db
+            .select({
+              id: users.id,
+              name: users.name,
+              email: users.email,
+              role: member.role,
+            })
+            .from(users)
+            .leftJoin(
+              member,
+              and(
+                eq(member.userId, users.id),
+                eq(member.organizationId, activeOrgId)
+              )
+            )
+            .where(inArray(users.id, creatorIds))
         : [];
-    const creatorMap = new Map(creators.map((u) => [u.id, u.name]));
+    const creatorMap = new Map(creators.map((u) => [u.id, u]));
 
-    // Add createdByName to response
-    const response = keys.map((key) => ({
-      ...key,
-      createdByName: key.createdBy
-        ? creatorMap.get(key.createdBy) || null
-        : null,
-      createdBy: undefined,
-    }));
+    const items = keys.map((key) => {
+      const creator = key.createdBy ? creatorMap.get(key.createdBy) : undefined;
+      return {
+        ...key,
+        createdByName: creator?.name ?? null,
+        createdByEmail: creator?.email ?? null,
+        createdByRole: creator?.role ?? null,
+        createdBy: undefined,
+      };
+    });
 
-    return NextResponse.json(response);
+    return NextResponse.json(buildPage(items, total, req, url));
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
@@ -189,6 +217,27 @@ export async function POST(request: Request) {
     console.log(
       `[API Keys] Created new API key for organization ${activeOrgId}: ${newKey.id}`
     );
+
+    // Out-of-band alert + durable audit record, symmetric with user keys.
+    notifyApiKeyChange({
+      email: session.user.email,
+      action: "created",
+      tokenName: newKey.name,
+      keyPrefix: newKey.keyPrefix,
+      when: newKey.createdAt,
+    });
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+        authMethod: "session",
+      },
+      action: "org_api_key.created",
+      resourceType: "org_api_key",
+      resourceId: newKey.id,
+      after: { name: newKey.name, keyPrefix: newKey.keyPrefix },
+      metadata: buildAuditMetadata(request),
+    });
 
     // Return the full key only on creation (won't be shown again)
     return NextResponse.json({

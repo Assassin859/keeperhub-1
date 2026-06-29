@@ -2,12 +2,10 @@
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
-  Code,
-  Copy,
   Eraser,
   Eye,
   EyeOff,
-  FileCode,
+  History,
   Play,
   RefreshCw,
   Settings2,
@@ -19,14 +17,12 @@ import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
 import { SmartOverlayHeader } from "@/components/overlays/overlay-header";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
-import { CodeEditor } from "@/components/ui/code-editor";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
-import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
 import {
   clearNodeStatusesAtom,
   clearWorkflowAtom,
@@ -49,7 +45,7 @@ import { findActionById } from "@/plugins/registry";
 import { ActionConfig } from "../workflow/config/action-config";
 import { ActionGrid } from "../workflow/config/action-grid";
 import { TriggerConfig } from "../workflow/config/trigger-config";
-import { generateNodeCode } from "../workflow/utils/code-generators";
+import { VersionHistoryContent } from "../workflow/version-history-content";
 import { WorkflowRuns } from "../workflow/workflow-runs";
 import type { OverlayComponentProps } from "./types";
 
@@ -58,28 +54,6 @@ const SYSTEM_ACTION_INTEGRATIONS: Record<string, IntegrationType> = {
   "Database Query": "database",
 };
 
-// Regex constants
-const NON_ALPHANUMERIC_REGEX = /[^a-zA-Z0-9\s]/g;
-const WORD_SPLIT_REGEX = /\s+/;
-
-// Helper to generate code filename based on node type
-function getCodeFilename(node: {
-  data: { type: string; config?: Record<string, unknown> };
-}): string {
-  if (node.data.type === "trigger") {
-    const triggerType = node.data.config?.triggerType as string;
-    if (triggerType === "Schedule") {
-      return "schedule.json";
-    }
-    const webhookPath = (node.data.config?.webhookPath as string) || "/webhook";
-    return `app/api${webhookPath}/route.ts`;
-  }
-  const actionType = (node.data.config?.actionType as string) || "action";
-  return `steps/${actionType
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")}-step.ts`;
-}
 
 type ConfigurationOverlayProps = OverlayComponentProps;
 
@@ -238,14 +212,6 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
     });
   }, [selectedNode, deleteNode, closeAll, push]);
 
-  const handleCopyCode = useCallback(() => {
-    if (!selectedNode) {
-      return;
-    }
-    navigator.clipboard.writeText(generateNodeCode(selectedNode));
-    toast.success("Code copied to clipboard");
-  }, [selectedNode]);
-
   const handleRefreshRuns = async () => {
     if (refreshRunsRef.current) {
       setIsRefreshing(true);
@@ -280,30 +246,22 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
     });
   };
 
-  // Determine which tabs to show (only for node view)
-  const showCodeTab =
-    selectedNode &&
-    (selectedNode.data.type !== "trigger" ||
-      (selectedNode.data.config?.triggerType as string) !== "Manual") &&
-    selectedNode.data.config?.actionType !== "Condition";
-
   // Get current tab title
   const getTabTitle = () => {
     if (!selectedNode) {
       // For workflow view, validate the tab
       const validTab =
         activeTab === "properties" ||
-        activeTab === "code" ||
-        (activeTab === "runs" && isOwner)
+        ((activeTab === "runs" || activeTab === "history") && isOwner)
           ? activeTab
           : "properties";
       switch (validTab) {
         case "properties":
           return "Workflow";
-        case "code":
-          return "Code";
         case "runs":
           return "Runs";
+        case "history":
+          return "History";
         default:
           return "Workflow";
       }
@@ -311,10 +269,10 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
     switch (activeTab) {
       case "properties":
         return "Properties";
-      case "code":
-        return "Code";
       case "runs":
         return "Runs";
+      case "history":
+        return "History";
       default:
         return "Properties";
     }
@@ -401,29 +359,6 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
     });
   };
 
-  // Generate full workflow code
-  const { workflowCode, workflowValidationErrors } = (() => {
-    const baseName = currentWorkflowName
-      .replace(NON_ALPHANUMERIC_REGEX, "")
-      .split(WORD_SPLIT_REGEX)
-      .map((word, index) =>
-        index === 0
-          ? word.toLowerCase()
-          : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-      )
-      .join("");
-    const functionName = `${baseName}Workflow`;
-    const { code, validationErrors } = generateWorkflowCode(nodes, edges, {
-      functionName,
-    });
-    return { workflowCode: code, workflowValidationErrors: validationErrors };
-  })();
-
-  // Handle copy workflow code
-  const handleCopyWorkflowCode = () => {
-    navigator.clipboard.writeText(workflowCode);
-    toast.success("Code copied to clipboard");
-  };
 
   // Handle delete edge
   const handleDeleteEdge = () => {
@@ -476,11 +411,10 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
 
   // If no node is selected, show workflow-level configuration
   if (!selectedNode) {
-    // For workflow view, only properties, code, and runs (if owner) are valid tabs
+    // For workflow view, properties plus runs/history (if owner) are valid tabs.
     const validWorkflowTab =
       activeTab === "properties" ||
-      activeTab === "code" ||
-      (activeTab === "runs" && isOwner)
+      ((activeTab === "runs" || activeTab === "history") && isOwner)
         ? activeTab
         : "properties";
 
@@ -553,53 +487,9 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
             </div>
           )}
 
-          {validWorkflowTab === "code" && (
-            <div className="flex flex-col">
-              <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <FileCode className="size-3.5 text-muted-foreground" />
-                  <code className="text-muted-foreground text-xs">
-                    workflow.ts
-                  </code>
-                </div>
-                <Button
-                  className="h-7 text-xs"
-                  onClick={handleCopyWorkflowCode}
-                  size="sm"
-                  variant="ghost"
-                >
-                  <Copy className="mr-1 size-3" />
-                  Copy
-                </Button>
-              </div>
-              {workflowValidationErrors &&
-                workflowValidationErrors.length > 0 && (
-                  <div className="border-amber-500/30 border-b bg-amber-500/10 px-3 py-2">
-                    <p className="font-medium text-amber-600 text-xs dark:text-amber-400">
-                      Workflow has configuration issues:
-                    </p>
-                    <ul className="mt-1 list-inside list-disc text-amber-600/80 text-xs dark:text-amber-400/80">
-                      {workflowValidationErrors.map((error) => (
-                        <li key={error}>{error}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              <div className="h-[400px]">
-                <CodeEditor
-                  defaultLanguage="typescript"
-                  height="100%"
-                  options={{
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    lineNumbers: "on",
-                    scrollBeyondLastLine: false,
-                    fontSize: 12,
-                    wordWrap: "on",
-                  }}
-                  value={workflowCode}
-                />
-              </div>
+          {validWorkflowTab === "history" && isOwner && (
+            <div className="px-3 py-3">
+              <VersionHistoryContent active={validWorkflowTab === "history"} />
             </div>
           )}
 
@@ -650,18 +540,6 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
             <Settings2 className="size-5" />
             Workflow
           </button>
-          <button
-            className={`flex flex-1 flex-col items-center gap-1 py-3 font-medium text-xs transition-colors ${
-              validWorkflowTab === "code"
-                ? "text-foreground"
-                : "text-muted-foreground"
-            }`}
-            onClick={() => setActiveTab("code")}
-            type="button"
-          >
-            <Code className="size-5" />
-            Code
-          </button>
           {isOwner && (
             <button
               className={`flex flex-1 flex-col items-center gap-1 py-3 font-medium text-xs transition-colors ${
@@ -676,6 +554,20 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
               Runs
             </button>
           )}
+          {isOwner && (
+            <button
+              className={`flex flex-1 flex-col items-center gap-1 py-3 font-medium text-xs transition-colors ${
+                validWorkflowTab === "history"
+                  ? "text-foreground"
+                  : "text-muted-foreground"
+              }`}
+              onClick={() => setActiveTab("history")}
+              type="button"
+            >
+              <History className="size-5" />
+              History
+            </button>
+          )}
         </div>
       </div>
     );
@@ -686,7 +578,7 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
       {/* Header with current tab name */}
       <SmartOverlayHeader overlayId={overlayId} title={getTabTitle()} />
 
-      {/* Content based on active tab */}
+      {/* Content based on active tab. */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === "properties" && (
           <div className="space-y-4 px-6 pt-4 pb-6">
@@ -791,51 +683,13 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
           </div>
         )}
 
-        {/* Preload Code tab - always render but hide when not active */}
-        {showCodeTab && (
-          <div
-            className={`flex flex-col ${activeTab === "code" ? "" : "-z-10 invisible absolute"}`}
-          >
-            <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 px-3 py-2">
-              <div className="flex items-center gap-2">
-                <FileCode className="size-3.5 text-muted-foreground" />
-                <code className="text-muted-foreground text-xs">
-                  {getCodeFilename(selectedNode)}
-                </code>
-              </div>
-              <Button
-                className="text-muted-foreground"
-                onClick={handleCopyCode}
-                size="sm"
-                variant="ghost"
-              >
-                <Copy className="mr-2 size-4" />
-                Copy
-              </Button>
-            </div>
-            <div className="h-[400px]">
-              <CodeEditor
-                height="100%"
-                language={
-                  selectedNode.data.type === "trigger" &&
-                  (selectedNode.data.config?.triggerType as string) ===
-                    "Schedule"
-                    ? "json"
-                    : "typescript"
-                }
-                options={{
-                  readOnly: true,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  fontSize: 13,
-                  lineNumbers: "on",
-                  folding: false,
-                  wordWrap: "off",
-                  padding: { top: 16, bottom: 16 },
-                }}
-                value={generateNodeCode(selectedNode)}
-              />
-            </div>
+        {activeTab === "history" && isOwner && (
+          <div className="px-3 py-3">
+            <VersionHistoryContent
+              active={activeTab === "history"}
+              nodeId={selectedNode.id}
+              nodeLabel={(selectedNode.data.label as string) ?? null}
+            />
           </div>
         )}
 
@@ -888,18 +742,6 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
           <Settings2 className="size-5" />
           Properties
         </button>
-        {showCodeTab && (
-          <button
-            className={`flex flex-1 flex-col items-center gap-1 py-3 font-medium text-xs transition-colors ${
-              activeTab === "code" ? "text-foreground" : "text-muted-foreground"
-            }`}
-            onClick={() => setActiveTab("code")}
-            type="button"
-          >
-            <Code className="size-5" />
-            Code
-          </button>
-        )}
         {isOwner && (
           <button
             className={`flex flex-1 flex-col items-center gap-1 py-3 font-medium text-xs transition-colors ${
@@ -910,6 +752,20 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
           >
             <Play className="size-5" />
             Runs
+          </button>
+        )}
+        {isOwner && (
+          <button
+            className={`flex flex-1 flex-col items-center gap-1 py-3 font-medium text-xs transition-colors ${
+              activeTab === "history"
+                ? "text-foreground"
+                : "text-muted-foreground"
+            }`}
+            onClick={() => setActiveTab("history")}
+            type="button"
+          >
+            <History className="size-5" />
+            History
           </button>
         )}
       </div>

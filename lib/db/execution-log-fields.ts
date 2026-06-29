@@ -33,3 +33,44 @@ export function logInputField(field: string): ReturnType<typeof sql> {
     ELSE ${workflowExecutionLogs.input}->>${sql.raw(`'${field}'`)}
   END`;
 }
+
+/**
+ * JS-side counterparts of the SQL extraction above, used by the executor writer
+ * (lib/workflow/executor/logging.ts) to populate the denormalised `network` /
+ * `gas_used_wei` columns at write time. They read the same raw input/output the
+ * `input` / `output` JSONB columns receive, so a writer-populated column agrees
+ * value-for-value with `logInputField`/`logOutputField` and the backfill (which
+ * uses the SQL builders). Mirror the `->>` semantics: only a plain-object source
+ * yields a value, and the result is the scalar's text form.
+ */
+function jsonScalarText(source: unknown, field: string): string | null {
+  if (source === null || typeof source !== "object" || Array.isArray(source)) {
+    return null;
+  }
+  const value = (source as Record<string, unknown>)[field];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "object") {
+    return null;
+  }
+  return String(value);
+}
+
+export function extractLogNetwork(input: unknown): string | null {
+  return jsonScalarText(input, "network");
+}
+
+/**
+ * Extract per-step gas as the text of a numeric (the `gas_used_wei` column is
+ * numeric). Returns null for a missing key or a value that is not a finite
+ * numeric string, matching what `CAST(... AS NUMERIC)` would accept from the
+ * SQL extraction.
+ */
+export function extractLogGasUsedWei(output: unknown): string | null {
+  const text = jsonScalarText(output, "gasUsed");
+  if (text === null || text.trim() === "") {
+    return null;
+  }
+  return Number.isFinite(Number(text)) ? text : null;
+}

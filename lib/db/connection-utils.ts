@@ -94,6 +94,33 @@ function formatPgQueryError(error: PgQueryError): string {
   return message;
 }
 
+/** Max error -> cause levels to inspect (drizzle wraps the driver error). */
+const MAX_ERROR_CAUSE_DEPTH = 5;
+
+/**
+ * Collect the `code` values and concatenated messages across an error's
+ * cause chain. The driver error is often wrapped (drizzle nests it under
+ * `cause`), so the connection code/message can live below the top level.
+ */
+function collectErrorChain(error: Error): { codes: Set<string>; text: string } {
+  const codes = new Set<string>();
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth <= MAX_ERROR_CAUSE_DEPTH && current instanceof Error;
+    depth++
+  ) {
+    messages.push(current.message);
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string") {
+      codes.add(code);
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return { codes, text: messages.join(" ") };
+}
+
 /**
  * Returns a safe, user-facing message for database errors.
  * Shows query errors from PostgreSQL directly (they don't contain credentials).
@@ -119,28 +146,36 @@ export function getDatabaseErrorMessage(error: unknown): string {
     return formatPgQueryError(cause);
   }
 
-  // Connection-level errors -- sanitize to avoid leaking credentials
-  const errorMessage = error.message;
+  // Connection-level errors -- sanitize to avoid leaking credentials. Classify
+  // against the code + message of the whole cause chain (drizzle wraps the
+  // driver error), preferring `code` for socket/connect failures so query text
+  // can't trigger a false match. Only canned strings are returned, never raw text.
+  const { codes, text } = collectErrorChain(error);
 
-  if (errorMessage.includes("ECONNREFUSED")) {
+  if (codes.has("ECONNREFUSED") || text.includes("ECONNREFUSED")) {
     return "Connection refused. Please check your database URL and ensure the database is running.";
   }
-  if (errorMessage.includes("ENOTFOUND")) {
+  if (codes.has("ENOTFOUND") || text.includes("ENOTFOUND")) {
     return "Database host not found. Please check your database URL.";
   }
-  if (errorMessage.includes("ENETUNREACH")) {
+  if (codes.has("ENETUNREACH") || text.includes("ENETUNREACH")) {
     return "Network unreachable. The database host may resolve to an IPv6 address; try using an IPv4 address or a hostname that resolves to IPv4.";
   }
-  if (errorMessage.includes("authentication failed")) {
-    return "Authentication failed. Please check your database credentials.";
-  }
-  if (errorMessage.includes("does not exist")) {
-    return "Database or resource not found. Please verify the database name and user permissions.";
-  }
-  if (errorMessage.includes("timeout") || errorMessage.includes("ETIMEDOUT")) {
+  if (
+    codes.has("CONNECT_TIMEOUT") ||
+    codes.has("ETIMEDOUT") ||
+    text.includes("CONNECT_TIMEOUT") ||
+    text.includes("ETIMEDOUT")
+  ) {
     return "Connection timed out. Please check your database host and network settings.";
   }
-  if (errorMessage.includes("SSL") || errorMessage.includes("TLS")) {
+  if (text.includes("authentication failed")) {
+    return "Authentication failed. Please check your database credentials.";
+  }
+  if (text.includes("does not exist")) {
+    return "Database or resource not found. Please verify the database name and user permissions.";
+  }
+  if (text.includes("SSL") || text.includes("TLS")) {
     return "SSL/TLS connection error. Try a different SSL mode (e.g. Require or Disable).";
   }
 

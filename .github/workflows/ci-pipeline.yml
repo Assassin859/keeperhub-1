@@ -1,4 +1,4 @@
-# Type: orchestrator | Coordinates build-images -> e2e-tests -> deploy -> release -> docs-sync
+# Type: orchestrator | Coordinates build-images + e2e-tests -> deploy -> release -> docs-sync
 name: CI Pipeline
 
 on:
@@ -22,10 +22,7 @@ jobs:
     uses: ./.github/workflows/build-images.yml
     secrets: inherit
 
-  # Ephemeral e2e tests run on:
-  # - Push to staging or prod
-  # - PRs with run-e2e-tests-ephemeral label
-  # - Manual workflow_dispatch
+  # Ephemeral e2e tests.
   e2e-tests:
     needs: [build-images]
     if: ${{ !failure() && !cancelled() }}
@@ -35,14 +32,21 @@ jobs:
       caller_action: ${{ github.event.action }}
       has_e2e_label: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-e2e-tests-ephemeral') || false }}
       label_name: ${{ github.event.label.name || '' }}
-      image_tag: ${{ needs.build-images.outputs.image_tag || '' }}
-      ecr_registry: ${{ needs.build-images.outputs.ecr_registry || '' }}
-      ecr_repo: ${{ needs.build-images.outputs.ecr_repo || '' }}
-      ecr_region: ${{ needs.build-images.outputs.ecr_region || '' }}
+      # Pass build outputs only on staging; '' must be the `||` fallthrough since
+      # an empty string is falsy (`cond && '' || x` would always yield x).
+      image_tag: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.image_tag || '') || '' }}
+      ecr_registry: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_registry || '') || '' }}
+      ecr_repo: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_repo || '') || '' }}
+      ecr_region: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_region || '') || '' }}
     secrets: inherit
 
   # Deploy runs after build-images and e2e-tests.
   # Blocked if e2e tests fail — no deployment without passing tests.
+  # Deploys the whole execution pipeline (app + executor + schedule + block +
+  # metrics-collector) as one atomic keeperhub-stack release, so every component
+  # rolls together. This replaces the previously separate app/executor/scheduler/
+  # metrics-collector deploys and removes the staggered-rollover window that left
+  # in-flight executions orphaned mid-deploy.
   deploy:
     needs: [build-images, e2e-tests]
     if: ${{ github.event_name != 'pull_request' && !failure() && !cancelled() }}
@@ -51,34 +55,16 @@ jobs:
       image_tag: ${{ needs.build-images.outputs.image_tag }}
     secrets: inherit
 
-  # Executor deploy runs after build-images and e2e-tests (same as deploy).
-  # The executor's RUNNER_IMAGE references the workflow-runner image built by
-  # build-images, so it must wait for that job to complete.
-  deploy-executor:
-    needs: [build-images, e2e-tests]
-    if: ${{ github.event_name != 'pull_request' && !failure() && !cancelled() }}
-    uses: ./.github/workflows/deploy-executor.yaml
-    with:
-      image_tag: ${{ needs.build-images.outputs.image_tag }}
-    secrets: inherit
-
-  # Synthetic gate that turns green only once BOTH deploy jobs finish. The
-  # app and executor deploys run in parallel and their durations diverge
-  # (executor is consistently the slower of the two because it rebuilds the
-  # workflow-runner image). Without this gate, users seeing the faster job
-  # turn green can retry workflows on a stale executor and observe phantom
-  # failures. KEEP-388 was a staging exec submitted ~2 min after the app
-  # deploy finished but ~5 min before the executor deploy finished -- the
-  # workflow-runner that picked it up was still on the old image. This job
-  # makes "all deployments rolled" a single, observable signal.
+  # Synthetic gate: green once the single atomic stack deploy finishes. Kept as a
+  # stable, observable "all deployments rolled" signal for downstream jobs.
   deploy-ready:
-    needs: [deploy, deploy-executor]
+    needs: [deploy]
     if: ${{ github.event_name != 'pull_request' && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Confirm deployment complete
         run: |
-          echo "App + executor deploys both rolled to new image."
+          echo "Atomic keeperhub-stack deploy rolled all components to the new image."
           echo "Workflows submitted from this point will run on the new build."
 
   # Release and docs-sync only run on prod pushes, after successful deploy.

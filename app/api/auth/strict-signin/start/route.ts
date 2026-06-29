@@ -1,11 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { testEndpointsEnabled } from "@/lib/admin-auth";
 import { auth } from "@/lib/auth";
 import { readAllSetCookies } from "@/lib/auth-cookie-chain";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { verifyPassword } from "@/lib/password";
+import { resolveClientIpFromHeaders } from "@/lib/security/login-risk";
+import { checkCredentialAttemptRateLimit } from "../../_lib/credential-attempt-rate-limit";
 
 /**
  * First step of the strict atomic dual-factor sign-in.
@@ -58,10 +61,45 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // F-013 / KEEP-738: this route verifies the credential password and returns a
+  // distinguishable 401 vs 200 (and signs non-TOTP users straight in on a
+  // correct password), so it is an unauthenticated password oracle unless
+  // throttled. Limit per-email + per-IP before any password comparison; buckets
+  // are shared with finish-credential-signup so an attacker cannot get a fresh
+  // allowance by hopping between the two routes for the same target.
+  const clientIp = resolveClientIpFromHeaders(request.headers) ?? "unknown";
+  // The e2e playwright suite signs in repeatedly as a handful of shared test
+  // users, which would otherwise exhaust the per-email budget mid-run. Skip the
+  // throttle only for authenticated test traffic, gated identically to
+  // Better Auth's rateLimitBypassRule (testEndpointsEnabled + a matching
+  // X-Test-API-Key) so it stays fully enforced in production.
+  const testApiKey = process.env.TEST_API_KEY;
+  const isE2eTestTraffic =
+    testEndpointsEnabled() &&
+    !!testApiKey &&
+    request.headers.get("X-Test-API-Key") === testApiKey;
+  if (!isE2eTestTraffic) {
+    const rateLimit = checkCredentialAttemptRateLimit(email, clientIp);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too many attempts. Wait and try again.",
+          code: "rate_limited",
+          retryAfter: rateLimit.retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+        }
+      );
+    }
+  }
+
   const [user] = await db
     .select({
       id: users.id,
       email: users.email,
+      emailVerified: users.emailVerified,
       twoFactorEnabled: users.twoFactorEnabled,
       deactivatedAt: users.deactivatedAt,
     })
@@ -99,7 +137,25 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (user.deactivatedAt) {
     return NextResponse.json(
-      { error: "Your account has been deactivated.", code: "account_deactivated" },
+      {
+        error: "Your account has been deactivated.",
+        code: "account_deactivated",
+      },
+      { status: 403 }
+    );
+  }
+
+  // The account exists and the password matched, but the email isn't verified.
+  // Better Auth's signInEmail would throw here; surface it as a typed signal so
+  // the dialog routes to the verification view (where it re-sends the OTP)
+  // instead of treating it as a generic 500. The password already matched, so
+  // this does not widen account enumeration beyond a correct-password reveal.
+  if (!user.emailVerified) {
+    return NextResponse.json(
+      {
+        error: "Please verify your email to continue.",
+        code: "email_not_verified",
+      },
       { status: 403 }
     );
   }

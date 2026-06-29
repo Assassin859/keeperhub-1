@@ -25,11 +25,11 @@ export const SYSTEM_ACTIONS = {
     category: "System",
     requiredFields: {
       condition:
-        'string - JavaScript expression using {{@nodeId:Label.field}} syntax. Supported operators: == (soft equals), === (equals), != (soft not equals), !== (not equals), >, >=, <, <=, contains, startsWith, endsWith, matchesRegex, isEmpty, isNotEmpty, exists, doesNotExist. Use == for cross-type comparisons (e.g., string "0" vs number 0). Example: "{{@check-balance:Check Balance.balance}} == 0"',
+        'string - JavaScript expression using {{@nodeId:Label.field}} syntax. Supported operators: == (soft equals), === (equals), != (soft not equals), !== (not equals), >, >=, <, <=, contains, startsWith, endsWith, matchesRegex, isEmpty, isNotEmpty, exists (not null and not undefined), doesNotExist (null or undefined), isNull (=== null), isNotNull (!== null), isUndefined (=== undefined), isNotUndefined (!== undefined). Use == for cross-type comparisons (e.g., string "0" vs number 0). Example: "{{@check-balance:Check Balance.balance}} == 0"',
     },
     optionalFields: {
       conditionConfig:
-        'object - Visual condition builder config. Structure: { group: { id: "nanoid", logic: "AND" | "OR", rules: [{ id: "nanoid", leftOperand: "{{@nodeId:Label.field}}", operator: "===" | "==" | "!==" | "!=" | ">" | ">=" | "<" | "<=" | "contains" | "startsWith" | "endsWith" | "isEmpty" | "isNotEmpty" | "exists" | "doesNotExist" | "matchesRegex", rightOperand: "value" }] } }. Every group and rule MUST have a unique id. Operator must be the exact symbol (e.g. "===" not "equals", "<" not "less_than"). When provided, the condition expression is auto-generated from this visual config.',
+        'object - Visual condition builder config. Structure: { group: { id: "nanoid", logic: "AND" | "OR", rules: [{ id: "nanoid", leftOperand: "{{@nodeId:Label.field}}", operator: "===" | "==" | "!==" | "!=" | ">" | ">=" | "<" | "<=" | "contains" | "startsWith" | "endsWith" | "isEmpty" | "isNotEmpty" | "exists" | "doesNotExist" | "isNull" | "isNotNull" | "isUndefined" | "isNotUndefined" | "matchesRegex", rightOperand: "value" }] } }. Every group and rule MUST have a unique id. Operator must be the exact symbol (e.g. "===" not "equals", "<" not "less_than"). When provided, the condition expression is auto-generated from this visual config.',
     },
     outputFields: {
       result: "boolean - Whether the condition evaluated to true",
@@ -73,6 +73,10 @@ export const SYSTEM_ACTIONS = {
     },
     optionalFields: {
       dbSchema: "string - JSON schema for result typing",
+      connectTimeout:
+        "number - Connection timeout in seconds (default 30, min 1, max 60). Raise for serverless databases that scale to zero and need time to wake on a cold start.",
+      retries:
+        "number - Connection retries (default 1, min 0, max 3). Retries only pre-query connection failures (e.g. a cold-start connect timeout); never re-runs a query that already started, so writes are not duplicated.",
     },
     outputFields: {
       rows: "array - Query result rows",

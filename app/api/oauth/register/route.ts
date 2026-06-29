@@ -5,6 +5,8 @@ import { type OAuthClient, storeOAuthClient } from "@/lib/mcp/oauth-store";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
+import { oauthRegisterSchema } from "@/lib/schemas/oauth";
+import { validateData } from "@/lib/validate-request";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +20,6 @@ function deriveBaseUrl(request: Request): string {
   const url = new URL(request.url);
   return `${url.protocol}//${url.host}`;
 }
-
-type RegistrationRequestBody = {
-  client_name?: unknown;
-  redirect_uris?: unknown;
-  scope?: unknown;
-  grant_types?: unknown;
-  token_endpoint_auth_method?: unknown;
-};
 
 type TokenEndpointAuthMethod =
   | "client_secret_basic"
@@ -72,14 +66,19 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  let body: RegistrationRequestBody;
+  let rawBody: unknown;
   try {
-    body = (await request.json()) as RegistrationRequestBody;
+    rawBody = await request.json();
   } catch {
     return Response.json(
       { error: "Invalid JSON body" },
       { status: HttpStatus.BAD_REQUEST }
     );
+  }
+
+  const parsed = validateData(rawBody, oauthRegisterSchema);
+  if (!parsed.success) {
+    return parsed.response;
   }
 
   const {
@@ -88,25 +87,8 @@ export async function POST(request: Request): Promise<Response> {
     scope,
     grant_types,
     token_endpoint_auth_method,
-  } = body;
+  } = parsed.data;
   const authMethod = resolveAuthMethod(token_endpoint_auth_method);
-
-  if (typeof client_name !== "string" || client_name.trim().length === 0) {
-    return Response.json(
-      { error: "client_name is required and must be a string" },
-      { status: HttpStatus.BAD_REQUEST }
-    );
-  }
-
-  if (!isStringArray(redirect_uris) || redirect_uris.length === 0) {
-    return Response.json(
-      {
-        error:
-          "redirect_uris is required and must be a non-empty array of strings",
-      },
-      { status: HttpStatus.BAD_REQUEST }
-    );
-  }
 
   for (const uri of redirect_uris) {
     if (!isAllowedRedirectUri(uri)) {

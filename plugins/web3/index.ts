@@ -4,6 +4,7 @@ import { Web3Icon } from "./icon";
 
 const web3Plugin: IntegrationPlugin = {
   type: "web3",
+  egress: "fixed-host",
   label: "Web3",
   description: "Interact with blockchain networks using your KeeperHub wallet",
 
@@ -252,6 +253,28 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "recipient",
           description: "The recipient address",
+        },
+        {
+          field: "executedCall.functionName",
+          description:
+            "Function that actually executed on the token contract, recovered by tracing the transaction. Identical for sponsored and direct sends.",
+        },
+        {
+          field: "executedCall.contractAddress",
+          description: "Address the executed call actually hit",
+        },
+        {
+          field: "executedCall.args",
+          description: "Decoded arguments of the executed call, keyed by name",
+        },
+        {
+          field: "executedCall.sponsored",
+          description:
+            "Whether the transaction was routed through a gas-sponsorship relayer/wrapper",
+        },
+        {
+          field: "executedCall.reverted",
+          description: "Whether the executed call frame reverted",
         },
         {
           field: "error",
@@ -1005,6 +1028,28 @@ const web3Plugin: IntegrationPlugin = {
           description: "The token symbol (e.g., USDC)",
         },
         {
+          field: "executedCall.functionName",
+          description:
+            "Function that actually executed on the token contract, recovered by tracing the transaction. Identical for sponsored and direct sends.",
+        },
+        {
+          field: "executedCall.contractAddress",
+          description: "Address the executed call actually hit",
+        },
+        {
+          field: "executedCall.args",
+          description: "Decoded arguments of the executed call, keyed by name",
+        },
+        {
+          field: "executedCall.sponsored",
+          description:
+            "Whether the transaction was routed through a gas-sponsorship relayer/wrapper",
+        },
+        {
+          field: "executedCall.reverted",
+          description: "Whether the executed call frame reverted",
+        },
+        {
           field: "error",
           description: "Error message if the approval failed",
         },
@@ -1143,6 +1188,28 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "result",
           description: "The contract function return value (if any)",
+        },
+        {
+          field: "executedCall.functionName",
+          description:
+            "Function that actually executed on the target contract, recovered by tracing the transaction. Identical for sponsored and direct sends.",
+        },
+        {
+          field: "executedCall.contractAddress",
+          description: "Address the executed call actually hit",
+        },
+        {
+          field: "executedCall.args",
+          description: "Decoded arguments of the executed call, keyed by name",
+        },
+        {
+          field: "executedCall.sponsored",
+          description:
+            "Whether the transaction was routed through a gas-sponsorship relayer/wrapper",
+        },
+        {
+          field: "executedCall.reverted",
+          description: "Whether the executed call frame reverted",
         },
         {
           field: "error",

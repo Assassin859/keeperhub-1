@@ -45,7 +45,7 @@ import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resol
 import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
 import { useFeatures } from "@/hooks/use-features";
 import type { FeatureDefinition } from "@/lib/features";
-import { getFeatureForActionType } from "@/lib/features";
+import { resolveActionFeature } from "@/lib/features";
 import {
   integrationsAtom,
   integrationsVersionAtom,
@@ -120,6 +120,47 @@ function DatabaseQueryFields({
               : []
           }
         />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="connectTimeout">Connection timeout (seconds)</Label>
+        <Input
+          disabled={disabled}
+          id="connectTimeout"
+          max={60}
+          min={1}
+          onChange={(e) => {
+            const raw = e.target.value.replace(/[^0-9]/g, "");
+            onUpdateConfig("connectTimeout", raw);
+          }}
+          placeholder="30"
+          type="number"
+          value={(config?.connectTimeout as string) || ""}
+        />
+        <p className="text-muted-foreground text-xs">
+          How long to wait to connect. Default 30 seconds, max 60. Raise this
+          for serverless databases that scale to zero and need time to wake.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="retries">Connection retries</Label>
+        <Input
+          disabled={disabled}
+          id="retries"
+          max={3}
+          min={0}
+          onChange={(e) => {
+            const raw = e.target.value.replace(/[^0-9]/g, "");
+            onUpdateConfig("retries", raw);
+          }}
+          placeholder="1"
+          type="number"
+          value={(config?.retries as string) || ""}
+        />
+        <p className="text-muted-foreground text-xs">
+          Retries only when the database is unreachable at connect time (safe
+          for cold starts). It never re-runs a query that already started.
+          Default 1, max 3.
+        </p>
       </div>
     </>
   );
@@ -812,7 +853,7 @@ export function ActionConfig({
   );
 
   const isActionLocked = (actionId: string): FeatureDefinition | null => {
-    const feature = getFeatureForActionType(actionId);
+    const feature = resolveActionFeature(actionId);
     if (!feature) {
       return null;
     }

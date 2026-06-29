@@ -12,6 +12,8 @@ import "server-only";
  *   Aave V3 Pool: github.com/bgd-labs/aave-address-book (AaveV3*.sol files)
  *   Lido: docs.lido.fi/deployed-contracts (mainnet page)
  *   Chainlink: reference-data-directory.vercel.app/feeds-*.json
+ *   Spark Pool: etherscan.io/address/0xC13e21B648A5Ee794902342038FF3aDAB66BE987 + docs.spark.fi
+ *   sUSDS + USDS: docs.spark.fi/dev/savings/susds-token + developers.skyeco.com
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,6 +71,47 @@ export const LIDO_TOKENS: Record<number, LidoChainTokens> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SparkLend Pool addresses (SparkLend is a direct Aave V3 fork — identical
+// getUserAccountData + getUserEMode interface, different pool address)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maps chainId → SparkLend Pool proxy contract address.
+ *
+ * SparkLend reuses the Aave V3 Pool interface exactly (getUserAccountData +
+ * getUserEMode). Do NOT use the same address as AAVE_V3_POOLS — SparkLend
+ * has its own Pool proxy deployment.
+ */
+export const SPARK_POOLS: Record<number, string> = {
+  1: "0xC13e21B648A5Ee794902342038FF3aDAB66BE987", // [VERIFIED etherscan.io/address/0xC13e21B648A5Ee794902342038FF3aDAB66BE987 + docs.spark.fi 2026-06-29]
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sky savings token addresses (sUSDS vault + USDS underlying)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SkySavingsTokens {
+  /** sUSDS ERC-4626 vault — balanceOf (shares) + maxWithdraw (underlying) are read from this address. */
+  sUSDS: string;
+  /** USDS stablecoin — used as the underlying token address for USD pricing via resolveUsdPrice. */
+  usds: string;
+}
+
+/**
+ * Maps chainId → Sky savings token addresses.
+ *
+ * sUSDS is an ERC-4626 vault. The scanner reads balanceOf (shares) and
+ * maxWithdraw (USDS underlying) in a single Multicall3 batch. USDS has no
+ * Chainlink feed in the registry — pricing falls through to DefiLlama.
+ */
+export const SKY_SAVINGS: Record<number, SkySavingsTokens> = {
+  1: {
+    sUSDS: "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD", // [VERIFIED docs.spark.fi/dev/savings/susds-token 2026-06-29]
+    usds: "0xdC035D45d973E3EC169d2276DDab16f1e407384F", // [VERIFIED developers.skyeco.com + docs.spark.fi/dev/savings/susds-token 2026-06-29]
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Chainlink stablecoin USD price feed addresses
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -112,6 +155,8 @@ export function scannableChainIds(enabledChainIds: number[]): number[] {
   const registeredChainIds = new Set<number>([
     ...Object.keys(AAVE_V3_POOLS).map(Number),
     ...Object.keys(LIDO_TOKENS).map(Number),
+    ...Object.keys(SPARK_POOLS).map(Number),
+    ...Object.keys(SKY_SAVINGS).map(Number),
   ]);
 
   return enabledChainIds.filter((chainId) => registeredChainIds.has(chainId));

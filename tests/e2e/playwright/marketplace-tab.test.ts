@@ -141,9 +141,16 @@ test.describe("Marketplace tab (MARKET-13)", () => {
       'div:not([role="tabpanel"]) > .animate-pulse, body > .animate-pulse'
     );
 
-    await page.getByRole("tab", { name: "Workflows" }).click();
-    await page.waitForTimeout(150);
-    expect(await shellPulseLocator.count()).toBe(0);
+    const workflowsTab = page.getByRole("tab", { name: "Workflows" });
+    await workflowsTab.click();
+    await expect(workflowsTab).toHaveAttribute("data-state", "active");
+    // The incoming tab's content skeleton can briefly mount before its
+    // [role="tabpanel"] wrapper exists -- the tab's own loading state, which is
+    // allowed. Poll until the shell settles; a pulse that stays outside any
+    // panel is the genuine shell flicker the contract forbids.
+    await expect
+      .poll(() => shellPulseLocator.count(), { timeout: 5000 })
+      .toBe(0);
     await expect(page).toHaveURL(URL_TAB_WORKFLOWS);
     // Marker survives → shell did not re-mount.
     await expect(sidebar).toHaveAttribute(

@@ -1,10 +1,18 @@
 name: Deploy PR Environment
 
+concurrency:
+  group: pr-env-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches:
       - staging
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   check-labels:
@@ -16,6 +24,7 @@ jobs:
       should-deploy-events-only: ${{ steps.check.outputs.should-deploy-events-only }}
       should-build-executor: ${{ steps.check.outputs.should-build-executor }}
       should-deploy-collector: ${{ steps.check.outputs.should-deploy-collector }}
+      should-load-test: ${{ steps.check.outputs.should-load-test }}
     steps:
       - name: Checkout code (for change detection)
         if: github.event.action == 'synchronize'
@@ -32,6 +41,7 @@ jobs:
           echo "should-deploy-events-only=false" >> $GITHUB_OUTPUT
           echo "should-build-executor=false" >> $GITHUB_OUTPUT
           echo "should-deploy-collector=false" >> $GITHUB_OUTPUT
+          echo "should-load-test=false" >> $GITHUB_OUTPUT
 
           HAS_DEPLOY_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'deploy-pr-environment') }}"
           HAS_TEST_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'run-e2e-tests-pr-deploy') }}"
@@ -52,6 +62,7 @@ jobs:
           # satellite so the PR's collector code can be exercised against the
           # PR's DB. ServiceMonitors are off in PR envs - verify via curl.
           HAS_METRICS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'deploy-pr-metrics') }}"
+          HAS_LOAD_TEST_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'run-load-test') }}"
           ACTION="${{ github.event.action }}"
           ADDED_LABEL="${{ github.event.label.name }}"
 
@@ -70,8 +81,17 @@ jobs:
               if [[ "$HAS_METRICS_LABEL" == "true" ]]; then
                 echo "should-deploy-collector=true" >> $GITHUB_OUTPUT
               fi
+              if [[ "$HAS_LOAD_TEST_LABEL" == "true" ]]; then
+                echo "should-load-test=true" >> $GITHUB_OUTPUT
+              fi
             elif [[ "$ADDED_LABEL" == "run-e2e-tests-pr-deploy" ]]; then
               echo "should-test=true" >> $GITHUB_OUTPUT
+            elif [[ "$ADDED_LABEL" == "run-load-test" ]]; then
+              # Load-test-only path: PR env is already deployed. Only meaningful
+              # when deploy-pr-environment is also present — no env, no target.
+              if [[ "$HAS_DEPLOY_LABEL" == "true" ]]; then
+                echo "should-load-test=true" >> $GITHUB_OUTPUT
+              fi
             elif [[ "$ADDED_LABEL" == "deploy-pr-executor" ]]; then
               # Executor-only path: PR env is already deployed. Build a PR
               # executor image and redeploy just that satellite. Cheaper than
@@ -154,6 +174,9 @@ jobs:
             if [[ "$HAS_DEPLOY_LABEL" == "true" && "$HAS_TEST_LABEL" == "true" ]]; then
               echo "should-test=true" >> $GITHUB_OUTPUT
             fi
+            if [[ "$HAS_DEPLOY_LABEL" == "true" && "$HAS_LOAD_TEST_LABEL" == "true" ]]; then
+              echo "should-load-test=true" >> $GITHUB_OUTPUT
+            fi
           fi
 
   build-images:
@@ -188,8 +211,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -266,8 +288,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -318,8 +339,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -391,8 +411,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -439,7 +458,18 @@ jobs:
           cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EXECUTOR_ECR_NAME }}:cache-pr,mode=max
 
   deploy:
-    needs: [check-labels, build-images, build-events-image, build-executor-image, build-collector-image]
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write # actions/github-script posts PR comments
+    needs:
+      [
+        check-labels,
+        build-images,
+        build-events-image,
+        build-executor-image,
+        build-collector-image,
+      ]
     # Cannot use the `success()` shorthand here because GHA evaluates it
     # as false whenever ANY needed job is skipped. build-events-image is
     # skipped on purpose for PRs without the deploy-pr-events label, so
@@ -473,8 +503,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -632,6 +661,18 @@ jobs:
           ENCODED_DB_PASSWORD=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
           echo "::add-mask::$ENCODED_DB_PASSWORD"
           export ENCODED_DB_PASSWORD
+          # Detect the scheduler image tags currently running on staging. The -latest
+          # floating tags (schedule-latest, block-latest) are not reliably maintained;
+          # using the pinned tag from the live staging deployment guarantees the image
+          # exists and is known-good.
+          SCHEDULE_IMAGE_TAG=$(kubectl get deployment keeperhub-schedule-common \
+            -n keeperhub \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+          BLOCK_IMAGE_TAG=$(kubectl get deployment keeperhub-block-common \
+            -n keeperhub \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+          echo "Scheduler image tags: schedule=${SCHEDULE_IMAGE_TAG}, block=${BLOCK_IMAGE_TAG}"
+          export SCHEDULE_IMAGE_TAG BLOCK_IMAGE_TAG
           envsubst < deploy/pr-environment/values.template.yaml > ${{ github.workspace }}/values-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/scheduler-dispatcher.template.yaml > ${{ github.workspace }}/schedule-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/block-dispatcher.template.yaml > ${{ github.workspace }}/block-pr-${{ env.PR_NUMBER }}.yaml
@@ -961,8 +1002,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -1038,8 +1078,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Configure kubectl
@@ -1136,6 +1175,10 @@ jobs:
 
   # DISABLED: remote E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-playwright-remote:
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write # actions/github-script posts PR comments
     needs: [check-labels, deploy]
     if: >-
       always() &&
@@ -1165,8 +1208,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Configure kubectl
@@ -1308,3 +1350,91 @@ jobs:
                 body,
               });
             }
+
+  seed-load-test-users:
+    permissions:
+      id-token: write
+      contents: read
+    needs: [check-labels, deploy]
+    if: >-
+      !cancelled() &&
+      needs.check-labels.outputs.should-load-test == 'true' &&
+      (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REGION: us-east-1
+      CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
+      NAMESPACE: pr-${{ github.event.pull_request.number }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.REGION }}
+
+      - name: Seed load-test users
+        env:
+          LOAD_TEST_USER_PASSWORD: ${{ secrets.LOAD_TEST_USER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Derive the migrator image from the running deployment initContainer rather
+          # than the HEAD SHA — the image may have been built on an earlier commit if
+          # only CI/test files changed and build-images was skipped this run.
+          MIGRATOR_IMAGE=$(kubectl get deployment keeperhub-pr-${PR_NUMBER}-common -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.template.spec.initContainers[0].image}')
+          DB_PASSWORD=$(kubectl get secret keeperhub-pr-${PR_NUMBER}-db-credentials -n "${NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)
+          ENCODED_PASSWORD=$(DB_PASSWORD="${DB_PASSWORD}" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
+          DB_URL="postgresql://keeperhub:${ENCODED_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.${NAMESPACE}.svc.cluster.local:5432/keeperhub"
+          kubectl delete job keeperhub-pr-${PR_NUMBER}-load-test-seed -n "${NAMESPACE}" --ignore-not-found
+          kubectl apply -n "${NAMESPACE}" -f - <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: keeperhub-pr-${PR_NUMBER}-load-test-seed
+          spec:
+            backoffLimit: 2
+            ttlSecondsAfterFinished: 600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: load-test-seed
+                    image: ${MIGRATOR_IMAGE}
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - 'pnpm tsx scripts/seed-load-test-users.ts'
+                    env:
+                      - name: DATABASE_URL
+                        value: "${DB_URL}"
+                      - name: ALLOW_REMOTE
+                        value: "1"
+                      - name: LOAD_TEST_USER_PASSWORD
+                        value: "${LOAD_TEST_USER_PASSWORD}"
+                      - name: SEED_COUNT
+                        value: "50"
+          EOF
+          kubectl wait --for=condition=complete job/keeperhub-pr-${PR_NUMBER}-load-test-seed -n "${NAMESPACE}" --timeout=120s || true
+          echo "--- load-test-seed job logs ---"
+          kubectl logs -n "${NAMESPACE}" job/keeperhub-pr-${PR_NUMBER}-load-test-seed --tail=30 || true
+
+  load-test:
+    needs: [check-labels, deploy, seed-load-test-users]
+    if: >-
+      !cancelled() &&
+      needs.check-labels.outputs.should-load-test == 'true' &&
+      (needs.deploy.result == 'success' || needs.deploy.result == 'skipped') &&
+      needs.seed-load-test-users.result == 'success'
+    uses: ./.github/workflows/load-test.yml
+    with:
+      target_url: https://app-pr-${{ github.event.pull_request.number }}.keeperhub.com
+    secrets: inherit

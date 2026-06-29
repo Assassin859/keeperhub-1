@@ -43,6 +43,7 @@ export type ErrorCode =
   | "E-0001"
   | "E-0002"
   | "E-0003"
+  | "E-0004"
   | "N-0001"
   | "N-0002"
   | "P-0001"
@@ -138,6 +139,15 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeEntry> = {
     customerMessage:
       "Internal error (E-0003). Please wait a few minutes and try again.",
   },
+  "E-0004": {
+    code: "E-0004",
+    prefix: "E",
+    component: "Executor",
+    retryable: true,
+    category: "infrastructure",
+    customerMessage:
+      "The run could not be processed (E-0004). Please wait a few minutes and try again.",
+  },
   "N-0001": {
     code: "N-0001",
     prefix: "N",
@@ -193,7 +203,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeEntry> = {
     prefix: "P",
     component: "Pod",
     retryable: true,
-    category: "workflow_engine",
+    category: "infrastructure",
     customerMessage: "The run could not be started (P-0005). Please try again.",
   },
   "CS-0001": {

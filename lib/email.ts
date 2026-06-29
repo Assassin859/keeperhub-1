@@ -5,7 +5,12 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
+import {
+  ErrorCategory,
+  logSystemError,
+  logUserError,
+  logWarn,
+} from "@/lib/logging";
 
 const isTestEnv = !!process.env.CI || process.env.NODE_ENV === "test";
 
@@ -66,9 +71,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
 
   if (!apiKey) {
     if (isTestEnv) {
-      console.warn(
-        "[Email] SENDGRID_API_KEY not configured — skipping email send"
-      );
+      logWarn("[Email] SENDGRID_API_KEY not configured — skipping email send");
     } else {
       logSystemError(
         ErrorCategory.INFRASTRUCTURE,
@@ -266,9 +269,7 @@ KeeperHub - Blockchain Workflow Automation
   if (success) {
     console.log(`[Email] OTP sent to ${email} for ${type}`);
   } else if (isTestEnv) {
-    console.warn(
-      `[Email] Failed to send OTP to ${email} — OTP is stored in DB`
-    );
+    logWarn(`[Email] Failed to send OTP to ${email} — OTP is stored in DB`);
   } else {
     logUserError(
       ErrorCategory.EXTERNAL_SERVICE,
@@ -458,7 +459,7 @@ KeeperHub - Blockchain Workflow Automation
   if (success) {
     console.log(`[Email] Invitation sent to ${inviteeEmail}`);
   } else if (isTestEnv) {
-    console.warn(
+    logWarn(
       `[Email] Failed to send invitation to ${inviteeEmail} — invitation is stored in DB`
     );
   } else {
@@ -588,6 +589,7 @@ KeeperHub - Blockchain Workflow Automation
 type ExecutionDigestEmailData = {
   to: string;
   orgName: string;
+  organizationId: string;
   cadence: "daily" | "weekly" | "monthly";
   // Window the digest summarizes, [since, until).
   since: Date;
@@ -709,6 +711,7 @@ export async function sendWorkflowExecutionDigestEmail(
   const {
     to,
     orgName,
+    organizationId,
     cadence,
     since,
     until,
@@ -734,6 +737,12 @@ export async function sendWorkflowExecutionDigestEmail(
 
   const workflowUrl = (id: string): string =>
     `${appUrl}/workflows/${encodeURIComponent(id)}`;
+
+  // Deep-links into the org's Notifications settings so a recipient can adjust
+  // or turn off this digest. Carries the org id so the app opens the right org.
+  const manageUrl = `${appUrl}/workflows?digestSettings=${encodeURIComponent(
+    organizationId
+  )}`;
 
   const failingText = topFailing.length
     ? topFailing
@@ -764,7 +773,8 @@ export async function sendWorkflowExecutionDigestEmail(
   );
 
   const text = `
-${orgName} - ${summaryLabel}
+Organization: ${orgName}
+${summaryLabel}
 ${periodRange}
 
 Total runs: ${stats.total}
@@ -781,6 +791,9 @@ Top failing workflows:
 ${failingText}
 
 View runs: ${appUrl}/analytics
+
+You're receiving this digest for ${orgName} because you're an owner or admin of that organization.
+Manage notifications: ${manageUrl}
 
 ---
 KeeperHub - Blockchain Workflow Automation
@@ -865,9 +878,13 @@ ${socialText}
     <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px; text-align: center;">
+    <div style="margin:0 0 14px;">
+      <div style="color:#999; font-size:11px; font-weight:600; letter-spacing:0.6px; text-transform:uppercase; margin-bottom:6px;">Organization</div>
+      <span style="display:inline-block; background:#f5f5f5; border:1px solid #e5e5e5; border-radius:999px; padding:6px 14px; color:#1a1a2e; font-weight:600; font-size:14px;">${escapeHtml(orgName)}</span>
+    </div>
     <h2 style="color: #1a1a2e; margin-top: 0;">${escapeHtml(orgName)} workflow digest</h2>
     <p style="color:#666; margin-bottom:10px;">${summaryLabel}</p>
-    <p style="color:#444; font-size:13px; margin:0 0 4px; line-height:1.8;">${formatUtcStamp(since)}<br><span style="color:#aaa;">to</span><br>${formatUtcStamp(until)}</p>
+    <p style="color:#444; font-size:13px; margin:0 0 4px;">${formatUtcStamp(since)} <span style="color:#aaa;">to</span> ${formatUtcStamp(until)}</p>
     <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:24px 0;">
       <tr>${statCard(stats.total, "Total runs")}${statCard(stats.distinctWorkflows, "Workflows run")}</tr>
     </table>
@@ -891,6 +908,8 @@ ${socialText}
       (s) =>
         `<td style="padding:0 8px;"><a href="${s.url}" target="_blank" rel="noopener"><img src="cid:${s.icon}" alt="${s.name}" width="20" height="20" style="display:block;" /></a></td>`
     ).join("")}</tr></table>
+    <p style="margin: 0 0 6px;">You're receiving this digest for <strong>${escapeHtml(orgName)}</strong> because you're an owner or admin of that organization.</p>
+    <p style="margin: 0 0 12px;"><a href="${manageUrl}" style="color:#666; text-decoration:underline;">Manage notifications</a></p>
     <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
   </div>
 </body>
@@ -904,6 +923,220 @@ ${socialText}
     html,
     attachments: getDigestSocialAttachments(),
   });
+}
+
+type ApiKeyChangeData = {
+  email: string;
+  action: "created" | "revoked";
+  tokenName: string | null;
+  keyPrefix: string;
+  when: Date;
+};
+
+/**
+ * Notify the account owner out-of-band whenever an API key is minted or
+ * revoked. An API key is the longest-lived bypass credential a session can
+ * mint, so the owner should learn about a create/revoke even if their session
+ * was the one that did it -- a silent key issued from a stolen session is the
+ * exact thing this surfaces.
+ */
+export async function sendApiKeyChangeEmail(
+  data: ApiKeyChangeData
+): Promise<boolean> {
+  const { email, action, tokenName, keyPrefix, when } = data;
+
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+
+  const created = action === "created";
+  const subject = created
+    ? "A new API key was created - KeeperHub"
+    : "An API key was revoked - KeeperHub";
+  const heading = created ? "New API key created" : "API key revoked";
+  const lead = created
+    ? "A new API key was just created on your KeeperHub account."
+    : "An API key was just revoked from your KeeperHub account.";
+  const nameLabel = tokenName ?? "Unnamed key";
+  const whenFormatted = when.toUTCString();
+
+  const text = `
+Hi,
+
+${lead}
+
+Name: ${nameLabel}
+Key: ${keyPrefix}...
+When: ${whenFormatted}
+
+If this was you, no action is needed. If this was not you, revoke your API keys and change your password immediately.
+
+---
+KeeperHub - Blockchain Workflow Automation
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">${heading}</h2>
+
+    <p>${lead}</p>
+
+    <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; font-family: monospace; font-size: 14px;">
+      <div><strong>Name:</strong> ${nameLabel}</div>
+      <div><strong>Key:</strong> ${keyPrefix}...</div>
+      <div><strong>When:</strong> ${whenFormatted}</div>
+    </div>
+
+    <p>If this was you, no action is needed.</p>
+
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 20px 0;">
+      <p style="margin: 0; color: #991b1b;">
+        <strong>If this was not you</strong>, revoke your API keys and change your password immediately.
+      </p>
+    </div>
+
+    <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;">
+
+    <p style="color: #999; font-size: 12px; margin-bottom: 0;">
+      You're receiving this because API keys on your account were changed. These notifications cannot be turned off as they protect your account.
+    </p>
+  </div>
+
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  const success = await sendEmail({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+
+  if (!(success || isTestEnv)) {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Email] Failed to send API key ${action} notification to ${email}`,
+      new Error("Failed to send API key change notification"),
+      {
+        service: "sendgrid",
+        action,
+      }
+    );
+  }
+
+  return success;
+}
+
+type SecurityAlertData = {
+  email: string;
+  // Human-readable phrase completing "{actor} ___" (from describeAuditAction),
+  // e.g. "exported a wallet private key".
+  actionPhrase: string;
+  actorLabel: string;
+  when: Date;
+  resourceType?: string | null;
+};
+
+/**
+ * Notify an organization owner out-of-band when a high-risk action (wallet
+ * private-key export, withdrawal, Safe role/allowance change, HMAC rotation,
+ * org deactivation, ...) is recorded. The real-time signal so an owner learns
+ * promptly rather than only on a later trail review. Carries the action phrase
+ * and actor only -- never the diff, a secret, or a payload.
+ */
+export async function sendSecurityAlertEmail(
+  data: SecurityAlertData
+): Promise<boolean> {
+  const { email, actionPhrase, actorLabel, when, resourceType } = data;
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+  const whenFormatted = when.toUTCString();
+  const summary = `${actorLabel} ${actionPhrase}`;
+  const subject = "Security alert: a high-risk action on your organization";
+
+  const text = `
+Hi,
+
+A high-risk security action was just performed on your KeeperHub organization.
+
+What: ${summary}
+${resourceType ? `Resource: ${resourceType}\n` : ""}When: ${whenFormatted}
+
+If this was expected, no action is needed. If it was not, revoke the actor's access, rotate affected credentials, and contact support immediately.
+
+---
+KeeperHub - Blockchain Workflow Automation
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">High-risk security action</h2>
+
+    <p>A high-risk security action was just performed on your KeeperHub organization.</p>
+
+    <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; font-size: 14px;">
+      <div><strong>What:</strong> ${summary}</div>
+      ${resourceType ? `<div><strong>Resource:</strong> ${resourceType}</div>` : ""}
+      <div><strong>When:</strong> ${whenFormatted}</div>
+    </div>
+
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 20px 0;">
+      <p style="margin: 0; color: #991b1b;">
+        <strong>If this was not expected</strong>, revoke the actor's access, rotate affected credentials, and contact support immediately.
+      </p>
+    </div>
+
+    <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;">
+
+    <p style="color: #999; font-size: 12px; margin-bottom: 0;">
+      You're receiving this as an owner of the organization. These security notifications cannot be turned off.
+    </p>
+  </div>
+
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  const success = await sendEmail({ to: email, subject, text, html });
+
+  if (!(success || isTestEnv)) {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Email] Failed to send security alert to ${email}`,
+      new Error("Failed to send security alert notification"),
+      { service: "sendgrid" }
+    );
+  }
+
+  return success;
 }
 
 type AccountDeactivatedData = {

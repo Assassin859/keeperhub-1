@@ -1,12 +1,12 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { signUpAndVerify as signUpAndVerifyBase } from "./utils/auth";
+import { getDbConnection } from "./utils/connection";
+import { PERSISTENT_TEST_USER_EMAIL } from "./utils/db";
 
 // Regex patterns (moved to top level for performance)
 const SLUG_PATTERN = /test-org-/;
 const CREATED_PATTERN = /created/i;
-const WALLET_CREATED_PATTERN = /wallet created/i;
-const ADDRESS_PATTERN = /0x.*\.\.\./;
 const COPIED_PATTERN = /copied/i;
 
 // Sign up a fresh user and wait for org switcher (used by wallet tests that need a new org)
@@ -71,22 +71,14 @@ async function openWalletOverlay(page: Page): Promise<void> {
   });
 }
 
-// Create a wallet via the overlay form and wait for the success toast
-async function createWalletViaOverlay(page: Page): Promise<void> {
-  await page.locator('button:has-text("Create Organization Wallet")').click();
-
-  const createBtn = page.locator(
-    'button[data-slot="button"]:has-text("Create Wallet")'
-  );
-  await expect(createBtn).toBeEnabled({ timeout: 5000 });
-  await createBtn.click();
-
-  // Wait for success toast (Para API can be slow in beta environments)
+// Wait for the wallet that is auto-provisioned at signup to resolve. The
+// toolbar address only appears once provisioning (a real Turnkey call) has
+// completed, so this is the signal that the org has its wallet.
+async function waitForAutoProvisionedWallet(page: Page): Promise<void> {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(
-    page
-      .locator("[data-sonner-toast]")
-      .filter({ hasText: WALLET_CREATED_PATTERN })
-  ).toBeVisible({ timeout: 30_000 });
+    page.locator('[data-testid="wallet-toolbar-address"]')
+  ).toBeVisible({ timeout: 45_000 });
 }
 
 // Run tests serially to avoid session state conflicts
@@ -94,6 +86,40 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("Organization Management", () => {
   test.describe("Organization Creation", () => {
+    // These tests create orgs as the shared persistent test user, which (via
+    // the afterCreateOrganization hook) flips that user's session active org
+    // and adds owner memberships. Later suites (workflow save, webhook toggle,
+    // marketplace listing) assume it acts in its seeded e2e-test-org, and a
+    // drifted active org makes their org-scoped API calls 404. Restore the
+    // session's active org to the seeded (owner, oldest) org after this block;
+    // createTestWorkflow targets that same org, so the two halves agree.
+    test.afterAll(async () => {
+      const sql = getDbConnection();
+      try {
+        const userRows = await sql`
+          SELECT id FROM users WHERE email = ${PERSISTENT_TEST_USER_EMAIL} LIMIT 1
+        `;
+        if (userRows.length === 0) {
+          return;
+        }
+        const userId = userRows[0].id as string;
+        const orgRows = await sql`
+          SELECT organization_id FROM member
+          WHERE user_id = ${userId} AND role = 'owner'
+          ORDER BY created_at ASC
+          LIMIT 1
+        `;
+        if (orgRows.length > 0) {
+          await sql`
+            UPDATE sessions SET active_organization_id = ${orgRows[0].organization_id}
+            WHERE user_id = ${userId}
+          `;
+        }
+      } finally {
+        await sql.end();
+      }
+    });
+
     test("ORG-CREATE-1: user can create a new organization", async ({
       page,
     }) => {
@@ -210,133 +236,26 @@ test.describe("Organization Management", () => {
   });
 });
 
-test.describe("Para Wallet Management", () => {
-  // biome-ignore lint/suspicious/noSkippedTests: Para beta API unreliable in CI
-  test.skip(!!process.env.CI, "Para beta API unreliable in CI");
+// The org wallet is now auto-provisioned at signup (Turnkey), so these specs
+// assert the overlay UI against that auto-created wallet. The manual
+// create-from-empty form is intentionally not covered here: provisioning runs
+// on every wallet-less org, so the empty-state entry point is no longer
+// reachable (deleting the wallet just re-triggers provisioning). The
+// auto-provision path itself is covered in wallet-autoprovision.test.ts.
+test.describe("Organization Wallet (auto-provisioned)", () => {
+  test.skip(!!process.env.CI, "Turnkey API unreliable in CI");
 
   test.beforeEach(async ({ context }) => {
     await context.clearCookies();
   });
 
-  test.describe("Wallet Creation", () => {
-    test("WALLET-CREATE-1: admin can create organization wallet", async ({
-      page,
-    }) => {
-      const { email } = await signUpAndVerify(page);
-
-      // Open wallet overlay
-      await openWalletOverlay(page);
-
-      // Wallet overlay doesn't have role="dialog" - scope to page
-      const overlay = page;
-
-      // Verify no wallet message is shown
-      await expect(overlay.locator("text=No wallet found")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Click create wallet button
-      await overlay
-        .locator('button:has-text("Create Organization Wallet")')
-        .click();
-
-      // Verify form appears with pre-filled email
-      const emailInput = overlay.locator("#wallet-email");
-      await expect(emailInput).toBeVisible({ timeout: 5000 });
-      await expect(emailInput).toHaveValue(email);
-
-      // Submit the form
-      const createBtn = overlay.locator(
-        'button[data-slot="button"]:has-text("Create Wallet")'
-      );
-      await expect(createBtn).toBeEnabled({ timeout: 5000 });
-      await createBtn.click();
-
-      // Wait for wallet creation to complete (Para API can take ~5s)
-      // Verify wallet details section appears (proves creation succeeded)
-      await expect(overlay.locator("text=Account details")).toBeVisible({
-        timeout: 30_000,
-      });
-    });
-
-    test("WALLET-CREATE-2: wallet shows address after creation", async ({
-      page,
-    }) => {
-      const { email } = await signUpAndVerify(page);
-
-      await openWalletOverlay(page);
-
-      // Create wallet
-      await createWalletViaOverlay(page);
-
-      // Verify wallet address is displayed (format: 0x...xxxx)
-      await expect(page.locator("code")).toContainText(ADDRESS_PATTERN);
-
-      // Verify email is displayed
-      await expect(page.locator(`text=${email}`)).toBeVisible();
-    });
-
-    test("WALLET-CREATE-3: wallet form can be cancelled", async ({ page }) => {
-      await signUpAndVerify(page);
-
-      await openWalletOverlay(page);
-      // Wallet overlay doesn't have role="dialog" - scope to page
-      const overlay = page;
-
-      // Click create wallet button
-      await overlay
-        .locator('button:has-text("Create Organization Wallet")')
-        .click();
-
-      // Verify form appears
-      await expect(overlay.locator("#wallet-email")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Click cancel
-      await overlay.locator('button:has-text("Cancel")').click();
-
-      // Verify form is hidden and original message is shown
-      await expect(overlay.locator("#wallet-email")).toBeHidden();
-      await expect(overlay.locator("text=No wallet found")).toBeVisible();
-    });
-
-    test("WALLET-CREATE-4: wallet creation requires email", async ({
-      page,
-    }) => {
-      await signUpAndVerify(page);
-
-      await openWalletOverlay(page);
-      // Wallet overlay doesn't have role="dialog" - scope to page
-      const overlay = page;
-
-      // Open create form
-      await overlay
-        .locator('button:has-text("Create Organization Wallet")')
-        .click();
-
-      // Clear the pre-filled email
-      const emailInput = overlay.locator("#wallet-email");
-      await emailInput.clear();
-
-      // Create button should be disabled when email is empty
-      const createButton = overlay.locator(
-        'button[data-slot="button"]:has-text("Create Wallet")'
-      );
-      await expect(createButton).toBeDisabled();
-    });
-  });
-
   test.describe("Wallet Display", () => {
-    test("WALLET-DISPLAY-1: wallet shows balance sections after creation", async ({
+    test("WALLET-DISPLAY-1: wallet shows balance sections", async ({
       page,
     }) => {
       await signUpAndVerify(page);
-
+      await waitForAutoProvisionedWallet(page);
       await openWalletOverlay(page);
-
-      // Create wallet
-      await createWalletViaOverlay(page);
 
       // Verify balance section appears
       await expect(page.locator('h3:has-text("Balances")')).toBeVisible({
@@ -352,11 +271,8 @@ test.describe("Para Wallet Management", () => {
       page,
     }) => {
       await signUpAndVerify(page);
-
+      await waitForAutoProvisionedWallet(page);
       await openWalletOverlay(page);
-
-      // Create wallet first
-      await createWalletViaOverlay(page);
 
       // Wait for balance section
       await expect(page.locator('h3:has-text("Balances")')).toBeVisible({
@@ -380,11 +296,8 @@ test.describe("Para Wallet Management", () => {
 
     test("WALLET-DISPLAY-3: admin can refresh balances", async ({ page }) => {
       await signUpAndVerify(page);
-
+      await waitForAutoProvisionedWallet(page);
       await openWalletOverlay(page);
-
-      // Create wallet
-      await createWalletViaOverlay(page);
 
       // Wait for balance section
       await expect(page.locator('h3:has-text("Balances")')).toBeVisible({
@@ -404,11 +317,8 @@ test.describe("Para Wallet Management", () => {
   test.describe("Wallet Copy Address", () => {
     test("WALLET-COPY-1: user can copy wallet address", async ({ page }) => {
       await signUpAndVerify(page);
-
+      await waitForAutoProvisionedWallet(page);
       await openWalletOverlay(page);
-
-      // Create wallet
-      await createWalletViaOverlay(page);
 
       // Wait for wallet details to load
       await expect(page.locator("text=Account details")).toBeVisible({

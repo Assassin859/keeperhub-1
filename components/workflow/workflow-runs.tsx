@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   Ban,
   Check,
@@ -9,12 +9,14 @@ import {
   Clock,
   Copy,
   ExternalLink,
+  GitBranch,
   Loader2,
   Play,
   TriangleAlert,
   X,
 } from "lucide-react";
 import Image from "next/image";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toChecksumAddress } from "@/lib/address-utils";
@@ -36,6 +38,7 @@ import { getRelativeTime } from "@/lib/utils/time";
 import {
   currentWorkflowIdAtom,
   executionLogsAtom,
+  propertiesPanelActiveTabAtom,
   runsRefreshTriggerAtom,
   selectedExecutionIdAtom,
 } from "@/lib/workflow/store";
@@ -78,6 +81,9 @@ type WorkflowExecution = {
   lastSuccessfulNodeId: string | null;
   lastSuccessfulNodeName: string | null;
   executionTrace: string[] | null;
+  // The workflow_history version this run executed (resolved server-side from
+  // the run's content hash); null when no matching version exists.
+  ranVersion: number | null;
 };
 
 type WorkflowRunsProps = {
@@ -114,6 +120,17 @@ function isBase64ImageOutput(output: unknown): output is { base64: string } {
     "base64" in output &&
     typeof (output as { base64: unknown }).base64 === "string" &&
     (output as { base64: string }).base64.length > 100 // Base64 images are large
+  );
+}
+
+// A sponsored on-chain step carries `sponsored: true` in its output (set by the
+// web3 step cores when Turnkey's gas station covered the gas).
+function isSponsoredOutput(output: unknown): boolean {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "sponsored" in output &&
+    (output as { sponsored?: unknown }).sponsored === true
   );
 }
 
@@ -632,14 +649,74 @@ function ForEachLogGroup({
 
   const hasContent = iterations.length > 0 || collectLog !== null;
 
+  const hasAnyIterationError = iterations.some((iteration) =>
+    iteration.logs.some((l) => l.status === "error")
+  );
+  const displayLog: ExecutionLog =
+    hasAnyIterationError && forEachLog.status !== "error"
+      ? { ...forEachLog, status: "error" as const }
+      : forEachLog;
+
+  const iterationsContent =
+    iterations.length > 0 ? (
+      <div className="space-y-1">
+        {iterations.map((iteration) => {
+          const isIterExpanded = expandedIterations.has(iteration.iterationIndex);
+          return (
+            <div key={iteration.iterationIndex}>
+              <IterationHeader
+                durationMs={computeIterationDuration(iteration.logs)}
+                hasError={iteration.logs.some((l) => l.status === "error")}
+                isExpanded={isIterExpanded}
+                iterationIndex={iteration.iterationIndex}
+                onToggle={() => toggleIteration(iteration.iterationIndex)}
+              />
+              {isIterExpanded && (
+                <div className="ml-4 border-border border-l pl-2">
+                  {groupLogsByIteration(iteration.logs, lookup).map(
+                    (subEntry, subIdx, subEntries) => {
+                      if (subEntry.type === FOR_EACH_GROUP_TYPE) {
+                        return (
+                          <ForEachLogGroup
+                            collectLog={subEntry.collectLog}
+                            expandedLogs={expandedLogs}
+                            forEachLog={subEntry.forEachLog}
+                            getStatusDotClass={getStatusDotClass}
+                            getStatusIcon={getStatusIcon}
+                            isFirst={subIdx === 0}
+                            isLast={subIdx === subEntries.length - 1}
+                            iterations={subEntry.iterations}
+                            key={subEntry.forEachLog.id}
+                            lookup={lookup}
+                            onToggleLog={onToggleLog}
+                          />
+                        );
+                      }
+                      return (
+                        <ExecutionLogEntry
+                          getStatusDotClass={getStatusDotClass}
+                          getStatusIcon={getStatusIcon}
+                          isExpanded={expandedLogs.has(subEntry.log.id)}
+                          isFirst={subIdx === 0}
+                          isLast={subIdx === subEntries.length - 1}
+                          key={subEntry.log.id}
+                          log={subEntry.log}
+                          onToggle={() => onToggleLog(subEntry.log.id)}
+                        />
+                      );
+                    }
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <div className="relative">
-      {/* Continuous timeline line from For Each dot through expanded
-          iterations down to Collect (or the group bottom). Without this,
-          the line breaks because expanded content sits between two
-          ExecutionLogEntry siblings whose internal lines don't span
-          across intervening DOM nodes. */}
-      {hasContent && (!isLast || collectLog !== null) && (
+      {collectLog !== null && (
         <div
           className="absolute w-px bg-border"
           style={{ left: "9px", top: "calc(0.5rem + 1.25rem)", bottom: 0 }}
@@ -650,70 +727,11 @@ function ForEachLogGroup({
         getStatusIcon={getStatusIcon}
         isExpanded={expandedLogs.has(forEachLog.id)}
         isFirst={isFirst}
-        isLast={isLast && !hasContent}
-        log={forEachLog}
+        isLast={isLast && collectLog === null}
+        log={displayLog}
+        middleContent={iterationsContent}
         onToggle={() => onToggleLog(forEachLog.id)}
       />
-
-      {expandedLogs.has(forEachLog.id) && (
-        <div className="ml-6 pl-2">
-          {iterations.map((iteration) => {
-            const isIterExpanded = expandedIterations.has(
-              iteration.iterationIndex
-            );
-
-            return (
-              <div key={iteration.iterationIndex}>
-                <IterationHeader
-                  durationMs={computeIterationDuration(iteration.logs)}
-                  hasError={iteration.logs.some((l) => l.status === "error")}
-                  isExpanded={isIterExpanded}
-                  iterationIndex={iteration.iterationIndex}
-                  onToggle={() => toggleIteration(iteration.iterationIndex)}
-                />
-
-                {isIterExpanded && (
-                  <div className="ml-4 border-border border-l pl-2">
-                    {groupLogsByIteration(iteration.logs, lookup).map(
-                      (subEntry, subIdx, subEntries) => {
-                        if (subEntry.type === FOR_EACH_GROUP_TYPE) {
-                          return (
-                            <ForEachLogGroup
-                              collectLog={subEntry.collectLog}
-                              expandedLogs={expandedLogs}
-                              forEachLog={subEntry.forEachLog}
-                              getStatusDotClass={getStatusDotClass}
-                              getStatusIcon={getStatusIcon}
-                              isFirst={subIdx === 0}
-                              isLast={subIdx === subEntries.length - 1}
-                              iterations={subEntry.iterations}
-                              key={subEntry.forEachLog.id}
-                              lookup={lookup}
-                              onToggleLog={onToggleLog}
-                            />
-                          );
-                        }
-                        return (
-                          <ExecutionLogEntry
-                            getStatusDotClass={getStatusDotClass}
-                            getStatusIcon={getStatusIcon}
-                            isExpanded={expandedLogs.has(subEntry.log.id)}
-                            isFirst={subIdx === 0}
-                            isLast={subIdx === subEntries.length - 1}
-                            key={subEntry.log.id}
-                            log={subEntry.log}
-                            onToggle={() => onToggleLog(subEntry.log.id)}
-                          />
-                        );
-                      }
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       {collectLog && (
         <ExecutionLogEntry
@@ -737,6 +755,8 @@ function getStatusLabel(status: string): string {
       return "Completed successfully";
     case "error":
       return "Failed - expand for the error";
+    case "system_error":
+      return "System error - a platform issue, expand for details";
     case "running":
       return "Running";
     case "cancelled":
@@ -755,6 +775,7 @@ function ExecutionLogEntry({
   getStatusDotClass,
   isFirst,
   isLast,
+  middleContent,
 }: {
   log: ExecutionLog;
   isExpanded: boolean;
@@ -763,6 +784,7 @@ function ExecutionLogEntry({
   getStatusDotClass: (status: string) => string;
   isFirst: boolean;
   isLast: boolean;
+  middleContent?: React.ReactNode;
 }) {
   return (
     <div className="relative flex gap-3" key={log.id}>
@@ -804,6 +826,11 @@ function ExecutionLogEntry({
                 <span className="truncate font-medium text-sm transition-colors group-hover:text-foreground">
                   {log.nodeName || log.nodeType}
                 </span>
+                {isSponsoredOutput(log.output) && (
+                  <span className="shrink-0 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 font-medium text-primary text-xs">
+                    Gas sponsored
+                  </span>
+                )}
               </div>
             </div>
 
@@ -826,6 +853,7 @@ function ExecutionLogEntry({
                 </pre>
               </CollapsibleSection>
             )}
+            {middleContent}
             {log.output !== null && log.output !== undefined && (
               <OutputDisplay input={log.input} output={log.output} />
             )}
@@ -841,7 +869,7 @@ function ExecutionLogEntry({
                 </pre>
               </CollapsibleSection>
             )}
-            {!(log.input || log.output || log.error) && (
+            {!(log.input || log.output || log.error || middleContent) && (
               <div className="rounded-lg border bg-muted/30 py-4 text-center text-muted-foreground text-xs">
                 No data recorded
               </div>
@@ -864,6 +892,23 @@ export function WorkflowRuns({
   );
   const [, setExecutionLogs] = useAtom(executionLogsAtom);
   const runsRefreshTrigger = useAtomValue(runsRefreshTriggerAtom);
+  const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Open the History tab on the version a run executed, highlighting it there
+  // (the History tab reads ?version=N and rings/expands/scrolls to it).
+  const openRanVersion = useCallback(
+    (version: number) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      params.set("tab", "history");
+      params.set("version", String(version));
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      setActiveTab("history");
+    },
+    [router, pathname, searchParams, setActiveTab]
+  );
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
   const [logs, setLogs] = useState<Record<string, ExecutionLog[]>>({});
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
@@ -1061,7 +1106,12 @@ export function WorkflowRuns({
         setExecutions(data as WorkflowExecution[]);
 
         // Refresh logs for expanded runs: always for running, once more for newly-terminal
-        const terminalStatuses = new Set(["cancelled", "success", "error"]);
+        const terminalStatuses = new Set([
+          "cancelled",
+          "success",
+          "error",
+          "system_error",
+        ]);
         const executionMap = new Map(data.map((e) => [e.id, e]));
         for (const executionId of expandedRuns) {
           const execution = executionMap.get(executionId);
@@ -1132,6 +1182,7 @@ export function WorkflowRuns({
       case "success":
         return <Check className="h-3 w-3 text-white" />;
       case "error":
+      case "system_error":
         return <X className="h-3 w-3 text-white" />;
       case "running":
         return <Loader2 className="h-3 w-3 animate-spin text-white" />;
@@ -1148,6 +1199,8 @@ export function WorkflowRuns({
         return "bg-green-600";
       case "error":
         return "bg-red-600";
+      case "system_error":
+        return "bg-amber-600";
       case "running":
         return "bg-blue-600";
       case "cancelled":
@@ -1263,6 +1316,19 @@ export function WorkflowRuns({
                   )}
                 </div>
               </button>
+
+              {execution.ranVersion !== null && (
+                <button
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 font-medium text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={() =>
+                    openRanVersion(execution.ranVersion as number)
+                  }
+                  title={`Ran version ${execution.ranVersion} — open in History`}
+                  type="button"
+                >
+                  <GitBranch className="size-3" />v{execution.ranVersion}
+                </button>
+              )}
 
               <button
                 className="flex shrink-0 items-center justify-center rounded p-1 transition-colors hover:bg-muted"

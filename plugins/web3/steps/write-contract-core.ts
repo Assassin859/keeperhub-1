@@ -42,6 +42,8 @@ import {
 } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
+import type { ExecutedCall } from "@/lib/web3/trace-decode";
+import { traceExecutedCallWithFailover } from "@/lib/web3/trace-executed-call";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import { isSponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import {
@@ -87,6 +89,12 @@ export type WriteContractResult =
       effectiveGasPrice: string;
       result?: unknown;
       sponsored?: boolean;
+      // Normalized view of the call that actually executed against the target
+      // contract, recovered by tracing the transaction. For sponsored sends the
+      // top-level `to` is a relayer/wrapper, so this is the only consistent way
+      // to report "what ran" identically to a direct send. Omitted when the RPC
+      // cannot trace the transaction.
+      executedCall?: ExecutedCall;
     }
   | { success: false; error: string; rejection?: RevertKind };
 
@@ -363,6 +371,12 @@ export async function writeContractCore(
           ? getTransactionUrl(explorerConfig, sponsoredResult.transactionHash)
           : "";
 
+        const executedCall = await traceExecutedCallWithFailover(
+          rpcManager,
+          sponsoredResult.transactionHash,
+          { target: contractAddress, abi: parsedAbi, functionName: abiFunction }
+        );
+
         return {
           success: true,
           sponsored: true,
@@ -371,6 +385,7 @@ export async function writeContractCore(
           gasUsed: sponsoredResult.gasUsed,
           gasUsedUnits: sponsoredResult.gasUsedUnits,
           effectiveGasPrice: sponsoredResult.effectiveGasPrice,
+          executedCall,
         };
       }
 
@@ -510,6 +525,12 @@ export async function writeContractCore(
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
+      const executedCall = await traceExecutedCallWithFailover(rpcManager, receipt.hash, {
+        target: contractAddress,
+        abi: parsedAbi,
+        functionName: abiFunction,
+      });
+
       return {
         success: true,
         transactionHash: receipt.hash,
@@ -518,6 +539,7 @@ export async function writeContractCore(
         gasUsedUnits,
         effectiveGasPrice,
         result: undefined,
+        executedCall,
       };
     } catch (error) {
       logUserError(

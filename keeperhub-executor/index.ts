@@ -21,6 +21,9 @@
  *   JOB_ACTIVE_DEADLINE - Max Job execution time in seconds (default: 300)
  */
 
+// Normalize all console.* output in this process to canonical JSON. Must be
+// the first import so the patch installs before any module logs.
+import "./log-facade";
 import { createServer, type IncomingMessage } from "node:http";
 import {
   DeleteMessageCommand,
@@ -32,7 +35,6 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
-  organization,
   workflowExecutions,
   workflowSchedules,
   workflows,
@@ -43,7 +45,8 @@ import { withBackstopCapture } from "../lib/security/backstop-capture";
 import { buildAttribution } from "../lib/security/request-attribution";
 import { generateId } from "../lib/utils/id";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
-import { getWorkflowExecutability } from "../lib/workflow/executable";
+import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
+import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
@@ -54,6 +57,7 @@ import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import {
   discardPhantomRow,
+  failExecutionAsSystemError,
   resolvePhantomToError,
   upgradePhantomToPending,
 } from "./lib/db-helpers";
@@ -66,6 +70,14 @@ import {
 import type { ExecutorMessage, ScheduleMessage } from "./types";
 
 const INGEST_MAX_BODY_BYTES = 256 * 1024;
+
+/**
+ * KEEP-853: a deliberate "leave the message on the queue and retry later"
+ * signal, distinct from a genuine processing failure. Thrown when the executor
+ * is at capacity (concurrency cap) so processMessage skips the system-error
+ * backstop and lets SQS redeliver the message after the visibility timeout.
+ */
+export class RequeueSignal extends Error {}
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -191,7 +203,7 @@ async function dispatchExecution(params: {
         await db
           .update(workflowExecutions)
           .set({
-            status: "error",
+            status: "system_error",
             error:
               error instanceof Error
                 ? `Failed to create job: ${error.message}`
@@ -233,39 +245,28 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
   );
 
-  // Load the workflow and its owning org's deactivation state in one round-trip.
-  const [row] = await db
-    .select()
-    .from(workflows)
-    .leftJoin(organization, eq(organization.id, workflows.organizationId))
-    .where(eq(workflows.id, workflowId))
-    .limit(1);
-  const workflow = row?.workflows;
-
-  if (!workflow) {
-    console.error(`[Executor] Workflow not found: ${workflowId}`);
-    await discardPhantomRow(db, message.executionId);
-    return;
-  }
-
+  // Load the workflow and evaluate its lifecycle state in one round-trip.
   // A soft-deleted, disabled, or deactivated workflow - or one whose owning
   // org is deactivated - must never execute, even if a stale schedule or
   // queued message still references it. The block_executions DB trigger is the
   // INSERT-time backstop; this skips the work before it gets that far. The org
   // owns the workflow, so org deactivation is the owner gate.
-  const executability = getWorkflowExecutability({
-    enabled: workflow.enabled,
-    deletedAt: workflow.deletedAt,
-    deactivatedAt: workflow.deactivatedAt,
-    orgDeactivatedAt: row?.organization?.deactivatedAt ?? null,
+  const loaded = await loadWorkflowForExecution(workflowId, {
+    requireEnabled: true,
   });
-  if (!executability.executable) {
+  if (loaded.status === "not_found") {
+    console.error(`[Executor] Workflow not found: ${workflowId}`);
+    await discardPhantomRow(db, message.executionId);
+    return;
+  }
+  if (loaded.status === "not_executable") {
     console.log(
-      `[Executor] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
+      `[Executor] Workflow not executable (${loaded.reason}), skipping: ${workflowId}`
     );
     await discardPhantomRow(db, message.executionId);
     return;
   }
+  const { workflow } = loaded;
 
   if (triggerType === "schedule") {
     const valid = await validateSchedule(
@@ -379,7 +380,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   // and do it before creating the row so a requeue does not leave orphans.
   const concurrency = await checkConcurrencyLimit(db);
   if (!concurrency.allowed) {
-    throw new Error(
+    throw new RequeueSignal(
       `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
     );
   }
@@ -394,13 +395,22 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   // there is no phantom to upgrade -- a legacy message with no id, or a phantom
   // that is missing (best-effort create failed) or already advanced (a
   // duplicate SQS delivery won the upgrade) -- so a run is never dropped.
+  //
+  // Hash of the definition the executor actually loaded, so schedule / block /
+  // event runs link to their workflow_history version like manual / webhook do.
+  const executedWorkflowHash = hashWorkflowDefinition(
+    workflow.nodes,
+    workflow.edges
+  );
+
   let executionId = generateId();
   let upgraded = false;
   if (message.executionId) {
     upgraded = await upgradePhantomToPending(
       db,
       message.executionId,
-      serializedInput
+      serializedInput,
+      executedWorkflowHash
     );
     if (upgraded) {
       executionId = message.executionId;
@@ -424,6 +434,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
         status: "pending",
         input: serializedInput,
         ...attribution,
+        executedWorkflowHash,
       })
     );
   }
@@ -468,7 +479,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     await db
       .update(workflowExecutions)
       .set({
-        status: "error",
+        status: "system_error",
         error:
           error instanceof Error
             ? `Dispatch failed: ${error.message}`
@@ -488,7 +499,12 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   }
 }
 
-async function processMessage(message: Message): Promise<void> {
+export async function processMessage(
+  message: Message,
+  // The message processor is injectable so tests can drive the success and
+  // failure branches without standing up the full executor pipeline.
+  runMessage: (body: ExecutorMessage) => Promise<void> = processExecutorMessage
+): Promise<void> {
   if (!(message.Body && message.ReceiptHandle)) {
     console.error("[Executor] Invalid message:", message);
     return;
@@ -509,7 +525,7 @@ async function processMessage(message: Message): Promise<void> {
   }
 
   try {
-    await processExecutorMessage(body);
+    await runMessage(body);
 
     await sqs.send(
       new DeleteMessageCommand({
@@ -520,9 +536,43 @@ async function processMessage(message: Message): Promise<void> {
 
     console.log(`[Executor] Message deleted for workflow ${body.workflowId}`);
   } catch (error) {
+    // KEEP-853: a RequeueSignal is a deliberate back-pressure skip (executor at
+    // capacity). Leave the message on the queue so SQS redelivers it after the
+    // visibility timeout, and leave the phantom row untouched for that retry.
+    if (error instanceof RequeueSignal) {
+      console.warn(`[Executor] Requeueing workflow ${body.workflowId}:`, error);
+      return;
+    }
+
+    // Genuine processing failure. Mark the in-flight execution as a system
+    // error immediately (instead of waiting for the reaper), then delete the
+    // message so a poison payload does not redeliver forever and so the
+    // resolved row is not re-claimed into a duplicate.
     console.error(
       `[Executor] Failed to process workflow ${body.workflowId}:`,
       error
+    );
+    const marked = await failExecutionAsSystemError(db, body.executionId, {
+      error:
+        error instanceof Error
+          ? `Message processing failed: ${error.message}`
+          : "Message processing failed",
+      errorCode: "E-0004",
+    });
+    if (!marked) {
+      // The row already advanced past phantom/pending (e.g. to running) or is
+      // missing, so the immediate mark did not apply. Deleting the message below
+      // is still correct, but the row is now left for the reaper; log that so it
+      // does not look like the backstop resolved it.
+      console.warn(
+        `[Executor] Backstop did not mark execution ${body.executionId} as system_error (already advanced or missing); leaving it for the reaper`
+      );
+    }
+    await sqs.send(
+      new DeleteMessageCommand({
+        QueueUrl: CONFIG.sqsQueueUrl,
+        ReceiptHandle: message.ReceiptHandle,
+      })
     );
   }
 }
@@ -695,7 +745,11 @@ async function listen(): Promise<void> {
   }
 }
 
-listen().catch((error: unknown) => {
-  console.error("[Executor] Fatal startup error:", error);
-  process.exit(1);
-});
+// Only auto-start the poll loop when run as the executor entrypoint, not when
+// the module is imported by tests (which drive processMessage directly).
+if (!process.env.VITEST) {
+  listen().catch((error: unknown) => {
+    console.error("[Executor] Fatal startup error:", error);
+    process.exit(1);
+  });
+}

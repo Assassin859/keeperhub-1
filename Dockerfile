@@ -107,8 +107,9 @@ ENV SANDBOX_URL=http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787
 # Cache mount persists .next/cache across builds on the same BuildKit instance,
 # enabling Turbopack's incremental compilation. sharing=locked serialises
 # concurrent builders to prevent racing on Next.js cache writes when bake runs
-# multiple targets that share this stage.
-RUN --mount=type=cache,target=/app/.next/cache,sharing=locked pnpm build
+# multiple targets that share this stage. The stable mount id lets CI persist
+# this cache across ephemeral runners (see build-images.yml).
+RUN --mount=type=cache,id=nextjs-build-cache,target=/app/.next/cache,sharing=locked pnpm build
 
 # Stage 2.5b: Sentry source map upload (side-effect only, not consumed by other stages)
 FROM builder AS sentry-upload
@@ -181,6 +182,7 @@ ENV NODE_ENV=production
 FROM scheduler-base AS schedule-dispatcher
 COPY --link --from=source /app/keeperhub-scheduler/schedule-dispatcher/ ./schedule-dispatcher/
 COPY --link --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --link --from=source /app/keeperhub-scheduler/log-facade.ts ./log-facade.ts
 COPY --link --from=source /app/keeperhub-scheduler/package.json ./keeperhub-scheduler/package.json
 COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./keeperhub-scheduler/tsconfig.json
 COPY --link --from=source /app/keeperhub-scheduler/package.json ./package.json
@@ -194,6 +196,7 @@ CMD ["tsx", "schedule-dispatcher/index.ts"]
 FROM scheduler-base AS block-dispatcher
 COPY --link --from=source /app/keeperhub-scheduler/block-dispatcher/ ./block-dispatcher/
 COPY --link --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --link --from=source /app/keeperhub-scheduler/log-facade.ts ./log-facade.ts
 COPY --link --from=source /app/keeperhub-scheduler/package.json ./package.json
 COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
 RUN chown -R scheduler:scheduler /app

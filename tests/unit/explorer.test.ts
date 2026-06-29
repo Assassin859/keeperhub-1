@@ -40,6 +40,12 @@ describe("explorer", () => {
     explorerContractPath: "/address/{address}#code",
     backupExplorerApiType: null,
     backupExplorerApiUrl: null,
+    backupExplorerApiKeyNeeded: false,
+    backupExplorerApiKey: null,
+    backupExplorerUrl: null,
+    backupExplorerTxPath: null,
+    backupExplorerAddressPath: null,
+    backupExplorerContractPath: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -56,6 +62,12 @@ describe("explorer", () => {
     explorerContractPath: "/address/{address}?tab=contract",
     backupExplorerApiType: null,
     backupExplorerApiUrl: null,
+    backupExplorerApiKeyNeeded: false,
+    backupExplorerApiKey: null,
+    backupExplorerUrl: null,
+    backupExplorerTxPath: null,
+    backupExplorerAddressPath: null,
+    backupExplorerContractPath: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -72,6 +84,12 @@ describe("explorer", () => {
     explorerContractPath: "/account/{address}#anchorProgramIDL",
     backupExplorerApiType: null,
     backupExplorerApiUrl: null,
+    backupExplorerApiKeyNeeded: false,
+    backupExplorerApiKey: null,
+    backupExplorerUrl: null,
+    backupExplorerTxPath: null,
+    backupExplorerAddressPath: null,
+    backupExplorerContractPath: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -654,23 +672,27 @@ describe("explorer", () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it("should paginate when first page returns 10,000 results", async () => {
+    it("should walk the block cursor when a window returns a full offset", async () => {
       vi.useFakeTimers();
 
-      const fullPage = Array.from({ length: 10_000 }, (_, i) => ({
+      // First window fills the 10,000 cap, spanning blocks 100..10099.
+      const fullWindow = Array.from({ length: 10_000 }, (_, i) => ({
         hash: `0xfull${i}`,
         blockNumber: String(startBlock + i),
       }));
-      const secondPage = [
-        { hash: "0xlast1", blockNumber: "20000" },
-        { hash: "0xlast2", blockNumber: "20001" },
+      // Second window resumes from the highest block seen (10099): the overlap
+      // tx is de-duplicated, the two newer ones are kept.
+      const secondWindow = [
+        { hash: "0xfull9999", blockNumber: "10099" },
+        { hash: "0xnew1", blockNumber: "10099" },
+        { hash: "0xnew2", blockNumber: "10100" },
       ];
 
       mockFetch.mockResolvedValueOnce(
-        mockFetchJsonResponse(createEtherscanTxResponse(fullPage))
+        mockFetchJsonResponse(createEtherscanTxResponse(fullWindow))
       );
       mockFetch.mockResolvedValueOnce(
-        mockFetchJsonResponse(createEtherscanTxResponse(secondPage))
+        mockFetchJsonResponse(createEtherscanTxResponse(secondWindow))
       );
 
       const resultPromise = fetchEtherscanTransactions(
@@ -681,7 +703,6 @@ describe("explorer", () => {
         endBlock
       );
 
-      // Advance past the delay between pages
       await vi.advanceTimersByTimeAsync(250);
 
       const result = await resultPromise;
@@ -689,13 +710,55 @@ describe("explorer", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.transactions).toHaveLength(10_002);
-        expect(result.transactions[10_000].hash).toBe("0xlast1");
+        expect(result.transactions.at(-2)?.hash).toBe("0xnew1");
+        expect(result.transactions.at(-1)?.hash).toBe("0xnew2");
       }
       expect(mockFetch).toHaveBeenCalledTimes(2);
 
-      // Verify the second call has page=2
+      // Second request resumes from the highest block of the first window.
       const secondCallUrl = mockFetch.mock.calls[1][0] as string;
-      expect(secondCallUrl).toContain("page=2");
+      expect(secondCallUrl).toContain("startblock=10099");
+
+      vi.useRealTimers();
+    });
+
+    it("should stop and keep collected results when the window is exhausted", async () => {
+      vi.useFakeTimers();
+
+      const fullWindow = Array.from({ length: 10_000 }, (_, i) => ({
+        hash: `0xwin${i}`,
+        blockNumber: String(startBlock + i),
+      }));
+
+      mockFetch.mockResolvedValueOnce(
+        mockFetchJsonResponse(createEtherscanTxResponse(fullWindow))
+      );
+      mockFetch.mockResolvedValueOnce(
+        mockFetchJsonResponse({
+          status: "0",
+          message:
+            "Result window is too large, PageNo x Offset size must be less than or equal to 10000",
+          result: null,
+        })
+      );
+
+      const resultPromise = fetchEtherscanTransactions(
+        apiUrl,
+        chainId,
+        contractAddress,
+        startBlock,
+        endBlock
+      );
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      const result = await resultPromise;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.transactions).toHaveLength(10_000);
+      }
+      expect(mockFetch).toHaveBeenCalledTimes(2);
 
       vi.useRealTimers();
     });
@@ -748,20 +811,19 @@ describe("explorer", () => {
       }
     });
 
-    it("should stop at MAX_PAGES (5) even if results keep coming", async () => {
+    it("should stop at the window budget even if windows keep filling", async () => {
       vi.useFakeTimers();
 
-      const fullPage = Array.from({ length: 10_000 }, (_, i) => ({
+      const fullWindow = Array.from({ length: 10_000 }, (_, i) => ({
         hash: `0xpage${i}`,
         blockNumber: String(startBlock + i),
       }));
 
-      // Mock 5 full pages -- each triggers "more pages" but the 5th should be the cap
-      for (let p = 0; p < 5; p++) {
-        mockFetch.mockResolvedValueOnce(
-          mockFetchJsonResponse(createEtherscanTxResponse(fullPage))
-        );
-      }
+      // Every window comes back full, so the cursor keeps advancing until the
+      // request budget (MAX_TX_WINDOWS = 30) caps it.
+      mockFetch.mockResolvedValue(
+        mockFetchJsonResponse(createEtherscanTxResponse(fullWindow))
+      );
 
       const resultPromise = fetchEtherscanTransactions(
         apiUrl,
@@ -771,19 +833,14 @@ describe("explorer", () => {
         endBlock
       );
 
-      // Advance past all delays (4 delays between 5 pages)
-      for (let d = 0; d < 4; d++) {
+      for (let d = 0; d < 30; d++) {
         await vi.advanceTimersByTimeAsync(250);
       }
 
       const result = await resultPromise;
 
       expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.transactions).toHaveLength(50_000);
-      }
-      // Should not attempt a 6th page
-      expect(mockFetch).toHaveBeenCalledTimes(5);
+      expect(mockFetch).toHaveBeenCalledTimes(30);
 
       vi.useRealTimers();
     });

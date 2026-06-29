@@ -14,6 +14,7 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
   successRate: 0,
   avgDurationMs: null,
   totalGasWei: "0",
+  sponsoredGasWei: "0",
   activeRuns: 0,
   previousPeriod: null,
 };

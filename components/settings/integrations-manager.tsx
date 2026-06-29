@@ -1,18 +1,20 @@
 "use client";
 
 import { useSetAtom } from "jotai";
-import { Pencil, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { History, Pencil, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   DeleteConnectionOverlay,
   EditConnectionOverlay,
 } from "@/components/overlays/edit-connection-overlay";
+import { IntegrationActivityOverlay } from "@/components/overlays/integration-activity-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
 import { IntegrationIcon } from "@/components/ui/integration-icon";
 import { Spinner } from "@/components/ui/spinner";
 import { api, type Integration } from "@/lib/api-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import { integrationsAtom } from "@/lib/integrations-store";
 import { getIntegrationLabels } from "@/plugins/registry";
 
@@ -24,13 +26,24 @@ const SYSTEM_INTEGRATION_LABELS: Record<string, string> = {
 type IntegrationsManagerProps = {
   onIntegrationChange?: () => void;
   filter?: string;
+  // When set (e.g. opened from the activity feed), the matching row is
+  // highlighted and scrolled into view.
+  highlightId?: string;
 };
 
 export function IntegrationsManager({
   onIntegrationChange,
   filter = "",
+  highlightId,
 }: IntegrationsManagerProps) {
   const { push } = useOverlay();
+  const highlightedRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (highlightId && highlightedRef.current) {
+      highlightedRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightId]);
+  const { isAdmin } = useActiveMember();
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
   const [_testingId, setTestingId] = useState<string | null>(null);
@@ -166,8 +179,13 @@ export function IntegrationsManager({
       <div className="space-y-1">
         {integrationsWithLabels.map((integration) => (
           <div
-            className="flex items-center justify-between rounded-md px-2 py-1.5"
+            className={`flex items-center justify-between rounded-md px-2 py-1.5 ${
+              integration.id === highlightId
+                ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
+                : ""
+            }`}
             key={integration.id}
+            ref={integration.id === highlightId ? highlightedRef : undefined}
           >
             <div className="flex items-center gap-2">
               <IntegrationIcon
@@ -194,6 +212,19 @@ export function IntegrationsManager({
                   <span className="text-xs">Test</span>
                 )}
               </Button> */}
+              {isAdmin && (
+                <Button
+                  className="size-7"
+                  onClick={() =>
+                    push(IntegrationActivityOverlay, { integration })
+                  }
+                  size="icon"
+                  title="View activity"
+                  variant="outline"
+                >
+                  <History className="size-3" />
+                </Button>
+              )}
               <Button
                 className="size-7"
                 onClick={() => handleEdit(integration)}

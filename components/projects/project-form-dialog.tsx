@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,17 +21,33 @@ type ProjectFormDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (project: Project) => void;
+  project?: Project | null;
+  onUpdated?: (project: Project) => void;
 };
 
 export function ProjectFormDialog({
   open,
   onOpenChange,
   onCreated,
+  project,
+  onUpdated,
 }: ProjectFormDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState(COLOR_PALETTE[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isEditing = Boolean(project);
+
+  // Sync the form to the project being edited (or reset for create) each time
+  // the dialog opens.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setName(project?.name ?? "");
+    setDescription(project?.description ?? "");
+    setColor(project?.color ?? COLOR_PALETTE[0]);
+  }, [open, project]);
 
   const handleSubmit = async () => {
     const trimmed = name.trim();
@@ -41,19 +57,27 @@ export function ProjectFormDialog({
 
     setIsSubmitting(true);
     try {
-      const project = await api.project.create({
-        name: trimmed,
-        description: description.trim() || undefined,
-        color,
-      });
-      onCreated(project);
+      if (project) {
+        const updated = await api.project.update(project.id, {
+          name: trimmed,
+          description: description.trim() || undefined,
+          color: color ?? undefined,
+        });
+        onUpdated?.(updated);
+      } else {
+        const created = await api.project.create({
+          name: trimmed,
+          description: description.trim() || undefined,
+          color,
+        });
+        onCreated(created);
+      }
       onOpenChange(false);
-      setName("");
-      setDescription("");
-      setColor(COLOR_PALETTE[0]);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create project"
+        error instanceof Error
+          ? error.message
+          : `Failed to ${isEditing ? "update" : "create"} project`
       );
     } finally {
       setIsSubmitting(false);
@@ -64,7 +88,9 @@ export function ProjectFormDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>New Project</DialogTitle>
+          <DialogTitle>
+            {isEditing ? "Edit Project" : "New Project"}
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
@@ -116,7 +142,8 @@ export function ProjectFormDialog({
             disabled={!name.trim() || isSubmitting}
             onClick={handleSubmit}
           >
-            {isSubmitting ? "Creating..." : "Create Project"}
+            {isSubmitting && (isEditing ? "Saving..." : "Creating...")}
+            {!isSubmitting && (isEditing ? "Save Changes" : "Create Project")}
           </Button>
         </DialogFooter>
       </DialogContent>

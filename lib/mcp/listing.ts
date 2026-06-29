@@ -16,6 +16,7 @@ export type ListingErrorCode =
   | "SLUG_CONFLICT"
   | "PRICE_CHANGE_WHILE_LISTED"
   | "INVALID_INPUT"
+  | "SLUG_REQUIRED"
   | "MISSING_WRITE_ACTION"
   | "INVALID_TEMPLATE_LITERALS"
   | "INPUT_SCHEMA_REQUIRED";
@@ -154,10 +155,14 @@ export async function listWorkflow(
   };
 
   if (current.listedSlug === null) {
-    if (!metadata.slug) {
-      return { ok: false, error: "INVALID_INPUT" };
+    // Trim before validating and persisting so a blank/whitespace slug is
+    // refused (not stored as an uncallable listing) and the stored value
+    // matches what the PATCH route's gate (which trims) would accept.
+    const slug = metadata.slug?.trim();
+    if (!slug) {
+      return { ok: false, error: "SLUG_REQUIRED" };
     }
-    updateSet.listedSlug = metadata.slug;
+    updateSet.listedSlug = slug;
   }
   // If listedSlug is already set, do not overwrite it (slug is sticky)
 

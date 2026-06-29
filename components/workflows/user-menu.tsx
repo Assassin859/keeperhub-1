@@ -229,7 +229,11 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <ManageOrgsModal onOpenChange={setOrgModalOpen} open={orgModalOpen} />
+      <ManageOrgsModal
+        consumeDeepLink
+        onOpenChange={setOrgModalOpen}
+        open={orgModalOpen}
+      />
     </>
   );
 };

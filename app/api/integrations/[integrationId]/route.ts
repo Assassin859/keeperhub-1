@@ -13,6 +13,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import type { IntegrationConfig } from "@/lib/types/integration";
 
 export type GetIntegrationResponse = {
@@ -169,6 +170,25 @@ export async function PUT(
       );
     }
 
+    // Only the name and a "config changed" flag -- never the config values.
+    await recordAuditEvent({
+      actor: {
+        userId: userId ?? null,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "integration.updated",
+      resourceType: "integration",
+      resourceId: integration.id,
+      before: existing ? { name: existing.name } : undefined,
+      after: {
+        name: integration.name,
+        configUpdated: body.config !== undefined,
+      },
+      metadata: buildAuditMetadata(request),
+    });
+
     const response: GetIntegrationResponse = {
       id: integration.id,
       name: integration.name,
@@ -230,6 +250,13 @@ export async function DELETE(
       return scopeError;
     }
 
+    // Capture name/type before deletion so the audit trail can name what went.
+    const existing = await getIntegration(
+      integrationId,
+      userId ?? "",
+      organizationId
+    );
+
     const success = await deleteIntegration(
       integrationId,
       userId ?? "",
@@ -242,6 +269,22 @@ export async function DELETE(
         { status: 404 }
       );
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId: userId ?? null,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "integration.deleted",
+      resourceType: "integration",
+      resourceId: integrationId,
+      before: existing
+        ? { name: existing.name, type: existing.type }
+        : undefined,
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

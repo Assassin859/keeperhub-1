@@ -14,12 +14,21 @@ import type {
 } from "./builder-types";
 import { isConditionGroup } from "./builder-types";
 
+// Decimal grammar the safe-eval tokenizer accepts (integer or fixed-point, optional sign).
+// Excludes hex like 0x... and exponents like 1e5, which Number() treats as numeric but the
+// tokenizer cannot parse, so those stay quoted as string literals.
+const NUMERIC_LITERAL_RE = /^[+-]?\d+(\.\d+)?$/;
+
 // Keep in sync with OPERATOR_METADATA in condition-builder-utils.ts (unary: true entries)
 const UNARY_OPERATORS: ReadonlySet<ConditionOperator> = new Set([
   "isEmpty",
   "isNotEmpty",
   "exists",
   "doesNotExist",
+  "isNull",
+  "isNotNull",
+  "isUndefined",
+  "isNotUndefined",
   "isTrue",
   "isFalse",
   "arrayIsEmpty",
@@ -37,7 +46,7 @@ function wrapOperand(operand: string): string {
     return trimmed;
   }
 
-  if (!Number.isNaN(Number(trimmed))) {
+  if (NUMERIC_LITERAL_RE.test(trimmed)) {
     return trimmed;
   }
 
@@ -94,6 +103,18 @@ function ruleToExpression(rule: ConditionRule): string {
 
     case "doesNotExist":
       return `(${left} === null || ${left} === undefined)`;
+
+    case "isNull":
+      return `(${left} === null)`;
+
+    case "isNotNull":
+      return `(${left} !== null)`;
+
+    case "isUndefined":
+      return `(${left} === undefined)`;
+
+    case "isNotUndefined":
+      return `(${left} !== undefined)`;
 
     case "matchesRegex":
       return `new RegExp(${wrapOperand(rule.rightOperand)}).test(String(${left}))`;

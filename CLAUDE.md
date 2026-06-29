@@ -194,6 +194,46 @@ If your local dev DB was bootstrapped via `pnpm db:push` (instead of file migrat
 
 Note: a shell-set `DATABASE_URL` overrides the value in `.env` (drizzle.config.ts uses dotenv without `override: true`). If `pnpm db:migrate` connects to the wrong DB or port, run `unset DATABASE_URL` first or prefix the command with the right value.
 
+### Heavy DDL Migrations: the `@requires-db-prep` directive
+
+Some DDL statements cannot run inside a transaction: `CREATE INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY`, `CREATE DATABASE`, `VACUUM`, certain `ALTER TYPE` forms, etc. `drizzle-kit migrate` wraps every migration in a transaction with no per-file opt-out, so these statements cannot live in a migration file directly.
+
+For changes where the lock-free form matters in production (a plain `CREATE INDEX` on a multi-GB table takes a multi-minute `ACCESS EXCLUSIVE` lock during deploy), we use a directive + branch-protection gate instead of running unsafe DDL through `drizzle-kit migrate`.
+
+**When to use the directive:** any migration whose intent on production is to be applied as `CREATE INDEX CONCURRENTLY` or another statement that cannot be wrapped in a transaction. If the migration only touches small tables and a brief lock is acceptable, you do not need the directive.
+
+**How to author the migration:**
+
+1. Put `-- @requires-db-prep` on the first non-empty line of the SQL file.
+2. Write the SQL using the **transaction-safe** form with `IF NOT EXISTS` / `IF EXISTS`. Example:
+   ```sql
+   -- @requires-db-prep
+   -- KEEP-XXX: index on hot column for query Y
+   CREATE INDEX IF NOT EXISTS idx_foo_bar ON foo (bar);
+   ```
+   The `IF NOT EXISTS` clause makes the migration a no-op on prod after step 3 below, and lets it run safely on dev / PR-environment DBs where the table is small.
+3. Update `lib/db/schema.ts` (or the matching schema file) to declare the index via the `index()` / `uniqueIndex()` helper, so drizzle-kit does not see it as drift.
+
+**Before merge - operator runbook:**
+
+For each environment the PR will deploy to (staging on PRs to `staging`, prod on staging->prod release PRs):
+
+1. Connect to the target DB.
+2. For each statement in the migration, run the **lock-free** form against the real DB. For indexes that is `CREATE INDEX CONCURRENTLY IF NOT EXISTS ...` instead of plain `CREATE INDEX IF NOT EXISTS ...`. Each statement must run individually (not inside a transaction block).
+3. Verify there are no INVALID indexes left behind:
+   ```sql
+   SELECT i.relname FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid WHERE NOT ix.indisvalid;
+   -- expect: (0 rows)
+   ```
+4. If an INVALID index is present (CONCURRENTLY can leave one if a statement errors mid-build), drop it with `DROP INDEX CONCURRENTLY IF EXISTS <name>` and re-run the failing CREATE.
+5. Apply the matching label to the PR: `db-prepped-staging` for PRs targeting `staging`, `db-prepped-prod` for PRs targeting `prod`.
+
+**The merge gate:** the `.github/workflows/db-prep-check.yml` workflow scans every PR's diff for newly-added `drizzle/*.sql` files containing the directive. If any are found, the `db-prep-check` status check fails until the matching `db-prepped-<base-branch>` label is set. `db-prep-check` is a required status check in the repo's branch-protection ruleset for `staging`, `prod`, and `main`, so a missing label blocks merge at the GitHub branch-protection layer. PRs without the directive in any added migration pass the check silently.
+
+**On deploy:** because the indexes were already created out-of-band, drizzle-kit's plain `CREATE INDEX IF NOT EXISTS` short-circuits before acquiring any lock and the migration is a true no-op. drizzle-kit records the migration hash in `drizzle.__drizzle_migrations` so future deploys skip it.
+
+Born from the 2026-05-05 RDS CPU incident (KEEP-432).
+
 ## Branch Strategy
 
 - **Main branch**: `staging`
@@ -320,7 +360,23 @@ curl http://localhost:3000/api/mcp/schemas?includeChains=false
 
 ## Writing Playwright Tests: Discovery-First Workflow
 
-Writing E2E tests requires understanding page structure before writing selectors. This project provides three complementary tools for page discovery.
+Writing and iterating on E2E tests is an agent-driven loop: discover the page, author against deterministic signals, run with capture, read the failure bundle, fix. Never write selectors from memory. The full guide -- testability signals, `data-*` aliases for reading data back, the agent loop, and the dev-vs-production rule -- lives in [tests/README.md](tests/README.md) (see the "Testability Signals" and "Agent-Driven Test Development" sections).
+
+### Running the test-development agent
+
+The loop is packaged as two project slash commands. Launch Claude Code from the repo root (or a worktree under `.worktrees/`) so the project `.claude/` is loaded, then run:
+
+```
+/test-write "<what the test should verify>"   # author a new test, discovery-first
+/test-debug <test-file | grep pattern>        # debug a failing test from probe data
+```
+
+- **`/test-write`** discovers page structure (`pnpm discover`), reads verified selectors from `.probes/elements.md`, reuses existing `utils/` helpers, writes the test importing from `./fixtures`, runs it, and self-corrects from failure probes (max 3 attempts).
+- **`/test-debug`** runs the failing test and classifies the failure from the auto-captured `tests/e2e/playwright/.probes/FAILURE-*` bundle (`elements.md`, `console-logs.txt`, `network-failures.txt`, `screenshot.png`).
+
+Prerequisites: the app and database must be running (infra via `make dev-up`, app on `http://localhost:3000`), and authored tests import from `./fixtures` to get auto-probe-on-failure for free. Develop against `pnpm dev` for the richest signals (source maps, React state); validate production-contract tests against `pnpm build && pnpm start` -- see tests/README.md "Dev vs production runtime".
+
+To investigate, the agent can also reach the app out of band -- the local database (test helpers or psql on `localhost:5433`), the `kh` CLI, and KeeperHub MCP tools (`mcp__keeperhub-dev__*` / `mcp__keeperhub-staging__*`) -- to inspect application state and mutate it to set up or reproduce a scenario. Arrange and verify ground truth out-of-band; assert what the user sees in the browser. See tests/README.md "Inspect and mutate application state".
 
 ### Tool 1: Discovery CLI (`pnpm discover`)
 

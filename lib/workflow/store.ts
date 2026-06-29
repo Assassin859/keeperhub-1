@@ -3,6 +3,7 @@ import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
+import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/workflow/editor/template-helpers";
 
@@ -92,6 +93,14 @@ export type WorkflowVisibility = "private" | "unlisted" | "public";
 // Atoms for workflow state (now backed by database)
 export const nodesAtom = atom<WorkflowNode[]>([]);
 export const edgesAtom = atom<WorkflowEdge[]>([]);
+
+// When non-null, the canvas is showing a historical version (read-only
+// preview from the version-history overlay). Autosave is suppressed while
+// this is set so previewing a past version can never clobber the live
+// workflow via the debounced save.
+export const previewVersionAtom = atom<number | null>(null);
+// Whether the right-docked version-history panel is open in the editor.
+export const versionHistoryOpenAtom = atom(false);
 export const selectedNodeAtom = atom<string | null>(null);
 export const selectedEdgeAtom = atom<string | null>(null);
 export const isExecutingAtom = atom(false);
@@ -131,6 +140,10 @@ export const runsRefreshTriggerAtom = atom<number>(0);
 export const showMinimapAtom = atom(false);
 export const selectedExecutionIdAtom = atom<string | null>(null);
 export const rightPanelWidthAtom = atom<string | null>(null);
+// Width (in viewport %) shared by the right-docked editor panels (node config
+// + version history) so they stay the same size and a resize on either keeps
+// them in sync. Clamp 20-50 when writing.
+export const rightPanelWidthPctAtom = atom(30);
 export const isPanelAnimatingAtom = atom<boolean>(false);
 export const hasSidebarBeenShownAtom = atom<boolean>(false);
 export const isSidebarCollapsedAtom = atom<boolean>(false);
@@ -176,7 +189,7 @@ export const lastExecutionLogsAtom = atom<LastExecutionLogsState>({
 
 // Autosave functionality
 let autosaveTimeoutId: NodeJS.Timeout | null = null;
-const AUTOSAVE_DELAY = 1000; // 1 second debounce for field typing
+const AUTOSAVE_DELAY = 2500; // debounce so rapid edits don't each save/version
 
 // Autosave atom that handles saving workflow state
 export const autosaveAtom = atom(
@@ -191,6 +204,12 @@ export const autosaveAtom = atom(
       return;
     }
 
+    // Never autosave while previewing a historical version -- the canvas is
+    // showing an old snapshot, not the user's working edits.
+    if (get(previewVersionAtom) !== null) {
+      return;
+    }
+
     const saveFunc = async () => {
       try {
         set(isSavingAtom, true);
@@ -201,7 +220,11 @@ export const autosaveAtom = atom(
         // Leave hasUnsavedChangesAtom set (only cleared on success) and tell the
         // user: a rejected save - e.g. the server refusing an out-of-org
         // connection reference - must not fail silently.
-        console.warn("Autosave failed:", error);
+        logUserError(
+          ErrorCategory.VALIDATION,
+          "[Workflow] Autosave failed",
+          error
+        );
         toast.error("Couldn't save workflow changes. Please try again.");
       } finally {
         await new Promise((resolve) => setTimeout(resolve, 800));
@@ -664,7 +687,11 @@ export const loadWorkflowAtom = atom(null, async (get, set) => {
         });
     }
   } catch (error) {
-    console.error("Failed to load workflow:", error);
+    logSystemError(
+      ErrorCategory.UNKNOWN,
+      "[Workflow] Failed to load workflow",
+      error
+    );
   } finally {
     set(isLoadingAtom, false);
   }
@@ -690,7 +717,11 @@ export const saveWorkflowAsAtom = atom(
       });
       return workflow;
     } catch (error) {
-      console.error("Failed to save workflow:", error);
+      logSystemError(
+        ErrorCategory.UNKNOWN,
+        "[Workflow] Failed to save workflow",
+        error
+      );
       throw error;
     }
   }

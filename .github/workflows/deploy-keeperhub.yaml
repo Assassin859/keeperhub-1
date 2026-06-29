@@ -1,5 +1,11 @@
 # Type: reusable | Called by ci-pipeline.yml
 # Pure deployer: expects images to already exist in ECR (built by build-images.yml).
+# Deploys the whole execution pipeline (app + executor + schedule + block +
+# metrics-collector) as the single atomic `keeperhub` keeperhub-stack release, so
+# all components roll together and roll back together. Supersedes the separate
+# deploy-executor / deploy-scheduler / deploy-metrics-collector workflows.
+# One-time per env: run the adopt-and-cutover runbook before the first stack
+# deploy so the existing standalone releases are adopted into this one.
 on:
   workflow_call:
     inputs:
@@ -10,6 +16,10 @@ on:
         default: ''
 
 name: deploy-keeperhub
+
+permissions:
+  contents: read
+  id-token: write
 
 # Serialize app deploys per target so two near-simultaneous pushes to the same
 # branch never run `helm upgrade` against the same release at once. Without this
@@ -26,7 +36,7 @@ jobs:
     environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
     runs-on: ubuntu-latest
     env:
-      HELM_FILE: deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/values.yaml
+      HELM_FILE: deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/values.yaml
       REGION: ${{ vars.TO_REGION }}
       CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
       NAMESPACE: keeperhub
@@ -48,8 +58,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
@@ -109,12 +118,12 @@ jobs:
         with:
           cluster-name: ${{ env.CLUSTER_NAME }}
           config-files: ${{ env.HELM_FILE }}
-          chart-path: techops-services/common
+          chart-path: techops-services/keeperhub-stack
           namespace: ${{ env.NAMESPACE }}
-          timeout: 5m0s
+          timeout: 15m0s
           name: ${{ env.SERVICE_NAME }}
           chart-repository: https://techops-services.github.io/helm-charts
-          version: 0.2.1
+          version: 0.2.0
           atomic: true
 
       - name: Wait for deployment health check
@@ -143,6 +152,18 @@ jobs:
               echo "Deployment did not become ready in time"
               exit 1
             '
+
+      - name: Set up Helm
+        if: steps.skip.outputs.skip_deploy != 'true'
+        uses: azure/setup-helm@v4
+
+      - name: Validate IRSA credentials end-to-end
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          helm test "${SERVICE_NAME}" \
+            --namespace "${NAMESPACE}" \
+            --filter "name=${SERVICE_NAME}-common-test-irsa-auth" \
+            --logs
 
   # DISABLED: remote E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-playwright-remote:
@@ -173,9 +194,6 @@ jobs:
             --region us-east-2)
           echo "::add-mask::$TEST_API_KEY"
           echo "TEST_API_KEY=$TEST_API_KEY" >> "$GITHUB_ENV"
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
 
       - name: Wait for deployment to be ready
         run: |

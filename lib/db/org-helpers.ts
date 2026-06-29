@@ -89,6 +89,25 @@ export const getOrgPlanLabel = cache(
 );
 
 /**
+ * Resolve org slug, display name, and plan label in parallel for use as
+ * execution log labels. Replaces the repeated `Promise.all([getOrgSlug,
+ * getOrgPlanLabel])` pattern across the three HTTP-path entry points.
+ * Best-effort: any failed lookup yields undefined for that field.
+ */
+export async function resolveExecutionOrgMetadata(
+  orgId: string | null | undefined
+): Promise<{ slug?: string; name?: string; plan?: string }> {
+  if (!orgId) {
+    return {};
+  }
+  const [identity, plan] = await Promise.all([
+    getOrgIdentity(orgId),
+    getOrgPlanLabel(orgId),
+  ]);
+  return { slug: identity.slug, name: identity.name, plan };
+}
+
+/**
  * Convenience for direct-execute API routes (e.g.
  * /api/execute/check-and-execute) that bypass the workflow executor and
  * therefore don't get its ALS scope. Resolves the org slug and plan and

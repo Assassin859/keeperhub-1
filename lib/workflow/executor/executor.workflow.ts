@@ -76,7 +76,6 @@ import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resol
 import { safeEvaluateCondition } from "@/lib/workflow/nodes/condition/safe-eval";
 import {
   type ConditionDecision,
-  collectAllSkippedTargets,
   collectSkippedTargets,
 } from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
@@ -85,11 +84,16 @@ import {
 } from "@/lib/workflow/nodes/condition/validator";
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
+import type { SystemActionType } from "@/lib/workflow/executor/system-action-types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
-// System actions that don't have plugins - maps to module import functions
-const SYSTEM_ACTIONS: Record<string, StepImporter> = {
+// System actions that don't have plugins - maps to module import functions.
+// `satisfies Record<SystemActionType, ...>` makes the dispatch table and the
+// egress classification map (lib/features/system-action-capabilities.ts) a
+// compile-time mirror: a key here that is not in SystemActionType (or vice
+// versa) fails the build, so a new system action cannot ship unclassified.
+const SYSTEM_ACTIONS = {
   "Database Query": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
     importer: () =>
@@ -120,7 +124,7 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
       import("@/lib/workflow/nodes/collect/step") as Promise<any>,
     stepFunction: "collectStep",
   },
-};
+} satisfies Record<SystemActionType, StepImporter>;
 
 export {
   computeFinalSuccess,
@@ -157,6 +161,32 @@ export function recordCatchOutput(
 
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
+
+/**
+ * Render a resolved condition value for the logged input/output panels while
+ * preserving the null/undefined distinction. `undefined` (e.g. a reference to a
+ * branch node that never executed) is shown as the string "undefined" so it is
+ * not mistaken for `null` -- `null` JSON-serializes fine and is left as-is, but
+ * `undefined` would otherwise be dropped/collapsed and read as `null`, making a
+ * strict `=== null` (isNull) check look like it should have matched. Recurses
+ * through plain objects and arrays. Display-only; never fed back into eval.
+ */
+function formatConditionValueForDisplay(value: unknown): unknown {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatConditionValueForDisplay);
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = formatConditionValueForDisplay(nested);
+    }
+    return out;
+  }
+  return value;
+}
 
 /**
  * Spurious-max-retries recovery poll window. When the framework re-fires a
@@ -321,7 +351,26 @@ function replaceTemplateVariable(
 type ConditionEvalResult = {
   result: boolean;
   resolvedValues: Record<string, unknown>;
+  // The expression with each {{...}} reference replaced by its resolved value,
+  // so observability shows what was actually compared (e.g. "0x1..." == "0x6...").
+  resolvedExpression?: string;
 };
+
+// Render a resolved value as it should appear inside the resolved expression:
+// strings quoted, numbers/booleans/null bare, undefined as the keyword.
+function renderConditionLiteral(value: unknown): string {
+  if (value === undefined) {
+    return "undefined";
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
 /**
  * Evaluate condition expression with template variable replacement.
@@ -366,6 +415,7 @@ export function evaluateConditionExpression(
     try {
       let evalContext: Record<string, unknown> = {};
       const resolvedValues: Record<string, unknown> = {};
+      const tokenLiterals: Record<string, string> = {};
       let transformedExpression = conditionExpression;
       const templatePattern = /\{\{@([^:]+):([^}]+)\}\}/g;
       const varCounter = { value: 0 };
@@ -383,10 +433,22 @@ export function evaluateConditionExpression(
             nodeMap,
             executionResults
           );
-          // Store the resolved value with a readable key (the display text from the template)
-          resolvedValues[rest] = evalContext[varName];
+          // Store the resolved value with a readable key (the display text
+          // from the template), preserving the null/undefined distinction so a
+          // strict `isNull` (=== null) check is not mistaken for a match.
+          resolvedValues[rest] = formatConditionValueForDisplay(
+            evalContext[varName]
+          );
+          tokenLiterals[match] = renderConditionLiteral(evalContext[varName]);
           return varName;
         }
+      );
+
+      // Mirror the substitution against the original expression so the value
+      // side keeps the author's literals (quotes, operators) intact.
+      const resolvedExpression = conditionExpression.replace(
+        templatePattern,
+        (match: string) => tokenLiterals[match] ?? match
       );
 
       // KEEP-468: any `{{...}}` token left after stored-format substitution
@@ -427,7 +489,7 @@ export function evaluateConditionExpression(
       // Only reads the resolved __v/__b values and applies allowlisted
       // operators and methods.
       const result = safeEvaluateCondition(transformedExpression, evalContext);
-      return { result: Boolean(result), resolvedValues };
+      return { result: Boolean(result), resolvedValues, resolvedExpression };
     } catch (error) {
       // KEEP-1284: Re-throw errors about missing data - these should not be silently swallowed
       if (
@@ -489,6 +551,7 @@ async function executeActionStep(input: {
     // KEEP-1284: Catch evaluation errors and pass to step so it gets logged
     let evaluatedCondition = false;
     let resolvedValues: Record<string, unknown> = {};
+    let resolvedExpression: string | undefined;
     let evaluationError: string | undefined;
 
     try {
@@ -500,6 +563,7 @@ async function executeActionStep(input: {
       );
       evaluatedCondition = result.result;
       resolvedValues = result.resolvedValues;
+      resolvedExpression = result.resolvedExpression;
     } catch (error) {
       evaluationError = error instanceof Error ? error.message : String(error);
     }
@@ -513,6 +577,7 @@ async function executeActionStep(input: {
         !evaluationError && typeof originalExpression === "string"
           ? originalExpression
           : undefined,
+      resolvedExpression: evaluationError ? undefined : resolvedExpression,
       values:
         Object.keys(resolvedValues).length > 0 ? resolvedValues : undefined,
       _evaluationError: evaluationError,
@@ -521,7 +586,9 @@ async function executeActionStep(input: {
   }
 
   // Check system actions first (Database Query, HTTP Request)
-  const systemAction = SYSTEM_ACTIONS[actionType];
+  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
+    actionType
+  ];
   if (systemAction) {
     const module = await systemAction.importer();
     const stepFunction = module[systemAction.stepFunction];
@@ -820,6 +887,9 @@ function formatCodeValue(value: unknown): string {
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
+  }
+  if (typeof value === "bigint") {
+    return `${value}n`;
   }
   return JSON.stringify(value);
 }
@@ -1758,6 +1828,13 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
 
   const edgesByTarget = buildEdgesByTarget(edges);
   const convergenceArrivals = new Map<string, Set<string>>();
+  // Skip-arrivals tracked apart from real arrivals so an OR-join whose every
+  // incoming edge was skipped is itself skipped rather than executed.
+  const convergenceSkipArrivals = new Map<string, Set<string>>();
+  // Nodes determined to be genuinely skipped (all incoming paths not taken).
+  // Authoritative input to computeFinalSuccess so a node that actually executed
+  // and failed is never masked as skipped.
+  const skippedNodes = new Set<string>();
 
   // Find trigger nodes
   const nodesWithIncoming = new Set(edges.map((e) => e.target));
@@ -2272,30 +2349,27 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       concurrencyLimit
     );
 
-    // KEEP-586: Detect genuine iteration-body failures. Without this they
-    // vanish into the Collect aggregate -- the Collect node and the For Each
-    // node both report success -- so the run is silently marked success even
-    // though a node that should have run did not. The caller (executeNode)
-    // uses these fields to fail the For Each node and surface it in the run.
-    const failedIterations = iterationResults.filter(
-      (
-        r
-      ): r is {
-        __forEachBodyFailure: true;
-        error?: string;
-        nodeId?: string;
-      } =>
-        typeof r === "object" &&
+    // 5a. If any iteration failed, flip the For Each node's own log row to error
+    // so the UI can surface which step errored rather than showing all green.
+    const firstIterationFailure = iterationResults.find(
+      (r): r is { success: false; error: string } =>
         r !== null &&
-        (r as { __forEachBodyFailure?: unknown }).__forEachBodyFailure === true
+        typeof r === "object" &&
+        "success" in (r as object) &&
+        (r as { success: unknown }).success === false
     );
-    if (failedIterations.length > 0) {
-      console.log(
-        `[Workflow Executor] For Each "${getNodeName(forEachNode)}": ${failedIterations.length}/${iterationResults.length} iteration(s) failed; first failing node ${failedIterations[0].nodeId}: ${failedIterations[0].error}`
-      );
+    if (firstIterationFailure && executionId) {
+      await triggerStep({
+        triggerData: {},
+        _recordForEachError: {
+          executionId,
+          nodeId: forEachNodeId,
+          error: firstIterationFailure.error,
+        },
+      });
     }
 
-    // 5. Mark body nodes as visited in the parent scope
+    // 5b. Mark body nodes as visited in the parent scope
     for (const bodyNodeId of bodyNodeIds) {
       currentVisited.add(bodyNodeId);
     }
@@ -2375,9 +2449,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       arrayLength: resolvedArray.length,
       maxIterations,
       iterationsRan: itemsToProcess.length,
-      failedIterations: failedIterations.length,
-      firstFailureError: failedIterations[0]?.error,
-      firstFailureNodeId: failedIterations[0]?.nodeId,
+      failedIterations: firstIterationFailure !== undefined ? 1 : 0,
+      firstFailureError: firstIterationFailure?.error,
+      firstFailureNodeId: undefined,
     };
   }
 
@@ -2425,8 +2499,74 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
   }
 
+  /**
+   * Continue execution downstream of a condition node, honoring the taken
+   * handle and propagating skips on the not-taken handle. Shared by the normal
+   * post-step path and the spurious-completion recovery path so a recovered
+   * condition routes exactly like one that completed normally. Routing a
+   * condition through `edgesBySource` instead fires the not-taken edge (e.g. a
+   * `false`-handle OR-join) on a branch that should have been skipped.
+   */
+  async function continueFromCondition(
+    nodeId: string,
+    conditionResult: boolean | undefined,
+    visited: Set<string>
+  ): Promise<void> {
+    const handleMap = edgesBySourceHandle.get(nodeId);
+    if (!handleMap) {
+      // Legacy fallback: no sourceHandle on edges, use old gate behavior
+      if (conditionResult === true) {
+        const nextNodes = edgesBySource.get(nodeId) ?? [];
+        await executeReadyDownstream(nodeId, nextNodes, visited);
+      }
+      return;
+    }
+
+    // Handle-aware routing: use the taken handle to determine targets
+    const handleId = conditionResult === true ? "true" : "false";
+    const notTakenHandle = conditionResult === true ? "false" : "true";
+    const handleTargets = handleMap.get(handleId) ?? [];
+
+    // Record decision for branch-aware finalSuccess
+    conditionDecisions.set(nodeId, {
+      taken: handleId,
+      skippedTargets: collectSkippedTargets(
+        nodeId,
+        notTakenHandle,
+        edgesBySourceHandle
+      ),
+      takenTargets: handleTargets,
+    });
+    await executeReadyDownstream(nodeId, handleTargets, visited);
+
+    // Propagate skip signals for the not-taken branch so convergence nodes
+    // downstream receive arrival signals from skipped sources. A convergence
+    // node runs only if it also got a real arrival; if every incoming edge was
+    // skipped it is added to `skippedNodes` and the skip continues downstream.
+    // This both unblocks genuine convergence and stops an all-skipped OR-join
+    // from firing.
+    const skippedTargets = handleMap.get(notTakenHandle) ?? [];
+    if (skippedTargets.length > 0) {
+      const unblockedIds = propagateConvergenceSkips(
+        nodeId,
+        skippedTargets,
+        edgesBySource,
+        edgesByTarget,
+        convergenceArrivals,
+        convergenceSkipArrivals,
+        skippedNodes,
+        visited
+      );
+      if (unblockedIds.length > 0) {
+        const settled = await pendingTasks.track(
+          Promise.allSettled(unblockedIds.map((id) => executeNode(id, visited)))
+        );
+        processSettledResults(settled, unblockedIds);
+      }
+    }
+  }
+
   // Helper to execute a single node
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Node execution requires type checking and error handling
   async function executeNode(nodeId: string, visited: Set<string> = new Set()) {
     console.log("[Workflow Executor] Executing node:", nodeId);
 
@@ -2782,68 +2922,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           // For condition nodes, route to true/false handle targets
           const conditionResult = (result.data as { condition?: boolean })
             ?.condition;
-
-          const handleMap = edgesBySourceHandle.get(nodeId);
-          if (handleMap) {
-            // Handle-aware routing: use sourceHandle to determine targets
-            const handleId = conditionResult === true ? "true" : "false";
-            const notTakenHandle = conditionResult === true ? "false" : "true";
-            const handleTargets = handleMap.get(handleId) ?? [];
-
-            // Record decision for branch-aware finalSuccess
-            conditionDecisions.set(nodeId, {
-              taken: handleId,
-              skippedTargets: collectSkippedTargets(
-                nodeId,
-                notTakenHandle,
-                edgesBySourceHandle
-              ),
-              takenTargets: handleTargets,
-            });
-            await executeReadyDownstream(nodeId, handleTargets, visited);
-
-            // Propagate skip signals for the not-taken branch so convergence
-            // nodes downstream receive arrival signals from skipped sources
-            const skippedTargets = handleMap.get(notTakenHandle) ?? [];
-            if (skippedTargets.length > 0) {
-              // Register the condition's skip-arrival at direct skipped targets
-              // that are themselves convergence nodes. Without this, a pattern
-              // like `Cond -> (skipped) -> nodeB` and `Cond -> (taken) -> X -> nodeB`
-              // stalls nodeB: the condition's not-taken edge never signals
-              // arrival, so nodeB only ever sees X's arrival (1/2).
-              const preSeedUnblocked = signalConvergenceArrival(
-                nodeId,
-                skippedTargets,
-                edgesByTarget,
-                convergenceArrivals,
-                visited
-              );
-              const unblockedIds = propagateConvergenceSkips(
-                skippedTargets,
-                edgesBySource,
-                edgesByTarget,
-                convergenceArrivals,
-                visited
-              );
-              const allUnblocked = [
-                ...new Set([...preSeedUnblocked, ...unblockedIds]),
-              ];
-              if (allUnblocked.length > 0) {
-                const settled = await pendingTasks.track(
-                  Promise.allSettled(
-                    allUnblocked.map((id) => executeNode(id, visited))
-                  )
-                );
-                processSettledResults(settled, allUnblocked);
-              }
-            }
-          } else {
-            // Legacy fallback: no sourceHandle on edges, use old gate behavior
-            if (conditionResult === true) {
-              const nextNodes = edgesBySource.get(nodeId) ?? [];
-              await executeReadyDownstream(nodeId, nextNodes, visited);
-            }
-          }
+          await continueFromCondition(nodeId, conditionResult, visited);
         } else {
           // For non-condition nodes, execute all next nodes in parallel
           const nextNodes = edgesBySource.get(nodeId) || [];
@@ -2924,8 +3003,24 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           label: getNodeName(node),
           data: recordedOutput,
         };
-        const nextNodes = edgesBySource.get(nodeId) ?? [];
-        await executeReadyDownstream(nodeId, nextNodes, visited);
+        // A recovered condition must route by handle, exactly like the normal
+        // path. Continuing through the handle-agnostic `edgesBySource` here
+        // fires the not-taken edge (e.g. a `false`-handle OR-join) on a branch
+        // that should have been skipped, which is what caused the join to run
+        // even though every condition evaluated true.
+        const recoveredActionType =
+          node.data.type === "action"
+            ? (node.data.config?.actionType as string | undefined)
+            : undefined;
+        if (recoveredActionType === "Condition") {
+          const recoveredCondition = (
+            recordedOutput as { condition?: boolean } | undefined
+          )?.condition;
+          await continueFromCondition(nodeId, recoveredCondition, visited);
+        } else {
+          const nextNodes = edgesBySource.get(nodeId) ?? [];
+          await executeReadyDownstream(nodeId, nextNodes, visited);
+        }
         return;
       }
 
@@ -2988,19 +3083,33 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       // Signal arrival at downstream convergence nodes to prevent deadlocks.
       // If this failure was the last arrival, execute the convergence node
       // with partial data rather than hanging forever.
-      const nextNodes = edgesBySource.get(nodeId) ?? [];
-      const unblockedIds = signalConvergenceArrival(
-        nodeId,
-        nextNodes,
-        edgesByTarget,
-        convergenceArrivals,
-        visited
-      );
-      if (unblockedIds.length > 0) {
-        const settled = await Promise.allSettled(
-          unblockedIds.map((id) => executeNode(id, visited))
+      //
+      // A genuinely-failed condition is the exception: it has no taken handle,
+      // and signaling a real arrival through the handle-agnostic `edgesBySource`
+      // would fire a not-taken OR-join (e.g. an alert on the `false` handle) on
+      // a branch that never produced a decision. Skip the signal for condition
+      // nodes; the run is already marked failed and the join is left unrun
+      // rather than mis-fired. Non-condition merges still signal so a
+      // partial-data join does not hang.
+      const failedActionType =
+        node.data.type === "action"
+          ? (node.data.config?.actionType as string | undefined)
+          : undefined;
+      if (failedActionType !== "Condition") {
+        const nextNodes = edgesBySource.get(nodeId) ?? [];
+        const unblockedIds = signalConvergenceArrival(
+          nodeId,
+          nextNodes,
+          edgesByTarget,
+          convergenceArrivals,
+          visited
         );
-        processSettledResults(settled, unblockedIds);
+        if (unblockedIds.length > 0) {
+          const settled = await Promise.allSettled(
+            unblockedIds.map((id) => executeNode(id, visited))
+          );
+          processSettledResults(settled, unblockedIds);
+        }
       }
     }
   }
@@ -3079,8 +3188,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // drained orphan nodes are reflected here. The pre-drain computation (now
     // unused) only ever saw nodes whose call-stack reached processSettledResults;
     // drained orphans land in `results` while drain awaits them.
-    const allSkippedTargets = collectAllSkippedTargets(conditionDecisions);
-    const finalSuccess = computeFinalSuccess(results, allSkippedTargets);
+    // `skippedNodes` is the authoritative set of genuinely-skipped nodes built
+    // during execution: a node only lands here when every incoming path was
+    // not taken. A node that actually executed (even one wired to a condition's
+    // not-taken handle but reached via a real arrival) is absent, so its
+    // failure is never masked as skipped.
+    const finalSuccess = computeFinalSuccess(results, skippedNodes);
 
     // Surface drained-orphan failures explicitly so prod logs make the
     // SDK-checkpoint-truncation case visible (otherwise the failure looks
@@ -3089,7 +3202,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       (id) => !resultKeysBeforeDrain.has(id)
     );
     const drainedFailures = drainedNodeIds.filter(
-      (id) => !(results[id]?.success || allSkippedTargets.has(id))
+      (id) => !(results[id]?.success || skippedNodes.has(id))
     );
     if (drainedFailures.length > 0) {
       console.log(
@@ -3114,7 +3227,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           conditionDecisions: [...conditionDecisions.entries()].map(
             ([id, d]) => ({ id, ...d })
           ),
-          skippedTargets: [...allSkippedTargets],
+          skippedTargets: [...skippedNodes],
           unexecutedNodes,
         }
       );

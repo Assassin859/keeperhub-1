@@ -87,6 +87,8 @@ deployment:
           pnpm db:migrate
           echo "Seeding chains..."
           pnpm db:seed
+          echo "Backfilling workflow version-history baselines..."
+          pnpm db:backfill-workflow-history || echo "[deploy] workflow-history backfill skipped (non-fatal)"
           echo "Migrations and seeding completed successfully"
       env: *shared_env
 
@@ -449,9 +451,6 @@ env:
     type: parameterStore
     name: kh-admin-secret
     parameter_name: /eks/techops-staging/keeperhub/kh-admin-secret
-  SAFE_FETCH_ENFORCE:
-    type: kv
-    value: "true"
 
 externalSecrets:
   clusterSecretStoreName: techops-staging

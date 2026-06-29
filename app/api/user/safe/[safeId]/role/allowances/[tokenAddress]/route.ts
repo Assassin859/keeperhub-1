@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getSafeForOrg, validateSafeOwner } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
@@ -91,6 +92,23 @@ export async function DELETE(
       );
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId: owner.userId,
+        organizationId: owner.organizationId,
+        authMethod: "session",
+      },
+      action: "safe_role_allowance.revoked",
+      resourceType: "safe",
+      resourceId: safe.id,
+      before: {
+        protocolSlug,
+        tokenAddress: result.deleted.tokenAddress,
+        tokenSymbol: result.deleted.tokenSymbol,
+      },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       success: true,

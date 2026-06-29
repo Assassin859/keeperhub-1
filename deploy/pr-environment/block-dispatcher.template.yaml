@@ -1,6 +1,6 @@
 # Block Dispatcher for PR environments
 # Uses pre-built staging image
-# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}
+# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}, ${BLOCK_IMAGE_TAG}
 
 replicaCount: 1
 
@@ -18,7 +18,7 @@ ingress:
 
 image:
   repository: ${ECR_REGISTRY}/keeperhub-scheduler-staging
-  tag: block-latest
+  tag: ${BLOCK_IMAGE_TAG}
   pullPolicy: Always
 
 deployment:

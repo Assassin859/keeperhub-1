@@ -170,6 +170,33 @@ describe("condition-builder-utils", () => {
           '("data" === null || "data" === undefined)'
         );
       });
+
+      it("should generate isNull expression", () => {
+        const g = group("AND", [rule("data", "isNull")]);
+        expect(visualConditionToExpression(g)).toBe('("data" === null)');
+      });
+
+      it("should generate isNotNull expression", () => {
+        const g = group("AND", [rule("data", "isNotNull")]);
+        expect(visualConditionToExpression(g)).toBe('("data" !== null)');
+      });
+
+      it("should generate isUndefined expression", () => {
+        const g = group("AND", [rule("data", "isUndefined")]);
+        expect(visualConditionToExpression(g)).toBe('("data" === undefined)');
+      });
+
+      it("should generate isNotUndefined expression", () => {
+        const g = group("AND", [rule("data", "isNotUndefined")]);
+        expect(visualConditionToExpression(g)).toBe('("data" !== undefined)');
+      });
+
+      it("treats the null/undefined operators as unary", () => {
+        expect(isUnaryOperator("isNull")).toBe(true);
+        expect(isUnaryOperator("isNotNull")).toBe(true);
+        expect(isUnaryOperator("isUndefined")).toBe(true);
+        expect(isUnaryOperator("isNotUndefined")).toBe(true);
+      });
     });
 
     describe("regex operator", () => {
@@ -271,6 +298,29 @@ describe("condition-builder-utils", () => {
       it("should pass numeric values through", () => {
         const g = group("AND", [rule("42", "===", "3.14")]);
         expect(visualConditionToExpression(g)).toBe("42 === 3.14");
+      });
+
+      it("should pass signed numeric values through", () => {
+        const g = group("AND", [rule("-7", ">", "-12.5")]);
+        expect(visualConditionToExpression(g)).toBe("-7 > -12.5");
+      });
+
+      it("should quote hex addresses instead of treating them as numbers", () => {
+        const g = group("AND", [
+          rule(
+            "{{@n:Get owners.result[0]}}",
+            "==",
+            "0x6924f2737145455bBF5B7412DfaDCB785e26f055"
+          ),
+        ]);
+        expect(visualConditionToExpression(g)).toBe(
+          '{{@n:Get owners.result[0]}} == "0x6924f2737145455bBF5B7412DfaDCB785e26f055"'
+        );
+      });
+
+      it("should quote exponent-style strings instead of treating them as numbers", () => {
+        const g = group("AND", [rule("code", "===", "1e5")]);
+        expect(visualConditionToExpression(g)).toBe('"code" === "1e5"');
       });
 
       it("should pass boolean literals through", () => {
@@ -497,6 +547,26 @@ describe("condition-builder-utils", () => {
       it("should parse doesNotExist", () => {
         const r = parseFirstRule('("data" === null || "data" === undefined)');
         expect(r.operator).toBe("doesNotExist");
+      });
+
+      it("should parse isNull", () => {
+        const r = parseFirstRule('("data" === null)');
+        expect(r.operator).toBe("isNull");
+      });
+
+      it("should parse isNotNull", () => {
+        const r = parseFirstRule('("data" !== null)');
+        expect(r.operator).toBe("isNotNull");
+      });
+
+      it("should parse isUndefined", () => {
+        const r = parseFirstRule('("data" === undefined)');
+        expect(r.operator).toBe("isUndefined");
+      });
+
+      it("should parse isNotUndefined", () => {
+        const r = parseFirstRule('("data" !== undefined)');
+        expect(r.operator).toBe("isNotUndefined");
       });
     });
 

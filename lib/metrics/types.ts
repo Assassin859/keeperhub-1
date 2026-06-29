@@ -135,6 +135,9 @@ export const MetricNames = {
   SYSTEM_AUTH_ERRORS: "errors.system.auth.total",
   SYSTEM_INFRASTRUCTURE_ERRORS: "errors.system.infrastructure.total",
   SYSTEM_WORKFLOW_ENGINE_ERRORS: "errors.system.workflow_engine.total",
+  // A dropped security audit row is itself security-relevant: make silent loss
+  // observable so the best-effort path can be alerted on.
+  SECURITY_AUDIT_WRITE_FAILED: "errors.system.security_audit_write.total",
 
   // Sponsorship metrics
   SPONSORSHIP_TRANSACTIONS_TOTAL: "sponsorship.transactions.total",

@@ -1,11 +1,15 @@
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
   workflowSchedules,
   type workflows,
 } from "../../lib/db/schema";
+import type { ErrorCode } from "../../lib/errors/error-codes";
+import { calculateTotalSteps } from "../../lib/workflow/executor/progress";
+import type { WorkflowEdge, WorkflowNode } from "../../lib/workflow/store";
+import type { executeWorkflow } from "../../lib/workflow/executor/executor.workflow";
 import { toJsonSafe } from "./serialize";
 
 export type DbSchema = {
@@ -53,9 +57,50 @@ export async function updateExecutionStatus(
         eq(workflowExecutions.id, executionId),
         ne(workflowExecutions.status, "success"),
         ne(workflowExecutions.status, "error"),
+        ne(workflowExecutions.status, "system_error"),
         ne(workflowExecutions.status, "cancelled")
       )
     );
+}
+
+/**
+ * KEEP-853: backstop for the SQS consumer. When message processing throws for a
+ * reason the inner dispatch handlers did not already record, mark the in-flight
+ * row as a system error right away instead of leaving it for the reaper (which
+ * runs minutes later). Compare-and-set on status IN ('phantom','pending') so it
+ * never clobbers a row the runtime already advanced to running/terminal.
+ *
+ * Returns true when a row was marked, false when the CAS matched nothing (no
+ * executionId, or the row already advanced past phantom/pending). The caller
+ * surfaces the false case instead of treating the backstop as resolved, since
+ * such a row is left for the reaper rather than marked immediately.
+ */
+export async function failExecutionAsSystemError(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string | undefined,
+  fields: { error: string; errorCode: ErrorCode }
+): Promise<boolean> {
+  if (!executionId) {
+    return false;
+  }
+  const marked = await db
+    .update(workflowExecutions)
+    .set({
+      status: "system_error",
+      error: fields.error,
+      errorCode: fields.errorCode,
+      errorType: "system",
+      errorCategory: "infrastructure",
+      completedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        inArray(workflowExecutions.status, ["phantom", "pending"])
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  return marked.length > 0;
 }
 
 /**
@@ -72,14 +117,16 @@ export async function updateExecutionStatus(
 export async function upgradePhantomToPending(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  executedWorkflowHash: string
 ): Promise<boolean> {
   const result = await db
     .update(workflowExecutions)
     // KEEP-693: the phantom was created billable=false (it had not run yet);
     // upgrading to pending means it is now a real execution, so it becomes
-    // billable like any owner-initiated run.
-    .set({ status: "pending", input, billable: true })
+    // billable like any owner-initiated run. Stamp the hash of the definition
+    // the executor just loaded so the run links to its workflow_history version.
+    .set({ status: "pending", input, billable: true, executedWorkflowHash })
     .where(
       and(
         eq(workflowExecutions.id, executionId),
@@ -149,8 +196,10 @@ export async function resolvePhantomToError(
 export async function initializeExecutionProgress(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
-  totalSteps: number
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[]
 ): Promise<void> {
+  const totalSteps = calculateTotalSteps(nodes, edges);
   await db
     .update(workflowExecutions)
     .set({
@@ -163,6 +212,47 @@ export async function initializeExecutionProgress(
       lastSuccessfulNodeName: null,
     })
     .where(eq(workflowExecutions.id, executionId));
+}
+
+type ExecuteWorkflowResult = Awaited<ReturnType<typeof executeWorkflow>>;
+
+/**
+ * Write the terminal execution status (success or error) and optionally update
+ * the associated schedule row. Replaces the identical if/else block that
+ * workflow-runner.ts and in-process.ts both maintained after executeWorkflow().
+ *
+ * Returns the error message string on failure (null on success) so callers can
+ * use it for their own logging without re-deriving it.
+ */
+export async function applyExecutionResult(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string,
+  result: ExecuteWorkflowResult,
+  opts: { scheduleId?: string }
+): Promise<{ errorMessage: string | null }> {
+  if (result.success) {
+    await updateExecutionStatus(db, executionId, "success", {
+      output: result.outputs,
+    });
+    if (opts.scheduleId) {
+      await updateScheduleStatus(db, opts.scheduleId, "success");
+    }
+    return { errorMessage: null };
+  }
+
+  const errorMessage =
+    result.error ||
+    Object.values(result.results || {}).find((r) => !r.success)?.error ||
+    "Unknown error";
+
+  await updateExecutionStatus(db, executionId, "error", {
+    error: errorMessage,
+    output: result.outputs,
+  });
+  if (opts.scheduleId) {
+    await updateScheduleStatus(db, opts.scheduleId, "error", errorMessage);
+  }
+  return { errorMessage };
 }
 
 export function computeNextRunTime(

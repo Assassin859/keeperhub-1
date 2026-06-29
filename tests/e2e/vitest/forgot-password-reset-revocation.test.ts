@@ -184,22 +184,31 @@ function resetRequest(email: string): Request {
 const cleanup: Seeded[] = [];
 
 async function purge(s: Seeded): Promise<void> {
-  await db
-    .delete(organizationApiKeys)
-    .where(eq(organizationApiKeys.organizationId, s.orgId));
-  await db
-    .delete(mcpOauthAuthCodes)
-    .where(eq(mcpOauthAuthCodes.userId, s.userId));
-  await db
-    .delete(mcpOauthRefreshTokens)
-    .where(eq(mcpOauthRefreshTokens.userId, s.userId));
-  await db.delete(deviceCode).where(eq(deviceCode.userId, s.userId));
-  await db.delete(apiKeys).where(eq(apiKeys.userId, s.userId));
-  await db.delete(sessions).where(eq(sessions.userId, s.userId));
-  await db.delete(accounts).where(eq(accounts.userId, s.userId));
-  await db.delete(verifications).where(eq(verifications.identifier, s.email));
-  await db.delete(organization).where(eq(organization.id, s.orgId));
-  await db.delete(users).where(eq(users.id, s.userId));
+  // Deleting the user drives the security_audit_log FK to null actor_user_id,
+  // which the append-only trigger rejects. Teardown runs as the postgres
+  // superuser, so disable replication-role triggers for this transaction to
+  // remove test data without tripping the guard.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL session_replication_role = 'replica'`);
+    await tx
+      .delete(organizationApiKeys)
+      .where(eq(organizationApiKeys.organizationId, s.orgId));
+    await tx
+      .delete(mcpOauthAuthCodes)
+      .where(eq(mcpOauthAuthCodes.userId, s.userId));
+    await tx
+      .delete(mcpOauthRefreshTokens)
+      .where(eq(mcpOauthRefreshTokens.userId, s.userId));
+    await tx.delete(deviceCode).where(eq(deviceCode.userId, s.userId));
+    await tx.delete(apiKeys).where(eq(apiKeys.userId, s.userId));
+    await tx.delete(sessions).where(eq(sessions.userId, s.userId));
+    await tx.delete(accounts).where(eq(accounts.userId, s.userId));
+    await tx
+      .delete(verifications)
+      .where(eq(verifications.identifier, s.email));
+    await tx.delete(organization).where(eq(organization.id, s.orgId));
+    await tx.delete(users).where(eq(users.id, s.userId));
+  });
 }
 
 describe.skipIf(SKIP)(

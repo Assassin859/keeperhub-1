@@ -4,8 +4,15 @@ import {
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
+import {
+  ErrorCategory,
+  logSystemWarn,
+  logUserError,
+  logWarn,
+} from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
+import { recordAuditEvent } from "@/lib/security/audit-log";
 import { BILLING_ALERTS } from "./constants";
 import { clearAllDebtForOrg, clearDebtForInvoice } from "./execution-debt";
 import { billOverageForOrg } from "./overage";
@@ -85,7 +92,7 @@ export async function handleBillingEvent(
       break;
     }
     case "invoice.paid": {
-      await handleInvoicePaid(data);
+      await handleInvoicePaid(data, provider);
       break;
     }
     case "invoice.payment_failed": {
@@ -112,12 +119,18 @@ async function handleCheckoutCompleted(
   const { organizationId, providerSubscriptionId } = data;
 
   if (!organizationId) {
-    console.error("[Billing Webhook] No organizationId in checkout event");
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Billing Webhook] No organizationId in checkout event"
+    );
     return;
   }
 
   if (!providerSubscriptionId) {
-    console.error("[Billing Webhook] No subscription in checkout event");
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Billing Webhook] No subscription in checkout event"
+    );
     return;
   }
 
@@ -139,7 +152,10 @@ async function handleCheckoutCompleted(
   );
 
   if (!details.priceId) {
-    console.error(LOG_PREFIX, "No price ID found in subscription");
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `${LOG_PREFIX} No price ID found in subscription`
+    );
     return;
   }
 
@@ -148,10 +164,11 @@ async function handleCheckoutCompleted(
     price: details.priceMetadata,
   });
   if (!resolved) {
-    console.error(
-      LOG_PREFIX,
-      "Unknown priceId, cannot resolve plan:",
-      details.priceId
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `${LOG_PREFIX} Unknown priceId, cannot resolve plan`,
+      undefined,
+      { price_id: details.priceId }
     );
     return;
   }
@@ -272,10 +289,8 @@ async function handleSubscriptionUpdated(
 
   const current = await findSubscriptionByProviderId(providerSubscriptionId);
   if (!current) {
-    console.warn(
-      LOG_PREFIX,
-      "subscription.updated - no matching row for subId:",
-      providerSubscriptionId
+    logWarn(
+      `${LOG_PREFIX} subscription.updated - no matching row for subId: ${providerSubscriptionId}`
     );
     return;
   }
@@ -301,12 +316,11 @@ async function handleSubscriptionUpdated(
         current.currentPeriodEnd
       );
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        LOG_PREFIX,
-        "Failed to bill overage for org (will be retried by scan):",
-        current.organizationId,
-        message
+      logSystemWarn(
+        ErrorCategory.BILLING,
+        `${LOG_PREFIX} Failed to bill overage for org (will be retried by scan)`,
+        error,
+        { org_id: current.organizationId }
       );
     }
   }
@@ -339,6 +353,23 @@ async function handleSubscriptionUpdated(
       from_plan: fromPlan,
       to_plan: newPlan,
       direction: planChangeDirection(fromPlan, newPlan),
+    });
+
+    // Authoritative plan-change record. The acting user is captured separately
+    // by subscription.change_requested on the checkout route; here the actor
+    // is the provider webhook that finalized the transition.
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: current.organizationId,
+        authMethod: "internal",
+      },
+      action: "subscription.plan_changed",
+      resourceType: "subscription",
+      resourceId: current.organizationId,
+      before: { plan: current.plan, tier: current.tier },
+      after: { plan: newPlan, tier: (update.tier as string | null) ?? null },
+      metadata: { source: "stripe", providerSubscriptionId },
     });
   }
 }
@@ -397,6 +428,22 @@ async function handleSubscriptionDeleted(
         tier: current?.tier ?? "none",
       }
     );
+
+    if (current) {
+      await recordAuditEvent({
+        actor: {
+          userId: null,
+          organizationId: current.organizationId,
+          authMethod: "internal",
+        },
+        action: "subscription.canceled",
+        resourceType: "subscription",
+        resourceId: current.organizationId,
+        before: { plan: current.plan, status: current.status },
+        after: { status: "canceled", activeUntil: periodEnd.toISOString() },
+        metadata: { source: "stripe", providerSubscriptionId },
+      });
+    }
     return;
   }
 
@@ -438,15 +485,43 @@ async function handleSubscriptionDeleted(
       tier: current?.tier ?? "none",
     }
   );
+
+  if (current) {
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: current.organizationId,
+        authMethod: "internal",
+      },
+      action: "subscription.canceled",
+      resourceType: "subscription",
+      resourceId: current.organizationId,
+      before: { plan: current.plan, status: current.status },
+      after: { plan: "free", status: "canceled" },
+      metadata: { source: "stripe", providerSubscriptionId },
+    });
+  }
 }
 
 async function markOverageRecordsPaid(
   organizationId: string,
-  invoiceId: string
+  invoiceId: string,
+  provider: BillingProvider
 ): Promise<void> {
-  await db
-    .update(overageBillingRecords)
-    .set({ providerInvoiceId: invoiceId })
+  // F-023 / KEEP-748: attribute an overage record to this invoice ONLY when the
+  // record's own invoice item actually belongs to it. The previous behavior
+  // stamped EVERY billed, unattributed record for the org with whatever invoice
+  // happened to be paid -- so an unrelated standalone/manual invoice could
+  // claim all pending overage, and the subsequent scanAndCreateDebt early-return
+  // (providerInvoiceId set + paid) silently waived it. Resolve each record's
+  // invoice via the same getInvoiceForItem path scanAndCreateDebt uses and only
+  // stamp the records whose item resolves to this exact invoice.
+  const rows = await db
+    .select({
+      id: overageBillingRecords.id,
+      providerInvoiceItemId: overageBillingRecords.providerInvoiceItemId,
+    })
+    .from(overageBillingRecords)
     .where(
       and(
         eq(overageBillingRecords.organizationId, organizationId),
@@ -454,10 +529,38 @@ async function markOverageRecordsPaid(
         isNull(overageBillingRecords.providerInvoiceId)
       )
     );
+
+  for (const row of rows) {
+    if (!row.providerInvoiceItemId) {
+      // No item link -> cannot prove this record belongs to the invoice; leave
+      // it unattributed so scanAndCreateDebt re-resolves it later.
+      continue;
+    }
+    let invoiceInfo: Awaited<ReturnType<BillingProvider["getInvoiceForItem"]>>;
+    try {
+      invoiceInfo = await provider.getInvoiceForItem(row.providerInvoiceItemId);
+    } catch (error) {
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        `${LOG_PREFIX} markOverageRecordsPaid: getInvoiceForItem failed`,
+        error,
+        { overage_record_id: row.id }
+      );
+      continue;
+    }
+    if (invoiceInfo?.invoiceId !== invoiceId) {
+      continue;
+    }
+    await db
+      .update(overageBillingRecords)
+      .set({ providerInvoiceId: invoiceId })
+      .where(eq(overageBillingRecords.id, row.id));
+  }
 }
 
 async function handleInvoicePaid(
-  data: BillingWebhookEvent["data"]
+  data: BillingWebhookEvent["data"],
+  provider: BillingProvider
 ): Promise<void> {
   const { providerSubscriptionId, invoiceId, providerCustomerId } = data;
 
@@ -487,7 +590,7 @@ async function handleInvoicePaid(
       );
 
     if (sub && invoiceId) {
-      await markOverageRecordsPaid(sub.organizationId, invoiceId);
+      await markOverageRecordsPaid(sub.organizationId, invoiceId, provider);
     }
 
     getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_PAID, {
@@ -520,7 +623,7 @@ async function handleInvoicePaid(
         );
 
       if (invoiceId) {
-        await markOverageRecordsPaid(sub.organizationId, invoiceId);
+        await markOverageRecordsPaid(sub.organizationId, invoiceId, provider);
       }
 
       getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_PAID, {
@@ -536,9 +639,8 @@ async function handleInvoicePaymentFailed(
   const { providerSubscriptionId, invoiceUrl } = data;
 
   if (!providerSubscriptionId) {
-    console.warn(
-      LOG_PREFIX,
-      "invoice.payment_failed - no subscriptionId, skipping"
+    logWarn(
+      `${LOG_PREFIX} invoice.payment_failed - no subscriptionId, skipping`
     );
     return;
   }
@@ -577,7 +679,7 @@ async function handleInvoiceOverdue(
   const { providerSubscriptionId, invoiceUrl } = data;
 
   if (!providerSubscriptionId) {
-    console.warn(LOG_PREFIX, "invoice.overdue - no subscriptionId, skipping");
+    logWarn(`${LOG_PREFIX} invoice.overdue - no subscriptionId, skipping`);
     return;
   }
 
@@ -604,9 +706,8 @@ async function handleInvoicePaymentActionRequired(
   const { providerSubscriptionId, invoiceUrl } = data;
 
   if (!providerSubscriptionId) {
-    console.warn(
-      LOG_PREFIX,
-      "invoice.payment_action_required - no subscriptionId, skipping"
+    logWarn(
+      `${LOG_PREFIX} invoice.payment_action_required - no subscriptionId, skipping`
     );
     return;
   }

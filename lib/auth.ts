@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { captureMessage } from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
@@ -20,8 +19,17 @@ import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { hasValidLoadTestBypass } from "@/lib/load-test-bypass";
+import {
+  ErrorCategory,
+  logSecurityEvent,
+  logSystemError,
+  logSystemWarn,
+  logUserError,
+  logWarn,
+} from "@/lib/logging";
 import { revokeRefreshTokensForUserOrg } from "@/lib/mcp/oauth-store";
+import { recordAuditEvent } from "@/lib/security/audit-log";
 import {
   assessCountryTrust,
   assessLoginRisk,
@@ -140,7 +148,10 @@ function getBaseURL() {
 // exercised before prod. Note: with the plugin loaded, the X-Test-API-Key
 // signup bypass no longer applies - that environment's site/secret keys must
 // be ones the widget+server can pass (e.g. Cloudflare's always-pass test
-// keys) for any UI-driven signup E2E to keep working.
+// keys) for any UI-driven signup E2E to keep working. Headless load-test /
+// e2e clients that cannot solve a challenge present the LOAD_TEST_BYPASS_TOKEN
+// instead (see the plugin wrapper below).
+const SIGNUP_CAPTCHA_ENDPOINT = "/sign-up/email";
 const captchaSecretKey = process.env.TURNSTILE_SECRET_KEY;
 const captchaForceEnabled = process.env.TURNSTILE_ENFORCE === "true";
 const captchaSkippedForTests =
@@ -151,12 +162,17 @@ const captchaSkippedForTests =
     process.env.NODE_ENV !== "production");
 
 // Captcha is mandatory in production and in any environment that explicitly
-// opts in via TURNSTILE_ENFORCE. next build evaluates route modules during
-// the "Collecting page data" phase with NODE_ENV=production but no runtime
-// secrets injected, so skip the assertion during that phase to avoid crashing
-// the build. The assertion still fires at server boot (phase-production-server)
-// and under any custom server that doesn't set NEXT_PHASE.
+// opts in via TURNSTILE_ENFORCE. The secret is only required where the plugin
+// is actually loaded, so gate on !captchaSkippedForTests too: a production
+// build run with CI=true / NODE_ENV=test (the ephemeral e2e job boots the
+// prod image with CI=true) skips the plugin entirely, and must not crash at
+// module load demanding a secret it will never use. next build also evaluates
+// route modules during the "Collecting page data" phase with NODE_ENV=production
+// but no runtime secrets injected, so skip the assertion during that phase to
+// avoid crashing the build. The assertion still fires at server boot
+// (phase-production-server) of any environment that actually enforces captcha.
 const captchaRequired =
+  !captchaSkippedForTests &&
   (process.env.NODE_ENV === "production" || captchaForceEnabled) &&
   process.env.NEXT_PHASE !== "phase-production-build";
 if (captchaRequired && !captchaSecretKey) {
@@ -165,15 +181,35 @@ if (captchaRequired && !captchaSecretKey) {
   );
 }
 
+// Wrap the captcha plugin's onRequest so trusted load-test / e2e traffic can
+// skip the Turnstile check on signup. A real challenge cannot be solved
+// headlessly, so k6 / Playwright present the LOAD_TEST_BYPASS_TOKEN (via the
+// x-load-test-mfa-bypass header) - the same token that already clears the MFA
+// gate (proxy.ts). Production never provisions the token, so the bypass is
+// inert there and normal users always hit the real Turnstile verification.
+function buildTurnstilePlugin(secretKey: string): ReturnType<typeof captcha> {
+  const turnstile = captcha({
+    provider: "cloudflare-turnstile",
+    secretKey,
+    endpoints: [SIGNUP_CAPTCHA_ENDPOINT],
+  });
+  return {
+    ...turnstile,
+    onRequest: (request, ctx) => {
+      if (
+        request.url.includes(SIGNUP_CAPTCHA_ENDPOINT) &&
+        hasValidLoadTestBypass(request)
+      ) {
+        return Promise.resolve(undefined);
+      }
+      return turnstile.onRequest(request, ctx);
+    },
+  };
+}
+
 const captchaPlugins =
   !captchaSkippedForTests && captchaSecretKey
-    ? [
-        captcha({
-          provider: "cloudflare-turnstile",
-          secretKey: captchaSecretKey,
-          endpoints: ["/sign-up/email"],
-        }),
-      ]
+    ? [buildTurnstilePlugin(captchaSecretKey)]
     : [];
 
 // Build plugins array conditionally
@@ -222,9 +258,13 @@ const plugins = [
       if (!success) {
         const msg = `[Auth] Failed to send verification email to ${email} — OTP is stored in DB`;
         if (process.env.CI || process.env.NODE_ENV === "test") {
-          console.warn(msg);
+          logWarn(msg);
         } else {
-          console.error(msg);
+          logSystemError(
+            ErrorCategory.EXTERNAL_SERVICE,
+            msg,
+            new Error("verification email send failed")
+          );
         }
       }
     },
@@ -336,7 +376,8 @@ const plugins = [
           inviteLink,
         });
       } catch (error) {
-        console.warn(
+        logSystemWarn(
+          ErrorCategory.EXTERNAL_SERVICE,
           `[Invitation] Email delivery failed for ${data.email}, invitation is still valid`,
           error
         );
@@ -367,8 +408,52 @@ const plugins = [
         await Promise.resolve();
       },
 
-      async afterAcceptInvitation() {
-        await Promise.resolve();
+      async afterCreateInvitation(data) {
+        await recordAuditEvent({
+          actor: {
+            userId: data.inviter.id,
+            organizationId: data.organization.id,
+            authMethod: "session",
+          },
+          action: "member.invited",
+          resourceType: "invitation",
+          resourceId: data.invitation.id,
+          after: { email: data.invitation.email, role: data.invitation.role },
+        });
+      },
+
+      async afterAcceptInvitation(data) {
+        await recordAuditEvent({
+          actor: {
+            userId: data.user.id,
+            organizationId: data.organization.id,
+            authMethod: "session",
+          },
+          action: "member.joined",
+          resourceType: "member",
+          resourceId: data.member.id,
+          after: { role: data.member.role },
+        });
+      },
+
+      // better-auth's updateMemberRole runs no custom route; the acting admin's
+      // identity is not in the hook payload, so the actor is the org context
+      // rather than a user. The affected member and the role transition are
+      // still recorded.
+      async afterUpdateMemberRole(data) {
+        await recordAuditEvent({
+          actor: {
+            userId: null,
+            organizationId: data.organization.id,
+            authMethod: "session",
+            actorLabel: "Organization admin",
+          },
+          action: "member.role_changed",
+          resourceType: "member",
+          resourceId: data.member.id,
+          before: { role: data.previousRole },
+          after: { role: data.member.role },
+        });
       },
 
       // A-04: admin-initiated removal goes through better-auth's removeMember
@@ -377,6 +462,22 @@ const plugins = [
       // time by the membership re-check; this clears the dormant 30-day
       // credential so it cannot linger. Mirrors the leave-route cascade.
       async afterRemoveMember(data) {
+        // The removing admin's identity is not in the hook payload, so the
+        // actor is the org context rather than a user; the removed member is
+        // captured as the resource.
+        await recordAuditEvent({
+          actor: {
+            userId: null,
+            organizationId: data.organization.id,
+            authMethod: "session",
+            actorLabel: "Organization admin",
+          },
+          action: "member.removed",
+          resourceType: "member",
+          resourceId: data.user.id,
+          before: { role: data.member.role },
+        });
+
         // Best-effort: better-auth calls this after the member row is already
         // deleted and outside any transaction, and access is already refused
         // at use time by the membership re-check. A failure to clear the
@@ -426,13 +527,20 @@ async function subscribeToMailerLite(user: {
   })
     .then((res) => {
       if (!res.ok) {
-        console.error(
-          `[MailerLite] Subscribe failed: ${res.status} ${res.statusText}`
+        logUserError(
+          ErrorCategory.EXTERNAL_SERVICE,
+          "[MailerLite] Subscribe failed",
+          new Error(`${res.status} ${res.statusText}`),
+          { status_code: String(res.status) }
         );
       }
     })
     .catch((err: unknown) => {
-      console.error("[MailerLite] Subscribe request error:", err);
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "[MailerLite] Subscribe request error",
+        err
+      );
     });
 }
 
@@ -471,14 +579,67 @@ async function notifyDiscordSignup(user: {
   })
     .then((res) => {
       if (!res.ok) {
-        console.error(
-          `[Discord] Webhook failed: ${res.status} ${res.statusText}`
+        logUserError(
+          ErrorCategory.EXTERNAL_SERVICE,
+          "[Discord] Webhook failed",
+          new Error(`${res.status} ${res.statusText}`),
+          { status_code: String(res.status) }
         );
       }
     })
     .catch((err: unknown) => {
-      console.error("[Discord] Webhook request error:", err);
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "[Discord] Webhook request error",
+        err
+      );
     });
+}
+
+/**
+ * Backstop for the signup-time fire-and-forget wallet provisioning. Runs on
+ * login (session.create.after): if the org still has no active wallet - because
+ * the signup attempt failed or the pod was killed mid-flight - it re-attempts
+ * provisioning in the background. Idempotent and non-fatal: skips anonymous
+ * accounts and never throws into the auth flow.
+ */
+async function backstopProvisionWallet(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  try {
+    // Lazy-loaded: these wallet modules pull in `server-only` (and Turnkey /
+    // ethers). Importing them statically would drag all of that into every
+    // consumer of lib/auth.ts at module-eval - including auth plugin
+    // registration - so keep them out of the static graph and load on demand.
+    const { organizationHasWallet } = await import("@/lib/web3/wallet-helpers");
+    if (await organizationHasWallet(organizationId)) {
+      return;
+    }
+
+    const [userRow] = await db
+      .select({ email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const email = userRow?.email;
+    if (!email || userRow?.name === "Anonymous" || email.startsWith("temp-")) {
+      return;
+    }
+
+    const { provisionOrganizationWallet } = await import(
+      "@/lib/turnkey/provision-org-wallet"
+    );
+    await provisionOrganizationWallet({ userId, organizationId, email });
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Auth] Backstop wallet provisioning failed on session create",
+      error,
+      { userId, organizationId }
+    );
+  }
 }
 
 export const auth = betterAuth({
@@ -506,7 +667,8 @@ export const auth = betterAuth({
           await Promise.resolve();
           const email = typeof user.email === "string" ? user.email : null;
           if (email && isDisposableEmailDomain(email)) {
-            console.warn(
+            logUserError(
+              ErrorCategory.VALIDATION,
               `[Auth] Rejected signup for disposable email domain: ${email}`
             );
             throw new APIError("BAD_REQUEST", {
@@ -568,6 +730,12 @@ export const auth = betterAuth({
             return;
           }
 
+          // The org's non-custodial wallet is provisioned client-side after
+          // signup via the streamed GET /api/user/wallet/provision endpoint,
+          // which awaits the Turnkey call and reports readiness to the UI.
+          // session.create.after backstops any signup that never opens that
+          // stream (API-only signup, or a tab closed mid-flight).
+
           // Notify external services for OAuth signups (already verified at creation).
           // `databaseHooks.user.create.after` only fires on actual user-row
           // inserts in current better-auth, so the freshness guard here is
@@ -594,10 +762,13 @@ export const auth = betterAuth({
                 headers: new Headers(),
               });
             } catch (error) {
-              console.error(
+              logSystemError(
+                ErrorCategory.AUTH,
                 "[Auth] Failed to dispatch signup verification OTP",
-                { email: user.email, userId: user.id },
-                error
+                error,
+                // No email label - PII. userId is enough to investigate; the
+                // email is derivable from it if needed.
+                { userId: user.id }
               );
             }
           }
@@ -641,27 +812,16 @@ export const auth = betterAuth({
             // Wrapped in try/catch so a Sentry transport throw cannot
             // propagate out of the better-auth hook and surface as a
             // generic login error instead of the deactivated-user deny.
-            try {
-              captureMessage("security.deactivated_login_attempt", {
-                level: "warning",
+            logSecurityEvent(
+              "deactivated_login_attempt",
+              { surface: "session", userId },
+              {
                 tags: {
                   security: "deactivated_login_attempt",
                   surface: "session",
                 },
                 user: { id: userId },
-              });
-            } catch {
-              // swallow; observability must not change auth flow shape
-            }
-            // Structured stdout line so Loki / log-only alert rules pick
-            // up the signal even when SENTRY_DSN is unset (local dev) or
-            // when the Sentry transport drops.
-            console.warn(
-              JSON.stringify({
-                event: "security.deactivated_login_attempt",
-                surface: "session",
-                userId,
-              })
+              }
             );
             return false;
           }
@@ -706,32 +866,64 @@ export const auth = betterAuth({
           };
         },
         after: async (session) => {
-          // If session already has an active organization, skip
-          if (session.activeOrganizationId) {
-            return;
+          let orgId: string | null =
+            (session.activeOrganizationId as string | null | undefined) ?? null;
+
+          // Backfill the active org for sessions that don't carry one yet.
+          if (!orgId) {
+            try {
+              const [member] = await db
+                .select()
+                .from(memberTable)
+                .where(eq(memberTable.userId, session.userId))
+                .limit(1);
+
+              if (member) {
+                orgId = member.organizationId;
+                await db
+                  .update(sessions)
+                  .set({ activeOrganizationId: member.organizationId })
+                  .where(eq(sessions.id, session.id));
+              }
+            } catch (error) {
+              logSystemError(
+                ErrorCategory.AUTH,
+                "[Auth] Failed to set active org on session",
+                error,
+                { sessionId: session.id }
+              );
+            }
           }
 
-          try {
-            // Find the user's first organization
-            const [member] = await db
-              .select()
-              .from(memberTable)
-              .where(eq(memberTable.userId, session.userId))
-              .limit(1);
+          // Audit the sign-in. ip/userAgent are columns on the session row;
+          // buildAuditMetadata isn't usable here (no Request in the hook), and
+          // country is only resolved on the request path, so it stays null.
+          const sessionRow = session as {
+            ipAddress?: string | null;
+            userAgent?: string | null;
+          };
+          await recordAuditEvent({
+            actor: {
+              userId: session.userId,
+              organizationId: orgId,
+              authMethod: "session",
+            },
+            action: "session.created",
+            resourceType: "session",
+            resourceId: session.id,
+            metadata: {
+              ip: sessionRow.ipAddress ?? null,
+              country: null,
+              userAgent: sessionRow.userAgent ?? null,
+            },
+          });
 
-            if (member) {
-              // Set as active organization in the session
-              await db
-                .update(sessions)
-                .set({ activeOrganizationId: member.organizationId })
-                .where(eq(sessions.id, session.id));
-            }
-          } catch (error) {
-            logSystemError(
-              ErrorCategory.AUTH,
-              "[Auth] Failed to set active org on session",
-              error,
-              { sessionId: session.id }
+          // Backstop the signup-time wallet provisioning (fire-and-forget):
+          // re-provision if the org somehow has no wallet yet. Intentionally
+          // not awaited; backstopProvisionWallet handles its own errors.
+          if (orgId) {
+            backstopProvisionWallet(session.userId, orgId).catch(
+              () => undefined
             );
           }
         },
@@ -752,24 +944,16 @@ export const auth = betterAuth({
             // Wrapped in try/catch so a Sentry transport throw cannot
             // propagate out of the OAuth re-link hook -- see session
             // surface above for the same pattern.
-            try {
-              captureMessage("security.deactivated_login_attempt", {
-                level: "warning",
+            logSecurityEvent(
+              "deactivated_login_attempt",
+              { surface: "account", userId },
+              {
                 tags: {
                   security: "deactivated_login_attempt",
                   surface: "account",
                 },
                 user: { id: userId },
-              });
-            } catch {
-              // swallow; observability must not change auth flow shape
-            }
-            console.warn(
-              JSON.stringify({
-                event: "security.deactivated_login_attempt",
-                surface: "account",
-                userId,
-              })
+              }
             );
             return false;
           }
@@ -778,23 +962,17 @@ export const auth = betterAuth({
     },
   },
   onAPIError: {
-    onError: (error, ctx) => {
+    onError: (error, _ctx) => {
       // KEEP-612: emit the sessions-backstop detection signal if this error
       // is the migration-0090 KH001 reject (a deactivated-user session insert
       // that bypassed the session.create.before gate). reportSessionBackstop
       // walks the wrapped-error cause chain + message fallback and is
       // unit-tested independently of the Better Auth config.
       reportSessionBackstop(error);
-      console.error("[Better Auth API Error]", {
-        error:
-          error instanceof Error
-            ? {
-                message: error.message,
-                stack: error.stack,
-                name: error.name,
-              }
-            : error,
-        context: ctx,
+      const errName = error instanceof Error ? error.name : "unknown";
+      const errMessage = error instanceof Error ? error.message : String(error);
+      logWarn(`[Better Auth API Error] ${errName}: ${errMessage}`, {
+        error_name: errName,
       });
     },
   },

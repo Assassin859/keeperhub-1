@@ -14,6 +14,11 @@ import {
 } from "@/lib/mcp/oauth-store";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
+import {
+  oauthAuthorizationCodeSchema,
+  oauthRefreshTokenSchema,
+} from "@/lib/schemas/oauth";
+import { validateData } from "@/lib/validate-request";
 import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export const dynamic = "force-dynamic";
@@ -100,17 +105,19 @@ async function handleAuthorizationCode(
   request: Request,
   params: URLSearchParams
 ): Promise<Response> {
-  const code = params.get("code");
-  const clientId = params.get("client_id");
-  const redirectUri = params.get("redirect_uri");
-  const codeVerifier = params.get("code_verifier");
-
-  if (!(code && clientId && redirectUri && codeVerifier)) {
-    return jsonError(
-      "Missing required parameters: code, client_id, redirect_uri, code_verifier",
-      HttpStatus.BAD_REQUEST
-    );
+  const parsed = validateData(
+    Object.fromEntries(params),
+    oauthAuthorizationCodeSchema
+  );
+  if (!parsed.success) {
+    return parsed.response;
   }
+  const {
+    code,
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier,
+  } = parsed.data;
 
   const client = await getOAuthClient(clientId);
   if (!client) {
@@ -188,15 +195,14 @@ async function handleRefreshToken(
   request: Request,
   params: URLSearchParams
 ): Promise<Response> {
-  const refreshTokenValue = params.get("refresh_token");
-  const clientId = params.get("client_id");
-
-  if (!(refreshTokenValue && clientId)) {
-    return jsonError(
-      "Missing required parameters: refresh_token, client_id",
-      HttpStatus.BAD_REQUEST
-    );
+  const parsed = validateData(
+    Object.fromEntries(params),
+    oauthRefreshTokenSchema
+  );
+  if (!parsed.success) {
+    return parsed.response;
   }
+  const { refresh_token: refreshTokenValue, client_id: clientId } = parsed.data;
 
   const client = await getOAuthClient(clientId);
   if (!client) {

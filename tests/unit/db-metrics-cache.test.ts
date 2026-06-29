@@ -26,6 +26,8 @@ const DEFAULT_DB_RETURNS: Record<string, unknown> = {
     durationSum: 0,
     durationCount: 0,
   },
+  getWorkflowErrorsByWorkflowFromDb: [],
+  getSystemErrorsByCategoryFromDb: [],
   getStepStatsFromDb: {
     countsByType: {},
     durationBuckets: [0, 0, 0, 0, 0, 0, 0, 0],
@@ -108,6 +110,7 @@ vi.mock("@/lib/metrics/rpc-health-probe", () => ({
 import {
   __resetDbMetricsCacheForTest,
   getApiProcessMetrics,
+  getDbMetrics,
   updateDbMetrics,
 } from "@/lib/metrics/collectors/prometheus";
 
@@ -137,6 +140,14 @@ const CACHE_LOOKUP_HIT_RE =
   /keeperhub_db_metrics_cache_lookups_total\{result="hit"\}\s+\d+/;
 const REFRESH_SUCCESS_RE =
   /keeperhub_db_metrics_refresh_total\{outcome="success"\}\s+\d+/;
+const ERRORS_BY_WORKFLOW_SKY_RE =
+  /keeperhub_workflow_errors_by_workflow\{[^}]*workflow_id="wf_sky_1"[^}]*org_slug="techops-services"[^}]*error_type="user"[^}]*\}\s+7/;
+const ERRORS_BY_WORKFLOW_AJNA_RE =
+  /keeperhub_workflow_errors_by_workflow\{[^}]*workflow_id="wf_ajna_1"[^}]*org_slug="ajna"[^}]*error_type="system"[^}]*\}\s+2/;
+const ERRORS_BY_CATEGORY_SYSTEM_RE =
+  /keeperhub_system_errors_by_category\{[^}]*error_category="network_rpc"[^}]*error_type="system"[^}]*\}\s+5/;
+const ERRORS_BY_CATEGORY_UNKNOWN_RE =
+  /keeperhub_system_errors_by_category\{[^}]*error_category="unknown"[^}]*error_type="user"[^}]*\}\s+3/;
 
 describe("updateDbMetrics TTL cache", () => {
   const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
@@ -156,6 +167,7 @@ describe("updateDbMetrics TTL cache", () => {
 
   afterEach(() => {
     if (originalTtl === undefined) {
+      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
       delete process.env.DB_METRICS_CACHE_TTL_MS;
     } else {
       process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
@@ -349,5 +361,132 @@ describe("updateDbMetrics TTL cache", () => {
     expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(2);
 
     errSpy.mockRestore();
+  });
+});
+
+// TECH-48: the per-workflow error gauge must be DB-sourced and populated on
+// the metrics scrape (the regression that left the prod metric empty was that
+// nothing wired the per-workflow series into the scrape path at all).
+describe("keeperhub_workflow_errors_by_workflow gauge", () => {
+  const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
+
+  beforeEach(() => {
+    __resetDbMetricsCacheForTest();
+    for (const fn of Object.values(dbMocks)) {
+      fn.mockReset();
+    }
+    rebindDefaultDbMockImplementations();
+    // No caching so each updateDbMetrics() re-reads the (overridden) mocks.
+    process.env.DB_METRICS_CACHE_TTL_MS = "0";
+  });
+
+  afterEach(() => {
+    if (originalTtl === undefined) {
+      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
+      delete process.env.DB_METRICS_CACHE_TTL_MS;
+    } else {
+      process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
+    }
+  });
+
+  it("emits one series per (workflow_id, org_slug, error_type) from the DB query", async () => {
+    dbMocks.getWorkflowErrorsByWorkflowFromDb.mockResolvedValue([
+      {
+        workflowId: "wf_sky_1",
+        orgSlug: "techops-services",
+        errorType: "user",
+        count: 7,
+      },
+      {
+        workflowId: "wf_ajna_1",
+        orgSlug: "ajna",
+        errorType: "system",
+        count: 2,
+      },
+    ]);
+
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+
+    expect(out).toMatch(ERRORS_BY_WORKFLOW_SKY_RE);
+    expect(out).toMatch(ERRORS_BY_WORKFLOW_AJNA_RE);
+  });
+
+  it("clears stale series when a workflow stops appearing in the query", async () => {
+    dbMocks.getWorkflowErrorsByWorkflowFromDb.mockResolvedValueOnce([
+      { workflowId: "wf_gone", orgSlug: "ajna", errorType: "user", count: 3 },
+    ]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toContain('workflow_id="wf_gone"');
+
+    // Next scrape no longer returns that workflow; reset() must drop the series.
+    dbMocks.getWorkflowErrorsByWorkflowFromDb.mockResolvedValue([]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).not.toContain('workflow_id="wf_gone"');
+  });
+});
+
+// TECH-6544: the system-errors-by-category gauge dedups errors by cause for the
+// infra P3 alert. It must be DB-sourced and populated on the metrics scrape,
+// grouped by (error_category, error_type) only — platform-wide, with no
+// org_slug or workflow_id label.
+describe("keeperhub_system_errors_by_category gauge", () => {
+  const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
+
+  beforeEach(() => {
+    __resetDbMetricsCacheForTest();
+    for (const fn of Object.values(dbMocks)) {
+      fn.mockReset();
+    }
+    rebindDefaultDbMockImplementations();
+    // No caching so each updateDbMetrics() re-reads the (overridden) mocks.
+    process.env.DB_METRICS_CACHE_TTL_MS = "0";
+  });
+
+  afterEach(() => {
+    if (originalTtl === undefined) {
+      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
+      delete process.env.DB_METRICS_CACHE_TTL_MS;
+    } else {
+      process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
+    }
+  });
+
+  it("emits one series per (error_category, error_type) from the DB query", async () => {
+    dbMocks.getSystemErrorsByCategoryFromDb.mockResolvedValue([
+      {
+        errorCategory: "network_rpc",
+        errorType: "system",
+        count: 5,
+      },
+      {
+        errorCategory: "unknown",
+        errorType: "user",
+        count: 3,
+      },
+    ]);
+
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+
+    expect(out).toMatch(ERRORS_BY_CATEGORY_SYSTEM_RE);
+    expect(out).toMatch(ERRORS_BY_CATEGORY_UNKNOWN_RE);
+  });
+
+  it("clears stale series when a category stops appearing in the query", async () => {
+    dbMocks.getSystemErrorsByCategoryFromDb.mockResolvedValueOnce([
+      {
+        errorCategory: "billing",
+        errorType: "user",
+        count: 4,
+      },
+    ]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toContain('error_category="billing"');
+
+    // Next scrape no longer returns that category; reset() must drop the series.
+    dbMocks.getSystemErrorsByCategoryFromDb.mockResolvedValue([]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).not.toContain('error_category="billing"');
   });
 });

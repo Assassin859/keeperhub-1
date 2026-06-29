@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rawConsole } from "@/lib/log/core";
 import {
   ErrorCategory,
   logSystemError,
@@ -13,23 +14,34 @@ import {
 } from "@/lib/metrics/types";
 import { createMockMetricsCollector } from "../mocks/metrics";
 
+// The structured logger writes via lib/log/core's rawConsole (the original
+// console methods bound at module load), so spies must target rawConsole, not
+// the global console (which the facade would patch in a real runtime).
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
+
 describe("Unified Logging Helpers", () => {
   let mockCollector: MetricsCollector;
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  const originalLevel = process.env.LOG_LEVEL;
 
   beforeEach(() => {
     vi.clearAllMocks();
     resetMetricsCollector();
+    // Make console emission deterministic regardless of ambient LOG_LEVEL.
+    process.env.LOG_LEVEL = "debug";
 
     mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
 
-    // Spy on console methods
-    consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+    // Spy on the canonical sink (rawConsole), not the global console.
+    consoleWarnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
       // noop - suppress console output
     });
-    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {
+    consoleErrorSpy = vi.spyOn(raw, "error").mockImplementation(() => {
       // noop - suppress console output
     });
   });
@@ -37,6 +49,7 @@ describe("Unified Logging Helpers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     resetMetricsCollector();
+    process.env.LOG_LEVEL = originalLevel;
   });
 
   // KEEP-545: log helpers now emit a single structured JSON line so Grafana
@@ -44,11 +57,15 @@ describe("Unified Logging Helpers", () => {
   // and `org_slug` via `| json`. This helper parses the JSON arg and returns
   // the payload so per-test assertions can check fields without coupling to
   // the on-the-wire serialization order.
-  function lastJsonLine(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown> {
-    const calls = spy.mock.calls;
-    expect(calls.length).toBeGreaterThan(0);
-    const last = calls[calls.length - 1];
-    expect(last.length).toBe(1);
+  function lastJsonLine(
+    spy: ReturnType<typeof vi.spyOn>
+  ): Record<string, unknown> {
+    const last = spy.mock.calls.at(-1);
+    if (!last || last.length !== 1) {
+      throw new Error(
+        `expected exactly one structured log arg, got ${JSON.stringify(spy.mock.calls)}`
+      );
+    }
     return JSON.parse(last[0] as string) as Record<string, unknown>;
   }
 

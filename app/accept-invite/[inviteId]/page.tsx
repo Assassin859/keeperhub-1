@@ -4,6 +4,7 @@ import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useAuthPrompt } from "@/components/auth/provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -509,14 +510,10 @@ function VerificationFormState({
 // Component for logged-out users with sign-in/sign-up toggle
 function AuthFormState({
   invitation,
-  onSuccess,
   onShowVerification,
-  onAccepting,
 }: {
   invitation: InvitationData;
-  onSuccess: () => void;
   onShowVerification: (password: string) => void;
-  onAccepting: () => void;
 }) {
   // Default to signup; at submit time an existing account flips to sign-in and
   // a new account proceeds to email verification (see handleSignupSubmit below).
@@ -527,6 +524,7 @@ function AuthFormState({
   const [captchaToken, setCaptchaToken] = useState("");
   const captchaRef = useRef<TurnstileInstance | null>(null);
   const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const { openAuthPrompt } = useAuthPrompt();
 
   const resetCaptcha = () => {
     setCaptchaToken("");
@@ -547,7 +545,7 @@ function AuthFormState({
       resetCaptcha();
       setAuthMode("signin");
       setFormError(
-        "You already have an account. Enter your password to sign in."
+        "You already have an account. Sign in to accept this invitation."
       );
       return { done: true };
     }
@@ -565,41 +563,19 @@ function AuthFormState({
     return { done: true };
   };
 
-  const handleSigninSubmit = async () => {
-    onAccepting();
-
-    const signInResult = await trySignIn(invitation.email, password);
-
-    if (!signInResult.success) {
-      if (signInResult.needsVerification) {
-        await authClient.emailOtp.sendVerificationOtp({
-          email: invitation.email,
-          type: "email-verification",
-        });
-        toast.info("Please verify your email. A new code has been sent.");
-        onShowVerification(password);
-        return { done: true };
-      }
-
-      setFormError("Incorrect password. Please try again.");
-      return { done: true };
-    }
-
-    const acceptResult = await acceptInvitation(invitation.id);
-    if (!acceptResult.success) {
-      setFormError(acceptResult.error || "Failed to accept invitation");
-      return { done: true };
-    }
-
-    onSuccess();
-    return { done: true };
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
-    if (authMode === "signup" && password.length < 8) {
+    if (authMode === "signin") {
+      // Existing users sign in through the shared AuthDialog, which runs the
+      // full password + email-OTP + TOTP flow and returns to this invite once
+      // a session exists, landing on the signed-in accept view.
+      openAuthPrompt({ redirectTo: `/accept-invite/${invitation.id}` });
+      return;
+    }
+
+    if (password.length < 8) {
       setFormError("Password must be at least 8 characters");
       return;
     }
@@ -607,11 +583,7 @@ function AuthFormState({
     setSubmitting(true);
 
     try {
-      if (authMode === "signup") {
-        await handleSignupSubmit();
-      } else {
-        await handleSigninSubmit();
-      }
+      await handleSignupSubmit();
     } catch (error) {
       console.error("Failed to complete auth flow:", error);
       setFormError(
@@ -650,27 +622,23 @@ function AuthFormState({
             <Input disabled id="email" type="email" value={invitation.email} />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              disabled={submitting}
-              id="password"
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={
-                authMode === "signin"
-                  ? "Enter your password"
-                  : "Create a password"
-              }
-              required
-              type="password"
-              value={password}
-            />
-            {authMode === "signup" && (
+          {authMode === "signup" && (
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                disabled={submitting}
+                id="password"
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Create a password"
+                required
+                type="password"
+                value={password}
+              />
               <p className="text-muted-foreground text-xs">
                 Password must be at least 8 characters.
               </p>
-            )}
-          </div>
+            </div>
+          )}
 
           {formError && (
             <div className="rounded-md bg-destructive/10 p-3 text-destructive text-sm">
@@ -698,9 +666,8 @@ function AuthFormState({
             type="submit"
           >
             {submitting && <Spinner className="mr-2 size-4" />}
-            {submitting && authMode === "signin" && "Signing in..."}
             {submitting && authMode === "signup" && "Creating account..."}
-            {!submitting && authMode === "signin" && "Sign In & Join"}
+            {authMode === "signin" && "Sign In & Join"}
             {!submitting && authMode === "signup" && "Create Account & Join"}
           </Button>
         </form>
@@ -789,7 +756,6 @@ export default function AcceptInvitePage() {
     showVerification: boolean;
     storedPassword: string;
   }>({ showVerification: false, storedPassword: "" });
-  const [isAcceptingViaAuth, setIsAcceptingViaAuth] = useState(false);
 
   useEffect(() => {
     async function fetchInvitation() {
@@ -881,30 +847,6 @@ export default function AcceptInvitePage() {
   }
 
   if (pageState === "logged-in-match") {
-    // When signing in via the auth form, the session update causes pageState to
-    // flip to "logged-in-match" before handleSigninSubmit finishes accepting the
-    // invitation. Show a transitional state instead of the AcceptDirectState
-    // button that would flash and auto-resolve.
-    if (isAcceptingViaAuth) {
-      return (
-        <div data-page-state={pageState}>
-          <div className="flex min-h-screen items-center justify-center p-4">
-            <div className="w-full max-w-md space-y-6 rounded-lg border bg-card p-8 text-center">
-              <Spinner className="mx-auto size-8" />
-              <div className="space-y-2">
-                <h1 className="font-semibold text-xl">
-                  Joining {invitation.organizationName}
-                </h1>
-                <p className="text-muted-foreground text-sm">
-                  Setting up your account...
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div data-page-state={pageState}>
         <AcceptDirectState invitation={invitation} onSuccess={handleSuccess} />
@@ -927,14 +869,12 @@ export default function AcceptInvitePage() {
     <div data-page-state={pageState}>
       <AuthFormState
         invitation={invitation}
-        onAccepting={() => setIsAcceptingViaAuth(true)}
         onShowVerification={(password) =>
           setVerificationData({
             showVerification: true,
             storedPassword: password,
           })
         }
-        onSuccess={handleSuccess}
       />
     </div>
   );

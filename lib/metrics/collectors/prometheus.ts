@@ -8,6 +8,7 @@
 import "server-only";
 
 import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
 import type { ErrorContext, MetricLabels, MetricsCollector } from "../types";
 
 // Use global singletons to prevent duplicate registration during hot reload
@@ -115,8 +116,49 @@ function getOrCreateGauge(
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug and error_type (all-time)",
+  "Workflow executions by status, broken down by org_slug and error_type (rolling 30-day window)",
   ["status", "org_slug", "error_type"]
+);
+
+// TECH-48: per-workflow error counts for managed orgs over a ROLLING 1-HOUR
+// window, DB-sourced so the series is authoritative regardless of which
+// finalization path wrote the error row. Replaces the per-pod
+// `keeperhub_workflow_execution_errors_by_workflow_total` counter, which was
+// only incremented on the kickoff/reaper/MCP paths and so returned no data in
+// prod for normal workflow failures.
+//
+// Value = executions that errored in the last hour, per workflow (see
+// getWorkflowErrorsByWorkflowFromDb). The managed-client alert reads this gauge
+// DIRECTLY as its numerator — no offset/delta. The earlier all-time-cumulative
+// variant forced the alert into `value(now) - value(offset 1h)`, which (a) was
+// fragile when the gauge gapped and (b) made the query scan every error row
+// ever and trip the 8s metrics statement_timeout, so the gauge flapped. The
+// 1h window keeps the query an index range scan that never times out.
+//
+// No `_total` suffix: that suffix on a poll-driven gauge is the trap KEEP-545
+// documents below. Cardinality is bounded by scoping to managed orgs and the
+// 1h window: only managed workflows that errored in the last hour emit a series.
+const workflowErrorsByWorkflow = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_workflow_errors_by_workflow",
+  "Workflow executions that errored in the last hour, by workflow_id for managed orgs, by org_slug and error_type",
+  ["workflow_id", "org_slug", "error_type"]
+);
+
+// TECH-6544: errored executions in the last hour, PLATFORM-WIDE, grouped by
+// (error_category, error_type). Keyed on error_category so the infra P3 alert
+// dedups system errors by *cause* — one series per failure mode — rather than
+// fanning a single root cause out into one series per affected workflow/org.
+// System faults are org-agnostic, so there is intentionally no org_slug label;
+// dropping it (and workflow_id) pins cardinality to ~categories * ~types
+// regardless of customer count. 1h-window, DB-sourced (see
+// getSystemErrorsByCategoryFromDb). Value = executions that errored in the last
+// hour per (error_category, error_type); the alert reads it directly.
+const systemErrorsByCategory = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_system_errors_by_category",
+  "Workflow executions that errored in the last hour, platform-wide, by error_category and error_type (system errors are org-agnostic; no org_slug label to keep cardinality fixed)",
+  ["error_category", "error_type"]
 );
 
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
@@ -1107,7 +1149,7 @@ export const prometheusMetricsCollector: MetricsCollector = {
     if (histogram) {
       histogram.observe(sanitizeLabels(labels), durationMs);
     } else {
-      console.warn(`[Prometheus] Unknown latency metric: ${name}`);
+      logWarn(`[Prometheus] Unknown latency metric: ${name}`);
     }
   },
 
@@ -1120,7 +1162,7 @@ export const prometheusMetricsCollector: MetricsCollector = {
     if (counter) {
       counter.inc(sanitizeLabels(labels), value);
     } else {
-      console.warn(`[Prometheus] Unknown counter metric: ${name}`);
+      logWarn(`[Prometheus] Unknown counter metric: ${name}`);
     }
   },
 
@@ -1150,7 +1192,7 @@ export const prometheusMetricsCollector: MetricsCollector = {
     if (gauge) {
       gauge.set(sanitizeLabels(labels), value);
     } else {
-      console.warn(`[Prometheus] Unknown gauge metric: ${name}`);
+      logWarn(`[Prometheus] Unknown gauge metric: ${name}`);
     }
   },
 };
@@ -1165,7 +1207,7 @@ function recordErrorCounter(
   }
   const counter = errorCounterMap[name];
   if (!counter) {
-    console.warn(`[Prometheus] Unknown error metric: ${name}`);
+    logWarn(`[Prometheus] Unknown error metric: ${name}`);
     return;
   }
   const sanitized = sanitizeLabels(labels);
@@ -1183,7 +1225,11 @@ function recordErrorCounter(
     // Defense-in-depth: if filtering missed something or prom-client rejects
     // the label set for any other reason, never let metrics break the
     // user-facing operation that called us.
-    console.warn(`[Prometheus] Failed to record error counter ${name}:`, err);
+    logSystemWarn(
+      ErrorCategory.INFRASTRUCTURE,
+      `[Prometheus] Failed to record error counter ${name}`,
+      err
+    );
   }
 }
 
@@ -1378,6 +1424,8 @@ async function refreshDbMetricsNow(): Promise<void> {
     // Dynamic import to avoid circular dependencies
     const {
       getWorkflowStatsFromDb,
+      getWorkflowErrorsByWorkflowFromDb,
+      getSystemErrorsByCategoryFromDb,
       getStepStatsFromDb,
       getDailyActiveUsersFromDb,
       getUserStatsFromDb,
@@ -1393,6 +1441,8 @@ async function refreshDbMetricsNow(): Promise<void> {
     } = await import("../db-metrics");
     const [
       workflowStats,
+      errorsByWorkflow,
+      systemErrorsByCategoryRows,
       stepStats,
       dailyActiveUsers,
       userStats,
@@ -1407,6 +1457,8 @@ async function refreshDbMetricsNow(): Promise<void> {
       billingStats,
     ] = await Promise.all([
       getWorkflowStatsFromDb(),
+      getWorkflowErrorsByWorkflowFromDb(),
+      getSystemErrorsByCategoryFromDb(),
       getStepStatsFromDb(),
       getDailyActiveUsersFromDb(),
       getUserStatsFromDb(),
@@ -1440,6 +1492,35 @@ async function refreshDbMetricsNow(): Promise<void> {
     // See `keeperhub_workflow_execution_errors_created_total` (per-pod
     // counter incremented at finalization time) for the replacement.
 
+    // TECH-48: per-workflow error counts for managed orgs. Reset before
+    // populating so a workflow that no longer has errors in a bucket clears
+    // out instead of pinning a stale value.
+    workflowErrorsByWorkflow.reset();
+    for (const row of errorsByWorkflow) {
+      workflowErrorsByWorkflow.set(
+        {
+          workflow_id: row.workflowId,
+          org_slug: row.orgSlug,
+          error_type: row.errorType,
+        },
+        row.count
+      );
+    }
+
+    // TECH-6544: errored executions per (error_category, error_type),
+    // platform-wide. Reset before populating so a category that no longer has
+    // errors in the window clears out instead of pinning a stale value.
+    systemErrorsByCategory.reset();
+    for (const row of systemErrorsByCategoryRows) {
+      systemErrorsByCategory.set(
+        {
+          error_category: row.errorCategory,
+          error_type: row.errorType,
+        },
+        row.count
+      );
+    }
+
     // Update workflow duration histogram buckets
     for (let i = 0; i < WORKFLOW_DURATION_BUCKETS.length; i++) {
       workflowDurationBucket.set(
@@ -1451,7 +1532,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     workflowDurationBucket.set(
       { le: "+Inf" },
       workflowStats.durationBuckets[WORKFLOW_DURATION_BUCKETS.length] ??
-        workflowStats.durationCount
+      workflowStats.durationCount
     );
 
     // Update workflow duration sum and count
@@ -1486,7 +1567,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     stepDurationBucket.set(
       { le: "+Inf" },
       stepStats.durationBuckets[STEP_DURATION_BUCKETS.length] ??
-        stepStats.durationCount
+      stepStats.durationCount
     );
 
     // Update step duration sum and count
@@ -1619,7 +1700,11 @@ async function refreshDbMetricsNow(): Promise<void> {
 
     updateHubVoteMetrics(voteStats);
   } catch (error) {
-    console.error("[Prometheus] Failed to update DB metrics:", error);
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Prometheus] Failed to update DB metrics",
+      error
+    );
     // Propagate so the TTL cache wrapper evicts the failed entry instead
     // of pinning it; updateDbMetrics() catches before returning to callers,
     // preserving the previous "metrics endpoint never 500s" behavior.

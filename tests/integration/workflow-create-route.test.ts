@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The route records a workflow snapshot, pulling in history -> version-diff ->
+// step-registry, which `import "server-only"`. Stub the guard for vitest.
+vi.mock("server-only", () => ({}));
+
 const { mockGetDualAuthContext, mockInsert, mockValidateWorkflowIntegrations } =
   vi.hoisted(() => ({
     mockGetDualAuthContext: vi.fn(),
@@ -45,6 +49,15 @@ vi.mock("@/lib/idempotency", () => ({
   beginIdempotentFromRequest: vi.fn().mockResolvedValue(null),
   idempotencyEarlyResponse: vi.fn().mockReturnValue(null),
   recordIdempotentResponse: vi.fn((_idem, response) => response),
+}));
+
+vi.mock("@/lib/workflow/history", () => ({
+  recordWorkflowSnapshot: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/security/audit-log", () => ({
+  buildAuditMetadata: vi.fn().mockReturnValue({}),
+  recordAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { POST } from "@/app/api/workflows/create/route";
@@ -204,5 +217,39 @@ describe("POST /api/workflows/create action config validation", () => {
       "org-123"
     );
     expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts a Hub draft payload (actionType + _protocolMeta only) and proceeds to insert", async () => {
+    const mockReturning = vi.fn().mockResolvedValue([
+      {
+        id: "wf-1",
+        name: "Untitled Workflow",
+        enabled: false,
+        createdAt: new Date("2024-01-01"),
+        updatedAt: new Date("2024-01-01"),
+      },
+    ]);
+    mockInsert.mockReturnValue({ values: vi.fn().mockReturnValue({ returning: mockReturning }) });
+
+    const protocolMeta = JSON.stringify({
+      protocolSlug: "aave-v3",
+      contractKey: "pool",
+      functionName: "supply",
+      actionType: "write",
+    });
+
+    const response = await POST(
+      request(
+        workflowBody([
+          baseActionNode({
+            actionType: "aave-v3/supply",
+            _protocolMeta: protocolMeta,
+          }),
+        ])
+      )
+    );
+
+    expect(response.status).not.toBe(422);
+    expect(mockInsert).toHaveBeenCalled();
   });
 });

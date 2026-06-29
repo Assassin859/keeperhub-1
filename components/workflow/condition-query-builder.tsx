@@ -78,12 +78,16 @@ function RuleRow({
         <SelectTrigger className="h-9 w-[120px] shrink-0 text-xs">
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="max-w-[280px]">
           {OPERATOR_OPTION_GROUPS.map((optionGroup) => (
             <SelectGroup key={optionGroup.label}>
               <SelectLabel>{optionGroup.label}</SelectLabel>
               {optionGroup.operators.map((op) => (
-                <SelectItem key={op} value={op}>
+                <SelectItem
+                  description={OPERATOR_METADATA[op].description}
+                  key={op}
+                  value={op}
+                >
                   {OPERATOR_METADATA[op].label}
                 </SelectItem>
               ))}

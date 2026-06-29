@@ -4,6 +4,10 @@ import { CodeIcon } from "./icon";
 
 const codePlugin: IntegrationPlugin = {
   type: "code",
+  // User code runs `fetch` against any host it chooses - a user-controlled
+  // destination. Already paid-gated via the explicit "action.code" feature;
+  // classified honestly so nothing downstream treats it as non-egressing.
+  egress: "user-destination",
   label: "Code",
   description:
     "Execute custom JavaScript code server-side in a sandboxed VM. Code can make outbound HTTP requests via fetch (subject to the configured timeout). Not a security boundary; intended for authenticated team members only.",

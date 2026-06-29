@@ -38,7 +38,7 @@ Send an `Idempotency-Key` header to safely retry a request without risking a dou
 Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
 
 ```bash
-curl -X POST https://api.keeperhub.com/api/execute/transfer \
+curl -X POST https://app.keeperhub.com/api/execute/transfer \
   -H "Authorization: Bearer kh_..." \
   -H "Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7" \
   -H "Content-Type: application/json" \

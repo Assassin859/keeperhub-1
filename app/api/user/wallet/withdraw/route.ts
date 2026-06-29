@@ -16,6 +16,9 @@ import {
   executeContractCallAsSafe,
   executeNativeTransferAsSafe,
 } from "@/lib/safe/execute-as-safe";
+import { withdrawSchema } from "@/lib/schemas/wallet";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { validateBody } from "@/lib/validate-request";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager } from "@/lib/web3/nonce-manager";
 import {
@@ -165,19 +168,15 @@ async function validateUserAndOrganization(
 
 export async function POST(request: Request) {
   try {
-    // Parse body up-front so the validator can pull the TOTP code out
-    // for the fresh-challenge step. Everything else still gets
-    // re-destructured below for the action itself.
-    const body = (await request.json()) as {
-      chainId?: number | string;
-      tokenAddress?: string;
-      amount?: string;
-      recipient?: string;
-      fromMax?: boolean;
-      safeId?: string;
-      code?: string;
-      emailOtp?: string;
-    };
+    // Validate the untrusted payload at the boundary (KEEP-828) before any
+    // fund-moving logic. The schema enforces a valid recipient address,
+    // numeric chainId, the fromMax/amount/tokenAddress invariants, and
+    // rejects unknown fields.
+    const bodyValidation = await validateBody(request, withdrawSchema);
+    if (!bodyValidation.success) {
+      return bodyValidation.response;
+    }
+    const body = bodyValidation.data;
 
     // 1. Validate user and permissions (includes dual-factor challenge).
     const validation = await validateUserAndOrganization(
@@ -201,42 +200,12 @@ export async function POST(request: Request) {
     const { organizationId, user } = validation;
 
     const { chainId: rawChainId, tokenAddress, amount, fromMax, safeId } = body;
-    const recipient = body.recipient;
+    const recipientAddr: string = body.recipient;
 
-    if (!(rawChainId && recipient)) {
-      return NextResponse.json(
-        { error: "Missing required fields: chainId, recipient" },
-        { status: 400 }
-      );
-    }
-    // After the guard above, recipient is non-null for the rest of the
-    // handler. TypeScript can't narrow through destructuring, so re-bind
-    // to a const with the narrowed type.
-    const recipientAddr: string = recipient;
-
-    // fromMax is only valid for native transfers: for ERC20, token gas is
-    // paid in the native asset, so sending the full token balance has no
-    // reservation conflict and the client already sets amount = balance.
-    if (fromMax && tokenAddress) {
-      return NextResponse.json(
-        { error: "fromMax is only valid for native transfers" },
-        { status: 400 }
-      );
-    }
-
-    if (!(fromMax || amount)) {
-      return NextResponse.json(
-        { error: "Missing required field: amount" },
-        { status: 400 }
-      );
-    }
-
+    // chainId is schema-validated to be a positive-integer number or string.
     const chainId = Number.parseInt(String(rawChainId), 10);
-    if (Number.isNaN(chainId)) {
-      return NextResponse.json({ error: "Invalid chainId" }, { status: 400 });
-    }
 
-    // Validate recipient address
+    // EIP-55 checksum validation beyond the schema's hex-shape regex.
     if (!ethers.isAddress(recipientAddr)) {
       return NextResponse.json(
         { error: "Invalid recipient address" },
@@ -244,17 +213,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate amount (skipped when fromMax: server computes the value).
-    // The guard above ensures amount is set when fromMax is false; bind to
-    // a non-optional alias so downstream `parseEther`/`parseUnits` calls
-    // type-check without per-site assertions.
+    // amount is schema-guaranteed present and positive unless fromMax is set,
+    // in which case the server computes the drain value. Bind to a
+    // non-optional alias for downstream parseEther/parseUnits calls.
     const amountStr: string = amount ?? "";
-    if (!fromMax) {
-      const parsedAmount = Number.parseFloat(amountStr);
-      if (Number.isNaN(parsedAmount) || parsedAmount <= 0) {
-        return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
-      }
-    }
 
     // 3. Get chain info from database
     const chainResult = await db
@@ -553,13 +515,33 @@ export async function POST(request: Request) {
       }
     );
 
+    await recordAuditEvent({
+      actor: {
+        userId: user.id,
+        organizationId,
+        authMethod: "session",
+      },
+      action: "wallet.funds_withdrawn",
+      resourceType: "wallet",
+      resourceId: recipientAddr,
+      after: {
+        chainId,
+        tokenAddress: tokenAddress || null,
+        amount,
+        recipient: recipientAddr,
+        safeId: safeId ?? null,
+        txHash: result.txHash,
+      },
+      metadata: buildAuditMetadata(request),
+    });
+
     return NextResponse.json({
       success: true,
       txHash: result.txHash,
       chainId,
       tokenAddress: tokenAddress || null,
       amount,
-      recipient,
+      recipient: recipientAddr,
     });
   } catch (error) {
     logSystemError(ErrorCategory.EXTERNAL_SERVICE, "[Withdraw] Failed", error, {

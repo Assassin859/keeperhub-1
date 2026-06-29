@@ -2,7 +2,8 @@
  * Blockscout API integration
  *
  * Provides ABI fetching and transaction listing for Blockscout-based
- * explorers (e.g., Tempo). No API key required.
+ * explorers (e.g., Tempo). Self-hosted instances typically don't require
+ * an API key; hosted multichain instances (e.g., api.blockscout.com) do.
  */
 
 type BlockscoutResponse = {
@@ -22,16 +23,22 @@ export type AbiResult = {
  *
  * @param apiUrl - Base API URL (e.g., "https://explorer.tempo.xyz/api")
  * @param contractAddress - Contract address to fetch ABI for
+ * @param apiKey - Optional Blockscout API key (required by hosted multichain instances like api.blockscout.com)
  */
 export async function fetchBlockscoutAbi(
   apiUrl: string,
-  contractAddress: string
+  contractAddress: string,
+  apiKey?: string
 ): Promise<AbiResult> {
   const params = new URLSearchParams({
     module: "contract",
     action: "getabi",
     address: contractAddress,
   });
+
+  if (apiKey) {
+    params.set("apikey", apiKey);
+  }
 
   try {
     const response = await fetch(`${apiUrl}?${params}`);
@@ -83,7 +90,8 @@ type BlockscoutCursor = { block_number: number; index: number };
 function buildBlockscoutTxUrl(
   baseUrl: string,
   contractAddress: string,
-  cursor: BlockscoutCursor | null
+  cursor: BlockscoutCursor | null,
+  apiKey?: string
 ): string {
   const url = new URL(`${baseUrl}/addresses/${contractAddress}/transactions`);
   url.searchParams.set("filter", "to");
@@ -91,6 +99,10 @@ function buildBlockscoutTxUrl(
   if (cursor) {
     url.searchParams.set("block_number", cursor.block_number.toString());
     url.searchParams.set("index", cursor.index.toString());
+  }
+
+  if (apiKey) {
+    url.searchParams.set("apikey", apiKey);
   }
 
   return url.toString();
@@ -151,11 +163,12 @@ type BlockscoutTxResult =
 async function fetchPage(
   baseUrl: string,
   contractAddress: string,
-  cursor: BlockscoutCursor | null
+  cursor: BlockscoutCursor | null,
+  apiKey?: string
 ): Promise<
   { ok: true; data: BlockscoutTxListResponse } | { ok: false; error: string }
 > {
-  const url = buildBlockscoutTxUrl(baseUrl, contractAddress, cursor);
+  const url = buildBlockscoutTxUrl(baseUrl, contractAddress, cursor, apiKey);
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -179,12 +192,14 @@ async function fetchPage(
  * @param contractAddress - Contract address to list transactions for
  * @param startBlock - Start block number (used for client-side filtering)
  * @param endBlock - End block number (used for client-side filtering)
+ * @param apiKey - Optional Blockscout API key (required by hosted multichain instances like api.blockscout.com)
  */
 export async function fetchBlockscoutTransactions(
   apiUrl: string,
   contractAddress: string,
   startBlock: number,
-  endBlock: number
+  endBlock: number,
+  apiKey?: string
 ): Promise<BlockscoutTxResult> {
   const allTransactions: BlockscoutTransaction[] = [];
   let cursor: BlockscoutCursor | null = null;
@@ -201,7 +216,7 @@ export async function fetchBlockscoutTransactions(
       }
       pageCount++;
 
-      const page = await fetchPage(baseUrl, contractAddress, cursor);
+      const page = await fetchPage(baseUrl, contractAddress, cursor, apiKey);
       if (!page.ok) {
         return { success: false, error: page.error };
       }

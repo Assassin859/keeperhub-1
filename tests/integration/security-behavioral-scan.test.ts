@@ -17,8 +17,14 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import type { InternalServiceAuthResult } from "@/lib/internal-service-auth";
+import { rawConsole } from "@/lib/log/core";
+
+// logSecurityEvent writes the structured line via lib/log/core's rawConsole.
+const raw = rawConsole as unknown as Record<
+  "debug" | "info" | "warn" | "error",
+  (line: string) => void
+>;
 
 // authenticateInternalService is async and returns a discriminated union;
 // reassigned per-test to drive the route's handling of each verdict.
@@ -68,10 +74,10 @@ vi.mock("@/lib/db/schema", () => ({
 
 const { GET } = await import("@/app/api/cron/security-behavioral-scan/route");
 
-const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+const warnSpy = vi.spyOn(raw, "warn").mockImplementation(() => {
   // suppress test noise; we assert against the spy below
 });
-const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {
+const errorSpy = vi.spyOn(raw, "error").mockImplementation(() => {
   // suppress test noise; we assert against the spy below
 });
 

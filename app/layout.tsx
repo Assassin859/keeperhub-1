@@ -16,6 +16,7 @@ import { OverlayProvider } from "@/components/overlays/overlay-provider";
 import { PendingScanRunner } from "@/components/scan/pending-scan-runner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { WalletProvisioningTrigger } from "@/components/wallet/wallet-provisioning-trigger";
 import { mono, sans } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
 
@@ -125,6 +126,7 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
               <FeatureSessionInvalidator />
               <PendingTemplateRunner />
               <PendingScanRunner />
+              <WalletProvisioningTrigger />
               <OverlayProvider>
                 <AppBanner />
                 <LayoutContent>{children}</LayoutContent>
@@ -140,6 +142,10 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
             {ROOT_DEV_BFCACHE_RELOAD}
           </Script>
         )}
+        <Script
+          src="https://status.keeperhub.com/embed/script.js"
+          strategy="lazyOnload"
+        />
       </body>
     </html>
   );

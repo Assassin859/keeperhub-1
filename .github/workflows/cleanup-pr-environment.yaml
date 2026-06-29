@@ -1,10 +1,18 @@
 name: Cleanup PR Environment
 
+concurrency:
+  group: pr-env-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [closed, unlabeled]
     branches:
       - staging
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   check-cleanup:
@@ -33,6 +41,10 @@ jobs:
           echo "pr-number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
   cleanup:
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write # actions/github-script posts PR comments
     needs: check-cleanup
     if: needs.check-cleanup.outputs.should-cleanup == 'true'
     runs-on: ubuntu-latest
@@ -47,8 +59,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Configure kubectl

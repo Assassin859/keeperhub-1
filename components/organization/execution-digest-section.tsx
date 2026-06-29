@@ -13,7 +13,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useFeature } from "@/hooks/use-features";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
   DIGEST_REQUIRES_CADENCE_ERROR,
@@ -61,11 +60,11 @@ export function ExecutionDigestSection({
   canManageBilling,
 }: ExecutionDigestSectionProps): React.ReactElement {
   const router = useRouter();
-  const { enabled: featureEnabled, loading: featureLoading } = useFeature(
-    "notifications.execution-digest"
-  );
 
   const [loading, setLoading] = useState(true);
+  // Entitlement is per-org (the API checks this org's plan), not the active
+  // org's, so a digest-email deep link to another org gates correctly.
+  const [eligible, setEligible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [cadences, setCadences] = useState<Set<Cadence>>(new Set(["weekly"]));
@@ -85,6 +84,7 @@ export function ExecutionDigestSection({
         setCadences(new Set(data.cadences));
         setSubscribers(new Set(data.subscriberUserIds));
         setMembers(data.members);
+        setEligible(data.eligible);
       })
       .finally(() => {
         if (active) {
@@ -163,7 +163,7 @@ export function ExecutionDigestSection({
     </h4>
   );
 
-  if (!(featureLoading || featureEnabled)) {
+  if (!(loading || eligible)) {
     return (
       <div className="space-y-3">
         {heading}

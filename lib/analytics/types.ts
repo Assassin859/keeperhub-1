@@ -29,6 +29,7 @@ export type NormalizedStatus =
   | "running"
   | "success"
   | "error"
+  | "system_error"
   | "cancelled";
 
 export type UnifiedRun = {
@@ -42,6 +43,10 @@ export type UnifiedRun = {
   workflowName: string | null;
   directType: DirectType | null;
   network: string | null;
+  /** Distinct networks (chain ids) the run produced on-chain writes on. */
+  networks: string[];
+  /** Total native gas cost (wei) sponsored across the run's transactions. */
+  gasCostWei: string | null;
   /**
    * KEEP-470: Ordered list of on-chain writes the run recorded.
    *
@@ -55,6 +60,10 @@ export type UnifiedRun = {
   gasUsedWei: string | null;
   totalSteps: number | null;
   completedSteps: number | null;
+  error: string | null;
+  errorCode: string | null;
+  errorType: "user" | "system" | null;
+  errorCategory: string | null;
 };
 
 export type AnalyticsSummary = {
@@ -65,6 +74,8 @@ export type AnalyticsSummary = {
   successRate: number;
   avgDurationMs: number | null;
   totalGasWei: string;
+  /** Subset of gas paid by KeeperHub sponsorship over the range, in wei. */
+  sponsoredGasWei: string;
   activeRuns: number;
   previousPeriod: {
     totalRuns: number;
@@ -73,6 +84,7 @@ export type AnalyticsSummary = {
     cancelledCount: number;
     avgDurationMs: number | null;
     totalGasWei: string;
+    sponsoredGasWei: string;
   } | null;
 };
 
@@ -123,6 +135,12 @@ export type StepLog = {
   error: string | null;
   iterationIndex: number | null;
   forEachNodeId: string | null;
+  /** Chain id this step ran on, when it was an on-chain write. */
+  network: string | null;
+  /** Native gas cost (wei) of this step's transaction, when known. */
+  gasCostWei: string | null;
+  /** True when KeeperHub sponsored the gas for this step's transaction. */
+  sponsored: boolean;
 };
 
 export type AnalyticsStreamEvent = {

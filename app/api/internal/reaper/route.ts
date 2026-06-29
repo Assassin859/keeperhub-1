@@ -99,22 +99,32 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
 
     // KEEP-545: reaped executions are by definition stuck/timed-out, which
-    // classifies as WORKFLOW_ENGINE / system-side. Write the classification
-    // columns and increment the per-org counter per reaped row.
+    // classifies as system-side. Write the classification columns and
+    // increment the per-org counter per reaped row.
     const reaperErrorMessage = `Execution timed out: no progress for ${thresholdMinutes} minutes`;
     const reaperClassification = classifyExecutionError(reaperErrorMessage);
 
     const reaped = await db
       .update(workflowExecutions)
       .set({
-        status: "error",
+        // KEEP-853: reaped rows are always system/infra failures (timeouts,
+        // never-started, SQS-lost), so they carry the system_error status.
+        status: "system_error",
         error: reaperErrorMessage,
-        errorCategory: reaperClassification.errorCategory,
+        // KEEP-651: errorCategory is per pre-update status. running -> the
+        // runtime claimed the execution but stopped progressing, which is a
+        // workflow engine failure (workflow_engine). pending/phantom -> the
+        // pod never started or the dispatcher never dequeued -- these are
+        // infrastructure failures (infrastructure), not runtime engine faults,
+        // and must be a distinct metric series so a FailedCreatePodSandBox
+        // burst surfaces separately from ordinary execution timeouts.
+        errorCategory: sql<string>`CASE
+          WHEN ${workflowExecutions.status} = 'running' THEN 'workflow_engine'
+          ELSE 'infrastructure' END`,
         errorType: reaperClassification.errorType,
         // KEEP-693: attribute the code to the pre-update status -- running ->
         // timed out (E-0001), pending -> never started (P-0001), phantom ->
-        // never picked up (P-0005). All three are workflow_engine/system, so the
-        // category/type columns above stay constant for every reaped row.
+        // never picked up (P-0005).
         errorCode: sql<ErrorCode>`CASE
           WHEN ${workflowExecutions.status} = 'pending' THEN 'P-0001'
           WHEN ${workflowExecutions.status} = 'phantom' THEN 'P-0005'
@@ -126,6 +136,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       .returning({
         id: workflowExecutions.id,
         workflowId: workflowExecutions.workflowId,
+        errorCategory: workflowExecutions.errorCategory,
       });
 
     const reapedIds = reaped.map((row) => row.id);
@@ -136,6 +147,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       await recordExecutionErrorFinalized({
         workflowId: row.workflowId,
         errorMessage: reaperErrorMessage,
+        errorCategory: row.errorCategory ?? undefined,
       });
     }
 

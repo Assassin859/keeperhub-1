@@ -79,7 +79,9 @@ describe("POST /api/billing/cancel", () => {
       periodEnd,
     });
 
-    const response = await POST();
+    const response = await POST(
+      new Request("http://localhost/api/billing/cancel", { method: "POST" })
+    );
     const json = await response.json();
 
     expect(response.status).toBe(200);
@@ -91,7 +93,9 @@ describe("POST /api/billing/cancel", () => {
   it("returns 401 without auth", async () => {
     mockGetSession.mockResolvedValue(null);
 
-    const response = await POST();
+    const response = await POST(
+      new Request("http://localhost/api/billing/cancel", { method: "POST" })
+    );
 
     expect(response.status).toBe(401);
   });
@@ -103,7 +107,9 @@ describe("POST /api/billing/cancel", () => {
     });
     mockGetActiveMember.mockResolvedValue({ role: "member" });
 
-    const response = await POST();
+    const response = await POST(
+      new Request("http://localhost/api/billing/cancel", { method: "POST" })
+    );
 
     expect(response.status).toBe(403);
   });
@@ -114,7 +120,9 @@ describe("POST /api/billing/cancel", () => {
       { plan: "free", providerSubscriptionId: null },
     ]);
 
-    const response = await POST();
+    const response = await POST(
+      new Request("http://localhost/api/billing/cancel", { method: "POST" })
+    );
 
     expect(response.status).toBe(400);
   });
@@ -122,7 +130,9 @@ describe("POST /api/billing/cancel", () => {
   it("returns 404 when billing is disabled", async () => {
     process.env.NEXT_PUBLIC_BILLING_ENABLED = "false";
 
-    const response = await POST();
+    const response = await POST(
+      new Request("http://localhost/api/billing/cancel", { method: "POST" })
+    );
 
     expect(response.status).toBe(404);
   });

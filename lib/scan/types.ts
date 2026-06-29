@@ -34,7 +34,7 @@ export interface PositionAsset {
  */
 export interface ProtocolPosition {
   chainId: number;
-  protocol: "aave-v3" | "lido";
+  protocol: "aave-v3" | "lido" | "spark" | "sky";
   /** null when there is no active loan (supply-only user). */
   healthFactor: number | null;
   /** true when the user has no borrowed assets on this protocol+chain. */
@@ -141,7 +141,7 @@ export interface MulticallResult {
  */
 export interface ProtocolAdapter {
   /** Stable identifier used in `ProtocolPosition.protocol`. */
-  readonly protocol: "aave-v3" | "lido";
+  readonly protocol: "aave-v3" | "lido" | "spark" | "sky";
 
   /**
    * Return the ordered list of Multicall3 call descriptors for this adapter.

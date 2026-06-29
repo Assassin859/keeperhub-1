@@ -4,9 +4,13 @@
  */
 import "server-only";
 
-import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { logOutputField } from "@/lib/db/execution-log-fields";
+import {
+  extractLogGasUsedWei,
+  extractLogNetwork,
+  logOutputField,
+} from "@/lib/db/execution-log-fields";
 import {
   organization,
   type TransactionHashEntry,
@@ -14,7 +18,15 @@ import {
   workflowExecutions,
   workflows,
 } from "@/lib/db/schema";
-import { classifyExecutionError } from "@/lib/errors/classify";
+import {
+  classifyExecutionError,
+  isDefaultClassification,
+} from "@/lib/errors/classify";
+import {
+  ERROR_STATUSES,
+  isErrorStatus,
+  statusForErrorType,
+} from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
@@ -284,7 +296,7 @@ async function selfHealWorkflowAfterLateStepCommit(
     emitEarlyExit("not_finalized");
     return;
   }
-  if (execution.status !== "error") {
+  if (!isErrorStatus(execution.status)) {
     emitEarlyExit("status_not_error");
     return;
   }
@@ -332,7 +344,7 @@ async function selfHealWorkflowAfterLateStepCommit(
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        eq(workflowExecutions.status, "error")
+        inArray(workflowExecutions.status, [...ERROR_STATUSES])
       )
     );
 
@@ -433,6 +445,7 @@ export async function logStepStartDb(
       nodeType: params.nodeType,
       status: "running",
       input: toJsonSafe(params.input),
+      network: extractLogNetwork(params.input),
       startedAt: new Date(),
       iterationIndex: params.iterationIndex ?? null,
       forEachNodeId: params.forEachNodeId ?? null,
@@ -492,6 +505,7 @@ export async function logStepCompleteDb(
       status: params.status,
       output: toJsonSafe(params.output),
       outputRaw: toJsonSafe(params.outputRaw),
+      gasUsedWei: extractLogGasUsedWei(params.output),
       error: errorValue,
       completedAt: new Date(),
       duration: duration.toString(),
@@ -513,6 +527,23 @@ export async function logStepCompleteDb(
       );
     }
   }
+}
+
+export async function updateForEachLogToError(params: {
+  executionId: string;
+  nodeId: string;
+  error: string;
+}): Promise<void> {
+  await db
+    .update(workflowExecutionLogs)
+    .set({ status: "error", error: params.error })
+    .where(
+      and(
+        eq(workflowExecutionLogs.executionId, params.executionId),
+        eq(workflowExecutionLogs.nodeId, params.nodeId),
+        isNull(workflowExecutionLogs.iterationIndex)
+      )
+    );
 }
 
 export type LogWorkflowCompleteParams = {
@@ -697,10 +728,25 @@ export async function logWorkflowCompleteDb(
   const classification =
     resolvedStatus === "error" ? classifyExecutionError(resolvedError) : null;
 
+  // KEEP-853: a confidently system/infra-classified failure persists as
+  // system_error so it is visible and filterable apart from user/workflow
+  // errors. An unmatched failure that only defaulted to "system" stays a plain
+  // error for the user-facing status (its errorType is still written as
+  // "system" below, so alerting is unchanged). Step logs and the success-path
+  // stay on resolvedStatus; only the execution row's status carries the split.
+  const executionStatus =
+    resolvedStatus === "error"
+      ? statusForErrorType(
+          classification && !isDefaultClassification(classification)
+            ? classification.errorType
+            : null
+        )
+      : resolvedStatus;
+
   const updated = await db
     .update(workflowExecutions)
     .set({
-      status: resolvedStatus,
+      status: executionStatus,
       output: toJsonSafe(params.output),
       error: resolvedError,
       errorCategory: classification?.errorCategory ?? null,

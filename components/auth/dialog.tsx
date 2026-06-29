@@ -411,11 +411,33 @@ const getViewDescription = (view: ModalView, email?: string) => {
   }
 };
 
+/**
+ * Restrict a post-sign-in redirect target to a same-origin relative path.
+ * Anything not starting with a single "/" - a protocol-relative "//", a
+ * scheme, or the "/\" form browsers normalize to "//" - is rejected so a
+ * caller-supplied redirectTo cannot become an open redirect. Returns null
+ * when the target is absent or unsafe.
+ */
+function safeRedirectPath(target: string | undefined): string | null {
+  if (
+    typeof target === "string" &&
+    target.startsWith("/") &&
+    !target.startsWith("//") &&
+    !target.startsWith("/\\")
+  ) {
+    return target;
+  }
+  return null;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Auth dialog handles multiple views and flows
 export const AuthDialog = ({
   children,
   controlledOpen,
   onControlledOpenChange,
+  // intent.redirectTo, when it is a same-origin relative path, is honored as
+  // the post-sign-in landing (guarded by safeRedirectPath); otherwise we fall
+  // back to "/". Entry points that set it: accept-invite and use-template.
   intent,
 }: AuthDialogProps) => {
   // Internal state — used when not controlled. We always call useState to
@@ -434,6 +456,9 @@ export const AuthDialog = ({
     }
   };
   const router = useRouter();
+  // Where to land after a successful sign-in: a guarded same-origin path from
+  // the auth intent, else "/". Consumed by the two sign-in success paths.
+  const redirectTarget = safeRedirectPath(intent?.redirectTo) ?? "/";
   const [view, setView] = useState<ModalView>(() =>
     pendingVerifyEmail === null ? "signin" : "verify"
   );
@@ -605,6 +630,24 @@ export const AuthDialog = ({
         signedIn?: boolean;
       };
       if (!startResponse.ok) {
+        // Unverified email: the account exists and the password matched, but the
+        // email isn't verified. Mirror the signup path -- (re)send the
+        // verification OTP and route to the verify view -- rather than surfacing
+        // a generic error. A send failure is non-fatal (the OTP is stored
+        // server-side and the verify view can resend), so don't block on it.
+        if (startBody.code === "email_not_verified") {
+          await authClient.emailOtp
+            .sendVerificationOtp({ email, type: "email-verification" })
+            .catch(() => undefined);
+          setVerifyEmail(email);
+          setVerifyPassword(password);
+          setView("verify");
+          setOtp("");
+          pendingVerifyEmail = email;
+          pendingVerifyPassword = password;
+          setLoading(false);
+          return;
+        }
         const message = startBody.error ?? "Sign in failed";
         if (startBody.code === "account_deactivated") {
           toast.error(message);
@@ -622,7 +665,7 @@ export const AuthDialog = ({
         toast.success("Signed in successfully!");
         window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
         if (typeof window !== "undefined") {
-          window.location.assign("/");
+          window.location.assign(redirectTarget);
         }
         return;
       }
@@ -770,7 +813,7 @@ export const AuthDialog = ({
       // races the AuthDialog unmount that happens once the dialog
       // closes; the cleanest signal is a real navigation.
       if (typeof window !== "undefined") {
-        window.location.assign("/");
+        window.location.assign(redirectTarget);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");

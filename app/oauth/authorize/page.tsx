@@ -1,11 +1,15 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
 import {
   isAnonymousUserShape,
   logAnonymousExecutionBlock,
 } from "@/lib/auth-anonymous-guard";
-import { auth } from "@/lib/auth";
-import { parseScopes } from "@/lib/mcp/oauth-scopes";
+import {
+  normalizeScope,
+  parseScopes,
+  SUPPORTED_SCOPES,
+} from "@/lib/mcp/oauth-scopes";
 import {
   AUTH_CODE_TTL_MS,
   getOAuthClient,
@@ -13,6 +17,8 @@ import {
 } from "@/lib/mcp/oauth-store";
 import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { ConsentForm } from "./_components/consent-form";
+import { isConsentOrgMismatch } from "./_lib/consent-binding";
 
 type AuthorizeSearchParams = {
   client_id?: string;
@@ -45,7 +51,17 @@ async function handleApprove(formData: FormData): Promise<void> {
   "use server";
   const clientId = formData.get("client_id") as string;
   const redirectUri = formData.get("redirect_uri") as string;
-  const scope = formData.get("scope") as string;
+  // The permissions section renders one checkbox per scope, so the granted
+  // scope is whatever the user left checked -- not a fixed value bound into a
+  // hidden field. normalizeScope drops anything unknown and falls back to
+  // mcp:read if every box was unchecked, so a token can never carry a bogus or
+  // empty scope.
+  const scope = normalizeScope(
+    formData
+      .getAll("scope")
+      .map((value) => value.toString())
+      .join(" ")
+  );
   const state = formData.get("state") as string | null;
   const codeChallenge = formData.get("code_challenge") as string;
   const codeChallengeMethod = formData.get("code_challenge_method") as string;
@@ -74,6 +90,16 @@ async function handleApprove(formData: FormData): Promise<void> {
 
   const orgContext = await getOrgContext();
   const organizationId = orgContext.organization?.id ?? session.user.id;
+
+  // F-022 / KEEP-747: the consent page rendered (and showed the user) a
+  // specific org and bound its id into the form. If the active org changed
+  // between viewing the page and approving (e.g. switched in another tab), the
+  // org resolved here no longer matches what the user consented to -- refuse
+  // rather than silently scope the token to a different org.
+  const consentedOrgId = formData.get("organization_id") as string | null;
+  if (isConsentOrgMismatch(consentedOrgId, organizationId)) {
+    errorRedirect(redirectUri, "access_denied", state ?? undefined);
+  }
 
   const code = crypto.randomUUID().replace(/-/g, "");
   await storeAuthCode({
@@ -240,14 +266,29 @@ export default async function AuthorizePage({
     );
   }
 
-  const resolvedScope = scope ?? "mcp:read mcp:write";
-  const scopeList = parseScopes(resolvedScope);
+  // F-022 / KEEP-747: resolve the org the token will be scoped to and show it,
+  // then bind its id into the approve form so the user explicitly consents to
+  // this specific org and handleApprove can reject a mid-flow org switch.
+  const consentOrgContext = await getOrgContext();
+  const consentOrgId = consentOrgContext.organization?.id ?? session.user.id;
+  const consentOrgName =
+    consentOrgContext.organization?.name ?? "your personal account";
+
+  // The scopes the client asked for become the checkboxes that are ticked by
+  // default. The user can untick any of them to narrow the grant (e.g. leave
+  // only "Read" for a read-only connection) before approving.
+  const requestedScopes = parseScopes(scope ?? "mcp:read mcp:write");
 
   const scopeDescriptions: Record<string, string> = {
     "mcp:read": "Read your workflows, executions, and plugin schemas",
     "mcp:write": "Write your workflows, executions, and integrations",
     "mcp:admin": "Full access to your KeeperHub organization",
   };
+
+  const scopeOptions = SUPPORTED_SCOPES.map((s) => ({
+    id: s,
+    label: scopeDescriptions[s] ?? s,
+  }));
 
   return (
     <main className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -265,81 +306,20 @@ export default async function AuthorizePage({
           </p>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="rounded-lg border bg-muted/30 p-5">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Permissions
-            </p>
-            <ul className="space-y-3">
-              {scopeList.map((s) => (
-                <li
-                  className="flex items-center gap-3 text-sm text-foreground"
-                  key={s}
-                >
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ds-green-accent-10)]">
-                    <svg
-                      className="h-3 w-3 text-[var(--ds-green-accent)]"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      viewBox="0 0 24 24"
-                    >
-                      <title>Included</title>
-                      <path
-                        d="M5 12l5 5L19 7"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </span>
-                  {scopeDescriptions[s] ?? s}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <p className="mt-5 text-sm text-muted-foreground">
-            Signed in as{" "}
-            <span className="font-medium text-foreground">
-              {session.user.email}
-            </span>
-          </p>
-        </div>
-
-        {/* Footer */}
-        <div className="flex gap-3 p-8 pt-4 sm:justify-end">
-          <form action={handleDeny}>
-            <input name="client_id" type="hidden" value={clientId} />
-            <input name="redirect_uri" type="hidden" value={redirectUri} />
-            {state && <input name="state" type="hidden" value={state} />}
-            <button
-              className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-5 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-              type="submit"
-            >
-              Deny
-            </button>
-          </form>
-
-          <form action={handleApprove}>
-            <input name="client_id" type="hidden" value={clientId} />
-            <input name="redirect_uri" type="hidden" value={redirectUri} />
-            <input name="scope" type="hidden" value={resolvedScope} />
-            {state && <input name="state" type="hidden" value={state} />}
-            <input name="code_challenge" type="hidden" value={codeChallenge} />
-            <input
-              name="code_challenge_method"
-              type="hidden"
-              value={codeChallengeMethod}
-            />
-            <button
-              className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
-              type="submit"
-            >
-              Approve
-            </button>
-          </form>
-        </div>
+        <ConsentForm
+          approveAction={handleApprove}
+          clientId={clientId}
+          codeChallenge={codeChallenge}
+          codeChallengeMethod={codeChallengeMethod}
+          consentOrgId={consentOrgId}
+          consentOrgName={consentOrgName}
+          denyAction={handleDeny}
+          redirectUri={redirectUri}
+          requestedScopes={requestedScopes}
+          scopeOptions={scopeOptions}
+          state={state}
+          userEmail={session.user.email}
+        />
       </div>
     </main>
   );

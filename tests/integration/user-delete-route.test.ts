@@ -26,6 +26,15 @@ vi.mock("@/lib/mfa/dual-factor", () => ({
   requireDualFactor: mockRequireDualFactor,
 }));
 
+// A `.where()` result that is awaitable (for the users update, which awaits it
+// directly) AND exposes `.returning()` (for the sessions delete and org-keys
+// update, which read back the rows they touched for the audit cascade).
+function whereWithReturning() {
+  return Object.assign(Promise.resolve(undefined), {
+    returning: vi.fn().mockResolvedValue([]),
+  });
+}
+
 // Track every tx.update / tx.delete call in order so the test asserts on
 // what the route actually did, not on the identity of internal mock tokens
 // for each schema table. This is sturdier than routing-by-table-string and
@@ -34,12 +43,12 @@ const txStub = {
   update: vi.fn((table: unknown) => ({
     set: vi.fn((value: unknown) => {
       txUpdateCalls.push({ table, value });
-      return { where: vi.fn().mockResolvedValue(undefined) };
+      return { where: vi.fn(whereWithReturning) };
     }),
   })),
   delete: vi.fn((table: unknown) => {
     txDeleteCalls.push({ table });
-    return { where: vi.fn().mockResolvedValue(undefined) };
+    return { where: vi.fn(whereWithReturning) };
   }),
 };
 
@@ -66,6 +75,15 @@ vi.mock("@/lib/logging", () => ({
   ErrorCategory: { AUTH: "AUTH" },
   logSystemError: vi.fn(),
 }));
+
+// Keep the real actor/correlation builders the route uses; no-op the audit
+// writers so this test stays focused on the cascade's DB writes. The schema
+// mock above intentionally omits securityAuditLog, so the writers must not run.
+vi.mock("@/lib/security/audit-log", async (importActual) => {
+  const actual =
+    await importActual<typeof import("@/lib/security/audit-log")>();
+  return { ...actual, recordAuditEvent: vi.fn(), recordAuditEvents: vi.fn() };
+});
 
 import { POST } from "@/app/api/user/delete/route";
 

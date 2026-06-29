@@ -8,6 +8,8 @@ import {
   buildPendingSignupSetCookie,
   encodePendingSignupCookie,
 } from "@/lib/pending-signup-cookie";
+import { resolveClientIpFromHeaders } from "@/lib/security/login-risk";
+import { checkCredentialAttemptRateLimit } from "../_lib/credential-attempt-rate-limit";
 
 /**
  * Bridges credential signup (signUp.email + emailOtp.verifyEmail) to
@@ -70,6 +72,28 @@ export async function POST(request: Request): Promise<NextResponse> {
         code: "missing_credentials",
       },
       { status: 400 }
+    );
+  }
+
+  // F-013 / KEEP-738: this route re-verifies the credential password and
+  // returns a distinguishable 401 vs 200, so it is a password oracle unless
+  // throttled. Limit per-email (brute-forcing one account) and per-IP (email
+  // enumeration spray) before any password comparison. Buckets are shared with
+  // strict-signin/start (the sibling oracle) so hopping between the two routes
+  // does not grant a fresh allowance for the same target.
+  const clientIp = resolveClientIpFromHeaders(request.headers) ?? "unknown";
+  const rateLimit = checkCredentialAttemptRateLimit(email, clientIp);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many attempts. Wait and try again.",
+        code: "rate_limited",
+        retryAfter: rateLimit.retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      }
     );
   }
 

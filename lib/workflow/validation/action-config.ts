@@ -56,7 +56,7 @@ export type ActionConfigValidationResult = {
   issues: ActionConfigValidationIssue[];
 };
 
-type WorkflowNodeForValidation = {
+export type WorkflowNodeForValidation = {
   id?: string;
   type?: unknown;
   data?: {
@@ -135,8 +135,8 @@ function isJsonArrayOrObjectString(value: unknown): boolean {
 // users can re-save existing workflows that contain the legacy shape. The
 // runtime is responsible for normalizing aliases when it reads the config.
 const LEGACY_FIELD_ALIASES: Record<string, Record<string, string>> = {
-  "web3/read-contract": { functionName: "abiFunction" },
-  "web3/write-contract": { functionName: "abiFunction" },
+  "web3/read-contract": { functionName: "abiFunction", args: "functionArgs" },
+  "web3/write-contract": { functionName: "abiFunction", args: "functionArgs" },
 };
 
 // Legacy config keys that don't map to a canonical field but should not be
@@ -149,6 +149,11 @@ const LEGACY_FIELD_ALIASES: Record<string, Record<string, string>> = {
 const LEGACY_IGNORED_FIELDS: Record<string, Set<string>> = {
   "web3/query-transactions": new Set(["inputMode", "batchSize"]),
   "web3/query-events": new Set(["inputMode", "batchSize"]),
+  // The editor persists the resolved function signature (for overloaded-
+  // function disambiguation); the runtime recomputes it and never reads it
+  // from config, so it must not block a save.
+  "web3/read-contract": new Set(["abiFunctionKey"]),
+  "web3/write-contract": new Set(["abiFunctionKey"]),
 };
 
 function getLegacyAliasMap(actionType: string): Record<string, string> {
@@ -157,6 +162,34 @@ function getLegacyAliasMap(actionType: string): Record<string, string> {
 
 function isLegacyIgnoredField(actionType: string, key: string): boolean {
   return LEGACY_IGNORED_FIELDS[actionType]?.has(key) ?? false;
+}
+
+// Whether a config key is accepted for the given action. Mirrors the
+// UNKNOWN_FIELD check in validateWorkflowActionConfigs so the editor can prune
+// cross-action leftovers before save with the same allowlist the server uses.
+// Unknown action types return true; that case is reported separately.
+export function isKnownConfigKeyForAction(
+  actionType: string,
+  key: string
+): boolean {
+  if (RESERVED_CONFIG_KEYS.has(key)) {
+    return true;
+  }
+  const action = findActionById(actionType);
+  if (!action) {
+    return true;
+  }
+  const fieldKeys = new Set(
+    flattenConfigFields(action.configFields).map((field) => field.key)
+  );
+  if (fieldKeys.has(key)) {
+    return true;
+  }
+  const aliasMap = getLegacyAliasMap(actionType);
+  if (aliasMap[key] && fieldKeys.has(aliasMap[key])) {
+    return true;
+  }
+  return isLegacyIgnoredField(actionType, key);
 }
 
 function validateStringLike(value: unknown): boolean {
@@ -325,6 +358,18 @@ export function validateWorkflowActionConfigs(
       continue;
     }
 
+    // Draft state: the config contains only actionType, reserved keys, and
+    // underscore-prefixed metadata keys — no user-supplied parameters yet.
+    // Skip all validation for this node: required-field, type, and UNKNOWN_FIELD
+    // checks are omitted because underscore-prefixed keys (e.g. _protocolMeta)
+    // would otherwise be flagged as unknown fields.
+    const hasUserParams = Object.keys(config).some(
+      (k) => !(RESERVED_CONFIG_KEYS.has(k) || k.startsWith("_"))
+    );
+    if (!hasUserParams) {
+      continue;
+    }
+
     const fields = flattenConfigFields(action.configFields);
     const fieldsByKey = new Map(fields.map((field) => [field.key, field]));
     const aliasMap = getLegacyAliasMap(actionType);
@@ -396,6 +441,41 @@ export function validateWorkflowActionConfigs(
   }
 
   return { valid: issues.length === 0, issues };
+}
+
+// Returns true if any known action node in `nodes` is in draft state — i.e.
+// its config contains only actionType, reserved keys, and underscore-prefixed
+// metadata keys with no user-supplied parameters. Used by the PATCH handler to
+// block enabling a workflow before all action nodes are configured.
+export function hasDraftActionNodes(
+  nodes: WorkflowNodeForValidation[]
+): boolean {
+  for (const node of nodes) {
+    if (!isActionNode(node)) {
+      continue;
+    }
+    const config = node.data?.config;
+    if (!isRecord(config)) {
+      continue;
+    }
+    const actionType = config.actionType;
+    if (typeof actionType !== "string" || actionType.trim() === "") {
+      continue;
+    }
+    if (SYSTEM_ACTION_TYPES.has(actionType)) {
+      continue;
+    }
+    if (!findActionById(actionType)) {
+      continue;
+    }
+    const hasUserParams = Object.keys(config).some(
+      (k) => !(RESERVED_CONFIG_KEYS.has(k) || k.startsWith("_"))
+    );
+    if (!hasUserParams) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function formatActionConfigValidationResponse(

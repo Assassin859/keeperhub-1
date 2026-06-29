@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   formatActionConfigValidationResponse,
+  hasDraftActionNodes,
+  isKnownConfigKeyForAction,
   validateWorkflowActionConfigs,
 } from "@/lib/workflow/validation/action-config";
 
@@ -1018,6 +1020,222 @@ describe("validateWorkflowActionConfigs", () => {
         ])
       );
     });
+  });
+
+  describe("draft state (Hub 'Use in Workflow' flow)", () => {
+    it("accepts a protocol action node with only actionType set", () => {
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: { type: "action", config: { actionType: "aave-v3/supply" } },
+        },
+      ]);
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts a protocol action node with actionType and _protocolMeta only", () => {
+      const protocolMeta = JSON.stringify({
+        protocolSlug: "aave-v3",
+        contractKey: "pool",
+        functionName: "supply",
+        actionType: "write",
+      });
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: {
+              actionType: "aave-v3/supply",
+              _protocolMeta: protocolMeta,
+            },
+          },
+        },
+      ]);
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts actionType combined with only reserved keys (e.g. integrationId)", () => {
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: {
+              actionType: "discord/send-message",
+              integrationId: "integ-abc",
+            },
+          },
+        },
+      ]);
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("resumes required-field validation once any user param is present", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("aave-v3/supply", { network: "1" }),
+      ]);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "MISSING_REQUIRED_FIELD",
+            field: "asset",
+          }),
+          expect.objectContaining({
+            code: "MISSING_REQUIRED_FIELD",
+            field: "amount",
+          }),
+          expect.objectContaining({
+            code: "MISSING_REQUIRED_FIELD",
+            field: "onBehalfOf",
+          }),
+        ])
+      );
+    });
+
+    it("still reports UNKNOWN_FIELD for unrecognised keys even in draft state", () => {
+      const result = validateWorkflowActionConfigs([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: { actionType: "aave-v3/supply", unknownKey: "value" },
+          },
+        },
+      ]);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "UNKNOWN_FIELD",
+            field: "unknownKey",
+            actionType: "aave-v3/supply",
+          }),
+        ])
+      );
+    });
+  });
+});
+
+describe("isKnownConfigKeyForAction", () => {
+  it("rejects web3 leftover fields after a switch to discord/send-message", () => {
+    for (const key of ["abi", "network", "abiFunction", "contractAddress"]) {
+      expect(isKnownConfigKeyForAction("discord/send-message", key)).toBe(
+        false
+      );
+    }
+  });
+
+  it("keeps fields the target action declares", () => {
+    expect(
+      isKnownConfigKeyForAction("discord/send-message", "discordMessage")
+    ).toBe(true);
+  });
+
+  it("keeps reserved structural keys for any action", () => {
+    for (const key of ["actionType", "integrationId"]) {
+      expect(isKnownConfigKeyForAction("discord/send-message", key)).toBe(true);
+    }
+  });
+
+  it("keeps legacy aliases that map to a declared field", () => {
+    expect(
+      isKnownConfigKeyForAction("web3/read-contract", "functionName")
+    ).toBe(true);
+  });
+
+  it("keeps legacy ignored fields for the target action", () => {
+    expect(
+      isKnownConfigKeyForAction("web3/query-transactions", "inputMode")
+    ).toBe(true);
+  });
+
+  it("does not prune when the action type is unknown", () => {
+    expect(isKnownConfigKeyForAction("not-a-real/action", "anything")).toBe(
+      true
+    );
+  });
+});
+
+describe("hasDraftActionNodes", () => {
+  it("returns true when an action node has only actionType", () => {
+    expect(
+      hasDraftActionNodes([
+        {
+          id: "n-1",
+          type: "action",
+          data: { type: "action", config: { actionType: "aave-v3/supply" } },
+        },
+      ])
+    ).toBe(true);
+  });
+
+  it("returns true when an action node has actionType and _protocolMeta only", () => {
+    expect(
+      hasDraftActionNodes([
+        {
+          id: "n-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: { actionType: "aave-v3/supply", _protocolMeta: "{}" },
+          },
+        },
+      ])
+    ).toBe(true);
+  });
+
+  it("returns false when an action node has at least one user parameter", () => {
+    expect(
+      hasDraftActionNodes([actionNode("aave-v3/supply", { network: "1" })])
+    ).toBe(false);
+  });
+
+  it("returns false for an empty node list", () => {
+    expect(hasDraftActionNodes([])).toBe(false);
+  });
+
+  it("returns false when all action nodes are fully configured", () => {
+    expect(
+      hasDraftActionNodes([
+        actionNode("aave-v3/supply", {
+          network: "1",
+          asset: "0xabc",
+          amount: "100",
+          onBehalfOf: "0xdef",
+        }),
+      ])
+    ).toBe(false);
+  });
+
+  it("returns true only for the draft node when mixed with configured nodes", () => {
+    expect(
+      hasDraftActionNodes([
+        actionNode(
+          "discord/send-message",
+          { channelId: "123", message: "hi" },
+          "n-1"
+        ),
+        {
+          id: "n-2",
+          type: "action",
+          data: { type: "action", config: { actionType: "aave-v3/supply" } },
+        },
+      ])
+    ).toBe(true);
+  });
+
+  it("ignores non-action nodes", () => {
+    expect(
+      hasDraftActionNodes([
+        { id: "n-1", type: "trigger", data: { type: "trigger", config: {} } },
+      ])
+    ).toBe(false);
   });
 });
 

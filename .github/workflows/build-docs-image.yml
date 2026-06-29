@@ -19,6 +19,10 @@ on:
         description: 'ECR registry URL (only set when push=true)'
         value: ${{ jobs.build.outputs.ecr_registry }}
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -51,8 +55,7 @@ jobs:
         if: ${{ inputs.push }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
       - name: Login to AWS ECR

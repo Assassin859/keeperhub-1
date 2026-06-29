@@ -1,12 +1,13 @@
 import "server-only";
 
-import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   workflowExecutionLogs,
   workflowExecutions,
   workflows,
 } from "@/lib/db/schema";
+import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 export type DigestCadence = "daily" | "weekly" | "monthly";
@@ -170,7 +171,10 @@ export async function getOrgExecutionDigest(
     .orderBy(desc(count()))
     .limit(TOP_EXECUTED_LIMIT);
 
-  const errorFilter = and(windowFilter, eq(workflowExecutions.status, "error"));
+  const errorFilter = and(
+    windowFilter,
+    inArray(workflowExecutions.status, [...ERROR_STATUSES])
+  );
 
   const failingRows = await db
     .select({

@@ -48,6 +48,13 @@ group "metrics-collector" {
   targets = ["metrics-collector"]
 }
 
+# The execution pipeline deployed as one atomic keeperhub-stack release. Building
+# these together in a single bake session shares the deps/source/builder stages
+# (one pnpm build) instead of each deploy workflow rebuilding them independently.
+group "pipeline" {
+  targets = ["app", "migrator", "workflow-runner", "executor", "schedule-dispatcher", "block-dispatcher", "metrics-collector"]
+}
+
 group "all" {
   targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox", "metrics-collector"]
 }
@@ -195,6 +202,19 @@ target "executor" {
   context    = "."
   dockerfile = "Dockerfile"
   target     = "executor"
+  # Args mirror "app" so BuildKit deduplicates the shared "builder" stage and
+  # runs `pnpm build` once. Divergent args here fork the builder stage into a
+  # second invocation that recompiles from scratch.
+  args = {
+    NEXT_PUBLIC_AUTH_PROVIDERS    = NEXT_PUBLIC_AUTH_PROVIDERS
+    NEXT_PUBLIC_GITHUB_CLIENT_ID = NEXT_PUBLIC_GITHUB_CLIENT_ID
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
+    NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED = NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY = NEXT_PUBLIC_TURNSTILE_SITE_KEY
+    NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    INCLUDE_TEST_ENDPOINTS       = INCLUDE_TEST_ENDPOINTS
+  }
   tags = compact([
     "${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:executor-${IMAGE_TAG}",
     "${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:executor-latest",

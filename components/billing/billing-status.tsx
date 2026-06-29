@@ -19,9 +19,7 @@ import {
   SPONSORSHIP_TESTNET_NAMES,
 } from "@/lib/web3/sponsorship-chains-meta";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
-
-const SPONSORED_MAINNETS = ["Ethereum", "Base", "Polygon", "Arbitrum"] as const;
-const SPONSORED_TESTNETS = ["Sepolia", "Base Sepolia", "Polygon Amoy"] as const;
+import { GasSponsorshipHistory } from "./gas-sponsorship-history";
 
 type OverageCharge = {
   periodStart: string;
@@ -414,11 +412,11 @@ function ExecutionUsageBar({
             </TooltipTrigger>
             <TooltipContent className="max-w-xs">
               <p>
-                Counts billable executions for the current calendar month
-                (since the 1st, UTC) and resets on the 1st. This is your plan
-                quota usage, so it differs from the Analytics page, which counts
-                all executions over the time range you select there (for
-                example, the last 30 days).
+                Counts billable executions for the current calendar month (since
+                the 1st, UTC) and resets on the 1st. This is your plan quota
+                usage, so it differs from the Analytics page, which counts all
+                executions over the time range you select there (for example,
+                the last 30 days).
               </p>
             </TooltipContent>
           </Tooltip>
@@ -537,58 +535,13 @@ function GasCreditsBar({
           style={{ width: `${percent}%` }}
         />
       </div>
-      <SponsoredNetworksRow />
+      <GasSponsorshipHistory />
       {isExhausted && (
         <p className="text-xs text-muted-foreground">
           Gas credits exhausted. Transactions will use your wallet's ETH for
           gas.
         </p>
       )}
-    </div>
-  );
-}
-
-function SponsoredNetworksRow(): React.ReactElement {
-  return (
-    <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-medium text-foreground">
-            Sponsored networks
-          </span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                aria-label="Learn more about sponsored networks"
-                className="inline-flex items-center text-muted-foreground/70 transition-colors hover:text-foreground"
-                type="button"
-              >
-                <Info className="size-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs space-y-2 px-3 py-2 text-left">
-              <p className="font-medium">Sponsored via Turnkey Gas Station</p>
-              <div className="space-y-1">
-                <p className="text-[10px] uppercase tracking-wide opacity-70">
-                  Testnets
-                </p>
-                <p>{SPONSORED_TESTNETS.join(", ")}</p>
-              </div>
-              <p className="opacity-70">
-                Transactions on other chains fall back to your wallet's native
-                balance for gas.
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {SPONSORED_MAINNETS.map((name) => (
-            <Badge className="text-[10px]" key={name} variant="secondary">
-              {name}
-            </Badge>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }

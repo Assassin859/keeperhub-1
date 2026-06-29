@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   BarChart3,
   Bookmark,
   ChevronDown,
@@ -32,6 +33,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { Project, SavedWorkflow, Tag } from "@/lib/api-client";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { NavPanelStates } from "@/lib/hooks/use-persisted-nav-state";
 import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
 import { isAnonymousUser } from "@/lib/is-anonymous";
@@ -455,6 +457,7 @@ function SidebarHeader({
 const ACTION_ITEM_IDS: ReadonlySet<string> = new Set([
   "workflows",
   "address-book",
+  "activity",
 ]);
 
 type NavItemDef = {
@@ -463,6 +466,9 @@ type NavItemDef = {
   label: string;
   href: string | null;
   requireAuth: boolean;
+  // Visible only to organization owners/admins (the audit feed is gated the
+  // same way server-side).
+  adminOnly?: boolean;
 };
 
 function NavItem({
@@ -568,6 +574,16 @@ const NAV_ITEMS: NavItemDef[] = [
     href: null,
     requireAuth: true,
   },
+  {
+    // Visible to everyone and routable while signed-out: the page itself shows
+    // an in-page sign-in for guests, a labelled sample for members, and the
+    // real feed for owners/admins. So this is neither requireAuth nor adminOnly.
+    id: "activity",
+    icon: Activity,
+    label: "Activity",
+    href: "/activity",
+    requireAuth: false,
+  },
 ];
 
 export function NavigationSidebar(): React.ReactNode {
@@ -575,6 +591,7 @@ export function NavigationSidebar(): React.ReactNode {
   const { data: session, isPending } = useSession();
   const { openAuthPrompt } = useAuthPrompt();
   const { open: openOverlay } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
@@ -655,6 +672,7 @@ export function NavigationSidebar(): React.ReactNode {
   const isHubPage = pathname === "/hub";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
+  const isActivityPage = pathname === "/activity";
 
   const expanded = navState.state.sidebar;
   const setExpanded = navState.setSidebar;
@@ -734,7 +752,18 @@ export function NavigationSidebar(): React.ReactNode {
       "--nav-sidebar-width",
       `${currentWidth}px`
     );
-  }, [currentWidth]);
+    // Full left offset including any open/collapsed flyout panels, so pages
+    // that resize their main frame (e.g. analytics) sit beside the panels
+    // instead of being overlapped by them.
+    const { rightEdge } = computePanelOffsets(
+      currentWidth,
+      navState.state.panels
+    );
+    document.documentElement.style.setProperty(
+      "--nav-content-offset",
+      `${rightEdge}px`
+    );
+  }, [currentWidth, navState.state.panels]);
 
   if (isMobile || !navState.hasMounted) {
     return null;
@@ -779,6 +808,9 @@ export function NavigationSidebar(): React.ReactNode {
     }
     if (id === "earnings") {
       return isEarningsPage;
+    }
+    if (id === "activity") {
+      return isActivityPage;
     }
     return false;
   }
@@ -877,8 +909,9 @@ export function NavigationSidebar(): React.ReactNode {
   }
 
   // NAV-01: render every nav item for everyone (anonymous, signed-out, signed-in).
-  // Click-gating for requireAuth items happens in handleNavClick.
-  const navItems = NAV_ITEMS;
+  // Click-gating for requireAuth items happens in handleNavClick. The exception
+  // is adminOnly items (e.g. org Activity), hidden for non-owner/admin members.
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
 
   // NAV-03: branch on isPending FIRST. While the better-auth session resolves,
   // render a neutral skeleton with the same width as the fully-loaded sidebar

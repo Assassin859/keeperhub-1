@@ -35,8 +35,6 @@ const SECRET_ENV_SLUGS: Record<string, string> = {
   ETHERSCAN_API_KEY: "etherscan-api-key",
   METRICS_INGEST_TOKEN: "metrics-ingest-token",
   OPENAI_API_KEY: "openai-api-key",
-  PIMLICO_API_KEY: "pimlico-api-key",
-  PIMLICO_BASE_URL: "pimlico-base-url",
   SENDGRID_API_KEY: "sendgrid-api-key",
   SIMPLE_ACCOUNT_7702_ADDRESS: "simple-account-7702-address",
   TURNKEY_API_PRIVATE_KEY: "turnkey-api-private-key",
@@ -119,13 +117,10 @@ export async function createWorkflowJob(params: {
     // below. tsx/esbuild and any plugin temp writes resolve through TMPDIR, so
     // point it there to keep the runner working under the hardened context.
     { name: "TMPDIR", value: "/tmp" },
-    // SSRF guard: force-enable on every workflow runner pod regardless
-    // of controller env. Hardcoded (rather than forwarded via
-    // RUNNER_SYSTEM_ENV_VARS) so the runner enforces even if the
-    // controller's Helm values drift or a deploy omits the entry.
-    // Flipping back to shadow mode is a deliberate code change here,
-    // which is the intended posture for SSRF protection.
-    { name: "SAFE_FETCH_ENFORCE", value: "true" },
+    // SSRF guard: runner pods enforce by default. safeFetch's shadow-mode
+    // opt-in (SAFE_FETCH_SHADOW) is neither injected here nor listed in
+    // RUNNER_SYSTEM_ENV_VARS, so a controller's env can never relax the
+    // runner's SSRF enforcement -- the runner is the actual execution path.
     // High-value credentials as Secret references, never literal values.
     ...Object.keys(SECRET_ENV_SLUGS).map(secretEnvRef),
     ...(process.env.METRICS_COLLECTOR

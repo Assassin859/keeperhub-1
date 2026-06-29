@@ -9,10 +9,12 @@ import {
   getAddressUrl,
   getTransactionUrl,
   type NormalizedTransaction,
+  resolveExplorerUrlConfig,
 } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { serializeArg } from "@/lib/web3/serialize-arg";
 import { getErrorMessage } from "@/lib/utils";
 
 const DEFAULT_BLOCK_LOOKBACK = 6500;
@@ -203,26 +205,7 @@ async function resolveBlockRange(
   };
 }
 
-function serializeValue(value: unknown): string {
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value.toString();
-  }
-  if (typeof value === "boolean") {
-    return value.toString();
-  }
-  if (value === null || value === undefined) {
-    return "";
-  }
-  return JSON.stringify(value, (_, v) =>
-    typeof v === "bigint" ? v.toString() : v
-  );
-}
+const serializeValue = serializeArg;
 
 type TxLinkBuilder = { getTransactionUrl: (hash: string) => string };
 
@@ -484,6 +467,7 @@ export async function queryTransactionsCore(
     return { success: false, error: txResult.error };
   }
 
+  const urlConfig = resolveExplorerUrlConfig(explorerConfig, txResult.usedBackup);
   const filterArgs = parseFunctionArgsFilter(input.functionArgs);
 
   const { matched, totalFiltered } = filterAndDecodeTransactions(
@@ -492,7 +476,7 @@ export async function queryTransactionsCore(
     iface,
     functionFragment,
     filterArgs,
-    (hash: string) => getTransactionUrl(explorerConfig, hash)
+    (hash: string) => getTransactionUrl(urlConfig, hash)
   );
 
   return {

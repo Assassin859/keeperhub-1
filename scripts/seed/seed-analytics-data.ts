@@ -403,10 +403,19 @@ async function createStepLogs(
 
     const isWeb3Write = nodeType === "web3:write-contract";
     const network = isWeb3Write ? randomChoice(NETWORKS) : null;
+    const chainId = isWeb3Write
+      ? network === "ethereum"
+        ? "1"
+        : network === "base"
+          ? "8453"
+          : network === "polygon"
+            ? "137"
+            : "11155111"
+      : null;
 
     const inputData = isWeb3Write
       ? JSON.stringify({
-          network: network === "ethereum" ? "1" : network === "base" ? "8453" : network === "polygon" ? "137" : "11155111",
+          network: chainId,
           contractAddress: `0x${randomHex(40)}`,
           actionType: "web3/write-contract",
           abiFunction: "transfer",
@@ -414,20 +423,28 @@ async function createStepLogs(
         })
       : null;
 
-    const outputData =
+    // Computed once and mirrored into both the output JSONB and the
+    // denormalised gas_used_wei column the analytics network breakdown reads.
+    const gasUsedWei =
       isWeb3Write && stepStatus === "success"
+        ? realisticGasWei(network ?? "ethereum")
+        : null;
+
+    const outputData =
+      gasUsedWei !== null
         ? JSON.stringify({
             success: true,
             transactionHash: `0x${randomHex(64)}`,
-            gasUsed: realisticGasWei(network ?? "ethereum"),
+            gasUsed: gasUsedWei,
           })
         : null;
 
     await sql.unsafe(
       `INSERT INTO workflow_execution_logs (
         id, execution_id, node_id, node_name, node_type, status,
-        started_at, completed_at, duration, error, input, output
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)`,
+        started_at, completed_at, duration, error, input, output,
+        network, gas_used_wei
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)`,
       [
         logId,
         executionId,
@@ -441,6 +458,8 @@ async function createStepLogs(
         errorMsg,
         inputData,
         outputData,
+        chainId,
+        gasUsedWei,
       ]
     );
 

@@ -10,6 +10,7 @@ import {
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type UpdateOrganizationNameRequest = {
   name?: string;
@@ -91,6 +92,12 @@ export async function PATCH(
       );
     }
 
+    const [existing] = await db
+      .select({ name: organization.name })
+      .from(organization)
+      .where(eq(organization.id, organizationId))
+      .limit(1);
+
     const [updated] = await db
       .update(organization)
       .set({ name: nextName })
@@ -103,6 +110,21 @@ export async function PATCH(
         { status: 404 }
       );
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "org.updated",
+      resourceType: "organization",
+      resourceId: organizationId,
+      before: { name: existing?.name },
+      after: { name: updated.name },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ organization: updated }, { status: 200 });
   } catch (error) {

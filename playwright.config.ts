@@ -56,6 +56,10 @@ export default defineConfig({
       ...(process.env.TEST_API_KEY && {
         "X-Test-API-Key": process.env.TEST_API_KEY,
       }),
+      // Bypass the mandatory-MFA enrollment gate (proxy.ts) for e2e traffic
+      ...(process.env.LOAD_TEST_BYPASS_TOKEN && {
+        "x-load-test-mfa-bypass": process.env.LOAD_TEST_BYPASS_TOKEN,
+      }),
       // Cloudflare Access headers for deployed PR environments
       ...(isDeployedEnv &&
         process.env.CF_ACCESS_CLIENT_ID &&

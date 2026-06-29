@@ -3,6 +3,7 @@ import "server-only";
 import { and, count, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { getPlanLimits, parsePlanName, parseTierKey } from "./plans";
 import { getOrgSubscription } from "./plans-server";
 
@@ -72,7 +73,8 @@ export async function isBillingLimitReached(
     const used = await getCurrentMonthUsage(organizationId);
     return used >= limits.maxExecutionsPerMonth;
   } catch (error) {
-    console.warn(
+    logSystemWarn(
+      ErrorCategory.DATABASE,
       "[limit-status] isBillingLimitReached failed; treating as not-reached",
       error
     );

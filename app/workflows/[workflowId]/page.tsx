@@ -56,8 +56,10 @@ import {
   isWorkflowOwnerAtom,
   newlyCreatedNodeIdAtom,
   nodesAtom,
+  previewVersionAtom,
   propertiesPanelActiveTabAtom,
   rightPanelWidthAtom,
+  rightPanelWidthPctAtom,
   selectedExecutionIdAtom,
   selectedNodeAtom,
   triggerExecuteAtom,
@@ -66,6 +68,7 @@ import {
   type WorkflowVisibility,
   workflowNotFoundAtom,
 } from "@/lib/workflow/store";
+import { useVersionPreview } from "@/lib/workflow/use-version-preview";
 import { findActionById } from "@/plugins/registry";
 
 type WorkflowPageProps = {
@@ -177,6 +180,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   const setCurrentExecutionId = useSetAtom(currentExecutionIdAtom);
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
+  const setPreviewVersion = useSetAtom(previewVersionAtom);
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
   const setCurrentWorkflowName = useSetAtom(currentWorkflowNameAtom);
   const setCurrentWorkflowDescription = useSetAtom(
@@ -230,8 +234,9 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     }
   }, [session]);
 
-  // Panel width state for resizing
-  const [panelWidth, setPanelWidth] = useState(30); // default percentage
+  // Panel width (viewport %), shared with the version-history panel so the
+  // two right-docked panels stay the same size and resizing keeps them in sync.
+  const [panelWidth, setPanelWidth] = useAtom(rightPanelWidthPctAtom);
   // Start visible if sidebar has already been shown (switching between workflows)
   const [panelVisible, setPanelVisible] = useState(hasSidebarBeenShown);
   const [isDraggingResize, setIsDraggingResize] = useState(false);
@@ -263,7 +268,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     if (collapsedCookie) {
       setPanelCollapsed(collapsedCookie.split("=")[1] === "true");
     }
-  }, [setPanelCollapsed]);
+  }, [setPanelCollapsed, setPanelWidth]);
 
   // Save sidebar width to cookie when it changes (skip initial render)
   const hasInitialized = useRef(false);
@@ -345,35 +350,38 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   }, [isMobile, setRightPanelWidth, panelWidth, panelVisible, panelCollapsed]);
 
   // Handle panel resize
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizing.current = true;
-    setIsDraggingResize(true);
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizing.current = true;
+      setIsDraggingResize(true);
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      if (!isResizing.current) {
-        return;
-      }
-      const newWidth =
-        ((window.innerWidth - moveEvent.clientX) / window.innerWidth) * 100;
-      // Clamp between 20% and 50%
-      setPanelWidth(Math.min(50, Math.max(20, newWidth)));
-    };
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        if (!isResizing.current) {
+          return;
+        }
+        const newWidth =
+          ((window.innerWidth - moveEvent.clientX) / window.innerWidth) * 100;
+        // Clamp between 20% and 50%
+        setPanelWidth(Math.min(50, Math.max(20, newWidth)));
+      };
 
-    const handleMouseUp = () => {
-      isResizing.current = false;
-      setIsDraggingResize(false);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
+      const handleMouseUp = () => {
+        isResizing.current = false;
+        setIsDraggingResize(false);
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [setPanelWidth]
+  );
 
   // Ref to track polling interval
   const executionPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -561,6 +569,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       setEdges([]);
       setSelectedNode(null);
       setWorkflowNotFound(false);
+      setPreviewVersion(null);
     }
     return (): void => {
       setCurrentWorkflowId(null);
@@ -572,6 +581,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       setEdges([]);
       setSelectedNode(null);
       setWorkflowNotFound(false);
+      setPreviewVersion(null);
     };
   }, [
     workflowId,
@@ -584,6 +594,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     setEdges,
     setSelectedNode,
     setWorkflowNotFound,
+    setPreviewVersion,
   ]);
 
   useEffect(() => {
@@ -624,6 +635,67 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     nodes.length,
     generateWorkflowFromAI,
     loadExistingWorkflow,
+  ]);
+
+  // Open a shared `?version=` link read-only: once the workflow is loaded,
+  // reveal the History tab and (for a specific past version) preview it on the
+  // canvas. "current" is the live version, so it opens history without a canvas
+  // preview. Fires once per distinct version param; clears when removed.
+  const { preview: previewVersionOnCanvas } = useVersionPreview();
+  const appliedVersionParamRef = useRef<string | null>(null);
+  useEffect(() => {
+    const raw = searchParams?.get("version");
+    if (!raw) {
+      appliedVersionParamRef.current = null;
+      return;
+    }
+    if (
+      currentWorkflowId === workflowId &&
+      appliedVersionParamRef.current !== raw
+    ) {
+      appliedVersionParamRef.current = raw;
+      setSelectedNode(null);
+      setActiveTab("history");
+      if (raw !== "current") {
+        const version = Number.parseInt(raw, 10);
+        if (!Number.isNaN(version)) {
+          previewVersionOnCanvas(version);
+        }
+      }
+    }
+  }, [
+    searchParams,
+    currentWorkflowId,
+    workflowId,
+    previewVersionOnCanvas,
+    setSelectedNode,
+    setActiveTab,
+  ]);
+
+  // Deep-link from the activity feed: `?tab=history` opens the workflow-level
+  // History tab once the workflow is loaded (no specific version preview).
+  // Fires once per distinct tab param.
+  const appliedTabParamRef = useRef<string | null>(null);
+  useEffect(() => {
+    const tab = searchParams?.get("tab");
+    if (tab !== "history") {
+      appliedTabParamRef.current = null;
+      return;
+    }
+    if (
+      currentWorkflowId === workflowId &&
+      appliedTabParamRef.current !== tab
+    ) {
+      appliedTabParamRef.current = tab;
+      setSelectedNode(null);
+      setActiveTab(tab);
+    }
+  }, [
+    searchParams,
+    currentWorkflowId,
+    workflowId,
+    setSelectedNode,
+    setActiveTab,
   ]);
 
   // KEEP-323: Rehydrate the Run/Stop button when the page loads while an
@@ -1077,7 +1149,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
             <div className="absolute inset-y-0 left-0 w-px bg-border" />
             {!(isDraggingResize || panelCollapsed) && (
               <button
-                className="-translate-x-1/2 absolute top-3 left-0 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+                className="absolute top-3 left-0 flex size-6 -translate-x-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsPanelAnimating(true);

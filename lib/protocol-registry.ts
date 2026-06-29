@@ -483,6 +483,9 @@ export function protocolToPlugin(def: ProtocolDefinition): IntegrationPlugin {
     icon: def.icon
       ? createProtocolIconComponent(def.icon, def.name)
       : ProtocolIcon,
+    // Protocol actions interact with chains via platform-resolved RPC and with
+    // fixed protocol service APIs - never a user-chosen host.
+    egress: "fixed-host",
     requiresCredentials: false,
     singleConnection: true,
     formFields: [],

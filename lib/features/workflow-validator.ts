@@ -1,9 +1,18 @@
 // Validates a workflow's nodes against the feature registry given a plan.
 // Used at save time (reject if violations) and at execute time (hard block).
+//
+// Gating resolves through resolveActionFeature (not the pure registry lookup)
+// so the egress-derived gate applies: any "user-destination" action is gated
+// even when it has no explicit feature entry - a new custom-destination action
+// is blocked for free plans the moment it is classified, without being added to
+// a hand-maintained list. Unknown/unclassified action types are not blocked
+// here (the executor rejects them at dispatch); the build-time invariant
+// (tests/unit/features-egress-invariant.test.ts) is what guarantees every
+// dispatchable egress action is classified and gated.
 
 import type { PlanName } from "@/lib/billing/plans";
+import { resolveActionFeature } from "./action-egress";
 import { isFeatureEnabled } from "./check";
-import { getFeatureForActionType } from "./registry";
 import type {
   FeatureId,
   WorkflowFeatureViolation,
@@ -17,7 +26,7 @@ export function validateWorkflowFeatures(
   const violations = new Map<FeatureId, WorkflowFeatureViolation>();
 
   for (const node of nodes) {
-    const feature = getFeatureForActionType(node.actionType);
+    const feature = resolveActionFeature(node.actionType);
     if (!feature) {
       continue;
     }

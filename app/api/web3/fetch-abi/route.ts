@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { fetchEtherscanSourceCode } from "@/lib/explorer/etherscan";
 import { detectProxyViaRpc } from "@/lib/explorer/proxy-detection";
-import { ErrorCategory, logUserError } from "@/lib/logging";
+import { ErrorCategory, logUserError, logWarn } from "@/lib/logging";
 import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -437,9 +437,11 @@ async function fetchOneFacet(
   try {
     facetAbi = await fetchAbiFromAddress(baseUrl, chainId, facetAddress);
   } catch (error) {
-    console.warn(
-      `[Diamond] Failed to fetch ABI for facet ${facetAddress}:`,
-      error instanceof Error ? error.message : "Unknown error"
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Diamond] Failed to fetch ABI for facet ${facetAddress}`,
+      error,
+      { service: "etherscan", component: "diamond-proxy" }
     );
     return { address: facetAddress, name: null, failed: true };
   }
@@ -587,9 +589,11 @@ async function handleDiamondContract(
       );
     }
   } catch (error) {
-    console.warn(
-      "[Diamond] RPC loupe failed, using Etherscan facet list if available:",
-      error instanceof Error ? error.message : "Unknown error"
+    logUserError(
+      ErrorCategory.NETWORK_RPC,
+      "[Diamond] RPC loupe failed, using Etherscan facet list if available",
+      error,
+      { component: "diamond-proxy" }
     );
   }
 
@@ -641,7 +645,9 @@ async function handleDiamondContract(
       `[Diamond] Combined ${facetAbis.length} facet ABIs into one ABI with ${functionCount} total functions`
     );
   } catch (error) {
-    console.warn("[Diamond] Failed to parse combined ABI for stats:", error);
+    logWarn("[Diamond] Failed to parse combined ABI for stats", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   let diamondDirectAbi: string | undefined;
@@ -879,9 +885,11 @@ async function fetchProxyAbi(
     console.log("[Etherscan] Fetched proxy ABI directly");
     return proxyAbi;
   } catch (error) {
-    console.warn(
-      "[Etherscan] Failed to fetch proxy ABI:",
-      error instanceof Error ? error.message : "Unknown error"
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Etherscan] Failed to fetch proxy ABI",
+      error,
+      { service: "etherscan" }
     );
     return;
   }
@@ -918,7 +926,9 @@ async function handleRegularProxy(
 
   // Validate implementation address
   if (!ethers.isAddress(implementationAddress)) {
-    console.warn("[Etherscan] Invalid implementation address, using proxy ABI");
+    logWarn("[Etherscan] Invalid implementation address, using proxy ABI", {
+      service: "etherscan",
+    });
     const proxyAbi = await fetchAbiFromAddress(
       baseUrl,
       chainId,
@@ -958,9 +968,11 @@ async function handleRegularProxy(
       proxyAbi,
     };
   } catch (error) {
-    console.warn(
-      "[Etherscan] Failed to fetch implementation ABI:",
-      error instanceof Error ? error.message : "Unknown error"
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[Etherscan] Failed to fetch implementation ABI",
+      error,
+      { service: "etherscan" }
     );
 
     if (proxyAbi) {
@@ -1013,9 +1025,11 @@ async function tryRpcDetectionOnAbiFailure(
       };
     }
   } catch (rpcError) {
-    console.warn(
-      "[Etherscan] RPC proxy detection also failed:",
-      rpcError instanceof Error ? rpcError.message : "Unknown error"
+    logUserError(
+      ErrorCategory.NETWORK_RPC,
+      "[Etherscan] RPC proxy detection also failed",
+      rpcError,
+      { component: "proxy-detection" }
     );
   }
   throw error;
@@ -1068,9 +1082,11 @@ async function tryRpcDetectionOnProxyPattern(
       };
     }
   } catch (rpcError) {
-    console.warn(
-      "[Etherscan] RPC proxy detection failed:",
-      rpcError instanceof Error ? rpcError.message : "Unknown error"
+    logUserError(
+      ErrorCategory.NETWORK_RPC,
+      "[Etherscan] RPC proxy detection failed",
+      rpcError,
+      { component: "proxy-detection" }
     );
   }
   return null;

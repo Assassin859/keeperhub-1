@@ -19,6 +19,12 @@ import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
+import {
+  ErrorCategory,
+  logSystemWarn,
+  logUserError,
+  logWarn,
+} from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 
 /**
@@ -181,7 +187,9 @@ async function measureVolatility(
     };
   } catch (error) {
     // If fee history fails (some chains don't support it), return non-volatile
-    console.warn("[GasStrategy] Failed to fetch fee history:", error);
+    logWarn("[GasStrategy] Failed to fetch fee history", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       baseFees: [],
       mean: BigInt(0),
@@ -239,7 +247,9 @@ async function getPercentileFees(
     return { baseFee, priorityFee };
   } catch (error) {
     // Fallback if fee history fails
-    console.warn("[GasStrategy] Failed to get percentile fees:", error);
+    logWarn("[GasStrategy] Failed to get percentile fees", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     const feeData = await runRpc(rpcManager, provider, (p) => p.getFeeData());
     return {
       baseFee: feeData.maxFeePerGas ?? parseGwei("50"),
@@ -490,9 +500,11 @@ export class AdaptiveGasStrategy {
       }
     } catch (error) {
       // Database unavailable, fall back to hardcoded
-      console.warn(
-        "[GasStrategy] Failed to fetch chain config from DB:",
-        error
+      logSystemWarn(
+        ErrorCategory.DATABASE,
+        "[GasStrategy] Failed to fetch chain config from DB",
+        error,
+        { chain_id: String(chainId) }
       );
     }
 
@@ -715,8 +727,14 @@ export async function executeWithRetry(
     }
 
     // Transaction stuck - will retry with higher gas (replacement)
-    console.warn(
-      `[GasStrategy] Transaction ${tx.hash} stuck after ${config.stuckThresholdMs}ms`
+    logUserError(
+      ErrorCategory.TRANSACTION,
+      `[GasStrategy] Transaction ${tx.hash} stuck after ${config.stuckThresholdMs}ms`,
+      undefined,
+      {
+        tx_hash: tx.hash,
+        stuck_threshold_ms: String(config.stuckThresholdMs),
+      }
     );
   }
 

@@ -37,6 +37,7 @@ import {
   requireDualFactor,
 } from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -159,6 +160,18 @@ export async function POST(
         { status: 409 }
       );
     }
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "agentic_wallet.approval_granted",
+      resourceType: "agentic_wallet",
+      resourceId: id,
+      metadata: buildAuditMetadata(request),
+    });
+
     return NextResponse.json({ ok: true, status: "approved" });
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "[Agentic] /approve failed", error, {
