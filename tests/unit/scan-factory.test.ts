@@ -824,6 +824,84 @@ const CONTRACT_SCAN: ScanResponse = {
   scannedAt: new Date().toISOString(),
 };
 
+// ---------------------------------------------------------------------------
+// PREFILL-08: Spark health descriptor → Spark pool address (not Aave pool)
+// ---------------------------------------------------------------------------
+
+const SPARK_HEALTH_DESCRIPTOR: SuggestionDescriptor = {
+  id: "hf-monitor-spark-1",
+  name: "Spark Health Factor Alert",
+  description: "Monitor your Spark health factor on Ethereum.",
+  category: "health",
+  chainId: 1,
+  readOrWrite: "read",
+  protocol: "spark",
+  usdValue: 4000,
+  riskNote:
+    "Read-only monitoring. This workflow does not make any transactions.",
+  confirmInputs: {
+    walletAddress: "Your wallet address to monitor",
+    threshold: "1500000000000000000",
+  },
+};
+
+describe("PREFILL-08: Spark health descriptor selects Spark pool, not Aave pool", () => {
+  const SPARK_POOL_ADDRESS = "0xC13e21B648A5Ee794902342038FF3aDAB66BE987";
+  const AAVE_V3_ETH_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+
+  it("spark: read node targets the Spark pool address, not the Aave V3 Ethereum pool", () => {
+    const result = buildWorkflow(SPARK_HEALTH_DESCRIPTOR);
+    const readNode = result.nodes.find(
+      (n) => n.data.config?.abiFunction === "getUserAccountData"
+    );
+    expect(readNode).toBeDefined();
+    expect(readNode?.data.config?.contractAddress).toBe(SPARK_POOL_ADDRESS);
+    expect(readNode?.data.config?.contractAddress).not.toBe(AAVE_V3_ETH_POOL);
+  });
+
+  it("spark: buildWorkflow passes all read-only factory guards without throwing", () => {
+    const result = buildWorkflow(SPARK_HEALTH_DESCRIPTOR);
+    expect(result.nodes).toHaveLength(4);
+    const { valid: refsValid, errors: refErrors } = validateTemplateRefs(
+      result.nodes,
+      result.edges
+    );
+    expect(refErrors).toEqual([]);
+    expect(refsValid).toBe(true);
+    const { valid: noApprove } = validateNoApproveTokenNode(result.nodes);
+    expect(noApprove).toBe(true);
+    const { valid: noMaxUint } = validateNoMaxUint256Approval(result.nodes);
+    expect(noMaxUint).toBe(true);
+  });
+
+  it("spark: condition hfRef resolves to the read node label (single-sourced, no drift)", () => {
+    const result = buildWorkflow(SPARK_HEALTH_DESCRIPTOR);
+    const readNode = result.nodes.find(
+      (n) => n.data.config?.abiFunction === "getUserAccountData"
+    );
+    // validateTemplateRefs verifies the {{@readId:readLabel.field}} ref in the
+    // condition leftOperand resolves against the actual read node label. If
+    // readLabel in hfRef and readLabel in the node drift, this check fails.
+    const { valid, errors } = validateTemplateRefs(result.nodes, result.edges);
+    expect(errors).toEqual([]);
+    expect(valid).toBe(true);
+    expect(typeof readNode?.data.label).toBe("string");
+    expect((readNode?.data.label ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("regression: Aave health descriptor still targets the Aave V3 Arbitrum pool after Spark changes", () => {
+    const result = buildWorkflow(HEALTH_DESCRIPTOR);
+    const readNode = result.nodes.find(
+      (n) => n.data.config?.abiFunction === "getUserAccountData"
+    );
+    // HEALTH_DESCRIPTOR uses chainId 42161 (Arbitrum) with protocol "aave-v3"
+    expect(readNode?.data.config?.contractAddress).toBe(
+      "0x794a61358D6845594F94dc1DB02A252b5b4814aD"
+    );
+    expect(readNode?.data.config?.contractAddress).not.toBe(SPARK_POOL_ADDRESS);
+  });
+});
+
 describe("Contract: engine → factory → no unresolved {{key}} placeholders (CR-01, CR-02)", () => {
   it("all four categories covered by the scan fixture", () => {
     const descriptors = buildSuggestions(CONTRACT_SCAN);
