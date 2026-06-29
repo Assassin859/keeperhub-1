@@ -37,13 +37,18 @@ export function ProtocolAddressField({
   const selectionMap = config ? parseAddressBookSelection(config) : {};
   const selectedBookmarkId = selectionMap[fieldKey];
 
+  // The input must be the DIRECT child of SaveAddressBookmark: it clones the
+  // child to intercept value/onChange and, on picking a saved address, calls
+  // `child.props.onChange`. Wrapping the input in a <div> sent the selection to
+  // the div (no onChange), so picking from the address book never filled the
+  // field. Validation renders as a sibling instead of inside the wrapper.
   return (
-    <SaveAddressBookmark
-      fieldKey={fieldKey}
-      nodeId={nodeId}
-      selectedBookmarkId={selectedBookmarkId}
-    >
-      <div className="relative">
+    <div className="relative">
+      <SaveAddressBookmark
+        fieldKey={fieldKey}
+        nodeId={nodeId}
+        selectedBookmarkId={selectedBookmarkId}
+      >
         <TemplateBadgeInput
           disabled={disabled}
           id={fieldKey}
@@ -51,10 +56,10 @@ export function ProtocolAddressField({
           placeholder={placeholder ?? "0x..."}
           value={displayValue}
         />
-        {validation && (
-          <p className="mt-1 text-xs text-destructive">{validation}</p>
-        )}
-      </div>
-    </SaveAddressBookmark>
+      </SaveAddressBookmark>
+      {validation && (
+        <p className="mt-1 text-xs text-destructive">{validation}</p>
+      )}
+    </div>
   );
 }
