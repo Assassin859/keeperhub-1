@@ -151,11 +151,6 @@ async function main(): Promise<void> {
 
     // 2. TOTP: encrypted secret stored exactly as Better Auth's two-factor
     // plugin does, so the MFA prompt works and pnpm dev:totp can mint codes.
-    const totpSecret = generateRandomString(32);
-    const encryptedSecret = await symmetricEncrypt({
-      key: authSecret,
-      data: totpSecret,
-    });
     const [existingTotp] = await db
       .select({ id: twoFactor.id })
       .from(twoFactor)
@@ -165,9 +160,14 @@ async function main(): Promise<void> {
     if (existingTotp) {
       await db
         .update(twoFactor)
-        .set({ secret: encryptedSecret, verified: true })
-        .where(eq(twoFactor.userId, userId));
+        .set({ verified: true })
+        .where(eq(twoFactor.id, existingTotp.id));
     } else {
+      const totpSecret = generateRandomString(32);
+      const encryptedSecret = await symmetricEncrypt({
+        key: authSecret,
+        data: totpSecret,
+      });
       await db.insert(twoFactor).values({
         id: generateId(),
         userId,
