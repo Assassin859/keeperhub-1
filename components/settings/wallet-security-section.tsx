@@ -198,15 +198,23 @@ function AddEmailDialog({
 
 export function WalletSecuritySection(): React.ReactElement {
   const [data, setData] = useState<PolicyResponse | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [addEmailOpen, setAddEmailOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/user/step-up/policy");
-    if (res.ok) {
-      setData((await res.json()) as PolicyResponse);
+    setLoadError(false);
+    try {
+      const res = await fetch("/api/user/step-up/policy");
+      if (res.ok) {
+        setData((await res.json()) as PolicyResponse);
+      } else {
+        setLoadError(true);
+      }
+    } catch {
+      setLoadError(true);
     }
   }, []);
 
@@ -296,6 +304,20 @@ export function WalletSecuritySection(): React.ReactElement {
   };
 
   if (!data) {
+    if (loadError) {
+      return (
+        <div className="py-6 text-center text-muted-foreground text-sm">
+          Failed to load security settings.{" "}
+          <button
+            className="underline"
+            onClick={() => void load()}
+            type="button"
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="flex justify-center py-6">
         <Spinner className="size-5" />
