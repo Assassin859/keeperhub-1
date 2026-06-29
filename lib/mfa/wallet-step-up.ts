@@ -161,16 +161,18 @@ async function mintEmailOtp(
   const otp = generateEmailOtp();
   const encrypted = await symmetricEncrypt({ key: serverSecret, data: otp });
   const identifier = emailIdentifier(userId, action);
-  await db
-    .delete(verifications)
-    .where(eq(verifications.identifier, identifier));
-  await db.insert(verifications).values({
-    id: generateId(),
-    identifier,
-    value: encrypted,
-    expiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MINUTES * 60 * 1000),
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(verifications)
+      .where(eq(verifications.identifier, identifier));
+    await tx.insert(verifications).values({
+      id: generateId(),
+      identifier,
+      value: encrypted,
+      expiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MINUTES * 60 * 1000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   });
   return await sendVerificationOTP({ email, otp, type: "confirm-action" });
 }
@@ -183,16 +185,18 @@ async function mintNonce(
   const nonce = randomBytes(16).toString("hex");
   const encrypted = await symmetricEncrypt({ key: serverSecret, data: nonce });
   const identifier = nonceIdentifier(userId, action);
-  await db
-    .delete(verifications)
-    .where(eq(verifications.identifier, identifier));
-  await db.insert(verifications).values({
-    id: generateId(),
-    identifier,
-    value: encrypted,
-    expiresAt: new Date(Date.now() + NONCE_TTL_MINUTES * 60 * 1000),
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(verifications)
+      .where(eq(verifications.identifier, identifier));
+    await tx.insert(verifications).values({
+      id: generateId(),
+      identifier,
+      value: encrypted,
+      expiresAt: new Date(Date.now() + NONCE_TTL_MINUTES * 60 * 1000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   });
   return buildStepUpMessage(action, nonce);
 }
