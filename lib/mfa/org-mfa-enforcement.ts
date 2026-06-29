@@ -29,6 +29,23 @@ export type OrgMfaEnforcement = {
 
 const NO_ENFORCEMENT: OrgMfaEnforcement = { enforce: false, factors: [] };
 
+// Short-lived in-process cache for org enforcement config. The proxy calls
+// getOrgMfaEnforcement on every authenticated wallet request; without a cache
+// that is one DB query per request per wallet user. The TTL is intentionally
+// short (30 s) so enforcement changes propagate quickly, and the cache is
+// best-effort per-pod (serverless deployments will see cache misses more
+// often, which is safe -- just slightly more DB queries). When an org's
+// enforcement settings are changed via the API, invalidateOrgMfaEnforcement
+// should be called so the update is visible on the next request in that pod
+// rather than waiting out the TTL.
+const ENFORCEMENT_CACHE_TTL_MS = 30_000;
+type CacheEntry = { value: OrgMfaEnforcement; expiry: number };
+const enforcementCache = new Map<string, CacheEntry>();
+
+export function invalidateOrgMfaEnforcement(organizationId: string): void {
+  enforcementCache.delete(organizationId);
+}
+
 /** Coerce the jsonb column into a clean factor list, dropping unknown values. */
 export function parseEnforcedFactors(value: unknown): StepUpFactor[] {
   if (!Array.isArray(value)) {
@@ -54,6 +71,11 @@ export async function getOrgMfaEnforcement(
   if (!organizationId) {
     return NO_ENFORCEMENT;
   }
+  const now = Date.now();
+  const cached = enforcementCache.get(organizationId);
+  if (cached && cached.expiry > now) {
+    return cached.value;
+  }
   const [row] = await db
     .select({
       enforceMfa: organization.enforceMfa,
@@ -62,14 +84,18 @@ export async function getOrgMfaEnforcement(
     .from(organization)
     .where(eq(organization.id, organizationId))
     .limit(1);
+  let result: OrgMfaEnforcement;
   if (!row?.enforceMfa) {
-    return NO_ENFORCEMENT;
+    result = NO_ENFORCEMENT;
+  } else {
+    const factors = parseEnforcedFactors(row.enforcedMfaFactors);
+    result = factors.length === 0 ? NO_ENFORCEMENT : { enforce: true, factors };
   }
-  const factors = parseEnforcedFactors(row.enforcedMfaFactors);
-  if (factors.length === 0) {
-    return NO_ENFORCEMENT;
-  }
-  return { enforce: true, factors };
+  enforcementCache.set(organizationId, {
+    value: result,
+    expiry: now + ENFORCEMENT_CACHE_TTL_MS,
+  });
+  return result;
 }
 
 /** Which extra factors a user currently has enrolled (TOTP authenticator,
