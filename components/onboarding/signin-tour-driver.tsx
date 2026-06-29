@@ -34,6 +34,7 @@ function markSeen(): void {
 export function SignInTourDriver(): null {
   const { data: session, isPending } = useSession();
   const startedRef = useRef(false);
+  const tourRef = useRef<{ destroy: () => void } | null>(null);
 
   useEffect(() => {
     if (isPending || startedRef.current) {
@@ -76,6 +77,7 @@ export function SignInTourDriver(): null {
           },
         ],
       });
+      tourRef.current = tour;
       tour.drive();
     };
 
@@ -85,6 +87,8 @@ export function SignInTourDriver(): null {
 
     return () => {
       controller.abort();
+      tourRef.current?.destroy();
+      tourRef.current = null;
     };
   }, [session, isPending]);
 
