@@ -47,7 +47,7 @@ type ApiKeysOverlayProps = {
 const SCOPE_LABELS: Record<string, string> = {
   "mcp:read": "Read your workflows, executions, and plugin schemas",
   "mcp:write": "Write your workflows, executions, and integrations",
-  "mcp:admin": "Full access to your KeeperHub organization",
+  "mcp:admin": "Full access to all existing and future actions",
 };
 
 /**
@@ -78,8 +78,16 @@ function CreateApiKeyOverlay({
   const hasScopeSelected = activeScopes.length > 0;
 
   const toggleScope = (id: string, checked: boolean): void => {
-    setSelectedScopes((prev) => ({ ...prev, [id]: checked }));
+    if (id === "mcp:admin" && checked) {
+      setSelectedScopes((prev) =>
+        Object.fromEntries(Object.keys(prev).map((k) => [k, true]))
+      );
+    } else {
+      setSelectedScopes((prev) => ({ ...prev, [id]: checked }));
+    }
   };
+
+  const isAdminSelected = selectedScopes["mcp:admin"] ?? false;
 
   const emptyCodesFetch = (): Promise<Response> =>
     fetch(endpoint, {
@@ -192,20 +200,26 @@ function CreateApiKeyOverlay({
           </p>
           <div className="rounded-lg border bg-muted/30 p-4">
             <ul className="space-y-3">
-              {SUPPORTED_SCOPES.map((scopeId) => (
-                <li key={scopeId}>
-                  <label className="flex cursor-pointer items-center gap-3 text-sm text-foreground">
-                    <input
-                      checked={selectedScopes[scopeId] ?? false}
-                      className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
-                      onChange={(e) => toggleScope(scopeId, e.target.checked)}
-                      type="checkbox"
-                      value={scopeId}
-                    />
-                    {SCOPE_LABELS[scopeId] ?? scopeId}
-                  </label>
-                </li>
-              ))}
+              {SUPPORTED_SCOPES.map((scopeId) => {
+                const lockedByAdmin = scopeId !== "mcp:admin" && isAdminSelected;
+                return (
+                  <li key={scopeId}>
+                    <label
+                      className={`flex items-center gap-3 text-sm text-foreground ${lockedByAdmin ? "cursor-default opacity-50" : "cursor-pointer"}`}
+                    >
+                      <input
+                        checked={selectedScopes[scopeId] ?? false}
+                        className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
+                        disabled={lockedByAdmin}
+                        onChange={(e) => toggleScope(scopeId, e.target.checked)}
+                        type="checkbox"
+                        value={scopeId}
+                      />
+                      {SCOPE_LABELS[scopeId] ?? scopeId}
+                    </label>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>
@@ -418,7 +432,7 @@ function ApiKeysList({
                     {apiKey.scope.split(" ").map((s) => (
                       <span key={s}>
                         <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
-                          {s}
+                          {s.startsWith("mcp:") ? s.slice(4) : s}
                         </code>
                         {" "}
                       </span>
