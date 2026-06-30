@@ -629,6 +629,45 @@ async function notifyDiscordSignup(user: {
 }
 
 /**
+ * Backstop for the signup-time fire-and-forget address book write. Runs on
+ * every SIWE wallet sign-in: ensures the signing address is in the org's
+ * address book regardless of whether the create.after write succeeded.
+ * Idempotent (onConflictDoNothing) and non-fatal.
+ */
+async function backstopWalletAddressBook(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  try {
+    const [userRow] = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const email = userRow?.email;
+    if (!email || !isWalletEmail(email)) {
+      return;
+    }
+
+    const walletAddress = email.split("@")[0];
+    await recordWalletInAddressBook({
+      organizationId,
+      address: walletAddress,
+      label: "My Wallet",
+      createdBy: userId,
+    });
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.AUTH,
+      "[Auth] Backstop address book write failed on session create",
+      error,
+      { userId, organizationId }
+    );
+  }
+}
+
+/**
  * Backstop for the signup-time fire-and-forget wallet provisioning. Runs on
  * login (session.create.after): if the org still has no active wallet - because
  * the signup attempt failed or the pod was killed mid-flight - it re-attempts
@@ -1020,6 +1059,9 @@ export const auth = betterAuth({
           // not awaited; backstopProvisionWallet handles its own errors.
           if (orgId) {
             backstopProvisionWallet(session.userId, orgId).catch(
+              () => undefined
+            );
+            backstopWalletAddressBook(session.userId, orgId).catch(
               () => undefined
             );
           }
