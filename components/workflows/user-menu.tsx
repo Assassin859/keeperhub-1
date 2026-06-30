@@ -93,7 +93,7 @@ export const UserMenu = (): React.ReactElement => {
   // `useActiveMember`, which auto-fire protected fetches as soon as they are
   // called. Routing anonymous users through a separate sign-in surface keeps
   // the network log clean on initial load.
-  if (isAnonymousUser || !(isEmailVerified || isWalletUser)) {
+  if (isAnonymous || !(session?.user?.emailVerified || isWalletUser)) {
     return (
       <div className="flex items-center gap-2">
         <ConnectButton />
