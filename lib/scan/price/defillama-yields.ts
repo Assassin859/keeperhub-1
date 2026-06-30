@@ -179,6 +179,13 @@ export function buildApyContext(
       if (!Number.isFinite(p.apy) || p.apy <= 0) {
         continue;
       }
+      // YIELD-03: the engine displays this rate as p.apy.toFixed(1), so any
+      // APY that rounds to 0.0 at one decimal (sub-0.05%) would render as
+      // "~0.0% APY". Drop such pools here so the only entries that survive
+      // have a showable rate and the engine degrades them to generic copy.
+      if (Number.parseFloat(p.apy.toFixed(1)) <= 0) {
+        continue;
+      }
 
       if (isUsds) {
         if (p.project !== SKY_SLUG || p.symbol !== SKY_SYMBOL) {

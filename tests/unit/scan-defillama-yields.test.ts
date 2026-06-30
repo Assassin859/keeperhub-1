@@ -289,4 +289,16 @@ describe("buildApyContext: degrade paths (YIELD-03)", () => {
     const entry = ctx.getBestYield("USDC", 42_161);
     expect(entry).toBeNull();
   });
+
+  it("degrade: pool whose apy rounds to 0.0 at 1dp is excluded (CR-01, YIELD-03)", () => {
+    // 0.03% renders as "~0.0% APY" via toFixed(1); must NOT surface as a venue.
+    const subRoundingPool = {
+      ...POOL_AAVE_V3_USDC_ARB,
+      pool: "sub-rounding-apy-uuid",
+      apy: 0.03,
+    };
+    const ctx = buildApyContext([subRoundingPool], [STABLE_USDC_ARB]);
+    const entry = ctx.getBestYield("USDC", 42_161);
+    expect(entry).toBeNull();
+  });
 });
