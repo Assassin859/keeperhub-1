@@ -395,6 +395,16 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   if (message.triggerType === "manual") {
     const nodes = workflow.nodes as WorkflowNode[];
     const target = resolveDispatchTarget(nodes);
+    if (target === "api") {
+      // EXECUTION_MODE=process routes dispatch back to the app's execute route,
+      // which calls executeWorkflowInBackground, which (if
+      // WORKFLOW_DISPATCH_VIA_EXECUTOR=1 is set) re-enqueues to SQS — loop.
+      throw new Error(
+        "EXECUTION_MODE=process is incompatible with WORKFLOW_DISPATCH_VIA_EXECUTOR: " +
+          "it routes manual executions back to the API which re-enqueues to SQS. " +
+          "Use EXECUTION_MODE=in-process instead."
+      );
+    }
     console.log(
       `[Executor] Manual trigger dispatch target: ${target} (mode: ${CONFIG.executionMode})`
     );
