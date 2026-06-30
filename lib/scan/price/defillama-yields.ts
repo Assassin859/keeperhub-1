@@ -61,6 +61,15 @@ const YIELDS_CACHE_TTL_MS = 15 * 60 * 1000;
 const YIELDS_URL = "https://yields.llama.fi/pools";
 
 /**
+ * Upper bound (in percent) on an acceptable DefiLlama `apy`. The feed is
+ * untrusted: a malformed value or transient incentive spike (e.g. apy: 5000,
+ * or >= 1e21 which toFixed(1) renders in exponential notation) would be ranked
+ * as "best" and shown verbatim. Anything above this ceiling is treated as
+ * malformed and excluded so the user never sees an absurd headline rate.
+ */
+const APY_MAX_PLAUSIBLE = 1000;
+
+/**
  * USDC/USDT project allowlist for yield ranking (YIELD-02).
  *
  * "sky-lending" is EXCLUDED: it has no USDC/USDT supply pools — only SUSDS
@@ -176,7 +185,13 @@ export function buildApyContext(
       if (!Number.isFinite(p.tvlUsd) || p.tvlUsd < 10_000_000) {
         continue;
       }
-      if (!Number.isFinite(p.apy) || p.apy <= 0) {
+      // Reject non-finite, non-positive, and implausibly large APY values
+      // (untrusted source — see APY_MAX_PLAUSIBLE).
+      if (
+        !Number.isFinite(p.apy) ||
+        p.apy <= 0 ||
+        p.apy > APY_MAX_PLAUSIBLE
+      ) {
         continue;
       }
       // YIELD-03: the engine displays this rate as p.apy.toFixed(1), so any

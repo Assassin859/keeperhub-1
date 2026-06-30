@@ -301,4 +301,16 @@ describe("buildApyContext: degrade paths (YIELD-03)", () => {
     const entry = ctx.getBestYield("USDC", 42_161);
     expect(entry).toBeNull();
   });
+
+  it("degrade: pool with an implausibly large apy is excluded (WR-01)", () => {
+    // apy: 5000 is malformed/incentive-spike noise from an untrusted feed.
+    const absurdApyPool = {
+      ...POOL_AAVE_V3_USDC_ARB,
+      pool: "absurd-apy-uuid",
+      apy: 5000,
+    };
+    const ctx = buildApyContext([absurdApyPool], [STABLE_USDC_ARB]);
+    const entry = ctx.getBestYield("USDC", 42_161);
+    expect(entry).toBeNull();
+  });
 });
