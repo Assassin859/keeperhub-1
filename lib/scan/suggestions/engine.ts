@@ -159,17 +159,43 @@ function buildHealthSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
  *
  * Only called when stable.depegged === false (depeg suppression handled by caller).
  *
- * When `apyContext` is provided and returns a valid entry for this stablecoin,
- * the description will be upgraded to APY-aware copy in Wave 2 (57-02).
- * For now (57-01 RED wave), generic copy is always returned.
+ * When `apyContext` returns a valid entry with apy > 0, emits APY-aware copy
+ * naming the best venue and rate (YIELD-01/02). Otherwise degrades to generic
+ * "idle yield opportunities" copy (YIELD-03). readOrWrite stays "read" in
+ * every branch (YIELD-04).
  */
 function buildYieldSuggestion(
   stable: StablecoinBalance,
-  _apyContext?: ApyContext | null
+  apyContext?: ApyContext | null
 ): SuggestionDescriptor {
   const slug = `stablecoin-yield-${stable.symbol.toLowerCase()}-${stable.chainId}`;
   const chain = chainLabel(stable.chainId);
   const bal = stable.usdValue ?? 0;
+  const entry = apyContext?.getBestYield(stable.symbol, stable.chainId) ?? null;
+
+  if (entry !== null && entry.apy > 0) {
+    const apyStr = entry.apy.toFixed(1);
+    const confirmInputs: Record<string, string> = {
+      walletAddress: "Your wallet address to monitor",
+      tokenAddress: stable.tokenAddress,
+    };
+    if (entry.destinationAddress !== null) {
+      confirmInputs.destinationAddress = entry.destinationAddress;
+    }
+    return {
+      id: slug,
+      name: `${stable.symbol} Idle Yield — ${entry.projectLabel}`,
+      description:
+        `Monitor your ${stable.symbol} balance ($${Math.round(bal)}) on ${chain}. ` +
+        `Earn ~${apyStr}% APY via ${entry.projectLabel}.`,
+      category: "yield",
+      chainId: stable.chainId,
+      readOrWrite: "read",
+      confirmInputs,
+      riskNote: RISK_NOTE_READ_ONLY,
+      usdValue: stable.usdValue,
+    };
+  }
 
   return {
     id: slug,
