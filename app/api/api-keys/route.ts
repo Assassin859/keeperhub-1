@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { normalizeScope } from "@/lib/mcp/oauth-scopes";
+import { parseScopeInput } from "@/lib/mcp/oauth-scopes";
 import {
   dualFactorErrorResponse,
   requireDualFactor,
@@ -117,13 +117,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const name = body.name || null;
-    let scopeInput: string | null = null;
-    if (Array.isArray(body.scopes)) {
-      scopeInput = (body.scopes as string[]).join(" ");
-    } else if (typeof body.scopes === "string") {
-      scopeInput = body.scopes;
-    }
-    const scope = scopeInput ? normalizeScope(scopeInput) : null;
+    const scope = parseScopeInput(body.scopes);
 
     // Dual-factor at mint time. Long-lived bypass credentials warrant
     // a fresh challenge on BOTH factors at the exact moment of issue.
