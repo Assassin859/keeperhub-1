@@ -59,7 +59,8 @@ export async function executeWorkflowInBackground(
   organizationId?: string | null,
   createdBy?: string,
   organizationSlug?: string,
-  organizationPlan?: string
+  organizationPlan?: string,
+  triggerType: "manual" | "webhook" = "manual"
 ): Promise<void> {
   try {
     console.log(`${context.logPrefix} Starting execution:`, executionId);
@@ -79,7 +80,7 @@ export async function executeWorkflowInBackground(
             workflowId,
             userId: createdBy ?? "",
             organizationId: organizationId ?? undefined,
-            triggerType: "manual",
+            triggerType,
             input,
           }),
         })

@@ -143,6 +143,8 @@ function buildInput(message: ExecutorMessage): Record<string, unknown> {
       };
     case "manual":
       return { triggerType: "manual" as const, ...message.input };
+    case "webhook":
+      return { triggerType: "webhook" as const, ...message.input };
     default: {
       const _exhaustive: never = message;
       throw new Error(
@@ -389,10 +391,10 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     );
   }
 
-  // Manual triggers: the API pre-created the execution row as 'pending' before
-  // enqueueing. Skip phantom handling entirely and dispatch directly. All
-  // billing/feature/concurrency guards above still run.
-  if (message.triggerType === "manual") {
+  // Manual and webhook triggers: the API pre-created the execution row as
+  // 'pending' before enqueueing. Skip phantom handling entirely and dispatch
+  // directly. All billing/feature/concurrency guards above still run.
+  if (message.triggerType === "manual" || message.triggerType === "webhook") {
     const nodes = workflow.nodes as WorkflowNode[];
     const target = resolveDispatchTarget(nodes);
     if (target === "api") {

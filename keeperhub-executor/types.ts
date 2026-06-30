@@ -49,7 +49,7 @@ export type ManualMessage = {
   workflowId: string;
   userId: string;
   organizationId?: string;
-  triggerType: "manual";
+  triggerType: "manual" | "webhook";
   input: Record<string, unknown>;
 };
 
