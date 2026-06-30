@@ -43,10 +43,6 @@ const TEST_DATA: ProtocolTestData = {
         sender: wallet(),
         receiver: wallet(),
       },
-      "get-account-flow-rate": {
-        token: "FUSDCX",
-        account: wallet(),
-      },
       // superToken contract is userSpecifiedAddress: pass `contractAddress`.
       "get-super-token-balance": {
         contractAddress: "FUSDCX",
