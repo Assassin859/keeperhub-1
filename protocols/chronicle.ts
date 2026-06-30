@@ -201,7 +201,8 @@ export default defineAbiProtocol({
       label: "DAI/USD Oracle",
       abi: FEED_ABI,
       addresses: {
-        "1": "0xCCd47B363b81E94321518D0393ACcb0846f4D4C6",
+        // No mainnet deployment: DAI is a USD-pegged stablecoin (MakerDAO defines the peg),
+        // so Chronicle does not publish a DAI/USD price feed on Ethereum mainnet.
         "11155111": "0xaf900d10f197762794C41dac395C5b8112eD13E1",
       },
       overrides: feedOverrides("dai-usd", "DAI/USD"),
