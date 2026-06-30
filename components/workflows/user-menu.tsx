@@ -7,6 +7,7 @@ import {
   CreditCard,
   FolderTree,
   Key,
+  LifeBuoy,
   LogOut,
   Plug,
   Rocket,
@@ -27,6 +28,7 @@ import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay"
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
+import { ContactSupportDialog } from "@/components/support/contact-support-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -278,6 +280,10 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           >
             <Compass className="size-4" />
             <span>Take a tour</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => openOverlay(ContactSupportDialog)}>
+            <LifeBuoy className="size-4" />
+            <span>Contact support</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout}>

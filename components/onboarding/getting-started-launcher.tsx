@@ -1,7 +1,15 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Check, ChevronDown, Compass, Info, Loader2, Sparkles, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Compass,
+  Info,
+  Loader2,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -10,6 +18,7 @@ import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { WalletOverlay } from "@/components/overlays/wallet-overlay";
+import { ContactSupportDialog } from "@/components/support/contact-support-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -314,6 +323,7 @@ function ExpandedCard({
   onChip,
   onTour,
   onTakeTour,
+  onContact,
 }: {
   gs: GettingStarted;
   creditLabel: string;
@@ -322,6 +332,7 @@ function ExpandedCard({
   onChip: (step: Step, chip: Chip) => void;
   onTour: (step: Step) => void;
   onTakeTour: () => void;
+  onContact: () => void;
 }): React.ReactElement {
   const [infoStep, setInfoStep] = useState<Step | null>(null);
   const branches = getBranches();
@@ -422,7 +433,13 @@ function ExpandedCard({
       </div>
 
       <div className="flex items-center justify-between border-t px-4 py-2 text-muted-foreground text-xs">
-        <span>Reopen anytime from your account menu.</span>
+        <button
+          className="font-medium text-foreground underline-offset-2 hover:underline"
+          onClick={onContact}
+          type="button"
+        >
+          Stuck? Contact us
+        </button>
         <button
           className="font-medium text-foreground underline-offset-2 hover:underline"
           onClick={onTakeTour}
@@ -681,6 +698,7 @@ export function GettingStartedLauncher(): React.ReactElement | null {
             key="gs-card"
             onAction={onAction}
             onChip={onChip}
+            onContact={() => open(ContactSupportDialog)}
             onTakeTour={() => requestTour(true)}
             onTour={onTour}
             panelOpen={panelOpen}
