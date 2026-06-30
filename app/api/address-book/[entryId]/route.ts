@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
+import { curateDbError } from "@/lib/db/errors";
 import { addressBookEntry } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
@@ -137,20 +138,21 @@ export async function PATCH(
 
     return NextResponse.json(updatedEntry);
   } catch (error) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[Address Book] Failed to update entry",
-      error,
-      { endpoint: "/api/address-book/[entryId]", operation: "update" }
-    );
+    const curated = curateDbError(error, {
+      messages: { "23505": "This address is already in your address book." },
+      fallback: "Failed to update address book entry",
+    });
+    if (curated.status >= 500) {
+      logSystemError(
+        ErrorCategory.DATABASE,
+        "[Address Book] Failed to update entry",
+        error,
+        { endpoint: "/api/address-book/[entryId]", operation: "update" }
+      );
+    }
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update address book entry",
-      },
-      { status: 500 }
+      { error: curated.message },
+      { status: curated.status }
     );
   }
 }
@@ -205,14 +207,12 @@ export async function DELETE(
       error,
       { endpoint: "/api/address-book/[entryId]", operation: "delete" }
     );
+    const curated = curateDbError(error, {
+      fallback: "Failed to delete address book entry",
+    });
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to delete address book entry",
-      },
-      { status: 500 }
+      { error: curated.message },
+      { status: curated.status }
     );
   }
 }

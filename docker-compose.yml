@@ -214,6 +214,15 @@ services:
       # all workflow runs sit at status=pending until the worker hits its
       # 5-minute timeout. Pinning to the IPv4 loopback bypasses DNS.
       WORKFLOW_LOCAL_BASE_URL: "http://127.0.0.1:3000"
+      # Route UI-triggered executions through the standalone executor via SQS
+      # so /.well-known/workflow/v1/step is never compiled in dev. The executor
+      # runs all steps in-process (tsc-compiled, no turbopack), bypassing the
+      # DevKit's embedded graphile worker which deadlocks on the 91-step bundle.
+      WORKFLOW_DISPATCH_VIA_EXECUTOR: "1"
+      # Override the minikube-targeted anchor URLs with the in-container hostnames
+      # so the SQS client can reach localstack from within the app-dev container.
+      AWS_ENDPOINT_URL: http://localstack:4566
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/keeperhub-workflow-queue
     deploy:
       resources:
         limits:
@@ -334,6 +343,10 @@ services:
       TURNKEY_API_PUBLIC_KEY: ${TURNKEY_API_PUBLIC_KEY:-}
       TURNKEY_API_PRIVATE_KEY: ${TURNKEY_API_PRIVATE_KEY:-}
       TURNKEY_ORGANIZATION_ID: ${TURNKEY_ORGANIZATION_ID:-}
+      # Run steps directly in the executor process instead of K8s Jobs.
+      # In dev there is no Kubernetes; in-process bypasses the isolation overhead
+      # and lets the executor run on a plain Docker Compose stack.
+      EXECUTION_MODE: in-process
     depends_on:
       db:
         condition: service_healthy
@@ -343,6 +356,7 @@ services:
         condition: service_started
     profiles:
       - dev
+      - dev-min
 
   # ===========================================================================
   # Internal-service HMAC secret seeder (one-shot)
@@ -373,6 +387,7 @@ services:
       pnpm tsx scripts/seed-internal-service-hmac.ts || true"
     profiles:
       - dev
+      - dev-min
       - minikube
 
   # ===========================================================================

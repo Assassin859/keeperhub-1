@@ -440,7 +440,8 @@ export async function POST(
       workflow.organizationId,
       workflow.userId,
       organizationSlug,
-      organizationPlan
+      organizationPlan,
+      "webhook"
     );
 
     await recordWebhookMetrics({

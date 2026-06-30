@@ -34,7 +34,7 @@ Open a release PR that promotes every merged PR currently on `staging` to `prod`
    - **Database migrations** --
      `git diff origin/prod..origin/staging --stat -- drizzle/`
    - **Deploy values / secrets** --
-     `git diff origin/prod..origin/staging --stat -- deploy/keeperhub/`
+     `git diff origin/prod..origin/staging --stat -- deploy/keeperhub-stack/`
    - **Dependency changes** --
      `git diff origin/prod..origin/staging --stat -- package.json pnpm-lock.yaml`
 6. **Build the PR body** from the following template. Omit the "Risk callouts"

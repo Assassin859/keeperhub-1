@@ -1,4 +1,4 @@
-export type ExecutionMode = "isolated" | "process" | "complex";
+export type ExecutionMode = "isolated" | "process" | "complex" | "in-process";
 
 export const CONFIG = {
   executionMode: (process.env.EXECUTION_MODE || "isolated") as ExecutionMode,
