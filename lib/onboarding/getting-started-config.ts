@@ -28,6 +28,7 @@ export type SignalId =
   | "ranWorkflow"
   | "alertsConnected"
   | "walletFunded"
+  | "walletScanned"
   // `always` is a pre-checked / not-a-task step (e.g. "wallet not needed").
   | "always";
 
@@ -37,6 +38,8 @@ export type StepAction =
   | { kind: "ai-prompt"; prompt: string }
   // Open an in-app overlay (api-keys, integrations, wallet) by id.
   | { kind: "deeplink"; target: DeepLinkTarget }
+  // Trigger a wallet holdings scan (5-second async gate; real call-site prep).
+  | { kind: "scan-wallet" }
   // placeholder: KEEP-878 follow-up - a curated template id once the registry
   // exists; not emitted yet, here so the union is stable for swap-in.
   | { kind: "template"; id: string };
@@ -109,6 +112,11 @@ export type Step = {
   offerTour?: boolean;
   /** Optional inline chips (each seeds the AI generator). */
   chips?: Chip[];
+  /**
+   * Step key that must be complete before this step's chips are rendered.
+   * Used to gate chip options on prior discovery steps (e.g. scan-wallet).
+   */
+  chipsGatedBy?: string;
   /** Render muted (e.g. a "not needed" confirmation step). */
   muted?: boolean;
 };
@@ -123,6 +131,42 @@ export type Branch = {
 type ChipContext = {
   /** Reserved for the future holdings scanner. Unused while static. */
   walletAddress?: string | null;
+};
+
+/**
+ * Shared across Monitor and Yield branches. One step key means completion is
+ * automatically synchronised — scanning from either branch marks it done on
+ * both. The 5-second timer in use-getting-started.ts is the call-site stub;
+ * swap the triggerWalletScan body for a real holdings fetch when ready.
+ */
+const SCAN_WALLET_STEP: Step = {
+  key: "scan-wallet",
+  title: "Scan your wallet",
+  description: "Detect your holdings to get personalised recommendations.",
+  info: {
+    summary:
+      "KeeperHub reads your wallet's on-chain holdings to suggest relevant monitoring targets and yield strategies.",
+    sections: [
+      {
+        heading: "What it checks",
+        points: [
+          "Token balances across supported chains.",
+          "Active DeFi positions (lending, staking, LP).",
+          "Recent transaction history for pattern detection.",
+        ],
+      },
+      {
+        heading: "Privacy",
+        points: [
+          "Only your wallet address is read — no private keys or signatures required.",
+          "Nothing is stored beyond the recommendations shown here.",
+        ],
+      },
+    ],
+  },
+  signal: "walletScanned",
+  action: { kind: "scan-wallet" },
+  actionLabel: "Scan wallet",
 };
 
 // placeholder: KEEP-878 follow-up - monitor event-trigger registry. Static
@@ -282,6 +326,7 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
       label: "Monitor",
       icon: LineChart,
       steps: [
+        SCAN_WALLET_STEP,
         {
           key: "pick-watch",
           title: "Pick what to watch",
@@ -308,6 +353,7 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           },
           signal: "ranWorkflow",
           chips: getMonitorTargets(ctx),
+          chipsGatedBy: "scan-wallet",
         },
         {
           key: "connect-alerts",
@@ -339,6 +385,7 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
       label: "Yield",
       icon: Sprout,
       steps: [
+        SCAN_WALLET_STEP,
         {
           key: "fund-wallet",
           title: "Fund your wallet",
@@ -393,6 +440,7 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           },
           signal: "ranWorkflow",
           chips: getYieldStrategies(ctx),
+          chipsGatedBy: "scan-wallet",
         },
         {
           key: "run-automate",

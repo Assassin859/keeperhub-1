@@ -165,6 +165,14 @@ export type GettingStarted = {
   hasLiveStepWorkflow: (key: string) => boolean;
   refetch: () => void;
   isAuthenticated: boolean;
+  /** True while the 5-second wallet scan is in progress. */
+  scanningWallet: boolean;
+  /**
+   * Trigger a wallet holdings scan. Shows a loading state for 5 seconds then
+   * latches the scan-wallet step as complete. No-op when already scanning or
+   * already done. Call-site stub: swap the body for a real holdings fetch.
+   */
+  triggerWalletScan: () => void;
 };
 
 export function useGettingStarted(): GettingStarted {
@@ -202,6 +210,28 @@ export function useGettingStarted(): GettingStarted {
     },
     [userId]
   );
+
+  const [scanningWallet, setScanningWallet] = useState(false);
+  const scanningWalletRef = useRef(scanningWallet);
+  scanningWalletRef.current = scanningWallet;
+
+  const triggerWalletScan = useCallback(() => {
+    if (
+      persistedRef.current.done.includes("scan-wallet") ||
+      scanningWalletRef.current
+    ) {
+      return;
+    }
+    setScanningWallet(true);
+    setTimeout(() => {
+      persist((prev) =>
+        prev.done.includes("scan-wallet")
+          ? prev
+          : { ...prev, done: [...prev.done, "scan-wallet"] }
+      );
+      setScanningWallet(false);
+    }, 5000);
+  }, [persist]);
 
   const workflowIds = Object.values(persisted.workflows).join(",");
   const fetchStatus = useCallback(() => {
@@ -353,5 +383,7 @@ export function useGettingStarted(): GettingStarted {
     hasLiveStepWorkflow,
     refetch: fetchStatus,
     isAuthenticated,
+    scanningWallet,
+    triggerWalletScan,
   };
 }
