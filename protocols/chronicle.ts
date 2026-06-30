@@ -1,5 +1,69 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import type { AbiFunctionOverride } from "@/lib/protocol-registry";
+import { contract, type ProtocolTestData } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "11155111": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+      protocolSteps: [
+        {
+          protocol: "chronicle",
+          action: "self-kiss",
+          inputs: { oracle: contract("ethUsd") },
+        },
+        {
+          protocol: "chronicle",
+          action: "self-kiss",
+          inputs: { oracle: contract("btcUsd") },
+        },
+        {
+          protocol: "chronicle",
+          action: "self-kiss",
+          inputs: { oracle: contract("daiUsd") },
+        },
+        {
+          protocol: "chronicle",
+          action: "self-kiss",
+          inputs: { oracle: contract("usdcUsd") },
+        },
+        {
+          protocol: "chronicle",
+          action: "self-kiss",
+          inputs: { oracle: contract("usdtUsd") },
+        },
+        {
+          protocol: "chronicle",
+          action: "self-kiss",
+          inputs: { oracle: contract("linkUsd") },
+        },
+      ],
+    },
+    actions: {
+      "eth-usd-read": {},
+      "eth-usd-read-with-age": {},
+      "btc-usd-read": {},
+      "btc-usd-read-with-age": {},
+      "dai-usd-read": {},
+      "dai-usd-read-with-age": {},
+      "usdc-usd-read": {},
+      "usdc-usd-read-with-age": {},
+      "usdt-usd-read": {},
+      "usdt-usd-read-with-age": {},
+      "link-usd-read": {},
+      "link-usd-read-with-age": {},
+      read: {},
+      "try-read": {},
+      "read-with-age": {},
+      "try-read-with-age": {},
+    },
+    skipped: {
+      "self-kiss": "used in setup; re-running would error if already kissed",
+    },
+  },
+};
 
 // Minimal oracle ABI used for named feed contracts (read + readWithAge only).
 // tryRead/tryReadWithAge are omitted from named feeds; they are exposed on the
@@ -110,6 +174,8 @@ export default defineAbiProtocol({
     "Chronicle Protocol: decentralized, verifiable oracle price feeds with Schnorr signature verification",
   website: "https://chroniclelabs.org",
   icon: "/protocols/chronicle.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     ethUsd: {
