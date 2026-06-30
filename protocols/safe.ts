@@ -1,4 +1,27 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-owners": {},
+      "get-threshold": {},
+      "is-owner": { owner: wallet() },
+      "get-nonce": {},
+      "is-module-enabled": { module: wallet() },
+      "get-modules-paginated": {
+        start: "0x0000000000000000000000000000000000000001",
+        pageSize: "10",
+      },
+    },
+    skipped: {},
+  },
+};
 
 const SAFE_ABI = JSON.stringify([
   // Functions
@@ -135,6 +158,8 @@ export default defineAbiProtocol({
     "Safe multisig wallet: read owners, threshold, nonce, and module status for any Safe address",
   website: "https://safe.global",
   icon: "/protocols/safe.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     safe: {
