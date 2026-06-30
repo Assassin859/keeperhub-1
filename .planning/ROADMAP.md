@@ -162,7 +162,7 @@ Plans:
 
 Plans:
 - [x] 57-01-PLAN.md — Foundation: ApyEntry/ApyContext types + yields-client throw-stub + engine signature widening + RED tests (YIELD-01..04) [wave 1]
-- [ ] 57-02-PLAN.md — DefiLlama yields client (fetch + 15m cache + 4s timeout + filter/rank) + APY-aware engine copy [wave 2]
+- [x] 57-02-PLAN.md — DefiLlama yields client (fetch + 15m cache + 4s timeout + filter/rank) + APY-aware engine copy [wave 2]
 - [ ] 57-03-PLAN.md — Scan route pre-fetch + apyContext wiring + factory destination reference + route test (YIELD-01/02/04) [wave 3]
 **UI hint**: no (reuses the existing suggestion card + read-only canvas preview; copy + data only)
 
@@ -178,7 +178,7 @@ Plans:
 | 54. Auth Round-Trip + Persistence | 4/4 | Complete   | 2026-06-17 |
 | 55. Polish + Hardening | 4/4 | Complete   | 2026-06-17 |
 | 56. Spark + Sky Scan Adapters | 5/5 | Complete   | 2026-06-29 |
-| 57. APY-Aware Stablecoin Yield Suggestions | 1/3 | In Progress|  |
+| 57. APY-Aware Stablecoin Yield Suggestions | 2/3 | In Progress|  |
 
 ---
 

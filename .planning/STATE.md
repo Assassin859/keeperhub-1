@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-30T09:16:09.963Z"
+last_updated: "2026-06-30T09:34:22.619Z"
 last_activity: 2026-06-30
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 34
-  completed_plans: 32
+  completed_plans: 33
   percent: 75
 ---
 
@@ -23,7 +23,7 @@ progress:
 ## Current Position
 
 Phase: 57 (apy-aware-stablecoin-yield-suggestions) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-06-30
 
@@ -130,9 +130,9 @@ Last activity: 2026-06-30
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 57-01 (APY-aware yield suggestions RED wave — throw-stub yields client + typed ApyEntry/ApyContext contracts + 20 RED tests) — 2026-06-30
-- Stopped at: 57-01 complete; 57-02 (GREEN wave) and 57-03 (factory wave) pending
-- Next command: execute 57-02-PLAN.md
+- Last completed: 57-02 (APY-aware yield suggestions GREEN wave — DefiLlama yields client + APY-aware engine copy; all 20 RED tests from 57-01 now GREEN) — 2026-06-30
+- Stopped at: 57-02 complete; 57-03 (factory wave) pending
+- Next command: execute 57-03-PLAN.md
 
 ## Deferred Items
 
@@ -158,3 +158,4 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | testing | scan-route-suggestions.test.ts 7 tests failing — NEXT_PUBLIC_SCAN_ENABLED not set in beforeEach; pre-existing since 55-03 flag gate (commit a51139f1); fix: add `process.env.NEXT_PUBLIC_SCAN_ENABLED = "true"` in beforeEach | deferred |
 | Phase 56-spark-sky-scan-adapters P05 | 90 | 2 tasks | 3 files |
 | Phase 57-apy-aware-stablecoin-yield-suggestions P01 | 10 | 3 tasks | 5 files |
+| Phase 57 P02 | 7 | 2 tasks | 3 files |

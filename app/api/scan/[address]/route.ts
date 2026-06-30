@@ -28,8 +28,15 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
+import {
+  buildApyContext,
+  fetchDefillamaYieldPools,
+} from "@/lib/scan/price/defillama-yields";
 import { scanAddress } from "@/lib/scan/scanner";
-import { buildSuggestions } from "@/lib/scan/suggestions/engine";
+import {
+  buildSuggestions,
+  type ApyContext,
+} from "@/lib/scan/suggestions/engine";
 import { getRequestSourceIp } from "@/lib/security/request-attribution";
 
 export const dynamic = "force-dynamic";
@@ -94,11 +101,23 @@ export async function GET(
       scanTimer(),
       { status: "success" }
     );
+    // T-57-05: Pre-fetch the DefiLlama yield pools snapshot once and build the
+    // apyContext before calling buildSuggestions. Any failure (timeout, parse
+    // error, etc.) leaves apyContext undefined so the engine degrades all yield
+    // suggestions to generic copy (YIELD-03) without blocking the 200 response.
+    let apyContext: ApyContext | undefined;
+    try {
+      const yieldPools = await fetchDefillamaYieldPools();
+      apyContext = buildApyContext(yieldPools, result.stablecoins);
+    } catch {
+      // Yields fetch or context build failed — degrade to generic copy.
+    }
+
     // T-52-12: buildSuggestions is pure and bounded (<10ms), but any engine
     // error degrades gracefully to [] rather than failing the 200 response.
     let suggestions: ReturnType<typeof buildSuggestions> = [];
     try {
-      suggestions = buildSuggestions(result);
+      suggestions = buildSuggestions(result, apyContext);
     } catch {
       // Engine error — return empty suggestions, do not fail the scan response.
     }
