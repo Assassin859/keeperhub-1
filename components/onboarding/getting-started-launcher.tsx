@@ -107,7 +107,7 @@ function StepCheck({
       {scanning ? (
         <Loader2
           aria-hidden="true"
-          className="size-3 animate-spin text-muted-foreground"
+          className="size-3 animate-spin text-keeperhub-green"
         />
       ) : (
         complete && <Check aria-hidden="true" className="size-3" />
@@ -158,7 +158,7 @@ function StepRow({
     <div
       className={cn(
         "rounded-md transition-colors",
-        locked ? "opacity-40" : "hover:bg-muted/40"
+        locked ? "opacity-60" : "hover:bg-muted/40"
       )}
       data-complete={complete}
       data-testid={`gs-step-${step.key}`}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "@/lib/auth-client";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 import {
   type BranchKey,
   getBranches,
@@ -178,7 +179,8 @@ export type GettingStarted = {
 export function useGettingStarted(): GettingStarted {
   const { data: session } = useSession();
   const userId = session?.user?.id;
-  const isAuthenticated = Boolean(session?.user);
+  const isAuthenticated =
+    Boolean(session?.user) && !isAnonymousUser(session?.user);
   const [persisted, setPersisted] = useState<Persisted>(() =>
     readPersisted(undefined)
   );
