@@ -31,7 +31,7 @@ import {
   ReceiveMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -323,10 +323,12 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     const blockedUserId =
       "userId" in message ? message.userId : workflow.userId;
 
-    // KEEP-693: if a phantom row was pre-created for this trigger, resolve it
-    // in place to the blocked (billing/user) state rather than inserting a
-    // second row -- and so the reaper does not later age the orphaned phantom
-    // to a system P-code. Falls through to an insert when there is no phantom.
+    // KEEP-693: if a pre-created row exists for this trigger, resolve it in
+    // place to the blocked (billing/user) state rather than inserting a second
+    // row -- and so the reaper does not later age the orphan to a system P-code.
+    // Matches both 'phantom' (scheduler/event-tracker pre-created) and 'pending'
+    // (API pre-created for manual triggers). Falls through to an insert when
+    // there is no executionId (legacy messages or no pre-create).
     let blockedResolved = false;
     if (message.executionId) {
       const resolved = await db
@@ -342,7 +344,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
         .where(
           and(
             eq(workflowExecutions.id, message.executionId),
-            eq(workflowExecutions.status, "phantom")
+            inArray(workflowExecutions.status, ["phantom", "pending"])
           )
         )
         .returning({ id: workflowExecutions.id });
