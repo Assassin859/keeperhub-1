@@ -22,6 +22,13 @@ const { mockIncrementAndCheck, mockGetRequestSourceIp, mockScanAddress } =
     mockScanAddress: vi.fn(),
   }));
 
+const { mockFetchDefillamaYieldPools, mockBuildApyContext } = vi.hoisted(
+  () => ({
+    mockFetchDefillamaYieldPools: vi.fn(),
+    mockBuildApyContext: vi.fn(),
+  })
+);
+
 vi.mock("@/lib/agentic-wallet/rate-limit", () => ({
   incrementAndCheck: mockIncrementAndCheck,
 }));
@@ -34,6 +41,11 @@ vi.mock("@/lib/scan/scanner", () => ({
   scanAddress: mockScanAddress,
 }));
 
+vi.mock("@/lib/scan/price/defillama-yields", () => ({
+  fetchDefillamaYieldPools: mockFetchDefillamaYieldPools,
+  buildApyContext: mockBuildApyContext,
+}));
+
 const { GET } = await import("@/app/api/scan/[address]/route");
 
 // ---------------------------------------------------------------------------
@@ -42,6 +54,7 @@ const { GET } = await import("@/app/api/scan/[address]/route");
 
 // Top-level regex constants (useTopLevelRegex rule)
 const RE_CHAIN_ID_42161 = /42161/;
+const RE_APY_COPY = /4\.2% APY via Aave V3 on Arbitrum/;
 
 /** Arbitrum native USDC — from scripts/seed/seed-tokens.ts */
 const ARBITRUM_USDC = "0xaf88d065e77c8cc2239327c5edb3a432268e5831";
@@ -103,9 +116,14 @@ describe("TEST-02: GET /api/scan returns suggestions from suggestion engine", ()
     mockIncrementAndCheck.mockReset();
     mockGetRequestSourceIp.mockReset();
     mockScanAddress.mockReset();
+    mockFetchDefillamaYieldPools.mockReset();
+    mockBuildApyContext.mockReset();
     mockGetRequestSourceIp.mockReturnValue(MOCK_IP);
     mockIncrementAndCheck.mockResolvedValue(ALLOWED_RATE);
     mockScanAddress.mockResolvedValue(MOCK_SCAN_WITH_USDC);
+    // Default: empty pools snapshot; context returns no APY entry (degrade path).
+    mockFetchDefillamaYieldPools.mockResolvedValue([]);
+    mockBuildApyContext.mockReturnValue({ getBestYield: () => null });
   });
 
   it("GET /api/scan returns 200 with Arbitrum USDC fixture", async () => {
@@ -211,5 +229,44 @@ describe("TEST-02: GET /api/scan returns suggestions from suggestion engine", ()
         "42161"
       );
     }
+  });
+
+  it("apy: route returns APY-aware description when buildApyContext resolves an entry (YIELD-01/02)", async () => {
+    mockBuildApyContext.mockReturnValue({
+      getBestYield: (symbol: string, chainId: number) => {
+        if (symbol === "USDC" && chainId === 42_161) {
+          return {
+            apy: 4.2,
+            projectLabel: "Aave V3 on Arbitrum",
+            destinationAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+          };
+        }
+        return null;
+      },
+    });
+    const res = await GET(
+      makeRequest(VALID_ADDRESS),
+      makeParams(VALID_ADDRESS)
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      suggestions: Array<{ description: string }>;
+    };
+    expect(body.suggestions.length).toBeGreaterThan(0);
+    expect(body.suggestions[0].description).toMatch(RE_APY_COPY);
+  });
+
+  it("degrade: route returns 200 with suggestions when fetchDefillamaYieldPools rejects (YIELD-03)", async () => {
+    mockFetchDefillamaYieldPools.mockRejectedValue(new Error("network error"));
+    const res = await GET(
+      makeRequest(VALID_ADDRESS),
+      makeParams(VALID_ADDRESS)
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      suggestions: Array<{ category: string }>;
+    };
+    expect(Array.isArray(body.suggestions)).toBe(true);
+    expect(body.suggestions.some((s) => s.category === "yield")).toBe(true);
   });
 });
