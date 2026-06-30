@@ -1,5 +1,45 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
+import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-user-account-data": { user: wallet() },
+      "get-user-reserve-data": { asset: "DAI", user: wallet() },
+      "vault-asset": {},
+      "vault-total-assets": {},
+      "vault-total-supply": {},
+      "vault-balance": { account: wallet() },
+      "vault-convert-to-assets": { shares: native("1") },
+      "vault-convert-to-shares": { assets: native("1") },
+      "vault-preview-deposit": { assets: native("1") },
+      "vault-preview-mint": { shares: native("1") },
+      "vault-preview-withdraw": { assets: native("1") },
+      "vault-preview-redeem": { shares: native("1") },
+      "vault-max-deposit": { receiver: wallet() },
+      "vault-max-mint": { receiver: wallet() },
+      "vault-max-withdraw": { owner: wallet() },
+      "vault-max-redeem": { owner: wallet() },
+    },
+    skipped: {
+      supply: "requires DAI balance + approval",
+      withdraw: "requires prior supply position",
+      borrow: "requires prior collateral position",
+      repay: "requires prior borrow position",
+      "set-collateral": "requires prior supply position",
+      "vault-deposit": "requires DAI balance + approval",
+      "vault-mint": "requires DAI balance + approval",
+      "vault-withdraw": "requires sDAI balance",
+      "vault-redeem": "requires sDAI balance",
+    },
+  },
+};
 
 // Minimal SparkLend Pool ABI. Named Aave V3 outputs are preserved so the
 // derived output names match the existing action output keys.
@@ -252,6 +292,8 @@ export default defineAbiProtocol({
     "Spark Protocol (Aave V3 fork): lending, borrowing, and sDAI savings in the Sky/Maker ecosystem",
   website: "https://spark.fi",
   icon: "/protocols/spark.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     pool: {
