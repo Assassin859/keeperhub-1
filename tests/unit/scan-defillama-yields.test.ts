@@ -196,6 +196,20 @@ describe("fetchDefillamaYieldPools: module-level cache", () => {
     await fetchDefillamaYieldPools();
     expect(safeFetch).toHaveBeenCalledTimes(2);
   });
+
+  it("cache: an empty successful response is NOT cached -> next call re-fetches (WR-03)", async () => {
+    // Transient empty 200 must not pin generic copy for the full TTL.
+    safeFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: "success", data: [] }),
+    });
+    const first = await fetchDefillamaYieldPools();
+    expect(first).toEqual([]);
+    // Next call re-fetches (default mock returns ALL_POOLS) since [] was not cached.
+    const second = await fetchDefillamaYieldPools();
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+    expect(second.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

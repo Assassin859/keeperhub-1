@@ -134,7 +134,13 @@ export async function fetchDefillamaYieldPools(): Promise<
     }
     const data = (await resp.json()) as { data: DefillamaYieldsPool[] };
     const pools = data.data ?? [];
-    _apyCache = { pools, fetchedAt: now };
+    // Only cache non-empty snapshots. A successful-but-empty response
+    // (`{ data: [] }` or a missing `data`) is a transient upstream blip; caching
+    // it would pin every user to generic copy for the full TTL even after
+    // DefiLlama recovers. Leaving the cache unset lets the next scan re-fetch.
+    if (pools.length > 0) {
+      _apyCache = { pools, fetchedAt: now };
+    }
     return pools;
   } catch {
     return [];
