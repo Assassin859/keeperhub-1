@@ -6,13 +6,6 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -22,7 +15,15 @@ import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 import { getEnabledAuthProviders } from "@/lib/auth-providers";
 import { setConnectPanelActive } from "@/components/auth/dialog";
 
-type View = "chooser" | "signin" | "signup" | "forgot" | "reset" | "verify";
+type View =
+  | "chooser"
+  | "signin"
+  | "signup"
+  | "forgot"
+  | "reset"
+  | "verify"
+  | "mfa-email"
+  | "mfa-totp";
 
 type Item = { key: string; node: React.ReactNode };
 
@@ -67,175 +68,9 @@ function reloadHome(): void {
 }
 
 /**
- * Layered step-up dialog for an MFA-enrolled sign-in: collects the emailed OTP
- * then the authenticator code and finishes the atomic /strict-signin call.
- * Rendered above the Connect modal, which stays open until this completes.
- */
-function StepUpDialog({
-  email,
-  password,
-  onCancel,
-}: {
-  email: string;
-  password: string;
-  onCancel: () => void;
-}): React.ReactElement {
-  const [step, setStep] = useState<"email" | "totp">("email");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [totpCode, setTotpCode] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const resend = async (): Promise<void> => {
-    const res = await authClient.emailOtp.sendVerificationOtp({
-      email,
-      type: "sign-in",
-    });
-    if (res.error) {
-      toast.error(res.error.message ?? "Could not resend code");
-      return;
-    }
-    toast.success("Code resent");
-  };
-
-  const complete = async (): Promise<void> => {
-    setError("");
-    setLoading(true);
-    try {
-      const response = await fetch("/api/auth/strict-signin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          password,
-          emailOtp: emailOtp.trim(),
-          totpCode: totpCode.trim(),
-        }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        code?: string;
-        redirect?: string;
-      };
-      if (!response.ok) {
-        if (body.code === "invalid_email_otp") {
-          setError("Invalid email code");
-          setStep("email");
-          return;
-        }
-        if (body.code === "invalid_totp") {
-          setError("Invalid authenticator code");
-          setTotpCode("");
-          return;
-        }
-        setError(body.error ?? "Sign in failed");
-        return;
-      }
-      if (body.redirect === "/verify-ip") {
-        window.location.assign("/verify-ip");
-        return;
-      }
-      toast.success("Signed in successfully!");
-      reloadHome();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Dialog
-      onOpenChange={(next) => {
-        if (!next) {
-          onCancel();
-        }
-      }}
-      open
-    >
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>
-            {step === "email" ? "Check your email" : "Authenticator code"}
-          </DialogTitle>
-          <DialogDescription>
-            {step === "email"
-              ? `Enter the 6-digit code sent to ${email}.`
-              : "Enter the 6-digit code from your authenticator app."}
-          </DialogDescription>
-        </DialogHeader>
-        {step === "email" ? (
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (emailOtp.trim().length === 6) {
-                setError("");
-                setStep("totp");
-              } else {
-                setError("Enter the 6-digit email code");
-              }
-            }}
-          >
-            <Input
-              autoFocus
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(e) => setEmailOtp(e.target.value)}
-              placeholder="123456"
-              value={emailOtp}
-            />
-            {error && <p className="text-destructive text-sm">{error}</p>}
-            <Button type="submit">Continue</Button>
-            <button
-              className="text-muted-foreground text-xs hover:text-foreground"
-              onClick={resend}
-              type="button"
-            >
-              Resend code
-            </button>
-          </form>
-        ) : (
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (totpCode.trim().length === 6) {
-                complete();
-              } else {
-                setError("Enter the 6-digit authenticator code");
-              }
-            }}
-          >
-            <Input
-              autoFocus
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(e) => setTotpCode(e.target.value)}
-              placeholder="123456"
-              value={totpCode}
-            />
-            {error && <p className="text-destructive text-sm">{error}</p>}
-            <Button disabled={loading} type="submit">
-              {loading ? <Spinner className="size-4" /> : "Sign in"}
-            </Button>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * Inline email + social auth for the Connect modal's right panel. Credential
- * entry, sign-up, and password reset all happen in place; only the
- * MFA-enrolled sign-in step-up opens a (layered) dialog, keeping the Connect
- * modal open beneath it. Reuses the same endpoints as the standalone dialog.
- *
- * The views render as a single keyed item list: items shared between two views
- * (header, email, password, submit) keep the same key and stay put, so only
- * the items that actually differ animate in (top-to-bottom) or out
- * (bottom-to-top) when switching views.
+ * Inline email + social auth for the Connect modal's right panel. All steps —
+ * credential entry, sign-up, email verification, MFA email OTP, and TOTP — are
+ * handled as views in the same animated panel so the user never leaves the modal.
  */
 export function ConnectAuthPanel(): React.ReactElement {
   const providers = getEnabledAuthProviders();
@@ -245,6 +80,8 @@ export function ConnectAuthPanel(): React.ReactElement {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
+  const [mfaEmailOtp, setMfaEmailOtp] = useState("");
+  const [mfaTotpCode, setMfaTotpCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [error, setError] = useState("");
@@ -252,27 +89,15 @@ export function ConnectAuthPanel(): React.ReactElement {
   const [social, setSocial] = useState<"github" | "google" | null>(null);
   const [captchaToken, setCaptchaToken] = useState("");
   const captchaRef = useRef<TurnstileInstance | null>(null);
-  const [stepUp, setStepUp] = useState<{
-    email: string;
-    password: string;
-  } | null>(null);
 
-  // Prevent UserMenu from swapping ConnectButton for a skeleton during the
-  // signUp.email() network call or while the verify-OTP step is shown. Without
-  // this guard, the brief isPending=true window that Better Auth's session
-  // refetch fires on signup completion unmounts the ConnectButton dialog before
-  // the user ever sees the OTP input. isAuthFlowInProgress() already covers
-  // the standalone AuthDialog; this flag extends that check to the connect panel.
+  const inCodeStep =
+    view === "verify" || view === "mfa-email" || view === "mfa-totp";
+
   useEffect(() => {
-    const active = loading || view === "verify";
-    setConnectPanelActive(active);
+    setConnectPanelActive(loading || inCodeStep);
     return () => setConnectPanelActive(false);
-  }, [loading, view]);
+  }, [loading, inCodeStep]);
 
-  // Animate the real (px) height of the list so the modal box grows/shrinks
-  // smoothly. framer's `layout` only transforms, which leaves the actual box
-  // height (and the centered dialog) snapping -- measuring + animating the
-  // true height is what keeps the modal from jumping.
   const contentRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState<number | "auto">("auto");
   useLayoutEffect(() => {
@@ -319,7 +144,8 @@ export function ConnectAuthPanel(): React.ReactElement {
         reloadHome();
         return;
       }
-      setStepUp({ email, password });
+      setMfaEmailOtp("");
+      setView("mfa-email");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
     } finally {
@@ -370,27 +196,6 @@ export function ConnectAuthPanel(): React.ReactElement {
     }
   };
 
-  const handleResendVerification = async (): Promise<void> => {
-    setError("");
-    setLoading(true);
-    try {
-      const res = await authClient.emailOtp.sendVerificationOtp({
-        email,
-        type: "email-verification",
-      });
-      if (res.error) {
-        setError(res.error.message ?? "Failed to resend code");
-        return;
-      }
-      toast.success("New code sent");
-      setOtp("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to resend code");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleVerify = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError("");
@@ -422,6 +227,107 @@ export function ConnectAuthPanel(): React.ReactElement {
       window.location.assign(finishBody.redirect ?? "/enroll-mfa");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async (): Promise<void> => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await authClient.emailOtp.sendVerificationOtp({
+        email,
+        type: "email-verification",
+      });
+      if (res.error) {
+        setError(res.error.message ?? "Failed to resend code");
+        return;
+      }
+      toast.success("New code sent");
+      setOtp("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resend code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMfaResend = async (): Promise<void> => {
+    const res = await authClient.emailOtp.sendVerificationOtp({
+      email,
+      type: "sign-in",
+    });
+    if (res.error) {
+      toast.error(res.error.message ?? "Could not resend code");
+      return;
+    }
+    toast.success("Code resent");
+  };
+
+  const handleMfaEmailContinue = (e: React.FormEvent): void => {
+    e.preventDefault();
+    if (mfaEmailOtp.trim().length !== 6) {
+      setError("Enter the 6-digit email code");
+      return;
+    }
+    setError("");
+    setMfaTotpCode("");
+    setView("mfa-totp");
+  };
+
+  const handleMfaComplete = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (mfaTotpCode.trim().length !== 6) {
+      setError("Enter the 6-digit authenticator code");
+      return;
+    }
+    if (mfaEmailOtp.trim().length !== 6) {
+      setError("Missing email code. Start sign-in again.");
+      setView("signin");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch("/api/auth/strict-signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          password,
+          emailOtp: mfaEmailOtp.trim(),
+          totpCode: mfaTotpCode.trim(),
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        redirect?: string;
+      };
+      if (!response.ok) {
+        if (body.code === "invalid_email_otp") {
+          setError("Invalid email code");
+          setMfaEmailOtp("");
+          setView("mfa-email");
+          return;
+        }
+        if (body.code === "invalid_totp") {
+          setError("Invalid authenticator code");
+          setMfaTotpCode("");
+          return;
+        }
+        setError(body.error ?? "Sign in failed");
+        return;
+      }
+      if (body.redirect === "/verify-ip") {
+        window.location.assign("/verify-ip");
+        return;
+      }
+      toast.success("Signed in successfully!");
+      reloadHome();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign in failed");
     } finally {
       setLoading(false);
     }
@@ -503,6 +409,8 @@ export function ConnectAuthPanel(): React.ReactElement {
     forgot: "Reset your password",
     reset: "Enter your reset code",
     verify: "Verify your email",
+    "mfa-email": "Check your email",
+    "mfa-totp": "Authenticator code",
   };
   const descriptions: Record<View, string> = {
     chooser: "Use email or a social account to get started.",
@@ -511,6 +419,8 @@ export function ConnectAuthPanel(): React.ReactElement {
     forgot: "We'll email you a code to reset your password.",
     reset: "Enter the code we emailed and choose a new password.",
     verify: `Enter the 6-digit code sent to ${email}.`,
+    "mfa-email": `Enter the 6-digit code sent to ${email}. We'll ask for your authenticator next.`,
+    "mfa-totp": "Enter the current 6-digit code from your authenticator app.",
   };
 
   const onSubmit = (e: React.FormEvent): void => {
@@ -524,14 +434,15 @@ export function ConnectAuthPanel(): React.ReactElement {
       handleForgotRequest(e);
     } else if (view === "reset") {
       handleReset(e);
+    } else if (view === "mfa-email") {
+      handleMfaEmailContinue(e);
+    } else if (view === "mfa-totp") {
+      handleMfaComplete(e);
     } else {
       e.preventDefault();
     }
   };
 
-  // Build the visible rows as keyed items. Stable keys (header/email/password/
-  // submit) persist across views and don't re-animate; only differing items
-  // enter or exit.
   const items: Item[] = [
     {
       key: "header",
@@ -793,6 +704,70 @@ export function ConnectAuthPanel(): React.ReactElement {
     });
   }
 
+  if (view === "mfa-email") {
+    items.push({
+      key: "otp",
+      node: (
+        <Input
+          autoFocus
+          inputMode="numeric"
+          maxLength={6}
+          onChange={(e) => setMfaEmailOtp(e.target.value)}
+          placeholder="123456"
+          value={mfaEmailOtp}
+        />
+      ),
+    });
+    items.push({
+      key: "submit",
+      node: (
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? <Spinner className="size-4" /> : "Continue"}
+        </Button>
+      ),
+    });
+    items.push({
+      key: "mfa-email-resend",
+      node: (
+        <p className="text-center text-muted-foreground text-sm">
+          Didn't receive it?{" "}
+          <button
+            className="font-medium text-foreground underline underline-offset-2"
+            disabled={loading}
+            onClick={handleMfaResend}
+            type="button"
+          >
+            Resend code
+          </button>
+        </p>
+      ),
+    });
+  }
+
+  if (view === "mfa-totp") {
+    items.push({
+      key: "otp",
+      node: (
+        <Input
+          autoFocus
+          inputMode="numeric"
+          maxLength={6}
+          onChange={(e) => setMfaTotpCode(e.target.value)}
+          placeholder="123456"
+          value={mfaTotpCode}
+        />
+      ),
+    });
+    items.push({
+      key: "submit",
+      node: (
+        <Button className="w-full" disabled={loading} type="submit">
+          {loading ? <Spinner className="size-4" /> : "Sign in"}
+        </Button>
+      ),
+    });
+  }
+
   if (view === "forgot") {
     items.push({ key: "email", node: emailField("email") });
     items.push({
@@ -877,12 +852,6 @@ export function ConnectAuthPanel(): React.ReactElement {
   return (
     <div className="flex flex-col gap-3">
       <form onSubmit={onSubmit}>
-        {/* Outer wrapper animates the real px height (measured below) so the
-            modal box grows/shrinks smoothly. overflow-hidden + top-anchored
-            content means a shrink clips the bottom away (bottom-to-top) and a
-            grow reveals top-to-bottom. Items only fade -- persistent items
-            (same key) stay opaque and slide via `layout`; removed items fade
-            out fast; new items fade in. */}
         <motion.div
           animate={{ height }}
           className="overflow-hidden"
@@ -894,10 +863,6 @@ export function ConnectAuthPanel(): React.ReactElement {
               {items.map(({ key, node }) => (
                 <motion.div
                   animate={{ opacity: 1 }}
-                  // Fade entering items in slightly late so they appear as the
-                  // height finishes expanding (no pop before the box opens).
-                  // Removed items vanish instantly so the box shrinks in a
-                  // single move instead of double-jumping while one lingers.
                   exit={{ opacity: 0, transition: { duration: 0 } }}
                   initial={{ opacity: 0 }}
                   key={key}
@@ -914,14 +879,6 @@ export function ConnectAuthPanel(): React.ReactElement {
           </div>
         </motion.div>
       </form>
-
-      {stepUp && (
-        <StepUpDialog
-          email={stepUp.email}
-          onCancel={() => setStepUp(null)}
-          password={stepUp.password}
-        />
-      )}
     </div>
   );
 }
