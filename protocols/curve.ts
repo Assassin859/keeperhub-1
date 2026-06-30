@@ -1,4 +1,29 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-dy": { i: "0", j: "1", dx: native("1") },
+      "get-virtual-price": {},
+      "get-coin": { arg0: "0" },
+      "get-pool-balance": { arg0: "0" },
+      "calc-withdraw-one-coin": { _token_amount: native("1"), i: "0" },
+      "crv-balance-of": { account: wallet() },
+    },
+    skipped: {
+      exchange: "requires token balance and approval",
+      "remove-liquidity-one-coin": "requires LP token balance",
+      "crv-approve": "write action",
+      "crv-transfer": "requires CRV balance",
+    },
+  },
+};
 
 // Vyper-style snake_case function names mean camelToKebab produces "get_dy",
 // not "get-dy". Every function therefore needs an explicit slug override.
@@ -108,6 +133,8 @@ export default defineAbiProtocol({
     "Curve Finance: stableswap pools, token exchanges, liquidity management, and CRV token operations",
   website: "https://curve.fi",
   icon: "/protocols/curve.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     pool: {
