@@ -44,6 +44,12 @@ const TEST_DATA: ProtocolTestData = {
         owner: wallet(),
         spender: contract("ccipRouter"),
       },
+      "get-round-data": {},
+      "ccip-get-fee": { receiver: wallet(), feeToken: wallet() },
+      "ccip-send": { receiver: wallet(), feeToken: wallet() },
+      "ccip-bnm-drip": { to: wallet() },
+      "ccip-approve-bridge-token": { spender: contract("ccipRouter") },
+      "ccip-approve-fee-token": { spender: contract("ccipRouter") },
     },
     skipped: {
       "get-round-data": "requires a valid historical round ID",

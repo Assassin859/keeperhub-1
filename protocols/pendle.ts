@@ -12,6 +12,17 @@ const TEST_DATA: ProtocolTestData = {
       "get-ve-pendle-balance": { user: wallet() },
       "get-ve-pendle-total-supply": {},
       "get-ve-pendle-position": { user: wallet() },
+      "get-market-expiry": {},
+      "is-market-expired": {},
+      "get-lp-balance": { account: wallet() },
+      "get-active-lp-balance": { user: wallet() },
+      "get-pt-balance": { account: wallet() },
+      "is-pt-expired": {},
+      "get-yt-balance": { account: wallet() },
+      "get-sy-balance": { account: wallet() },
+      "get-sy-exchange-rate": {},
+      "mint-py-from-sy": { receiver: wallet(), YT: wallet() },
+      "redeem-py-to-sy": { receiver: wallet(), YT: wallet() },
     },
     skipped: {
       "get-market-expiry":

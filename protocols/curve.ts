@@ -15,6 +15,9 @@ const TEST_DATA: ProtocolTestData = {
       "get-pool-balance": { arg0: "0" },
       "calc-withdraw-one-coin": { _token_amount: native("1"), i: "0" },
       "crv-balance-of": { account: wallet() },
+      "crv-approve": { spender: wallet() },
+      "crv-transfer": { to: wallet() },
+      "remove-liquidity-one-coin": {},
     },
     skipped: {
       exchange: "requires token balance and approval",

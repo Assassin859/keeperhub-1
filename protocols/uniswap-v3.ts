@@ -29,6 +29,13 @@ const TEST_DATA: ProtocolTestData = {
         fee: "3000",
         sqrtPriceLimitX96: "0",
       },
+      "get-position": {},
+      "owner-of": {},
+      "approve-position": { to: wallet() },
+      "transfer-position": { from: wallet(), to: wallet() },
+      "burn-position": {},
+      "swap-exact-input": { tokenIn: "WETH", tokenOut: "USDC", recipient: wallet() },
+      "swap-exact-output": { tokenIn: "USDC", tokenOut: "WETH", recipient: wallet() },
     },
     skipped: {
       "get-position": "requires a valid NFT position token ID",

@@ -58,6 +58,7 @@ const TEST_DATA: ProtocolTestData = {
       "try-read": {},
       "read-with-age": {},
       "try-read-with-age": {},
+      "self-kiss": { oracle: contract("ethUsd") },
     },
     skipped: {
       "self-kiss": "used in setup; re-running would error if already kissed",

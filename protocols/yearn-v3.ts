@@ -37,6 +37,10 @@ const TEST_DATA: ProtocolTestData = {
       "get-use-default-queue": {},
       "get-minimum-total-idle": {},
       "get-vault-decimals": {},
+      "vault-deposit": { receiver: wallet() },
+      "vault-mint": { receiver: wallet() },
+      "vault-withdraw": { receiver: wallet(), owner: wallet() },
+      "vault-redeem": { receiver: wallet(), owner: wallet() },
     },
     skipped: {
       "vault-deposit": "requires vault asset balance + approval",

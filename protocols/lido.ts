@@ -112,6 +112,7 @@ export default defineAbiProtocol({
         "get-wsteth-balance": { account: wallet() },
         "get-wsteth-total-supply": {},
         "get-steth-balance": { account: wallet() },
+        "approve-steth": { spender: wallet() },
       },
       skipped: {
         wrap: "requires stETH balance - not provisioned in fork setup",
