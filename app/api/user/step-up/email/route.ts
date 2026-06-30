@@ -56,7 +56,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const rateLimit = checkDualFactorRateLimit(session.user.id, STEP_UP_ACTIONS.stepUpEmailEnroll);
+    const rateLimit = checkDualFactorRateLimit(
+      session.user.id,
+      STEP_UP_ACTIONS.stepUpEmailEnroll
+    );
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Too many attempts. Wait and try again." },
@@ -74,7 +77,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     const email =
       typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const code = typeof body.code === "string" ? body.code.trim() : "";
-    if (!EMAIL_RE.test(email) || isDisposableEmailDomain(email)) {
+    if (
+      !EMAIL_RE.test(email) ||
+      isWalletEmail(email) ||
+      isDisposableEmailDomain(email)
+    ) {
       return NextResponse.json(
         { error: "Enter a valid, non-disposable email." },
         { status: 400 }
