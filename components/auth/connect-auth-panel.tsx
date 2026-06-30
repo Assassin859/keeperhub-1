@@ -370,6 +370,27 @@ export function ConnectAuthPanel(): React.ReactElement {
     }
   };
 
+  const handleResendVerification = async (): Promise<void> => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await authClient.emailOtp.sendVerificationOtp({
+        email,
+        type: "email-verification",
+      });
+      if (res.error) {
+        setError(res.error.message ?? "Failed to resend code");
+        return;
+      }
+      toast.success("New code sent");
+      setOtp("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resend code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleVerify = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError("");
@@ -752,6 +773,22 @@ export function ConnectAuthPanel(): React.ReactElement {
         <Button className="w-full" disabled={loading} type="submit">
           {loading ? <Spinner className="size-4" /> : "Verify"}
         </Button>
+      ),
+    });
+    items.push({
+      key: "verify-resend",
+      node: (
+        <p className="text-center text-muted-foreground text-sm">
+          Didn't receive it?{" "}
+          <button
+            className="font-medium text-foreground underline underline-offset-2"
+            disabled={loading}
+            onClick={handleResendVerification}
+            type="button"
+          >
+            Resend code
+          </button>
+        </p>
       ),
     });
   }
