@@ -23,11 +23,12 @@
 
 ## Phases
 
-- [ ] **Phase 51: Scanner Infrastructure** - Multi-protocol position scanner + Postgres cache + public rate-limited `GET /api/scan` endpoint + scanner correctness unit tests
+- [x] **Phase 51: Scanner Infrastructure** - Multi-protocol position scanner + Postgres cache + public rate-limited `GET /api/scan` endpoint + scanner correctness unit tests (completed 2026-06-17)
 - [x] **Phase 52: Suggestion Engine + Workflow Factory** - 4-category deterministic rule engine + 6-template workflow factory + remaining protocol adapters + Zerion breadth fallback + integration test (completed 2026-06-17)
-- [ ] **Phase 53: /scan UI** - Address input page, suggestion card list, WorkflowCanvas read-only preview, unauthenticated run/save CTAs
+- [x] **Phase 53: /scan UI** - Address input page, suggestion card list, WorkflowCanvas read-only preview, unauthenticated run/save CTAs (completed 2026-06-17)
 - [x] **Phase 54: Auth Round-Trip + Persistence** - `pending_scan` cookie, `PendingScanRunner`, save-on-schedule wiring, Turnkey provision pre-flight, E2E funnel test (completed 2026-06-17)
 - [x] **Phase 55: Polish + Hardening** - Abuse telemetry, cache sweeper cron, observability metrics, financial-advice disclaimer review (completed 2026-06-17)
+- [x] **Phase 56: Spark + Sky Scan Adapters** - Native SparkLend (Aave-fork) + Sky sUSDS savings adapters completing SCAN-03; protocol-aware factory pool selection; scan-scoped DAI exclusion (read-only; Compound V3 deferred) (completed 2026-06-29)
 
 ---
 
@@ -51,8 +52,8 @@ Plans:
 - [x] 51-04-PLAN.md — USD pricing: Chainlink feeds + depeg detection + DefiLlama fallback (N/A not $0) [wave 2]
 - [x] 51-06-PLAN.md — Lido staking + stablecoin balance adapters (registry-driven, soft-miss) [wave 2]
 - [x] 51-05-PLAN.md — Aave V3 adapter (account data + eMode + HF guard) + EIP-1967 proxy resolution [wave 3]
-- [ ] 51-07-PLAN.md — Scanner orchestrator: cache short-circuit + fan-out + pricing assembly + Zerion degradation [wave 4]
-- [ ] 51-08-PLAN.md — Public `GET /api/scan/[address]` route: validate + trusted-IP rate limit + ZERION_API_KEY scaffold [wave 5]
+- [x] 51-07-PLAN.md — Scanner orchestrator: cache short-circuit + fan-out + pricing assembly + Zerion degradation [wave 4]
+- [x] 51-08-PLAN.md — Public `GET /api/scan/[address]` route: validate + trusted-IP rate limit + ZERION_API_KEY scaffold [wave 5]
 
 ### Phase 52: Suggestion Engine + Workflow Factory
 **Goal**: The deterministic suggestion engine maps any scan result to a ranked list of named suggestions, and the workflow factory deterministically constructs prefilled node/edge JSON for each suggestion — covering all four categories (health/yield/alert/claim), enforcing correct chain IDs, and validating every template reference — without calling the AI generate route.
@@ -87,7 +88,7 @@ Plans:
 - [x] 53-02-PLAN.md — Suggestion card cluster: CategoryBadge + ReadWritePill + SuggestionCard + skeleton [wave 2]
 - [x] 53-03-PLAN.md — Results metadata: scannedAt header + unavailable badges + depeg banner + disclaimer [wave 2]
 - [x] 53-04-PLAN.md — Preview drawer: read-only WorkflowCanvas (atom hydration) + confirmInputs + auth-gated CTAs [wave 2]
-- [ ] 53-05-PLAN.md — Page wiring: ScanInput + ScanResults state machine + app/scan/page.tsx + E2E green [wave 3]
+- [x] 53-05-PLAN.md — Page wiring: ScanInput + ScanResults state machine + app/scan/page.tsx + E2E green [wave 3]
 **UI hint**: yes
 
 ### Phase 54: Auth Round-Trip + Persistence
@@ -123,14 +124,74 @@ Plans:
 - [x] 55-03-PLAN.md — HARDEN-01/04: abuse telemetry on 429 + NEXT_PUBLIC_SCAN_ENABLED gate (API 404 + page) + reviewed disclaimer copy [wave 2]
 - [x] 55-04-PLAN.md — HARDEN-03: scanner cache hit/miss counters + route scan-duration metric + Zerion counter + Prometheus TODO [wave 3]
 
+### Phase 56: Spark + Sky Scan Adapters
+
+**Goal**: Complete the deferred Spark + Sky portions of SCAN-03 with native scan adapters — an Ethereum address with a SparkLend loan yields a Spark health-factor suggestion that targets the Spark pool (not Aave's), and an address holding sUSDS yields a priced Sky savings-monitor suggestion that survives the dust filter — while curating scan stablecoin coverage to favour USDS over legacy DAI, all read-only and behind the existing scan system. Compound V3 remains out of scope.
+**Depends on**: Phase 55 (the complete, hardened scan system: scanner orchestration, suggestion engine, factory, pricing layer)
+**Requirements**: SCAN-03 (Spark + Sky portions), SCAN-04 (Sky savings), SCAN-15, PREFILL-08
+**Design spec**: `specs/scan-spark-sky-adapters.md`
+**Success Criteria** (what must be TRUE):
+  1. An Ethereum address with a Spark (SparkLend) loan produces a Spark health-factor suggestion whose prefilled workflow reads the **Spark** pool (`0xC13e21…987`), not the Aave pool; a supply-only Spark address produces a price-alert suggestion (same paths as Aave).
+  2. An Ethereum address holding sUSDS produces a single priced `sky` savings-monitor suggestion (category `claim`) that survives the dust filter, with the monitored token prefilled to the actual sUSDS address.
+  3. USDS continues to surface as a stablecoin idle-yield suggestion; DAI no longer appears as a scanned balance or yield card, and the global `supported_tokens` registry is unchanged (scan-scoped exclusion only).
+  4. No write-type suggestions are produced; all new suggestions are `readOrWrite: "read"` and pass the read-only factory guards.
+  5. Native Spark/Sky positions take precedence over the dormant Zerion fallback for the same `(protocol, chainId)`; new unit tests pass and the existing scan suite stays green.
+**Plans**: 5 plans (3 waves)
+
+Plans:
+- [x] 56-01-PLAN.md — Foundation: protocol union widen + verified Spark/Sky registry + ERC-4626 ABI + RED adapter tests [wave 1]
+- [x] 56-02-PLAN.md — Spark (Aave-fork thin wrapper) + Sky (sUSDS ERC-4626) adapter implementations [wave 2]
+- [x] 56-03-PLAN.md — Suggestion engine routing: SAVINGS_PROTOCOLS + spark/sky labels + Sky savings copy/prefill [wave 2]
+- [x] 56-04-PLAN.md — Factory PREFILL-08: protocol-aware HF-monitor pool selection (Spark pool, not Aave) [wave 1]
+- [x] 56-05-PLAN.md — Scanner wiring + Sky pricing (maxWithdraw→USDS via DefiLlama) + scan-scoped DAI exclusion [wave 3]
+**UI hint**: no
+
+### Phase 57: APY-Aware Stablecoin Yield Suggestions
+
+**Goal**: Upgrade the read-only stablecoin idle-yield suggestion from a generic "consider deploying to a yield protocol" reminder into an APY-aware, destination-specific recommendation. For an idle USDS / USDC / USDT balance above the dust threshold, the suggestion names a concrete yield destination and its current APY — USDS → Sky Savings (sUSDS) at the live Sky Savings Rate; USDC / USDT → the best-available supply venue selected by live APY (ranked across Aave V4 / Spark / Morpho etc. via a yields source, NOT hardcoded to one protocol or version) — and the prefilled monitor workflow references that destination. Every APY is sourced from live data (never hardcoded) with graceful fallback to the existing generic copy on lookup failure. Remains fully read-only: no deposit/approve/write node is produced. The actual auto-deposit/auto-compound (Level B), including which protocol/version the deposit targets (Aave V4 hub-and-spoke vs others), is explicitly out of scope and tracked for the write-paths milestone.
+**Depends on**: Phase 56 (Sky/sUSDS detection, the suggestion engine, the workflow factory, and the pricing/DefiLlama layer)
+**Requirements**: YIELD-01 (USDS → Sky Savings APY), YIELD-02 (USDC/USDT → best supply venue by live APY), YIELD-03 (live APY source + graceful degradation), YIELD-04 (read-only guardrail preserved)
+**Design spec**: `specs/scan-apy-yield-suggestions.md`
+**Success Criteria** (what must be TRUE):
+  1. A wallet holding idle **USDS** above dust produces a yield suggestion that names **Sky Savings (sUSDS)** and shows the current Sky Savings Rate (e.g. "earn ~X% APY"); the prefilled read-only monitor workflow references the sUSDS destination address.
+  2. A wallet holding idle **USDC or USDT** above dust produces a yield suggestion that names the **best-available supply venue by live APY** (ranked across Aave V4 / Spark / Morpho etc. — selected by current rate, not hardcoded to a single protocol or version) and shows that venue's supply APY for the asset on that chain.
+  3. Every APY shown is fetched from a **live source** (Sky Savings Rate on-chain / DefiLlama yields), never hardcoded; when the APY lookup fails the suggestion **degrades gracefully** to the existing generic monitor copy rather than showing a stale or $0 APY.
+  4. **No write-type suggestion is produced** — all suggestions remain `readOrWrite: "read"` and pass the read-only factory guards (`validateNoApproveTokenNode` / `validateNoMaxUint256Approval`). The deposit/auto-compound action stays out of scope (see write-paths backlog item).
+  5. Suggestion ranking/dedup still holds (one suggestion per `(symbol, chainId)`, capped at `MAX_SUGGESTIONS`); new unit tests pass and the existing scan suite stays green.
+**Plans**: 3 plans (3 waves)
+
+Plans:
+- [x] 57-01-PLAN.md — Foundation: ApyEntry/ApyContext types + yields-client throw-stub + engine signature widening + RED tests (YIELD-01..04) [wave 1]
+- [ ] 57-02-PLAN.md — DefiLlama yields client (fetch + 15m cache + 4s timeout + filter/rank) + APY-aware engine copy [wave 2]
+- [ ] 57-03-PLAN.md — Scan route pre-fetch + apyContext wiring + factory destination reference + route test (YIELD-01/02/04) [wave 3]
+**UI hint**: no (reuses the existing suggestion card + read-only canvas preview; copy + data only)
+
 ---
 
 ## Progress Table
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 51. Scanner Infrastructure | 6/8 | In Progress|  |
+| 51. Scanner Infrastructure | 8/8 | Complete   | 2026-06-17 |
 | 52. Suggestion Engine + Workflow Factory | 5/5 | Complete   | 2026-06-17 |
-| 53. /scan UI | 4/5 | In Progress|  |
+| 53. /scan UI | 5/5 | Complete   | 2026-06-17 |
 | 54. Auth Round-Trip + Persistence | 4/4 | Complete   | 2026-06-17 |
 | 55. Polish + Hardening | 4/4 | Complete   | 2026-06-17 |
+| 56. Spark + Sky Scan Adapters | 5/5 | Complete   | 2026-06-29 |
+| 57. APY-Aware Stablecoin Yield Suggestions | 1/3 | In Progress|  |
+
+---
+
+## Backlog
+
+### Phase 999.1: Stablecoin Yield WRITE Paths — Auto-Deposit / Auto-Compound (BACKLOG)
+
+**Goal:** Make the stablecoin yield suggestion ACTIONABLE, not just advisory. Phase 57 (Level A) detects idle USDS/USDC/USDT and recommends a destination + APY ("move idle USDS to sUSDS for ~X%") but is read-only — it can only monitor/alert. This epic adds the WRITE path: a workflow that actually deposits idle stablecoins into the yield destination (USDS → sUSDS Sky Savings; USDC/USDT → the best supply venue — likely Aave V4's hub-and-spoke markets, live on mainnet since 2026-03-30, vs Spark/Morpho) on a schedule or balance threshold, then optionally auto-compounds. Targeting V4's spoke model (vs the legacy V3 pool the scan currently reads) is itself a design decision for this epic.
+**Why it's parked:** Requires the deferred write machinery the whole v1.13 scan funnel intentionally excluded — Turnkey wallet provisioning for the funnel user, EXACT (non-MaxUint256) ERC20 approvals, ask-tier / execution-safety gating, and selectively lifting the read-only factory guards (`validateNoApproveTokenNode` / `validateNoMaxUint256Approval`) for this path only. Comparable in size to its own milestone.
+**Trigger to promote:** after Phase 57 (Level A, read-only APY-aware suggestions) ships and the write-path safety design (approvals + ask-tier + wallet provisioning) is scoped.
+**Prior art / cross-refs:** already noted in `.planning/REQUIREMENTS.md` → "Future Requirements (deferred)" ("Stablecoin idle-yield WRITE path: auto-deposit to a vault via Turnkey wallet (exact-approval, ask-tier safety)") and "Out of Scope" ("Stablecoin write auto-deposit in v1.13"). The Phase-52 `validateNoMaxUint256Approval` / PREFILL-07 guard already anticipates this path (exact-approval enforcement).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)

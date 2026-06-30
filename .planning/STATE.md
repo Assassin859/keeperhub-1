@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.13
 milestone_name: Scan-to-Automate Onboarding
 status: executing
-last_updated: "2026-06-17T21:25:57.240Z"
-last_activity: 2026-06-17
+last_updated: "2026-06-30T09:16:09.963Z"
+last_activity: 2026-06-30
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 26
-  completed_plans: 26
-  percent: 100
+  total_phases: 8
+  completed_phases: 6
+  total_plans: 34
+  completed_plans: 32
+  percent: 75
 ---
 
 # Project State
@@ -18,14 +18,14 @@ progress:
 ## Project Reference
 
 - **Core value:** Users can build and deploy Web3 automation workflows through a visual builder without writing code.
-- **Current focus:** Phase 55 — polish-hardening
+- **Current focus:** Phase 57 — apy-aware-stablecoin-yield-suggestions
 
 ## Current Position
 
-Phase: 55 (polish-hardening) — COMPLETE
-Plan: 4 of 4 (55-04 complete)
-Status: Phase 55 complete — v1.13 all plans done
-Last activity: 2026-06-17 -- 55-04 complete (HARDEN-03 scan observability metrics)
+Phase: 57 (apy-aware-stablecoin-yield-suggestions) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-06-30
 
 ## Performance Metrics
 
@@ -109,10 +109,17 @@ Last activity: 2026-06-17 -- 55-04 complete (HARDEN-03 scan observability metric
 - scan-cache-sweeper uses authenticateInternalService HMAC (no NODE_ENV bypass); agentic-wallet-sweeper Bearer pattern explicitly not mirrored for this endpoint (55-02).
 - scan-cache-sweeper CronJob schedule */30 * * * *; cluster helm apply is operator-gated and not performed in this phase (55-02).
 - Console-mode metrics only in v1.13; metricsCollector+scanTimer declared before try in route; SCAN_ZERION_CALLS_TOTAL stays 0 — TODO comment marks future increment site at maybeZerionFallback (55-04).
+- ApyContext defined as interface with getBestYield(symbol, chainId): ApyEntry | null — not Map<string, ApyEntry> — keeps engine pure sync and easily mockable (57-01).
+- DEFILLAMA_YIELDS_CHAIN_SLUGS separate from DEFILLAMA_CHAIN_SLUGS: yields API uses title-case ("OP Mainnet" not "Optimism") — separate map required (57-01).
+- Wave 0 throw-stub pattern applied to 57-01: all 4 defillama-yields.ts functions throw "not implemented: 57-02"; type-check passes; 20 RED tests land; Wave 2 (57-02) replaces stubs with real implementations (57-01).
+
+### Roadmap Evolution
+
+- Phase 56 added (2026-06-29): Spark + Sky scan adapters — completes the deferred Spark/Sky portions of SCAN-03 (Aave V3 was the only adapter shipped in Phase 51). Adds SCAN-15 (scan-scoped DAI exclusion) and PREFILL-08 (factory protocol-aware pool selection). Compound V3 explicitly deferred. Design spec: `specs/scan-spark-sky-adapters.md`. Locked scope decisions: Spark reuses Aave decode; Sky = sUSDS only (sDAI dropped); price Sky via maxWithdraw → USDS → DefiLlama so the suggestion survives the dust filter; DAI excluded scan-scoped only (global registry untouched); read-only.
 
 ### Todos
 
-- Run `/gsd:plan-phase 51` to begin Phase 51: Scanner Infrastructure.
+- Run `/gsd:plan-phase 56` to plan Phase 56: Spark + Sky Scan Adapters.
 
 ### Blockers
 
@@ -123,9 +130,9 @@ Last activity: 2026-06-17 -- 55-04 complete (HARDEN-03 scan observability metric
 - Roadmap file: `.planning/ROADMAP.md`
 - Requirements file: `.planning/REQUIREMENTS.md`
 - Last shipped milestone: v1.12 (MCP n8n Pattern Borrows, phases 46-50, shipped 2026-05-18, never formalized in GSD)
-- Last completed: 55-04 (HARDEN-03: scan observability metrics — cache hit/miss counters + scan-duration timer) — 2026-06-17
-- Stopped at: Phase 55 complete (4 of 4 plans done) — v1.13 all plans complete
-- Next command: ship v1.13 PR
+- Last completed: 57-01 (APY-aware yield suggestions RED wave — throw-stub yields client + typed ApyEntry/ApyContext contracts + 20 RED tests) — 2026-06-30
+- Stopped at: 57-01 complete; 57-02 (GREEN wave) and 57-03 (factory wave) pending
+- Next command: execute 57-02-PLAN.md
 
 ## Deferred Items
 
@@ -149,3 +156,5 @@ Items carried forward from v1.11 close and v1.12 (informal):
 | Phase 55-polish-hardening P02 | 8 minutes | 2 tasks | 3 files |
 | Phase 55-polish-hardening P04 | 6 minutes | 2 tasks | 3 files |
 | testing | scan-route-suggestions.test.ts 7 tests failing — NEXT_PUBLIC_SCAN_ENABLED not set in beforeEach; pre-existing since 55-03 flag gate (commit a51139f1); fix: add `process.env.NEXT_PUBLIC_SCAN_ENABLED = "true"` in beforeEach | deferred |
+| Phase 56-spark-sky-scan-adapters P05 | 90 | 2 tasks | 3 files |
+| Phase 57-apy-aware-stablecoin-yield-suggestions P01 | 10 | 3 tasks | 5 files |

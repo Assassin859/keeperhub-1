@@ -1,10 +1,13 @@
 import "server-only";
 
+import { safeFetch } from "@/lib/safe-fetch";
+import {
+  AAVE_V3_POOLS,
+  SKY_SAVINGS,
+  SPARK_POOLS,
+} from "@/lib/scan/adapters/protocol-registry";
 import type { ApyContext, ApyEntry } from "@/lib/scan/suggestions/engine";
 import type { StablecoinBalance } from "@/lib/scan/types";
-
-// Re-export for consumers that import types from this module.
-export type { ApyContext, ApyEntry };
 
 /**
  * Chain name map for the DefiLlama yields API (`yields.llama.fi/pools`).
@@ -49,53 +52,216 @@ export type DefillamaYieldsPool = {
   underlyingTokens: string[];
 };
 
+// ---------------------------------------------------------------------------
+// Internal constants
+// ---------------------------------------------------------------------------
+
+const APY_FETCH_TIMEOUT_MS = 4000;
+const YIELDS_CACHE_TTL_MS = 15 * 60 * 1000;
+const YIELDS_URL = "https://yields.llama.fi/pools";
+
 /**
- * Fetches all stablecoin yield pools from DefiLlama (`yields.llama.fi/pools`).
+ * USDC/USDT project allowlist for yield ranking (YIELD-02).
  *
- * Uses a module-level 15-minute in-process cache to avoid repeated ~4MB fetches.
- * Returns [] on any failure (timeout, non-ok response, parse error) — graceful
- * degrade so callers fall back to generic copy (YIELD-03).
+ * "sky-lending" is EXCLUDED: it has no USDC/USDT supply pools — only SUSDS
+ * pools for the USDS->sUSDS pinned case (Pitfall 7 in 57-RESEARCH).
+ * "spark" (bare) is EXCLUDED: the correct slug is "sparklend" or "spark-savings"
+ * (Pitfall 2 in 57-RESEARCH -- verified from live yields.llama.fi/pools).
  *
- * NOT YET IMPLEMENTED — stub for type-check compliance (57-01 RED wave).
- * Implementation lands in 57-02.
+ * [VERIFIED: live yields.llama.fi/pools 2026-06-30]
+ */
+const USDC_USDT_ALLOWLIST = new Set([
+  "aave-v3",
+  "aave-v4",
+  "sparklend",
+  "spark-savings",
+  "morpho-blue",
+]);
+
+const SKY_SLUG = "sky-lending";
+const SKY_SYMBOL = "SUSDS";
+
+// ---------------------------------------------------------------------------
+// Module-level cache (single-entry for the full pools snapshot)
+// ---------------------------------------------------------------------------
+
+type ApyCacheEntry = {
+  pools: DefillamaYieldsPool[];
+  fetchedAt: number;
+};
+
+let _apyCache: ApyCacheEntry | null = null;
+
+// ---------------------------------------------------------------------------
+// Exported functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches all yield pools from DefiLlama (`yields.llama.fi/pools`).
+ *
+ * Uses a module-level 15-minute in-process cache to avoid repeated ~4MB
+ * fetches. Returns [] on any failure (timeout, non-ok response, parse error)
+ * so callers degrade gracefully to generic copy (YIELD-03).
+ *
+ * Timeout: 4s via AbortController, matching the per-chain scan timeout.
  */
 export async function fetchDefillamaYieldPools(): Promise<
   DefillamaYieldsPool[]
 > {
-  throw new Error("not implemented: 57-02");
+  const now = Date.now();
+  if (_apyCache !== null && now - _apyCache.fetchedAt < YIELDS_CACHE_TTL_MS) {
+    return _apyCache.pools;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), APY_FETCH_TIMEOUT_MS);
+  try {
+    const resp = await safeFetch(YIELDS_URL, {
+      plugin: "scan-defillama-yields",
+      signal: controller.signal as RequestInit["signal"],
+    });
+    if (!resp.ok) {
+      return [];
+    }
+    const data = (await resp.json()) as { data: DefillamaYieldsPool[] };
+    const pools = data.data ?? [];
+    _apyCache = { pools, fetchedAt: now };
+    return pools;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * Builds the ApyContext lookup object from a pre-fetched pool snapshot.
+ * Builds the ApyContext lookup from a pre-fetched pool snapshot and the
+ * stablecoins detected in the current scan.
  *
- * Filters by chain, project allowlist, TVL >= $10M, apy > 0, and
- * underlying token address match. USDS is pinned to sky-lending SUSDS;
- * USDC/USDT are ranked by max APY with TVL tie-break.
+ * USDS is pinned to sky-lending SUSDS (YIELD-01).
+ * USDC/USDT are ranked by max total APY across the USDC_USDT_ALLOWLIST with
+ * a TVL >= $10M floor and a TVL tie-break on equal APY (YIELD-02).
  *
- * NOT YET IMPLEMENTED — stub for type-check compliance (57-01 RED wave).
- * Implementation lands in 57-02.
+ * Malformed entries (non-finite apy/tvlUsd, missing chain, etc.) are skipped
+ * without throwing (YIELD-03 graceful-degrade contract).
  */
 export function buildApyContext(
-  _pools: DefillamaYieldsPool[],
-  _stablecoins: StablecoinBalance[]
+  pools: DefillamaYieldsPool[],
+  stablecoins: StablecoinBalance[]
 ): ApyContext {
-  throw new Error("not implemented: 57-02");
+  const map = new Map<string, ApyEntry>();
+
+  for (const stable of stablecoins) {
+    const chainSlug = DEFILLAMA_YIELDS_CHAIN_SLUGS[stable.chainId];
+    if (!chainSlug) {
+      continue;
+    }
+
+    const isUsds = stable.symbol === "USDS";
+    const candidates: DefillamaYieldsPool[] = [];
+
+    for (const p of pools) {
+      if (p.chain !== chainSlug) {
+        continue;
+      }
+      if (!p.stablecoin) {
+        continue;
+      }
+      if (p.ilRisk !== "no") {
+        continue;
+      }
+      if (p.exposure !== "single") {
+        continue;
+      }
+      if (!Number.isFinite(p.tvlUsd) || p.tvlUsd < 10_000_000) {
+        continue;
+      }
+      if (!Number.isFinite(p.apy) || p.apy <= 0) {
+        continue;
+      }
+
+      if (isUsds) {
+        if (p.project !== SKY_SLUG || p.symbol !== SKY_SYMBOL) {
+          continue;
+        }
+      } else if (!USDC_USDT_ALLOWLIST.has(p.project)) {
+        continue;
+      }
+
+      const underlyingMatch = (p.underlyingTokens ?? []).some(
+        (t) => t.toLowerCase() === stable.tokenAddress.toLowerCase()
+      );
+      if (!underlyingMatch) {
+        continue;
+      }
+
+      candidates.push(p);
+    }
+
+    let best: DefillamaYieldsPool | null = null;
+    for (const pool of candidates) {
+      if (best === null) {
+        best = pool;
+      } else if (pool.apy > best.apy) {
+        best = pool;
+      } else if (pool.apy === best.apy && pool.tvlUsd > best.tvlUsd) {
+        best = pool;
+      }
+    }
+
+    if (!best) {
+      continue;
+    }
+
+    const key = `${stable.symbol.toLowerCase()}:${stable.chainId}`;
+    map.set(key, {
+      apy: best.apy,
+      projectLabel: projectSlugToLabel(best.project, stable.chainId),
+      destinationAddress: resolveDestinationAddress(
+        best.project,
+        stable.chainId
+      ),
+    });
+  }
+
+  return {
+    getBestYield: (symbol: string, chainId: number): ApyEntry | null =>
+      map.get(`${symbol.toLowerCase()}:${chainId}`) ?? null,
+  };
 }
 
 /**
  * Returns a human-readable label for a DefiLlama project slug.
  *
- * Example: projectSlugToLabel("aave-v3", 42161) → "Aave V3 on Arbitrum"
- *          projectSlugToLabel("sky-lending", 1) → "Sky Savings (sUSDS)"
+ * Chain suffix (e.g. " on Arbitrum") is appended for non-Ethereum chains.
+ * sky-lending always returns "Sky Savings (sUSDS)" with no chain suffix
+ * since the sUSDS product name is self-describing.
  *
- * NOT YET IMPLEMENTED — stub for type-check compliance (57-01 RED wave).
- * Implementation lands in 57-02.
+ * Examples:
+ *   projectSlugToLabel("sky-lending", 1)     -> "Sky Savings (sUSDS)"
+ *   projectSlugToLabel("aave-v3", 42161)     -> "Aave V3 on Arbitrum"
+ *   projectSlugToLabel("sparklend", 1)       -> "SparkLend"
+ *   projectSlugToLabel("morpho-blue", 8453)  -> "Morpho Blue on Base"
  */
-export function projectSlugToLabel(
-  _slug: string,
-  _chainId: number
-): string {
-  throw new Error("not implemented: 57-02");
+export function projectSlugToLabel(slug: string, chainId: number): string {
+  const label = yieldChainLabel(chainId);
+  const chainSuffix = label === "Ethereum" ? "" : ` on ${label}`;
+  switch (slug) {
+    case "sky-lending":
+      return "Sky Savings (sUSDS)";
+    case "aave-v3":
+      return `Aave V3${chainSuffix}`;
+    case "aave-v4":
+      return `Aave V4${chainSuffix}`;
+    case "sparklend":
+      return `SparkLend${chainSuffix}`;
+    case "spark-savings":
+      return `Spark Savings${chainSuffix}`;
+    case "morpho-blue":
+      return `Morpho Blue${chainSuffix}`;
+    default:
+      return slug;
+  }
 }
 
 /**
@@ -103,10 +269,64 @@ export function projectSlugToLabel(
  *
  * Exported for test isolation — call in beforeEach to prevent cache state
  * from leaking between test cases.
- *
- * NOT YET IMPLEMENTED — stub for type-check compliance (57-01 RED wave).
- * Implementation lands in 57-02.
  */
 export function clearApyCache(): void {
-  throw new Error("not implemented: 57-02");
+  _apyCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the on-chain contract address from the existing protocol registry
+ * for a given project slug and chain. Returns null for protocols not yet in
+ * the registry (aave-v4, morpho-blue) — these show label-only copy in
+ * confirmInputs (T-57-04 accepted).
+ *
+ * Never uses the DefiLlama `pool` UUID field — that is an internal UUID, not
+ * a contract address (Pitfall 4 in 57-RESEARCH).
+ */
+function resolveDestinationAddress(
+  projectSlug: string,
+  chainId: number
+): string | null {
+  switch (projectSlug) {
+    case "sky-lending":
+      return SKY_SAVINGS[chainId]?.sUSDS ?? null;
+    case "aave-v3":
+      return AAVE_V3_POOLS[chainId] ?? null;
+    case "sparklend":
+    case "spark-savings":
+      return SPARK_POOLS[chainId] ?? null;
+    case "aave-v4":
+    case "morpho-blue":
+      return null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Human-readable chain name for use in project labels.
+ *
+ * Intentionally separate from DEFILLAMA_YIELDS_CHAIN_SLUGS (which uses
+ * the yields API's title-case values like "OP Mainnet") so that labels
+ * read naturally in English (e.g. "Aave V3 on Optimism", not "on OP Mainnet").
+ */
+function yieldChainLabel(chainId: number): string {
+  switch (chainId) {
+    case 1:
+      return "Ethereum";
+    case 10:
+      return "Optimism";
+    case 42_161:
+      return "Arbitrum";
+    case 8453:
+      return "Base";
+    case 137:
+      return "Polygon";
+    default:
+      return `Chain ${chainId}`;
+  }
 }

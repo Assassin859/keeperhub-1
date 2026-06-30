@@ -23,12 +23,6 @@ import {
 } from "@/lib/scan/price/defillama-yields";
 
 // ---------------------------------------------------------------------------
-// Top-level regex constants (useTopLevelRegex rule)
-// ---------------------------------------------------------------------------
-
-const RE_NOT_IMPLEMENTED = /not implemented/;
-
-// ---------------------------------------------------------------------------
 // Fixtures — pool records from yields.llama.fi/pools
 // All fields match the verified DefillamaYieldsPool schema (57-RESEARCH.md).
 // [VERIFIED: live yields.llama.fi/pools 2026-06-30]
@@ -170,10 +164,6 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("fetchDefillamaYieldPools: fetch behaviour", () => {
-  it("throws the stub error (RED — not implemented: 57-02)", async () => {
-    await expect(fetchDefillamaYieldPools()).rejects.toMatch(RE_NOT_IMPLEMENTED);
-  });
-
   it("fetch: returns parsed pool array on ok response", async () => {
     const pools = await fetchDefillamaYieldPools();
     expect(Array.isArray(pools)).toBe(true);
