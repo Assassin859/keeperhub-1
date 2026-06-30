@@ -2,7 +2,7 @@
 
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import Image from "next/image";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConnectAuthPanel } from "@/components/auth/connect-auth-panel";
 import { Button } from "@/components/ui/button";
@@ -69,11 +69,20 @@ export function ConnectButton(): React.ReactElement {
   const installable = POPULAR_WALLETS.filter((w) => !installedRdns.has(w.rdns));
   const [open, setOpen] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [connectHint, setConnectHint] = useState(false);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleConnect = async (wallet: DiscoveredWallet): Promise<void> => {
     setConnecting(wallet.info.rdns);
+    setConnectHint(false);
+    hintTimerRef.current = setTimeout(() => setConnectHint(true), 2000);
     const result = await loginWithWallet(wallet.provider);
+    if (hintTimerRef.current) {
+      clearTimeout(hintTimerRef.current);
+      hintTimerRef.current = null;
+    }
     setConnecting(null);
+    setConnectHint(false);
     if (result.ok) {
       await refetch();
       setOpen(false);
@@ -127,6 +136,27 @@ export function ConnectButton(): React.ReactElement {
                     )}
                   </button>
                 ))}
+                {connectHint && (
+                  <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">
+                      Check your wallet for a connection prompt.
+                    </span>
+                    <button
+                      className="ml-3 shrink-0 font-medium text-foreground underline-offset-2 hover:underline"
+                      onClick={() => {
+                        setConnecting(null);
+                        setConnectHint(false);
+                        if (hintTimerRef.current) {
+                          clearTimeout(hintTimerRef.current);
+                          hintTimerRef.current = null;
+                        }
+                      }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
