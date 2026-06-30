@@ -21,6 +21,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { DiscordIcon } from "@/components/icons/discord-icon";
+import {
+  LinkedInIcon,
+  TelegramIcon,
+  XIcon,
+  YouTubeIcon,
+} from "@/components/icons/social-icons";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -38,6 +44,7 @@ import type { NavPanelStates } from "@/lib/hooks/use-persisted-nav-state";
 import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { registerSidebarRefetch } from "@/lib/refetch-sidebar";
+import { SOCIAL_LINKS, type SocialBrand } from "@/lib/social-links";
 import { cn } from "@/lib/utils";
 import { filterPickerVisible } from "@/lib/workflow/soft-delete";
 import {
@@ -50,6 +57,39 @@ import { FLYOUT_WIDTH, FlyoutPanel, STRIP_WIDTH } from "./flyout-panel";
 export const COLLAPSED_WIDTH = 60;
 export const EXPANDED_WIDTH = 200;
 const SNAP_THRESHOLD = (COLLAPSED_WIDTH + EXPANDED_WIDTH) / 2;
+
+// Icon-only community links shown above the Discord link in the sidebar footer.
+// Hrefs come from the canonical SOCIAL_LINKS so they stay in one place.
+const HREF_BY_BRAND = Object.fromEntries(
+  SOCIAL_LINKS.map((link) => [link.brand, link.href])
+) as Record<SocialBrand, string>;
+
+const SOCIAL_ICON_ROW: ReadonlyArray<{
+  brand: SocialBrand;
+  label: string;
+  href: string;
+  Icon: (props: { className?: string }) => React.ReactElement;
+}> = [
+  {
+    brand: "linkedin",
+    label: "LinkedIn",
+    href: HREF_BY_BRAND.linkedin,
+    Icon: LinkedInIcon,
+  },
+  { brand: "x", label: "X", href: HREF_BY_BRAND.x, Icon: XIcon },
+  {
+    brand: "youtube",
+    label: "YouTube",
+    href: HREF_BY_BRAND.youtube,
+    Icon: YouTubeIcon,
+  },
+  {
+    brand: "telegram",
+    label: "Telegram",
+    href: HREF_BY_BRAND.telegram,
+    Icon: TelegramIcon,
+  },
+];
 
 type WorkflowEntry = {
   id: string;
@@ -964,6 +1004,25 @@ export function NavigationSidebar(): React.ReactNode {
         </nav>
 
         <div className="flex flex-col gap-1 border-t px-2.5 py-3">
+          <div
+            className={cn(
+              "flex flex-wrap items-center gap-1 pb-1",
+              showLabels ? "justify-start" : "justify-center"
+            )}
+          >
+            {SOCIAL_ICON_ROW.map(({ brand, label, href, Icon }) => (
+              <a
+                aria-label={label}
+                className="flex size-8 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted"
+                href={href}
+                key={brand}
+                rel="noopener"
+                target="_blank"
+              >
+                <Icon className="size-4" />
+              </a>
+            ))}
+          </div>
           {(
             [
               {
