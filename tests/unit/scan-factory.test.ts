@@ -975,3 +975,61 @@ describe("Contract: engine → factory → no unresolved {{key}} placeholders (C
     expect(rightOperand).toMatch(RE_HF_1E18);
   });
 });
+
+// ---------------------------------------------------------------------------
+// YIELD-04: yield workflow destination reference + read-only guard (57-01)
+// ---------------------------------------------------------------------------
+
+// YIELD_DESCRIPTOR variant with destinationAddress in confirmInputs.
+// This is the shape the engine will produce in Wave 2 (57-02) when apyContext
+// resolves a valid APY entry for the stablecoin.
+const YIELD_DESCRIPTOR_WITH_DEST: SuggestionDescriptor = {
+  ...YIELD_DESCRIPTOR,
+  id: "yield-monitor-usdc-42161-apy",
+  name: "USDC Idle Yield Monitor",
+  description:
+    "Monitor your USDC balance ($500) on Arbitrum. Earn ~4.2% APY via Aave V3 on Arbitrum.",
+  confirmInputs: {
+    walletAddress: "Your wallet address to monitor",
+    tokenAddress: ARBITRUM_USDC,
+    destinationAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+  },
+};
+
+describe("YIELD-04: yield workflow destination reference + read-only guard (57-01)", () => {
+  it(
+    "destination-ref: buildWorkflow output JSON references the destinationAddress (RED — 57-03 wires it)",
+    () => {
+      const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
+      const workflowJson = JSON.stringify({
+        nodes: result.nodes,
+        edges: result.edges,
+      });
+      // RED: factory does not yet embed destinationAddress in any node config.
+      // 57-03 will modify stablecoin-yield.ts to surface it (e.g. in alert body).
+      expect(workflowJson).toContain(
+        YIELD_DESCRIPTOR_WITH_DEST.confirmInputs.destinationAddress
+      );
+    }
+  );
+
+  it(
+    "read-only guard: validateNoApproveTokenNode passes on APY-aware yield workflow",
+    () => {
+      const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
+      const { valid } = validateNoApproveTokenNode(result.nodes);
+      // GREEN: stablecoin-yield.ts never emits approve-token nodes (YIELD-04 invariant)
+      expect(valid).toBe(true);
+    }
+  );
+
+  it(
+    "read-only guard: validateNoMaxUint256Approval passes on APY-aware yield workflow",
+    () => {
+      const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
+      const { valid } = validateNoMaxUint256Approval(result.nodes);
+      // GREEN: no MaxUint256 approval possible in a read-only monitor (YIELD-04 invariant)
+      expect(valid).toBe(true);
+    }
+  );
+});

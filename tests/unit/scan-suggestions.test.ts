@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { buildSuggestions } from "@/lib/scan/suggestions/engine";
+import type { ApyContext } from "@/lib/scan/suggestions/engine";
 import {
   clampHfThreshold,
   hfThresholdRaw,
@@ -22,6 +23,10 @@ import { SUGGESTION_DISCLAIMER } from "@/lib/scan/suggestions/types";
 const RE_HF_VALUE = /1\.8/;
 const RE_HF_BELOW_FLOOR = /1\.[012]\d/;
 const RE_NOT_FINANCIAL_ADVICE = /not financial advice/i;
+// APY-aware copy pattern: e.g. "3.6% APY via Sky Savings (sUSDS)"
+const RE_APY_AWARE = /\d+\.\d+% APY via/;
+// Generic fallback copy (no APY figure present)
+const RE_IDLE_YIELD = /for idle yield opportunities\./;
 
 // Spark/Sky routing tests (SCAN-03 + SCAN-04)
 const SUDS_TOKEN_ADDRESS = "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD";
@@ -579,5 +584,184 @@ describe("SUGGEST-09: clampHfThreshold and hfThresholdRaw helpers", () => {
 
   it("hfThresholdRaw: 1.3 → '1300000000000000000'", () => {
     expect(hfThresholdRaw(1.3)).toBe("1300000000000000000");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// YIELD: APY-aware yield suggestions (57-01 RED wave — YIELD-01..04)
+// ---------------------------------------------------------------------------
+
+// Aave V3 Pool proxy on Arbitrum from AAVE_V3_POOLS registry
+const AAVE_V3_ARB_POOL = "0x794a61358D6845594F94dc1DB02A252b5b4814aD";
+// sUSDS vault on Ethereum from SKY_SAVINGS[1].sUSDS registry
+const SUSDS_ETH_VAULT = "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD";
+
+const USDS_ETH_STABLE = {
+  chainId: 1,
+  symbol: "USDS",
+  tokenAddress: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+  amount: "500000000000000000000",
+  decimals: 18,
+  usdValue: 500,
+  priceUsd: 1.0,
+  depegged: false,
+};
+
+/**
+ * Builds a minimal ApyContext from an overrides map.
+ *
+ * `getBestYield` looks up `${symbol}:${chainId}` in the overrides map and
+ * returns the entry (or null). Matches the shape returned by buildApyContext
+ * in the real implementation (57-02).
+ */
+function makeApyContext(
+  overrides?: Record<
+    string,
+    | { apy: number; projectLabel: string; destinationAddress: string | null }
+    | null
+  >
+): ApyContext {
+  return {
+    getBestYield: (symbol: string, chainId: number) => {
+      const key = `${symbol}:${chainId}`;
+      return overrides?.[key] ?? null;
+    },
+  };
+}
+
+describe("YIELD: APY-aware yield suggestions (57-01 RED wave)", () => {
+  // (a) USDS + apyContext Sky → APY-aware copy + destinationAddress (YIELD-01)
+  // RED: engine still emits generic copy; Wave 2 (57-02) turns this GREEN.
+  it("(a) USDS + Sky apyContext: description contains APY rate and venue (YIELD-01)", () => {
+    const apyCtx = makeApyContext({
+      "USDS:1": {
+        apy: 3.6,
+        projectLabel: "Sky Savings (sUSDS)",
+        destinationAddress: SUSDS_ETH_VAULT,
+      },
+    });
+    const result = buildSuggestions(
+      { ...BASE_SCAN, stablecoins: [USDS_ETH_STABLE] },
+      apyCtx
+    );
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    expect(yield_?.description).toMatch(RE_APY_AWARE);
+    expect(yield_?.description).toContain("3.6% APY via Sky Savings (sUSDS)");
+  });
+
+  // (a) continued: confirmInputs.destinationAddress is the sUSDS vault address
+  it("(a) USDS + Sky apyContext: confirmInputs.destinationAddress is sUSDS vault", () => {
+    const apyCtx = makeApyContext({
+      "USDS:1": {
+        apy: 3.6,
+        projectLabel: "Sky Savings (sUSDS)",
+        destinationAddress: SUSDS_ETH_VAULT,
+      },
+    });
+    const result = buildSuggestions(
+      { ...BASE_SCAN, stablecoins: [USDS_ETH_STABLE] },
+      apyCtx
+    );
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    expect(yield_?.confirmInputs?.destinationAddress).toBe(SUSDS_ETH_VAULT);
+  });
+
+  // (b) USDC + Aave V3 apyContext → APY-aware copy (YIELD-02)
+  // RED: engine still emits generic copy; Wave 2 turns this GREEN.
+  it("(b) USDC + Aave apyContext: description contains APY rate and venue (YIELD-02)", () => {
+    const apyCtx = makeApyContext({
+      "USDC:42161": {
+        apy: 4.2,
+        projectLabel: "Aave V3 on Arbitrum",
+        destinationAddress: AAVE_V3_ARB_POOL,
+      },
+    });
+    const result = buildSuggestions(
+      { ...BASE_SCAN, stablecoins: [USDC_STABLE] },
+      apyCtx
+    );
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    expect(yield_?.description).toContain("4.2% APY via Aave V3 on Arbitrum");
+  });
+
+  // (c) apyContext returns null → degrade to generic copy (YIELD-03)
+  // GREEN: engine already outputs generic copy; remains a regression guard.
+  it("(c) apyContext returns null → degrades to generic copy (YIELD-03)", () => {
+    const apyCtx = makeApyContext({ "USDC:42161": null });
+    const result = buildSuggestions(
+      { ...BASE_SCAN, stablecoins: [USDC_STABLE] },
+      apyCtx
+    );
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    expect(yield_?.description).toMatch(RE_IDLE_YIELD);
+    expect(yield_?.description).not.toMatch(RE_APY_AWARE);
+    expect(yield_?.confirmInputs).not.toHaveProperty("destinationAddress");
+  });
+
+  // (d) apyContext entry with apy:0 → degrade to generic copy (YIELD-03)
+  // GREEN: engine uses generic copy; remains a regression guard.
+  it("(d) apyContext entry with apy:0 → degrades to generic copy (YIELD-03)", () => {
+    const apyCtx = makeApyContext({
+      "USDC:42161": {
+        apy: 0,
+        projectLabel: "Aave V3 on Arbitrum",
+        destinationAddress: AAVE_V3_ARB_POOL,
+      },
+    });
+    const result = buildSuggestions(
+      { ...BASE_SCAN, stablecoins: [USDC_STABLE] },
+      apyCtx
+    );
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    expect(yield_?.description).toMatch(RE_IDLE_YIELD);
+    expect(yield_?.description).not.toMatch(RE_APY_AWARE);
+  });
+
+  // (e) APY-aware suggestion has readOrWrite === "read" (YIELD-04 invariant)
+  // RED: compound test — APY-copy assertion fails first; readOrWrite guard
+  // ensures the write invariant is preserved in Wave 2.
+  it("(e) APY-aware yield suggestion has readOrWrite 'read' (YIELD-04)", () => {
+    const apyCtx = makeApyContext({
+      "USDC:42161": {
+        apy: 4.2,
+        projectLabel: "Aave V3 on Arbitrum",
+        destinationAddress: AAVE_V3_ARB_POOL,
+      },
+    });
+    const result = buildSuggestions(
+      { ...BASE_SCAN, stablecoins: [USDC_STABLE] },
+      apyCtx
+    );
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    // Must be APY-aware copy (fails against stub — RED until 57-02)
+    expect(yield_?.description).toMatch(RE_APY_AWARE);
+    // Must remain read-only regardless of destination context (YIELD-04 guard)
+    expect(yield_?.readOrWrite).toBe("read");
+  });
+
+  // (f) no apyContext arg → backward compat: generic copy unchanged
+  // GREEN: existing behaviour; must never regress.
+  it("(f) buildSuggestions without apyContext produces generic yield suggestion", () => {
+    const result = buildSuggestions({
+      ...BASE_SCAN,
+      stablecoins: [USDC_STABLE],
+    });
+    const yield_ = result.find(
+      (s: SuggestionDescriptor) => s.category === "yield"
+    );
+    expect(yield_?.description).toMatch(RE_IDLE_YIELD);
+    expect(yield_?.description).not.toMatch(RE_APY_AWARE);
   });
 });
