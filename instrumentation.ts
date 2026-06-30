@@ -120,6 +120,87 @@ export async function register() {
       }
     }
 
+    // Register the workflow executor handler directly for the local world in
+    // dev mode. The generated flow/route.js (2MB bundled executor with a large
+    // inline string literal) causes Turbopack to hang on first compilation,
+    // leaving all workflow runs at status=pending indefinitely. By registering
+    // the handler via world.registerHandler() we bypass the HTTP dispatch
+    // (and thus Turbopack compilation) entirely.
+    //
+    // The builder-deferred plugin writes a stub at Next.js startup and then
+    // overwrites with real content in the background. We watch for the file to
+    // change before attempting registration, so we don't read the stub.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      process.env.WORKFLOW_TARGET_WORLD !== "@workflow/world-postgres"
+    ) {
+      const { readFileSync } = await import("node:fs");
+      const { watch } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { runInNewContext } = await import("node:vm");
+
+      const routePath = join(
+        process.cwd(),
+        "app/.well-known/workflow/v1/flow/route.js"
+      );
+
+      const tryRegisterHandler = async (): Promise<boolean> => {
+        try {
+          const routeContent = readFileSync(routePath, "utf8");
+          if (routeContent.includes("__workflowRouteStub")) return false;
+
+          const vmScript = routeContent
+            .replace(
+              /^import \{ workflowEntrypoint \} from ['"]workflow\/runtime['"];?$/m,
+              "const workflowEntrypoint = (code) => code;"
+            )
+            .replace(
+              /^export const POST = workflowEntrypoint\(workflowCode\);?$/m,
+              "__wkfResult.code = workflowEntrypoint(workflowCode);"
+            );
+
+          const sandbox = { __wkfResult: { code: "" } };
+          runInNewContext(vmScript, sandbox);
+
+          const workflowCode = sandbox.__wkfResult.code;
+          if (typeof workflowCode !== "string" || workflowCode.length === 0) {
+            return false;
+          }
+
+          const { workflowEntrypoint, getWorld } = await import(
+            "workflow/runtime"
+          );
+          const handler = workflowEntrypoint(workflowCode);
+          const world = getWorld() as unknown as {
+            registerHandler?: (
+              prefix: "__wkf_workflow_" | "__wkf_step_",
+              handler: (req: Request) => Promise<Response>
+            ) => void;
+          };
+          if (typeof world.registerHandler === "function") {
+            world.registerHandler("__wkf_workflow_", handler);
+            console.log(
+              "[Workflow] Local world: direct handler registered, HTTP dispatch bypassed"
+            );
+            return true;
+          }
+        } catch {
+          // Ignore errors — file may not exist yet or may be partially written
+        }
+        return false;
+      };
+
+      // Try immediately; if the file is still a stub, watch for the real content
+      if (!(await tryRegisterHandler())) {
+        const watcher = watch(routePath, async () => {
+          if (await tryRegisterHandler()) {
+            watcher.close();
+          }
+        });
+        watcher.on("error", () => watcher.close());
+      }
+    }
+
     // Catch unhandled promise rejections (would otherwise be silent)
     process.on("unhandledRejection", (reason) => {
       console.error(
