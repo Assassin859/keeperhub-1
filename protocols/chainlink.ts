@@ -309,6 +309,7 @@ export default defineAbiProtocol({
 
     ccipBnM: {
       label: "CCIP-BnM Test Token",
+      userSpecifiedAddress: true,
       abi: JSON.stringify(ccipBnmAbi),
       addresses: {
         "11155111": "0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05",
