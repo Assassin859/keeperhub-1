@@ -43,7 +43,21 @@ export type EventMessage = {
   };
 };
 
-export type ExecutorMessage = ScheduleMessage | BlockMessage | EventMessage;
+export type ManualMessage = {
+  // Always present: the API pre-creates this row as 'pending' before enqueueing.
+  executionId: string;
+  workflowId: string;
+  userId: string;
+  organizationId?: string;
+  triggerType: "manual" | "webhook";
+  input: Record<string, unknown>;
+};
+
+export type ExecutorMessage =
+  | ScheduleMessage
+  | BlockMessage
+  | EventMessage
+  | ManualMessage;
 
 export type DispatchTarget = "k8s-job" | "in-process" | "api";
 
