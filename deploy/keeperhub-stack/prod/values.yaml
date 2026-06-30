@@ -730,7 +730,7 @@ executor:
       value: "noreply@keeperhub.com"
     # Billing guard. Read by keeperhub-executor/billing-guard.ts to gate
     # SQS-triggered runs (schedule / block / event) on the monthly tier.
-    # Must mirror NEXT_PUBLIC_BILLING_ENABLED in deploy/keeperhub/prod/values.yaml.
+    # Must mirror NEXT_PUBLIC_BILLING_ENABLED under the app component above.
     NEXT_PUBLIC_BILLING_ENABLED:
       type: kv
       value: "true"
@@ -920,7 +920,7 @@ block:
     reloader.stakater.com/auto: "true"
 
   # Prod Alloy scrapes via ServiceMonitor CRDs, not prometheus.io/* annotations.
-  # Same pattern the executor uses (deploy/executor/prod/values.yaml). Without
+  # Same pattern the executor component uses above (executor.serviceMonitors). Without
   # this block, the block-dispatcher /metrics endpoint is unreachable to Alloy
   # even with annotations set, so Grafana panels stay empty.
   serviceMonitors:

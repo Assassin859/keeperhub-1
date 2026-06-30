@@ -104,12 +104,17 @@ jobs:
       - name: Apply RBAC for Job Spawner
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
-          kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/rbac.yaml
+          kubectl apply -f deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/rbac.yaml
 
       - name: Apply NetworkPolicy for workflow runner egress hardening
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
-          kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/networkpolicy.yaml
+          kubectl apply -f deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/networkpolicy.yaml
+
+      - name: Apply workflow-runner ServiceAccount
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          kubectl apply -f deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/runner-sa.yaml
 
       - name: Deploying Service to Kubernetes with Helm
         id: deploy
