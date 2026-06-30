@@ -1,4 +1,44 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-ve-pendle-balance": { user: wallet() },
+      "get-ve-pendle-total-supply": {},
+      "get-ve-pendle-position": { user: wallet() },
+    },
+    skipped: {
+      "get-market-expiry":
+        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
+      "is-market-expired":
+        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
+      "get-lp-balance":
+        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
+      "get-active-lp-balance":
+        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
+      "get-pt-balance":
+        "pt contract requires a specific PT token address (userSpecifiedAddress)",
+      "is-pt-expired":
+        "pt contract requires a specific PT token address (userSpecifiedAddress)",
+      "get-yt-balance":
+        "yt contract requires a specific YT token address (userSpecifiedAddress)",
+      "get-sy-balance":
+        "sy contract requires a specific SY token address (userSpecifiedAddress)",
+      "get-sy-exchange-rate":
+        "sy contract requires a specific SY token address (userSpecifiedAddress)",
+      "mint-py-from-sy":
+        "write - requires SY balance and a specific YT address (userSpecifiedAddress)",
+      "redeem-py-to-sy":
+        "write - requires PT/YT balance and a specific YT address (userSpecifiedAddress)",
+    },
+  },
+};
 
 export default defineAbiProtocol({
   name: "Pendle Finance",
@@ -7,6 +47,8 @@ export default defineAbiProtocol({
     "Pendle Finance: yield tokenization protocol for trading fixed and variable yield on DeFi assets",
   website: "https://pendle.finance",
   icon: "/protocols/pendle.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     router: {
