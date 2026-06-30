@@ -120,6 +120,7 @@ function StepRow({
   step,
   complete,
   scanning,
+  locked,
   chipsGated,
   isChipCloned,
   onAction,
@@ -130,6 +131,7 @@ function StepRow({
   step: Step;
   complete: boolean;
   scanning?: boolean;
+  locked?: boolean;
   chipsGated?: boolean;
   isChipCloned: (chip: Chip) => boolean;
   onAction: (step: Step) => void;
@@ -137,13 +139,13 @@ function StepRow({
   onTour: (step: Step) => void;
   onInfo: (step: Step) => void;
 }): React.ReactElement {
-  const clickable = Boolean(step.action) && !step.muted;
+  const clickable = Boolean(step.action) && !step.muted && !locked;
   const body = (
     <div className="flex-1 space-y-1.5 text-left">
       <div
         className={cn(
           "font-medium text-sm",
-          step.muted && "text-muted-foreground"
+          (step.muted || locked) && "text-muted-foreground"
         )}
       >
         {step.title}
@@ -154,7 +156,10 @@ function StepRow({
 
   return (
     <div
-      className="rounded-md transition-colors hover:bg-muted/40"
+      className={cn(
+        "rounded-md transition-colors",
+        locked ? "opacity-40" : "hover:bg-muted/40"
+      )}
       data-complete={complete}
       data-testid={`gs-step-${step.key}`}
     >
@@ -184,7 +189,7 @@ function StepRow({
           <Info aria-hidden="true" className="size-3.5" />
         </button>
       </div>
-      {step.chips && !chipsGated && (
+      {step.chips && !chipsGated && !locked && (
         <div className="flex flex-wrap gap-1.5 px-2 pb-2 pl-9">
           {step.chips.map((chip) => {
             const cloned = isChipCloned(chip);
@@ -205,7 +210,7 @@ function StepRow({
           })}
         </div>
       )}
-      {step.offerTour && (
+      {step.offerTour && !locked && (
         <div className="px-2 pb-2 pl-9">
           <button
             className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-medium text-primary text-xs transition-colors hover:bg-primary/20"
@@ -392,22 +397,28 @@ function ExpandedCard({
       </Tabs>
 
       <div className="max-h-[60vh] space-y-1 overflow-y-auto px-2 py-2">
-        {active.steps.map((step) => (
-          <StepRow
-            chipsGated={Boolean(step.chipsGatedBy) && !scanWalletDone}
-            complete={gs.isStepComplete(step)}
-            isChipCloned={(chip) =>
-              gs.hasLiveStepWorkflow(`${step.key}:${chip.id}`)
-            }
-            key={step.key}
-            onAction={onAction}
-            onChip={onChip}
-            onInfo={setInfoStep}
-            onTour={onTour}
-            scanning={step.key === "scan-wallet" && gs.scanningWallet}
-            step={step}
-          />
-        ))}
+        {active.steps.map((step, idx) => {
+          const locked = active.steps
+            .slice(0, idx)
+            .some((s) => !gs.isStepComplete(s));
+          return (
+            <StepRow
+              chipsGated={Boolean(step.chipsGatedBy) && !scanWalletDone}
+              complete={gs.isStepComplete(step)}
+              isChipCloned={(chip) =>
+                gs.hasLiveStepWorkflow(`${step.key}:${chip.id}`)
+              }
+              key={step.key}
+              locked={locked}
+              onAction={onAction}
+              onChip={onChip}
+              onInfo={setInfoStep}
+              onTour={onTour}
+              scanning={step.key === "scan-wallet" && gs.scanningWallet}
+              step={step}
+            />
+          );
+        })}
       </div>
 
       <div className="flex items-center justify-between border-t px-4 py-2 text-muted-foreground text-xs">
