@@ -78,6 +78,19 @@ export const TOKEN_REGISTRY: Record<
       symbol: "DAI",
     },
   },
+  // Base Mainnet (used by ajna coverage tests; not fork-mode — no testnet faucets)
+  "8453": {
+    WETH: {
+      address: "0x4200000000000000000000000000000000000006",
+      decimals: 18,
+      symbol: "WETH",
+    },
+    USDC: {
+      address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  },
   // Ethereum Sepolia
   "11155111": {
     // Aave V3 Sepolia DAI test token (matches existing
