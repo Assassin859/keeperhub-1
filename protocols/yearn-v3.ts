@@ -1,5 +1,51 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
+import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "vault-asset": {},
+      "vault-total-assets": {},
+      "vault-total-supply": {},
+      "vault-balance": { account: wallet() },
+      "vault-convert-to-assets": { shares: native("1") },
+      "vault-convert-to-shares": { assets: native("1") },
+      "vault-preview-deposit": { assets: native("1") },
+      "vault-preview-mint": { shares: native("1") },
+      "vault-preview-withdraw": { assets: native("1") },
+      "vault-preview-redeem": { shares: native("1") },
+      "vault-max-deposit": { receiver: wallet() },
+      "vault-max-mint": { receiver: wallet() },
+      "vault-max-withdraw": { owner: wallet() },
+      "vault-max-redeem": { owner: wallet() },
+      "get-price-per-share": {},
+      "get-total-idle": {},
+      "get-total-debt": {},
+      "get-is-shutdown": {},
+      "get-api-version": {},
+      "get-profit-max-unlock-time": {},
+      "get-full-profit-unlock-date": {},
+      "get-accountant": {},
+      "get-deposit-limit": {},
+      "get-role-manager": {},
+      "get-use-default-queue": {},
+      "get-minimum-total-idle": {},
+      "get-vault-decimals": {},
+    },
+    skipped: {
+      "vault-deposit": "requires vault asset balance + approval",
+      "vault-mint": "requires vault asset balance + approval",
+      "vault-withdraw": "requires vault share balance",
+      "vault-redeem": "requires vault share balance",
+    },
+  },
+};
 
 // Yearn V3 vaults are EIP-1167 minimal proxies. The ABI cache cannot resolve
 // implementation ABIs for clones, so we provide the ABI inline.
@@ -249,6 +295,8 @@ export default defineAbiProtocol({
     "Yearn V3 yield vaults: fully ERC-4626 compliant yield aggregators with automated strategy management",
   website: "https://yearn.fi",
   icon: "/protocols/yearn.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     vault: {
