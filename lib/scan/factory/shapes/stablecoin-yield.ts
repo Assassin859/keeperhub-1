@@ -106,7 +106,12 @@ export function buildStablecoinYield(
       {
         label: "Send Yield Alert",
         bodyTemplate: JSON.stringify({
-          message: `Idle stablecoin balance detected: ${balanceRef}. Consider deploying to a yield protocol.`,
+          message:
+            `Idle stablecoin balance detected: ${balanceRef}.` +
+            (descriptor.confirmInputs.destinationAddress
+              ? ` Destination: ${descriptor.confirmInputs.destinationAddress}.`
+              : "") +
+            " Consider deploying to a yield protocol.",
         }),
       },
       3
