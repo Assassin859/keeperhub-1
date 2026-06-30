@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
@@ -57,7 +57,12 @@ export async function GET(request: Request): Promise<NextResponse> {
     db
       .select({ one: sql<number>`1` })
       .from(integrations)
-      .where(eq(integrations.organizationId, orgId))
+      .where(
+        and(
+          eq(integrations.organizationId, orgId),
+          ne(integrations.type, "web3")
+        )
+      )
       .limit(1),
     workflowIds.length === 0
       ? Promise.resolve([] as { workflowId: string }[])
