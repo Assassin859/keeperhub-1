@@ -15,6 +15,7 @@ import { createAccessControl } from "better-auth/plugins/access";
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { generateSiweNonce } from "viem/siwe";
+import { recordWalletInAddressBook } from "@/lib/address-book/record-wallet";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { verifySiweSignature } from "@/lib/auth/siwe-verify";
 import {
@@ -765,6 +766,18 @@ export const auth = betterAuth({
               role: "owner",
               createdAt: new Date(),
             });
+
+            // Auto-add the signing wallet to the address book so it is
+            // immediately available for use in workflows.
+            if (isWallet) {
+              const walletAddress = user.email.split("@")[0];
+              void recordWalletInAddressBook({
+                organizationId: org.id,
+                address: walletAddress,
+                label: "My Wallet",
+                createdBy: user.id,
+              });
+            }
           } catch (error) {
             logSystemError(
               ErrorCategory.AUTH,
