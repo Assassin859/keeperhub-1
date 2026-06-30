@@ -1,4 +1,67 @@
 import { defineAbiProtocol, type AbiFunctionOverride } from "@/lib/protocol-registry";
+import { contract, native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "8453": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-hpb-index": { ajnaPool_: contract("pool1") },
+      "get-pool-lup": { ajnaPool_: contract("pool1") },
+      "get-pool-htp": { ajnaPool_: contract("pool1") },
+      "price-to-index": { price: native("1") },
+      "index-to-price": { index_: "5000" },
+      "get-deposit-index": { ajnaPool_: contract("pool1"), debt_: native("1") },
+      "pool1-inflator-info": {},
+      "pool1-bucket-info": { index_: "5000" },
+      "pool1-kicker-info": { kicker_: wallet() },
+      "pool2-inflator-info": {},
+      "pool2-bucket-info": { index_: "5000" },
+      "pool2-kicker-info": { kicker_: wallet() },
+      "vault1-is-paused": {},
+      "vault1-get-buckets": {},
+      "vault1-total-assets": {},
+      "vault2-is-paused": {},
+      "vault2-get-buckets": {},
+      "vault2-total-assets": {},
+      "vault1-buffer-ratio": {},
+      "vault1-min-bucket-index": {},
+      "vault2-buffer-ratio": {},
+      "vault2-min-bucket-index": {},
+      "vault1-buffer-total": {},
+      "vault2-buffer-total": {},
+    },
+    skipped: {
+      "get-auction-status": "requires an active auction in the pool",
+      "get-borrower-info": "requires an active borrower address in the pool",
+      "pool1-auction-info": "requires an active auction in the pool",
+      "pool1-kick": "requires an undercollateralized borrower position",
+      "pool1-bucket-take": "requires an active liquidation auction",
+      "pool1-settle": "requires a completed liquidation auction",
+      "pool1-withdraw-bonds": "requires prior kicker bond balance",
+      "pool1-update-interest": "write action with no predictable outcome on mainnet fork",
+      "pool2-auction-info": "requires an active auction in the pool",
+      "pool2-kick": "requires an undercollateralized borrower position",
+      "pool2-bucket-take": "requires an active liquidation auction",
+      "pool2-settle": "requires a completed liquidation auction",
+      "pool2-withdraw-bonds": "requires prior kicker bond balance",
+      "pool2-update-interest": "write action with no predictable outcome on mainnet fork",
+      "vault1-lp-to-value": "requires an active bucket with LP in the vault",
+      "vault1-drain": "write action requiring vault admin role",
+      "vault1-move": "write action requiring vault admin role",
+      "vault1-move-from-buffer": "write action requiring vault admin role",
+      "vault1-move-to-buffer": "write action requiring vault admin role",
+      "vault2-lp-to-value": "requires an active bucket with LP in the vault",
+      "vault2-drain": "write action requiring vault admin role",
+      "vault2-move": "write action requiring vault admin role",
+      "vault2-move-from-buffer": "write action requiring vault admin role",
+      "vault2-move-to-buffer": "write action requiring vault admin role",
+    },
+  },
+};
 
 const POOL_INFO_UTILS_ABI = JSON.stringify([
   {
@@ -513,6 +576,8 @@ export default defineAbiProtocol({
     "Ajna permissionless lending protocol: liquidation and vault keeper operations on Base",
   website: "https://www.ajna.finance",
   icon: "/protocols/ajna.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     poolInfoUtils: {
