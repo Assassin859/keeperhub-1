@@ -23,7 +23,7 @@ The TEST-01..05 cases assert the env / SA / IRSA strand. The TEST-06..10 cases (
 - AWS credentials exported (for EKS token exchange).
 - The staging sandbox release is deployed (see `deploy/keeperhub-sandbox/staging/`).
 - A `STAGING_API_TOKEN` with permission to create + execute workflows.
-- `SANDBOX_BACKEND=remote` is set in the main `keeperhub-staging` Deployment env (see `deploy/keeperhub/staging/values.yaml` v1.9 additions).
+- `SANDBOX_BACKEND=remote` is set in the main `keeperhub-staging` Deployment env (see the `app` component in `deploy/keeperhub-stack/staging/values.yaml`).
 
 ### One-time planted sentinel
 
@@ -37,8 +37,9 @@ aws ssm put-parameter \
   --value "KH_ESCAPE_CANARY_$(openssl rand -hex 8)" \
   --overwrite
 
-# Add it to deploy/keeperhub/staging/values.yaml shared_env as
-# KH_ESCAPE_CANARY_VALUE (parameterStore type), then helm upgrade to
+# Add it to the app component shared_env in
+# deploy/keeperhub-stack/staging/values.yaml as KH_ESCAPE_CANARY_VALUE
+# (parameterStore type), then helm upgrade to
 # propagate. DO NOT commit the sentinel value.
 
 # Capture the sentinel locally for the test runner:

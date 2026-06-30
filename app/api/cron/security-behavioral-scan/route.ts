@@ -11,7 +11,7 @@
  * having to re-run the query.
  *
  * Deployment: invoked by a Kubernetes CronJob every 5 minutes (the
- * `security-behavioral-scan` job in `deploy/keeperhub/{prod,staging}/
+ * `security-behavioral-scan` job in `deploy/keeperhub-stack/{prod,staging}/
  * values.yaml`, which runs `deploy/scripts/reaper.sh` against this path).
  * Authorized via the internal-service HMAC scheme (`X-KH-Caller`,
  * `X-KH-Timestamp`, `X-KH-Signature` signed with
