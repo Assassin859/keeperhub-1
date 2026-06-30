@@ -141,6 +141,8 @@ function buildInput(message: ExecutorMessage): Record<string, unknown> {
         triggerType: "event",
         ...message.triggerData,
       };
+    case "manual":
+      return message.input;
     default: {
       const _exhaustive: never = message;
       throw new Error(
@@ -383,6 +385,26 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     throw new RequeueSignal(
       `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
     );
+  }
+
+  // Manual triggers: the API pre-created the execution row as 'pending' before
+  // enqueueing. Skip phantom handling entirely and dispatch directly. All
+  // billing/feature/concurrency guards above still run.
+  if (message.triggerType === "manual") {
+    const nodes = workflow.nodes as WorkflowNode[];
+    const target = resolveDispatchTarget(nodes);
+    console.log(
+      `[Executor] Manual trigger dispatch target: ${target} (mode: ${CONFIG.executionMode})`
+    );
+    await dispatchExecution({
+      target,
+      workflowId,
+      executionId: message.executionId,
+      input: message.input,
+      triggerType: "manual",
+      scheduleId: undefined,
+    });
+    return;
   }
 
   const input = buildInput(message);

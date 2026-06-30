@@ -1,3 +1,4 @@
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { and, eq } from "drizzle-orm";
 import { start } from "workflow/api";
 import { db } from "@/lib/db";
@@ -11,6 +12,25 @@ import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+
+let _sqsClient: SQSClient | null = null;
+function getSqsClient(): SQSClient {
+  if (!_sqsClient) {
+    _sqsClient = new SQSClient({
+      region: process.env.AWS_REGION ?? "us-east-1",
+      ...(process.env.AWS_ENDPOINT_URL
+        ? {
+            endpoint: process.env.AWS_ENDPOINT_URL,
+            credentials: {
+              accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "test",
+              secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "test",
+            },
+          }
+        : {}),
+    });
+  }
+  return _sqsClient;
+}
 
 type BackgroundLogContext = {
   /** Prefix for console logs, e.g. "[Workflow Execute]" or "[Webhook]". */
@@ -43,6 +63,33 @@ export async function executeWorkflowInBackground(
 ): Promise<void> {
   try {
     console.log(`${context.logPrefix} Starting execution:`, executionId);
+
+    // When WORKFLOW_DISPATCH_VIA_EXECUTOR is set, route execution through the
+    // standalone keeperhub-executor (in-process mode) via SQS instead of the
+    // DevKit's embedded graphile worker. This bypasses /.well-known/workflow/v1/step
+    // compilation, which deadlocks on the full 91-step bundle in dev.
+    // The executor transitions the row from 'pending' -> 'running' -> terminal
+    // directly, so we do not pre-lift the status here.
+    if (process.env.WORKFLOW_DISPATCH_VIA_EXECUTOR === "1") {
+      await getSqsClient().send(
+        new SendMessageCommand({
+          QueueUrl: process.env.SQS_QUEUE_URL,
+          MessageBody: JSON.stringify({
+            executionId,
+            workflowId,
+            userId: createdBy ?? "",
+            organizationId: organizationId ?? undefined,
+            triggerType: "manual",
+            input,
+          }),
+        })
+      );
+      console.log(
+        `${context.logPrefix} Dispatched to executor via SQS:`,
+        executionId
+      );
+      return;
+    }
 
     // Flip the pre-created row from "pending" to "running" so every execution
     // path shares the same pending -> running -> terminal lifecycle. Guarded on
