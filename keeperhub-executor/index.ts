@@ -142,7 +142,7 @@ function buildInput(message: ExecutorMessage): Record<string, unknown> {
         ...message.triggerData,
       };
     case "manual":
-      return message.input;
+      return { triggerType: "manual" as const, ...message.input };
     default: {
       const _exhaustive: never = message;
       throw new Error(
