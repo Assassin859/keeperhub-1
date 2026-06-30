@@ -30,6 +30,36 @@ import type {
   StablecoinBalance,
 } from "@/lib/scan/types";
 
+// ---------------------------------------------------------------------------
+// APY context types (YIELD-01..04)
+// ---------------------------------------------------------------------------
+
+/**
+ * The best-available yield entry for a (symbol, chainId) pair.
+ *
+ * `destinationAddress` is the on-chain contract address from the protocol
+ * registry, or null when the protocol is not yet in the registry (label-only).
+ */
+export type ApyEntry = {
+  apy: number;
+  projectLabel: string;
+  destinationAddress: string | null;
+};
+
+/**
+ * Pre-computed APY context passed from the scan route into `buildSuggestions`.
+ *
+ * Built by `buildApyContext` in `lib/scan/price/defillama-yields.ts` from the
+ * pre-fetched DefiLlama yields snapshot. The engine calls `getBestYield` for
+ * each stablecoin and uses the returned entry for APY-aware copy.
+ *
+ * When no entry is available (fetch failed, TVL too low, chain not supported)
+ * `getBestYield` returns null and the engine degrades to generic copy (YIELD-03).
+ */
+export type ApyContext = {
+  getBestYield(symbol: string, chainId: number): ApyEntry | null;
+};
+
 // Re-export so consumers can access the disclaimer without a separate import.
 export { SUGGESTION_DISCLAIMER } from "@/lib/scan/suggestions/types";
 
@@ -128,8 +158,15 @@ function buildHealthSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
  * SUGGEST-03: Stablecoin idle-yield monitoring (read-only).
  *
  * Only called when stable.depegged === false (depeg suppression handled by caller).
+ *
+ * When `apyContext` is provided and returns a valid entry for this stablecoin,
+ * the description will be upgraded to APY-aware copy in Wave 2 (57-02).
+ * For now (57-01 RED wave), generic copy is always returned.
  */
-function buildYieldSuggestion(stable: StablecoinBalance): SuggestionDescriptor {
+function buildYieldSuggestion(
+  stable: StablecoinBalance,
+  _apyContext?: ApyContext | null
+): SuggestionDescriptor {
   const slug = `stablecoin-yield-${stable.symbol.toLowerCase()}-${stable.chainId}`;
   const chain = chainLabel(stable.chainId);
   const bal = stable.usdValue ?? 0;
@@ -239,8 +276,16 @@ function buildRewardSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
  * Covers SUGGEST-01 through SUGGEST-10. Pure function; no I/O, no AI calls.
  * Produces at most MAX_SUGGESTIONS (7) descriptors ordered health > yield >
  * alert > claim, then USD value descending within each category.
+ *
+ * @param apyContext - Optional pre-fetched APY context (YIELD-01..04).
+ *   When provided, yield suggestions use live APY copy for stablecoins with
+ *   known yield venues. When absent or null, generic copy is used (YIELD-03
+ *   degrade). Callers that omit this argument continue to work unchanged.
  */
-export function buildSuggestions(scan: ScanResponse): SuggestionDescriptor[] {
+export function buildSuggestions(
+  scan: ScanResponse,
+  apyContext?: ApyContext | null
+): SuggestionDescriptor[] {
   const raw: SuggestionDescriptor[] = [];
 
   // SUGGEST-02: HF monitoring for lending positions with active loans.
@@ -274,7 +319,7 @@ export function buildSuggestions(scan: ScanResponse): SuggestionDescriptor[] {
     if ((stable.usdValue ?? 0) < DUST_THRESHOLD_USD) {
       continue;
     }
-    raw.push(buildYieldSuggestion(stable));
+    raw.push(buildYieldSuggestion(stable, apyContext));
   }
 
   // SUGGEST-05: Staking reward reminders for savings-protocol positions (Lido, Sky).
