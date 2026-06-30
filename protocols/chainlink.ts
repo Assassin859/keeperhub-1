@@ -3,6 +3,60 @@ import type { AbiFunctionOverride } from "@/lib/protocol-registry";
 import ccipBnmAbi from "./abis/ccip-bnm.json";
 import ccipErc20Abi from "./abis/ccip-erc20.json";
 import ccipRouterAbi from "./abis/ccip-router.json";
+import { contract, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "eth-usd-latest-round-data": {},
+      "eth-usd-decimals": {},
+      "btc-usd-latest-round-data": {},
+      "btc-usd-decimals": {},
+      "link-usd-latest-round-data": {},
+      "link-usd-decimals": {},
+      "usdc-usd-latest-round-data": {},
+      "usdc-usd-decimals": {},
+      "dai-usd-latest-round-data": {},
+      "dai-usd-decimals": {},
+      "usdt-usd-latest-round-data": {},
+      "usdt-usd-decimals": {},
+      "link-eth-latest-round-data": {},
+      "link-eth-decimals": {},
+      "btc-eth-latest-round-data": {},
+      "btc-eth-decimals": {},
+      "latest-round-data": {},
+      "latest-answer": {},
+      decimals: {},
+      description: {},
+      version: {},
+      "ccip-check-bridge-balance": { account: wallet() },
+      "ccip-check-bridge-allowance": {
+        owner: wallet(),
+        spender: contract("ccipRouter"),
+      },
+      "ccip-check-fee-balance": { account: wallet() },
+      "ccip-check-fee-allowance": {
+        owner: wallet(),
+        spender: contract("ccipRouter"),
+      },
+    },
+    skipped: {
+      "get-round-data": "requires a valid historical round ID",
+      "ccip-get-fee":
+        "requires CCIP message struct with destination chain and encoded data",
+      "ccip-send":
+        "requires CCIP message struct, bridge token balance, and fee token balance",
+      "ccip-bnm-drip": "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
+      "ccip-approve-bridge-token": "write action requiring bridge token balance",
+      "ccip-approve-fee-token": "write action requiring fee token balance",
+    },
+  },
+};
 
 // Minimal AggregatorV3Interface ABI used for named feed contracts.
 // Inline because Arbitrum and Optimism lack Etherscan-compatible explorer configs.
@@ -213,6 +267,8 @@ export default defineAbiProtocol({
     "Chainlink oracle price feeds and CCIP cross-chain messaging - read prices via AggregatorV3Interface, bridge tokens and data via CCIP Router",
   website: "https://chain.link",
   icon: "/protocols/chainlink.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     // -- CCIP contracts --------------------------------------------------------
