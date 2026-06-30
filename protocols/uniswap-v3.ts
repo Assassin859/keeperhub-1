@@ -1,8 +1,46 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import factoryAbi from "./abis/uniswap-factory.json";
 import positionManagerAbi from "./abis/uniswap-position-manager.json";
 import quoterAbi from "./abis/uniswap-quoter.json";
 import swapRouterAbi from "./abis/uniswap-swap-router.json";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-pool": { tokenA: "WETH", tokenB: "USDC", fee: "3000" },
+      "balance-of": { owner: wallet() },
+      "quote-exact-input": {
+        tokenIn: "WETH",
+        tokenOut: "USDC",
+        amountIn: native("1"),
+        fee: "3000",
+        sqrtPriceLimitX96: "0",
+      },
+      "quote-exact-output": {
+        tokenIn: "USDC",
+        tokenOut: "WETH",
+        amount: native("1"),
+        fee: "3000",
+        sqrtPriceLimitX96: "0",
+      },
+    },
+    skipped: {
+      "get-position": "requires a valid NFT position token ID",
+      "owner-of": "requires a valid NFT position token ID",
+      "approve-position": "write action requiring an owned position NFT",
+      "transfer-position": "write action requiring an owned position NFT",
+      "burn-position": "write action requiring an empty position NFT",
+      "swap-exact-input": "requires token balance and approval",
+      "swap-exact-output": "requires token balance and approval",
+    },
+  },
+};
 
 const UNISWAP_DOCS =
   "https://developers.uniswap.org/docs/protocols/v3/overview";
@@ -35,6 +73,8 @@ export default defineAbiProtocol({
     "Uniswap V3 - pool discovery, liquidity positions, swaps, and quotes",
   website: "https://uniswap.org",
   icon: "/protocols/uniswap.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     factory: {
