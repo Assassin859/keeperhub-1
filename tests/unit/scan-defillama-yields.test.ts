@@ -313,4 +313,21 @@ describe("buildApyContext: degrade paths (YIELD-03)", () => {
     const entry = ctx.getBestYield("USDC", 42_161);
     expect(entry).toBeNull();
   });
+
+  it("resilience: a non-string underlyingTokens element does not throw or block other lookups (WR-02)", () => {
+    const malformedPool = {
+      ...POOL_AAVE_V3_USDC_ARB,
+      pool: "malformed-underlying-uuid",
+      // Untrusted feed: a non-string element must not throw on toLowerCase().
+      underlyingTokens: [null, 123] as unknown as string[],
+    };
+    const ctx = buildApyContext(
+      [malformedPool, POOL_SKY_SUSDS_ETH],
+      [STABLE_USDC_ARB, STABLE_USDS_ETH]
+    );
+    // The malformed Arbitrum pool is skipped (no match), not fatal...
+    expect(ctx.getBestYield("USDC", 42_161)).toBeNull();
+    // ...and the unrelated USDS lookup still resolves to its sky-lending pool.
+    expect(ctx.getBestYield("USDS", 1)?.apy).toBe(3.6);
+  });
 });

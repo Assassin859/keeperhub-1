@@ -210,8 +210,13 @@ export function buildApyContext(
         continue;
       }
 
+      // underlyingTokens is untrusted: a non-string element (null, number)
+      // would throw on .toLowerCase() and abort buildApyContext for the WHOLE
+      // scan. Type-guard each element so one bad pool is skipped, not fatal.
       const underlyingMatch = (p.underlyingTokens ?? []).some(
-        (t) => t.toLowerCase() === stable.tokenAddress.toLowerCase()
+        (t) =>
+          typeof t === "string" &&
+          t.toLowerCase() === stable.tokenAddress.toLowerCase()
       );
       if (!underlyingMatch) {
         continue;
