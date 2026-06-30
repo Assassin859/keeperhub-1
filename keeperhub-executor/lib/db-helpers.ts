@@ -163,10 +163,13 @@ export async function discardPhantomRow(
 }
 
 /**
- * KEEP-693: resolve a pre-created phantom row to a user-actionable error (e.g. a
- * billing block) rather than leaving it for the reaper to mis-code as a system
- * failure. Compare-and-set on status='phantom' so a row that already advanced
- * is left untouched.
+ * KEEP-693: resolve a pre-created phantom or pending row to a user-actionable
+ * error (e.g. a billing block) rather than leaving it for the reaper to
+ * mis-code as a system failure. Compare-and-set on status IN ('phantom',
+ * 'pending') so a row that already advanced is left untouched.
+ *
+ * Matches 'pending' in addition to 'phantom' because manual-trigger executions
+ * are pre-created by the API as 'pending' (not 'phantom') before being enqueued.
  */
 export async function resolvePhantomToError(
   db: PostgresJsDatabase<DbSchema>,
@@ -188,7 +191,7 @@ export async function resolvePhantomToError(
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        eq(workflowExecutions.status, "phantom")
+        inArray(workflowExecutions.status, ["phantom", "pending"])
       )
     );
 }
