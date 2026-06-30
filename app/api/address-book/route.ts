@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
+import { isUniqueViolation } from "@/lib/db/errors";
 import { addressBookEntry, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
@@ -69,12 +70,7 @@ export async function GET(request: Request) {
       { endpoint: "/api/address-book", operation: "list" }
     );
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to list address book entries",
-      },
+      { error: "Failed to list address book entries" },
       { status: 500 }
     );
   }
@@ -140,6 +136,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json(newEntry, { status: 201 });
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        { error: "This address is already in your address book." },
+        { status: 409 }
+      );
+    }
     logSystemError(
       ErrorCategory.DATABASE,
       "[Address Book] Failed to create entry",
@@ -147,12 +149,7 @@ export async function POST(request: Request) {
       { endpoint: "/api/address-book", operation: "create" }
     );
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create address book entry",
-      },
+      { error: "Failed to create address book entry" },
       { status: 500 }
     );
   }

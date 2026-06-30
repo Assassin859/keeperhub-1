@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
+import { isUniqueViolation } from "@/lib/db/errors";
 import { addressBookEntry } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
@@ -137,6 +138,12 @@ export async function PATCH(
 
     return NextResponse.json(updatedEntry);
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        { error: "This address is already in your address book." },
+        { status: 409 }
+      );
+    }
     logSystemError(
       ErrorCategory.DATABASE,
       "[Address Book] Failed to update entry",
@@ -144,12 +151,7 @@ export async function PATCH(
       { endpoint: "/api/address-book/[entryId]", operation: "update" }
     );
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update address book entry",
-      },
+      { error: "Failed to update address book entry" },
       { status: 500 }
     );
   }
@@ -206,12 +208,7 @@ export async function DELETE(
       { endpoint: "/api/address-book/[entryId]", operation: "delete" }
     );
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to delete address book entry",
-      },
+      { error: "Failed to delete address book entry" },
       { status: 500 }
     );
   }
