@@ -19,6 +19,9 @@
  *      never read in or committed.
  *   7. Upsert the 8 workflow fixtures from ./fixtures/dev-workflows.ts
  *      into the dev user's org.
+ *   8. Seed the 6 public onboarding hub workflows from
+ *      ./fixtures/onboarding-workflows.ts into the dev user's org so the
+ *      recommendations endpoint resolves them locally without env vars.
  *
  * Re-run anytime: it's an upsert at every step.
  */
@@ -51,6 +54,7 @@ import {
   buildTriggerNodes,
   DEV_WORKFLOW_FIXTURES,
 } from "./fixtures/dev-workflows";
+import { seedOnboardingWorkflows } from "./seed-onboarding-workflows";
 
 // ---------------------------------------------------------------------------
 // Hostname guard
@@ -533,6 +537,12 @@ async function main(): Promise<void> {
     console.log(
       `  + workflows: ${fixtures.created} created, ${fixtures.updated} updated ` +
         `(${DEV_WORKFLOW_FIXTURES.length} total fixtures)`
+    );
+
+    const onboarding = await seedOnboardingWorkflows(db, identity);
+    console.log(
+      `  + onboarding: ${onboarding.created} created, ${onboarding.refreshed} refreshed, ` +
+        `${onboarding.skipped} skipped (user-edited)`
     );
 
     // Use sql to keep schema imports honest: this is just a smoke-test count.

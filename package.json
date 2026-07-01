@@ -26,6 +26,7 @@
     "db:seed-dev-user": "tsx scripts/seed/seed-dev-user.ts",
     "db:seed-test-wallet": "tsx scripts/seed/seed-test-wallet.ts",
     "db:seed-workflows": "tsx scripts/seed/seed-protocol-workflows.ts",
+    "db:seed-onboarding": "tsx scripts/seed/seed-onboarding-workflows.ts",
     "db:seed-all": "pnpm db:seed && pnpm db:seed-test-wallet && pnpm db:seed-workflows",
     "dev:bootstrap": "tsx scripts/seed/dev-bootstrap.ts",
     "dev:mint-cookie": "tsx scripts/dev-mint-session.ts",

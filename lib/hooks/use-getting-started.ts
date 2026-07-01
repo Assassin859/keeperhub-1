@@ -174,6 +174,12 @@ export type GettingStarted = {
    * already done. Call-site stub: swap the body for a real holdings fetch.
    */
   triggerWalletScan: () => void;
+  /**
+   * Chip slug -> live hub workflow id, resolved from /api/onboarding/recommendations.
+   * Pass this into getBranches({ resolvedIds }) so chips clone the seeded hub
+   * workflow instead of falling back to the AI prompt.
+   */
+  recommendedIds: Record<string, string>;
 };
 
 export function useGettingStarted(): GettingStarted {
@@ -185,6 +191,9 @@ export function useGettingStarted(): GettingStarted {
     readPersisted(undefined)
   );
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
+  const [recommendedIds, setRecommendedIds] = useState<Record<string, string>>(
+    {}
+  );
 
   // Re-hydrate persisted state once the user id is known (the key is per-user).
   useEffect(() => {
@@ -261,6 +270,19 @@ export function useGettingStarted(): GettingStarted {
     window.addEventListener("focus", fetchStatus);
     return () => window.removeEventListener("focus", fetchStatus);
   }, [fetchStatus]);
+
+  // Fetch hub workflow ids for onboarding chips once on mount. These change
+  // only when workflows are reseeded, so a single fetch per session is enough.
+  useEffect(() => {
+    fetch("/api/onboarding/recommendations")
+      .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : null))
+      .then((data) => {
+        if (data) {
+          setRecommendedIds(data);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   // While the checklist is open, poll so an outcome completed elsewhere (an
   // in-app overlay, or running the draft in the builder) is reflected without
@@ -387,5 +409,6 @@ export function useGettingStarted(): GettingStarted {
     isAuthenticated,
     scanningWallet,
     triggerWalletScan,
+    recommendedIds,
   };
 }

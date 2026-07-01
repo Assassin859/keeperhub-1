@@ -20,6 +20,7 @@ import {
   type ProtocolDefinition,
 } from "@/lib/protocol-registry";
 import { TOKEN_REGISTRY, type TokenSymbol } from "./chain-test-data";
+import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/workflow/node-builders";
 import {
   type ActionInputBindings,
   type InputBinding,
@@ -29,8 +30,6 @@ import {
   isWalletBinding,
   type ProtocolChainTestData,
   type SetupSpec,
-  type WorkflowEdgeJson,
-  type WorkflowNodeJson,
 } from "./types";
 
 export const TRIGGER_TYPES = [

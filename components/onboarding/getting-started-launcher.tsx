@@ -335,7 +335,7 @@ function ExpandedCard({
   onContact: () => void;
 }): React.ReactElement {
   const [infoStep, setInfoStep] = useState<Step | null>(null);
-  const branches = getBranches();
+  const branches = getBranches({ resolvedIds: gs.recommendedIds });
   const active = branches.find((b) => b.key === gs.branch) ?? branches[0];
   const total = active.steps.length;
   const done = active.steps.filter((s) => gs.isStepComplete(s)).length;
@@ -726,12 +726,16 @@ export function GettingStartedLauncher(): React.ReactElement | null {
 }
 
 function launcherTotal(gs: GettingStarted): number {
-  const branch = getBranches().find((b) => b.key === gs.branch);
+  const branch = getBranches({ resolvedIds: gs.recommendedIds }).find(
+    (b) => b.key === gs.branch
+  );
   return branch?.steps.length ?? 0;
 }
 
 function launcherDone(gs: GettingStarted): number {
-  const branch = getBranches().find((b) => b.key === gs.branch);
+  const branch = getBranches({ resolvedIds: gs.recommendedIds }).find(
+    (b) => b.key === gs.branch
+  );
   if (!branch) {
     return 0;
   }
