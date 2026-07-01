@@ -36,6 +36,17 @@ vi.mock("@/lib/protocol-registry", () => ({
     contracts: { router: { addresses: { "8453": "0xBaseRouter" } } },
     actions: [],
   }),
+  resolveContractAddress: (
+    contract: {
+      userSpecifiedAddress?: boolean;
+      addresses: Record<string, string>;
+    },
+    network: string,
+    providedAddress: string | undefined
+  ) =>
+    contract.userSpecifiedAddress
+      ? providedAddress
+      : contract.addresses[network],
 }));
 
 const writeContractCoreMock = vi.fn();
