@@ -245,7 +245,7 @@ describe("authorizeAction decision matrix", () => {
   it("allows a wallet user-scoped action with no role floor", async () => {
     const res = await authorizeAction({
       ...base,
-      action: "user_api_key_create",
+      action: "user_api_key_manage",
       session: makeSession({ email: WALLET }),
       roleFloor: "none",
     });

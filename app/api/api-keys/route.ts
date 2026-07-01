@@ -85,7 +85,7 @@ export async function POST(request: Request) {
 
     const authorized = await authorizeAction({
       session,
-      action: STEP_UP_ACTIONS.apiKeyCreate,
+      action: STEP_UP_ACTIONS.apiKeyManage,
       roleFloor: "none",
       body,
       headers: request.headers,

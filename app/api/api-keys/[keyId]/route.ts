@@ -31,7 +31,7 @@ export async function DELETE(
     };
     const authorized = await authorizeAction({
       session,
-      action: STEP_UP_ACTIONS.apiKeyRevoke,
+      action: STEP_UP_ACTIONS.apiKeyManage,
       roleFloor: "none",
       body,
       headers: request.headers,

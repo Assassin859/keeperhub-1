@@ -23,10 +23,10 @@ export const STEP_UP_ACTIONS = {
   // User-configurable via the security settings panel.
   walletWithdraw: "wallet_withdraw",
   walletExportKey: "wallet_export_key",
-  apiKeyCreate: "user_api_key_create",
-  apiKeyRevoke: "user_api_key_revoke",
-  orgApiKeyCreate: "org_api_key_create",
-  orgApiKeyRevoke: "org_api_key_revoke",
+  // Create and revoke share one policy/challenge: managing an API key is a
+  // single sensitive capability from the user's perspective.
+  apiKeyManage: "user_api_key_manage",
+  orgApiKeyManage: "org_api_key_manage",
   emailChange: "email_change",
   passwordChange: "password_change",
   accountDeactivate: "account_deactivate",

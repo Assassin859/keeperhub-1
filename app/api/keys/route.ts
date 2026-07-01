@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     // (dual-factor for email/OAuth, a wallet signature for wallet accounts).
     const authorized = await authorizeAction({
       session,
-      action: STEP_UP_ACTIONS.orgApiKeyCreate,
+      action: STEP_UP_ACTIONS.orgApiKeyManage,
       roleFloor: "admin",
       organizationId: activeOrgId,
       body,

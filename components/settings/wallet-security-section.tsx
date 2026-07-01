@@ -40,15 +40,10 @@ type PolicyResponse = {
 const CONFIGURABLE_ACTIONS: { action: string; label: string }[] = [
   { action: STEP_UP_ACTIONS.walletWithdraw, label: "Withdraw funds" },
   { action: STEP_UP_ACTIONS.walletExportKey, label: "Export wallet key" },
-  { action: STEP_UP_ACTIONS.apiKeyCreate, label: "Create an API key" },
-  { action: STEP_UP_ACTIONS.apiKeyRevoke, label: "Revoke an API key" },
+  { action: STEP_UP_ACTIONS.apiKeyManage, label: "Manage API keys" },
   {
-    action: STEP_UP_ACTIONS.orgApiKeyCreate,
-    label: "Create an org API key",
-  },
-  {
-    action: STEP_UP_ACTIONS.orgApiKeyRevoke,
-    label: "Revoke an org API key",
+    action: STEP_UP_ACTIONS.orgApiKeyManage,
+    label: "Manage org API keys",
   },
   {
     action: STEP_UP_ACTIONS.agenticWalletApprove,

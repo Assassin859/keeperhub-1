@@ -52,7 +52,7 @@ export async function DELETE(
     };
     const authorized = await authorizeAction({
       session,
-      action: STEP_UP_ACTIONS.orgApiKeyRevoke,
+      action: STEP_UP_ACTIONS.orgApiKeyManage,
       roleFloor: "admin",
       organizationId: activeOrgId,
       body,

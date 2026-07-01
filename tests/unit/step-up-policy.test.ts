@@ -6,7 +6,7 @@ import {
 } from "@/lib/mfa/step-up-policy";
 
 const WITHDRAW = STEP_UP_ACTIONS.walletWithdraw;
-const API_KEY = STEP_UP_ACTIONS.apiKeyCreate;
+const API_KEY = STEP_UP_ACTIONS.apiKeyManage;
 
 const enrolledAll = { wallet: true, totp: true, email: true };
 const enrolledNoTotp = { wallet: true, totp: false, email: true };
