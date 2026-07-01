@@ -1,12 +1,15 @@
 /**
  * Post-deployment verification for managed and enterprise organizations.
  *
- * Reads recent workflow execution outcomes for the white-glove cohort
- * (MANAGED_ORG_SLUGS plus any org on an `enterprise` subscription) and reports
- * whether any of them are erroring after a deploy. Authenticated as an internal
- * service (HMAC) and invoked from the post-deploy-verification CI job, which
- * runs inside the cluster against the in-pod service URL (the public hostname
- * is WAF-blocked for /api/internal/*).
+ * Reads recent workflow execution outcomes for the white-glove cohort (the
+ * env-sourced managed slugs from getManagedOrgSlugs() plus any org on an
+ * `enterprise` subscription) and reports whether any of them regressed after a
+ * deploy. Authenticated as an internal service (HMAC) and invoked from the
+ * post-deploy-verification CI job, which runs inside the cluster against the
+ * in-pod service URL (the public hostname is WAF-blocked for /api/internal/*).
+ *
+ * On a flagged org this pages that client's own PagerDuty service (per-client
+ * routing key, env sourced), deduped to one incident per org per deploy.
  *
  * The cohort is gated to orgs that actually have work due in the window: an
  * enabled, non-deleted, non-deactivated workflow with an enabled schedule whose
@@ -28,6 +31,10 @@
  */
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import {
+  type PagerDutySeverity,
+  triggerPagerDutyAlert,
+} from "@/lib/alerting/pagerduty";
 import { db } from "@/lib/db";
 import {
   organization,
@@ -40,13 +47,27 @@ import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { HttpStatus } from "@/lib/http-status";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
-import { MANAGED_ORG_SLUGS } from "@/lib/orgs/managed-clients";
+import {
+  getManagedOrgSlugs,
+  getPagerDutyRoutingKey,
+} from "@/lib/orgs/managed-clients";
 
 const DEFAULT_LOOKBACK_MINUTES = 60;
 const DEFAULT_MIN_EXECUTIONS = 1;
 const DEFAULT_MAX_ERROR_RATE = 0.5;
 const SAMPLE_ERRORS_PER_ORG = 3;
 const MAX_SAMPLE_ERROR_LENGTH = 300;
+const PAGERDUTY_SOURCE = "post-deploy-verification";
+
+// Internal P-levels. A missed execution or a platform (system_error) fault is a
+// P2 (a managed/enterprise client's automation silently broke); a user-error
+// rate spike is a P3 (more likely the client's own input/config than the
+// deploy). PagerDuty severity: P2 -> critical, P3 -> warning.
+type AlertSeverity = "P2" | "P3";
+
+function pagerDutySeverity(severity: AlertSeverity): PagerDutySeverity {
+  return severity === "P2" ? "critical" : "warning";
+}
 
 type TargetOrg = {
   id: string;
@@ -66,6 +87,7 @@ type OrgVerification = {
   systemErrors: number;
   errorRate: number;
   isProblem: boolean;
+  severity: AlertSeverity | null;
   reasons: string[];
   sampleErrors: string[];
 };
@@ -87,6 +109,10 @@ async function resolveTargetOrgs(
   // an enabled schedule whose next run lands inside [windowStart, windowEnd].
   // Without this an idle org (no live workflow, or schedules that won't fire in
   // our window) is either dead weight or a false-positive source.
+  //
+  // Cohort = managed slugs (env-sourced) plus any enterprise-plan org. When no
+  // managed slugs are configured we fall back to enterprise-plan orgs only.
+  const managedSlugs = getManagedOrgSlugs();
   const rows = await db
     .selectDistinct({
       id: organization.id,
@@ -107,10 +133,12 @@ async function resolveTargetOrgs(
     .where(
       and(
         isNull(organization.deactivatedAt),
-        or(
-          inArray(organization.slug, [...MANAGED_ORG_SLUGS]),
-          eq(organizationSubscriptions.plan, "enterprise")
-        ),
+        managedSlugs.length > 0
+          ? or(
+              inArray(organization.slug, managedSlugs),
+              eq(organizationSubscriptions.plan, "enterprise")
+            )
+          : eq(organizationSubscriptions.plan, "enterprise"),
         eq(workflows.enabled, true),
         isNull(workflows.deletedAt),
         isNull(workflows.deactivatedAt),
@@ -175,6 +203,45 @@ async function fetchSampleErrors(
   return byOrg;
 }
 
+/**
+ * Page each flagged org's own PagerDuty service (per-client routing key, env
+ * sourced). The dedup key is per (deploy, org) so the verification poll loop
+ * collapses into one incident per org per deploy. Orgs without a routing key
+ * (and no default) are skipped -- they still surface in the response + Loki.
+ */
+async function pageProblemOrgs(
+  problems: OrgVerification[],
+  deployId: string,
+  windowStart: string
+): Promise<void> {
+  await Promise.all(
+    problems.map((org) => {
+      const routingKey = getPagerDutyRoutingKey(org.slug);
+      if (!(routingKey && org.severity)) {
+        return Promise.resolve(false);
+      }
+      return triggerPagerDutyAlert({
+        routingKey,
+        dedupKey: `post-deploy/${deployId || windowStart}/${org.organizationId}`,
+        severity: pagerDutySeverity(org.severity),
+        source: PAGERDUTY_SOURCE,
+        summary: `[${org.severity}] Post-deploy regression for ${org.slug}: ${org.reasons.join("; ")}`,
+        customDetails: {
+          org_slug: org.slug,
+          org_name: org.name,
+          plan: org.plan,
+          total: org.total,
+          user_errors: org.userErrors,
+          system_errors: org.systemErrors,
+          reasons: org.reasons,
+          sample_errors: org.sampleErrors,
+          window_start: windowStart,
+        },
+      });
+    })
+  );
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
@@ -197,6 +264,15 @@ export async function GET(request: Request): Promise<NextResponse> {
     url.searchParams.get("maxErrorRate"),
     DEFAULT_MAX_ERROR_RATE
   );
+
+  // `final=1` on the CI loop's last poll: only then can "no executions in the
+  // window" be concluded (a due schedule may fire at the very end of the
+  // window). `deployId` (commit SHA) scopes the PagerDuty dedup key so all
+  // polls of one deploy collapse into a single incident per org.
+  const isFinalPoll =
+    url.searchParams.get("final") === "1" ||
+    url.searchParams.get("final") === "true";
+  const deployId = url.searchParams.get("deployId") ?? "";
 
   // Stateless single check: one query per request. The CI job owns the timing
   // (it polls this endpoint). `since`/`until` (unix seconds) bound the
@@ -279,15 +355,29 @@ export async function GET(request: Request): Promise<NextResponse> {
       const errorRate = stats.total > 0 ? errorCount / stats.total : 0;
 
       const reasons: string[] = [];
+      let severity: AlertSeverity | null = null;
+
+      // No executions: the org had a schedule due in the window but produced
+      // nothing -- its automation silently did not run. Only conclusive on the
+      // final poll. P2.
+      if (isFinalPoll && stats.total === 0) {
+        reasons.push("no executions in the monitoring window");
+        severity = "P2";
+      }
+      // Platform/infra faults are the strongest signal of a deploy regression. P2.
       if (stats.systemErrors > 0) {
         reasons.push(`${stats.systemErrors} system_error execution(s)`);
+        severity = "P2";
       }
+      // User-error rate spike: more likely the client's own input/config than
+      // the deploy. P3, and never downgrades an already-P2 org.
       if (stats.total >= minExecutions && errorRate > maxErrorRate) {
         reasons.push(
           `error rate ${(errorRate * 100).toFixed(1)}% exceeds ${(
             maxErrorRate * 100
           ).toFixed(1)}% over ${stats.total} execution(s)`
         );
+        severity = severity ?? "P3";
       }
 
       return {
@@ -301,6 +391,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         systemErrors: stats.systemErrors,
         errorRate,
         isProblem: reasons.length > 0,
+        severity,
         reasons,
         sampleErrors: [],
       };
@@ -345,6 +436,10 @@ export async function GET(request: Request): Promise<NextResponse> {
           ),
         }
       );
+
+      // Page each flagged org's PagerDuty service. Never throws; a paging
+      // failure is logged but does not fail the verification response.
+      await pageProblemOrgs(problems, deployId, windowStart);
     }
 
     return NextResponse.json({

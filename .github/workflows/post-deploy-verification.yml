@@ -75,6 +75,10 @@ jobs:
 
       - name: Monitor the new build (in-cluster, poll once a minute)
         id: verify
+        env:
+          # Scopes the endpoint's PagerDuty dedup key so every poll of this
+          # deploy collapses into one incident per org.
+          DEPLOY_ID: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -uo pipefail
 
@@ -104,7 +108,15 @@ jobs:
             SIGNING_STRING=$(printf '%s\n%s\n%s\n%s\n%s' "$METHOD" "$PATHNAME" "$CALLER" "$BODY_DIGEST" "$TIMESTAMP")
             SIGNATURE=$(printf '%s' "$SIGNING_STRING" | openssl dgst -sha256 -hmac "$INTERNAL_SERVICE_HMAC_SECRET" | awk '{print $2}')
 
-            URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?since=${SINCE}&until=${DEADLINE}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
+            # Mark the last poll: only then can the endpoint conclude "no
+            # executions in the window" (a due schedule may fire at the end).
+            if [ $(( $(date +%s) + POLL_INTERVAL_SECONDS )) -ge "$DEADLINE" ]; then
+              FINAL=1
+            else
+              FINAL=0
+            fi
+
+            URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000${PATHNAME}?since=${SINCE}&until=${DEADLINE}&final=${FINAL}&deployId=${DEPLOY_ID}&minExecutions=${MIN_EXECUTIONS}&maxErrorRate=${MAX_ERROR_RATE}"
 
             # The secret never enters the pod -- only the precomputed signature does.
             RESPONSE=$(kubectl run "post-deploy-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ATTEMPT}" \
@@ -171,58 +183,22 @@ jobs:
             echo "problems=$PROBLEMS"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Alert and fail on verification problems
+      - name: Fail on verification problems
         if: always() && steps.verify.outputs.ok != 'true'
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_DEPLOY_ALERTS }}
           CHECKED: ${{ steps.verify.outputs.checked }}
           PROBLEMS: ${{ steps.verify.outputs.problems }}
         run: |
-          REPO_URL="https://github.com/${{ github.repository }}"
-          RUN_URL="${REPO_URL}/actions/runs/${{ github.run_id }}"
-
-          # Aggregate-only message. No org slugs/names/error text -- those live in
-          # internal logs (Loki: "Post-deploy verification flagged ..."). Safe to
-          # post to a chat channel without leaking customer data.
+          # Paging is done server-side by the endpoint (per-client PagerDuty
+          # routing), so the CI job carries no slugs or routing keys. This step
+          # just surfaces a red job + aggregate counts; the per-org detail lives
+          # in PagerDuty and internal logs (Loki: "post-deploy verification
+          # flagged ...").
           if [ -n "${PROBLEMS:-}" ] && [ "${PROBLEMS}" != "?" ]; then
-            SUMMARY="Flagged ${PROBLEMS} of ${CHECKED} managed/enterprise org(s) erroring on the new build. Details are in internal logs (search: post-deploy verification flagged)."
+            echo "Flagged ${PROBLEMS} of ${CHECKED} managed/enterprise org(s) on the new build. Paged via PagerDuty; details in internal logs."
           else
-            SUMMARY="Post-deploy verification could not complete. See the Actions run and internal logs."
+            echo "Post-deploy verification could not complete. See the Actions run and internal logs."
           fi
 
-          echo "$SUMMARY"
-
-          # Defensive guard against Discord's embed description limit (4096).
-          # The aggregate message is tiny today, but keep this so a future edit
-          # that adds detail cannot produce a 400 from an over-length payload.
-          MAX_DESC_LENGTH=4000
-          if [ ${#SUMMARY} -gt $MAX_DESC_LENGTH ]; then
-            SUMMARY="${SUMMARY:0:$MAX_DESC_LENGTH}"
-          fi
-
-          if [ -n "${DISCORD_WEBHOOK:-}" ]; then
-            jq -n \
-              --arg title "Post-deploy verification failed" \
-              --arg url "$RUN_URL" \
-              --arg desc "$SUMMARY" \
-              '{
-                username: "KeeperHub Deploy Verifier",
-                embeds: [{
-                  title: $title,
-                  url: $url,
-                  description: $desc,
-                  color: 15548997
-                }]
-              }' > /tmp/discord-payload.json
-
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Content-Type: application/json" \
-              -d @/tmp/discord-payload.json \
-              "$DISCORD_WEBHOOK")
-            echo "Discord notification HTTP ${HTTP_STATUS}"
-          else
-            echo "DISCORD_WEBHOOK_DEPLOY_ALERTS not set; skipping Discord notification (failure still surfaces via the red job and internal logs)."
-          fi
-
-          echo "::error::Post-deploy verification flagged managed/enterprise org errors (count only; see internal logs for specifics)."
+          echo "::error::Post-deploy verification flagged managed/enterprise org problems (count only; PagerDuty + internal logs have specifics)."
           exit 1
