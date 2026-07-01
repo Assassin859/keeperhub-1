@@ -282,6 +282,27 @@ export function getRegisteredProtocols(): ProtocolDefinition[] {
   return Array.from(protocolRegistry.values());
 }
 
+/**
+ * Resolve a protocol contract's address for a network: the caller-supplied
+ * address when the contract is userSpecifiedAddress (e.g. Superfluid
+ * SuperTokens, MetaMorpho vaults), otherwise the registry's known deployment
+ * address. Returns undefined when neither is available; callers construct
+ * their own error message since wording differs by call site (step error
+ * vs. HTTP response).
+ *
+ * Shared by every place a protocol action actually runs: protocolReadStep,
+ * protocolWriteStep, and the REST execute route.
+ */
+export function resolveContractAddress(
+  contract: ProtocolContract,
+  network: string,
+  providedAddress: string | undefined
+): string | undefined {
+  return contract.userSpecifiedAddress
+    ? providedAddress
+    : contract.addresses[network];
+}
+
 function buildInputField(input: ProtocolActionInput): ActionConfigFieldBase {
   const labelWithType = `${input.label} (${input.type})`;
   const hasDefault = input.default !== undefined;
