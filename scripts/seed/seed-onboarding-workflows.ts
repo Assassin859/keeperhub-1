@@ -40,7 +40,7 @@ import {
 } from "./fixtures/onboarding-workflows";
 
 /** Gap in ms between seededAt and updatedAt that indicates a user edit. */
-const USER_EDIT_EPSILON_MS = 5_000;
+export const USER_EDIT_EPSILON_MS = 5_000;
 
 type Identity = { userId: string; orgId: string };
 
@@ -134,7 +134,7 @@ export async function seedOnboardingWorkflows(
 async function resolveIdentity(
   db: ReturnType<typeof drizzle>,
   email: string
-): Promise<Identity> {
+): Promise<Identity | null> {
   const userRow = await db
     .select({ id: users.id })
     .from(users)
@@ -142,7 +142,8 @@ async function resolveIdentity(
     .limit(1);
 
   if (!userRow[0]) {
-    throw new Error(`User not found: ${email}`);
+    console.log(`User not found: ${email} -- skipping onboarding seed`);
+    return null;
   }
 
   const userId = userRow[0].id;
@@ -154,7 +155,8 @@ async function resolveIdentity(
     .limit(1);
 
   if (!memberRow[0]) {
-    throw new Error(`User ${email} has no organization membership`);
+    console.log(`User ${email} has no organization membership -- skipping onboarding seed`);
+    return null;
   }
 
   return { userId, orgId: memberRow[0].organizationId };
@@ -174,6 +176,9 @@ async function main(): Promise<void> {
 
   try {
     const identity = await resolveIdentity(db, email);
+    if (!identity) {
+      return;
+    }
     console.log(`Seeding onboarding workflows into org ${identity.orgId} (user ${email})`);
 
     const result = await seedOnboardingWorkflows(db, identity);
@@ -186,7 +191,17 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// Main-guard so `import { USER_EDIT_EPSILON_MS } from ...` in tests/unit
+// doesn't fire main() at module load (which would try to connect to PG and
+// throw an unhandled rejection in the unit test pool).
+const isMain =
+  process.argv[1] &&
+  (process.argv[1].endsWith("seed-onboarding-workflows.ts") ||
+    process.argv[1].endsWith("seed-onboarding-workflows.js"));
+
+if (isMain) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
