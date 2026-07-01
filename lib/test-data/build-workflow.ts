@@ -160,10 +160,22 @@ type DefaultContext = {
   protocolSlug: string;
   actionSlug: string;
   inputName: string;
+  /** Action is listed in TEST_DATA.skipped -- it's never executed, only
+   *  built (so the seeder can surface it and build-workflow.test.ts can
+   *  cover it), so an unbound address input gets a placeholder instead of
+   *  requiring a real binding nobody will use. */
+  allowAddressPlaceholder: boolean;
 };
+
+// Well-known "no real address" placeholder. Never dereferenced -- the
+// workflow this appears in is marked skipped and is not executed.
+const SKIPPED_ADDRESS_PLACEHOLDER = `0x${"0".repeat(40)}`;
 
 function defaultForSolidityType(type: string, context: DefaultContext): string {
   if (type === "address" || type.startsWith("address")) {
+    if (context.allowAddressPlaceholder) {
+      return SKIPPED_ADDRESS_PLACEHOLDER;
+    }
     throw new Error(
       `address-typed input "${context.inputName}" on "${context.protocolSlug}/${context.actionSlug}" ` +
         "has no binding and no protocol-level default. Add it to TEST_DATA " +
@@ -277,6 +289,7 @@ function buildProtocolActionNode(
   action: ProtocolAction,
   chainId: string,
   bindings: ActionInputBindings,
+  isSkipped: boolean,
   nodeId: string,
   xPos: number,
   walletAddress: string
@@ -355,6 +368,7 @@ function buildProtocolActionNode(
       protocolSlug: protocol.slug,
       actionSlug: action.slug,
       inputName: input.name,
+      allowAddressPlaceholder: isSkipped,
     });
   }
 
@@ -490,6 +504,7 @@ export function buildSetupWorkflow({
         stepAction,
         chainId,
         step.inputs,
+        false,
         id,
         x,
         walletAddress
@@ -535,6 +550,7 @@ export function buildActionWorkflow({
   }
   const chainData = getChainData(protocol, chainId);
   const bindings = chainData?.actions[actionSlug] ?? {};
+  const isSkipped = chainData?.skipped?.[actionSlug] !== undefined;
 
   const triggerNode = buildTriggerNode(trigger, chainId);
   const actionNode = buildProtocolActionNode(
@@ -542,6 +558,7 @@ export function buildActionWorkflow({
     action,
     chainId,
     bindings,
+    isSkipped,
     "step-1",
     450,
     walletAddress

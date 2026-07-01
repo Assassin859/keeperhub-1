@@ -1,7 +1,6 @@
 import { AbiCoder, keccak256 } from "ethers";
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
-  type ActionInputBindings,
   amount,
   contract,
   type ProtocolTestData,
@@ -70,35 +69,6 @@ const VAULT_SKIPS: Record<VaultActionSlug, string> = Object.fromEntries(
     "vault address required (userSpecifiedAddress)",
   ])
 ) as Record<VaultActionSlug, string>;
-
-// Vault actions are skipped at runtime (no vault address available), but
-// build-workflow.test.ts still builds a workflow for every action that has
-// TEST_DATA. These placeholder bindings satisfy the builder; the runner
-// skips execution via VAULT_SKIPS.
-const VAULT_BINDINGS: Record<VaultActionSlug, ActionInputBindings> = {
-  "vault-deposit": { assets: amount("USDC", "1"), receiver: wallet() },
-  "vault-mint": { shares: "1000000", receiver: wallet() },
-  "vault-withdraw": {
-    assets: amount("USDC", "1"),
-    receiver: wallet(),
-    owner: wallet(),
-  },
-  "vault-redeem": { shares: "1000000", receiver: wallet(), owner: wallet() },
-  "vault-asset": {},
-  "vault-total-assets": {},
-  "vault-total-supply": {},
-  "vault-balance": { account: wallet() },
-  "vault-convert-to-assets": { shares: "1000000" },
-  "vault-convert-to-shares": { assets: amount("USDC", "1") },
-  "vault-preview-deposit": { assets: amount("USDC", "1") },
-  "vault-preview-mint": { shares: "1000000" },
-  "vault-preview-withdraw": { assets: amount("USDC", "1") },
-  "vault-preview-redeem": { shares: "1000000" },
-  "vault-max-deposit": { receiver: wallet() },
-  "vault-max-mint": { receiver: wallet() },
-  "vault-max-withdraw": { owner: wallet() },
-  "vault-max-redeem": { owner: wallet() },
-};
 
 export const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -173,8 +143,14 @@ export const TEST_DATA: ProtocolTestData = {
         onBehalf: wallet(),
         receiver: wallet(),
       },
-      ...VAULT_BINDINGS,
-      // Skipped write actions: builder still requires bindings for all address inputs.
+      // vault-* actions need no bindings here: they're all in `skipped`
+      // (no real vault address at test time), and the builder now fills
+      // unbound address inputs on skipped actions with a placeholder.
+      //
+      // liquidate and flash-loan are also skipped (state/callback
+      // prerequisites, not a missing address), but keep explicit bindings
+      // since they document what a real call against WSTETH_USDC_MARKET
+      // looks like.
       liquidate: {
         ...WSTETH_USDC_MARKET,
         borrower: wallet(),
