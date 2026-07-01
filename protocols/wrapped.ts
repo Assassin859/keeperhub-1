@@ -1,5 +1,5 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import wethAbi from "./abis/weth.json";
 
 const WRAPPED_DOCS = "https://ethereum.org/en/wrapped-eth/";
@@ -18,7 +18,7 @@ export const TEST_DATA: ProtocolTestData = {
       // deposit() is payable with no calldata inputs; ethValue sets msg.value.
       wrap: { ethValue: "0.01" },
       // withdraw(wad uint256): burn 0.005 WETH and receive 0.005 ETH.
-      unwrap: { wad: "5000000000000000" },
+      unwrap: { wad: amount("WETH", "0.005") },
       // balanceOf: input is renamed to "account" via override, so binding key is "account".
       "balance-of": { account: wallet() },
     },
