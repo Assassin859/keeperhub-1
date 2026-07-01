@@ -14,6 +14,7 @@
 
 import { parseUnits } from "ethers";
 import {
+  computeProtocolMeta,
   getProtocol,
   getRegisteredProtocols,
   type ProtocolAction,
@@ -271,15 +272,6 @@ function buildTriggerNode(
 
 // --- Action nodes ------------------------------------------------------------
 
-function buildProtocolMeta(action: ProtocolAction, slug: string): string {
-  return JSON.stringify({
-    protocolSlug: slug,
-    contractKey: action.contract,
-    functionName: action.function,
-    actionType: action.type,
-  });
-}
-
 function buildProtocolActionNode(
   protocol: ProtocolDefinition,
   action: ProtocolAction,
@@ -292,7 +284,7 @@ function buildProtocolActionNode(
   const config: Record<string, unknown> = {
     actionType: `${protocol.slug}/${action.slug}`,
     network: chainId,
-    _protocolMeta: buildProtocolMeta(action, protocol.slug),
+    _protocolMeta: computeProtocolMeta(protocol, action),
   };
 
   // `contractAddress` and `ethValue` are reserved virtual keys. Catch
