@@ -14,7 +14,6 @@ const TEST_DATA: ProtocolTestData = {
       "get-pool-htp": { ajnaPool_: contract("pool1") },
       "price-to-index": { price: native("1") },
       "index-to-price": { index_: "5000" },
-      "get-deposit-index": { ajnaPool_: contract("pool1"), debt_: native("1") },
       "get-auction-status": { ajnaPool_: contract("pool1"), borrower_: wallet() },
       "get-borrower-info": { ajnaPool_: contract("pool1"), borrower_: wallet() },
       "pool1-inflator-info": {},
@@ -26,6 +25,9 @@ const TEST_DATA: ProtocolTestData = {
       "pool1-settle": { borrowerAddress_: wallet() },
       "pool1-withdraw-bonds": { recipient_: wallet() },
       "pool1-update-interest": {},
+      // depositIndex is a pool-level function (IPoolDerivedState.sol), not
+      // a PoolInfoUtils function -- it takes only debt_, no pool address.
+      "pool1-deposit-index": { debt_: native("1") },
       "pool2-inflator-info": {},
       "pool2-bucket-info": { index_: "5000" },
       "pool2-kicker-info": { kicker_: wallet() },
@@ -35,6 +37,7 @@ const TEST_DATA: ProtocolTestData = {
       "pool2-settle": { borrowerAddress_: wallet() },
       "pool2-withdraw-bonds": { recipient_: wallet() },
       "pool2-update-interest": {},
+      "pool2-deposit-index": { debt_: native("1") },
       "vault1-is-paused": {},
       "vault1-get-buckets": {},
       "vault1-total-assets": {},
@@ -158,16 +161,6 @@ const POOL_INFO_UTILS_ABI = JSON.stringify([
     inputs: [{ name: "index_", type: "uint256" }],
     outputs: [{ name: "price", type: "uint256" }],
   },
-  {
-    type: "function",
-    name: "depositIndex",
-    stateMutability: "view",
-    inputs: [
-      { name: "ajnaPool_", type: "address" },
-      { name: "debt_", type: "uint256" },
-    ],
-    outputs: [{ name: "index", type: "uint256" }],
-  },
 ]);
 
 const POOL_ABI = JSON.stringify([
@@ -269,6 +262,15 @@ const POOL_ABI = JSON.stringify([
     stateMutability: "nonpayable",
     inputs: [],
     outputs: [],
+  },
+  {
+    // Pool-level function per IPoolDerivedState.sol -- NOT a PoolInfoUtils
+    // function. Takes only debt_ (the pool itself is the call target).
+    type: "function",
+    name: "depositIndex",
+    stateMutability: "view",
+    inputs: [{ name: "debt_", type: "uint256" }],
+    outputs: [{ name: "index", type: "uint256" }],
   },
 ]);
 
@@ -470,6 +472,17 @@ function poolOverrides(
       slug: `${slugPrefix}-update-interest`,
       label: `${pairLabel} Update Interest`,
       description: `Update interest rate for the ${pairLabel} pool`,
+    },
+    depositIndex: {
+      slug: `${slugPrefix}-deposit-index`,
+      label: `${pairLabel} Deposit Index`,
+      description: `Get the bucket index containing a given amount of deposit in the ${pairLabel} pool`,
+      inputs: {
+        debt_: { label: "Debt Amount (WAD)" },
+      },
+      outputs: {
+        index: { label: "Deposit Bucket Index" },
+      },
     },
   };
 }
@@ -707,19 +720,6 @@ export default defineAbiProtocol({
           },
           outputs: {
             price: { label: "Price (WAD)", decimals: 18 },
-          },
-        },
-        depositIndex: {
-          slug: "get-deposit-index",
-          label: "Get Deposit Index",
-          description:
-            "Get the bucket index containing a given amount of deposit for an Ajna pool",
-          inputs: {
-            ajnaPool_: { label: "Pool Address" },
-            debt_: { label: "Debt Amount (WAD)" },
-          },
-          outputs: {
-            index: { label: "Deposit Bucket Index" },
           },
         },
       },

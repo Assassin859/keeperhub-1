@@ -82,13 +82,32 @@ export async function runSetup(opts: {
   }
   const walletAddress = ctx.walletAddress;
 
-  await ensureNativeGas(chainId, walletAddress);
-
   const protocolDef = getProtocol(protocol);
-  const setupSpec = protocolDef?.testData?.[chainId]?.setup;
+  const chainData = protocolDef?.testData?.[chainId];
+  const setupSpec = chainData?.setup;
   if (!setupSpec) {
     throw new Error(`No setup spec for ${protocol} on chain ${chainId}.`);
   }
+
+  // Native gas is only needed if the wallet will actually sign a
+  // transaction: a setup approval, a setup protocol step, or a write
+  // action that isn't skipped. A protocol whose coverage on this chain is
+  // 100% reads (e.g. ajna on Base mainnet) never submits anything, so
+  // skip the funder/balance preflight entirely rather than requiring a
+  // funded wallet for gas that will never be spent.
+  const needsGas =
+    setupSpec.approvals.length > 0 ||
+    (setupSpec.protocolSteps?.length ?? 0) > 0 ||
+    (protocolDef?.actions.some(
+      (action) =>
+        action.type === "write" &&
+        chainData?.skipped?.[action.slug] === undefined
+    ) ??
+      false);
+  if (needsGas) {
+    await ensureNativeGas(chainId, walletAddress);
+  }
+
   for (const required of setupSpec.requiredTokens) {
     await ensureErc20Acquired(
       chainId,

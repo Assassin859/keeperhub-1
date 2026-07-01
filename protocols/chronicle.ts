@@ -54,10 +54,14 @@ const TEST_DATA: ProtocolTestData = {
       "usdt-usd-read-with-age": {},
       "link-usd-read": {},
       "link-usd-read-with-age": {},
-      read: {},
-      "try-read": {},
-      "read-with-age": {},
-      "try-read-with-age": {},
+      // customOracle is userSpecifiedAddress; point the generic read actions
+      // at the ETH/USD oracle the setup workflow already self-kissed above,
+      // so read/readWithAge (which require whitelisting) succeed too, not
+      // just tryRead/tryReadWithAge.
+      read: { contractAddress: contract("ethUsd") },
+      "try-read": { contractAddress: contract("ethUsd") },
+      "read-with-age": { contractAddress: contract("ethUsd") },
+      "try-read-with-age": { contractAddress: contract("ethUsd") },
       "self-kiss": { oracle: contract("ethUsd") },
     },
     skipped: {
