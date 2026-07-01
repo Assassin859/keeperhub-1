@@ -33,7 +33,7 @@ jobs:
     # registry stalls) without burning the default 6h GHA budget.
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-scheduler-deps
       - name: Run lint
         working-directory: keeperhub-scheduler
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-scheduler-deps
       - name: Run typecheck
         working-directory: keeperhub-scheduler
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-scheduler-deps
       - name: Run build
         # `pnpm build` runs `tsc` (with emit), catching d.ts generation
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-scheduler-deps
       - name: Run unit tests
         working-directory: keeperhub-scheduler
