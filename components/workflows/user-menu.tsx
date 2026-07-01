@@ -49,7 +49,7 @@ import {
   useNotificationStatus,
 } from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
-import { isAnonymousUser, isNewUserSession } from "@/lib/is-anonymous";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 import {
   editorTourRequestedAtom,
   gettingStartedOpenAtom,
@@ -64,7 +64,6 @@ export const UserMenu = (): React.ReactElement => {
   // temp- email; anyone anonymous or not yet email-verified still needs the
   // Sign In surface. Shared with the onboarding tour via lib/is-new-user.
   const isAnonymous = isAnonymousUser(session?.user);
-  const isNewUser = isNewUserSession(session);
 
   // Wallet (SIWE) users authenticate by signature and never verify an email,
   // so they count as authenticated despite emailVerified being false.

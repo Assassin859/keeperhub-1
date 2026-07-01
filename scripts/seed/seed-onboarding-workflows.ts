@@ -28,13 +28,12 @@
 
 import "dotenv/config";
 
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import { member, users, workflows } from "../../lib/db/schema";
-import { generateId } from "../../lib/utils/id";
 import {
   ONBOARDING_WORKFLOW_FIXTURES,
   type OnboardingWorkflowFixture,
