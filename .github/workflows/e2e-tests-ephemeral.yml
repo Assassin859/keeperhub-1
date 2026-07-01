@@ -222,6 +222,12 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           ai_model: claude-3-5-haiku-20241022
           safe_fetch_shadow: "true"
+          # Forward sandbox config to the app container so the production build
+          # does not throw at run-code module load. The protocol-coverage setup
+          # workflows execute steps through the app, which dispatches code steps
+          # to the sandbox started below.
+          sandbox_backend: remote
+          sandbox_url: http://localhost:8787
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
         run: |
