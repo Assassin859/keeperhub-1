@@ -138,6 +138,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      # ubuntu-latest ships several GB of preinstalled toolchains this job
+      # never touches (Android SDK, .NET, Haskell/GHC). This job now runs
+      # two anvil forks, a sandbox container, and the protocol-coverage
+      # suite on top of the base e2e stack -- free the unused space up
+      # front rather than risk "no space left on device" mid-job.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
