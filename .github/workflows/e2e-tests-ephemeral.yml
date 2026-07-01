@@ -300,6 +300,28 @@ jobs:
           # SSRF (dev/CI-only opt-in) to reach the localhost anvil fork.
           SAFE_FETCH_SHADOW: "true"
 
+      - name: Run protocol-coverage tests
+        run: pnpm test:protocol
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          WORKFLOW_TARGET_WORLD: "@workflow/world-postgres"
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_REGION: us-east-1
+          TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
+          # Funder EOA for protocol-coverage suites' ensureNativeGas top-up
+          # on testnet chains (aave-v3, superfluid, chronicle). When unset
+          # those suites skip cleanly (see coverage.test.ts gate).
+          TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
+          # Archive-node URL for the Ethereum mainnet anvil fork started
+          # above. When set, protocol-coverage suites for chain 1 (morpho,
+          # wrapped, lido, ethena, curve, chainlink, spark, yearn, uniswap,
+          # pendle, sky) run for real. When unset those suites skip cleanly.
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
         run: docker logs keeperhub-app 2>&1 | tail -200
