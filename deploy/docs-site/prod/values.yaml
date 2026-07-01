@@ -41,7 +41,7 @@ podAnnotations:
 
 resources:
   limits:
-    memory: 256Mi
+    memory: 512Mi
   requests:
     cpu: 10m
     memory: 128Mi
@@ -53,6 +53,9 @@ env:
   HOSTNAME:
     type: kv
     value: "0.0.0.0"
+  NODE_OPTIONS:
+    type: kv
+    value: "--max-old-space-size=350"
 
 livenessProbe:
   initialDelaySeconds: 5

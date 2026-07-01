@@ -1,8 +1,31 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import depositPoolAbi from "./abis/rocket-pool-deposit-pool.json";
 import rethAbi from "./abis/rocket-pool-reth.json";
 
 const ROCKET_POOL_DOCS = "https://docs.rocketpool.net";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-exchange-rate": {},
+      "balance-of": { account: wallet() },
+      "total-supply": {},
+      "get-total-collateral": {},
+      burn: {},
+      deposit: {},
+    },
+    skipped: {
+      burn: "requires rETH balance",
+      deposit: "payable; requires ETH value to send",
+    },
+  },
+};
 
 export default defineAbiProtocol({
   name: "Rocket Pool",
@@ -11,6 +34,8 @@ export default defineAbiProtocol({
     "Decentralized Ethereum liquid staking: deposit ETH for rETH, monitor exchange rates, and manage staking positions",
   website: "https://rocketpool.net",
   icon: "/protocols/rocket-pool.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     reth: {

@@ -78,14 +78,14 @@ describe("Yearn V3 Protocol Definition", () => {
     }
   });
 
-  it("has exactly 27 actions (18 ERC-4626 + 9 Yearn-specific)", () => {
-    expect(yearnV3Def.actions).toHaveLength(27);
+  it("has exactly 31 actions (18 ERC-4626 + 13 Yearn-specific)", () => {
+    expect(yearnV3Def.actions).toHaveLength(31);
   });
 
-  it("has 23 read actions and 4 write actions", () => {
+  it("has 27 read actions and 4 write actions", () => {
     const readActions = yearnV3Def.actions.filter((a) => a.type === "read");
     const writeActions = yearnV3Def.actions.filter((a) => a.type === "write");
-    expect(readActions).toHaveLength(23);
+    expect(readActions).toHaveLength(27);
     expect(writeActions).toHaveLength(4);
   });
 

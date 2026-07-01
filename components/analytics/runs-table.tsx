@@ -14,7 +14,6 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
 import type {
   NormalizedStatus,
   StepLog,
@@ -28,6 +27,7 @@ import {
   analyticsSourceFilterAtom,
   analyticsStatusFilterAtom,
 } from "@/lib/atoms/analytics";
+import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
 import { cn } from "@/lib/utils";
 import { SPONSORSHIP_CHAINS } from "@/lib/web3/sponsorship-chains-meta";
 import { ProjectDrawer } from "./project-drawer";
@@ -318,7 +318,6 @@ type ExpandableRunRowProps = {
 };
 
 function ExpandableRunRow({ run }: ExpandableRunRowProps): ReactNode {
-  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [steps, setSteps] = useState<StepLog[]>([]);
   const [loadingSteps, setLoadingSteps] = useState(false);
@@ -346,12 +345,6 @@ function ExpandableRunRow({ run }: ExpandableRunRowProps): ReactNode {
       setLoadingSteps(false);
     }
   }, [expanded, steps.length, run.id, run.source]);
-
-  const handleNavigate = useCallback((): void => {
-    if (run.source === "workflow" && run.workflowId) {
-      router.push(`/workflows/${run.workflowId}`);
-    }
-  }, [run.source, run.workflowId, router]);
 
   const isDeleted = run.workflowName === "(Deleted)";
   const runName =
@@ -388,16 +381,16 @@ function ExpandableRunRow({ run }: ExpandableRunRowProps): ReactNode {
               {runName}
             </span>
             {run.source === "workflow" && run.workflowId && !isDeleted ? (
-              <button
+              <a
+                aria-label={`Open ${runName} in a new tab`}
                 className="opacity-0 transition-opacity group-hover:opacity-100"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleNavigate();
-                }}
-                type="button"
+                href={`/workflows/${run.workflowId}`}
+                onClick={(e) => e.stopPropagation()}
+                rel="noopener"
+                target="_blank"
               >
                 <ExternalLink className="size-3.5 text-muted-foreground" />
-              </button>
+              </a>
             ) : null}
           </div>
         </td>

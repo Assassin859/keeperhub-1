@@ -1,15 +1,95 @@
-import {
-  type AbiDrivenContract,
-  deriveActionsFromAbi,
-} from "@/lib/abi/protocol-derive";
-import type { ProtocolAction } from "@/lib/protocol-registry";
-import { defineProtocol } from "@/lib/protocol-registry";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import type { AbiFunctionOverride } from "@/lib/protocol-registry";
 import ccipBnmAbi from "./abis/ccip-bnm.json";
 import ccipErc20Abi from "./abis/ccip-erc20.json";
 import ccipRouterAbi from "./abis/ccip-router.json";
+import { contract, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 
-// AggregatorV3Interface ABI - shared across all feed contracts.
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "eth-usd-latest-round-data": {},
+      "eth-usd-decimals": {},
+      "btc-usd-latest-round-data": {},
+      "btc-usd-decimals": {},
+      "link-usd-latest-round-data": {},
+      "link-usd-decimals": {},
+      "usdc-usd-latest-round-data": {},
+      "usdc-usd-decimals": {},
+      "dai-usd-latest-round-data": {},
+      "dai-usd-decimals": {},
+      "usdt-usd-latest-round-data": {},
+      "usdt-usd-decimals": {},
+      "link-eth-latest-round-data": {},
+      "link-eth-decimals": {},
+      "btc-eth-latest-round-data": {},
+      "btc-eth-decimals": {},
+      "latest-round-data": {},
+      "latest-answer": {},
+      decimals: {},
+      description: {},
+      version: {},
+      "ccip-check-bridge-balance": { account: wallet() },
+      "ccip-check-bridge-allowance": {
+        owner: wallet(),
+        spender: contract("ccipRouter"),
+      },
+      "ccip-check-fee-balance": { account: wallet() },
+      "ccip-check-fee-allowance": {
+        owner: wallet(),
+        spender: contract("ccipRouter"),
+      },
+      "get-round-data": {},
+      "ccip-get-fee": { receiver: wallet(), feeToken: wallet() },
+      "ccip-send": { receiver: wallet(), feeToken: wallet() },
+      "ccip-bnm-drip": { to: wallet() },
+      "ccip-approve-bridge-token": { spender: contract("ccipRouter") },
+      "ccip-approve-fee-token": { spender: contract("ccipRouter") },
+    },
+    skipped: {
+      "get-round-data": "requires a valid historical round ID",
+      "ccip-get-fee":
+        "requires CCIP message struct with destination chain and encoded data",
+      "ccip-send":
+        "requires CCIP message struct, bridge token balance, and fee token balance",
+      "ccip-bnm-drip": "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
+      "ccip-approve-bridge-token": "write action requiring bridge token balance",
+      "ccip-approve-fee-token": "write action requiring fee token balance",
+    },
+  },
+};
+
+// Minimal AggregatorV3Interface ABI used for named feed contracts.
 // Inline because Arbitrum and Optimism lack Etherscan-compatible explorer configs.
+const MINIMAL_FEED_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "latestRoundData",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "roundId", type: "uint80" },
+      { name: "answer", type: "int256" },
+      { name: "startedAt", type: "uint256" },
+      { name: "updatedAt", type: "uint256" },
+      { name: "answeredInRound", type: "uint80" },
+    ],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }],
+  },
+]);
+
+// Full AggregatorV3Interface ABI used for the custom feed contract.
 const AGGREGATOR_V3_ABI = JSON.stringify([
   {
     type: "function",
@@ -87,7 +167,7 @@ export const CCIP_MESSAGE_INPUT_OVERRIDES = {
   },
   receiver: {
     label: "Receiver Address",
-    fieldType: "address",
+    fieldType: "address" as const,
     helpTip:
       "The destination address that will receive the tokens and/or data. Enter a standard EVM address - it is automatically abi-encoded for the CCIP message.",
     docUrl: CCIP_DOCS,
@@ -155,247 +235,38 @@ const CCIP_ERC20_ADDRESSES: Record<string, string> = {
   "43113": "0xd00ae08403B9bbb9124bB305C09058E32C39A48c",
 };
 
-// -- ABI-driven CCIP contract definitions ------------------------------------
-
-const ccipRouter: AbiDrivenContract = {
-  label: "CCIP Router",
-  abi: JSON.stringify(ccipRouterAbi),
-  addresses: CCIP_ROUTER_ADDRESSES,
-  overrides: {
-    getFee: {
-      slug: "ccip-get-fee",
-      label: "CCIP Get Fee",
-      description:
-        "Quote the LINK (or native) fee for a CCIP cross-chain message before sending",
-      inputs: CCIP_MESSAGE_INPUT_OVERRIDES,
-      outputs: {
-        fee: { label: "Fee Amount (wei)" },
-      },
-    },
-    ccipSend: {
-      slug: "ccip-send",
-      label: "CCIP Send",
-      description:
-        "Send a cross-chain message (token transfer and/or arbitrary data) via Chainlink CCIP",
-      inputs: CCIP_MESSAGE_INPUT_OVERRIDES,
-      outputs: {
-        messageId: { label: "CCIP Message ID" },
-      },
-    },
-  },
-};
-
-const ccipBnM: AbiDrivenContract = {
-  label: "CCIP-BnM Test Token",
-  abi: JSON.stringify(ccipBnmAbi),
-  addresses: {
-    "11155111": "0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05",
-    "84532": "0x88A2d74F47a237a62e7A51cdDa67270CE381555e",
-  },
-  overrides: {
-    drip: {
-      slug: "ccip-bnm-drip",
-      label: "CCIP-BnM Drip (Testnet)",
-      description:
-        "Mint 1 CCIP-BnM test token to an address. Testnet only - this token is used for exercising CCIP bridging on Sepolia/Base Sepolia.",
-      inputs: {
-        to: {
-          label: "Recipient Address",
-          helpTip:
-            "Address to receive the minted CCIP-BnM test tokens. Typically your own wallet for testing.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-    },
-  },
-};
-
-const ccipBridgeToken: AbiDrivenContract = {
-  label: "Bridge Token (ERC-20 for CCIP)",
-  userSpecifiedAddress: true,
-  abi: JSON.stringify(ccipErc20Abi),
-  addresses: CCIP_ERC20_ADDRESSES,
-  overrides: {
-    approve: {
-      slug: "ccip-approve-bridge-token",
-      label: "CCIP Approve Bridge Token",
-      description:
-        "Approve the CCIP Router to spend the token you are bridging. Required before ccipSend.",
-      inputs: {
-        spender: {
-          label: "Spender (CCIP Router)",
-          helpTip:
-            "The CCIP Router address for your source chain. Must match the router used in the ccipSend step.",
-          docUrl: CCIP_DOCS,
-        },
-        amount: {
-          label: "Amount (wei)",
-          helpTip:
-            "Amount to approve in the token's smallest unit. Must be >= the amount you intend to bridge.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-    },
-    balanceOf: {
-      slug: "ccip-check-bridge-balance",
-      label: "CCIP Check Bridge Token Balance",
-      description:
-        "Check the balance of the token being bridged. Use before ccipSend to catch insufficient bridge token balances early.",
-      inputs: {
-        account: {
-          label: "Account Address",
-          helpTip:
-            "The address whose bridge token balance to check. Typically the wallet that will call ccipSend.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-      outputs: {
-        result: { name: "balance", label: "Token Balance (wei)" },
-      },
-    },
-    allowance: {
-      slug: "ccip-check-bridge-allowance",
-      label: "CCIP Check Bridge Token Allowance",
-      description:
-        "Check how much of the bridge token the CCIP Router is approved to spend. Use to verify the approve-bridge-token step succeeded.",
-      inputs: {
-        owner: {
-          label: "Token Owner",
-          helpTip:
-            "The address that granted the approval. Typically your wallet address.",
-          docUrl: CCIP_DOCS,
-        },
-        spender: {
-          label: "Spender (CCIP Router)",
-          helpTip:
-            "The CCIP Router address to check allowance for. Must match the router on your source chain.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-      outputs: {
-        result: { name: "allowance", label: "Approved Amount (wei)" },
-      },
-    },
-  },
-};
-
-const ccipFeeToken: AbiDrivenContract = {
-  label: "Fee Token (ERC-20 for CCIP)",
-  userSpecifiedAddress: true,
-  abi: JSON.stringify(ccipErc20Abi),
-  addresses: CCIP_ERC20_ADDRESSES,
-  overrides: {
-    approve: {
-      slug: "ccip-approve-fee-token",
-      label: "CCIP Approve Fee Token",
-      description:
-        "Approve the CCIP Router to spend LINK (or another fee token) for bridge fees. Required before ccipSend when paying fees in ERC-20.",
-      inputs: {
-        spender: {
-          label: "Spender (CCIP Router)",
-          helpTip:
-            "The CCIP Router address for your source chain. Must match the router used in the ccipSend step.",
-          docUrl: CCIP_DOCS,
-        },
-        amount: {
-          label: "Amount (wei)",
-          helpTip:
-            "Fee ceiling to approve in the fee token's smallest unit. Set higher than the expected fee to avoid reverts (e.g. 1 LINK = 1000000000000000000). Unused allowance is not spent.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-    },
-    balanceOf: {
-      slug: "ccip-check-fee-balance",
-      label: "CCIP Check Fee Token Balance",
-      description:
-        "Check the balance of the fee token (LINK or native wrapper). Use before ccipSend to catch insufficient fee token balances early.",
-      inputs: {
-        account: {
-          label: "Account Address",
-          helpTip:
-            "The address whose fee token balance to check. Typically the wallet that will call ccipSend.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-      outputs: {
-        result: { name: "balance", label: "Token Balance (wei)" },
-      },
-    },
-    allowance: {
-      slug: "ccip-check-fee-allowance",
-      label: "CCIP Check Fee Token Allowance",
-      description:
-        "Check how much of the fee token (LINK) the CCIP Router is approved to spend. Use to verify the approve-fee-token step succeeded.",
-      inputs: {
-        owner: {
-          label: "Token Owner",
-          helpTip:
-            "The address that granted the approval. Typically your wallet address.",
-          docUrl: CCIP_DOCS,
-        },
-        spender: {
-          label: "Spender (CCIP Router)",
-          helpTip:
-            "The CCIP Router address to check allowance for. Must match the router on your source chain.",
-          docUrl: CCIP_DOCS,
-        },
-      },
-      outputs: {
-        result: { name: "allowance", label: "Approved Amount (wei)" },
-      },
-    },
-  },
-};
-
-// -- Price feed helpers (manual actions) -------------------------------------
-
-const LATEST_ROUND_OUTPUTS: ProtocolAction["outputs"] = [
-  { name: "roundId", type: "uint80", label: "Round ID" },
-  { name: "answer", type: "int256", label: "Price Answer" },
-  { name: "startedAt", type: "uint256", label: "Round Started At (Unix)" },
-  { name: "updatedAt", type: "uint256", label: "Last Updated At (Unix)" },
-  { name: "answeredInRound", type: "uint80", label: "Answered In Round" },
-];
-
-function feedActions(
+// Per-feed overrides: unique slugs per contract to avoid collisions when named
+// feed contracts share the same ABI (auto-derived slug would be "latest-round-data"
+// and "decimals" for all, causing duplicate-slug errors in defineAbiProtocol).
+function feedOverrides(
   feedSlug: string,
-  feedLabel: string,
-  contractKey: string
-): ProtocolAction[] {
-  return [
-    {
+  feedLabel: string
+): Record<string, AbiFunctionOverride> {
+  return {
+    latestRoundData: {
       slug: `${feedSlug}-latest-round-data`,
       label: `Get ${feedLabel} Latest Round Data`,
       description: `Get the latest price, round ID, and timestamps from the Chainlink ${feedLabel} feed`,
-      type: "read",
-      contract: contractKey,
-      function: "latestRoundData",
-      inputs: [],
-      outputs: LATEST_ROUND_OUTPUTS,
+      outputs: {
+        roundId: { label: "Round ID" },
+        answer: { label: "Price Answer" },
+        startedAt: { label: "Round Started At (Unix)" },
+        updatedAt: { label: "Last Updated At (Unix)" },
+        answeredInRound: { label: "Answered In Round" },
+      },
     },
-    {
+    decimals: {
       slug: `${feedSlug}-decimals`,
       label: `Get ${feedLabel} Decimals`,
       description: `Get the number of decimals used by the Chainlink ${feedLabel} feed`,
-      type: "read",
-      contract: contractKey,
-      function: "decimals",
-      inputs: [],
-      outputs: [
-        {
-          name: "decimals",
-          type: "uint8",
-          label: "Decimals",
-        },
-      ],
+      outputs: {
+        result: { name: "decimals", label: "Decimals" },
+      },
     },
-  ];
+  };
 }
 
-// -- Protocol definition -----------------------------------------------------
-
-export default defineProtocol({
+export default defineAbiProtocol({
   name: "Chainlink",
   slug: "chainlink",
   description:
@@ -403,35 +274,211 @@ export default defineProtocol({
   website: "https://chain.link",
   icon: "/protocols/chainlink.png",
 
+  testData: TEST_DATA,
+
   contracts: {
-    // CCIP contracts (ABI-driven)
+    // -- CCIP contracts --------------------------------------------------------
+
     ccipRouter: {
-      label: ccipRouter.label,
-      abi: ccipRouter.abi,
-      addresses: ccipRouter.addresses,
-    },
-    ccipBnM: {
-      label: ccipBnM.label,
-      abi: ccipBnM.abi,
-      addresses: ccipBnM.addresses,
-    },
-    ccipBridgeToken: {
-      label: ccipBridgeToken.label,
-      userSpecifiedAddress: true,
-      abi: ccipBridgeToken.abi,
-      addresses: ccipBridgeToken.addresses,
-    },
-    ccipFeeToken: {
-      label: ccipFeeToken.label,
-      userSpecifiedAddress: true,
-      abi: ccipFeeToken.abi,
-      addresses: ccipFeeToken.addresses,
+      label: "CCIP Router",
+      abi: JSON.stringify(ccipRouterAbi),
+      addresses: CCIP_ROUTER_ADDRESSES,
+      overrides: {
+        getFee: {
+          slug: "ccip-get-fee",
+          label: "CCIP Get Fee",
+          description:
+            "Quote the LINK (or native) fee for a CCIP cross-chain message before sending",
+          inputs: { ...CCIP_MESSAGE_INPUT_OVERRIDES },
+          outputs: {
+            fee: { label: "Fee Amount (wei)" },
+          },
+        },
+        ccipSend: {
+          slug: "ccip-send",
+          label: "CCIP Send",
+          description:
+            "Send a cross-chain message (token transfer and/or arbitrary data) via Chainlink CCIP",
+          inputs: { ...CCIP_MESSAGE_INPUT_OVERRIDES },
+          outputs: {
+            messageId: { label: "CCIP Message ID" },
+          },
+        },
+      },
     },
 
-    // Price feed contracts (manual)
+    ccipBnM: {
+      label: "CCIP-BnM Test Token",
+      userSpecifiedAddress: true,
+      abi: JSON.stringify(ccipBnmAbi),
+      addresses: {
+        "11155111": "0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05",
+        "84532": "0x88A2d74F47a237a62e7A51cdDa67270CE381555e",
+      },
+      overrides: {
+        drip: {
+          slug: "ccip-bnm-drip",
+          label: "CCIP-BnM Drip (Testnet)",
+          description:
+            "Mint 1 CCIP-BnM test token to an address. Testnet only - this token is used for exercising CCIP bridging on Sepolia/Base Sepolia.",
+          inputs: {
+            to: {
+              label: "Recipient Address",
+              helpTip:
+                "Address to receive the minted CCIP-BnM test tokens. Typically your own wallet for testing.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+        },
+      },
+    },
+
+    ccipBridgeToken: {
+      label: "Bridge Token (ERC-20 for CCIP)",
+      userSpecifiedAddress: true,
+      abi: JSON.stringify(ccipErc20Abi),
+      addresses: CCIP_ERC20_ADDRESSES,
+      overrides: {
+        approve: {
+          slug: "ccip-approve-bridge-token",
+          label: "CCIP Approve Bridge Token",
+          description:
+            "Approve the CCIP Router to spend the token you are bridging. Required before ccipSend.",
+          inputs: {
+            spender: {
+              label: "Spender (CCIP Router)",
+              helpTip:
+                "The CCIP Router address for your source chain. Must match the router used in the ccipSend step.",
+              docUrl: CCIP_DOCS,
+            },
+            amount: {
+              label: "Amount (wei)",
+              helpTip:
+                "Amount to approve in the token's smallest unit. Must be >= the amount you intend to bridge.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+        },
+        balanceOf: {
+          slug: "ccip-check-bridge-balance",
+          label: "CCIP Check Bridge Token Balance",
+          description:
+            "Check the balance of the token being bridged. Use before ccipSend to catch insufficient bridge token balances early.",
+          inputs: {
+            account: {
+              label: "Account Address",
+              helpTip:
+                "The address whose bridge token balance to check. Typically the wallet that will call ccipSend.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+          outputs: {
+            result: { name: "balance", label: "Token Balance (wei)" },
+          },
+        },
+        allowance: {
+          slug: "ccip-check-bridge-allowance",
+          label: "CCIP Check Bridge Token Allowance",
+          description:
+            "Check how much of the bridge token the CCIP Router is approved to spend. Use to verify the approve-bridge-token step succeeded.",
+          inputs: {
+            owner: {
+              label: "Token Owner",
+              helpTip:
+                "The address that granted the approval. Typically your wallet address.",
+              docUrl: CCIP_DOCS,
+            },
+            spender: {
+              label: "Spender (CCIP Router)",
+              helpTip:
+                "The CCIP Router address to check allowance for. Must match the router on your source chain.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+          outputs: {
+            result: { name: "allowance", label: "Approved Amount (wei)" },
+          },
+        },
+      },
+    },
+
+    ccipFeeToken: {
+      label: "Fee Token (ERC-20 for CCIP)",
+      userSpecifiedAddress: true,
+      abi: JSON.stringify(ccipErc20Abi),
+      addresses: CCIP_ERC20_ADDRESSES,
+      overrides: {
+        approve: {
+          slug: "ccip-approve-fee-token",
+          label: "CCIP Approve Fee Token",
+          description:
+            "Approve the CCIP Router to spend LINK (or another fee token) for bridge fees. Required before ccipSend when paying fees in ERC-20.",
+          inputs: {
+            spender: {
+              label: "Spender (CCIP Router)",
+              helpTip:
+                "The CCIP Router address for your source chain. Must match the router used in the ccipSend step.",
+              docUrl: CCIP_DOCS,
+            },
+            amount: {
+              label: "Amount (wei)",
+              helpTip:
+                "Fee ceiling to approve in the fee token's smallest unit. Set higher than the expected fee to avoid reverts (e.g. 1 LINK = 1000000000000000000). Unused allowance is not spent.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+        },
+        balanceOf: {
+          slug: "ccip-check-fee-balance",
+          label: "CCIP Check Fee Token Balance",
+          description:
+            "Check the balance of the fee token (LINK or native wrapper). Use before ccipSend to catch insufficient fee token balances early.",
+          inputs: {
+            account: {
+              label: "Account Address",
+              helpTip:
+                "The address whose fee token balance to check. Typically the wallet that will call ccipSend.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+          outputs: {
+            result: { name: "balance", label: "Token Balance (wei)" },
+          },
+        },
+        allowance: {
+          slug: "ccip-check-fee-allowance",
+          label: "CCIP Check Fee Token Allowance",
+          description:
+            "Check how much of the fee token (LINK) the CCIP Router is approved to spend. Use to verify the approve-fee-token step succeeded.",
+          inputs: {
+            owner: {
+              label: "Token Owner",
+              helpTip:
+                "The address that granted the approval. Typically your wallet address.",
+              docUrl: CCIP_DOCS,
+            },
+            spender: {
+              label: "Spender (CCIP Router)",
+              helpTip:
+                "The CCIP Router address to check allowance for. Must match the router on your source chain.",
+              docUrl: CCIP_DOCS,
+            },
+          },
+          outputs: {
+            result: { name: "allowance", label: "Approved Amount (wei)" },
+          },
+        },
+      },
+    },
+
+    // -- Price feed contracts --------------------------------------------------
+    // Named feeds expose only latestRoundData + decimals (minimal ABI to avoid
+    // duplicate slug collisions when multiple contracts share the same ABI).
+    // Per-feed slug overrides give each contract its own unique action slugs.
+
     ethUsd: {
       label: "ETH/USD Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
         "8453": "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
@@ -439,10 +486,11 @@ export default defineProtocol({
         "10": "0x13e3Ee699D1909E989722E753853AE30b17e08c5",
         "11155111": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
       },
+      overrides: feedOverrides("eth-usd", "ETH/USD"),
     },
     btcUsd: {
       label: "BTC/USD Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c",
         "8453": "0x03Df23A32C83cA8cD9B1aAC0aF1c72924af7502b",
@@ -450,65 +498,75 @@ export default defineProtocol({
         "10": "0xD702DD976Fb76Fffc2D3963D037dfDae5b04E593",
         "11155111": "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
       },
+      overrides: feedOverrides("btc-usd", "BTC/USD"),
     },
     linkUsd: {
       label: "LINK/USD Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c",
         "8453": "0x17CAb8FE31E32f08326e5E27412894e49B0f9D65",
         "42161": "0x3EAbF62EB761BD86c71d07AdBb1A9183FeC24064",
         "10": "0xCc232dcFAAE6354cE191Bd574108c1aD03f86450",
       },
+      overrides: feedOverrides("link-usd", "LINK/USD"),
     },
     usdcUsd: {
       label: "USDC/USD Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
         "8453": "0x1401Fd60F9ba4F718a2fE6149aadf3d1F0dB1b0A",
         "42161": "0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3",
         "10": "0x16a9FA2FDa030272Ce99B29CF780dFA30361E0f3",
       },
+      overrides: feedOverrides("usdc-usd", "USDC/USD"),
     },
     daiUsd: {
       label: "DAI/USD Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9",
         "8453": "0x591e79239a7d679378eC8c847e5038150364C78F",
         "42161": "0xc5C8E77B397E531B8EC06BFb0048328B30E9eCfB",
         "10": "0x8dBa75e83DA73cc766A7e5a0ee71F656BAb470d6",
       },
+      overrides: feedOverrides("dai-usd", "DAI/USD"),
     },
     usdtUsd: {
       label: "USDT/USD Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
         "8453": "0xf19d560eB8d2ADf07BD6D13ed03e1D11215721F9",
         "42161": "0x3f3f5dF88dC9F13eac63DF89EC16ef6e7E25DdE7",
         "10": "0xECef79E109e997bCA29c1c0897ec9d7b03647F5E",
       },
+      overrides: feedOverrides("usdt-usd", "USDT/USD"),
     },
     linkEth: {
       label: "LINK/ETH Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0xDC530D9457755926550b59e8ECcdaE7624181557",
         "8453": "0xc5E65227fe3385B88468F9A01600017cDC9F3A12",
         "42161": "0xb7c8Fb1dB45007F98A68Da0588e1AA524C317f27",
         "10": "0x464A1515ADc20de946f8d0DEB99cead8CEAE310d",
       },
+      overrides: feedOverrides("link-eth", "LINK/ETH"),
     },
     btcEth: {
       label: "BTC/ETH Price Feed",
-      abi: AGGREGATOR_V3_ABI,
+      abi: MINIMAL_FEED_ABI,
       addresses: {
         "1": "0xdeb288F737066589598e9214E782fa5A8eD689e8",
         "42161": "0xc5a90A6d7e4Af242dA238FFe279e9f2BA0c64B2e",
       },
+      overrides: feedOverrides("btc-eth", "BTC/ETH"),
     },
+
+    // Custom feed exposes the full 6-function AggregatorV3Interface. The user
+    // supplies any AggregatorV3-compatible address via the address config field.
     customFeed: {
       label: "Custom Price Feed (AggregatorV3Interface)",
       userSpecifiedAddress: true,
@@ -520,122 +578,69 @@ export default defineProtocol({
         "10": "0x13e3Ee699D1909E989722E753853AE30b17e08c5",
         "11155111": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
       },
+      overrides: {
+        latestRoundData: {
+          label: "Get Latest Round Data (Custom Feed)",
+          description:
+            "Get the latest price, round ID, and timestamps from any Chainlink price feed",
+          outputs: {
+            roundId: { label: "Round ID" },
+            answer: { label: "Price Answer" },
+            startedAt: { label: "Round Started At (Unix)" },
+            updatedAt: { label: "Last Updated At (Unix)" },
+            answeredInRound: { label: "Answered In Round" },
+          },
+        },
+        getRoundData: {
+          slug: "get-round-data",
+          label: "Get Round Data (Custom Feed)",
+          description:
+            "Get the price and timestamps for a specific historical round from any Chainlink price feed",
+          inputs: {
+            _roundId: { label: "Round ID" },
+          },
+          outputs: {
+            roundId: { label: "Round ID" },
+            answer: { label: "Price Answer" },
+            startedAt: { label: "Round Started At (Unix)" },
+            updatedAt: { label: "Last Updated At (Unix)" },
+            answeredInRound: { label: "Answered In Round" },
+          },
+        },
+        latestAnswer: {
+          slug: "latest-answer",
+          label: "Get Latest Answer (Custom Feed)",
+          description:
+            "Get the latest price answer from any Chainlink price feed (raw integer, divide by 10^decimals for human-readable value)",
+          outputs: {
+            result: { name: "answer", label: "Latest Price Answer" },
+          },
+        },
+        decimals: {
+          label: "Get Decimals (Custom Feed)",
+          description:
+            "Get the number of decimals used by a Chainlink price feed (typically 8 for USD pairs, 18 for ETH pairs)",
+          outputs: {
+            result: { name: "decimals", label: "Decimals" },
+          },
+        },
+        description: {
+          label: "Get Description (Custom Feed)",
+          description:
+            "Get the human-readable description of any Chainlink price feed (e.g. ETH / USD)",
+          outputs: {
+            result: { name: "description", label: "Feed Description" },
+          },
+        },
+        version: {
+          label: "Get Version (Custom Feed)",
+          description:
+            "Get the version number of any Chainlink price feed aggregator contract",
+          outputs: {
+            result: { name: "version", label: "Aggregator Version" },
+          },
+        },
+      },
     },
   },
-
-  actions: [
-    // CCIP actions (ABI-derived)
-    ...deriveActionsFromAbi("ccipRouter", ccipRouter),
-    ...deriveActionsFromAbi("ccipBnM", ccipBnM),
-    ...deriveActionsFromAbi("ccipBridgeToken", ccipBridgeToken),
-    ...deriveActionsFromAbi("ccipFeeToken", ccipFeeToken),
-
-    // Pre-populated feed actions - one-click, no address needed
-    ...feedActions("eth-usd", "ETH/USD", "ethUsd"),
-    ...feedActions("btc-usd", "BTC/USD", "btcUsd"),
-    ...feedActions("link-usd", "LINK/USD", "linkUsd"),
-    ...feedActions("usdc-usd", "USDC/USD", "usdcUsd"),
-    ...feedActions("dai-usd", "DAI/USD", "daiUsd"),
-    ...feedActions("usdt-usd", "USDT/USD", "usdtUsd"),
-    ...feedActions("link-eth", "LINK/ETH", "linkEth"),
-    ...feedActions("btc-eth", "BTC/ETH", "btcEth"),
-
-    // Custom feed actions - user provides any AggregatorV3 address
-    {
-      slug: "latest-round-data",
-      label: "Get Latest Round Data (Custom Feed)",
-      description:
-        "Get the latest price, round ID, and timestamps from any Chainlink price feed",
-      type: "read",
-      contract: "customFeed",
-      function: "latestRoundData",
-      inputs: [],
-      outputs: LATEST_ROUND_OUTPUTS,
-    },
-    {
-      slug: "get-round-data",
-      label: "Get Round Data (Custom Feed)",
-      description:
-        "Get the price and timestamps for a specific historical round from any Chainlink price feed",
-      type: "read",
-      contract: "customFeed",
-      function: "getRoundData",
-      inputs: [
-        {
-          name: "_roundId",
-          type: "uint80",
-          label: "Round ID",
-        },
-      ],
-      outputs: LATEST_ROUND_OUTPUTS,
-    },
-    {
-      slug: "latest-answer",
-      label: "Get Latest Answer (Custom Feed)",
-      description:
-        "Get the latest price answer from any Chainlink price feed (raw integer, divide by 10^decimals for human-readable value)",
-      type: "read",
-      contract: "customFeed",
-      function: "latestAnswer",
-      inputs: [],
-      outputs: [
-        {
-          name: "answer",
-          type: "int256",
-          label: "Latest Price Answer",
-        },
-      ],
-    },
-    {
-      slug: "decimals",
-      label: "Get Decimals (Custom Feed)",
-      description:
-        "Get the number of decimals used by a Chainlink price feed (typically 8 for USD pairs, 18 for ETH pairs)",
-      type: "read",
-      contract: "customFeed",
-      function: "decimals",
-      inputs: [],
-      outputs: [
-        {
-          name: "decimals",
-          type: "uint8",
-          label: "Decimals",
-        },
-      ],
-    },
-    {
-      slug: "description",
-      label: "Get Description (Custom Feed)",
-      description:
-        "Get the human-readable description of any Chainlink price feed (e.g. ETH / USD)",
-      type: "read",
-      contract: "customFeed",
-      function: "description",
-      inputs: [],
-      outputs: [
-        {
-          name: "description",
-          type: "string",
-          label: "Feed Description",
-        },
-      ],
-    },
-    {
-      slug: "version",
-      label: "Get Version (Custom Feed)",
-      description:
-        "Get the version number of any Chainlink price feed aggregator contract",
-      type: "read",
-      contract: "customFeed",
-      function: "version",
-      inputs: [],
-      outputs: [
-        {
-          name: "version",
-          type: "uint256",
-          label: "Aggregator Version",
-        },
-      ],
-    },
-  ],
 });

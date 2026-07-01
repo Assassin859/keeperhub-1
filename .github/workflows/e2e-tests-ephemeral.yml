@@ -138,6 +138,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      # ubuntu-latest ships several GB of preinstalled toolchains this job
+      # never touches (Android SDK, .NET, Haskell/GHC). This job now runs
+      # two anvil forks, a sandbox container, and the protocol-coverage
+      # suite on top of the base e2e stack -- free the unused space up
+      # front rather than risk "no space left on device" mid-job.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
@@ -212,6 +222,12 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           ai_model: claude-3-5-haiku-20241022
           safe_fetch_shadow: "true"
+          # Forward sandbox config to the app container so the production build
+          # does not throw at run-code module load. The protocol-coverage setup
+          # workflows execute steps through the app, which dispatches code steps
+          # to the sandbox started below.
+          sandbox_backend: remote
+          sandbox_url: http://localhost:8787
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
         run: |
@@ -239,6 +255,36 @@ jobs:
           done
           echo "anvil Sepolia fork ready on localhost:8547"
 
+      - name: Start anvil Ethereum mainnet fork for protocol-coverage tests
+        run: |
+          docker network create keeperhub-network 2>/dev/null || true
+          docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
+            docker compose --profile test up -d test-anvil-fork-mainnet
+          # Health-poll up to ~60s. Chain ID 0x1 confirms we are on the mainnet fork
+          # (not a misconfigured Sepolia fork on the same port).
+          retries=0
+          until curl -sf -X POST http://localhost:8548 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0x1"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil Ethereum mainnet fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-mainnet || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "anvil Ethereum mainnet fork ready on localhost:8548"
+          # Patch the test DB so chain 1's primaryRpc points at the local fork.
+          # Without this the app (which reads CHAIN_RPC_CONFIG) would submit
+          # transactions to a real mainnet node rather than the anvil fork.
+          # Postgres runs as a GitHub Actions `services:` container (see
+          # postgres: above), not a docker-compose service, so there is no
+          # "keeperhub-db"-named container to docker exec into -- connect
+          # directly on localhost:5432, same as "Wait for services" above.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548' WHERE chain_id = 1"
+
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
 
@@ -257,6 +303,10 @@ jobs:
           # Funder EOA for protocol-coverage suites' ensureNativeGas top-up.
           # When unset the suites skip cleanly (see coverage.test.ts gate).
           TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
+          # Archive-node URL for the Ethereum mainnet anvil fork. When set, the
+          # fork starts on port 8548 and protocol-coverage suites for chain 1
+          # (wrapped, morpho) become active. When unset the suites skip cleanly.
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
           # Live sandbox started by the start-sandbox step above; the
           # sandbox-run-code suite drives runRemote() against it.
           SANDBOX_BACKEND: remote
@@ -265,6 +315,28 @@ jobs:
           # in-process, so the vitest process (not just the app) needs shadow-mode
           # SSRF (dev/CI-only opt-in) to reach the localhost anvil fork.
           SAFE_FETCH_SHADOW: "true"
+
+      - name: Run protocol-coverage tests
+        run: pnpm test:protocol
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          WORKFLOW_TARGET_WORLD: "@workflow/world-postgres"
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_REGION: us-east-1
+          TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
+          # Funder EOA for protocol-coverage suites' ensureNativeGas top-up
+          # on testnet chains (aave-v3, superfluid, chronicle). When unset
+          # those suites skip cleanly (see coverage.test.ts gate).
+          TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
+          # Archive-node URL for the Ethereum mainnet anvil fork started
+          # above. When set, protocol-coverage suites for chain 1 (morpho,
+          # wrapped, lido, ethena, curve, chainlink, spark, yearn, uniswap,
+          # pendle, sky) run for real. When unset those suites skip cleanly.
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''

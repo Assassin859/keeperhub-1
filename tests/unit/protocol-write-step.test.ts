@@ -26,6 +26,17 @@ vi.mock("@/plugins/protocol/steps/resolve-protocol-meta", () => ({
 const mockGetProtocol = vi.fn();
 vi.mock("@/lib/protocol-registry", () => ({
   getProtocol: (...args: unknown[]) => mockGetProtocol(...args),
+  resolveContractAddress: (
+    contract: {
+      userSpecifiedAddress?: boolean;
+      addresses: Record<string, string>;
+    },
+    network: string,
+    providedAddress: string | undefined
+  ) =>
+    contract.userSpecifiedAddress
+      ? providedAddress
+      : contract.addresses[network],
 }));
 
 const mockResolveAbi = vi.fn();
