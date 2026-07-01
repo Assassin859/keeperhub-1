@@ -233,18 +233,19 @@ export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
 };
 
 /**
- * How much native to send when topping up. Aim for ~10x the per-tx cost so
- * a single top-up survives a full suite run without re-checking mid-flight.
+ * How much native to send when topping up. Aim for ~25x the per-tx cost so
+ * a single top-up survives a full suite run without re-checking mid-flight,
+ * including a multi-tx setup sequence (e.g. superfluid: faucet mint +
+ * approve + wrap in setup, then ~7 more writes in the coverage phase --
+ * observed to need ~0.012-0.013 ETH total end to end) plus headroom for
+ * concurrent NonceManager usage across protocols sharing one wallet.
  * Fork-mode: set once via anvil_setBalance to 10 ETH and never re-top-up.
  *
- * Sepolia is sized to the shared TESTNET_FUNDER_PK wallet's actual balance
- * (~0.0117 ETH as of 2026-07-01) rather than the original 0.02 ETH target --
- * still ~9x the per-tx cost, but the funder no longer holds enough to send
- * 0.02 ETH per top-up. Sepolia ETH has no real value, so this is a safe
- * adaptation; it is not a substitute for topping up the funder wallet via a
- * faucet, which remains necessary as the balance keeps draining over time.
+ * The shared TESTNET_FUNDER_PK wallet on Sepolia was topped up to ~0.15 ETH
+ * on 2026-07-01 after briefly running dry mid-debug; re-top-up via a faucet
+ * if this starts throwing "funder has X; need >= Y" again.
  */
 export const FUND_NATIVE_AMOUNT_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("10000000000000000000"), // 10 ETH (fork mode)
-  "11155111": BigInt("11000000000000000"), // 0.011 ETH
+  "11155111": BigInt("30000000000000000"), // 0.03 ETH
 };
