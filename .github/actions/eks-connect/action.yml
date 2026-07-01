@@ -2,12 +2,13 @@ name: Connect to EKS
 description: >
   Opens an AWS Systems Manager port-forward to the cluster API endpoint and maps
   the API hostname to localhost so kubectl and helm reach it through the session.
-  TLS SNI is unchanged so the certificate still validates. No-op when no target
-  is provided for the environment. Requires AWS credentials to be configured.
+  TLS SNI is unchanged so the certificate still validates. Skips entirely unless
+  the environment opts in via the enabled input. Requires AWS credentials to be
+  configured.
 
 inputs:
-  instance-id:
-    description: SSM target instance id for the environment. Empty skips the step.
+  enabled:
+    description: Set to "true" (per-environment variable) to route through the jump.
     required: false
     default: ""
   cluster-name:
@@ -23,16 +24,29 @@ runs:
     - name: Connect to EKS
       shell: bash
       env:
-        INSTANCE_ID: ${{ inputs.instance-id }}
+        ENABLED: ${{ inputs.enabled }}
         CLUSTER_NAME: ${{ inputs.cluster-name }}
         REGION: ${{ inputs.region }}
       run: |
         set -euo pipefail
 
-        if [ -z "${INSTANCE_ID}" ]; then
-          echo "No connection target set for this environment; using the endpoint directly."
+        if [ "${ENABLED}" != "true" ]; then
+          echo "jump not enabled for this environment; using the endpoint directly."
           exit 0
         fi
+
+        # Find the jump host by tag in the target region. Fail closed if the
+        # environment opted in but no jump is running.
+        INSTANCE_ID="$(aws ec2 describe-instances --region "$REGION" \
+          --filters "Name=tag:Role,Values=eks-jump" \
+                    "Name=tag:Cluster,Values=${CLUSTER_NAME}" \
+                    "Name=instance-state-name,Values=running" \
+          --query 'Reservations[].Instances[].InstanceId | [0]' --output text)"
+        if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+          echo "::error::jump enabled for ${CLUSTER_NAME} but no running jump host was found"
+          exit 1
+        fi
+        echo "jump host: ${INSTANCE_ID}"
 
         ENDPOINT=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" \
           --query 'cluster.endpoint' --output text)

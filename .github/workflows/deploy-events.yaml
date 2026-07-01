@@ -57,7 +57,7 @@ jobs:
       - name: Connect to EKS
         uses: ./.github/actions/eks-connect
         with:
-          instance-id: ${{ vars.TO_EKS_CONNECT_INSTANCE_ID }}
+          enabled: ${{ vars.TO_EKS_CONNECT }}
           cluster-name: ${{ env.CLUSTER_NAME }}
           region: ${{ env.REGION }}
 
