@@ -49,6 +49,13 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
 
+      - name: Connect to EKS
+        uses: ./.github/actions/eks-connect
+        with:
+          enabled: ${{ vars.TO_EKS_CONNECT }}
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          region: ${{ env.REGION }}
+
       - name: Replace variables in the Helm values file
         id: replace-vars
         env:
