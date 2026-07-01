@@ -226,10 +226,18 @@ export const FORK_WHALES: Record<
  * ~0.0012 ETH; coverage suites run multiple writes per CI run, sometimes
  * concurrently across protocols sharing one wallet via NonceManager).
  * Fork-mode chains get a generous floor since anvil_setBalance is free.
+ *
+ * Chain 8453 (Base) is real mainnet, not a fork or testnet -- ajna is the
+ * only protocol-coverage suite on it, and every write action it has is
+ * marked skipped in TEST_DATA, so this floor is never actually spent on
+ * gas; it just needs to exist for the preflight to proceed. 0.01 ETH
+ * matches the "read-only test execution" floor documented in
+ * tests/e2e/vitest/protocol-coverage/ajna/base/coverage.test.ts.
  */
 export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("1000000000000000000"), // 1 ETH (fork mode, free via anvil_setBalance)
   "11155111": BigInt("10000000000000000"), // 0.01 ETH
+  "8453": BigInt("10000000000000000"), // 0.01 ETH real Base mainnet ETH
 };
 
 /**
@@ -244,8 +252,13 @@ export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
  * The shared TESTNET_FUNDER_PK wallet on Sepolia was topped up to ~0.15 ETH
  * on 2026-07-01 after briefly running dry mid-debug; re-top-up via a faucet
  * if this starts throwing "funder has X; need >= Y" again.
+ *
+ * Chain 8453 (Base) is real mainnet ETH, unlike the fork/testnet entries
+ * above -- kept modest since ajna's write actions are all skipped, so this
+ * balance is never actually spent, only held as the preflight floor.
  */
 export const FUND_NATIVE_AMOUNT_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("10000000000000000000"), // 10 ETH (fork mode)
   "11155111": BigInt("30000000000000000"), // 0.03 ETH
+  "8453": BigInt("15000000000000000"), // 0.015 ETH real Base mainnet ETH
 };
