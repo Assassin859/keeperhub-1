@@ -262,9 +262,11 @@ jobs:
           # Patch the test DB so chain 1's primaryRpc points at the local fork.
           # Without this the app (which reads CHAIN_RPC_CONFIG) would submit
           # transactions to a real mainnet node rather than the anvil fork.
-          DB_CONTAINER=$(docker ps --filter "name=keeperhub-db" --filter "status=running" \
-            --format '{{.Names}}' | grep -vi 'test' | head -n1)
-          docker exec "$DB_CONTAINER" psql -U postgres keeperhub_test \
+          # Postgres runs as a GitHub Actions `services:` container (see
+          # postgres: above), not a docker-compose service, so there is no
+          # "keeperhub-db"-named container to docker exec into -- connect
+          # directly on localhost:5432, same as "Wait for services" above.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548' WHERE chain_id = 1"
 
       - name: Start code-execution sandbox
