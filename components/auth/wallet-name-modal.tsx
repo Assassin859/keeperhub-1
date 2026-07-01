@@ -1,5 +1,6 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import { RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -17,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
 import { generateHandle } from "@/lib/utils/wallet-handle";
+import { gettingStartedOpenAtom } from "@/lib/workflow/store";
 
 /**
  * First-login rename step for wallet sign-in accounts. The account already has
@@ -26,6 +28,7 @@ import { generateHandle } from "@/lib/utils/wallet-handle";
  */
 export function WalletNameModal(): React.ReactElement | null {
   const { data: session, refetch } = useSession();
+  const setGettingStartedOpen = useSetAtom(gettingStartedOpenAtom);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -75,6 +78,8 @@ export function WalletNameModal(): React.ReactElement | null {
       }
       await refetch();
       toast.success("Welcome to KeeperHub!");
+      // First wallet signup just finished: open the getting-started launcher.
+      setGettingStartedOpen(true);
     } catch {
       toast.error("Could not save your name.");
     } finally {
