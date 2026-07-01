@@ -1,7 +1,9 @@
-import { and, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { workflows } from "@/lib/db/schema";
+import { member, workflows } from "@/lib/db/schema";
+import { ONBOARDING_WORKFLOW_FIXTURES } from "@/scripts/seed/fixtures/onboarding-workflows";
 
 const CHIP_SLUGS = [
   "aave-health",
@@ -12,17 +14,9 @@ const CHIP_SLUGS = [
   "usds-savings",
 ] as const;
 
-/**
- * GET /api/onboarding/recommendations
- *
- * Returns a map of chip slug -> workflow id for each onboarding hub workflow
- * that has been seeded into the database. Public endpoint — the workflows are
- * already visibility=public so revealing their ids is fine.
- *
- * Response: { [chipSlug: string]: string }
- * Missing slugs (not yet seeded) are omitted from the response.
- */
-export async function GET(): Promise<NextResponse> {
+const SLUG_SET = new Set<string>(CHIP_SLUGS);
+
+export async function GET(request: Request): Promise<NextResponse> {
   const rows = await db
     .select({ id: workflows.id, listedSlug: workflows.listedSlug })
     .from(workflows)
@@ -41,7 +35,77 @@ export async function GET(): Promise<NextResponse> {
     }
   }
 
+  const missing = ONBOARDING_WORKFLOW_FIXTURES.filter(
+    (f) => SLUG_SET.has(f.listedSlug) && !map[f.listedSlug]
+  );
+
+  if (missing.length > 0) {
+    try {
+      const session = await auth.api
+        .getSession({ headers: request.headers })
+        .catch(() => null);
+      const userId = session?.user?.id;
+
+      if (userId) {
+        const memberRow = await db
+          .select({ organizationId: member.organizationId })
+          .from(member)
+          .where(eq(member.userId, userId))
+          .limit(1);
+
+        const orgId = memberRow[0]?.organizationId;
+        if (orgId) {
+          const now = new Date();
+          await Promise.allSettled(
+            missing.map((fixture) =>
+              db
+                .insert(workflows)
+                .values({
+                  id: fixture.id,
+                  name: fixture.name,
+                  description: fixture.description,
+                  userId,
+                  organizationId: orgId,
+                  nodes: fixture.nodes,
+                  edges: fixture.edges,
+                  visibility: "public",
+                  enabled: true,
+                  featured: true,
+                  featuredProtocol: fixture.featuredProtocol,
+                  listedSlug: fixture.listedSlug,
+                  seededAt: now,
+                  createdAt: now,
+                  updatedAt: now,
+                  deletedAt: null,
+                })
+                .onConflictDoNothing()
+            )
+          );
+
+          const freshRows = await db
+            .select({ id: workflows.id, listedSlug: workflows.listedSlug })
+            .from(workflows)
+            .where(
+              and(
+                inArray(workflows.listedSlug, [...CHIP_SLUGS]),
+                isNull(workflows.deletedAt),
+                isNotNull(workflows.listedSlug)
+              )
+            );
+
+          for (const row of freshRows) {
+            if (row.listedSlug) {
+              map[row.listedSlug] = row.id;
+            }
+          }
+        }
+      }
+    } catch {
+      // best-effort; fall through and return whatever is in map
+    }
+  }
+
   return NextResponse.json(map, {
-    headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=60" },
+    headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=30" },
   });
 }
