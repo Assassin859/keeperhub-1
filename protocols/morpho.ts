@@ -1,3 +1,4 @@
+import { AbiCoder, keccak256 } from "ethers";
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
   type ActionInputBindings,
@@ -16,8 +17,22 @@ const WSTETH_USDC_MARKET = {
   irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC", // AdaptiveCurveIrm
   lltv: "860000000000000000", // 86%
 } as const;
-const MARKET_ID =
-  "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc";
+
+// Morpho Blue's on-chain market id is keccak256(abi.encode(MarketParams)),
+// the 5 fields above in struct order. Deriving it here (rather than hand-
+// copying the hash) means it can never drift from WSTETH_USDC_MARKET.
+const MARKET_ID = keccak256(
+  AbiCoder.defaultAbiCoder().encode(
+    ["address", "address", "address", "address", "uint256"],
+    [
+      WSTETH_USDC_MARKET.loanToken,
+      WSTETH_USDC_MARKET.collateralToken,
+      WSTETH_USDC_MARKET.oracle,
+      WSTETH_USDC_MARKET.irm,
+      WSTETH_USDC_MARKET.lltv,
+    ]
+  )
+);
 
 // MetaMorpho vault actions (userSpecifiedAddress) are skipped: the vault
 // contract address is unknown at test time and must come from user input.
