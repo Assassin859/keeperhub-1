@@ -1,5 +1,6 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
+  type ActionInputBindings,
   amount,
   contract,
   type ProtocolTestData,
@@ -20,25 +21,68 @@ const MARKET_ID =
 
 // MetaMorpho vault actions (userSpecifiedAddress) are skipped: the vault
 // contract address is unknown at test time and must come from user input.
-const VAULT_SKIPS: Record<string, string> = {
-  "vault-deposit": "vault address required (userSpecifiedAddress)",
-  "vault-mint": "vault address required (userSpecifiedAddress)",
-  "vault-withdraw": "vault address required (userSpecifiedAddress)",
-  "vault-redeem": "vault address required (userSpecifiedAddress)",
-  "vault-asset": "vault address required (userSpecifiedAddress)",
-  "vault-total-assets": "vault address required (userSpecifiedAddress)",
-  "vault-total-supply": "vault address required (userSpecifiedAddress)",
-  "vault-balance": "vault address required (userSpecifiedAddress)",
-  "vault-convert-to-assets": "vault address required (userSpecifiedAddress)",
-  "vault-convert-to-shares": "vault address required (userSpecifiedAddress)",
-  "vault-preview-deposit": "vault address required (userSpecifiedAddress)",
-  "vault-preview-mint": "vault address required (userSpecifiedAddress)",
-  "vault-preview-withdraw": "vault address required (userSpecifiedAddress)",
-  "vault-preview-redeem": "vault address required (userSpecifiedAddress)",
-  "vault-max-deposit": "vault address required (userSpecifiedAddress)",
-  "vault-max-mint": "vault address required (userSpecifiedAddress)",
-  "vault-max-withdraw": "vault address required (userSpecifiedAddress)",
-  "vault-max-redeem": "vault address required (userSpecifiedAddress)",
+//
+// Single source for the 18 standard ERC-4626 vault action slugs (must match
+// the "vault-*" slugs produced by contracts.vault.overrides below). The
+// skip-reason map and the vault action bindings are both keyed off this
+// array via a Record<VaultActionSlug, _> type, so a missing or misspelled
+// slug in either place is a compile error instead of a silent gap.
+const VAULT_ACTION_SLUGS = [
+  "vault-deposit",
+  "vault-mint",
+  "vault-withdraw",
+  "vault-redeem",
+  "vault-asset",
+  "vault-total-assets",
+  "vault-total-supply",
+  "vault-balance",
+  "vault-convert-to-assets",
+  "vault-convert-to-shares",
+  "vault-preview-deposit",
+  "vault-preview-mint",
+  "vault-preview-withdraw",
+  "vault-preview-redeem",
+  "vault-max-deposit",
+  "vault-max-mint",
+  "vault-max-withdraw",
+  "vault-max-redeem",
+] as const;
+type VaultActionSlug = (typeof VAULT_ACTION_SLUGS)[number];
+
+const VAULT_SKIPS: Record<VaultActionSlug, string> = Object.fromEntries(
+  VAULT_ACTION_SLUGS.map((slug) => [
+    slug,
+    "vault address required (userSpecifiedAddress)",
+  ])
+) as Record<VaultActionSlug, string>;
+
+// Vault actions are skipped at runtime (no vault address available), but
+// build-workflow.test.ts still builds a workflow for every action that has
+// TEST_DATA. These placeholder bindings satisfy the builder; the runner
+// skips execution via VAULT_SKIPS.
+const VAULT_BINDINGS: Record<VaultActionSlug, ActionInputBindings> = {
+  "vault-deposit": { assets: amount("USDC", "1"), receiver: wallet() },
+  "vault-mint": { shares: "1000000", receiver: wallet() },
+  "vault-withdraw": {
+    assets: amount("USDC", "1"),
+    receiver: wallet(),
+    owner: wallet(),
+  },
+  "vault-redeem": { shares: "1000000", receiver: wallet(), owner: wallet() },
+  "vault-asset": {},
+  "vault-total-assets": {},
+  "vault-total-supply": {},
+  "vault-balance": { account: wallet() },
+  "vault-convert-to-assets": { shares: "1000000" },
+  "vault-convert-to-shares": { assets: amount("USDC", "1") },
+  "vault-preview-deposit": { assets: amount("USDC", "1") },
+  "vault-preview-mint": { shares: "1000000" },
+  "vault-preview-withdraw": { assets: amount("USDC", "1") },
+  "vault-preview-redeem": { shares: "1000000" },
+  "vault-max-deposit": { receiver: wallet() },
+  "vault-max-mint": { receiver: wallet() },
+  "vault-max-withdraw": { owner: wallet() },
+  "vault-max-redeem": { owner: wallet() },
 };
 
 export const TEST_DATA: ProtocolTestData = {
@@ -114,32 +158,7 @@ export const TEST_DATA: ProtocolTestData = {
         onBehalf: wallet(),
         receiver: wallet(),
       },
-      // Vault actions: skipped at runtime (no vault address available), but
-      // build-workflow.test.ts still builds a workflow for every action that
-      // has TEST_DATA. Placeholder bindings satisfy the builder; the runner
-      // skips them via VAULT_SKIPS.
-      "vault-deposit": { assets: amount("USDC", "1"), receiver: wallet() },
-      "vault-mint": { shares: "1000000", receiver: wallet() },
-      "vault-withdraw": {
-        assets: amount("USDC", "1"),
-        receiver: wallet(),
-        owner: wallet(),
-      },
-      "vault-redeem": { shares: "1000000", receiver: wallet(), owner: wallet() },
-      "vault-asset": {},
-      "vault-total-assets": {},
-      "vault-total-supply": {},
-      "vault-balance": { account: wallet() },
-      "vault-convert-to-assets": { shares: "1000000" },
-      "vault-convert-to-shares": { assets: amount("USDC", "1") },
-      "vault-preview-deposit": { assets: amount("USDC", "1") },
-      "vault-preview-mint": { shares: "1000000" },
-      "vault-preview-withdraw": { assets: amount("USDC", "1") },
-      "vault-preview-redeem": { shares: "1000000" },
-      "vault-max-deposit": { receiver: wallet() },
-      "vault-max-mint": { receiver: wallet() },
-      "vault-max-withdraw": { owner: wallet() },
-      "vault-max-redeem": { owner: wallet() },
+      ...VAULT_BINDINGS,
       // Skipped write actions: builder still requires bindings for all address inputs.
       liquidate: {
         ...WSTETH_USDC_MARKET,
