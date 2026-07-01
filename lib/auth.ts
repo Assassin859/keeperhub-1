@@ -378,6 +378,14 @@ const plugins = [
       member: memberRole,
     },
 
+    // Wallet (SIWE) accounts authenticate by signature and never verify their
+    // synthetic email, so better-auth's default email-verification gate on
+    // invitation list/accept/reject/create (403 EMAIL_VERIFICATION_REQUIRED)
+    // permanently hid received invites from them. Email/OAuth accounts are
+    // already verified at signup, so this gate was a no-op for them; disabling
+    // it only unblocks wallet users.
+    requireEmailVerificationOnInvitation: false,
+
     // Email invitation handler using SendGrid
     async sendInvitationEmail(data) {
       const inviteLink = `${getBaseURL()}/accept-invite/${data.id}`;
