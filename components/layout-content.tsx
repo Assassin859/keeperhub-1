@@ -25,13 +25,25 @@ const BARE_LAYOUT_PATHS: ReadonlySet<string> = new Set([
   "/enforce-mfa",
 ]);
 
+// Prefixes whose whole subtree renders bare. The welcome landing plus its
+// onboarding wizard (/welcome, /welcome/create-org, ...) are full-screen and
+// must not render the workflow shell behind them.
+const BARE_LAYOUT_PREFIXES: readonly string[] = ["/welcome"];
+
+function isBareLayoutPath(pathname: string): boolean {
+  if (BARE_LAYOUT_PATHS.has(pathname)) {
+    return true;
+  }
+  return BARE_LAYOUT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
 export function LayoutContent({
   children,
 }: {
   children: ReactNode;
 }): React.ReactElement {
   const pathname = usePathname();
-  if (BARE_LAYOUT_PATHS.has(pathname)) {
+  if (isBareLayoutPath(pathname)) {
     return <div className="relative z-10">{children}</div>;
   }
   return (

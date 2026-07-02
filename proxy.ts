@@ -163,6 +163,7 @@ const MFA_EXEMPT_PAGES = new Set<string>([
   "/about",
   "/terms",
   "/privacy",
+  "/welcome",
   "/enroll-mfa",
   "/enforce-mfa",
   "/verify-mfa",

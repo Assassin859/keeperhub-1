@@ -504,7 +504,12 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     };
   }, []);
 
-  if (!gs.isAuthenticated || SUPPRESSED_PATHS.has(pathname ?? "")) {
+  const path = pathname ?? "";
+  if (
+    !gs.isAuthenticated ||
+    SUPPRESSED_PATHS.has(path) ||
+    path.startsWith("/welcome")
+  ) {
     return null;
   }
   if (gs.state === "dismissed") {

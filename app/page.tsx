@@ -9,6 +9,7 @@ import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
+import { hasSeenWelcome, isContinueAsGuest } from "@/lib/welcome-status";
 import {
   currentWorkflowIdAtom,
   currentWorkflowNameAtom,
@@ -64,7 +65,7 @@ function createDefaultNodes() {
 
 const Home = () => {
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, isPending: sessionPending } = useSession();
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
@@ -82,6 +83,35 @@ const Home = () => {
   useEffect(() => {
     setHasSidebarBeenShown(false);
   }, [setHasSidebarBeenShown]);
+
+  // Welcome gating: a visitor without a real session (none, or anonymous) lands
+  // on the welcome page instead of the bare canvas, unless they explicitly chose
+  // to continue without an account. A signed-in user who has not gone through
+  // the onboarding wizard is sent into it.
+  const welcomeRedirectedRef = useRef(false);
+  useEffect(() => {
+    if (sessionPending || welcomeRedirectedRef.current) {
+      return;
+    }
+    const isSignedIn =
+      Boolean(session?.user) && !isAnonymousUser(session?.user);
+    if (!isSignedIn) {
+      if (!isContinueAsGuest()) {
+        welcomeRedirectedRef.current = true;
+        router.replace("/welcome");
+      }
+      return;
+    }
+    // Server flag makes completion stick across devices/browsers; the local
+    // flag is a same-device fast path right after finishing.
+    const onboardingDone =
+      (session?.user as { onboardingCompleted?: boolean } | undefined)
+        ?.onboardingCompleted === true || hasSeenWelcome();
+    if (!onboardingDone) {
+      welcomeRedirectedRef.current = true;
+      router.replace("/welcome/create-org");
+    }
+  }, [sessionPending, session, router]);
 
   // Update page title when workflow name changes
   useEffect(() => {
@@ -183,12 +213,7 @@ const Home = () => {
     setCurrentWorkflowId(null);
     setCurrentWorkflowName("New Workflow");
     hasCreatedWorkflowRef.current = false;
-  }, [
-    setNodes,
-    setEdges,
-    setCurrentWorkflowId,
-    setCurrentWorkflowName,
-  ]);
+  }, [setNodes, setEdges, setCurrentWorkflowId, setCurrentWorkflowName]);
 
   // Canvas and toolbar are rendered by PersistentCanvas in the layout
   return null;
