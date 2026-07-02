@@ -187,6 +187,12 @@ export const MetricNames = {
   // often the policy-bypass window opens before deciding whether to
   // hard-fail the resolver vs keep the current silent-downgrade behavior.
   SIGNER_PROBE_FAILURE: "signer_probe.failure.total",
+
+  // SQS trigger-message authentication. One counter labelled by
+  // auth_result (valid | unsigned | unknown_caller | bad_signature |
+  // invalid_schema | stale) and mode (warn | enforce). Drives the rollout gate:
+  // flip the executor to enforce only once unsigned/invalid series hit zero.
+  SQS_MESSAGE_AUTH: "sqs.message.auth.total",
 } as const;
 
 /**
@@ -216,6 +222,8 @@ export const LabelKeys = {
   ERROR_CONTEXT: "error_context",
   BILLING_STATUS: "billing_status",
   TIER: "tier",
+  AUTH_RESULT: "auth_result",
+  MODE: "mode",
 } as const;
 
 /**

@@ -10,6 +10,7 @@ import {
 import { statusForErrorType } from "@/lib/errors/execution-status";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { signSqsMessageAttributes } from "@/lib/sqs-message-auth";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
@@ -72,17 +73,19 @@ export async function executeWorkflowInBackground(
     // The executor transitions the row from 'pending' -> 'running' -> terminal
     // directly, so we do not pre-lift the status here.
     if (process.env.WORKFLOW_DISPATCH_VIA_EXECUTOR === "1") {
+      const body = JSON.stringify({
+        executionId,
+        workflowId,
+        userId: createdBy ?? "",
+        organizationId: organizationId ?? undefined,
+        triggerType,
+        input,
+      });
       await getSqsClient().send(
         new SendMessageCommand({
           QueueUrl: process.env.SQS_QUEUE_URL,
-          MessageBody: JSON.stringify({
-            executionId,
-            workflowId,
-            userId: createdBy ?? "",
-            organizationId: organizationId ?? undefined,
-            triggerType,
-            input,
-          }),
+          MessageBody: body,
+          MessageAttributes: signSqsMessageAttributes("app", body),
         })
       );
       console.log(

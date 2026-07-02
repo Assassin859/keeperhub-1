@@ -1,4 +1,5 @@
 import { type SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { signSqsMessageAttributes } from "./sqs-message-auth";
 
 /**
  * Shape of every event-trigger message the tracker enqueues to SQS. Kept
@@ -24,7 +25,7 @@ export async function enqueueWorkflowEventTrigger(
   queueUrl: string,
   trigger: WorkflowEventTrigger,
 ): Promise<void> {
-  const body = {
+  const payload = {
     // undefined is dropped by JSON.stringify, so legacy messages stay identical.
     executionId: trigger.executionId,
     workflowId: trigger.workflowId,
@@ -32,16 +33,18 @@ export async function enqueueWorkflowEventTrigger(
     triggerType: "event" as const,
     triggerData: trigger.triggerData,
   };
+  const body = JSON.stringify(payload);
   await client.send(
     new SendMessageCommand({
       QueueUrl: queueUrl,
-      MessageBody: JSON.stringify(body),
+      MessageBody: body,
       MessageAttributes: {
         TriggerType: { DataType: "String", StringValue: "event" },
         WorkflowId: {
           DataType: "String",
           StringValue: trigger.workflowId,
         },
+        ...signSqsMessageAttributes("events", body),
       },
     }),
   );

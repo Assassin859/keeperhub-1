@@ -1,5 +1,13 @@
 export type ExecutionMode = "isolated" | "process" | "complex" | "in-process";
 
+export type SqsHmacMode = "off" | "warn" | "enforce";
+
+// Anything other than an explicit "off"/"enforce" falls back to "warn" so a
+// typo can never silently disable verification (fail-safe default).
+function parseSqsHmacMode(value: string | undefined): SqsHmacMode {
+  return value === "off" || value === "enforce" ? value : "warn";
+}
+
 export const CONFIG = {
   executionMode: (process.env.EXECUTION_MODE || "isolated") as ExecutionMode,
 
@@ -43,6 +51,18 @@ export const CONFIG = {
 
   workflowRunnerCollectMonitoring:
     process.env.WORKFLOW_RUNNER_COLLECT_MONITORING !== "false",
+
+  // SQS trigger-message HMAC verification mode. "warn" (default)
+  // verifies + records metrics but never drops a message, so shipping the
+  // executor change alone cannot reject live traffic; flip to "enforce" via env
+  // (no redeploy) once rollout metrics show every producer is signing. "off"
+  // skips the checks entirely.
+  sqsHmacMode: parseSqsHmacMode(process.env.SQS_HMAC_MODE),
+  // Advisory freshness threshold (seconds) for a validly-signed message. Beyond
+  // it a metric + warn is emitted, but the message is still processed - a queue
+  // backlog can legitimately hold old messages, so age alone never drops a
+  // trigger.
+  sqsHmacMaxAgeSeconds: Number(process.env.SQS_HMAC_MAX_AGE_SECONDS) || 900,
 
   visibilityTimeout: 300,
   waitTimeSeconds: 20,
