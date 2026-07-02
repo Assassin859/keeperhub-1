@@ -323,7 +323,17 @@ jobs:
           SAFE_FETCH_SHADOW: "true"
 
       - name: Run protocol-coverage tests
-        run: pnpm test:protocol
+        run: |
+          # Re-point both forked chains at their local anvil forks right
+          # before the suites read the rows: full-pipeline.test.ts (in the
+          # e2e step above) rewrites the Sepolia row to live publicnode
+          # URLs in its beforeAll, undoing the patches applied when the
+          # forks started. Nothing runs between this statement and the
+          # suites, so this write wins.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
+          pnpm test:protocol
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
