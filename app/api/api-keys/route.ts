@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { parseScopeInput } from "@/lib/mcp/oauth-scopes";
 import {
   dualFactorErrorResponse,
   requireDualFactor,
@@ -51,6 +52,7 @@ export async function GET(request: Request) {
         keyPrefix: true,
         createdAt: true,
         lastUsedAt: true,
+        scope: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
       limit: req.pageSize,
@@ -115,6 +117,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const name = body.name || null;
+    const scope = parseScopeInput(body.scopes);
 
     // Dual-factor at mint time. Long-lived bypass credentials warrant
     // a fresh challenge on BOTH factors at the exact moment of issue.
@@ -141,6 +144,7 @@ export async function POST(request: Request) {
         name,
         keyHash: hash,
         keyPrefix: prefix,
+        scope,
       })
       .returning({
         id: apiKeys.id,

@@ -80,7 +80,7 @@ export default async function McpReauthorizePage({
               </li>
               <li>
                 <span className="font-mono text-xs">mcp:admin</span> — full
-                access to your KeeperHub organization.
+                access to all existing and future actions.
               </li>
             </ul>
           </div>
