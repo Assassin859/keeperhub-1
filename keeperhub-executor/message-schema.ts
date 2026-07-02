@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ExecutorMessage } from "./types";
 
 /**
  * Runtime validation for SQS trigger message bodies, mirroring the TypeScript
@@ -44,7 +45,10 @@ const eventMessageSchema = z.object({
   workflowId,
   userId: z.string(),
   executionId: z.string().optional(),
-  triggerData: payload,
+  // The event producer types triggerData as `unknown` (workflow-sqs.ts) and
+  // passes decoded event data through verbatim; keep this permissive so a
+  // non-object payload never fails an already-authenticated message.
+  triggerData: z.unknown(),
 });
 
 // manual and webhook share a shape but are separate literal branches so the
@@ -72,3 +76,14 @@ export const executorMessageSchema = z.discriminatedUnion("triggerType", [
   manualMessageSchema,
   webhookMessageSchema,
 ]);
+
+// Compile-time drift guard binding this schema to ExecutorMessage in ./types.ts
+// (the "Keep in sync" comment above is otherwise unenforced). If a new trigger
+// type or a new required field is added to ExecutorMessage without a matching
+// schema branch/field, every message of that shape would be dropped as
+// invalid_schema in enforce mode - so instead this stops compiling: each
+// ExecutorMessage variant must be a valid input to the schema.
+type Assert<T extends true> = T;
+type _SchemaCoversExecutorMessage = Assert<
+  ExecutorMessage extends z.input<typeof executorMessageSchema> ? true : false
+>;
