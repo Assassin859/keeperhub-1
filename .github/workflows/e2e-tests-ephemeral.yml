@@ -401,6 +401,8 @@ jobs:
           docker logs keeperhub-test-anvil-fork 2>&1 | tail -40 || true
           echo "--- anvil mainnet fork logs:"
           docker logs keeperhub-test-anvil-fork-mainnet 2>&1 | tail -20 || true
+          echo "--- bare-metal app log tail:"
+          tail -n 150 /tmp/keeperhub-app-baremetal.log 2>/dev/null || echo "(no bare-metal app log)"
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''

@@ -228,7 +228,10 @@ runs:
       if: inputs.image_tag == ''
       shell: bash
       run: |
-        pnpm start &
+        # Capture bare-metal app output: a backgrounded process's stdout is
+        # not attributed to later steps' logs, so without this the app's
+        # runtime errors are invisible in CI post-mortems.
+        pnpm start > /tmp/keeperhub-app-baremetal.log 2>&1 &
         for i in $(seq 1 30); do
           if curl -sf http://localhost:3000 > /dev/null 2>&1; then
             echo "App is ready"
