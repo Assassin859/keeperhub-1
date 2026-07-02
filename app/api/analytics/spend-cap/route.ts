@@ -34,9 +34,9 @@ export const GET = requireOrganization(
  * Set or clear the organization's daily value cap (native wei).
  *
  * Gated by `organization:update` (admin/owner) over the session. A leaked `kh_`
- * API key or MCP OAuth token -- the KEEP-911 threat -- authenticates a different
- * layer and never satisfies the org session context, so it cannot raise its own
- * ceiling. A null `dailyValueCapWei` clears the cap (unlimited).
+ * API key or MCP OAuth token authenticates a different layer and never satisfies
+ * the org session context, so a compromised key cannot raise its own ceiling.
+ * A null `dailyValueCapWei` clears the cap (unlimited).
  */
 export const PUT = requirePermission(
   "organization",
