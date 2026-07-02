@@ -100,6 +100,19 @@ describe("sendWorkflowExecutionDigestEmail", () => {
     expect(content).toContain("Failed: 2 (40%)");
   });
 
+  it("rates success against completed runs, excluding pending/running/cancelled", async () => {
+    const data = baseData();
+    // 3 success + 2 error = 5 completed, but 10 total runs (5 in-flight or
+    // cancelled). The rate must be over completed (3/5 = 60%), not total.
+    await sendWorkflowExecutionDigestEmail({
+      ...data,
+      stats: { ...data.stats, total: 10, success: 3, error: 2 },
+    });
+    const content = sentContent();
+    expect(content).toContain("Succeeded: 3 (60%)");
+    expect(content).toContain("Failed: 2 (40%)");
+  });
+
   it("reports the number of distinct workflows run", async () => {
     await sendWorkflowExecutionDigestEmail(baseData());
     const content = sentContent();
