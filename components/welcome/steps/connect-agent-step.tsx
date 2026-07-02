@@ -1,6 +1,7 @@
 "use client";
 
 import { KeyRound } from "lucide-react";
+import { motion, useAnimationControls } from "motion/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
@@ -23,6 +24,7 @@ const BACK_PATH = "/welcome/invite-members";
 export function ConnectAgentStep(): React.ReactElement {
   const router = useRouter();
   const { open } = useOverlay();
+  const apiKeyBoxControls = useAnimationControls();
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [mcpUrl, setMcpUrl] = useState(
@@ -53,6 +55,13 @@ export function ConnectAgentStep(): React.ReactElement {
   // server-side with the new flag; the root gate then keeps the user on the
   // canvas instead of bouncing back here.
   const finish = async (): Promise<void> => {
+    if (!apiKey) {
+      await apiKeyBoxControls.start({
+        scale: [1, 1.08, 1],
+        transition: { duration: 0.6, ease: "easeInOut" },
+      });
+      return;
+    }
     setFinishing(true);
     await markOnboardingComplete();
     window.location.assign("/");
@@ -118,7 +127,10 @@ export function ConnectAgentStep(): React.ReactElement {
           </Tabs>
         </div>
 
-        <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
+        <motion.div
+          animate={apiKeyBoxControls}
+          className="flex flex-col gap-2 rounded-lg border border-border p-4"
+        >
           <p className="font-medium text-sm">Organization API key</p>
           <p className="text-muted-foreground text-sm">
             {apiKey
@@ -134,7 +146,7 @@ export function ConnectAgentStep(): React.ReactElement {
             <KeyRound className="size-4" />
             {apiKey ? "Manage API keys" : "Generate API key"}
           </Button>
-        </div>
+        </motion.div>
       </div>
     </WelcomeShell>
   );
