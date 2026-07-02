@@ -47,7 +47,13 @@ export function signSqsMessageAttributes(
     );
   }
   const timestamp = String(nowSeconds);
-  const signature = computeSqsSignature(secret, queueUrl, caller, body, timestamp);
+  const signature = computeSqsSignature(
+    secret,
+    queueUrl,
+    caller,
+    body,
+    timestamp,
+  );
   return {
     [SQS_CALLER_ATTR]: { DataType: "String", StringValue: caller },
     [SQS_TIMESTAMP_ATTR]: { DataType: "String", StringValue: timestamp },

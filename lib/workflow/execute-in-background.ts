@@ -86,7 +86,11 @@ export async function executeWorkflowInBackground(
         new SendMessageCommand({
           QueueUrl: queueUrl,
           MessageBody: body,
-          MessageAttributes: signSqsMessageAttributes("app", queueUrl ?? "", body),
+          MessageAttributes: signSqsMessageAttributes(
+            "app",
+            queueUrl ?? "",
+            body
+          ),
         })
       );
       console.log(
