@@ -606,21 +606,20 @@ export async function processMessage(
       message.MessageAttributes,
       body
     );
-    const collector = getMetricsCollector();
+    // Exactly one auth_result per message (a failure outranks stale, stale
+    // outranks valid) so the metric's total across labels equals messages
+    // processed - the rollout gate reads these series.
+    const result = auth.failure ?? (auth.stale ? "stale" : "valid");
+    getMetricsCollector().incrementCounter(MetricNames.SQS_MESSAGE_AUTH, {
+      [LabelKeys.AUTH_RESULT]: result,
+      [LabelKeys.MODE]: CONFIG.sqsHmacMode,
+    });
     if (auth.stale) {
-      collector.incrementCounter(MetricNames.SQS_MESSAGE_AUTH, {
-        [LabelKeys.AUTH_RESULT]: "stale",
-        [LabelKeys.MODE]: CONFIG.sqsHmacMode,
-      });
       console.warn(
         `[Executor] SQS message older than ${CONFIG.sqsHmacMaxAgeSeconds}s (advisory) for workflow ${body.workflowId}`
       );
     }
     if (auth.failure) {
-      collector.incrementCounter(MetricNames.SQS_MESSAGE_AUTH, {
-        [LabelKeys.AUTH_RESULT]: auth.failure,
-        [LabelKeys.MODE]: CONFIG.sqsHmacMode,
-      });
       console.warn(
         `[Executor] SQS message failed auth (${auth.failure}, mode=${CONFIG.sqsHmacMode}) for workflow ${body.workflowId}`
       );
@@ -633,11 +632,6 @@ export async function processMessage(
         );
         return;
       }
-    } else {
-      collector.incrementCounter(MetricNames.SQS_MESSAGE_AUTH, {
-        [LabelKeys.AUTH_RESULT]: "valid",
-        [LabelKeys.MODE]: CONFIG.sqsHmacMode,
-      });
     }
   }
 
