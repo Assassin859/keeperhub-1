@@ -193,11 +193,7 @@ export function buildApyContext(
       }
       // Reject non-finite, non-positive, and implausibly large APY values
       // (untrusted source — see APY_MAX_PLAUSIBLE).
-      if (
-        !Number.isFinite(p.apy) ||
-        p.apy <= 0 ||
-        p.apy > APY_MAX_PLAUSIBLE
-      ) {
+      if (!Number.isFinite(p.apy) || p.apy <= 0 || p.apy > APY_MAX_PLAUSIBLE) {
         continue;
       }
       // YIELD-03: the engine displays this rate as p.apy.toFixed(1), so any
@@ -249,7 +245,7 @@ export function buildApyContext(
     const key = `${stable.symbol.toLowerCase()}:${stable.chainId}`;
     map.set(key, {
       apy: best.apy,
-      projectLabel: projectSlugToLabel(best.project, stable.chainId),
+      projectLabel: projectSlugToLabel(best.project),
       destinationAddress: resolveDestinationAddress(
         best.project,
         stable.chainId
@@ -266,32 +262,29 @@ export function buildApyContext(
 /**
  * Returns a human-readable label for a DefiLlama project slug.
  *
- * Chain suffix (e.g. " on Arbitrum") is appended for non-Ethereum chains.
- * sky-lending always returns "Sky Savings (sUSDS)" with no chain suffix
- * since the sUSDS product name is self-describing.
+ * The network is intentionally NOT included: the suggestion card renders a
+ * separate chain pill, so repeating the chain in the venue label would be
+ * redundant.
  *
  * Examples:
- *   projectSlugToLabel("sky-lending", 1)     -> "Sky Savings (sUSDS)"
- *   projectSlugToLabel("aave-v3", 42161)     -> "Aave V3 on Arbitrum"
- *   projectSlugToLabel("sparklend", 1)       -> "SparkLend"
- *   projectSlugToLabel("morpho-blue", 8453)  -> "Morpho Blue on Base"
+ *   projectSlugToLabel("sky-lending")  -> "Sky Savings (sUSDS)"
+ *   projectSlugToLabel("aave-v3")      -> "Aave V3"
+ *   projectSlugToLabel("morpho-blue")  -> "Morpho Blue"
  */
-export function projectSlugToLabel(slug: string, chainId: number): string {
-  const label = yieldChainLabel(chainId);
-  const chainSuffix = label === "Ethereum" ? "" : ` on ${label}`;
+export function projectSlugToLabel(slug: string): string {
   switch (slug) {
     case "sky-lending":
       return "Sky Savings (sUSDS)";
     case "aave-v3":
-      return `Aave V3${chainSuffix}`;
+      return "Aave V3";
     case "aave-v4":
-      return `Aave V4${chainSuffix}`;
+      return "Aave V4";
     case "sparklend":
-      return `SparkLend${chainSuffix}`;
+      return "SparkLend";
     case "spark-savings":
-      return `Spark Savings${chainSuffix}`;
+      return "Spark Savings";
     case "morpho-blue":
-      return `Morpho Blue${chainSuffix}`;
+      return "Morpho Blue";
     default:
       return slug;
   }
@@ -337,29 +330,5 @@ function resolveDestinationAddress(
       return null;
     default:
       return null;
-  }
-}
-
-/**
- * Human-readable chain name for use in project labels.
- *
- * Intentionally separate from DEFILLAMA_YIELDS_CHAIN_SLUGS (which uses
- * the yields API's title-case values like "OP Mainnet") so that labels
- * read naturally in English (e.g. "Aave V3 on Optimism", not "on OP Mainnet").
- */
-function yieldChainLabel(chainId: number): string {
-  switch (chainId) {
-    case 1:
-      return "Ethereum";
-    case 10:
-      return "Optimism";
-    case 42_161:
-      return "Arbitrum";
-    case 8453:
-      return "Base";
-    case 137:
-      return "Polygon";
-    default:
-      return `Chain ${chainId}`;
   }
 }

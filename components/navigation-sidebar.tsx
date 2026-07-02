@@ -13,6 +13,7 @@ import {
   Info,
   Loader2,
   Plus,
+  ScanLine,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
@@ -546,6 +547,20 @@ const NAV_ITEMS: NavItemDef[] = [
     href: "/hub",
     requireAuth: false,
   },
+  // Scan is a public funnel entry point, gated by the same build-time flag as
+  // the /scan page and API. Hidden entirely when scanning is disabled so the
+  // nav never links to the "not available yet" placeholder.
+  ...(process.env.NEXT_PUBLIC_SCAN_ENABLED === "true"
+    ? ([
+        {
+          id: "scan",
+          icon: ScanLine,
+          label: "Scan",
+          href: "/scan",
+          requireAuth: false,
+        },
+      ] satisfies NavItemDef[])
+    : []),
   {
     id: "workflows",
     icon: WorkflowIcon,

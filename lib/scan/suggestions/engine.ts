@@ -169,7 +169,6 @@ function buildYieldSuggestion(
   apyContext?: ApyContext | null
 ): SuggestionDescriptor {
   const slug = `stablecoin-yield-${stable.symbol.toLowerCase()}-${stable.chainId}`;
-  const chain = chainLabel(stable.chainId);
   const bal = stable.usdValue ?? 0;
   const entry = apyContext?.getBestYield(stable.symbol, stable.chainId) ?? null;
 
@@ -184,9 +183,9 @@ function buildYieldSuggestion(
     }
     return {
       id: slug,
-      name: `${stable.symbol} Idle Yield — ${entry.projectLabel}`,
+      name: `${stable.symbol} Idle Yield · ${entry.projectLabel}`,
       description:
-        `Monitor your ${stable.symbol} balance ($${Math.round(bal)}) on ${chain}. ` +
+        `Monitor your ${stable.symbol} balance ($${Math.round(bal)}). ` +
         `Earn ~${apyStr}% APY via ${entry.projectLabel}.`,
       category: "yield",
       chainId: stable.chainId,
@@ -201,7 +200,7 @@ function buildYieldSuggestion(
     id: slug,
     name: `${stable.symbol} Idle Yield Monitor`,
     description:
-      `Monitor your ${stable.symbol} balance ($${Math.round(bal)}) on ${chain} ` +
+      `Monitor your ${stable.symbol} balance ($${Math.round(bal)}) ` +
       "for idle yield opportunities.",
     category: "yield",
     chainId: stable.chainId,

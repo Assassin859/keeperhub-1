@@ -32,7 +32,7 @@ export function ScanResults({
       className="mt-8"
     >
       {scanState === "loading" && (
-        <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <SuggestionCardSkeleton />
           <SuggestionCardSkeleton />
           <SuggestionCardSkeleton />
@@ -42,11 +42,10 @@ export function ScanResults({
       {scanState === "populated" && data && (
         <>
           <ResultsHeader
-            scannedAt={data.scannedAt}
             stablecoins={data.stablecoins}
             unavailableChains={data.unavailableChains}
           />
-          <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {(data.suggestions ?? []).map((suggestion) => (
               <SuggestionCard
                 key={suggestion.id}
@@ -88,7 +87,7 @@ export function ScanResults({
             className="mt-0.5 size-4 shrink-0 text-[var(--color-text-error)]"
           />
           <p className="text-[var(--color-text-error)] text-sm">
-            Too many scan requests — try again in {retryAfter} minute
+            Too many scan requests. Try again in {retryAfter} minute
             {retryAfter === 1 ? "" : "s"}.
           </p>
         </div>

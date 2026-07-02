@@ -127,48 +127,50 @@ export default function ScanPage(): React.ReactElement {
 
   return (
     <>
-      <main className="pointer-events-auto min-h-screen bg-[var(--color-hub-overlay)] pt-[var(--header-height)]">
-        <div className="mx-auto max-w-2xl px-4 sm:px-6">
-          {isCompact ? (
-            <div className="py-4">
-              <ScanInput
-                disabled={isLoading}
-                error={inputError}
-                onChange={handleAddressChange}
-                onSubmit={handleScanSubmit}
-                value={address}
-              />
-            </div>
-          ) : (
-            <div className="py-12 text-center sm:py-16">
-              <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-foreground">
-                Scan your wallet
-              </h1>
-              <p className="mb-8 text-muted-foreground text-sm">
-                Paste an EVM address to see DeFi positions and suggested
-                automations.
-              </p>
-              <ScanInput
-                disabled={isLoading}
-                error={inputError}
-                onChange={handleAddressChange}
-                onSubmit={handleScanSubmit}
-                value={address}
-              />
-            </div>
-          )}
+      <main className="pointer-events-auto fixed inset-0 overflow-y-auto bg-[var(--color-hub-overlay)] pt-[calc(5rem+var(--app-banner-height,0px))]">
+        <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
+          <div className="mx-auto max-w-5xl px-4 pb-16 sm:px-6">
+            {isCompact ? (
+              <div className="mx-auto max-w-2xl py-4">
+                <ScanInput
+                  disabled={isLoading}
+                  error={inputError}
+                  onChange={handleAddressChange}
+                  onSubmit={handleScanSubmit}
+                  value={address}
+                />
+              </div>
+            ) : (
+              <div className="mx-auto max-w-2xl py-12 text-center sm:py-16">
+                <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-foreground">
+                  Scan your wallet
+                </h1>
+                <p className="mb-8 text-muted-foreground text-sm">
+                  Paste an EVM address to see DeFi positions and suggested
+                  automations.
+                </p>
+                <ScanInput
+                  disabled={isLoading}
+                  error={inputError}
+                  onChange={handleAddressChange}
+                  onSubmit={handleScanSubmit}
+                  value={address}
+                />
+              </div>
+            )}
 
-          {scanState !== "idle" && (
-            <ScanResults
-              data={scanData}
-              errorMessage={errorMessage}
-              onCardSelect={handleCardSelect}
-              retryAfter={retryAfter}
-              scanState={scanState}
-            />
-          )}
+            {scanState !== "idle" && (
+              <ScanResults
+                data={scanData}
+                errorMessage={errorMessage}
+                onCardSelect={handleCardSelect}
+                retryAfter={retryAfter}
+                scanState={scanState}
+              />
+            )}
 
-          {scanState === "populated" && <ScanDisclaimer />}
+            {scanState === "populated" && <ScanDisclaimer />}
+          </div>
         </div>
       </main>
 

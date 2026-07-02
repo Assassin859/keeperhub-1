@@ -34,8 +34,8 @@ import {
 } from "@/lib/scan/price/defillama-yields";
 import { scanAddress } from "@/lib/scan/scanner";
 import {
-  buildSuggestions,
   type ApyContext,
+  buildSuggestions,
 } from "@/lib/scan/suggestions/engine";
 import { getRequestSourceIp } from "@/lib/security/request-attribution";
 

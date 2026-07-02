@@ -1,8 +1,18 @@
 "use client";
 
+import { Bell, Box, Coins, Gift, ShieldCheck } from "lucide-react";
+import Image from "next/image";
 import type { KeyboardEvent } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getChainName } from "@/lib/chain-utils";
-import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
+import type {
+  SuggestionCategory,
+  SuggestionDescriptor,
+} from "@/lib/scan/suggestions/types";
 import { CategoryBadge } from "./category-badge";
 import { ReadWritePill } from "./read-write-pill";
 
@@ -10,6 +20,67 @@ type SuggestionCardProps = {
   suggestion: SuggestionDescriptor;
   onSelect: (suggestion: SuggestionDescriptor) => void;
 };
+
+/** Protocol/venue logos served from public/protocols. */
+const PROTOCOL_ICONS: Record<string, string> = {
+  aave: "/protocols/aave.png",
+  morpho: "/protocols/morpho.png",
+  sky: "/protocols/sky.png",
+  spark: "/protocols/spark.png",
+  lido: "/protocols/lido.png",
+  compound: "/protocols/compound.png",
+};
+
+/** Lucide fallback icon per category when no protocol logo maps. */
+const CATEGORY_FALLBACK_ICON: Record<SuggestionCategory, typeof Box> = {
+  yield: Coins,
+  health: ShieldCheck,
+  alert: Bell,
+  claim: Gift,
+};
+
+/**
+ * Resolve a protocol/venue logo for the card icon tile.
+ *
+ * Health/alert/claim suggestions carry a `protocol` slug; yield suggestions
+ * name the venue in `name` (format controlled by projectSlugToLabel), so a
+ * keyword match is stable. Returns null when nothing maps (category fallback).
+ */
+function resolveProtocolIcon(suggestion: SuggestionDescriptor): string | null {
+  const proto = suggestion.protocol ?? "";
+  if (proto.startsWith("aave")) {
+    return PROTOCOL_ICONS.aave;
+  }
+  if (proto.startsWith("spark")) {
+    return PROTOCOL_ICONS.spark;
+  }
+  if (proto === "lido") {
+    return PROTOCOL_ICONS.lido;
+  }
+  if (proto === "sky") {
+    return PROTOCOL_ICONS.sky;
+  }
+  const label = suggestion.name.toLowerCase();
+  if (label.includes("aave")) {
+    return PROTOCOL_ICONS.aave;
+  }
+  if (label.includes("morpho")) {
+    return PROTOCOL_ICONS.morpho;
+  }
+  if (label.includes("sky")) {
+    return PROTOCOL_ICONS.sky;
+  }
+  if (label.includes("spark")) {
+    return PROTOCOL_ICONS.spark;
+  }
+  if (label.includes("lido")) {
+    return PROTOCOL_ICONS.lido;
+  }
+  if (label.includes("compound")) {
+    return PROTOCOL_ICONS.compound;
+  }
+  return null;
+}
 
 export function SuggestionCard({
   suggestion,
@@ -26,6 +97,9 @@ export function SuggestionCard({
     }
   };
 
+  const iconSrc = resolveProtocolIcon(suggestion);
+  const FallbackIcon = CATEGORY_FALLBACK_ICON[suggestion.category] ?? Box;
+
   return (
     // biome-ignore lint/a11y/useSemanticElements: card uses an <article> with role="link" + ::before overlay per UI-SPEC §1; wrapping <a> is forbidden to preserve nested-button a11y
     <article
@@ -37,24 +111,44 @@ export function SuggestionCard({
       role="link"
       tabIndex={0}
     >
-      <div className="pointer-events-none relative z-[2]">
+      <div className="pointer-events-none relative z-[2] flex items-start justify-between gap-3">
+        <div className="flex size-12 items-center justify-center rounded-lg bg-[var(--color-hub-icon-bg)]">
+          {iconSrc ? (
+            <Image
+              alt=""
+              className="size-8 object-contain"
+              height={32}
+              src={iconSrc}
+              width={32}
+            />
+          ) : (
+            <FallbackIcon
+              aria-hidden="true"
+              className="size-6 text-[var(--color-text-accent)]"
+            />
+          )}
+        </div>
         <CategoryBadge category={suggestion.category} />
       </div>
-      <h3 className="pointer-events-none relative z-[2] mt-2 line-clamp-2 font-semibold text-foreground text-sm">
+      <h3 className="pointer-events-none relative z-[2] mt-3 line-clamp-2 font-semibold text-foreground text-sm">
         {suggestion.name}
       </h3>
       <p className="pointer-events-none relative z-[2] mt-1 line-clamp-3 text-muted-foreground/80 text-xs leading-normal">
         {suggestion.description}
       </p>
-      <div className="pointer-events-none relative z-[2] mt-auto flex items-center gap-3 pt-3">
-        <span className="text-muted-foreground text-xs">
+      <div className="pointer-events-none relative z-[2] mt-auto flex items-center gap-2 pt-3">
+        <span className="inline-flex items-center rounded-full border border-border/40 bg-muted/60 px-2 py-0.5 font-medium text-[0.625rem] text-foreground/80">
           {getChainName(String(suggestion.chainId))}
         </span>
-        <ReadWritePill value={suggestion.readOrWrite} />
+        <Tooltip>
+          <TooltipTrigger className="pointer-events-auto inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)]">
+            <ReadWritePill value={suggestion.readOrWrite} />
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[220px]">
+            {suggestion.riskNote}
+          </TooltipContent>
+        </Tooltip>
       </div>
-      <p className="pointer-events-none relative z-[2] mt-2 line-clamp-2 text-muted-foreground/70 text-xs leading-relaxed">
-        {suggestion.riskNote}
-      </p>
     </article>
   );
 }
