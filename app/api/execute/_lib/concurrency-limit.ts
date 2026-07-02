@@ -24,19 +24,23 @@ export function checkConcurrencyLimit(): Promise<ConcurrencyLimitResult> {
 
 /**
  * Back-pressure for the direct execution write routes, bound to the app db.
- * Counts in-flight direct executions (not workflow executions).
+ * Counts the org's in-flight direct executions (not workflow executions).
  */
-export function checkDirectExecutionConcurrency(): Promise<ConcurrencyLimitResult> {
-  return checkDirectExecutionConcurrencyCore(db);
+export function checkDirectExecutionConcurrency(
+  organizationId: string
+): Promise<ConcurrencyLimitResult> {
+  return checkDirectExecutionConcurrencyCore(db, organizationId);
 }
 
 /**
  * Enforce direct-execution back-pressure at the top of a write route. Returns a
- * 429 response (with Retry-After) when the in-flight cap is hit, or null to
- * proceed. Mirrors the workflow routes' concurrency 429 shape.
+ * 429 response (with Retry-After) when the org's in-flight cap is hit, or null
+ * to proceed. Mirrors the workflow routes' concurrency 429 shape.
  */
-export async function enforceDirectExecutionConcurrency(): Promise<NextResponse | null> {
-  const check = await checkDirectExecutionConcurrency();
+export async function enforceDirectExecutionConcurrency(
+  organizationId: string
+): Promise<NextResponse | null> {
+  const check = await checkDirectExecutionConcurrency(organizationId);
   if (check.allowed) {
     return null;
   }

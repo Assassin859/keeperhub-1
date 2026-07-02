@@ -226,7 +226,7 @@ async function executeProtocolAction(
     return recordIdempotentResponse(idem, executionGuard.response, "release");
   }
 
-  const concurrency = await enforceDirectExecutionConcurrency();
+  const concurrency = await enforceDirectExecutionConcurrency(organizationId);
   if (concurrency) {
     return recordIdempotentResponse(idem, concurrency, "release");
   }

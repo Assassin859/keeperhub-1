@@ -322,7 +322,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Concurrency back-pressure: gate the state-changing write path only (reads
   // and simulations already returned above). Before reserving the idempotency
   // key so a 429 leaves no key to release.
-  const concurrency = await enforceDirectExecutionConcurrency();
+  const concurrency = await enforceDirectExecutionConcurrency(
+    apiKeyCtx.organizationId
+  );
   if (concurrency) {
     return concurrency;
   }

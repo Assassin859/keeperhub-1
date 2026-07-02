@@ -20,6 +20,9 @@ vi.mock("@/lib/db/schema", () => ({
   },
   directExecutions: {
     status: "status",
+    organizationId: "organization_id",
+    network: "network",
+    createdAt: "created_at",
   },
 }));
 
@@ -122,18 +125,18 @@ describe("checkDirectExecutionConcurrency", () => {
     Reflect.deleteProperty(process.env, "MAX_CONCURRENT_DIRECT_EXECUTIONS");
   });
 
-  it("allows when in-flight count is below the default limit", async () => {
+  it("allows when the org's in-flight count is below the default limit", async () => {
     mockRunningCount = 99;
 
-    const result = await checkDirectExecutionConcurrency();
+    const result = await checkDirectExecutionConcurrency("org_1");
 
     expect(result).toEqual({ allowed: true });
   });
 
-  it("rejects when in-flight count meets the default limit", async () => {
+  it("rejects when the org's in-flight count meets the default limit", async () => {
     mockRunningCount = 100;
 
-    const result = await checkDirectExecutionConcurrency();
+    const result = await checkDirectExecutionConcurrency("org_1");
 
     expect(result).toEqual({ allowed: false, running: 100, limit: 100 });
   });
@@ -146,7 +149,7 @@ describe("checkDirectExecutionConcurrency", () => {
     );
     mockRunningCount = 5;
 
-    const result = await freshCheck();
+    const result = await freshCheck("org_1");
 
     expect(result).toEqual({ allowed: false, running: 5, limit: 5 });
   });

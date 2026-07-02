@@ -578,7 +578,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // Concurrency back-pressure before broadcasting. Release the idempotency
     // key on a 429 so a retry is not blocked by a stale in-progress record.
-    const concurrency = await enforceDirectExecutionConcurrency();
+    const concurrency = await enforceDirectExecutionConcurrency(
+      apiKeyCtx.organizationId
+    );
     if (concurrency) {
       return recordIdempotentResponse(idem, concurrency, "release");
     }

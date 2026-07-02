@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { directExecutions, workflowExecutions } from "@/lib/db/schema";
 
@@ -10,6 +10,11 @@ import { directExecutions, workflowExecutions } from "@/lib/db/schema";
 
 const DEFAULT_LIMIT = 500;
 const DEFAULT_DIRECT_LIMIT = 100;
+// In-flight rows older than this are treated as stale (crashed pod / lost
+// process) and excluded from the count, so a stuck row cannot permanently
+// consume a slot. On-chain broadcast + confirmation is seconds to a couple of
+// minutes; 15m is a comfortable upper bound for a legitimate in-flight row.
+const DIRECT_STALE_MINUTES = 15;
 
 export function resolveMaxConcurrent(): number {
   const envValue = process.env.MAX_CONCURRENT_WORKFLOW_EXECUTIONS;
@@ -59,21 +64,33 @@ export async function checkConcurrencyLimit<
 }
 
 /**
- * Back-pressure for the direct execution API. Counts in-flight direct
- * executions (pending/running) rather than workflow executions, so the
- * /api/execute/* write routes throttle on their own load. Same soft-cap
- * caveat as checkConcurrencyLimit: count-then-admit is not atomic.
+ * Back-pressure for the direct execution API, scoped to one organization so a
+ * single org's burst cannot throttle other tenants. Counts that org's in-flight
+ * on-chain direct executions (pending/running with a network, created within the
+ * stale window). The network filter matches what the write routes gate (off-chain
+ * node executions are not gated, so they must not consume slots either), and the
+ * time window means a crashed/stuck row ages out instead of holding a slot
+ * forever. Same soft-cap caveat as checkConcurrencyLimit: count-then-admit is not
+ * atomic.
  */
 export async function checkDirectExecutionConcurrency<
   TSchema extends Record<string, unknown>,
 >(
   db: PostgresJsDatabase<TSchema>,
+  organizationId: string,
   limit: number = resolveMaxConcurrentDirect()
 ): Promise<ConcurrencyLimitResult> {
   const [result] = await db
     .select({ count: sql<number>`COUNT(*)::int` })
     .from(directExecutions)
-    .where(inArray(directExecutions.status, ["pending", "running"]));
+    .where(
+      and(
+        eq(directExecutions.organizationId, organizationId),
+        isNotNull(directExecutions.network),
+        inArray(directExecutions.status, ["pending", "running"]),
+        sql`${directExecutions.createdAt} > now() - interval '${sql.raw(String(DIRECT_STALE_MINUTES))} minutes'`
+      )
+    );
 
   const running = result?.count ?? 0;
 
