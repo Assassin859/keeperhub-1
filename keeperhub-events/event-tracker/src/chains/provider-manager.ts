@@ -37,6 +37,19 @@ const GETLOGS_ADDRESS_BATCH = 500;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
+/**
+ * Ceiling on the gap between delivered blocks before a subscribed chain's
+ * connection is treated as dead. The heartbeat pings `eth_blockNumber`, a
+ * request/response RPC call that stays healthy even when the `newHeads` push
+ * subscription has silently stopped delivering blocks - so a stalled
+ * subscription passes the heartbeat forever. Block-staleness is the only
+ * signal that catches that state. Checked on each heartbeat tick, so
+ * effective detection latency is this value plus up to one
+ * HEARTBEAT_INTERVAL_MS. Defaults well above any supported chain's block
+ * time so a slow-but-healthy chain is never reconnected for a normal
+ * inter-block gap; overridable per-manager for tests.
+ */
+const BLOCK_STALENESS_TIMEOUT_MS = 120_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -67,7 +80,8 @@ export type ProviderFactory = (wssUrl: string) => ethers.WebSocketProvider;
 export type DisconnectReason =
   | "provider_error"
   | "heartbeat_failure"
-  | "heartbeat_timeout";
+  | "heartbeat_timeout"
+  | "block_staleness";
 
 export interface DisconnectEvent {
   chainId: number;
@@ -122,6 +136,12 @@ export interface SubscribeOptions {
 export interface ChainProviderManagerOptions {
   factory?: ProviderFactory;
   onPermanentFailure?: (chainId: number) => void;
+  /**
+   * Override the block-staleness ceiling (defaults to
+   * BLOCK_STALENESS_TIMEOUT_MS). Tests set a small value to exercise the
+   * watchdog without advancing timers past the production threshold.
+   */
+  blockStalenessTimeoutMs?: number;
 }
 
 interface Subscriber {
@@ -166,6 +186,14 @@ interface ChainEntry {
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   isReconnecting: boolean;
   lastBlockAt: number | null;
+  /**
+   * When the current block listener was attached. Baseline for the
+   * block-staleness watchdog before the first block arrives, so a
+   * connection that never delivers a single block (subscription that
+   * silently failed to establish) is still caught. Null while no block
+   * listener is attached.
+   */
+  blockListenerAttachedAt: number | null;
   /**
    * Populated when `createProvider` rejects (most often the
    * subscription probe). Cleared on the next successful creation.
@@ -240,6 +268,7 @@ export class ChainProviderManager {
   private readonly chains = new Map<number, ChainEntry>();
   private readonly factory: ProviderFactory;
   private readonly onPermanentFailure: (chainId: number) => void;
+  private readonly blockStalenessTimeoutMs: number;
   private isDestroyed = false;
   // Wake-up signal for in-flight reconnect sleeps: `destroy()` resolves
   // this promise, racing any pending backoff sleep so the reconnect loop
@@ -255,6 +284,8 @@ export class ChainProviderManager {
     this.factory = opts.factory ?? defaultFactory;
     this.onPermanentFailure =
       opts.onPermanentFailure ?? defaultOnPermanentFailure;
+    this.blockStalenessTimeoutMs =
+      opts.blockStalenessTimeoutMs ?? BLOCK_STALENESS_TIMEOUT_MS;
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
       resolve = r;
@@ -505,6 +536,7 @@ export class ChainProviderManager {
       heartbeatTimer: null,
       isReconnecting: false,
       lastBlockAt: null,
+      blockListenerAttachedAt: null,
       lastCreateError: null,
       disconnectHandlers: new Set(),
     };
@@ -693,10 +725,15 @@ export class ChainProviderManager {
       await this.processBlock(entry, blockNumber);
     };
     entry.blockListener = listener;
+    // Baseline for the block-staleness watchdog: until the first block
+    // arrives, staleness is measured from attach time so a subscription that
+    // never delivers a block is still caught.
+    entry.blockListenerAttachedAt = Date.now();
     entry.provider.on("block", listener);
   }
 
   private detachBlockListener(entry: ChainEntry): void {
+    entry.blockListenerAttachedAt = null;
     if (!(entry.provider && entry.blockListener)) {
       entry.blockListener = null;
       return;
@@ -766,7 +803,58 @@ export class ChainProviderManager {
         `[ChainProviderManager] chain=${entry.chainId} heartbeat failed: ${message}`,
       );
       this.triggerReconnect(entry, reason, message);
+      return;
     }
+
+    // The heartbeat succeeded, so the RPC is answering. That does not prove
+    // the newHeads subscription is still delivering blocks - a silently
+    // dropped subscription passes the heartbeat forever. Block-staleness is
+    // the only signal that catches it.
+    this.checkBlockStaleness(entry);
+  }
+
+  /**
+   * Reconnect a chain whose connection is answering the heartbeat but has
+   * stopped delivering blocks past `blockStalenessTimeoutMs`. Runs on each
+   * heartbeat tick (after a successful ping) so it inherits the heartbeat's
+   * subscriber-scoped lifecycle. Measures staleness from the last delivered
+   * block, or - before any block has arrived - from when the block listener
+   * attached, so a subscription that never delivers is also caught.
+   */
+  private checkBlockStaleness(entry: ChainEntry): void {
+    if (this.isDestroyed || entry.isReconnecting || !entry.provider) {
+      return;
+    }
+    // Blocks are only expected while a subscriber (and thus a block
+    // listener) is attached; an idle provider is legitimately silent.
+    if (entry.subscribers.size === 0) {
+      return;
+    }
+    // Measure from the most recent of the last delivered block and the
+    // current block-listener attach time. After a reconnect, lastBlockAt
+    // still holds the pre-drop timestamp, so folding in the fresh attach
+    // time gives the new connection a full window to deliver its first
+    // block instead of tripping again immediately. Real timestamps are
+    // always > 0, so 0 means neither is set.
+    const reference = Math.max(
+      entry.lastBlockAt ?? 0,
+      entry.blockListenerAttachedAt ?? 0,
+    );
+    if (reference === 0) {
+      return;
+    }
+    const age = Date.now() - reference;
+    if (age <= this.blockStalenessTimeoutMs) {
+      return;
+    }
+    logger.warn(
+      `[ChainProviderManager] chain=${entry.chainId} no block for ${age}ms while heartbeat passing; treating subscription as dead and reconnecting`,
+    );
+    this.triggerReconnect(
+      entry,
+      "block_staleness",
+      `no block received for ${age}ms while heartbeat passing`,
+    );
   }
 
   private triggerReconnect(

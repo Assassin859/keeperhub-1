@@ -20,7 +20,8 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, vi } from "vitest";
+import { itOnchain } from "./_shared/onchain-rpc";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -170,110 +171,137 @@ describe("Web3 write-contract on-chain integration", () => {
     );
   });
 
-  it("deposit (payable, no args): estimateGas with ETH value", async () => {
-    const { data, value } = buildWeb3Calldata("deposit", undefined, "0.001");
+  itOnchain(
+    "deposit (payable, no args): estimateGas with ETH value",
+    async () => {
+      const { data, value } = buildWeb3Calldata("deposit", undefined, "0.001");
 
-    const gas = await manager.executeWithFailover((p) =>
-      p.estimateGas({
-        to: WETH_SEPOLIA,
-        data,
-        value,
-        from: TEST_ADDRESS,
-      })
-    );
+      const gas = await manager.executeWithFailover((p) =>
+        p.estimateGas({
+          to: WETH_SEPOLIA,
+          data,
+          value,
+          from: TEST_ADDRESS,
+        })
+      );
 
-    expect(gas).toBeGreaterThan(BigInt(0));
-  }, 15_000);
+      expect(gas).toBeGreaterThan(BigInt(0));
+    },
+    15_000
+  );
 
-  it("withdraw (uint256 arg): calldata encodes correctly", async () => {
-    const { data } = buildWeb3Calldata("withdraw", '["1000000000000000000"]');
+  itOnchain(
+    "withdraw (uint256 arg): calldata encodes correctly",
+    async () => {
+      const { data } = buildWeb3Calldata("withdraw", '["1000000000000000000"]');
 
-    try {
-      await manager.executeWithFailover((p) =>
+      try {
+        await manager.executeWithFailover((p) =>
+          p.estimateGas({
+            to: WETH_SEPOLIA,
+            data,
+            from: TEST_ADDRESS,
+          })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+      }
+    },
+    15_000
+  );
+
+  itOnchain(
+    "approve (address + uint256 args): calldata encodes correctly",
+    async () => {
+      const { data } = buildWeb3Calldata(
+        "approve",
+        `["${TEST_ADDRESS}", "1000000000000000000"]`
+      );
+
+      const gas = await manager.executeWithFailover((p) =>
         p.estimateGas({
           to: WETH_SEPOLIA,
           data,
           from: TEST_ADDRESS,
         })
       );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-    }
-  }, 15_000);
 
-  it("approve (address + uint256 args): calldata encodes correctly", async () => {
-    const { data } = buildWeb3Calldata(
-      "approve",
-      `["${TEST_ADDRESS}", "1000000000000000000"]`
-    );
+      expect(gas).toBeGreaterThan(BigInt(0));
+    },
+    15_000
+  );
 
-    const gas = await manager.executeWithFailover((p) =>
-      p.estimateGas({
-        to: WETH_SEPOLIA,
-        data,
-        from: TEST_ADDRESS,
-      })
-    );
+  itOnchain(
+    "transfer (address + uint256 args): calldata encodes correctly",
+    async () => {
+      const { data } = buildWeb3Calldata(
+        "transfer",
+        `["${TEST_ADDRESS}", "0"]`
+      );
 
-    expect(gas).toBeGreaterThan(BigInt(0));
-  }, 15_000);
+      const gas = await manager.executeWithFailover((p) =>
+        p.estimateGas({
+          to: WETH_SEPOLIA,
+          data,
+          from: TEST_ADDRESS,
+        })
+      );
 
-  it("transfer (address + uint256 args): calldata encodes correctly", async () => {
-    const { data } = buildWeb3Calldata("transfer", `["${TEST_ADDRESS}", "0"]`);
+      expect(gas).toBeGreaterThan(BigInt(0));
+    },
+    15_000
+  );
 
-    const gas = await manager.executeWithFailover((p) =>
-      p.estimateGas({
-        to: WETH_SEPOLIA,
-        data,
-        from: TEST_ADDRESS,
-      })
-    );
+  itOnchain(
+    "balanceOf (read via eth_call): returns decodable uint256",
+    async () => {
+      const { data } = buildWeb3Calldata("balanceOf", `["${TEST_ADDRESS}"]`);
 
-    expect(gas).toBeGreaterThan(BigInt(0));
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({
+          to: WETH_SEPOLIA,
+          data,
+        })
+      );
 
-  it("balanceOf (read via eth_call): returns decodable uint256", async () => {
-    const { data } = buildWeb3Calldata("balanceOf", `["${TEST_ADDRESS}"]`);
+      const iface = new ethers.Interface(WETH_ABI);
+      const decoded = iface.decodeFunctionResult("balanceOf", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({
-        to: WETH_SEPOLIA,
-        data,
-      })
-    );
+  itOnchain(
+    "allowance (two address args via eth_call): returns decodable uint256",
+    async () => {
+      const { data } = buildWeb3Calldata(
+        "allowance",
+        `["${TEST_ADDRESS}", "${TEST_ADDRESS}"]`
+      );
 
-    const iface = new ethers.Interface(WETH_ABI);
-    const decoded = iface.decodeFunctionResult("balanceOf", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({
+          to: WETH_SEPOLIA,
+          data,
+        })
+      );
 
-  it("allowance (two address args via eth_call): returns decodable uint256", async () => {
-    const { data } = buildWeb3Calldata(
-      "allowance",
-      `["${TEST_ADDRESS}", "${TEST_ADDRESS}"]`
-    );
+      const iface = new ethers.Interface(WETH_ABI);
+      const decoded = iface.decodeFunctionResult("allowance", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({
-        to: WETH_SEPOLIA,
-        data,
-      })
-    );
-
-    const iface = new ethers.Interface(WETH_ABI);
-    const decoded = iface.decodeFunctionResult("allowance", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
-
-  it("rejects invalid ethValue at parseEther", () => {
+  itOnchain("rejects invalid ethValue at parseEther", () => {
     expect(() => buildWeb3Calldata("deposit", undefined, "abc")).toThrow();
   });
 
-  it("rejects invalid JSON functionArgs", () => {
+  itOnchain("rejects invalid JSON functionArgs", () => {
     expect(() => buildWeb3Calldata("withdraw", "{bad json")).toThrow();
   });
 });
