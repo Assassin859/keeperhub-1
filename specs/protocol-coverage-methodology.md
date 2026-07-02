@@ -109,3 +109,4 @@ timed local runs unless marked CI.
 | Date | Milestone | Runnable | Skipped | Value-asserted | Executing in CI | Feedback loop |
 |---|---|---|---|---|---|---|
 | 2026-07-02 | Baseline (post suite-hardening PR) | 232 of 394 (19 protocol-chains; 16 behind the hard-skipped chronicle suite, 7 in orphaned aave-v3 Sepolia testData) | 117 | 8 actions | ~35 (mainnet fork secret unprovisioned; chronicle hard-skipped) | 30-35 min per CI round |
+| 2026-07-02 | Local rig codified (scripts/protocol-local.sh) | unchanged; all 232 runnable actions now executable locally (local mainnet fork needs no secret; writes need TURNKEY_* exported) | unchanged | unchanged | unchanged | local: cold up 7m49s (incl. build), warm up 59s, single suite validated end to end in 27s (safe 6/6 with oracle assertions); vs 30-35 min per CI round |

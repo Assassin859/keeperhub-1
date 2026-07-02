@@ -142,6 +142,9 @@ packages/*/dist/
 .claude/test-*-output.txt
 .claude/worktrees/
 
+# Local protocol-coverage rig output (scripts/protocol-local.sh)
+.claude/protocol-local-results.json
+
 # Local dev session cookie minted by scripts/dev-mint-session.ts
 .claude/.dev-session-cookie-LOCAL
 
