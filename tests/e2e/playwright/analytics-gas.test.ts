@@ -103,10 +103,22 @@ test.describe("Analytics Gas Tracking", () => {
     );
     expect(hasWorkflowNetwork).toBe(true);
 
-    // All networks should have non-zero gas
+    // Gas is recorded only when an execution completes, so networks that saw
+    // only failed or pending runs legitimately report zero gas (matches the
+    // production write path). Assert gas is attributed overall, and that any
+    // network with successful executions carries non-zero gas.
+    let totalGasAcrossNetworks = BigInt(0);
     for (const network of data.networks) {
-      expect(BigInt(network.totalGasWei)).toBeGreaterThan(BigInt(0));
+      const gas = BigInt(network.totalGasWei);
+      totalGasAcrossNetworks += gas;
+      if (network.successCount > 0) {
+        expect(
+          gas,
+          `network ${network.network} has successful executions but zero gas`
+        ).toBeGreaterThan(BigInt(0));
+      }
     }
+    expect(totalGasAcrossNetworks).toBeGreaterThan(BigInt(0));
   });
 
   test("workflow runs API attaches gas to the returned page", async ({

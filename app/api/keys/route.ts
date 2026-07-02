@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { parseScopeInput } from "@/lib/mcp/oauth-scopes";
 import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { authorizeAction } from "@/lib/middleware/authorize-action";
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
         createdAt: true,
         lastUsedAt: true,
         expiresAt: true,
+        scope: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
       limit: req.pageSize,
@@ -157,6 +159,7 @@ export async function POST(request: Request) {
     }
     const name = body.name || null;
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    const scope = parseScopeInput(body.scopes);
 
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();
@@ -171,6 +174,7 @@ export async function POST(request: Request) {
         keyPrefix: prefix,
         createdBy: session.user.id,
         expiresAt,
+        scope,
       })
       .returning({
         id: organizationApiKeys.id,

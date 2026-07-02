@@ -14,6 +14,7 @@
 
 import { parseUnits } from "ethers";
 import {
+  computeProtocolMeta,
   getProtocol,
   getRegisteredProtocols,
   type ProtocolAction,
@@ -158,10 +159,22 @@ type DefaultContext = {
   protocolSlug: string;
   actionSlug: string;
   inputName: string;
+  /** Action is listed in TEST_DATA.skipped -- it's never executed, only
+   *  built (so the seeder can surface it and build-workflow.test.ts can
+   *  cover it), so an unbound address input gets a placeholder instead of
+   *  requiring a real binding nobody will use. */
+  allowAddressPlaceholder: boolean;
 };
+
+// Well-known "no real address" placeholder. Never dereferenced -- the
+// workflow this appears in is marked skipped and is not executed.
+const SKIPPED_ADDRESS_PLACEHOLDER = `0x${"0".repeat(40)}`;
 
 function defaultForSolidityType(type: string, context: DefaultContext): string {
   if (type === "address" || type.startsWith("address")) {
+    if (context.allowAddressPlaceholder) {
+      return SKIPPED_ADDRESS_PLACEHOLDER;
+    }
     throw new Error(
       `address-typed input "${context.inputName}" on "${context.protocolSlug}/${context.actionSlug}" ` +
         "has no binding and no protocol-level default. Add it to TEST_DATA " +
@@ -270,20 +283,12 @@ function buildTriggerNode(
 
 // --- Action nodes ------------------------------------------------------------
 
-function buildProtocolMeta(action: ProtocolAction, slug: string): string {
-  return JSON.stringify({
-    protocolSlug: slug,
-    contractKey: action.contract,
-    functionName: action.function,
-    actionType: action.type,
-  });
-}
-
 function buildProtocolActionNode(
   protocol: ProtocolDefinition,
   action: ProtocolAction,
   chainId: string,
   bindings: ActionInputBindings,
+  isSkipped: boolean,
   nodeId: string,
   xPos: number,
   walletAddress: string
@@ -291,19 +296,26 @@ function buildProtocolActionNode(
   const config: Record<string, unknown> = {
     actionType: `${protocol.slug}/${action.slug}`,
     network: chainId,
-    _protocolMeta: buildProtocolMeta(action, protocol.slug),
+    _protocolMeta: computeProtocolMeta(protocol, action),
   };
 
-  // `contractAddress` is the builder's reserved virtual hint for
-  // userSpecifiedAddress contracts (Superfluid SuperTokens). An action
-  // declaring a real input with the same name would silently share the
-  // binding -- catch it loudly here instead.
+  // `contractAddress` and `ethValue` are reserved virtual keys. Catch
+  // any real action input with those names before they collide with the
+  // builder's own virtual handling below.
   for (const input of action.inputs) {
     if (input.name === "contractAddress") {
       throw new Error(
         `${protocol.slug}/${action.slug} declares an input named "contractAddress", ` +
           "which the protocol-coverage builder reserves as a virtual hint for " +
           "userSpecifiedAddress contracts. Rename the input in protocols/" +
+          `${protocol.slug}.ts.`
+      );
+    }
+    if (input.name === "ethValue") {
+      throw new Error(
+        `${protocol.slug}/${action.slug} declares an input named "ethValue", ` +
+          "which the protocol-coverage builder reserves for the payable msg.value " +
+          "field. Rename the input in protocols/" +
           `${protocol.slug}.ts.`
       );
     }
@@ -319,6 +331,20 @@ function buildProtocolActionNode(
       chainId,
       walletAddress
     );
+  }
+
+  // Optional virtual `ethValue` for payable actions. The execution engine
+  // expects an ETH string (e.g. "0.01"), not wei. Provide a plain string
+  // binding in TEST_DATA actions: `{ ethValue: "0.01" }`.
+  if (bindings.ethValue !== undefined) {
+    const ev = bindings.ethValue;
+    if (typeof ev !== "string") {
+      throw new Error(
+        `${protocol.slug}/${action.slug}: ethValue binding must be a plain ETH ` +
+          `string (e.g. "0.01"), got ${JSON.stringify(ev)}.`
+      );
+    }
+    config.ethValue = ev;
   }
 
   for (const input of action.inputs) {
@@ -341,6 +367,7 @@ function buildProtocolActionNode(
       protocolSlug: protocol.slug,
       actionSlug: action.slug,
       inputName: input.name,
+      allowAddressPlaceholder: isSkipped,
     });
   }
 
@@ -476,6 +503,7 @@ export function buildSetupWorkflow({
         stepAction,
         chainId,
         step.inputs,
+        false,
         id,
         x,
         walletAddress
@@ -521,6 +549,7 @@ export function buildActionWorkflow({
   }
   const chainData = getChainData(protocol, chainId);
   const bindings = chainData?.actions[actionSlug] ?? {};
+  const isSkipped = chainData?.skipped?.[actionSlug] !== undefined;
 
   const triggerNode = buildTriggerNode(trigger, chainId);
   const actionNode = buildProtocolActionNode(
@@ -528,6 +557,7 @@ export function buildActionWorkflow({
     action,
     chainId,
     bindings,
+    isSkipped,
     "step-1",
     450,
     walletAddress

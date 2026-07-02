@@ -306,6 +306,15 @@ export class EvmChainAdapter implements ChainAdapter {
     if (!receipt) {
       throw new Error("Transaction sent but receipt not available");
     }
+    // ethers v6 wait() throws CALL_EXCEPTION on reverts it can detect, but
+    // that detection is provider-dependent; a tx that passed the staticCall
+    // preflight and reverted only at inclusion time can still resolve here.
+    // status 0 is authoritative: never report a reverted tx as confirmed.
+    if (receipt.status === 0) {
+      throw new Error(
+        `Transaction ${receipt.hash} reverted on-chain (status 0, block ${receipt.blockNumber})`
+      );
+    }
 
     await this.nonceManager.confirmTransaction(tx.hash);
 

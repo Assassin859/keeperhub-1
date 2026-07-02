@@ -82,13 +82,32 @@ export async function runSetup(opts: {
   }
   const walletAddress = ctx.walletAddress;
 
-  await ensureNativeGas(chainId, walletAddress);
-
   const protocolDef = getProtocol(protocol);
-  const setupSpec = protocolDef?.testData?.[chainId]?.setup;
+  const chainData = protocolDef?.testData?.[chainId];
+  const setupSpec = chainData?.setup;
   if (!setupSpec) {
     throw new Error(`No setup spec for ${protocol} on chain ${chainId}.`);
   }
+
+  // Native gas is only needed if the wallet will actually sign a
+  // transaction: a setup approval, a setup protocol step, or a write
+  // action that isn't skipped. A protocol whose coverage on this chain is
+  // 100% reads (e.g. ajna on Base mainnet) never submits anything, so
+  // skip the funder/balance preflight entirely rather than requiring a
+  // funded wallet for gas that will never be spent.
+  const needsGas =
+    setupSpec.approvals.length > 0 ||
+    (setupSpec.protocolSteps?.length ?? 0) > 0 ||
+    (protocolDef?.actions.some(
+      (action) =>
+        action.type === "write" &&
+        chainData?.skipped?.[action.slug] === undefined
+    ) ??
+      false);
+  if (needsGas) {
+    await ensureNativeGas(chainId, walletAddress);
+  }
+
   for (const required of setupSpec.requiredTokens) {
     await ensureErc20Acquired(
       chainId,
@@ -131,11 +150,53 @@ export async function runSetup(opts: {
     );
   }
 
-  const result = await waitForWorkflowExecution(workflow.id, 180_000);
+  // 300s: forked chains lazy-load contract state from their upstream on
+  // first touch, so the first transaction through a protocol's contracts
+  // can be far slower than steady-state (observed >180s on the Sepolia
+  // fork with the default public upstream).
+  const result = await waitForWorkflowExecution(workflow.id, 300_000);
   if (!result || result.status !== "success") {
+    const diagnosis = await describeExecutionState(workflow.id);
     throw new Error(
-      `setup workflow failed for ${protocol}/${chainId}: ${result?.status ?? "timeout"}${result?.error ? ` - ${result.error}` : ""}`
+      `setup workflow failed for ${protocol}/${chainId}: ${result?.status ?? "timeout"}${result?.error ? ` - ${result.error}` : ""}\n${diagnosis}`
     );
+  }
+}
+
+/** Pre-cleanup post-mortem for setup failures. Must run before afterAll's
+ *  cleanupAll cascades the workflow delete: a "running" execution hung on
+ *  a specific node and a missing execution row (webhook accepted, nothing
+ *  dispatched) are different bugs, and both are invisible afterwards. */
+async function describeExecutionState(workflowId: string): Promise<string> {
+  const client = postgres(getDatabaseUrl(), { max: 1 });
+  try {
+    const executions = await client`
+      SELECT id, status, left(coalesce(error, ''), 200) AS error
+      FROM workflow_executions WHERE workflow_id = ${workflowId}
+      ORDER BY started_at DESC LIMIT 5`;
+    if (executions.length === 0) {
+      return "diagnosis: no workflow_executions row for this workflow - webhook accepted but nothing was dispatched";
+    }
+    const steps = await client`
+      SELECT node_id, node_name, node_type, status, left(coalesce(error, ''), 200) AS error, started_at, completed_at
+      FROM workflow_execution_logs WHERE execution_id = ${executions[0].id as string}
+      ORDER BY started_at ASC LIMIT 20`;
+    const execSummary = executions
+      .map((e) => `execution ${e.id}: ${e.status}${e.error ? ` (${e.error})` : ""}`)
+      .join("; ");
+    // node_id disambiguates steps that share a display name (e.g. a setup
+    // workflow with several protocol steps of the same action).
+    const stepSummary = steps
+      .map(
+        (s) =>
+          `  step ${s.node_id} ${s.node_name} [${s.node_type}]: ${s.status}${s.error ? ` (${s.error})` : ""} started=${s.started_at}${s.completed_at ? ` completed=${s.completed_at}` : " (never completed)"}`
+      )
+      .join("\n");
+    return `diagnosis: ${execSummary}\n${stepSummary || "  (no step logs recorded)"}`;
+  } catch (err) {
+    return `diagnosis unavailable: ${(err as Error).message}`;
+  } finally {
+    await client.end();
   }
 }
 

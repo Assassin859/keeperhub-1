@@ -44,7 +44,7 @@ jobs:
       SERVICE_ACCOUNT_ROLE_ARN: ${{ vars.TO_SERVICE_ACCOUNT_ROLE_ARN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -60,6 +60,13 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
+
+      - name: Connect to EKS
+        uses: ./.github/actions/eks-connect
+        with:
+          enabled: ${{ vars.TO_EKS_CONNECT }}
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          region: ${{ env.REGION }}
 
       - name: Login to AWS ECR
         id: login-ecr
@@ -104,12 +111,17 @@ jobs:
       - name: Apply RBAC for Job Spawner
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
-          kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/rbac.yaml
+          kubectl apply -f deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/rbac.yaml
 
       - name: Apply NetworkPolicy for workflow runner egress hardening
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
-          kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/networkpolicy.yaml
+          kubectl apply -f deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/networkpolicy.yaml
+
+      - name: Apply workflow-runner ServiceAccount
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          kubectl apply -f deploy/keeperhub-stack/${{ vars.TO_HELM_VALUES_DIR }}/runner-sa.yaml
 
       - name: Deploying Service to Kubernetes with Helm
         id: deploy
@@ -155,7 +167,7 @@ jobs:
 
       - name: Set up Helm
         if: steps.skip.outputs.skip_deploy != 'true'
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: Validate IRSA credentials end-to-end
         if: steps.skip.outputs.skip_deploy != 'true'
@@ -224,7 +236,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1

@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { parseScopeInput } from "@/lib/mcp/oauth-scopes";
 import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
@@ -48,6 +49,7 @@ export async function GET(request: Request) {
         keyPrefix: true,
         createdAt: true,
         lastUsedAt: true,
+        scope: true,
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
       limit: req.pageSize,
@@ -95,6 +97,7 @@ export async function POST(request: Request) {
     }
 
     const name = body.name || null;
+    const scope = parseScopeInput(body.scopes);
 
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();
@@ -107,6 +110,7 @@ export async function POST(request: Request) {
         name,
         keyHash: hash,
         keyPrefix: prefix,
+        scope,
       })
       .returning({
         id: apiKeys.id,

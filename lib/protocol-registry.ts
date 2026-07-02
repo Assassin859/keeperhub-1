@@ -259,6 +259,7 @@ export function defineAbiProtocol(
     description: input.description,
     website: input.website,
     icon: input.icon,
+    testData: input.testData,
     contracts,
     actions,
     events,
@@ -279,6 +280,46 @@ export function getProtocol(slug: string): ProtocolDefinition | undefined {
 
 export function getRegisteredProtocols(): ProtocolDefinition[] {
   return Array.from(protocolRegistry.values());
+}
+
+/**
+ * Compute the `_protocolMeta` JSON blob a workflow action node's config
+ * carries: protocol/contract/function identity used by resolveProtocolMeta()
+ * to route execution. Shared by the UI config-field builder (the SSOT the
+ * editor force-refreshes on every action-type change) and the
+ * protocol-coverage test-data builder, which construct nodes independently.
+ */
+export function computeProtocolMeta(
+  def: ProtocolDefinition,
+  action: ProtocolAction
+): string {
+  return JSON.stringify({
+    protocolSlug: def.slug,
+    contractKey: action.contract,
+    functionName: action.function,
+    actionType: action.type,
+  });
+}
+
+/**
+ * Resolve a protocol contract's address for a network: the caller-supplied
+ * address when the contract is userSpecifiedAddress (e.g. Superfluid
+ * SuperTokens, MetaMorpho vaults), otherwise the registry's known deployment
+ * address. Returns undefined when neither is available; callers construct
+ * their own error message since wording differs by call site (step error
+ * vs. HTTP response).
+ *
+ * Shared by every place a protocol action actually runs: protocolReadStep,
+ * protocolWriteStep, and the REST execute route.
+ */
+export function resolveContractAddress(
+  contract: ProtocolContract,
+  network: string,
+  providedAddress: string | undefined
+): string | undefined {
+  return contract.userSpecifiedAddress
+    ? providedAddress
+    : contract.addresses[network];
 }
 
 function buildInputField(input: ProtocolActionInput): ActionConfigFieldBase {
@@ -402,12 +443,7 @@ function buildConfigFieldsFromAction(
     });
   }
 
-  const metaValue = JSON.stringify({
-    protocolSlug: def.slug,
-    contractKey: action.contract,
-    functionName: action.function,
-    actionType: action.type,
-  });
+  const metaValue = computeProtocolMeta(def, action);
 
   fields.push({
     key: "_protocolMeta",

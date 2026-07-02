@@ -934,6 +934,7 @@ export const apiKeys = pgTable("api_keys", {
   keyPrefix: text("key_prefix").notNull(), // Store first few chars for display (e.g., "wf_abc...")
   createdAt: timestamp("created_at").notNull().defaultNow(),
   lastUsedAt: timestamp("last_used_at"),
+  scope: text("scope"), // Space-separated OAuth scopes; null means full access
 });
 
 // Beta Access Requests - stores emails requesting beta access

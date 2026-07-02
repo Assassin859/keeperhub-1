@@ -1,4 +1,5 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import fraxEtherV2Abi from "./abis/frax-ether-v2.json";
 
 // Frax Ether V2 launched Q2-Q3 2024 as part of the Frax V3 reorganization.
@@ -15,6 +16,32 @@ import fraxEtherV2Abi from "./abis/frax-ether-v2.json";
 const FRAX_ETHER_DOCS =
   "https://docs.frax.finance/frax-ether/frxeth-and-sfrxeth";
 
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "mint-paused": {},
+      // Minting is unconditional while mintFrxEthPaused() is false: ETH in,
+      // frxETH out 1:1, no caps or queues. ethValue is the builder's
+      // virtual msg.value key for payable actions.
+      mint: { ethValue: "0.01" },
+      "mint-and-give": { ethValue: "0.01", recipient: wallet() },
+      "mint-and-stake": { ethValue: "0.01", recipient: wallet() },
+    },
+    // mintFrxEthPaused() returned false on mainnet as of 2026-07-02. A
+    // flip to true is an emergency pause -- the mint actions this plugin
+    // markets would be failing for users, so surfacing it as a red suite
+    // is signal, not flake.
+    expectations: {
+      "mint-paused": [{ equals: "false" }],
+    },
+  },
+};
+
 export default defineAbiProtocol({
   name: "Frax Ether V2",
   slug: "frax-ether-v2",
@@ -22,6 +49,8 @@ export default defineAbiProtocol({
     "Liquid staking on Ethereum mainnet. Deposit ETH to mint frxETH (1:1 receipt) or sfrxETH (yield-bearing ERC4626 vault) in one transaction.",
   website: "https://frax.finance/products/frax-ether",
   icon: "/protocols/frax-ether.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     minter: {

@@ -64,7 +64,7 @@ describe("Ajna Protocol Definition", () => {
   });
 
   it("has expected action count", () => {
-    expect(ajnaProtocol.actions.length).toBe(48);
+    expect(ajnaProtocol.actions.length).toBe(49);
   });
 
   it("has expected contract count", () => {
@@ -89,10 +89,10 @@ describe("Ajna Protocol Definition", () => {
     }
   });
 
-  it("has 30 read actions and 18 write actions", () => {
+  it("has 31 read actions and 18 write actions", () => {
     const readActions = ajnaProtocol.actions.filter((a) => a.type === "read");
     const writeActions = ajnaProtocol.actions.filter((a) => a.type === "write");
-    expect(readActions).toHaveLength(30);
+    expect(readActions).toHaveLength(31);
     expect(writeActions).toHaveLength(18);
   });
 

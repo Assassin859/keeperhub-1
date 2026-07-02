@@ -11,13 +11,13 @@ import { cleanupAll, createSharedCtx, runSetup } from "../../_shared/setup";
 
 const PROTOCOL = "superfluid";
 const CHAIN_ID = "11155111";
-// Suite needs a funded Sepolia EOA to top up the test wallet via
-// `ensureNativeGas` in setup. Without TESTNET_FUNDER_PK, beforeAll throws
-// before any test runs — skip cleanly instead so CI environments without
-// the funder provisioned (PR / staging-push) stay green.
+// Runs against the anvil Sepolia fork CI stands up on localhost:8547
+// (funding via cheatcodes; no live-testnet funder). PROTOCOL_E2E_SEPOLIA_FORK
+// signals the fork is up and the chains row points at it; without it,
+// beforeAll would throw against a live RPC - skip cleanly instead.
 const SKIP_INFRA_TESTS =
   !process.env.DATABASE_URL ||
-  !process.env.TESTNET_FUNDER_PK ||
+  !process.env.PROTOCOL_E2E_SEPOLIA_FORK ||
   process.env.SKIP_INFRA_TESTS === "true";
 
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Sepolia)`, () => {
@@ -25,7 +25,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Sepolia)`, () => {
 
   beforeAll(async () => {
     await runSetup({ protocol: PROTOCOL, chainId: CHAIN_ID, ctx });
-  }, 240_000);
+  }, 420_000);
 
   afterAll(async () => {
     await cleanupAll(ctx);

@@ -4,7 +4,16 @@
  * The setup workflow itself can't fund the wallet that signs its own
  * transactions, so this helper runs as a TS preflight in `beforeAll`. Logic is
  * lifted from `scripts/miscellaneous/fund-test-wallet.ts:84-126` and
- * parameterised on chainId so it works across testnets.
+ * parameterised on chainId so it works across testnets and mainnet forks.
+ *
+ * Two provisioning paths:
+ *   - Live chain (TESTNET_FUNDER_PK): real EOA sends native gas and calls
+ *     faucet contracts to mint ERC20s. Used on Base (ajna, reads only).
+ *   - Fork mode (FORK_CHAIN_IDS): anvil cheatcodes provision balances without
+ *     a funded EOA. ensureNativeGas calls anvil_setBalance; ERC20s come from
+ *     whale impersonation (FORK_WHALES) or a permissionless faucet mint
+ *     impersonating the wallet (FAUCETS). Used on the mainnet fork (chain 1)
+ *     and the Sepolia fork (chain 11155111) in CI.
  */
 
 import { eq } from "drizzle-orm";
@@ -14,6 +23,8 @@ import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { chains } from "@/lib/db/schema";
 import {
+  FORK_CHAIN_IDS,
+  FORK_WHALES,
   FAUCETS,
   FUND_NATIVE_AMOUNT_WEI_BY_CHAIN,
   MIN_NATIVE_BALANCE_WEI_BY_CHAIN,
@@ -22,8 +33,9 @@ import {
   type TokenSymbol,
 } from "@/lib/test-data/chain-test-data";
 
-const ERC20_BALANCE_ABI = [
+const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
 // chains.defaultPrimaryRpc is bootstrap-time data; memoize per process so a
@@ -60,7 +72,11 @@ async function getChainRpcUrl(chainId: string): Promise<string> {
 
 /**
  * Top up the test wallet on `chainId` with native gas if its balance falls
- * below the chain's minimum. Throws when the funder isn't configured.
+ * below the chain's minimum.
+ *
+ * Fork-mode chains (FORK_CHAIN_IDS): uses anvil_setBalance to set the balance
+ * directly — no funder EOA required.
+ * Testnet chains: sends a real transaction from the TESTNET_FUNDER_PK EOA.
  */
 export async function ensureNativeGas(
   chainId: string,
@@ -74,18 +90,27 @@ export async function ensureNativeGas(
     );
   }
 
-  const funderPk = process.env[TESTNET_FUNDER_PK_ENV];
-  if (!funderPk) {
-    throw new Error(
-      `${TESTNET_FUNDER_PK_ENV} not set; cannot top up native gas on chain ${chainId}`
-    );
-  }
-
   const rpcUrl = await getChainRpcUrl(chainId);
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const balance = await provider.getBalance(address);
   if (balance >= minWei) {
     return;
+  }
+
+  if (FORK_CHAIN_IDS.has(chainId)) {
+    // anvil_setBalance sets the balance to an absolute value in hex wei.
+    await provider.send("anvil_setBalance", [
+      address,
+      "0x" + topUpWei.toString(16),
+    ]);
+    return;
+  }
+
+  const funderPk = process.env[TESTNET_FUNDER_PK_ENV];
+  if (!funderPk) {
+    throw new Error(
+      `${TESTNET_FUNDER_PK_ENV} not set; cannot top up native gas on chain ${chainId}`
+    );
   }
 
   const funder = new ethers.Wallet(funderPk, provider);
@@ -144,16 +169,127 @@ export function bindFaucetArgs(
 }
 
 /**
- * Top up the wallet's ERC20 balance via the chain's faucet entry when the
- * existing balance is short. Returns silently when balance is sufficient.
+ * Fork-mode ERC20 provisioning via whale impersonation.
  *
- * Mint is signed by the funder EOA, which pays gas. Anyone can call the
- * Aave Sepolia faucet (`mint(token, to, amount)`) or FUSDC's permissionless
- * `mint(to, amount)`, so this works without per-token privileges.
+ * Impersonates a whale account on the anvil fork, transfers the needed tokens
+ * to the test wallet, then stops impersonation. The whale address is looked up
+ * from FORK_WHALES in chain-test-data.ts.
  *
- * Throws when no FAUCETS entry exists for (chain, symbol) — that means the
- * SSOT doesn't know how to acquire this token, and the caller must provision
- * it manually or extend FAUCETS in `lib/test-data/chain-test-data.ts`.
+ * Only called from ensureErc20Acquired when FORK_CHAIN_IDS.has(chainId).
+ */
+async function ensureErc20OnFork(
+  chainId: string,
+  walletAddress: string,
+  symbol: TokenSymbol,
+  human: string
+): Promise<void> {
+  const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
+  if (!tokenEntry) {
+    throw new Error(
+      `TOKEN_REGISTRY missing ${symbol} on chain ${chainId}; cannot acquire on fork.`
+    );
+  }
+
+  const whale = FORK_WHALES[chainId]?.[symbol];
+  if (!whale) {
+    throw new Error(
+      `FORK_WHALES missing ${symbol} on chain ${chainId}. Add a whale address to lib/test-data/chain-test-data.ts.`
+    );
+  }
+
+  const needed = ethers.parseUnits(human, tokenEntry.decimals);
+  const rpcUrl = await getChainRpcUrl(chainId);
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+
+  const token = new ethers.Contract(tokenEntry.address, ERC20_ABI, provider);
+  const balance: bigint = await token.balanceOf(walletAddress);
+  if (balance >= needed) {
+    return;
+  }
+  const gap = needed - balance;
+
+  await provider.send("anvil_impersonateAccount", [whale.address]);
+  try {
+    const whaleSigner = await provider.getSigner(whale.address);
+    const tokenAsWhale = new ethers.Contract(
+      tokenEntry.address,
+      ERC20_ABI,
+      whaleSigner
+    );
+    const tx = await tokenAsWhale.transfer(walletAddress, gap);
+    await tx.wait();
+  } finally {
+    await provider.send("anvil_stopImpersonatingAccount", [whale.address]);
+  }
+}
+
+/**
+ * Fork-mode ERC20 provisioning via a permissionless faucet mint.
+ *
+ * For tokens with a FAUCETS entry whose mint is permissionless (e.g. the
+ * Superfluid Sepolia fUSDC), no whale is needed on a fork: impersonate the
+ * recipient wallet itself and call the faucet from it. The wallet already
+ * holds native gas from ensureNativeGas (runSetup funds gas before tokens).
+ */
+async function mintViaFaucetOnFork(
+  chainId: string,
+  walletAddress: string,
+  symbol: TokenSymbol,
+  human: string
+): Promise<void> {
+  const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
+  if (!tokenEntry) {
+    throw new Error(
+      `TOKEN_REGISTRY missing ${symbol} on chain ${chainId}; cannot mint on fork.`
+    );
+  }
+  const faucet = FAUCETS[chainId]?.[symbol];
+  if (!faucet) {
+    throw new Error(
+      `FAUCETS missing ${symbol} on chain ${chainId}; cannot mint on fork.`
+    );
+  }
+
+  const needed = ethers.parseUnits(human, tokenEntry.decimals);
+  const rpcUrl = await getChainRpcUrl(chainId);
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const token = new ethers.Contract(tokenEntry.address, ERC20_ABI, provider);
+  const balance: bigint = await token.balanceOf(walletAddress);
+  if (balance >= needed) {
+    return;
+  }
+  const gap = needed - balance;
+
+  const abi = JSON.parse(faucet.abi) as AbiFunction[];
+  const fn = abi.find((entry) => entry.name === faucet.functionName);
+  if (!fn) {
+    throw new Error(
+      `FAUCETS[${chainId}][${symbol}].abi missing function "${faucet.functionName}".`
+    );
+  }
+  const args = bindFaucetArgs(fn, tokenEntry.address, walletAddress, gap);
+
+  await provider.send("anvil_impersonateAccount", [walletAddress]);
+  try {
+    const signer = await provider.getSigner(walletAddress);
+    const contract = new ethers.Contract(faucet.contract, abi, signer);
+    const tx = await contract[faucet.functionName](...args);
+    await tx.wait();
+  } finally {
+    await provider.send("anvil_stopImpersonatingAccount", [walletAddress]);
+  }
+}
+
+/**
+ * Top up the wallet's ERC20 balance when the existing balance is short.
+ * Returns silently when balance is sufficient.
+ *
+ * Fork-mode chains: whale impersonation (FORK_WHALES) when a whale is
+ * registered, otherwise a permissionless faucet mint impersonating the
+ * wallet itself (FAUCETS). Live testnet chains: FAUCETS entries signed by
+ * the TESTNET_FUNDER_PK EOA.
+ *
+ * Throws when no acquisition path exists for (chain, symbol).
  */
 export async function ensureErc20Acquired(
   chainId: string,
@@ -161,6 +297,20 @@ export async function ensureErc20Acquired(
   symbol: TokenSymbol,
   human: string
 ): Promise<void> {
+  if (FORK_CHAIN_IDS.has(chainId)) {
+    if (FORK_WHALES[chainId]?.[symbol]) {
+      await ensureErc20OnFork(chainId, walletAddress, symbol, human);
+      return;
+    }
+    if (FAUCETS[chainId]?.[symbol]) {
+      await mintViaFaucetOnFork(chainId, walletAddress, symbol, human);
+      return;
+    }
+    throw new Error(
+      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire.`
+    );
+  }
+
   const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
   if (!tokenEntry) {
     throw new Error(
@@ -171,11 +321,7 @@ export async function ensureErc20Acquired(
 
   const rpcUrl = await getChainRpcUrl(chainId);
   const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const token = new ethers.Contract(
-    tokenEntry.address,
-    ERC20_BALANCE_ABI,
-    provider
-  );
+  const token = new ethers.Contract(tokenEntry.address, ERC20_ABI, provider);
   const balance: bigint = await token.balanceOf(walletAddress);
   if (balance >= needed) {
     return;

@@ -44,6 +44,17 @@ const getProtocolMock = vi.fn().mockReturnValue({
 });
 vi.mock("@/lib/protocol-registry", () => ({
   getProtocol: (...args: unknown[]) => getProtocolMock(...args),
+  resolveContractAddress: (
+    contract: {
+      userSpecifiedAddress?: boolean;
+      addresses: Record<string, string>;
+    },
+    network: string,
+    providedAddress: string | undefined
+  ) =>
+    contract.userSpecifiedAddress
+      ? providedAddress
+      : contract.addresses[network],
 }));
 
 const writeContractCoreMock = vi.fn().mockResolvedValue({

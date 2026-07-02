@@ -22,6 +22,7 @@ import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { Page, PageMeta } from "@/lib/pagination";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
+import { SUPPORTED_SCOPES } from "@/lib/mcp/oauth-scopes";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { KeyActivityOverlay } from "./key-activity-overlay";
 import { Overlay } from "./overlay";
@@ -34,6 +35,7 @@ type ApiKey = {
   keyPrefix: string;
   createdAt: string;
   lastUsedAt: string | null;
+  scope?: string | null;
   createdByName?: string | null;
   createdByEmail?: string | null;
   createdByRole?: string | null;
@@ -49,6 +51,12 @@ type ApiKeysOverlayProps = OverlayComponentProps<{
   // caller (e.g. the onboarding connect-agent step) reflect the new key.
   onKeyCreated?: (key: string, type: "webhook" | "organisation") => void;
 }>;
+
+const SCOPE_LABELS: Record<string, string> = {
+  "mcp:read": "Read your workflows, executions, and plugin schemas",
+  "mcp:write": "Write your workflows, executions, and integrations",
+  "mcp:admin": "Full access to all existing and future actions",
+};
 
 /**
  * Overlay for creating a new API key.
@@ -72,12 +80,30 @@ function CreateApiKeyOverlay({
   const [phase, setPhase] = useState<"label" | "codes">("label");
   const dual = useDualFactorState();
   const [creating, setCreating] = useState(false);
+  const [selectedScopes, setSelectedScopes] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(SUPPORTED_SCOPES.map((s) => [s, true]))
+  );
+
+  const activeScopes = SUPPORTED_SCOPES.filter((s) => selectedScopes[s]);
+  const hasScopeSelected = activeScopes.length > 0;
+
+  const toggleScope = (id: string, checked: boolean): void => {
+    if (id === "mcp:admin" && checked) {
+      setSelectedScopes((prev) =>
+        Object.fromEntries(Object.keys(prev).map((k) => [k, true]))
+      );
+    } else {
+      setSelectedScopes((prev) => ({ ...prev, [id]: checked }));
+    }
+  };
+
+  const isAdminSelected = selectedScopes["mcp:admin"] ?? false;
 
   const emptyCodesFetch = (): Promise<Response> =>
     fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: keyName.trim() || null }),
+      body: JSON.stringify({ name: keyName.trim() || null, scopes: activeScopes }),
     });
 
   // Wallet users confirm by signing instead of entering TOTP + email codes.
@@ -118,6 +144,7 @@ function CreateApiKeyOverlay({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: keyName.trim() || null,
+          scopes: activeScopes,
           code: dual.totpCode.trim(),
           emailOtp: dual.emailOtp.trim() || undefined,
         }),
@@ -140,15 +167,14 @@ function CreateApiKeyOverlay({
         ) {
           return;
         }
-        throw new Error(data.error || "Failed to create API key");
+        throw new Error(data.error ?? "Failed to create API key");
       }
 
-      const newKey = await response.json();
+      const newKey = (await response.json()) as ApiKey;
       onCreated(newKey);
       toast.success("API key created successfully");
       pop();
     } catch (error) {
-      console.error("Failed to create API key:", error);
       toast.error(
         error instanceof Error ? error.message : "Failed to create API key"
       );
@@ -192,12 +218,12 @@ function CreateApiKeyOverlay({
           ? {
               label: "Create API key",
               onClick: handleWalletCreate,
-              disabled: !keyName.trim() || creating,
+              disabled: !keyName.trim() || creating || !hasScopeSelected,
             }
           : {
               label: "Continue",
               onClick: () => setPhase("codes"),
-              disabled: !keyName.trim(),
+              disabled: !keyName.trim() || !hasScopeSelected,
             },
       ]}
       overlayId={overlayId}
@@ -213,6 +239,35 @@ function CreateApiKeyOverlay({
             placeholder="e.g., Production, Testing"
             value={keyName}
           />
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Permissions
+          </p>
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <ul className="space-y-3">
+              {SUPPORTED_SCOPES.map((scopeId) => {
+                const lockedByAdmin = scopeId !== "mcp:admin" && isAdminSelected;
+                return (
+                  <li key={scopeId}>
+                    <label
+                      className={`flex items-center gap-3 text-sm text-foreground ${lockedByAdmin ? "cursor-default opacity-50" : "cursor-pointer"}`}
+                    >
+                      <input
+                        checked={selectedScopes[scopeId] ?? false}
+                        className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
+                        disabled={lockedByAdmin}
+                        onChange={(e) => toggleScope(scopeId, e.target.checked)}
+                        type="checkbox"
+                        value={scopeId}
+                      />
+                      {SCOPE_LABELS[scopeId] ?? scopeId}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         </div>
       </div>
     </Overlay>
@@ -449,11 +504,10 @@ function ApiKeysList({
         <div className="space-y-2">
           {apiKeys.map((apiKey) => (
             <div
-              className={`flex items-center justify-between rounded-md border p-3 ${
-                apiKey.id === highlightId
-                  ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
-                  : ""
-              }`}
+              className={`flex items-center justify-between rounded-md border p-3 ${apiKey.id === highlightId
+                ? "bg-muted/40 ring-2 ring-primary/60 ring-inset"
+                : ""
+                }`}
               key={apiKey.id}
               ref={apiKey.id === highlightId ? highlightedRef : undefined}
             >
@@ -462,10 +516,26 @@ function ApiKeysList({
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                     {apiKey.keyPrefix}...
                   </code>
-                  {apiKey.name && (
-                    <span className="truncate text-sm">{apiKey.name}</span>
-                  )}
                 </div>
+                {apiKey.name && (
+                  <p className="mt-2 mb-2 text-sm">
+                    {"Name: "}
+                    <span className="truncate text-sm">{apiKey.name}</span>
+                  </p>
+                )}
+                {apiKey.scope && (
+                  <p className="mt-2 mb-2 text-sm">
+                    {"Scope: "}
+                    {apiKey.scope.split(" ").map((s) => (
+                      <span key={s}>
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                          {s.startsWith("mcp:") ? s.slice(4) : s}
+                        </code>
+                        {" "}
+                      </span>
+                    ))}
+                  </p>
+                )}
                 <p className="mt-1 text-muted-foreground text-xs">
                   Created {formatDate(apiKey.createdAt)}
                   {showCreator &&
