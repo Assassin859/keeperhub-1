@@ -1,5 +1,6 @@
 "use client";
 
+import { ethers } from "ethers";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -11,33 +12,27 @@ type SpendCapResponse = {
   dailyUsedWei: string;
 };
 
-const WEI_PER_ETH = BigInt(10) ** BigInt(18);
-const ETH_AMOUNT = /^\d+(\.\d{1,18})?$/;
-const TRAILING_ZEROS = /0+$/;
-
 function formatWeiToEth(wei: string): string {
-  let value: bigint;
   try {
-    value = BigInt(wei);
+    return ethers.formatEther(wei);
   } catch {
     return "0";
   }
-  const whole = value / WEI_PER_ETH;
-  const frac = (value % WEI_PER_ETH)
-    .toString()
-    .padStart(18, "0")
-    .replace(TRAILING_ZEROS, "");
-  return frac ? `${whole}.${frac}` : whole.toString();
 }
 
 function parseEthToWei(input: string): string | null {
   const trimmed = input.trim();
-  if (!ETH_AMOUNT.test(trimmed)) {
+  if (trimmed === "") {
     return null;
   }
-  const [whole, frac = ""] = trimmed.split(".");
-  const fracPadded = (frac + "0".repeat(18)).slice(0, 18);
-  return (BigInt(whole) * WEI_PER_ETH + BigInt(fracPadded)).toString();
+  try {
+    const wei = ethers.parseEther(trimmed);
+    // ethers.parseEther("-5") yields a negative BigInt without throwing; the
+    // cap must be non-negative (the server also rejects it).
+    return wei < BigInt(0) ? null : wei.toString();
+  } catch {
+    return null;
+  }
 }
 
 /**
