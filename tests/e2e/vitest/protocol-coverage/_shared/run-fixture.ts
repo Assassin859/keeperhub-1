@@ -151,7 +151,10 @@ export function runPhaseFixtures(opts: {
         expect(response.ok, `webhook returned ${response.status}`).toBe(true);
 
         const result = await waitForWorkflowExecution(workflow.id, TIMEOUT_MS);
-        expect(result, "no execution recorded within timeout").not.toBeNull();
+        expect(
+          result,
+          "execution did not reach a terminal status within timeout (either never created or still running)"
+        ).not.toBeNull();
         expect(
           result?.status,
           result?.error ?? "execution did not succeed"

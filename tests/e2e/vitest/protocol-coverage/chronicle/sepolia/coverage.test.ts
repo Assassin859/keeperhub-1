@@ -13,16 +13,20 @@ const SKIP_INFRA_TESTS =
   !process.env.PROTOCOL_E2E_SEPOLIA_FORK ||
   process.env.SKIP_INFRA_TESTS === "true";
 
-// Temporarily disabled on the fork: the setup workflow runs six
-// sequential self-kiss write steps inside one execution, and on anvil
-// the second write step reliably hangs (step log stuck "running", no
-// receipt) while the execution stays "running" forever, starving the
-// executor's workflow slots and knocking out later suites' fixtures.
-// Single-write executions on the same fork are fine (superfluid's
-// create/update/delete-flow all pass), and this same setup passed on
-// live Sepolia, so this is a multi-write-step-on-anvil executor issue,
-// not a chronicle problem. Re-enable once that interaction is fixed;
-// until then the suite would be red on every CI run.
+// Temporarily disabled on the fork. Root cause (measured locally with
+// real signing, 2026-07-02): anvil lazily fetches touched contract
+// state from its upstream on first access, and the free public upstream
+// throttles those fetches, so a write touching a cold contract takes
+// ~200s to mine (kiss #1: 3m19s measured). Every one of chronicle's six
+// setup kisses targets a different oracle contract, and each read
+// fixture touches yet another feed, so the suite needs ~20 minutes of
+// first-touch fetches - past the 300s setup wait and past the fork's
+// own ~15-minute survival window on a non-archive upstream. Superfluid
+// passes on the same fork because its operations reuse the same
+// contracts, which warm once during setup.
+// Unlock: provision a dedicated archive-grade Sepolia upstream for the
+// fork (ANVIL_FORK_SEPOLIA_URL secret, mirroring ANVIL_FORK_MAINNET_URL)
+// and re-enable; until then the suite would be red on every CI run.
 describe.skip(`${PROTOCOL} (Sepolia)`, () => {
   const ctx = createSharedCtx();
 
