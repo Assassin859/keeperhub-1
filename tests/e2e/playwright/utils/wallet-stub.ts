@@ -130,28 +130,17 @@ export async function installWalletStub(
  * and clear the first-login display-name modal. Assumes `installWalletStub` ran
  * and the page is logged out. Leaves the page signed in and in-app.
  */
-export async function completeWalletLogin(
-  page: Page,
-  displayName = "Swift Falcon"
-): Promise<void> {
+export async function completeWalletLogin(page: Page): Promise<void> {
   await page.goto("/welcome", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Sign in with your wallet" }).click();
   await page.getByTestId("connect-wallet-io.metamask").click();
 
-  // A first-time wallet account must pick a display name; an already-named
-  // account skips straight into the app.
-  const nameInput = page.locator("#wallet-display-name");
-  const needsName = await nameInput
-    .waitFor({ state: "visible", timeout: 20_000 })
-    .then(() => true)
-    .catch(() => false);
-  if (needsName) {
-    await nameInput.fill(displayName);
-    await page.getByRole("button", { name: "Continue" }).click();
-  }
-
-  // Skip the post-signup onboarding wizard so helper-based tests land straight
-  // in-app, matching the pre-welcome behavior they were written against.
+  // SIWE login mints the session and redirects into the app (the onboarding
+  // wizard for a new account). Wait until we leave the landing, then skip the
+  // wizard so helper-based tests land straight in-app.
+  await page.waitForURL((url) => !url.pathname.endsWith("/welcome"), {
+    timeout: 20_000,
+  });
   await page.evaluate(() =>
     localStorage.setItem("keeperhub-welcome-seen", "1")
   );
