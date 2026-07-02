@@ -46,24 +46,26 @@ export function parseNativeValueWei(
 }
 
 /**
- * Native value (wei) reserved for a generic node execution, keyed by the
- * resolved step function. Only actions that broadcast native ETH value are
- * charged against the cap: a native transfer (`amount`) or a contract write
- * that forwards value (`ethValue`). Token transfers/approvals and off-chain
- * steps move no native value and reserve "0".
+ * Native value (wei) reserved for a generic node execution.
  *
- * Keyed on the step function so a newly-added value-bearing action must opt in
- * here rather than silently reserving 0 (which would be a cap bypass).
+ * A native transfer forwards `amount`; every contract-write-style action
+ * forwards native value via `ethValue`. Charging `ethValue` on the field name
+ * (not the step name) means a future value-forwarding action is charged
+ * automatically rather than silently reserving 0 (a cap bypass). Token
+ * transfers/approvals and off-chain steps have neither field and correctly
+ * reserve "0". `value` is deliberately NOT read -- it names non-broadcasting
+ * inputs on other steps (e.g. risk analysis), so charging it would be wrong.
  */
 export function parseNodeNativeValueWei(
   stepFunction: string,
   config: Record<string, unknown>
 ): ReservedValue {
-  let raw: string | undefined;
   if (stepFunction === "transferFundsStep") {
-    raw = typeof config.amount === "string" ? config.amount : undefined;
-  } else if (stepFunction === "writeContractStep") {
-    raw = typeof config.ethValue === "string" ? config.ethValue : undefined;
+    return parseNativeValueWei(
+      typeof config.amount === "string" ? config.amount : undefined
+    );
   }
-  return parseNativeValueWei(raw);
+  return parseNativeValueWei(
+    typeof config.ethValue === "string" ? config.ethValue : undefined
+  );
 }

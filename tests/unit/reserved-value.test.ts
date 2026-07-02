@@ -54,10 +54,18 @@ describe("parseNodeNativeValueWei", () => {
     ).toEqual({ ok: true, valueWei: "0" });
   });
 
-  it("reserves 0 for off-chain / unrecognized steps", () => {
+  it("reserves 0 for off-chain / unrecognized steps with no ethValue", () => {
     expect(parseNodeNativeValueWei("httpRequestStep", { amount: "5" })).toEqual(
       { ok: true, valueWei: "0" }
     );
+  });
+
+  it("charges any step that forwards ethValue, not just writeContractStep", () => {
+    // A future value-forwarding action reserves its ethValue instead of
+    // silently bypassing the cap with "0".
+    expect(
+      parseNodeNativeValueWei("someFutureWriteStep", { ethValue: "0.25" })
+    ).toEqual({ ok: true, valueWei: "250000000000000000" });
   });
 
   it("propagates a parse failure for a value-bearing step", () => {
