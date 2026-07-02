@@ -1,6 +1,5 @@
 "use client";
 
-import { WalletNameModal } from "@/components/auth/wallet-name-modal";
 import { OverlayContainer } from "@/components/overlays/overlay-container";
 import { OverlaySync } from "@/components/overlays/overlay-sync";
 
@@ -12,7 +11,6 @@ export function GlobalModals() {
     <>
       <OverlayContainer />
       <OverlaySync />
-      <WalletNameModal />
     </>
   );
 }
