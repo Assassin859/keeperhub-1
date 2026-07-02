@@ -2,7 +2,6 @@
 // only -- not a security gate -- so localStorage is sufficient, mirroring the
 // getting-started guide's `keeperhub-onboarding-guide` persistence pattern.
 
-const WELCOME_SEEN_KEY = "keeperhub-welcome-seen";
 const CONTINUE_AS_GUEST_KEY = "keeperhub-continue-as-guest";
 
 function readFlag(key: string): boolean {
@@ -28,27 +27,20 @@ function writeFlag(key: string): void {
   }
 }
 
-/** True once the signed-in user has finished or skipped the welcome wizard. */
-export function hasSeenWelcome(): boolean {
-  return readFlag(WELCOME_SEEN_KEY);
-}
-
-export function markWelcomeSeen(): void {
-  writeFlag(WELCOME_SEEN_KEY);
-}
-
 /**
- * Persists onboarding completion server-side so the wizard is not shown again
- * on another device or browser. Fire-and-forget: the local flag already guards
- * this device, so a failed request is not fatal.
+ * Persists onboarding completion server-side (the authoritative flag, read on
+ * every session fetch) so the wizard is not shown again on any device. Resolves
+ * even on failure so callers can await it before navigating.
  */
-export function markOnboardingComplete(): void {
+export async function markOnboardingComplete(): Promise<void> {
   if (typeof window === "undefined") {
     return;
   }
-  fetch("/api/user/onboarding/complete", { method: "POST" }).catch(() => {
-    // Best-effort; the local welcome-seen flag still guards this device.
-  });
+  try {
+    await fetch("/api/user/onboarding/complete", { method: "POST" });
+  } catch {
+    // Best-effort; the caller still navigates and the gate re-shows if needed.
+  }
 }
 
 /** True once the user chose "Continue without an account" on the welcome page. */

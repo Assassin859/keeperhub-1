@@ -11,7 +11,8 @@ import { CopyBlock } from "@/components/welcome/copy-block";
 import { ConnectAgentPreview } from "@/components/welcome/previews";
 import { WelcomeShell } from "@/components/welcome/welcome-shell";
 import { getAgentFrameworks } from "@/lib/agent-connect-commands";
-import { markOnboardingComplete, markWelcomeSeen } from "@/lib/welcome-status";
+import { useSession } from "@/lib/auth-client";
+import { markOnboardingComplete } from "@/lib/welcome-status";
 
 const BACK_PATH = "/welcome/invite-members";
 
@@ -23,7 +24,9 @@ const BACK_PATH = "/welcome/invite-members";
 export function ConnectAgentStep(): React.ReactElement {
   const router = useRouter();
   const { open } = useOverlay();
+  const { refetch } = useSession();
   const [apiKey, setApiKey] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
   const [mcpUrl, setMcpUrl] = useState(
     process.env.NEXT_PUBLIC_APP_URL
       ? `${process.env.NEXT_PUBLIC_APP_URL}/mcp`
@@ -48,14 +51,18 @@ export function ConnectAgentStep(): React.ReactElement {
     });
   };
 
-  const finish = (): void => {
-    markWelcomeSeen();
-    markOnboardingComplete();
+  // Persist completion, refresh the session so the client carries the new flag,
+  // then head home. The refetch avoids the root gate bouncing back here.
+  const finish = async (): Promise<void> => {
+    setFinishing(true);
+    await markOnboardingComplete();
+    await refetch();
     router.push("/");
   };
 
   return (
     <WelcomeShell
+      busy={finishing}
       contentClassName="max-w-none"
       description="Point your AI agent at KeeperHub over MCP, then drive workflows and wallets from your editor."
       nextLabel="Finish"

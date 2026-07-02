@@ -9,7 +9,7 @@ import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
-import { hasSeenWelcome, isContinueAsGuest } from "@/lib/welcome-status";
+import { isContinueAsGuest } from "@/lib/welcome-status";
 import {
   currentWorkflowIdAtom,
   currentWorkflowNameAtom,
@@ -102,11 +102,12 @@ const Home = () => {
       }
       return;
     }
-    // Server flag makes completion stick across devices/browsers; the local
-    // flag is a same-device fast path right after finishing.
+    // A real user who has not completed onboarding (new signup, or an anonymous
+    // guest who just signed in) is sent into the wizard. The server flag is
+    // authoritative so this is not skipped by a stale device flag.
     const onboardingDone =
       (session?.user as { onboardingCompleted?: boolean } | undefined)
-        ?.onboardingCompleted === true || hasSeenWelcome();
+        ?.onboardingCompleted === true;
     if (!onboardingDone) {
       welcomeRedirectedRef.current = true;
       router.replace("/welcome/create-org");

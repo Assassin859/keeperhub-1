@@ -105,7 +105,9 @@ export function ConnectAuthPanel({
   const handleSocial = async (provider: "github" | "google"): Promise<void> => {
     setSocial(provider);
     try {
-      await signIn.social({ provider, callbackURL: window.location.pathname });
+      // Land on "/" so the onboarding gate runs (a new social user goes to the
+      // wizard; a returning user goes home).
+      await signIn.social({ provider, callbackURL: "/" });
     } catch {
       setSocial(null);
       toast.error(`Could not start ${provider} sign-in.`);
