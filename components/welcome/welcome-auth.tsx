@@ -1,39 +1,16 @@
 "use client";
 
-import { ArrowLeft, Wallet } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { useLayoutEffect, useRef, useState } from "react";
-import { ConnectAuthPanel } from "@/components/auth/connect-auth-panel";
-import { WalletPicker } from "@/components/auth/wallet-picker";
+import { SignInChoices } from "@/components/auth/sign-in-choices";
 import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
-import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { markContinueAsGuest } from "@/lib/welcome-status";
 
 /**
- * Safe-style welcome / sign-in panel. Presents email + social auth in a single
- * column (via ConnectAuthPanel), a "Sign in with your wallet" action that
- * reveals the wallet picker on click, and a guest escape hatch. The transition
- * between the two views is height-animated to match ConnectAuthPanel's own
- * view changes. Rendered full-screen on the bare-layout /welcome route.
+ * Full-screen welcome / sign-in surface for the bare-layout /welcome route:
+ * the KeeperHub mark, a single title, the shared SignInChoices panel, and a
+ * guest escape hatch.
  */
 export function WelcomeAuth(): React.ReactElement {
-  const [showWallet, setShowWallet] = useState(false);
-
-  // Animate the card height as the view swaps, mirroring ConnectAuthPanel.
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number | "auto">("auto");
-  useLayoutEffect(() => {
-    const el = contentRef.current;
-    if (!el) {
-      return;
-    }
-    const observer = new ResizeObserver(() => setHeight(el.scrollHeight));
-    observer.observe(el);
-    setHeight(el.scrollHeight);
-    return () => observer.disconnect();
-  }, []);
-
   // Mint the anonymous session before leaving so the request to "/" carries a
   // cookie; the proxy then lets it through and the client gate honors the guest
   // flag instead of bouncing back here.
@@ -56,69 +33,7 @@ export function WelcomeAuth(): React.ReactElement {
             Sign in to KeeperHub
           </h1>
         </div>
-
-        <motion.div
-          animate={{ height }}
-          className="overflow-hidden"
-          initial={false}
-          transition={{ duration: 0.25, ease: "easeInOut" }}
-        >
-          <div ref={contentRef}>
-            <AnimatePresence initial={false} mode="popLayout">
-              {showWallet ? (
-                <motion.div
-                  animate={{ opacity: 1 }}
-                  className="flex flex-col gap-4"
-                  exit={{ opacity: 0, transition: { duration: 0 } }}
-                  initial={{ opacity: 0 }}
-                  key="wallet"
-                  transition={{ opacity: { duration: 0.15, delay: 0.2 } }}
-                >
-                  <p className="text-muted-foreground text-sm">
-                    Nothing leaves your device but a signature.
-                  </p>
-                  <WalletPicker
-                    onConnected={() => window.location.assign("/")}
-                  />
-                  <Button
-                    className="w-full justify-center"
-                    onClick={() => setShowWallet(false)}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <ArrowLeft className="size-4" />
-                    Other ways to sign in
-                  </Button>
-                </motion.div>
-              ) : (
-                <motion.div
-                  animate={{ opacity: 1 }}
-                  className="flex flex-col gap-4"
-                  exit={{ opacity: 0, transition: { duration: 0 } }}
-                  initial={{ opacity: 0 }}
-                  key="socials"
-                  transition={{ opacity: { duration: 0.15, delay: 0.2 } }}
-                >
-                  <ConnectAuthPanel hideChooserHeader />
-                  <div className="flex items-center gap-3">
-                    <span className="h-px flex-1 bg-border" />
-                    <span className="text-muted-foreground text-xs">OR</span>
-                    <span className="h-px flex-1 bg-border" />
-                  </div>
-                  <Button
-                    className="w-full justify-start"
-                    onClick={() => setShowWallet(true)}
-                    type="button"
-                    variant="outline"
-                  >
-                    <Wallet className="size-4" />
-                    Sign in with your wallet
-                  </Button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </motion.div>
+        <SignInChoices />
       </div>
 
       <button
