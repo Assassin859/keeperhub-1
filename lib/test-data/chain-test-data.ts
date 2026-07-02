@@ -227,6 +227,14 @@ export const FORK_WHALES: Record<
  * concurrently across protocols sharing one wallet via NonceManager).
  * Fork-mode chains get a generous floor since anvil_setBalance is free.
  *
+ * Sepolia sizing must survive base-fee spikes, not just typical prices:
+ * on 2026-07-02 Sepolia ran at 30-90 gwei and the node's worst-case
+ * check (gasLimit x maxFeePerGas) priced a single Superfluid create-flow
+ * at ~0.065 ETH, so a 0.03 ETH balance failed with INSUFFICIENT_FUNDS
+ * before submission. The floor is checked once per suite in beforeAll,
+ * so it must cover a full suite's worst-case single tx, and actual spend
+ * (gasUsed x effective price) stays far below the per-tx worst case.
+ *
  * No entry for chain 8453 (Base): ajna is the only protocol-coverage suite
  * on it, every write action it has is marked skipped in TEST_DATA, and
  * runSetup() only calls ensureNativeGas when a chain actually has a
@@ -235,7 +243,7 @@ export const FORK_WHALES: Record<
  */
 export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("1000000000000000000"), // 1 ETH (fork mode, free via anvil_setBalance)
-  "11155111": BigInt("10000000000000000"), // 0.01 ETH
+  "11155111": BigInt("50000000000000000"), // 0.05 ETH (covers one worst-case tx at spike prices)
 };
 
 /**
@@ -249,10 +257,12 @@ export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
  *
  * The shared TESTNET_FUNDER_PK wallet on Sepolia was topped up to ~0.15 ETH
  * on 2026-07-01 after briefly running dry mid-debug; re-top-up via a faucet
- * if this starts throwing "funder has X; need >= Y" again.
+ * if this starts throwing "funder has X; need >= Y" again. At the 0.06
+ * top-up below, ~0.12 of funder balance covers roughly two spike-priced
+ * runs before it needs a refill.
  */
 export const FUND_NATIVE_AMOUNT_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("10000000000000000000"), // 10 ETH (fork mode)
-  "11155111": BigInt("30000000000000000"), // 0.03 ETH
+  "11155111": BigInt("60000000000000000"), // 0.06 ETH (survives base-fee spikes; see floor comment)
   "8453": BigInt("15000000000000000"), // 0.015 ETH real Base mainnet ETH
 };
