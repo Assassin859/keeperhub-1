@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   DollarSign,
-  Github,
   Globe,
   Info,
   Loader2,
@@ -21,14 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { DiscordIcon } from "@/components/icons/discord-icon";
-import {
-  LinkedInIcon,
-  TelegramIcon,
-  XIcon,
-  YouTubeIcon,
-} from "@/components/icons/social-icons";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
-import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   Tooltip,
@@ -44,7 +36,6 @@ import type { NavPanelStates } from "@/lib/hooks/use-persisted-nav-state";
 import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { registerSidebarRefetch } from "@/lib/refetch-sidebar";
-import { SOCIAL_LINKS, type SocialBrand } from "@/lib/social-links";
 import { cn } from "@/lib/utils";
 import { filterPickerVisible } from "@/lib/workflow/soft-delete";
 import {
@@ -57,39 +48,6 @@ import { FLYOUT_WIDTH, FlyoutPanel, STRIP_WIDTH } from "./flyout-panel";
 export const COLLAPSED_WIDTH = 60;
 export const EXPANDED_WIDTH = 200;
 const SNAP_THRESHOLD = (COLLAPSED_WIDTH + EXPANDED_WIDTH) / 2;
-
-// Icon-only community links shown above the Discord link in the sidebar footer.
-// Hrefs come from the canonical SOCIAL_LINKS so they stay in one place.
-const HREF_BY_BRAND = Object.fromEntries(
-  SOCIAL_LINKS.map((link) => [link.brand, link.href])
-) as Record<SocialBrand, string>;
-
-const SOCIAL_ICON_ROW: ReadonlyArray<{
-  brand: SocialBrand;
-  label: string;
-  href: string;
-  Icon: (props: { className?: string }) => React.ReactElement;
-}> = [
-  {
-    brand: "linkedin",
-    label: "LinkedIn",
-    href: HREF_BY_BRAND.linkedin,
-    Icon: LinkedInIcon,
-  },
-  { brand: "x", label: "X", href: HREF_BY_BRAND.x, Icon: XIcon },
-  {
-    brand: "youtube",
-    label: "YouTube",
-    href: HREF_BY_BRAND.youtube,
-    Icon: YouTubeIcon,
-  },
-  {
-    brand: "telegram",
-    label: "Telegram",
-    href: HREF_BY_BRAND.telegram,
-    Icon: TelegramIcon,
-  },
-];
 
 type WorkflowEntry = {
   id: string;
@@ -1004,25 +962,6 @@ export function NavigationSidebar(): React.ReactNode {
         </nav>
 
         <div className="flex flex-col gap-1 border-t px-2.5 py-3">
-          <div
-            className={cn(
-              "flex flex-wrap items-center gap-1 pb-1",
-              showLabels ? "justify-start" : "justify-center"
-            )}
-          >
-            {SOCIAL_ICON_ROW.map(({ brand, label, href, Icon }) => (
-              <a
-                aria-label={label}
-                className="flex size-8 items-center justify-center rounded-md text-foreground transition-colors hover:bg-muted"
-                href={href}
-                key={brand}
-                rel="noopener"
-                target="_blank"
-              >
-                <Icon className="size-4" />
-              </a>
-            ))}
-          </div>
           {(
             [
               {
@@ -1066,42 +1005,6 @@ export function NavigationSidebar(): React.ReactNode {
               </Tooltip>
             );
           })}
-          {(() => {
-            // Feedback widget is disabled by default. Re-enable by setting
-            // NEXT_PUBLIC_FEEDBACK_ENABLED=true (the POST /api/feedback route
-            // gates on the same flag).
-            if (process.env.NEXT_PUBLIC_FEEDBACK_ENABLED !== "true") {
-              return null;
-            }
-            const reportButton = (
-              <button
-                aria-label="Report an issue"
-                className={cn(
-                  "flex h-9 w-full items-center rounded-md transition-colors hover:bg-muted",
-                  showLabels ? "gap-3 px-2" : "justify-center"
-                )}
-                data-testid="nav-report-issue"
-                onClick={() => openOverlay(FeedbackOverlay)}
-                type="button"
-              >
-                <Github className="size-4 shrink-0" />
-                {showLabels && (
-                  <span className="truncate text-sm">Report an issue</span>
-                )}
-              </button>
-            );
-
-            if (showLabels) {
-              return reportButton;
-            }
-
-            return (
-              <Tooltip>
-                <TooltipTrigger asChild>{reportButton}</TooltipTrigger>
-                <TooltipContent side="right">Report an issue</TooltipContent>
-              </Tooltip>
-            );
-          })()}
         </div>
 
         {/* Resize handle */}
