@@ -11,7 +11,6 @@ import { CopyBlock } from "@/components/welcome/copy-block";
 import { ConnectAgentPreview } from "@/components/welcome/previews";
 import { WelcomeShell } from "@/components/welcome/welcome-shell";
 import { getAgentFrameworks } from "@/lib/agent-connect-commands";
-import { useSession } from "@/lib/auth-client";
 import { markOnboardingComplete } from "@/lib/welcome-status";
 
 const BACK_PATH = "/welcome/invite-members";
@@ -24,7 +23,6 @@ const BACK_PATH = "/welcome/invite-members";
 export function ConnectAgentStep(): React.ReactElement {
   const router = useRouter();
   const { open } = useOverlay();
-  const { refetch } = useSession();
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [mcpUrl, setMcpUrl] = useState(
@@ -51,13 +49,13 @@ export function ConnectAgentStep(): React.ReactElement {
     });
   };
 
-  // Persist completion, refresh the session so the client carries the new flag,
-  // then head home. The refetch avoids the root gate bouncing back here.
+  // Persist completion, then hard-navigate home so the session is refetched
+  // server-side with the new flag; the root gate then keeps the user on the
+  // canvas instead of bouncing back here.
   const finish = async (): Promise<void> => {
     setFinishing(true);
     await markOnboardingComplete();
-    await refetch();
-    router.push("/");
+    window.location.assign("/");
   };
 
   return (
