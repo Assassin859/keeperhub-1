@@ -60,6 +60,9 @@ export function SpendCapSection(): React.ReactElement {
         setUsedWei(data.dailyUsedWei);
         setInput(data.dailyCapWei ? formatWeiToEth(data.dailyCapWei) : "");
       })
+      .catch(() => {
+        toast.error("Could not load the spend cap");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -94,6 +97,11 @@ export function SpendCapSection(): React.ReactElement {
   }, []);
 
   const handleSave = useCallback(() => {
+    // An empty field clears the cap, matching the "Leave empty for no cap" hint.
+    if (input.trim() === "") {
+      save(null);
+      return;
+    }
     const wei = parseEthToWei(input);
     if (wei === null) {
       toast.error("Enter a valid ETH amount (up to 18 decimals)");
