@@ -64,7 +64,12 @@ export type QueryEventsCoreInput = {
 
 export type QueryEventsInput = StepInput & QueryEventsCoreInput;
 
-type BlockRange = { fromBlock: number; toBlock: number };
+// `toBlockIsLatest` marks a range whose end was resolved by us (from an empty
+// or "latest" input) rather than given explicitly by the user. Only that case
+// is safe to re-verify/clamp against a fresher head at query time -- an
+// explicit user-provided toBlock must surface a real error if it turns out to
+// be beyond the chain, not get silently truncated.
+type BlockRange = { fromBlock: number; toBlock: number; toBlockIsLatest: boolean };
 
 function serializeBigInts(value: unknown): unknown {
   return JSON.parse(
@@ -172,8 +177,13 @@ async function resolveBlockRange(
 > {
   const toBlockStr = toBlockInput?.toString().trim() ?? "";
   let resolvedToBlock: number;
+  const toBlockIsLatest =
+    toBlockStr === "" || toBlockStr.toLowerCase() === "latest";
 
-  if (toBlockStr === "" || toBlockStr.toLowerCase() === "latest") {
+  if (toBlockIsLatest) {
+    // This is a planning estimate only -- how many batches to run and where
+    // `fromBlock` starts. It is NOT the authoritative bound used for the
+    // final eth_getLogs call; see queryBatchWithRetry's tip-batch handling.
     resolvedToBlock = await provider.getBlockNumber();
     console.log("[Query Events] Resolved latest block:", resolvedToBlock);
   } else {
@@ -197,9 +207,15 @@ async function resolveBlockRange(
 
   return {
     success: true,
-    range: { fromBlock: fromBlockResult.value, toBlock: resolvedToBlock },
+    range: {
+      fromBlock: fromBlockResult.value,
+      toBlock: resolvedToBlock,
+      toBlockIsLatest,
+    },
   };
 }
+
+type EventBatchesResult = { events: DecodedEvent[]; actualToBlock: number };
 
 async function queryEventBatches(
   rpcManager: RpcProviderManager,
@@ -208,9 +224,10 @@ async function queryEventBatches(
   eventName: string,
   eventFragment: ethers.EventFragment,
   range: BlockRange
-): Promise<DecodedEvent[]> {
+): Promise<EventBatchesResult> {
   const batchSize = DEFAULT_BATCH_SIZE;
   const allEvents: DecodedEvent[] = [];
+  let actualToBlock = range.fromBlock - 1;
 
   for (
     let start = range.fromBlock;
@@ -218,15 +235,17 @@ async function queryEventBatches(
     start += batchSize
   ) {
     const end = Math.min(start + batchSize - 1, range.toBlock);
+    const isTipBatch = range.toBlockIsLatest && end === range.toBlock;
     console.log(`[Query Events] Querying batch: blocks ${start} to ${end}`);
 
-    const batchEvents = await queryBatchWithRetry(
+    const { events: batchEvents, actualEnd } = await queryBatchWithRetry(
       rpcManager,
       contractAddress,
       parsedAbi,
       eventName,
       start,
-      end
+      end,
+      isTipBatch
     );
 
     for (const event of batchEvents) {
@@ -239,9 +258,17 @@ async function queryEventBatches(
         });
       }
     }
+
+    actualToBlock = actualEnd;
+    // The head was clamped below this batch's planned end -- later batches
+    // would target blocks even further out, so there is nothing left to gain
+    // by continuing.
+    if (actualEnd < end) {
+      break;
+    }
   }
 
-  return allEvents;
+  return { events: allEvents, actualToBlock };
 }
 
 async function stepHandler(
@@ -335,7 +362,7 @@ async function stepHandler(
   // Query events (each batch fails over between endpoints and retries with a
   // backoff, so a transient timeout on one batch does not fail the whole node).
   try {
-    const events = await queryEventBatches(
+    const { events, actualToBlock } = await queryEventBatches(
       rpcManager,
       contractAddress,
       abiResult.parsed,
@@ -350,7 +377,7 @@ async function stepHandler(
       success: true as const,
       events,
       fromBlock: range.fromBlock,
-      toBlock: range.toBlock,
+      toBlock: actualToBlock,
       eventCount: events.length,
     };
   } catch (error) {
