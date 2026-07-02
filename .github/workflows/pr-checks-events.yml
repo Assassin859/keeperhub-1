@@ -20,7 +20,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-events-deps
       - name: Run lint
         working-directory: keeperhub-events
@@ -29,7 +29,7 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-events-deps
       - name: Run typecheck
         working-directory: keeperhub-events
@@ -40,7 +40,7 @@ jobs:
     environment: staging
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-events-deps
       - name: Run unit tests
         working-directory: keeperhub-events
@@ -56,7 +56,7 @@ jobs:
     # requires it even for community SQS use). Mirrors e2e-tests-ephemeral.
     environment: staging
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-events-deps
       - name: Ensure keeperhub-network exists
         # docker-compose.yml declares keeperhub-network as external, so

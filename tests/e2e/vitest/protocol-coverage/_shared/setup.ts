@@ -150,11 +150,53 @@ export async function runSetup(opts: {
     );
   }
 
-  const result = await waitForWorkflowExecution(workflow.id, 180_000);
+  // 300s: forked chains lazy-load contract state from their upstream on
+  // first touch, so the first transaction through a protocol's contracts
+  // can be far slower than steady-state (observed >180s on the Sepolia
+  // fork with the default public upstream).
+  const result = await waitForWorkflowExecution(workflow.id, 300_000);
   if (!result || result.status !== "success") {
+    const diagnosis = await describeExecutionState(workflow.id);
     throw new Error(
-      `setup workflow failed for ${protocol}/${chainId}: ${result?.status ?? "timeout"}${result?.error ? ` - ${result.error}` : ""}`
+      `setup workflow failed for ${protocol}/${chainId}: ${result?.status ?? "timeout"}${result?.error ? ` - ${result.error}` : ""}\n${diagnosis}`
     );
+  }
+}
+
+/** Pre-cleanup post-mortem for setup failures. Must run before afterAll's
+ *  cleanupAll cascades the workflow delete: a "running" execution hung on
+ *  a specific node and a missing execution row (webhook accepted, nothing
+ *  dispatched) are different bugs, and both are invisible afterwards. */
+async function describeExecutionState(workflowId: string): Promise<string> {
+  const client = postgres(getDatabaseUrl(), { max: 1 });
+  try {
+    const executions = await client`
+      SELECT id, status, left(coalesce(error, ''), 200) AS error
+      FROM workflow_executions WHERE workflow_id = ${workflowId}
+      ORDER BY started_at DESC LIMIT 5`;
+    if (executions.length === 0) {
+      return "diagnosis: no workflow_executions row for this workflow - webhook accepted but nothing was dispatched";
+    }
+    const steps = await client`
+      SELECT node_id, node_name, node_type, status, left(coalesce(error, ''), 200) AS error, started_at, completed_at
+      FROM workflow_execution_logs WHERE execution_id = ${executions[0].id as string}
+      ORDER BY started_at ASC LIMIT 20`;
+    const execSummary = executions
+      .map((e) => `execution ${e.id}: ${e.status}${e.error ? ` (${e.error})` : ""}`)
+      .join("; ");
+    // node_id disambiguates steps that share a display name (e.g. a setup
+    // workflow with several protocol steps of the same action).
+    const stepSummary = steps
+      .map(
+        (s) =>
+          `  step ${s.node_id} ${s.node_name} [${s.node_type}]: ${s.status}${s.error ? ` (${s.error})` : ""} started=${s.started_at}${s.completed_at ? ` completed=${s.completed_at}` : " (never completed)"}`
+      )
+      .join("\n");
+    return `diagnosis: ${execSummary}\n${stepSummary || "  (no step logs recorded)"}`;
+  } catch (err) {
+    return `diagnosis unavailable: ${(err as Error).message}`;
+  } finally {
+    await client.end();
   }
 }
 

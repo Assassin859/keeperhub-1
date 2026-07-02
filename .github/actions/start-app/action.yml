@@ -124,6 +124,7 @@ runs:
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
         ALLOW_TEST_ENDPOINTS: ${{ inputs.allow_test_endpoints }}
         LOAD_TEST_BYPASS_TOKEN: ${{ inputs.load_test_bypass_token }}
+        SAFE_FETCH_SHADOW: ${{ inputs.safe_fetch_shadow }}
         SANDBOX_BACKEND: ${{ inputs.sandbox_backend }}
         SANDBOX_URL: ${{ inputs.sandbox_url }}
       run: |
@@ -164,7 +165,11 @@ runs:
         # opt-in for testEndpointsEnabled, gating the admin OTP endpoint +
         # rate-limit bypass) and LOAD_TEST_BYPASS_TOKEN (MFA-enrollment bypass,
         # verified in proxy.ts) are required for the Playwright auth setup -
-        # the bare-metal path already sets them.
+        # the bare-metal path already sets them. SAFE_FETCH_SHADOW puts the
+        # app's safeFetch into shadow mode so the protocol-coverage setup
+        # workflows can reach the localhost anvil fork (chain 11155111 -> :8547);
+        # it takes effect under NODE_ENV=production because the container is
+        # CI-exempt (CI=true). Empty in other jobs keeps SSRF fully enforced.
         docker run -d --name keeperhub-app --network host \
           --env-file /tmp/keeperhub-app.env \
           -e "CHAIN_RPC_CONFIG=${CHAIN_RPC_CONFIG}" \
@@ -174,6 +179,7 @@ runs:
           -e "TURNKEY_ORGANIZATION_ID=${TURNKEY_ORGANIZATION_ID}" \
           -e "ALLOW_TEST_ENDPOINTS=${ALLOW_TEST_ENDPOINTS}" \
           -e "LOAD_TEST_BYPASS_TOKEN=${LOAD_TEST_BYPASS_TOKEN}" \
+          -e "SAFE_FETCH_SHADOW=${SAFE_FETCH_SHADOW}" \
           "${IMAGE}"
 
         for i in $(seq 1 30); do
@@ -228,7 +234,10 @@ runs:
       if: inputs.image_tag == ''
       shell: bash
       run: |
-        pnpm start &
+        # Capture bare-metal app output: a backgrounded process's stdout is
+        # not attributed to later steps' logs, so without this the app's
+        # runtime errors are invisible in CI post-mortems.
+        pnpm start > /tmp/keeperhub-app-baremetal.log 2>&1 &
         for i in $(seq 1 30); do
           if curl -sf http://localhost:3000 > /dev/null 2>&1; then
             echo "App is ready"

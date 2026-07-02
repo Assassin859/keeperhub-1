@@ -311,12 +311,14 @@ function resolveApiKeyContext(apiKeyAuth: {
   organizationId?: string;
   userId?: string;
   apiKeyId?: string;
+  scope?: string;
 }): DualAuthContext {
   return {
     userId: apiKeyAuth.userId ?? null,
     organizationId: apiKeyAuth.organizationId ?? null,
     authMethod: "api-key",
     apiKeyId: apiKeyAuth.apiKeyId ?? null,
+    scope: apiKeyAuth.scope,
     // Anonymous creators are rejected inside authenticateApiKey.
     isAnonymous: false,
   };
@@ -327,8 +329,9 @@ export type OrganizationAuthContext =
       organizationId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
-      // OAuth token scope (mcp:read|write|admin). Undefined for api-key/session
-      // callers, which scopeSatisfies() treats as full access.
+      // OAuth token scope (mcp:read|write|admin). Also set for scoped API keys.
+      // Undefined for session callers and unscoped keys, which scopeSatisfies()
+      // treats as full access.
       scope?: string;
     }
   | { error: string; status: number };
@@ -362,6 +365,7 @@ export async function resolveOrganizationId(
       organizationId,
       authMethod: "api-key",
       apiKeyId: apiKeyAuth.apiKeyId ?? null,
+      scope: apiKeyAuth.scope,
     };
   }
 
@@ -404,8 +408,9 @@ export async function resolveCreatorContext(request: Request): Promise<
       userId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
-      // OAuth token scope (mcp:read|write|admin). Undefined for api-key/session
-      // callers, which scopeSatisfies() treats as full access.
+      // OAuth token scope (mcp:read|write|admin). Also set for scoped API keys.
+      // Undefined for session callers and unscoped keys, which scopeSatisfies()
+      // treats as full access for backwards compatibility.
       scope?: string;
     }
   | { error: string; status: number }
@@ -427,7 +432,8 @@ export async function resolveCreatorContext(request: Request): Promise<
       apiKeyAuth.organizationId ?? null,
       apiKeyAuth.userId ?? null,
       "api-key",
-      apiKeyAuth.apiKeyId ?? null
+      apiKeyAuth.apiKeyId ?? null,
+      apiKeyAuth.scope
     );
   }
 

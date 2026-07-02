@@ -1,6 +1,13 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
 
+// The contract is userSpecifiedAddress, so every action binds a concrete
+// Safe. The registry's chain-1 fallback (the canonical v1.4.1 singleton,
+// 0x41675C...) is NOT usable: its storage is uninitialized, so getOwners()
+// reverts with INVALID (verified 2026-07-02 via eth_call). Target the
+// GnosisDAO treasury Safe instead -- long-lived, threshold 3, six owners.
+const MAINNET_TEST_SAFE = "0x849D52316331967b6fF1198e5E32A0eB168D039d";
+
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
@@ -9,17 +16,29 @@ const TEST_DATA: ProtocolTestData = {
       approvals: [],
     },
     actions: {
-      "get-owners": {},
-      "get-threshold": {},
-      "is-owner": { owner: wallet() },
-      "get-nonce": {},
-      "is-module-enabled": { module: wallet() },
+      "get-owners": { contractAddress: MAINNET_TEST_SAFE },
+      "get-threshold": { contractAddress: MAINNET_TEST_SAFE },
+      "is-owner": { contractAddress: MAINNET_TEST_SAFE, owner: wallet() },
+      "get-nonce": { contractAddress: MAINNET_TEST_SAFE },
+      "is-module-enabled": {
+        contractAddress: MAINNET_TEST_SAFE,
+        module: wallet(),
+      },
       "get-modules-paginated": {
+        contractAddress: MAINNET_TEST_SAFE,
         start: "0x0000000000000000000000000000000000000001",
         pageSize: "10",
       },
     },
     skipped: {},
+    // Invariants of any live Safe: a nonzero threshold and at least one
+    // owner. The test wallet is a Turnkey EOA that is not an owner of the
+    // treasury, so is-owner is a known constant false.
+    expectations: {
+      "get-owners": [{ notEmpty: true }],
+      "get-threshold": [{ nonZero: true }],
+      "is-owner": [{ equals: "false" }],
+    },
   },
 };
 

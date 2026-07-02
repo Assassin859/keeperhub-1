@@ -117,6 +117,23 @@ export function normalizeScope(requestedScope: string): string {
 }
 
 /**
+ * Coerce the `scopes` field from an API request body (array or space-separated
+ * string) into a normalized scope string, or null when omitted.
+ */
+export function parseScopeInput(scopes: unknown): string | null {
+  if (Array.isArray(scopes)) {
+    const raw = scopes
+      .filter((s): s is string => typeof s === "string")
+      .join(" ");
+    return raw.trim() ? normalizeScope(raw) : null;
+  }
+  if (typeof scopes === "string") {
+    return scopes.trim() ? normalizeScope(scopes) : null;
+  }
+  return null;
+}
+
+/**
  * Return the minimum OAuth scope a caller needs to invoke the given tool.
  *
  * KEEP-483: when a tool denies for missing scope, the client must be told

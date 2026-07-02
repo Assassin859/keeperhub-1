@@ -35,6 +35,17 @@ const TEST_DATA: ProtocolTestData = {
       distribute: "pool dependency; needs real pool address",
       "distribute-flow": "pool dependency; needs real pool address",
       "connect-pool": "pool dependency; needs real pool address",
+      // These two touch contracts the setup workflow does not warm (the
+      // GDA forwarder, and the CFA flow-operator storage). On the CI
+      // anvil fork, first-touch state fetches through the throttled
+      // public upstream take ~200s per contract (measured 2026-07-02),
+      // exceeding the fixture timeout; the CFA flow actions pass because
+      // setup warms that contract. Unlock with an archive-grade
+      // ANVIL_FORK_SEPOLIA_URL upstream, then remove these skips.
+      "grant-flow-operator":
+        "cold-contract state fetch exceeds fixture timeout on the public fork upstream",
+      "create-pool":
+        "cold-contract state fetch exceeds fixture timeout on the public fork upstream",
     },
     actions: {
       // Reads
