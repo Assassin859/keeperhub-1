@@ -13,7 +13,17 @@ const SKIP_INFRA_TESTS =
   !process.env.PROTOCOL_E2E_SEPOLIA_FORK ||
   process.env.SKIP_INFRA_TESTS === "true";
 
-describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Sepolia)`, () => {
+// Temporarily disabled on the fork: the setup workflow runs six
+// sequential self-kiss write steps inside one execution, and on anvil
+// the second write step reliably hangs (step log stuck "running", no
+// receipt) while the execution stays "running" forever, starving the
+// executor's workflow slots and knocking out later suites' fixtures.
+// Single-write executions on the same fork are fine (superfluid's
+// create/update/delete-flow all pass), and this same setup passed on
+// live Sepolia, so this is a multi-write-step-on-anvil executor issue,
+// not a chronicle problem. Re-enable once that interaction is fixed;
+// until then the suite would be red on every CI run.
+describe.skip(`${PROTOCOL} (Sepolia)`, () => {
   const ctx = createSharedCtx();
 
   beforeAll(async () => {

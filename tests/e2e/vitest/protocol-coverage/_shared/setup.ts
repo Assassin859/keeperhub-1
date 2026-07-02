@@ -178,16 +178,18 @@ async function describeExecutionState(workflowId: string): Promise<string> {
       return "diagnosis: no workflow_executions row for this workflow - webhook accepted but nothing was dispatched";
     }
     const steps = await client`
-      SELECT node_name, node_type, status, left(coalesce(error, ''), 200) AS error, completed_at
+      SELECT node_id, node_name, node_type, status, left(coalesce(error, ''), 200) AS error, started_at, completed_at
       FROM workflow_execution_logs WHERE execution_id = ${executions[0].id as string}
       ORDER BY started_at ASC LIMIT 20`;
     const execSummary = executions
       .map((e) => `execution ${e.id}: ${e.status}${e.error ? ` (${e.error})` : ""}`)
       .join("; ");
+    // node_id disambiguates steps that share a display name (e.g. a setup
+    // workflow with several protocol steps of the same action).
     const stepSummary = steps
       .map(
         (s) =>
-          `  step ${s.node_name} [${s.node_type}]: ${s.status}${s.error ? ` (${s.error})` : ""}${s.completed_at ? "" : " (never completed)"}`
+          `  step ${s.node_id} ${s.node_name} [${s.node_type}]: ${s.status}${s.error ? ` (${s.error})` : ""} started=${s.started_at}${s.completed_at ? ` completed=${s.completed_at}` : " (never completed)"}`
       )
       .join("\n");
     return `diagnosis: ${execSummary}\n${stepSummary || "  (no step logs recorded)"}`;
