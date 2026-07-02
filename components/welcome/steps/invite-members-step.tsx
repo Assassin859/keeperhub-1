@@ -45,6 +45,8 @@ export function InviteMembersStep(): React.ReactElement {
   const { data: session } = useSession();
   const [rows, setRows] = useState<InviteRow[]>([newRow()]);
   const [sending, setSending] = useState(false);
+  // Validation only surfaces after the user tries to continue, not while typing.
+  const [showErrors, setShowErrors] = useState(false);
 
   const user = session?.user;
   const ownerLabel =
@@ -81,11 +83,6 @@ export function InviteMembersStep(): React.ReactElement {
     }
     return null;
   };
-  const allValid = rows.every(
-    (row) =>
-      isValidInvite(row.value) &&
-      !(isSelfInvite(row.value, selfEmail, selfAddress) || isDuplicate(row))
-  );
 
   const updateRow = (id: string, patch: Partial<InviteRow>): void => {
     setRows((current) =>
@@ -140,13 +137,25 @@ export function InviteMembersStep(): React.ReactElement {
     return true;
   };
 
-  // Next is only enabled when every row is a valid, unique invite, so here we
-  // just send them. Users who don't want to invite anyone use Skip instead.
+  // Validation happens here, on Next, not while typing. Empty rows are ignored;
+  // to continue without inviting anyone, use Skip.
   const handleNext = async (): Promise<void> => {
+    const filled = rows.filter((row) => row.value.trim());
+    if (filled.length === 0) {
+      setShowErrors(true);
+      toast.error("Add a teammate, or skip this step.");
+      return;
+    }
+    if (filled.some((row) => rowError(row) !== null)) {
+      setShowErrors(true);
+      toast.error("Fix the highlighted invites.");
+      return;
+    }
+    setShowErrors(false);
     setSending(true);
     try {
       let sent = 0;
-      for (const row of rows) {
+      for (const row of filled) {
         if (await sendInvite(row)) {
           sent += 1;
         }
@@ -164,7 +173,6 @@ export function InviteMembersStep(): React.ReactElement {
     <WelcomeShell
       busy={sending}
       description="Add teammates by email or wallet address. They can also be invited later from settings."
-      nextDisabled={!allValid}
       onBack={() => router.push(BACK_PATH)}
       onNext={handleNext}
       onSkip={() => router.push(NEXT_PATH)}
@@ -188,7 +196,7 @@ export function InviteMembersStep(): React.ReactElement {
             <span className="size-9 shrink-0" />
           </div>
           {rows.map((row) => {
-            const error = rowError(row);
+            const error = showErrors ? rowError(row) : null;
             return (
               <div className="flex flex-col gap-1" key={row.id}>
                 <div className="flex items-center gap-2">
@@ -242,7 +250,7 @@ export function InviteMembersStep(): React.ReactElement {
         </div>
         <Button
           className="w-fit"
-          disabled={!allValid}
+          disabled={rows.some((row) => !row.value.trim())}
           onClick={() => setRows((current) => [...current, newRow()])}
           size="sm"
           type="button"
