@@ -260,6 +260,8 @@ jobs:
           # Sepolia (unfunded wallet, real gas) and mask fork problems.
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111"
+
+      - name: Start anvil Ethereum mainnet fork for protocol-coverage tests
         run: |
           docker network create keeperhub-network 2>/dev/null || true
           docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
