@@ -19,56 +19,23 @@ import { InvitePreview } from "@/components/welcome/previews";
 import { WelcomeShell } from "@/components/welcome/welcome-shell";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { authClient, useSession } from "@/lib/auth-client";
-import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { useOrganization } from "@/lib/hooks/use-organization";
+import {
+  findDuplicateKeys,
+  inviteKey,
+  isSelfInvite,
+  isValidInvite,
+} from "@/lib/onboarding/invite-validation";
 import { cn } from "@/lib/utils";
 
 const NEXT_PATH = "/welcome/connect-agent";
 const BACK_PATH = "/welcome/create-org";
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type InviteRole = "member" | "admin";
 type InviteRow = { id: string; value: string; role: InviteRole };
 
 function newRow(): InviteRow {
   return { id: nanoid(), value: "", role: "member" };
-}
-
-/**
- * A row is valid when it is either a valid (checksum-strict) wallet address, or
- * a well-formed email that is not disposable/blacklisted or a synthetic wallet
- * address, matching the signup email rules.
- */
-function isValidInvite(value: string): boolean {
-  const v = value.trim();
-  if (!v) {
-    return false;
-  }
-  if (v.startsWith("0x")) {
-    return isAddress(v);
-  }
-  return EMAIL_RE.test(v) && !(isWalletEmail(v) || isDisposableEmailDomain(v));
-}
-
-/** Ids of rows whose (case-insensitive) value collides with another row. */
-function duplicateRowIds(rows: InviteRow[]): Set<string> {
-  const byKey = new Map<string, string[]>();
-  for (const row of rows) {
-    const key = row.value.trim().toLowerCase();
-    if (!key) {
-      continue;
-    }
-    byKey.set(key, [...(byKey.get(key) ?? []), row.id]);
-  }
-  const dups = new Set<string>();
-  for (const ids of byKey.values()) {
-    if (ids.length > 1) {
-      for (const id of ids) {
-        dups.add(id);
-      }
-    }
-  }
-  return dups;
 }
 
 /** Wizard step 2: invite teammates by email or wallet address. */
@@ -93,25 +60,20 @@ export function InviteMembersStep(): React.ReactElement {
     selfEmail && isWalletEmail(selfEmail)
       ? (selfEmail.split("@")[0] ?? "")
       : "";
-  const isSelf = (value: string): boolean => {
-    const v = value.trim().toLowerCase();
-    return (
-      v.length > 0 &&
-      (v === selfEmail || (selfAddress !== "" && v === selfAddress))
-    );
-  };
 
-  const dupIds = duplicateRowIds(rows);
+  const dupKeys = findDuplicateKeys(rows.map((row) => row.value));
+  const isDuplicate = (row: InviteRow): boolean =>
+    dupKeys.has(inviteKey(row.value));
   // Per-row reason, shown inline and used to gate Next. Empty rows are neutral.
   const rowError = (row: InviteRow): string | null => {
     const v = row.value.trim();
     if (!v) {
       return null;
     }
-    if (isSelf(v)) {
+    if (isSelfInvite(v, selfEmail, selfAddress)) {
       return "You're already in this organization.";
     }
-    if (dupIds.has(row.id)) {
+    if (isDuplicate(row)) {
       return "This invite is duplicated.";
     }
     if (!isValidInvite(v)) {
@@ -121,7 +83,8 @@ export function InviteMembersStep(): React.ReactElement {
   };
   const allValid = rows.every(
     (row) =>
-      isValidInvite(row.value) && !(isSelf(row.value) || dupIds.has(row.id))
+      isValidInvite(row.value) &&
+      !(isSelfInvite(row.value, selfEmail, selfAddress) || isDuplicate(row))
   );
 
   const updateRow = (id: string, patch: Partial<InviteRow>): void => {
