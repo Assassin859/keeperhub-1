@@ -685,6 +685,7 @@ export function NavigationSidebar(): React.ReactNode {
   const workflowId =
     typeof params.workflowId === "string" ? params.workflowId : undefined;
   const isHubPage = pathname === "/hub";
+  const isScanPage = pathname === "/scan";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
   const isActivityPage = pathname === "/activity";
@@ -817,6 +818,9 @@ export function NavigationSidebar(): React.ReactNode {
     }
     if (id === "hub") {
       return isHubPage;
+    }
+    if (id === "scan") {
+      return isScanPage;
     }
     if (id === "analytics") {
       return isAnalyticsPage;

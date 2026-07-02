@@ -314,7 +314,7 @@ function buildGasBalanceSuggestion(
 
   return {
     id: `gas-balance-${chainId}`,
-    name: "Gas Balance Alert",
+    name: "Native Token Balance Alert",
     description:
       `Alerts when your native ${native} balance on ${chain} drops below ` +
       "0.01, so transactions keep working.",

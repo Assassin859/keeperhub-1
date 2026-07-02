@@ -103,7 +103,7 @@ const SIMPLE_FAMILIES = [
   {
     prefix: "balance-drop-",
     id: "group-balance-drop",
-    name: "Balance Drop Alert",
+    name: "Stablecoin Drop Alert",
     describe: balanceDropGroupDescription,
   },
   {
@@ -115,7 +115,7 @@ const SIMPLE_FAMILIES = [
   {
     prefix: "gas-balance-",
     id: "group-gas-balance",
-    name: "Gas Balance Alert",
+    name: "Native Token Balance Alert",
     describe: gasGroupDescription,
   },
 ] as const;

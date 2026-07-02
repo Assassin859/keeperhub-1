@@ -9,8 +9,10 @@
  *   2. Resolve canonical client IP via getRequestSourceIp (cf-connecting-ip,
  *      set authoritatively by Cloudflare and unforgeable by clients; trusted-
  *      proxy XFF fallback). Never raw x-real-ip / X-Forwarded-For.
- *   3. Postgres-backed rate limit 3/hr/IP via incrementAndCheck. 4th request
- *      within the hour returns 429 BEFORE scanAddress is called.
+ *   3. Postgres-backed rate limit via incrementAndCheckWithBackoff: 6 free
+ *      scans per hour per IP, then an exponential backoff tail (30s, 60s,
+ *      120s, ... between scans) until the hour bucket rolls over. Blocked
+ *      requests return 429 BEFORE scanAddress is called.
  *   4. scanAddress handles the 5-min cache short-circuit (SCAN-13) and fans
  *      out to N-chain RPC calls only on a cache miss.
  *
@@ -21,7 +23,6 @@
 import "server-only";
 
 import { ethers } from "ethers";
-import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
 import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -32,6 +33,7 @@ import {
   buildApyContext,
   fetchDefillamaYieldPools,
 } from "@/lib/scan/price/defillama-yields";
+import { incrementAndCheckWithBackoff } from "@/lib/scan/rate-limit";
 import { scanAddress } from "@/lib/scan/scanner";
 import {
   type ApyContext,
@@ -41,7 +43,10 @@ import { getRequestSourceIp } from "@/lib/security/request-attribution";
 
 export const dynamic = "force-dynamic";
 
-const RATE_LIMIT_MAX = 3;
+/** Scans that pass with no wait within one hour bucket. */
+const FREE_SCAN_LIMIT = 6;
+/** First backoff step; doubles per additional scan (30s, 60s, 120s, ...). */
+const BACKOFF_BASE_SECONDS = 30;
 
 export async function GET(
   request: Request,
@@ -67,11 +72,15 @@ export async function GET(
 
   // Canonical client IP via cf-connecting-ip (Cloudflare-authoritative,
   // unforgeable). Raw x-real-ip / X-Forwarded-For is client-controllable and
-  // would let a caller spoof the rate-limit key to bypass the 3/hr limit.
+  // would let a caller spoof the rate-limit key to bypass the limit.
   // Unattributable requests share one "unknown" bucket so they cannot escape
   // the limit by withholding the header.
   const trustedIp = getRequestSourceIp(request) ?? "unknown";
-  const rate = await incrementAndCheck(`scan:${trustedIp}`, RATE_LIMIT_MAX);
+  const rate = await incrementAndCheckWithBackoff(
+    `scan:${trustedIp}`,
+    FREE_SCAN_LIMIT,
+    BACKOFF_BASE_SECONDS
+  );
 
   if (!rate.allowed) {
     // HARDEN-01: emit abuse telemetry BEFORE returning 429 so the Sentry

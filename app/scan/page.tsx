@@ -1,10 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ScanDisclaimer } from "@/components/scan/scan-disclaimer";
 import { ScanInput } from "@/components/scan/scan-input";
 import { ScanResults } from "@/components/scan/scan-results";
 import { SuggestionPreviewDrawer } from "@/components/scan/suggestion-preview-drawer";
+import { Button } from "@/components/ui/button";
+import { truncateAddress } from "@/lib/address-utils";
 import { useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
@@ -20,7 +23,32 @@ type ScanState =
 
 const ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 
+const EXAMPLE_WALLETS = [
+  {
+    label: "Stablecoin holder",
+    address: "0x6ea08ca8f313d860808ef7431fc72c6fbcf4a72d",
+  },
+  {
+    label: "Aave borrower",
+    address: "0xE33230364C7379DD0026f3ec714283d03535E77a",
+  },
+  {
+    label: "Sky saver",
+    address: "0xc6891787230F68b1E3485094A3b55a436f3E7de5",
+  },
+] as const;
+
 export default function ScanPage(): React.ReactElement {
+  // useSearchParams in ScanPageContent requires a Suspense boundary so the
+  // static prerender of this route can bail out to client rendering.
+  return (
+    <Suspense fallback={null}>
+      <ScanPageContent />
+    </Suspense>
+  );
+}
+
+function ScanPageContent(): React.ReactElement {
   const [address, setAddress] = useState<string>("");
   const [scanState, setScanState] = useState<ScanState>("idle");
   const [scanData, setScanData] = useState<ScanResponse | null>(null);
@@ -34,6 +62,13 @@ export default function ScanPage(): React.ReactElement {
   >([]);
   const [previewOpen, setPreviewOpen] = useState<boolean>(false);
   const triggerRef = useRef<HTMLElement | null>(null);
+  // Monotonic scan generation: bumped by every runScan call and by the
+  // URL-param reset below, so a superseded in-flight response never lands.
+  const scanSeq = useRef(0);
+  // True once the current ?address= param has been consumed (either written
+  // by runScan itself or auto-scanned from a deep link). Also guards Strict
+  // Mode's double effect invocation from burning a second anonymous scan.
+  const autoScanDone = useRef(false);
 
   const { data: session } = useSession();
   const isAuthenticated =
@@ -46,20 +81,31 @@ export default function ScanPage(): React.ReactElement {
     }
   };
 
-  const handleScan = async (): Promise<void> => {
-    if (!ADDRESS_REGEX.test(address)) {
+  const runScan = useCallback(async (target: string): Promise<void> => {
+    if (!ADDRESS_REGEX.test(target)) {
       setInputError("Enter a valid EVM address (0x...)");
       return;
     }
 
+    const seq = ++scanSeq.current;
     setInputError(undefined);
     setScanState("loading");
 
+    // Reflect the scanned address in the URL so results are shareable.
+    // history.replaceState (synced into useSearchParams by the App Router)
+    // avoids a route re-render; autoScanDone marks the param as self-written
+    // so the URL-sync effect below does not scan it a second time.
+    autoScanDone.current = true;
+    window.history.replaceState(null, "", `?address=${target}`);
+
     try {
-      const res = await fetch(`/api/scan/${encodeURIComponent(address)}`);
+      const res = await fetch(`/api/scan/${encodeURIComponent(target)}`);
 
       if (res.status === 429) {
         const body = (await res.json()) as { retryAfter?: number };
+        if (scanSeq.current !== seq) {
+          return;
+        }
         // The API returns retryAfter in SECONDS; the banner renders minutes.
         // Convert to whole minutes (min 1) and fall back to 60 (hourly limit)
         // when the field is absent or non-positive.
@@ -74,29 +120,79 @@ export default function ScanPage(): React.ReactElement {
       }
 
       if (!res.ok) {
+        if (scanSeq.current !== seq) {
+          return;
+        }
         setErrorMessage(
-          "The scan service is temporarily unavailable. Please try again."
+          "Our chain data providers are not responding right now. This usually clears within a few minutes, so try again shortly."
         );
         setScanState("error");
         return;
       }
 
       const data = (await res.json()) as ScanResponse;
+      if (scanSeq.current !== seq) {
+        return;
+      }
       setScanData(data);
       setScanState(data.suggestions?.length ? "populated" : "empty");
     } catch {
+      if (scanSeq.current !== seq) {
+        return;
+      }
       setErrorMessage(
         "Couldn't reach the scanner. Check your connection and try again."
       );
       setScanState("error");
     }
-  };
+  }, []);
 
   const handleScanSubmit = (): void => {
-    handleScan().catch(() => {
-      // Errors are handled inside handleScan's try/catch block.
+    runScan(address).catch(() => {
+      // Errors are handled inside runScan's try/catch block.
     });
   };
+
+  const handleExampleSelect = (target: string): void => {
+    setAddress(target);
+    runScan(target).catch(() => {
+      // Errors are handled inside runScan's try/catch block.
+    });
+  };
+
+  // Sync scan state with the ?address= URL param. Deep links (/scan?address=)
+  // prefill and auto-run one scan; navigating back to a bare /scan (e.g. the
+  // Scan nav item while results are showing) resets to the initial hero state.
+  const searchParams = useSearchParams();
+  const urlAddress = searchParams.get("address");
+  useEffect(() => {
+    if (urlAddress && ADDRESS_REGEX.test(urlAddress)) {
+      if (autoScanDone.current) {
+        return;
+      }
+      autoScanDone.current = true;
+      if (process.env.NEXT_PUBLIC_SCAN_ENABLED !== "true") {
+        return;
+      }
+      setAddress(urlAddress);
+      runScan(urlAddress).catch(() => {
+        // Errors are handled inside runScan's try/catch block.
+      });
+      return;
+    }
+    // Param gone: invalidate any in-flight scan and return to the hero state.
+    scanSeq.current += 1;
+    autoScanDone.current = false;
+    setAddress("");
+    setScanState("idle");
+    setScanData(null);
+    setRetryAfter(null);
+    setErrorMessage(null);
+    setInputError(undefined);
+    setPreviewOpen(false);
+    setSelectedSuggestion(null);
+    setSelectedVariants([]);
+  }, [urlAddress, runScan]);
 
   const handleCardSelect = (
     suggestion: SuggestionDescriptor,
@@ -150,11 +246,10 @@ export default function ScanPage(): React.ReactElement {
             ) : (
               <div className="mx-auto max-w-2xl py-12 text-center sm:py-16">
                 <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-foreground">
-                  Scan your wallet
+                  Scan onchain address
                 </h1>
                 <p className="mb-8 text-muted-foreground text-sm">
-                  Paste an EVM address to see DeFi positions and suggested
-                  automations.
+                  See DeFi positions and suggested automations
                 </p>
                 <ScanInput
                   disabled={isLoading}
@@ -163,6 +258,23 @@ export default function ScanPage(): React.ReactElement {
                   onSubmit={handleScanSubmit}
                   value={address}
                 />
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <span className="text-muted-foreground text-xs">
+                    Try an example:
+                  </span>
+                  {EXAMPLE_WALLETS.map((example) => (
+                    <Button
+                      className="rounded-full font-normal text-muted-foreground text-xs hover:text-foreground"
+                      key={example.address}
+                      onClick={() => handleExampleSelect(example.address)}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      {example.label} · {truncateAddress(example.address)}
+                    </Button>
+                  ))}
+                </div>
               </div>
             )}
 

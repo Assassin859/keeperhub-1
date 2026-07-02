@@ -3,11 +3,11 @@
  * scan route.
  *
  * Verifies: address validation (400 on malformed), rate-limit enforcement
- * (429 on 4th/hr from same IP, scanAddress NOT called), happy path
+ * (429 when the backoff limiter denies, scanAddress NOT called), happy path
  * (200 + scanAddress called once with the rate-limit key `scan:<ip>`),
  * HARDEN-01 abuse telemetry on 429, and HARDEN-04 flag-gate 404.
  *
- * Mocks: incrementAndCheck, getRequestSourceIp, scanAddress,
+ * Mocks: incrementAndCheckWithBackoff, getRequestSourceIp, scanAddress,
  *        logAnonymousExecutionBlock.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,8 +26,8 @@ const {
   mockLogAnonymousExecutionBlock: vi.fn(),
 }));
 
-vi.mock("@/lib/agentic-wallet/rate-limit", () => ({
-  incrementAndCheck: mockIncrementAndCheck,
+vi.mock("@/lib/scan/rate-limit", () => ({
+  incrementAndCheckWithBackoff: mockIncrementAndCheck,
 }));
 
 vi.mock("@/lib/security/request-attribution", () => ({
@@ -50,16 +50,16 @@ const MOCK_IP = "1.2.3.4";
 const ALLOWED_RATE = {
   allowed: true as const,
   count: 1,
-  limit: 3,
-  remaining: 2,
+  limit: 6,
+  remaining: 5,
   reset: 9_999_999_999,
 };
 
 const DENIED_RATE = {
   allowed: false as const,
   retryAfter: 1200,
-  count: 4,
-  limit: 3,
+  count: 7,
+  limit: 6,
   remaining: 0,
   reset: 9_999_999_999,
 };
@@ -107,7 +107,7 @@ describe("GET /api/scan/[address]", () => {
     expect(mockScanAddress).not.toHaveBeenCalled();
   });
 
-  it("rate limit: returns 429 without calling scanAddress (4th/hr from same IP)", async () => {
+  it("rate limit: returns 429 without calling scanAddress when the backoff limiter denies", async () => {
     mockIncrementAndCheck.mockResolvedValue(DENIED_RATE);
     const res = await GET(
       makeRequest(VALID_ADDRESS),
@@ -130,7 +130,11 @@ describe("GET /api/scan/[address]", () => {
     expect(body.schemaVersion).toBe(1);
     expect(mockScanAddress).toHaveBeenCalledTimes(1);
     expect(mockScanAddress).toHaveBeenCalledWith(VALID_ADDRESS);
-    expect(mockIncrementAndCheck).toHaveBeenCalledWith(`scan:${MOCK_IP}`, 3);
+    expect(mockIncrementAndCheck).toHaveBeenCalledWith(
+      `scan:${MOCK_IP}`,
+      6,
+      30
+    );
   });
 
   // HARDEN-01: abuse telemetry on 429
@@ -144,7 +148,7 @@ describe("GET /api/scan/[address]", () => {
     // RED: logAnonymousExecutionBlock is not yet called in the route (55-02 adds it)
     expect(mockLogAnonymousExecutionBlock).toHaveBeenCalledWith("scan", null, {
       ip: MOCK_IP,
-      rateLimitCount: "4",
+      rateLimitCount: "7",
       address: VALID_ADDRESS,
     });
   });

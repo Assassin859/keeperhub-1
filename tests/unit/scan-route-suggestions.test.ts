@@ -29,8 +29,8 @@ const { mockFetchDefillamaYieldPools, mockBuildApyContext } = vi.hoisted(
   })
 );
 
-vi.mock("@/lib/agentic-wallet/rate-limit", () => ({
-  incrementAndCheck: mockIncrementAndCheck,
+vi.mock("@/lib/scan/rate-limit", () => ({
+  incrementAndCheckWithBackoff: mockIncrementAndCheck,
 }));
 
 vi.mock("@/lib/security/request-attribution", () => ({

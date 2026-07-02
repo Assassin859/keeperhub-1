@@ -7,22 +7,10 @@ const CATEGORY_LABELS: Record<SuggestionCategory, string> = {
   claim: "Claim",
 };
 
-function categoryBadgeClass(category: SuggestionCategory): string {
-  const base =
-    "inline-flex items-center rounded-full border px-2 py-0.5 text-[0.625rem] font-medium";
-  switch (category) {
-    case "health":
-      return `${base} bg-[var(--color-badge-health-bg)] text-[var(--color-badge-health-text)] border-[var(--color-badge-health-border)]`;
-    case "yield":
-      return `${base} bg-[var(--color-bg-accent)] text-[var(--color-text-accent)] border-[var(--color-border-accent)]`;
-    case "alert":
-      return `${base} bg-[var(--color-bg-error)] text-[var(--color-text-error)] border-[var(--color-border-error)]`;
-    case "claim":
-      return `${base} bg-[var(--color-badge-blue-bg)] text-[var(--color-badge-blue-text)] dark:text-[var(--color-badge-blue-text-dark)] border-[var(--color-badge-blue-border)]`;
-    default:
-      return base;
-  }
-}
+// All categories share one quiet outline treatment so category tags do not
+// compete with the card title.
+const BADGE_CLASS =
+  "inline-flex items-center rounded-full border border-border bg-transparent px-2 py-0.5 font-medium text-[0.625rem] text-muted-foreground";
 
 type CategoryBadgeProps = {
   category: SuggestionCategory;
@@ -34,7 +22,7 @@ export function CategoryBadge({
   return (
     <span
       aria-label={`Category: ${category}`}
-      className={categoryBadgeClass(category)}
+      className={BADGE_CLASS}
       role="img"
     >
       {CATEGORY_LABELS[category]}
