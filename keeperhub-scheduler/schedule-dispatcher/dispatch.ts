@@ -20,6 +20,7 @@ import {
   failPhantomExecution,
 } from "../lib/phantom.js";
 import { sqs } from "../lib/sqs-client.js";
+import { signSqsMessageAttributes } from "../lib/sqs-message-auth.js";
 import type { Schedule, ScheduleMessage } from "../lib/types.js";
 import {
   errorsTotal,
@@ -242,9 +243,10 @@ function describeSchedule(schedule: Schedule): string {
 }
 
 export async function sendToQueue(message: ScheduleMessage): Promise<void> {
+  const body = JSON.stringify(message);
   const command = new SendMessageCommand({
     QueueUrl: SQS_QUEUE_URL,
-    MessageBody: JSON.stringify(message),
+    MessageBody: body,
     MessageAttributes: {
       TriggerType: {
         DataType: "String",
@@ -254,6 +256,7 @@ export async function sendToQueue(message: ScheduleMessage): Promise<void> {
         DataType: "String",
         StringValue: message.workflowId,
       },
+      ...signSqsMessageAttributes("scheduler", SQS_QUEUE_URL, body),
     },
   });
 
