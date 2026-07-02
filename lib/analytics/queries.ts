@@ -9,6 +9,7 @@ import {
   inArray,
   isNotNull,
   lt,
+  ne,
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -1295,51 +1296,32 @@ export async function getSpendCapData(organizationId: string): Promise<{
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
 
-  const [capResult, directUsageResult, workflowUsageResult] = await Promise.all(
-    [
-      db
-        .select({ dailyCapWei: organizationSpendCaps.dailyCapWei })
-        .from(organizationSpendCaps)
-        .where(eq(organizationSpendCaps.organizationId, organizationId))
-        .limit(1),
-      db
-        .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-        })
-        .from(directExecutions)
-        .where(
-          and(
-            eq(directExecutions.organizationId, organizationId),
-            eq(directExecutions.status, "completed"),
-            gte(directExecutions.createdAt, todayStart)
-          )
-        ),
-      db
-        // Same denormalised-column read as getWorkflowGasTotal: today's run
-        // gas straight off workflow_executions, no logs JSONB scan. gas_used_wei
-        // already reflects only gas-bearing (success) step output, so the
-        // previous log status='success' filter is subsumed. Windowed by run
-        // start rather than per-step time (see getWorkflowGasTotal).
-        .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-        })
-        .from(workflowExecutions)
-        .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
-        .where(
-          and(
-            eq(workflows.organizationId, organizationId),
-            gte(workflowExecutions.startedAt, todayStart)
-          )
-        ),
-    ]
-  );
+  // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
+  // per day (SUM value_wei over non-failed direct executions -- pending/running
+  // reservations included) against the org's daily value cap.
+  const [capResult, usageResult] = await Promise.all([
+    db
+      .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
+      .from(organizationSpendCaps)
+      .where(eq(organizationSpendCaps.organizationId, organizationId))
+      .limit(1),
+    db
+      .select({
+        totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.valueWei} AS NUMERIC)), 0)::text`,
+      })
+      .from(directExecutions)
+      .where(
+        and(
+          eq(directExecutions.organizationId, organizationId),
+          ne(directExecutions.status, "failed"),
+          gte(directExecutions.createdAt, todayStart)
+        )
+      ),
+  ]);
 
   return {
-    dailyCapWei: capResult[0]?.dailyCapWei ?? null,
-    dailyUsedWei: addBigIntStrings(
-      directUsageResult[0]?.totalWei ?? "0",
-      workflowUsageResult[0]?.totalWei ?? "0"
-    ),
+    dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
+    dailyUsedWei: usageResult[0]?.totalWei ?? "0",
   };
 }
 

@@ -18,9 +18,15 @@ vi.mock("@/lib/db/schema", () => ({
   workflowExecutions: {
     status: "status",
   },
+  directExecutions: {
+    status: "status",
+  },
 }));
 
-import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
+import {
+  checkConcurrencyLimit,
+  checkDirectExecutionConcurrency,
+} from "@/app/api/execute/_lib/concurrency-limit";
 
 describe("checkConcurrencyLimit", () => {
   beforeEach(() => {
@@ -102,5 +108,46 @@ describe("checkConcurrencyLimit", () => {
     const result = await freshCheck();
 
     expect(result).toEqual({ allowed: true });
+  });
+});
+
+describe("checkDirectExecutionConcurrency", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRunningCount = 0;
+    Reflect.deleteProperty(process.env, "MAX_CONCURRENT_DIRECT_EXECUTIONS");
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(process.env, "MAX_CONCURRENT_DIRECT_EXECUTIONS");
+  });
+
+  it("allows when in-flight count is below the default limit", async () => {
+    mockRunningCount = 99;
+
+    const result = await checkDirectExecutionConcurrency();
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  it("rejects when in-flight count meets the default limit", async () => {
+    mockRunningCount = 100;
+
+    const result = await checkDirectExecutionConcurrency();
+
+    expect(result).toEqual({ allowed: false, running: 100, limit: 100 });
+  });
+
+  it("uses a custom limit from MAX_CONCURRENT_DIRECT_EXECUTIONS", async () => {
+    process.env.MAX_CONCURRENT_DIRECT_EXECUTIONS = "5";
+    vi.resetModules();
+    const { checkDirectExecutionConcurrency: freshCheck } = await import(
+      "@/app/api/execute/_lib/concurrency-limit"
+    );
+    mockRunningCount = 5;
+
+    const result = await freshCheck();
+
+    expect(result).toEqual({ allowed: false, running: 5, limit: 5 });
   });
 });
