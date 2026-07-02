@@ -8,6 +8,17 @@ function parseSqsHmacMode(value: string | undefined): SqsHmacMode {
   return value === "off" || value === "enforce" ? value : "warn";
 }
 
+// Parse a non-negative integer env var, falling back on unset/blank/non-numeric.
+// Unlike `Number(x) || fallback`, this honours an explicit 0 rather than
+// treating it as falsy.
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 export const CONFIG = {
   executionMode: (process.env.EXECUTION_MODE || "isolated") as ExecutionMode,
 
@@ -54,15 +65,19 @@ export const CONFIG = {
 
   // SQS trigger-message HMAC verification mode. "warn" (default)
   // verifies + records metrics but never drops a message, so shipping the
-  // executor change alone cannot reject live traffic; flip to "enforce" via env
-  // (no redeploy) once rollout metrics show every producer is signing. "off"
-  // skips the checks entirely.
+  // executor change alone cannot reject live traffic; flip to "enforce" once
+  // rollout metrics show every producer is signing. Read once at process start,
+  // so changing it takes an env update + pod restart (no code deploy needed).
+  // "off" skips the checks entirely.
   sqsHmacMode: parseSqsHmacMode(process.env.SQS_HMAC_MODE),
   // Advisory freshness threshold (seconds) for a validly-signed message. Beyond
   // it a metric + warn is emitted, but the message is still processed - a queue
   // backlog can legitimately hold old messages, so age alone never drops a
   // trigger.
-  sqsHmacMaxAgeSeconds: Number(process.env.SQS_HMAC_MAX_AGE_SECONDS) || 900,
+  sqsHmacMaxAgeSeconds: parseNonNegativeInt(
+    process.env.SQS_HMAC_MAX_AGE_SECONDS,
+    900
+  ),
 
   visibilityTimeout: 300,
   waitTimeSeconds: 20,

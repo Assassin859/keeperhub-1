@@ -34,6 +34,10 @@ import type { MessageAttributeValue } from "@aws-sdk/client-sqs";
 export const SQS_HMAC_CALLERS = ["scheduler", "events", "app"] as const;
 export type SqsHmacCaller = (typeof SQS_HMAC_CALLERS)[number];
 
+// Only these attributes plus the MessageBody are covered by the signature. Any
+// other MessageAttribute a producer attaches (TriggerType, WorkflowId) is an
+// unauthenticated routing hint: consumers MUST derive security-relevant fields
+// (workflowId, triggerType, userId) from the signed body, never from attributes.
 export const SQS_SIGNATURE_ATTR = "X-KH-Signature";
 export const SQS_TIMESTAMP_ATTR = "X-KH-Timestamp";
 export const SQS_CALLER_ATTR = "X-KH-Caller";
@@ -90,6 +94,13 @@ export type SqsVerifyResult =
  * Current signing secret plus an optional previous secret, so a secret rotation
  * can flip producers and the executor independently without dropping in-flight
  * messages during the changeover. Empty secrets are ignored.
+ *
+ * OPERATOR NOTE: this SQS path uses env vars, NOT the DB-backed rotating store
+ * (internal_service_hmac_secrets) that the HTTP verifier in
+ * lib/internal-service-auth.ts reads. So when rotating the shared secret, set
+ * the executor's INTERNAL_SERVICE_HMAC_SECRET_PREVIOUS to the outgoing secret
+ * for the grace window; otherwise, in enforce mode, messages still signed by
+ * not-yet-rotated producers are dropped.
  */
 function activeSecrets(): string[] {
   return [
