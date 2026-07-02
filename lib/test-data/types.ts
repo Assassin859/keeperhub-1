@@ -106,6 +106,35 @@ export function isNativeBinding(v: InputBinding): v is NativeBinding {
  *  for actions whose contract is userSpecifiedAddress (Superfluid SuperTokens). */
 export type ActionInputBindings = Record<string, InputBinding>;
 
+/**
+ * Declarative assertion on one field of a step's output, checked by the
+ * coverage runner after the execution reaches `success`. Without these the
+ * suite only proves liveness: any non-throwing read passes regardless of
+ * the value it returned.
+ *
+ * `field` is a dot-path into the step output's `result` (the structured
+ * ABI output from `structureAbiOutputs`, so multi-output reads key by
+ * output name, e.g. "totalCollateralBase"). Omit `field` to target
+ * `result` itself (single-output reads).
+ *
+ * Every expectation implies existence (resolved value is not
+ * null/undefined). Predicates are optional and additive:
+ *   - `nonZero`: numeric value (BigInt-serialized string) is not zero
+ *   - `notEmpty`: array/string has length, object has keys
+ *   - `equals`: String(value) matches exactly (booleans: "true"/"false")
+ *
+ * Keep expectations to values the suite provisions itself (positions the
+ * setup workflow opened) or long-lived chain invariants (an exchange rate,
+ * a Safe's threshold). Do not assert values another concurrently-running
+ * suite can move: all protocol-coverage suites share one test wallet.
+ */
+export type OutputExpectation = {
+  field?: string;
+  nonZero?: boolean;
+  notEmpty?: boolean;
+  equals?: string;
+};
+
 /** Setup bootstrap per (protocol, chain). */
 export type SetupSpec = {
   /** Native gas floor (preflight asserts before the setup workflow runs). */
@@ -137,6 +166,11 @@ export type ProtocolChainTestData = {
   setup: SetupSpec;
   /** Per-action input bindings keyed by action.slug. */
   actions: Record<string, ActionInputBindings>;
+  /**
+   * Optional per-action output assertions keyed by action.slug, checked by
+   * the coverage runner after execution success. See OutputExpectation.
+   */
+  expectations?: Record<string, OutputExpectation[]>;
   /**
    * Action slugs the test runner should mark as `test.skip` with a reason.
    * Builders still produce these workflows (so the seeder surfaces them in

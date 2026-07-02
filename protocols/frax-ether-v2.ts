@@ -25,14 +25,19 @@ const TEST_DATA: ProtocolTestData = {
     },
     actions: {
       "mint-paused": {},
-      mint: {},
-      "mint-and-give": { recipient: wallet() },
-      "mint-and-stake": { recipient: wallet() },
+      // Minting is unconditional while mintFrxEthPaused() is false: ETH in,
+      // frxETH out 1:1, no caps or queues. ethValue is the builder's
+      // virtual msg.value key for payable actions.
+      mint: { ethValue: "0.01" },
+      "mint-and-give": { ethValue: "0.01", recipient: wallet() },
+      "mint-and-stake": { ethValue: "0.01", recipient: wallet() },
     },
-    skipped: {
-      mint: "payable; requires ETH value to send",
-      "mint-and-give": "payable; requires ETH value to send",
-      "mint-and-stake": "payable; requires ETH value to send",
+    // mintFrxEthPaused() returned false on mainnet as of 2026-07-02. A
+    // flip to true is an emergency pause -- the mint actions this plugin
+    // markets would be failing for users, so surfacing it as a red suite
+    // is signal, not flake.
+    expectations: {
+      "mint-paused": [{ equals: "false" }],
     },
   },
 };

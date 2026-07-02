@@ -231,6 +231,15 @@ jobs:
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
         run: |
+          # Upstream note: the compose default (publicnode) is deliberate.
+          # It serves state only for recent blocks, which bounds a fork's
+          # useful lifetime to ~15 minutes (anvil panics in do_mine_block
+          # once its pinned block leaves the upstream window - EIP-2935
+          # pre-execution reads get HTTP 403). The protocol-coverage step
+          # therefore restarts this fork for a fresh window before running.
+          # Do not point the fork at the platform dRPC URL: fork state
+          # fetches burn through its request quota.
+          #
           # docker-compose.yml attaches every service to the external
           # `keeperhub-network`; the ephemeral start-app step uses
           # `docker run --network host` and never creates it, so compose
@@ -254,6 +263,12 @@ jobs:
             sleep 2
           done
           echo "anvil Sepolia fork ready on localhost:8547"
+          # Point chain 11155111 at the local fork for protocol-coverage.
+          # Null the fallback too: the RPC manager retries failures on the
+          # fallback endpoint, which would leak fork transactions to live
+          # Sepolia (unfunded wallet, real gas) and mask fork problems.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111"
 
       - name: Start anvil Ethereum mainnet fork for protocol-coverage tests
         run: |
@@ -283,7 +298,7 @@ jobs:
           # "keeperhub-db"-named container to docker exec into -- connect
           # directly on localhost:5432, same as "Wait for services" above.
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
-            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548' WHERE chain_id = 1"
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
 
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
@@ -317,7 +332,36 @@ jobs:
           SAFE_FETCH_SHADOW: "true"
 
       - name: Run protocol-coverage tests
-        run: pnpm test:protocol
+        run: |
+          # Restart the Sepolia fork for a fresh upstream window: the
+          # publicnode upstream serves state only for recent blocks, so a
+          # fork started ~30 minutes ago (top of this job) panics once its
+          # pinned block ages out. A fresh fork re-pins to the current
+          # head; the protocol suites finish well inside the window.
+          docker restart keeperhub-test-anvil-fork
+          retries=0
+          until curl -sf -X POST http://localhost:8547 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0xaa36a7"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil Sepolia fork did not come back in 60s"
+              docker logs keeperhub-test-anvil-fork 2>&1 | tail -20 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "anvil Sepolia fork restarted with a fresh window"
+          # Re-point both forked chains at their local anvil forks right
+          # before the suites read the rows: full-pipeline.test.ts (in the
+          # e2e step above) rewrites the Sepolia row to live publicnode
+          # URLs in its beforeAll, undoing the patches applied when the
+          # forks started. Nothing runs between this statement and the
+          # suites, so this write wins.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
+          pnpm test:protocol
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
@@ -328,15 +372,51 @@ jobs:
           AWS_REGION: us-east-1
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
-          # Funder EOA for protocol-coverage suites' ensureNativeGas top-up
-          # on testnet chains (aave-v3, superfluid, chronicle). When unset
-          # those suites skip cleanly (see coverage.test.ts gate).
+          # Funder EOA for protocol-coverage suites on live (non-fork)
+          # chains; only ajna on Base still gates on it, and it never
+          # spends (reads only). When unset that suite skips cleanly.
           TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
           # Archive-node URL for the Ethereum mainnet anvil fork started
           # above. When set, protocol-coverage suites for chain 1 (morpho,
           # wrapped, lido, ethena, curve, chainlink, spark, yearn, uniswap,
-          # pendle, sky) run for real. When unset those suites skip cleanly.
+          # pendle, sky, aave-v3, frax-ether-v2, rocket-pool, safe) run for
+          # real. When unset those suites skip cleanly.
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+          # Signals the anvil Sepolia fork (localhost:8547, started above)
+          # is up and the chains row points at it. Gates the superfluid and
+          # chronicle Sepolia suites, which fund via anvil cheatcodes - no
+          # live-testnet funder involved.
+          PROTOCOL_E2E_SEPOLIA_FORK: "1"
+
+      - name: Dump protocol-coverage execution state
+        if: failure()
+        run: |
+          # Post-mortem for protocol-coverage setup timeouts: execution
+          # statuses distinguish "never picked up" (no step logs) from
+          # "hung mid-step" (a running node row), and the chains rows show
+          # whether the fork patches were still in effect.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
+            "SELECT id, status, left(error, 120) AS error, started_at, completed_at FROM workflow_executions ORDER BY started_at DESC NULLS LAST LIMIT 12"
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
+            "SELECT execution_id, node_name, node_type, status, left(error, 160) AS error, started_at, completed_at FROM workflow_execution_logs ORDER BY started_at DESC NULLS LAST LIMIT 24"
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
+            "SELECT chain_id, default_primary_rpc, default_fallback_rpc FROM chains WHERE chain_id IN (1, 11155111)"
+          # Fork responsiveness probes: a cheap local call, then a state
+          # read that forces an upstream fetch. Slow/failed probes plus
+          # upstream errors in the anvil logs indicate upstream throttling.
+          echo "--- sepolia fork eth_blockNumber:"
+          time curl -sf -m 20 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' || echo "PROBE FAILED"
+          echo "--- sepolia fork eth_getCode (Superfluid CFA forwarder, forces upstream fetch):"
+          time curl -sf -m 60 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
+          echo ""
+          echo "--- anvil sepolia fork logs:"
+          docker logs keeperhub-test-anvil-fork 2>&1 | tail -40 || true
+          echo "--- anvil mainnet fork logs:"
+          docker logs keeperhub-test-anvil-fork-mainnet 2>&1 | tail -20 || true
+          echo "--- bare-metal app log tail:"
+          tail -n 150 /tmp/keeperhub-app-baremetal.log 2>/dev/null || echo "(no bare-metal app log)"
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''

@@ -18,11 +18,21 @@ const TEST_DATA: ProtocolTestData = {
       "total-supply": {},
       "get-total-collateral": {},
       burn: {},
-      deposit: {},
+      // Deposits are open with ~6M ETH of headroom and a 0.01 ETH minimum
+      // (verified 2026-07-02 via getMaximumDepositAmount/getBalance).
+      deposit: { ethValue: "0.02" },
     },
     skipped: {
-      burn: "requires rETH balance",
-      deposit: "payable; requires ETH value to send",
+      burn: "requires rETH balance and deposit-pool excess liquidity, which can legitimately be zero",
+    },
+    // Chain invariants: the exchange rate only ratchets up from 1e18 and
+    // rETH supply is nine figures; both being zero means the read decoded
+    // garbage. No expectation on balance-of: the deposit fixture mints the
+    // wallet rETH mid-run, so its value depends on run history on a
+    // long-lived fork.
+    expectations: {
+      "get-exchange-rate": [{ field: "rate", nonZero: true }],
+      "total-supply": [{ field: "totalSupply", nonZero: true }],
     },
   },
 };
