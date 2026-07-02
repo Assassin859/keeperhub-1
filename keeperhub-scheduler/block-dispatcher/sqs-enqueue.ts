@@ -30,7 +30,7 @@ export async function enqueueBlockTrigger(
           DataType: "String",
           StringValue: message.workflowId,
         },
-        ...signSqsMessageAttributes("scheduler", body),
+        ...signSqsMessageAttributes("scheduler", SQS_QUEUE_URL, body),
       },
     }),
   );

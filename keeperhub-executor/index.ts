@@ -558,7 +558,7 @@ export function evaluateSqsMessageAuth(
     | null;
   stale: boolean;
 } {
-  const sig = verifySqsMessageSignature(rawBody, attributes);
+  const sig = verifySqsMessageSignature(CONFIG.sqsQueueUrl, rawBody, attributes);
   if (!sig.ok) {
     return { failure: sig.reason, stale: false };
   }

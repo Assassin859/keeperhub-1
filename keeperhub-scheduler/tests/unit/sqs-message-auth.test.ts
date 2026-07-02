@@ -9,6 +9,8 @@ import {
 // event-tracker copy. A mismatch means a copy drifted from the scheme and the
 // executor would reject this producer's messages.
 const FIXED_SECRET = "test-shared-secret";
+const FIXED_QUEUE_URL =
+  "https://sqs.us-east-1.amazonaws.com/123456789012/keeperhub-workflow-queue-test";
 const FIXED_BODY = JSON.stringify({
   workflowId: "wf_1",
   scheduleId: "sch_1",
@@ -17,7 +19,7 @@ const FIXED_BODY = JSON.stringify({
 });
 const FIXED_TS = 1_700_000_000;
 const FIXED_SIG =
-  "f508ed8e583f7d2f61341526a735cefe45a4aa83d0befcb761ad5953fc48fca2";
+  "52a1fbfe8524879f745928cde4565fb86bbe4e00c75f3ad9f4935e633c7e7328";
 
 let savedSecret: string | undefined;
 
@@ -32,7 +34,12 @@ afterEach(() => {
 
 describe("scheduler sqs-message-auth", () => {
   it("matches the shared anti-drift signature vector", () => {
-    const attrs = signSqsMessageAttributes("scheduler", FIXED_BODY, FIXED_TS);
+    const attrs = signSqsMessageAttributes(
+      "scheduler",
+      FIXED_QUEUE_URL,
+      FIXED_BODY,
+      FIXED_TS,
+    );
     expect(attrs[SQS_SIGNATURE_ATTR].StringValue).toBe(FIXED_SIG);
   });
 });

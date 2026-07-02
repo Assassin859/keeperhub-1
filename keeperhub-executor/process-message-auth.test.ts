@@ -38,7 +38,8 @@ function signed(body: unknown, caller: "scheduler" | "events" | "app" = "schedul
   return {
     Body: str,
     ReceiptHandle: "rh-1",
-    MessageAttributes: signSqsMessageAttributes(caller, str),
+    // Sign against the queue the executor verifies with (CONFIG.sqsQueueUrl).
+    MessageAttributes: signSqsMessageAttributes(caller, CONFIG.sqsQueueUrl, str),
   } as Message;
 }
 

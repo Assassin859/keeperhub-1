@@ -44,7 +44,7 @@ export async function enqueueWorkflowEventTrigger(
           DataType: "String",
           StringValue: trigger.workflowId,
         },
-        ...signSqsMessageAttributes("events", body),
+        ...signSqsMessageAttributes("events", queueUrl, body),
       },
     }),
   );

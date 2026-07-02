@@ -256,7 +256,7 @@ export async function sendToQueue(message: ScheduleMessage): Promise<void> {
         DataType: "String",
         StringValue: message.workflowId,
       },
-      ...signSqsMessageAttributes("scheduler", body),
+      ...signSqsMessageAttributes("scheduler", SQS_QUEUE_URL, body),
     },
   });
 

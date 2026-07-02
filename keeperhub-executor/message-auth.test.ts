@@ -14,6 +14,8 @@ import { executorMessageSchema } from "./message-schema";
 // divergence in any copy fails CI.
 const FIXED_SECRET = "test-shared-secret";
 const FIXED_CALLER = "scheduler";
+const FIXED_QUEUE_URL =
+  "https://sqs.us-east-1.amazonaws.com/123456789012/keeperhub-workflow-queue-test";
 const FIXED_BODY = JSON.stringify({
   workflowId: "wf_1",
   scheduleId: "sch_1",
@@ -22,7 +24,10 @@ const FIXED_BODY = JSON.stringify({
 });
 const FIXED_TS = 1_700_000_000;
 const FIXED_SIG =
-  "f508ed8e583f7d2f61341526a735cefe45a4aa83d0befcb761ad5953fc48fca2";
+  "52a1fbfe8524879f745928cde4565fb86bbe4e00c75f3ad9f4935e633c7e7328";
+
+// Queue URL used for the round-trip tests below.
+const QUEUE = "https://sqs.us-east-1.amazonaws.com/000000000000/local-queue";
 
 let savedSecret: string | undefined;
 let savedPrevious: string | undefined;
@@ -50,7 +55,12 @@ afterEach(() => {
 describe("sqs-message-auth signing", () => {
   it("matches the shared anti-drift vector", () => {
     process.env.INTERNAL_SERVICE_HMAC_SECRET = FIXED_SECRET;
-    const attrs = signSqsMessageAttributes(FIXED_CALLER, FIXED_BODY, FIXED_TS);
+    const attrs = signSqsMessageAttributes(
+      FIXED_CALLER,
+      FIXED_QUEUE_URL,
+      FIXED_BODY,
+      FIXED_TS
+    );
     expect(attrs[SQS_SIGNATURE_ATTR].StringValue).toBe(FIXED_SIG);
     expect(attrs[SQS_CALLER_ATTR].StringValue).toBe(FIXED_CALLER);
     expect(attrs[SQS_TIMESTAMP_ATTR].StringValue).toBe(String(FIXED_TS));
@@ -58,8 +68,8 @@ describe("sqs-message-auth signing", () => {
 
   it("verifies a freshly signed message", () => {
     const body = JSON.stringify({ workflowId: "wf1", triggerType: "schedule" });
-    const attrs = signSqsMessageAttributes("scheduler", body);
-    const result = verifySqsMessageSignature(body, attrs);
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body);
+    const result = verifySqsMessageSignature(QUEUE, body, attrs);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.caller).toBe("scheduler");
@@ -71,33 +81,42 @@ describe("sqs-message-auth signing", () => {
 describe("sqs-message-auth verification failures", () => {
   it("rejects a tampered body", () => {
     const body = JSON.stringify({ workflowId: "wf1", triggerType: "schedule" });
-    const attrs = signSqsMessageAttributes("scheduler", body);
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body);
     const tampered = JSON.stringify({
       workflowId: "victim",
       triggerType: "schedule",
     });
-    const result = verifySqsMessageSignature(tampered, attrs);
+    const result = verifySqsMessageSignature(QUEUE, tampered, attrs);
+    expect(result).toEqual({ ok: false, reason: "bad_signature" });
+  });
+
+  it("rejects a message signed for a different queue (cross-environment replay)", () => {
+    const body = JSON.stringify({ workflowId: "wf1", triggerType: "schedule" });
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body);
+    const otherQueue =
+      "https://sqs.us-east-1.amazonaws.com/999999999999/other-queue";
+    const result = verifySqsMessageSignature(otherQueue, body, attrs);
     expect(result).toEqual({ ok: false, reason: "bad_signature" });
   });
 
   it("rejects a message with no signature attributes", () => {
-    const result = verifySqsMessageSignature("{}", undefined);
+    const result = verifySqsMessageSignature(QUEUE, "{}", undefined);
     expect(result).toEqual({ ok: false, reason: "unsigned" });
   });
 
   it("rejects an unknown caller", () => {
     const body = "{}";
-    const attrs = signSqsMessageAttributes("scheduler", body);
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body);
     attrs[SQS_CALLER_ATTR].StringValue = "attacker";
-    const result = verifySqsMessageSignature(body, attrs);
+    const result = verifySqsMessageSignature(QUEUE, body, attrs);
     expect(result).toEqual({ ok: false, reason: "unknown_caller" });
   });
 
   it("rejects a malformed (non 64-hex) signature", () => {
     const body = "{}";
-    const attrs = signSqsMessageAttributes("scheduler", body);
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body);
     attrs[SQS_SIGNATURE_ATTR].StringValue = "deadbeef";
-    const result = verifySqsMessageSignature(body, attrs);
+    const result = verifySqsMessageSignature(QUEUE, body, attrs);
     expect(result).toEqual({ ok: false, reason: "bad_signature" });
   });
 
@@ -105,18 +124,18 @@ describe("sqs-message-auth verification failures", () => {
     const body = JSON.stringify({ workflowId: "wf1", triggerType: "schedule" });
     // Producer still signs with the old secret.
     process.env.INTERNAL_SERVICE_HMAC_SECRET = "old-secret";
-    const attrs = signSqsMessageAttributes("scheduler", body);
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body);
     // Executor has rotated: new secret is primary, old is retained as previous.
     process.env.INTERNAL_SERVICE_HMAC_SECRET = "new-secret";
     process.env.INTERNAL_SERVICE_HMAC_SECRET_PREVIOUS = "old-secret";
-    expect(verifySqsMessageSignature(body, attrs).ok).toBe(true);
+    expect(verifySqsMessageSignature(QUEUE, body, attrs).ok).toBe(true);
   });
 
   it("reports a large positive age for an old timestamp", () => {
     const body = JSON.stringify({ workflowId: "wf1", triggerType: "schedule" });
     const oldTs = Math.floor(Date.now() / 1000) - 10_000;
-    const attrs = signSqsMessageAttributes("scheduler", body, oldTs);
-    const result = verifySqsMessageSignature(body, attrs);
+    const attrs = signSqsMessageAttributes("scheduler", QUEUE, body, oldTs);
+    const result = verifySqsMessageSignature(QUEUE, body, attrs);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.ageSeconds).toBeGreaterThan(9_000);
@@ -132,6 +151,22 @@ describe("executorMessageSchema", () => {
         workflowId: "wf1",
         scheduleId: "s1",
         triggerTime: "2026-01-01T00:00:00.000Z",
+      }).success
+    ).toBe(true);
+  });
+
+  it("accepts a valid block message", () => {
+    expect(
+      executorMessageSchema.safeParse({
+        triggerType: "block",
+        workflowId: "wf1",
+        userId: "u1",
+        triggerData: {
+          blockNumber: 1,
+          blockHash: "0xhash",
+          blockTimestamp: 1,
+          parentHash: "0xparent",
+        },
       }).success
     ).toBe(true);
   });

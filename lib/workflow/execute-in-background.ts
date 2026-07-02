@@ -81,11 +81,12 @@ export async function executeWorkflowInBackground(
         triggerType,
         input,
       });
+      const queueUrl = process.env.SQS_QUEUE_URL;
       await getSqsClient().send(
         new SendMessageCommand({
-          QueueUrl: process.env.SQS_QUEUE_URL,
+          QueueUrl: queueUrl,
           MessageBody: body,
-          MessageAttributes: signSqsMessageAttributes("app", body),
+          MessageAttributes: signSqsMessageAttributes("app", queueUrl ?? "", body),
         })
       );
       console.log(

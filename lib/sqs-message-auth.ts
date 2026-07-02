@@ -11,9 +11,12 @@ import type { MessageAttributeValue } from "@aws-sdk/client-sqs";
  *
  * Scheme mirrors the HTTP signer (lib/internal-service-auth.ts computeSignature)
  * minus the HTTP method/path, with a fixed "sqs" domain-separation prefix so an
- * HTTP signature can never be replayed as an SQS one and vice versa:
+ * HTTP signature can never be replayed as an SQS one, and the destination queue
+ * URL bound in so a signature minted for one environment's queue (staging and
+ * every pr-N share the same INTERNAL_SERVICE_HMAC_SECRET) can never be replayed
+ * into another's:
  *
- *   signingString = "sqs\n<caller>\n<sha256hex(body)>\n<unixSeconds>"
+ *   signingString = "sqs\n<queueUrl>\n<caller>\n<sha256hex(body)>\n<unixSeconds>"
  *   signature     = hex(hmac_sha256(secret, signingString))
  *
  * The proof travels as SQS MessageAttributes (X-KH-Caller / X-KH-Timestamp /
@@ -39,28 +42,30 @@ const SIGNATURE_HEX_LENGTH = 64; // sha256 hex
 
 function computeSqsSignature(
   secret: string,
+  queueUrl: string,
   caller: string,
   body: string,
   timestamp: string
 ): string {
   const bodyDigest = createHash("sha256").update(body).digest("hex");
-  const signingString = `sqs\n${caller}\n${bodyDigest}\n${timestamp}`;
+  const signingString = `sqs\n${queueUrl}\n${caller}\n${bodyDigest}\n${timestamp}`;
   return createHmac("sha256", secret).update(signingString).digest("hex");
 }
 
 /**
  * Build the signed SQS MessageAttributes for `body`. Merge the result into the
  * producer's existing attributes (TriggerType / WorkflowId). Sign the exact
- * string passed as MessageBody.
+ * string passed as MessageBody, bound to the destination `queueUrl`.
  */
 export function signSqsMessageAttributes(
   caller: SqsHmacCaller,
+  queueUrl: string,
   body: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): Record<string, MessageAttributeValue> {
   const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
   const timestamp = String(nowSeconds);
-  const signature = computeSqsSignature(secret, caller, body, timestamp);
+  const signature = computeSqsSignature(secret, queueUrl, caller, body, timestamp);
   return {
     [SQS_CALLER_ATTR]: { DataType: "String", StringValue: caller },
     [SQS_TIMESTAMP_ATTR]: { DataType: "String", StringValue: timestamp },
@@ -92,6 +97,7 @@ function activeSecrets(): string[] {
  * triggers during an executor outage).
  */
 export function verifySqsMessageSignature(
+  queueUrl: string,
   body: string,
   attributes: Record<string, MessageAttributeValue> | undefined
 ): SqsVerifyResult {
@@ -113,7 +119,13 @@ export function verifySqsMessageSignature(
 
   const providedBuf = Buffer.from(signature, "hex");
   for (const secret of activeSecrets()) {
-    const expected = computeSqsSignature(secret, caller, body, timestamp);
+    const expected = computeSqsSignature(
+      secret,
+      queueUrl,
+      caller,
+      body,
+      timestamp
+    );
     const expectedBuf = Buffer.from(expected, "hex");
     if (
       providedBuf.length === expectedBuf.length &&

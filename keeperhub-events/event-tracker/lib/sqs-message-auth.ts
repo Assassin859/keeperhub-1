@@ -22,23 +22,25 @@ export const SQS_CALLER_ATTR = "X-KH-Caller";
 
 function computeSqsSignature(
   secret: string,
+  queueUrl: string,
   caller: string,
   body: string,
   timestamp: string,
 ): string {
   const bodyDigest = createHash("sha256").update(body).digest("hex");
-  const signingString = `sqs\n${caller}\n${bodyDigest}\n${timestamp}`;
+  const signingString = `sqs\n${queueUrl}\n${caller}\n${bodyDigest}\n${timestamp}`;
   return createHmac("sha256", secret).update(signingString).digest("hex");
 }
 
 export function signSqsMessageAttributes(
   caller: SqsHmacCaller,
+  queueUrl: string,
   body: string,
   nowSeconds: number = Math.floor(Date.now() / 1000),
 ): Record<string, MessageAttributeValue> {
   const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
   const timestamp = String(nowSeconds);
-  const signature = computeSqsSignature(secret, caller, body, timestamp);
+  const signature = computeSqsSignature(secret, queueUrl, caller, body, timestamp);
   return {
     [SQS_CALLER_ATTR]: { DataType: "String", StringValue: caller },
     [SQS_TIMESTAMP_ATTR]: { DataType: "String", StringValue: timestamp },
