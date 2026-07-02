@@ -230,21 +230,16 @@ jobs:
           sandbox_url: http://localhost:8787
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
-        env:
-          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
         run: |
-          # Fork from the platform's real Sepolia RPC when CHAIN_RPC_CONFIG
-          # provides one. The compose default (public publicnode) rate-limits
-          # shared runner IPs, and a cold fork proxies every first-touch
-          # state read upstream - heavy protocol calls (Superfluid host) can
-          # hang for minutes under throttling.
-          ANVIL_FORK_URL=$(jq -r '[.[] | select(.chainId == 11155111)][0].primaryRpcUrl // empty' <<< "$CHAIN_RPC_CONFIG" 2>/dev/null || true)
-          if [ -n "$ANVIL_FORK_URL" ]; then
-            echo "Sepolia fork upstream: from CHAIN_RPC_CONFIG"
-            export ANVIL_FORK_URL
-          else
-            echo "Sepolia fork upstream: compose default (public RPC)"
-          fi
+          # Upstream note: the compose default (publicnode) is deliberate.
+          # It serves state only for recent blocks, which bounds a fork's
+          # useful lifetime to ~15 minutes (anvil panics in do_mine_block
+          # once its pinned block leaves the upstream window - EIP-2935
+          # pre-execution reads get HTTP 403). The protocol-coverage step
+          # therefore restarts this fork for a fresh window before running.
+          # Do not point the fork at the platform dRPC URL: fork state
+          # fetches burn through its request quota.
+          #
           # docker-compose.yml attaches every service to the external
           # `keeperhub-network`; the ephemeral start-app step uses
           # `docker run --network host` and never creates it, so compose
@@ -338,6 +333,25 @@ jobs:
 
       - name: Run protocol-coverage tests
         run: |
+          # Restart the Sepolia fork for a fresh upstream window: the
+          # publicnode upstream serves state only for recent blocks, so a
+          # fork started ~30 minutes ago (top of this job) panics once its
+          # pinned block ages out. A fresh fork re-pins to the current
+          # head; the protocol suites finish well inside the window.
+          docker restart keeperhub-test-anvil-fork
+          retries=0
+          until curl -sf -X POST http://localhost:8547 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0xaa36a7"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil Sepolia fork did not come back in 60s"
+              docker logs keeperhub-test-anvil-fork 2>&1 | tail -20 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "anvil Sepolia fork restarted with a fresh window"
           # Re-point both forked chains at their local anvil forks right
           # before the suites read the rows: full-pipeline.test.ts (in the
           # e2e step above) rewrites the Sepolia row to live publicnode
