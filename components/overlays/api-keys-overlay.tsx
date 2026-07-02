@@ -26,6 +26,7 @@ import { ConfirmOverlay } from "./confirm-overlay";
 import { KeyActivityOverlay } from "./key-activity-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
+import type { OverlayComponentProps } from "./types";
 
 type ApiKey = {
   id: string;
@@ -39,13 +40,15 @@ type ApiKey = {
   key?: string;
 };
 
-type ApiKeysOverlayProps = {
-  overlayId: string;
+type ApiKeysOverlayProps = OverlayComponentProps<{
   // Highlight + scroll to this key (e.g. opened from the activity feed). The
   // resource type selects which tab opens: org keys vs personal/user keys.
   highlightId?: string;
   highlightType?: "api_key" | "org_api_key";
-};
+  // Fires once, with the full secret, right after a key is created. Lets a
+  // caller (e.g. the onboarding connect-agent step) reflect the new key.
+  onKeyCreated?: (key: string, type: "webhook" | "organisation") => void;
+}>;
 
 /**
  * Overlay for creating a new API key.
@@ -711,6 +714,7 @@ export function ApiKeysOverlay({
   overlayId,
   highlightId,
   highlightType,
+  onKeyCreated,
 }: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
   const { isAdmin, role } = useActiveMember();
@@ -756,7 +760,15 @@ export function ApiKeysOverlay({
           disabled: activeTab === "organisation" && !canManageOrgKeys,
           onClick: () =>
             push(CreateApiKeyOverlay, {
-              onCreated: currentKeys.handleKeyCreated,
+              onCreated: (key: ApiKey) => {
+                currentKeys.handleKeyCreated(key);
+                if (key.key) {
+                  onKeyCreated?.(
+                    key.key,
+                    activeTab as "webhook" | "organisation"
+                  );
+                }
+              },
               endpoint: createEndpoint,
               keyType: activeTab as "webhook" | "organisation",
             }),
