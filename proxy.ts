@@ -437,7 +437,29 @@ async function countryGateBlock(
 // Composed proxy entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * A signed-out visitor (no session cookie) hitting the app entry is sent
+ * straight to the welcome landing, so we never render "/" only to redirect
+ * client-side. Cookie-bearing users (anonymous or real) fall through to the
+ * client gate, which knows about the guest and onboarding flags.
+ */
+function welcomeRedirect(request: NextRequest): NextResponse | null {
+  if (request.method !== "GET" || request.nextUrl.pathname !== "/") {
+    return null;
+  }
+  if (hasSessionCookie(request.headers)) {
+    return null;
+  }
+  const url = request.nextUrl.clone();
+  url.pathname = "/welcome";
+  return NextResponse.redirect(url);
+}
+
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  const welcome = welcomeRedirect(request);
+  if (welcome) {
+    return welcome;
+  }
   const csrfResponse = csrfBlock(request);
   if (csrfResponse) {
     return csrfResponse;

@@ -7,6 +7,7 @@ import { ConnectAuthPanel } from "@/components/auth/connect-auth-panel";
 import { WalletPicker } from "@/components/auth/wallet-picker";
 import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
 import { Button } from "@/components/ui/button";
+import { authClient } from "@/lib/auth-client";
 import { markContinueAsGuest } from "@/lib/welcome-status";
 
 /**
@@ -33,8 +34,16 @@ export function WelcomeAuth(): React.ReactElement {
     return () => observer.disconnect();
   }, []);
 
-  const continueWithoutAccount = (): void => {
+  // Mint the anonymous session before leaving so the request to "/" carries a
+  // cookie; the proxy then lets it through and the client gate honors the guest
+  // flag instead of bouncing back here.
+  const continueWithoutAccount = async (): Promise<void> => {
     markContinueAsGuest();
+    try {
+      await authClient.signIn.anonymous();
+    } catch {
+      // Fall through: the client gate still handles the no-session case.
+    }
     window.location.assign("/");
   };
 
