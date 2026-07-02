@@ -78,6 +78,11 @@ export const CONFIG = {
     process.env.SQS_HMAC_MAX_AGE_SECONDS,
     900
   ),
+  // When true, a validly-signed message older than sqsHmacMaxAgeSeconds is
+  // rejected in enforce mode, bounding replay to the freshness window. Default
+  // false keeps freshness advisory so a queue backlog never drops real triggers;
+  // enable once backlog behaviour is understood.
+  sqsHmacMaxAgeEnforce: process.env.SQS_HMAC_MAX_AGE_ENFORCE === "true",
 
   visibilityTimeout: 300,
   waitTimeSeconds: 20,

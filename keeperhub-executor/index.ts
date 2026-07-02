@@ -614,14 +614,20 @@ export async function processMessage(
       [LabelKeys.AUTH_RESULT]: result,
       [LabelKeys.MODE]: CONFIG.sqsHmacMode,
     });
-    if (auth.stale) {
+
+    // Staleness is advisory unless SQS_HMAC_MAX_AGE_ENFORCE is set, in which case
+    // an over-age message becomes a hard failure (bounds replay to the window).
+    const staleRejected = auth.stale && CONFIG.sqsHmacMaxAgeEnforce;
+    if (auth.stale && !staleRejected) {
       console.warn(
         `[Executor] SQS message older than ${CONFIG.sqsHmacMaxAgeSeconds}s (advisory) for workflow ${body.workflowId}`
       );
     }
-    if (auth.failure) {
+
+    const failure = auth.failure ?? (staleRejected ? "stale" : null);
+    if (failure) {
       console.warn(
-        `[Executor] SQS message failed auth (${auth.failure}, mode=${CONFIG.sqsHmacMode}) for workflow ${body.workflowId}`
+        `[Executor] SQS message rejected (${failure}, mode=${CONFIG.sqsHmacMode}) for workflow ${body.workflowId}`
       );
       if (CONFIG.sqsHmacMode === "enforce") {
         await sqs.send(
