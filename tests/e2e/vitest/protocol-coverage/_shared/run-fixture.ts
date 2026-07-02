@@ -26,6 +26,7 @@ import {
   PERSISTENT_TEST_USER_EMAIL,
   waitForWorkflowExecution,
 } from "@/tests/utils/db";
+import { checkOutputExpectation, fetchNodeOutput } from "./oracle";
 import type { SharedCtx } from "./setup";
 
 const TIMEOUT_MS = 120_000;
@@ -155,6 +156,26 @@ export function runPhaseFixtures(opts: {
           result?.status,
           result?.error ?? "execution did not succeed"
         ).toBe("success");
+
+        // Output oracle: when testData declares expectations for this
+        // action, assert on the action node's recorded output rather than
+        // stopping at execution-level success.
+        const expectations =
+          protocol?.testData?.[opts.chainId]?.expectations?.[action.slug];
+        if (expectations && expectations.length > 0 && result) {
+          const actionNode = built.nodes.find((n) => n.id !== "trigger-1");
+          if (!actionNode) {
+            throw new Error("built workflow has no action node");
+          }
+          const output = await fetchNodeOutput(
+            result.executionId,
+            actionNode.id
+          );
+          for (const expectation of expectations) {
+            const failure = checkOutputExpectation(output, expectation);
+            expect(failure, failure ?? "").toBeNull();
+          }
+        }
       },
       TIMEOUT_MS + 30_000
     );

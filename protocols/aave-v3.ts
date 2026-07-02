@@ -9,6 +9,15 @@ import {
 // KEEP-458 protocol-coverage test data. Co-located with the protocol
 // definition; consumed programmatically by `lib/test-data/build-workflow.ts`.
 //
+// Mainnet (fork mode) uses the USDC reserve: LTV 7500, collateral and
+// borrowing enabled, active, not frozen, supply cap 2.5B with ample
+// headroom -- verified 2026-07-02 via eth_call against
+// PoolDataProvider.getReserveConfigurationData/getReserveCaps. DAI is
+// unusable as collateral on mainnet (governance set its LTV to 0), so the
+// Sepolia pattern does not transfer. Setup provisions USDC from the fork
+// whale, approves the Pool, then supplies 100 USDC so the write coverage
+// (withdraw/borrow/repay/set-collateral) has a real position.
+//
 // Sepolia uses the Aave V3 testnet LINK reserve. DAI/USDC/USDT all hit
 // `SUPPLY_CAP_EXCEEDED` (error 51) on Aave Sepolia, verified 2026-05-12
 // via eth_call against Pool.supply(). LINK has headroom and is borrowable.
@@ -16,6 +25,75 @@ import {
 // then supplies 100 LINK so the write coverage (withdraw/borrow/repay/
 // set-collateral) has a real position to operate on.
 const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.05",
+      // 100 USDC initial supply + 10 USDC per-test supply + buffer.
+      requiredTokens: [{ symbol: "USDC", human: "200" }],
+      approvals: [{ token: "USDC", spender: contract("pool"), human: "200" }],
+      protocolSteps: [
+        {
+          protocol: "aave-v3",
+          action: "supply",
+          inputs: {
+            asset: "USDC",
+            amount: amount("USDC", "100"),
+            onBehalfOf: wallet(),
+            referralCode: "0",
+          },
+        },
+      ],
+    },
+    actions: {
+      "get-user-account-data": {
+        user: wallet(),
+      },
+      "get-user-reserve-data": {
+        asset: "USDC",
+        user: wallet(),
+      },
+      supply: {
+        asset: "USDC",
+        amount: amount("USDC", "10"),
+        onBehalfOf: wallet(),
+        referralCode: "0",
+      },
+      withdraw: {
+        asset: "USDC",
+        amount: amount("USDC", "1"),
+        to: wallet(),
+      },
+      borrow: {
+        asset: "USDC",
+        amount: amount("USDC", "1"),
+        interestRateMode: "2",
+        referralCode: "0",
+        onBehalfOf: wallet(),
+      },
+      repay: {
+        asset: "USDC",
+        amount: amount("USDC", "1"),
+        interestRateMode: "2",
+        onBehalfOf: wallet(),
+      },
+      "set-collateral": {
+        asset: "USDC",
+        useAsCollateral: "true",
+      },
+    },
+    // Both reads run after setup supplied 100 USDC, so the position values
+    // are self-provisioned -- no dependency on third-party chain state.
+    expectations: {
+      "get-user-account-data": [
+        { field: "totalCollateralBase", nonZero: true },
+        { field: "healthFactor", nonZero: true },
+      ],
+      "get-user-reserve-data": [
+        { field: "currentATokenBalance", nonZero: true },
+        { field: "usageAsCollateralEnabled", equals: "true" },
+      ],
+    },
+  },
   "11155111": {
     setup: {
       minNativeHuman: "0.001",
