@@ -26,10 +26,10 @@ export function ConnectButton(): React.ReactElement {
           Connect
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader className="flex flex-col items-center gap-3">
-          <KeeperHubLogo className="size-9" />
-          <DialogTitle>Sign in to KeeperHub</DialogTitle>
+      <DialogContent className="gap-8 p-8 sm:max-w-md">
+        <DialogHeader className="flex flex-col items-center gap-4">
+          <KeeperHubLogo className="size-10" />
+          <DialogTitle className="text-2xl">Sign in to KeeperHub</DialogTitle>
         </DialogHeader>
         <SignInChoices />
       </DialogContent>
