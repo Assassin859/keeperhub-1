@@ -28,10 +28,12 @@ test.describe("wallet login (SIWE)", () => {
   test("connects, mints a session, and prompts for a display name", async ({
     page,
   }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-    // Open the Connect modal and pick the injected wallet.
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    // Reveal the wallet picker and pick the injected wallet.
+    await page
+      .getByRole("button", { name: "Sign in with your wallet" })
+      .click();
     const walletButton = page.getByTestId("connect-wallet-io.metamask");
     await expect(walletButton).toBeVisible({ timeout: 15_000 });
     await walletButton.click();
@@ -48,16 +50,19 @@ test.describe("wallet login (SIWE)", () => {
     await nameInput.fill("Swift Falcon");
     await page.getByRole("button", { name: "Continue" }).click();
 
-    // Lands in-app as a signed-in user (org switcher present), name modal gone.
+    // Signed in: the name modal clears and the onboarding wizard's first step
+    // (rename organization) takes over.
     await expect(nameModal).toBeHidden({ timeout: 15_000 });
-    await expect(page.locator('button[role="combobox"]')).toBeVisible({
-      timeout: 15_000,
-    });
+    await expect(
+      page.getByRole("heading", { name: "Name your organization" })
+    ).toBeVisible({ timeout: 15_000 });
   });
 
   test("seeded display name is never a raw 0x address", async ({ page }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+    await page
+      .getByRole("button", { name: "Sign in with your wallet" })
+      .click();
     await page.getByTestId("connect-wallet-io.metamask").click();
 
     const nameInput = page.locator("#wallet-display-name");

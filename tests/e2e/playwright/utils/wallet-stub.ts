@@ -134,8 +134,8 @@ export async function completeWalletLogin(
   page: Page,
   displayName = "Swift Falcon"
 ): Promise<void> {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Sign in with your wallet" }).click();
   await page.getByTestId("connect-wallet-io.metamask").click();
 
   // A first-time wallet account must pick a display name; an already-named
@@ -150,6 +150,12 @@ export async function completeWalletLogin(
     await page.getByRole("button", { name: "Continue" }).click();
   }
 
+  // Skip the post-signup onboarding wizard so helper-based tests land straight
+  // in-app, matching the pre-welcome behavior they were written against.
+  await page.evaluate(() =>
+    localStorage.setItem("keeperhub-welcome-seen", "1")
+  );
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator('button[role="combobox"]')).toBeVisible({
     timeout: 15_000,
   });
