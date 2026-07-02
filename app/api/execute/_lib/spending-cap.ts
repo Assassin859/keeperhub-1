@@ -84,7 +84,14 @@ export async function checkAndReserveExecution(
         and(
           eq(directExecutions.organizationId, params.organizationId),
           ne(directExecutions.status, "failed"),
-          gte(directExecutions.createdAt, todayStart)
+          gte(directExecutions.createdAt, todayStart),
+          // Exclude stale in-flight reservations: a pending/running row from a
+          // crashed pod or a throwing core would otherwise hold its reserved
+          // value against the cap for the rest of the UTC day. Completed rows
+          // always count; pending/running only within a 15m window (matches the
+          // concurrency limiter's stale window). Legitimate in-flight requests
+          // settle in seconds, so this never drops a real concurrent reservation.
+          sql`(${directExecutions.status} = 'completed' OR ${directExecutions.createdAt} > now() - interval '15 minutes')`
         )
       )
       .then((rows) => rows[0]);
