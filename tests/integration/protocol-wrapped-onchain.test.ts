@@ -16,7 +16,7 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -32,6 +32,7 @@ import {
 } from "@/lib/rpc/rpc-config";
 import wrappedDef from "@/protocols/wrapped";
 import { buildCalldata } from "./_shared/build-calldata";
+import { itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
@@ -69,66 +70,78 @@ describe("Wrapped on-chain integration", () => {
     );
   });
 
-  it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: wrappedDef,
-      actionSlug: "balance-of",
-      sampleInputs: { account: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "balanceOf: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: wrappedDef,
+        actionSlug: "balance-of",
+        sampleInputs: { account: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
 
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("balanceOf", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("balanceOf", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("deposit: estimateGas succeeds with ETH value", async () => {
-    const { to, data } = buildCalldata({
-      protocol: wrappedDef,
-      actionSlug: "wrap",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "deposit: estimateGas succeeds with ETH value",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: wrappedDef,
+        actionSlug: "wrap",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    const gas = await manager.executeWithFailover((p) =>
-      p.estimateGas({
-        to,
-        data,
-        value: ethers.parseEther("0.001"),
-        from: TEST_ADDRESS,
-      })
-    );
-
-    expect(gas).toBeGreaterThan(BigInt(0));
-  }, 15_000);
-
-  it("withdraw: calldata encodes correctly (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: wrappedDef,
-      actionSlug: "unwrap",
-      sampleInputs: { wad: "1000000000000000000" },
-      chainId: CHAIN_ID,
-    });
-
-    try {
-      await manager.executeWithFailover((p) =>
+      const gas = await manager.executeWithFailover((p) =>
         p.estimateGas({
           to,
           data,
+          value: ethers.parseEther("0.001"),
           from: TEST_ADDRESS,
         })
       );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 15_000);
+
+      expect(gas).toBeGreaterThan(BigInt(0));
+    },
+    15_000
+  );
+
+  itOnchain(
+    "withdraw: calldata encodes correctly (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: wrappedDef,
+        actionSlug: "unwrap",
+        sampleInputs: { wad: "1000000000000000000" },
+        chainId: CHAIN_ID,
+      });
+
+      try {
+        await manager.executeWithFailover((p) =>
+          p.estimateGas({
+            to,
+            data,
+            from: TEST_ADDRESS,
+          })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    15_000
+  );
 });

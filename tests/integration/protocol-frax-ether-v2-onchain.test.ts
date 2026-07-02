@@ -18,7 +18,7 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -34,6 +34,7 @@ import {
 } from "@/lib/rpc/rpc-config";
 import fraxEtherV2Def from "@/protocols/frax-ether-v2";
 import { buildCalldata } from "./_shared/build-calldata";
+import { itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
@@ -124,55 +125,71 @@ describe("Frax Ether V2 minter on-chain integration", () => {
     }
   }
 
-  it("mintFrxEthPaused: eth_call returns a decodable bool", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: fraxEtherV2Def,
-      actionSlug: "mint-paused",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "mintFrxEthPaused: eth_call returns a decodable bool",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: fraxEtherV2Def,
+        actionSlug: "mint-paused",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
 
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("mintFrxEthPaused", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("boolean");
-  }, 15_000);
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("mintFrxEthPaused", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("boolean");
+    },
+    15_000
+  );
 
-  it("mintFrxEth: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: fraxEtherV2Def,
-      actionSlug: "mint",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "mintFrxEth: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: fraxEtherV2Def,
+        actionSlug: "mint",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
-  }, 15_000);
+      await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
+    },
+    15_000
+  );
 
-  it("mintFrxEthAndGive: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: fraxEtherV2Def,
-      actionSlug: "mint-and-give",
-      sampleInputs: { recipient: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "mintFrxEthAndGive: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: fraxEtherV2Def,
+        actionSlug: "mint-and-give",
+        sampleInputs: { recipient: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
-  }, 15_000);
+      await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
+    },
+    15_000
+  );
 
-  it("submitAndDeposit: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: fraxEtherV2Def,
-      actionSlug: "mint-and-stake",
-      sampleInputs: { recipient: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "submitAndDeposit: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: fraxEtherV2Def,
+        actionSlug: "mint-and-stake",
+        sampleInputs: { recipient: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
-  }, 15_000);
+      await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
+    },
+    15_000
+  );
 });
