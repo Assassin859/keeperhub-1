@@ -10,6 +10,7 @@
 #
 #   scripts/protocol-local.sh up            # build + start everything
 #   scripts/protocol-local.sh test [suite]  # run all suites or one (e.g. superfluid)
+#   scripts/protocol-local.sh sim [chain]   # Tier 1 fork simulations (no app needed)
 #   scripts/protocol-local.sh down [--purge]
 #
 # Signing: real on-chain writes need TURNKEY_API_PUBLIC_KEY,
@@ -223,6 +224,22 @@ cmd_test() {
   run_node "pnpm coverage:report --results ${RESULTS_FILE}"
 }
 
+cmd_sim() {
+  local suite="${1:-}"
+  local target="tests/e2e/vitest/protocol-simulation"
+  if [ -n "$suite" ]; then
+    target="tests/e2e/vitest/protocol-simulation/${suite}.test.ts"
+  fi
+  # Tier 1 needs only the forks - no app, no database beyond none at all.
+  start_forks
+  log "running Tier 1 simulations: ${target}"
+  local started ended
+  started=$(date +%s)
+  run_node "PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} ${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || true
+  ended=$(date +%s)
+  log "simulation wall-clock: $((ended - started))s"
+}
+
 cmd_down() {
   docker rm -f "$APP_CONTAINER" kh-protocol-local-fork-sepolia kh-protocol-local-fork-mainnet 2>/dev/null || true
   if [ "${1:-}" = "--purge" ]; then
@@ -235,6 +252,7 @@ cmd_down() {
 case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   test) shift; cmd_test "$@" ;;
+  sim) shift; cmd_sim "$@" ;;
   down) shift; cmd_down "$@" ;;
   *) grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -20; exit 1 ;;
 esac

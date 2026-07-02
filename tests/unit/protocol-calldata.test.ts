@@ -27,18 +27,15 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Interface } from "ethers";
 import { describe, expect, it } from "vitest";
 import "@/protocols";
 import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
+import { getRegisteredProtocols } from "@/lib/protocol-registry";
 import {
-  getRegisteredProtocols,
-  type ProtocolAction,
-  type ProtocolDefinition,
-  resolveContractAddress,
-} from "@/lib/protocol-registry";
-import { buildActionWorkflow } from "@/lib/test-data/build-workflow";
+  encodeBoundAction,
+  fragmentFor,
+  ifaceFor,
+} from "@/lib/test-data/encode-action";
 
 const GOLDEN_DIR = join(
   import.meta.dirname,
@@ -81,116 +78,6 @@ function syntheticArg(input: {
   }
   // uintN / intN
   return "1";
-}
-
-function ifaceFor(
-  protocol: ProtocolDefinition,
-  action: ProtocolAction
-): Interface {
-  const contract = protocol.contracts[action.contract];
-  if (!contract?.abi) {
-    throw new Error(
-      `${protocol.slug}: action ${action.slug} references missing contract or ABI "${action.contract}"`
-    );
-  }
-  return new Interface(JSON.parse(contract.abi));
-}
-
-/** Resolve the exact fragment for an action. Bare-name lookup throws on
- *  overload ambiguity, and registry actions flatten single-tuple params
- *  (deriveTupleInputs), so fragment arity can differ from the action's
- *  input count: prefer an exact-arity match, else a fragment whose
- *  flattened tuple arity matches. */
-function fragmentFor(
-  iface: Interface,
-  action: ProtocolAction
-): { ethersFragment: unknown; abi: FunctionAbiEntry } {
-  const byName = iface.fragments.filter(
-    (f) =>
-      f.type === "function" && (f as { name?: string }).name === action.function
-  );
-  const parsed = byName.map(
-    (f) => JSON.parse(f.format("json")) as FunctionAbiEntry
-  );
-  const flatArity = (f: FunctionAbiEntry): number =>
-    (f.inputs ?? []).reduce(
-      (n, i) =>
-        n + (i.type === "tuple" && i.components ? i.components.length : 1),
-      0
-    );
-  let idx = parsed.findIndex(
-    (f) => (f.inputs ?? []).length === action.inputs.length
-  );
-  if (idx < 0) {
-    const flattened = parsed
-      .map((f, i) => [f, i] as const)
-      .filter(([f]) => flatArity(f) === action.inputs.length);
-    if (flattened.length !== 1) {
-      throw new Error(
-        `${action.slug}: no unambiguous ABI fragment for ${action.function} with ${action.inputs.length} flattened args (candidates: ${parsed.length})`
-      );
-    }
-    idx = flattened[0][1];
-  }
-  return { ethersFragment: byName[idx], abi: parsed[idx] };
-}
-
-type FunctionAbiEntry = {
-  name?: string;
-  type?: string;
-  inputs?: Array<{ name?: string; type: string; components?: unknown[] }>;
-};
-
-function boundCalldata(
-  protocol: ProtocolDefinition,
-  action: ProtocolAction,
-  chainId: string
-): GoldenEntry {
-  const built = buildActionWorkflow({
-    protocolSlug: protocol.slug,
-    actionSlug: action.slug,
-    chainId,
-    trigger: "Manual",
-    walletAddress: WALLET,
-  });
-  const actionNode = built.nodes.find((n) => n.id !== "trigger-1");
-  const config = (actionNode?.data.config ?? {}) as Record<string, unknown>;
-
-  const named = action.inputs.map((inp) => {
-    const raw = config[inp.name];
-    let value: string;
-    if (raw === undefined || raw === "") {
-      value = inp.default ?? "";
-    } else if (typeof raw === "object") {
-      value = JSON.stringify(raw);
-    } else {
-      value = String(raw);
-    }
-    return { name: inp.name, value };
-  });
-  const transformed = applyEncodeTransformsNamed(
-    protocol.slug,
-    action.slug,
-    named
-  );
-  const iface = ifaceFor(protocol, action);
-  const { ethersFragment, abi } = fragmentFor(iface, action);
-  // Same pipeline the runtime steps run: flattened string args are
-  // reshaped against tuple params, then coerced per ABI type.
-  let args: unknown[] = transformed.map((t) => t.value);
-  args = reshapeArgsForAbi(args, abi as never);
-  args = coerceArgsForAbi(args, abi as never);
-  const data = iface.encodeFunctionData(ethersFragment as never, args);
-  const contract = protocol.contracts[action.contract];
-  const to =
-    resolveContractAddress(
-      contract,
-      chainId,
-      (config.contractAddress as string | undefined) ?? undefined
-    ) ?? "";
-  const skipped =
-    protocol.testData?.[chainId]?.skipped?.[action.slug] !== undefined;
-  return { to, data, skipped };
 }
 
 describe("protocol calldata: synthetic encode (all actions)", () => {
@@ -240,11 +127,13 @@ describe("protocol calldata: bound-encode goldens (testData chains)", () => {
           const skipped =
             protocol.testData?.[chainId]?.skipped?.[action.slug] !== undefined;
           try {
-            current[chainId][action.slug] = boundCalldata(
+            const { to, data } = encodeBoundAction(
               protocol,
               action,
-              chainId
+              chainId,
+              WALLET
             );
+            current[chainId][action.slug] = { to, data, skipped };
           } catch (err) {
             if (skipped) {
               // A skipped action is allowed to be unencodable (its skip
