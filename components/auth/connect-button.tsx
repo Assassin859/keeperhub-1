@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SignInChoices } from "@/components/auth/sign-in-choices";
+import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,10 +27,9 @@ export function ConnectButton(): React.ReactElement {
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-center">
-            Sign in to KeeperHub
-          </DialogTitle>
+        <DialogHeader className="flex flex-col items-center gap-3">
+          <KeeperHubLogo className="size-9" />
+          <DialogTitle>Sign in to KeeperHub</DialogTitle>
         </DialogHeader>
         <SignInChoices />
       </DialogContent>
