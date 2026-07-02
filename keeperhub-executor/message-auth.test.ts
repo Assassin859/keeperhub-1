@@ -76,6 +76,13 @@ describe("sqs-message-auth signing", () => {
       expect(Math.abs(result.ageSeconds)).toBeLessThan(5);
     }
   });
+
+  it("throws when the signing secret is unset (fails loud, not silent)", () => {
+    delete process.env.INTERNAL_SERVICE_HMAC_SECRET;
+    expect(() => signSqsMessageAttributes("scheduler", QUEUE, "{}")).toThrow(
+      /INTERNAL_SERVICE_HMAC_SECRET/
+    );
+  });
 });
 
 describe("sqs-message-auth verification failures", () => {

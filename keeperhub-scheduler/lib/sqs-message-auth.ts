@@ -37,7 +37,14 @@ export function signSqsMessageAttributes(
   body: string,
   nowSeconds: number = Math.floor(Date.now() / 1000),
 ): Record<string, MessageAttributeValue> {
-  const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
+  const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET;
+  // Fail loud rather than sign with "" (see lib/sqs-message-auth.ts): a
+  // ""-signed message is dropped by the verifier in enforce mode.
+  if (!secret) {
+    throw new Error(
+      "INTERNAL_SERVICE_HMAC_SECRET is not set; refusing to enqueue an unsigned SQS message",
+    );
+  }
   const timestamp = String(nowSeconds);
   const signature = computeSqsSignature(secret, queueUrl, caller, body, timestamp);
   return {

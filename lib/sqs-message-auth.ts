@@ -63,7 +63,16 @@ export function signSqsMessageAttributes(
   body: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): Record<string, MessageAttributeValue> {
-  const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
+  const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET;
+  // Fail loud rather than sign with "". The verifier ignores the empty secret,
+  // so a silently ""-signed message would be dropped in enforce mode with only
+  // a warn log - a hard-to-diagnose partial outage. Throwing surfaces the
+  // misconfiguration at the producer, which resolves the phantom row to an error.
+  if (!secret) {
+    throw new Error(
+      "INTERNAL_SERVICE_HMAC_SECRET is not set; refusing to enqueue an unsigned SQS message"
+    );
+  }
   const timestamp = String(nowSeconds);
   const signature = computeSqsSignature(secret, queueUrl, caller, body, timestamp);
   return {
