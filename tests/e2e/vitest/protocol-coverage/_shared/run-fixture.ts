@@ -10,11 +10,7 @@
  */
 
 import { expect, test } from "vitest";
-import {
-  getProtocol,
-  type ProtocolAction,
-  type ProtocolDefinition,
-} from "@/lib/protocol-registry";
+import { getProtocol } from "@/lib/protocol-registry";
 import {
   buildActionWorkflow,
   toWebhookTriggered,
@@ -27,50 +23,14 @@ import {
   waitForWorkflowExecution,
 } from "@/tests/utils/db";
 import { checkOutputExpectation, fetchNodeOutput } from "./oracle";
+import { planPhaseFixtures } from "./plan";
 import type { SharedCtx } from "./setup";
 
+// Planning logic lives in ./plan (vitest-free) so the coverage report CLI
+// can share it; re-exported here to keep existing import sites working.
+export { type FixtureCase, planPhaseFixtures } from "./plan";
+
 const TIMEOUT_MS = 120_000;
-
-/**
- * Planned per-action outcome for a phase: either a real test that should
- * register, or a documented skip. Pure data -- separated from the vitest
- * registration in `runPhaseFixtures` so the gating logic can be
- * unit-tested without spying on vitest internals.
- *
- *   - `run` carries the action so the caller can build a workflow for it.
- *   - `skip` carries the reason (used in the test name and shown by the
- *     vitest reporter so a green run still surfaces what was skipped).
- *   - `no-protocol` / `no-actions` cover the early-return branches in
- *     `runPhaseFixtures` (unknown protocol slug, no actions for phase).
- */
-export type FixtureCase =
-  | { kind: "run"; action: ProtocolAction }
-  | { kind: "skip"; action: ProtocolAction; reason: string }
-  | { kind: "no-protocol"; protocolSlug: string }
-  | { kind: "no-actions"; protocolSlug: string; phase: "read" | "write" };
-
-export function planPhaseFixtures(
-  protocol: ProtocolDefinition | undefined,
-  protocolSlug: string,
-  chainId: string,
-  phase: "read" | "write"
-): FixtureCase[] {
-  if (!protocol) {
-    return [{ kind: "no-protocol", protocolSlug }];
-  }
-  const actions = protocol.actions.filter((a) => a.type === phase);
-  if (actions.length === 0) {
-    return [{ kind: "no-actions", protocolSlug, phase }];
-  }
-  const skipped = protocol.testData?.[chainId]?.skipped ?? {};
-  return actions.map((action) => {
-    const reason = skipped[action.slug];
-    if (reason) {
-      return { kind: "skip", action, reason };
-    }
-    return { kind: "run", action };
-  });
-}
 
 export function runPhaseFixtures(opts: {
   protocol: string;

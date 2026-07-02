@@ -98,3 +98,14 @@ code.
 4. Verify third-party state assumptions empirically (eth_call) and record
    the date in a comment, as done in `protocols/safe.ts` and
    `protocols/aave-v3.ts`.
+
+## Measured progress
+
+Numbers come from `pnpm coverage:report` (the same planPhaseFixtures the
+runner uses, so they cannot drift from what actually registers). One row
+per landed phase of the local-first coverage plan; wall-clock times are
+timed local runs unless marked CI.
+
+| Date | Milestone | Runnable | Skipped | Value-asserted | Executing in CI | Feedback loop |
+|---|---|---|---|---|---|---|
+| 2026-07-02 | Baseline (post suite-hardening PR) | 232 of 394 (19 protocol-chains; 16 behind the hard-skipped chronicle suite, 7 in orphaned aave-v3 Sepolia testData) | 117 | 8 actions | ~35 (mainnet fork secret unprovisioned; chronicle hard-skipped) | 30-35 min per CI round |
