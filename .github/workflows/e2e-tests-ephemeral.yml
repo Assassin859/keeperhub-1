@@ -360,6 +360,20 @@ jobs:
           # live-testnet funder involved.
           PROTOCOL_E2E_SEPOLIA_FORK: "1"
 
+      - name: Dump protocol-coverage execution state
+        if: failure()
+        run: |
+          # Post-mortem for protocol-coverage setup timeouts: execution
+          # statuses distinguish "never picked up" (no step logs) from
+          # "hung mid-step" (a running node row), and the chains rows show
+          # whether the fork patches were still in effect.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
+            "SELECT id, status, left(error, 120) AS error, started_at, completed_at FROM workflow_executions ORDER BY started_at DESC NULLS LAST LIMIT 12"
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
+            "SELECT execution_id, node_name, node_type, status, left(error, 160) AS error, started_at, completed_at FROM workflow_execution_logs ORDER BY started_at DESC NULLS LAST LIMIT 24"
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
+            "SELECT chain_id, default_primary_rpc, default_fallback_rpc FROM chains WHERE chain_id IN (1, 11155111)"
+
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
         run: docker logs keeperhub-app 2>&1 | tail -200

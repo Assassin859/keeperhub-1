@@ -150,7 +150,11 @@ export async function runSetup(opts: {
     );
   }
 
-  const result = await waitForWorkflowExecution(workflow.id, 180_000);
+  // 300s: forked chains lazy-load contract state from their upstream on
+  // first touch, so the first transaction through a protocol's contracts
+  // can be far slower than steady-state (observed >180s on the Sepolia
+  // fork with the default public upstream).
+  const result = await waitForWorkflowExecution(workflow.id, 300_000);
   if (!result || result.status !== "success") {
     throw new Error(
       `setup workflow failed for ${protocol}/${chainId}: ${result?.status ?? "timeout"}${result?.error ? ` - ${result.error}` : ""}`
