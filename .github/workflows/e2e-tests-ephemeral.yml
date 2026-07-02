@@ -230,7 +230,21 @@ jobs:
           sandbox_url: http://localhost:8787
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
+        env:
+          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
         run: |
+          # Fork from the platform's real Sepolia RPC when CHAIN_RPC_CONFIG
+          # provides one. The compose default (public publicnode) rate-limits
+          # shared runner IPs, and a cold fork proxies every first-touch
+          # state read upstream - heavy protocol calls (Superfluid host) can
+          # hang for minutes under throttling.
+          ANVIL_FORK_URL=$(jq -r '[.[] | select(.chainId == 11155111)][0].primaryRpcUrl // empty' <<< "$CHAIN_RPC_CONFIG" 2>/dev/null || true)
+          if [ -n "$ANVIL_FORK_URL" ]; then
+            echo "Sepolia fork upstream: from CHAIN_RPC_CONFIG"
+            export ANVIL_FORK_URL
+          else
+            echo "Sepolia fork upstream: compose default (public RPC)"
+          fi
           # docker-compose.yml attaches every service to the external
           # `keeperhub-network`; the ephemeral start-app step uses
           # `docker run --network host` and never creates it, so compose
@@ -373,6 +387,20 @@ jobs:
             "SELECT execution_id, node_name, node_type, status, left(error, 160) AS error, started_at, completed_at FROM workflow_execution_logs ORDER BY started_at DESC NULLS LAST LIMIT 24"
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
             "SELECT chain_id, default_primary_rpc, default_fallback_rpc FROM chains WHERE chain_id IN (1, 11155111)"
+          # Fork responsiveness probes: a cheap local call, then a state
+          # read that forces an upstream fetch. Slow/failed probes plus
+          # upstream errors in the anvil logs indicate upstream throttling.
+          echo "--- sepolia fork eth_blockNumber:"
+          time curl -sf -m 20 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' || echo "PROBE FAILED"
+          echo "--- sepolia fork eth_getCode (Superfluid CFA forwarder, forces upstream fetch):"
+          time curl -sf -m 60 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
+          echo ""
+          echo "--- anvil sepolia fork logs:"
+          docker logs keeperhub-test-anvil-fork 2>&1 | tail -40 || true
+          echo "--- anvil mainnet fork logs:"
+          docker logs keeperhub-test-anvil-fork-mainnet 2>&1 | tail -20 || true
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
