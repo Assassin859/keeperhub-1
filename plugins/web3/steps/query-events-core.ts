@@ -7,11 +7,11 @@ export type AbiEntry = { type: string; name: string };
 export type BatchQueryResult = {
   events: (ethers.Log | ethers.EventLog)[];
   // The block actually scanned up to. Equal to the requested `end` for a
-  // non-tip batch. For the tip batch it is the head observed by the
-  // parallel getBlockNumber() call in fetchTipBatch, which is purely
-  // informational and can differ from what was originally planned -- the
-  // caller's reported `toBlock` must use this, not the originally requested
-  // `end`, or it will misstate what was actually queried.
+  // non-tip batch. For the tip batch it is derived from the query result
+  // itself (see fetchTipBatch) rather than a separate RPC call, since only
+  // the exact call that served the query can vouch for what it covered --
+  // the caller's reported `toBlock` must use this, not the originally
+  // requested `end`, or it will misstate what was actually queried.
   actualEnd: number;
 };
 
@@ -61,9 +61,16 @@ async function fetchFixedBatch(
 // block tag "latest" to eth_getLogs instead of a previously-resolved number
 // eliminates that race entirely -- whichever replica serves this call
 // resolves "latest" against its own head, so it can never reject its own
-// answer as beyond its own head. The block-number fetch alongside it is
-// purely informational (for the caller's reported `toBlock`) and runs in
-// parallel since the query no longer depends on it for correctness.
+// answer as beyond its own head.
+//
+// A separate getBlockNumber() call is deliberately NOT used to report
+// `actualEnd`: even issued against the same `provider` object, a concurrent
+// request isn't guaranteed to land on the same backend replica as the
+// queryFilter call, so it could report a head more advanced than what this
+// call's replica actually resolved "latest" to -- overstating what was
+// scanned and, if a caller checkpoints off `toBlock`, risking a skipped
+// range on the next run. The highest event block actually returned is the
+// only value this exact call can vouch for.
 async function fetchTipBatch(
   provider: ethers.JsonRpcProvider,
   contractAddress: string,
@@ -73,13 +80,14 @@ async function fetchTipBatch(
 ): Promise<BatchQueryResult> {
   const contract = new ethers.Contract(contractAddress, parsedAbi, provider);
   const eventFilter = resolveEventFilter(contract, eventName);
+  const events = await contract.queryFilter(eventFilter, start, "latest");
 
-  const [events, head] = await Promise.all([
-    contract.queryFilter(eventFilter, start, "latest"),
-    provider.getBlockNumber(),
-  ]);
+  const actualEnd =
+    events.length > 0
+      ? Math.max(...events.map((event) => event.blockNumber))
+      : start - 1;
 
-  return { events, actualEnd: head };
+  return { events, actualEnd };
 }
 
 // Query a single block range, failing over between RPC endpoints AND retrying

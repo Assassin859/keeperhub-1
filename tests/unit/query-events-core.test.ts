@@ -28,8 +28,8 @@ function mockRpc(
   return { executeWithFailover } as unknown as RpcProviderManager;
 }
 
-function fakeProvider(head: number): { getBlockNumber: () => Promise<number> } {
-  return { getBlockNumber: () => Promise.resolve(head) };
+function fakeProvider(): Record<string, never> {
+  return {};
 }
 
 describe("queryBatchWithRetry", () => {
@@ -45,9 +45,7 @@ describe("queryBatchWithRetry", () => {
   it("returns on the first attempt without retrying (non-tip batch)", async () => {
     const events = [{ blockNumber: 1 }];
     mockQueryFilter.mockResolvedValue(events);
-    const executeWithFailover = vi.fn((operation) =>
-      operation(fakeProvider(999))
-    );
+    const executeWithFailover = vi.fn((operation) => operation(fakeProvider()));
 
     const promise = queryBatchWithRetry(
       mockRpc(executeWithFailover),
@@ -116,12 +114,14 @@ describe("queryBatchWithRetry", () => {
     expect(executeWithFailover).toHaveBeenCalledTimes(MAX_BATCH_RETRIES);
   });
 
-  it("queries a tip batch against the literal 'latest' tag and reports the parallel head fetch as actualEnd", async () => {
-    const events = [{ blockNumber: 205 }];
+  it("queries a tip batch against the literal 'latest' tag and derives actualEnd from the highest returned event", async () => {
+    const events = [
+      { blockNumber: 201 },
+      { blockNumber: 205 },
+      { blockNumber: 199 },
+    ];
     mockQueryFilter.mockResolvedValue(events);
-    const executeWithFailover = vi.fn((operation) =>
-      operation(fakeProvider(205))
-    );
+    const executeWithFailover = vi.fn((operation) => operation(fakeProvider()));
 
     const promise = queryBatchWithRetry(
       mockRpc(executeWithFailover),
@@ -141,7 +141,9 @@ describe("queryBatchWithRetry", () => {
 
     // The literal "latest" tag, not a previously-resolved number, is what
     // makes this immune to the fast-replica/slow-replica race: whichever
-    // node answers resolves "latest" against its own head.
+    // node answers resolves "latest" against its own head. actualEnd must
+    // come from the events this exact call returned (max, not last), not a
+    // separate getBlockNumber() call that could hit a different replica.
     expect(mockQueryFilter).toHaveBeenCalledWith(
       expect.anything(),
       200,
@@ -150,16 +152,13 @@ describe("queryBatchWithRetry", () => {
     expect(executeWithFailover).toHaveBeenCalledTimes(1);
   });
 
-  it("reports actualEnd from the head fetch even when it disagrees with the originally planned end", async () => {
-    // The planned `end` (200) is only used for the outer batch loop's
-    // bookkeeping; the tip batch's actual query and its reported actualEnd
-    // are both driven by the live head, which can have moved past (or, in
-    // this case, sit below) that original estimate without causing an error.
+  it("reports no forward progress when a tip batch's latest query returns no events", async () => {
+    // With nothing returned, there is no value this call can vouch for as
+    // actually scanned -- reporting start - 1 means a future run re-checks
+    // the same window instead of risking a skipped range.
     const events: unknown[] = [];
     mockQueryFilter.mockResolvedValue(events);
-    const executeWithFailover = vi.fn((operation) =>
-      operation(fakeProvider(150))
-    );
+    const executeWithFailover = vi.fn((operation) => operation(fakeProvider()));
 
     const promise = queryBatchWithRetry(
       mockRpc(executeWithFailover),
@@ -172,9 +171,15 @@ describe("queryBatchWithRetry", () => {
     );
     const expectation = expect(promise).resolves.toEqual({
       events,
-      actualEnd: 150,
+      actualEnd: 99,
     });
     await vi.runAllTimersAsync();
     await expectation;
+
+    expect(mockQueryFilter).toHaveBeenCalledWith(
+      expect.anything(),
+      100,
+      "latest"
+    );
   });
 });

@@ -260,9 +260,9 @@ async function queryEventBatches(
     }
 
     actualToBlock = actualEnd;
-    // The head was clamped below this batch's planned end -- later batches
-    // would target blocks even further out, so there is nothing left to gain
-    // by continuing.
+    // The batch could not vouch for scanning all the way to its planned end
+    // -- later batches would target blocks even further out, so there is
+    // nothing left to gain by continuing.
     if (actualEnd < end) {
       break;
     }
