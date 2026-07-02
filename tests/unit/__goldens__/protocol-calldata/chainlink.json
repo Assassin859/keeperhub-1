@@ -1,0 +1,159 @@
+{
+  "1": {
+    "ccip-get-fee": {
+      "to": "",
+      "data": "unencodable-while-skipped",
+      "skipped": true
+    },
+    "ccip-send": {
+      "to": "",
+      "data": "unencodable-while-skipped",
+      "skipped": true
+    },
+    "ccip-bnm-drip": {
+      "to": "",
+      "data": "0x67a5cd060000000000000000000000001111111111111111111111111111111111111111",
+      "skipped": true
+    },
+    "ccip-approve-bridge-token": {
+      "to": "",
+      "data": "0x095ea7b300000000000000000000000080226fc0ee2b096224eeac085bb9a8cba1146f7d0000000000000000000000000000000000000000000000000000000000000001",
+      "skipped": true
+    },
+    "ccip-check-bridge-balance": {
+      "to": "",
+      "data": "0x70a082310000000000000000000000001111111111111111111111111111111111111111",
+      "skipped": false
+    },
+    "ccip-check-bridge-allowance": {
+      "to": "",
+      "data": "0xdd62ed3e000000000000000000000000111111111111111111111111111111111111111100000000000000000000000080226fc0ee2b096224eeac085bb9a8cba1146f7d",
+      "skipped": false
+    },
+    "ccip-approve-fee-token": {
+      "to": "",
+      "data": "0x095ea7b300000000000000000000000080226fc0ee2b096224eeac085bb9a8cba1146f7d0000000000000000000000000000000000000000000000000000000000000001",
+      "skipped": true
+    },
+    "ccip-check-fee-balance": {
+      "to": "",
+      "data": "0x70a082310000000000000000000000001111111111111111111111111111111111111111",
+      "skipped": false
+    },
+    "ccip-check-fee-allowance": {
+      "to": "",
+      "data": "0xdd62ed3e000000000000000000000000111111111111111111111111111111111111111100000000000000000000000080226fc0ee2b096224eeac085bb9a8cba1146f7d",
+      "skipped": false
+    },
+    "eth-usd-latest-round-data": {
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "eth-usd-decimals": {
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "btc-usd-latest-round-data": {
+      "to": "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "btc-usd-decimals": {
+      "to": "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "link-usd-latest-round-data": {
+      "to": "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "link-usd-decimals": {
+      "to": "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "usdc-usd-latest-round-data": {
+      "to": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "usdc-usd-decimals": {
+      "to": "0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "dai-usd-latest-round-data": {
+      "to": "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "dai-usd-decimals": {
+      "to": "0xAed0c38402a5d19df6E4c03F4E2DceD6e29c1ee9",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "usdt-usd-latest-round-data": {
+      "to": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "usdt-usd-decimals": {
+      "to": "0x3E7d1eAB13ad0104d2750B8863b489D65364e32D",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "link-eth-latest-round-data": {
+      "to": "0xDC530D9457755926550b59e8ECcdaE7624181557",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "link-eth-decimals": {
+      "to": "0xDC530D9457755926550b59e8ECcdaE7624181557",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "btc-eth-latest-round-data": {
+      "to": "0xdeb288F737066589598e9214E782fa5A8eD689e8",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "btc-eth-decimals": {
+      "to": "0xdeb288F737066589598e9214E782fa5A8eD689e8",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "latest-round-data": {
+      "to": "",
+      "data": "0xfeaf968c",
+      "skipped": false
+    },
+    "get-round-data": {
+      "to": "",
+      "data": "0x9a6fc8f50000000000000000000000000000000000000000000000000000000000000001",
+      "skipped": true
+    },
+    "latest-answer": {
+      "to": "",
+      "data": "0x50d25bcd",
+      "skipped": false
+    },
+    "decimals": {
+      "to": "",
+      "data": "0x313ce567",
+      "skipped": false
+    },
+    "description": {
+      "to": "",
+      "data": "0x7284e416",
+      "skipped": false
+    },
+    "version": {
+      "to": "",
+      "data": "0x54fd4d50",
+      "skipped": false
+    }
+  }
+}
