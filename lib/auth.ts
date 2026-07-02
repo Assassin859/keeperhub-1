@@ -654,7 +654,7 @@ async function backstopWalletAddressBook(
       .limit(1);
 
     const email = userRow?.email;
-    if (!email || !isWalletEmail(email)) {
+    if (!(email && isWalletEmail(email))) {
       return;
     }
 
@@ -1137,6 +1137,12 @@ export const auth = betterAuth({
   user: {
     additionalFields: {
       displayNameConfirmed: {
+        type: "boolean",
+        defaultValue: false,
+        required: false,
+        input: false,
+      },
+      onboardingCompleted: {
         type: "boolean",
         defaultValue: false,
         required: false,

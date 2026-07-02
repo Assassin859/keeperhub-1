@@ -60,6 +60,9 @@ export const users = pgTable("users", {
   displayNameConfirmed: boolean("display_name_confirmed")
     .notNull()
     .default(false),
+  // True once the user finishes (or skips through) the /welcome onboarding
+  // wizard. Server-side so the flow is not re-shown on another device/browser.
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
   // Wallet-only per-action step-up policy: maps a sensitive action to the
   // extra factors the wallet user opted into (e.g. {"wallet_withdraw":["totp"]}).
   // Email/TOTP users always use dual-factor regardless and ignore this column.

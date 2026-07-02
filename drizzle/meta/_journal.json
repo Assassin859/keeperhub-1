@@ -862,6 +862,13 @@
       "when": 1782648000006,
       "tag": "0122_keep_171_org_enforce_mfa",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1782648000007,
+      "tag": "0123_keep_171_onboarding_completed",
+      "breakpoints": true
     }
   ]
 }
