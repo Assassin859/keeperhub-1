@@ -17,6 +17,7 @@
  * Zero AI calls. Zero new npm packages. Pure TypeScript.
  */
 
+import { DEPEG_WATCH_FEEDS } from "@/lib/scan/factory/shapes/depeg-watch";
 import {
   clampHfThreshold,
   DUST_THRESHOLD_USD,
@@ -96,6 +97,11 @@ function protocolLabel(protocol: string): string {
   }
 }
 
+/** Native gas token symbol per chain; every other supported chain uses ETH. */
+function nativeSymbol(chainId: number): string {
+  return chainId === 137 ? "POL" : "ETH";
+}
+
 function chainLabel(chainId: number): string {
   switch (chainId) {
     case 1:
@@ -124,7 +130,10 @@ function chainLabel(chainId: number): string {
  * and total debt in USD. The suggested alert threshold is clamped per SUGGEST-09
  * (floor 1.3, default 1.5 when HF has headroom).
  */
-function buildHealthSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
+function buildHealthSuggestion(
+  pos: ProtocolPosition,
+  walletAddress: string
+): SuggestionDescriptor {
   const hf = pos.healthFactor as number; // null check performed by caller
   const threshold = clampHfThreshold(hf);
   const slug = `hf-monitor-${pos.protocol}-${pos.chainId}`;
@@ -143,7 +152,7 @@ function buildHealthSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
     chainId: pos.chainId,
     readOrWrite: "read",
     confirmInputs: {
-      walletAddress: "Your wallet address to monitor",
+      walletAddress,
       // Pre-computed as a 1e18 base-unit string so the factory condition
       // rightOperand and the user-visible description use the same value.
       threshold: hfThresholdRaw(threshold),
@@ -166,6 +175,7 @@ function buildHealthSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
  */
 function buildYieldSuggestion(
   stable: StablecoinBalance,
+  walletAddress: string,
   apyContext?: ApyContext | null
 ): SuggestionDescriptor {
   const slug = `stablecoin-yield-${stable.symbol.toLowerCase()}-${stable.chainId}`;
@@ -175,7 +185,7 @@ function buildYieldSuggestion(
   if (entry !== null && entry.apy > 0) {
     const apyStr = entry.apy.toFixed(1);
     const confirmInputs: Record<string, string> = {
-      walletAddress: "Your wallet address to monitor",
+      walletAddress,
       tokenAddress: stable.tokenAddress,
     };
     if (entry.destinationAddress !== null) {
@@ -183,22 +193,26 @@ function buildYieldSuggestion(
     }
     return {
       id: slug,
-      name: `${stable.symbol} Idle Yield · ${entry.projectLabel}`,
+      name: `${stable.symbol} Yield Opportunity · ${entry.projectLabel}`,
       description:
-        `Monitor your ${stable.symbol} balance ($${Math.round(bal)}). ` +
-        `Earn ~${apyStr}% APY via ${entry.projectLabel}.`,
+        `Your ${stable.symbol} ($${Math.round(bal)}) sits idle. ` +
+        `It could earn ~${apyStr}% APY via ${entry.projectLabel}. ` +
+        "This read-only monitor alerts you while it stays idle.",
       category: "yield",
       chainId: stable.chainId,
       readOrWrite: "read",
       confirmInputs,
       riskNote: RISK_NOTE_READ_ONLY,
       usdValue: stable.usdValue,
+      symbol: stable.symbol,
+      apy: entry.apy,
+      venue: entry.projectLabel,
     };
   }
 
   return {
     id: slug,
-    name: `${stable.symbol} Idle Yield Monitor`,
+    name: `${stable.symbol} Yield Opportunity Monitor`,
     description:
       `Monitor your ${stable.symbol} balance ($${Math.round(bal)}) ` +
       "for idle yield opportunities.",
@@ -206,11 +220,113 @@ function buildYieldSuggestion(
     chainId: stable.chainId,
     readOrWrite: "read",
     confirmInputs: {
-      walletAddress: "Your wallet address to monitor",
+      walletAddress,
       tokenAddress: stable.tokenAddress,
     },
     riskNote: RISK_NOTE_READ_ONLY,
     usdValue: stable.usdValue,
+    symbol: stable.symbol,
+  };
+}
+
+/**
+ * Balance-drop tripwire for held stablecoins (read-only, category "alert").
+ *
+ * Alerts when the balance falls below its scanned level: a tripwire for
+ * unexpected outflows (compromised key, drainer approval, fat-finger send).
+ * The alert threshold is prefilled with the scanned raw balance so the
+ * price-alert shape's `balance < threshold` condition fires on any decrease.
+ */
+function buildBalanceDropSuggestion(
+  stable: StablecoinBalance,
+  walletAddress: string
+): SuggestionDescriptor {
+  const slug = `balance-drop-${stable.symbol.toLowerCase()}-${stable.chainId}`;
+  const bal = stable.usdValue ?? 0;
+  const chain = chainLabel(stable.chainId);
+
+  return {
+    id: slug,
+    name: `${stable.symbol} Balance Drop Alert`,
+    description:
+      `Tripwire for unexpected outflows: alerts if your ${stable.symbol} ` +
+      `balance on ${chain} drops below its current level ($${Math.round(bal)}).`,
+    category: "alert",
+    chainId: stable.chainId,
+    readOrWrite: "read",
+    confirmInputs: {
+      walletAddress,
+      tokenAddress: stable.tokenAddress,
+      // Raw base-unit amount from the scan; the shape's condition compares
+      // balanceRaw < alertThreshold, so any outflow triggers the alert.
+      alertThreshold: stable.amount,
+    },
+    riskNote: RISK_NOTE_READ_ONLY,
+    usdValue: stable.usdValue,
+    symbol: stable.symbol,
+  };
+}
+
+/**
+ * Depeg watch for held stablecoins with a known Chainlink feed (read-only,
+ * category "alert"). Market-level monitor: alerts when the Chainlink price
+ * falls below $0.995. Emitted regardless of the current depeg flag — a coin
+ * that is already depegged is exactly what the holder wants to hear about.
+ */
+function buildDepegWatchSuggestion(
+  stable: StablecoinBalance
+): SuggestionDescriptor {
+  const slug = `depeg-watch-${stable.symbol.toLowerCase()}-${stable.chainId}`;
+  const chain = chainLabel(stable.chainId);
+  const bal = stable.usdValue ?? 0;
+
+  return {
+    id: slug,
+    name: `${stable.symbol} Depeg Watch`,
+    description:
+      `Alerts if ${stable.symbol} loses its $1 peg on ${chain} ` +
+      `(Chainlink price below $0.995). You hold $${Math.round(bal)}.`,
+    category: "alert",
+    chainId: stable.chainId,
+    readOrWrite: "read",
+    // Market-level read: no wallet or token parameter to confirm.
+    confirmInputs: {},
+    riskNote: RISK_NOTE_READ_ONLY,
+    usdValue: stable.usdValue,
+    symbol: stable.symbol,
+  };
+}
+
+/** Default low-gas threshold prefill: 0.01 native token in wei. */
+const GAS_THRESHOLD_WEI = "10000000000000000";
+
+/**
+ * Gas balance alert for chains where the wallet holds non-dust assets
+ * (read-only, category "alert"). Alerts when the native balance drops below
+ * 0.01 so scheduled and manual transactions do not start failing.
+ */
+function buildGasBalanceSuggestion(
+  chainId: number,
+  walletAddress: string
+): SuggestionDescriptor {
+  const chain = chainLabel(chainId);
+  const native = nativeSymbol(chainId);
+
+  return {
+    id: `gas-balance-${chainId}`,
+    name: "Gas Balance Alert",
+    description:
+      `Alerts when your native ${native} balance on ${chain} drops below ` +
+      "0.01, so transactions keep working.",
+    category: "alert",
+    chainId,
+    readOrWrite: "read",
+    confirmInputs: {
+      walletAddress,
+      gasThreshold: GAS_THRESHOLD_WEI,
+    },
+    riskNote: RISK_NOTE_READ_ONLY,
+    usdValue: null,
   };
 }
 
@@ -221,7 +337,10 @@ function buildYieldSuggestion(
  * protocol not in SAVINGS_PROTOCOLS — i.e. users who have collateral deposited
  * without debt on a lending protocol (e.g. Aave, Spark).
  */
-function buildAlertSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
+function buildAlertSuggestion(
+  pos: ProtocolPosition,
+  walletAddress: string
+): SuggestionDescriptor {
   const asset = pos.suppliedAssets[0];
   const symbol = asset?.symbol ?? "Token";
   const slug = `price-alert-${symbol.toLowerCase()}-${pos.chainId}`;
@@ -239,7 +358,7 @@ function buildAlertSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
     chainId: pos.chainId,
     readOrWrite: "read",
     confirmInputs: {
-      walletAddress: "Your wallet address to monitor",
+      walletAddress,
       tokenAddress: "ERC20 token contract address to monitor",
       alertThreshold: "Balance threshold in token base units",
     },
@@ -257,7 +376,10 @@ function buildAlertSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
  * from the position (sourced from suppliedAssets[0].tokenAddress set by the
  * Sky adapter — no server-only registry import required).
  */
-function buildRewardSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
+function buildRewardSuggestion(
+  pos: ProtocolPosition,
+  walletAddress: string
+): SuggestionDescriptor {
   const slug = `reward-reminder-${pos.protocol}-${pos.chainId}`;
   const protName = protocolLabel(pos.protocol);
   const chain = chainLabel(pos.chainId);
@@ -282,7 +404,7 @@ function buildRewardSuggestion(pos: ProtocolPosition): SuggestionDescriptor {
     chainId: pos.chainId,
     readOrWrite: "read",
     confirmInputs: {
-      walletAddress: "Your wallet address to monitor",
+      walletAddress,
       stakingTokenAddress,
     },
     riskNote: RISK_NOTE_READ_ONLY,
@@ -312,6 +434,10 @@ export function buildSuggestions(
   apyContext?: ApyContext | null
 ): SuggestionDescriptor[] {
   const raw: SuggestionDescriptor[] = [];
+  // The scanned (EIP-55 checksummed) address prefills every descriptor's
+  // confirmInputs.walletAddress: the user already told us which address to
+  // monitor, so the confirm screen should not ask again.
+  const walletAddress = scan.address;
 
   // SUGGEST-02: HF monitoring for lending positions with active loans.
   // SUGGEST-04: Price alert for supply-only positions (healthFactor null, not lido).
@@ -323,7 +449,7 @@ export function buildSuggestions(
         const collat =
           pos.totalCollateralUsd ?? pos.suppliedAssets[0]?.usdValue ?? 0;
         if (collat >= DUST_THRESHOLD_USD) {
-          raw.push(buildAlertSuggestion(pos));
+          raw.push(buildAlertSuggestion(pos, walletAddress));
         }
       }
       continue;
@@ -333,10 +459,11 @@ export function buildSuggestions(
     if (debt < DUST_THRESHOLD_USD) {
       continue;
     }
-    raw.push(buildHealthSuggestion(pos));
+    raw.push(buildHealthSuggestion(pos, walletAddress));
   }
 
-  // SUGGEST-03: Stablecoin yield monitoring (depeg-suppressed, dust-filtered).
+  // SUGGEST-03: Stablecoin yield monitoring (depeg-suppressed, dust-filtered),
+  // plus a balance-drop tripwire (category "alert") for the same balance.
   for (const stable of scan.stablecoins) {
     if (stable.depegged) {
       continue; // SUGGEST-03 depeg suppression
@@ -344,7 +471,8 @@ export function buildSuggestions(
     if ((stable.usdValue ?? 0) < DUST_THRESHOLD_USD) {
       continue;
     }
-    raw.push(buildYieldSuggestion(stable, apyContext));
+    raw.push(buildYieldSuggestion(stable, walletAddress, apyContext));
+    raw.push(buildBalanceDropSuggestion(stable, walletAddress));
   }
 
   // SUGGEST-05: Staking reward reminders for savings-protocol positions (Lido, Sky).
@@ -356,7 +484,38 @@ export function buildSuggestions(
     if (bal < DUST_THRESHOLD_USD) {
       continue;
     }
-    raw.push(buildRewardSuggestion(pos));
+    raw.push(buildRewardSuggestion(pos, walletAddress));
+  }
+
+  // Depeg watch: held stablecoins above dust with a known Chainlink feed.
+  // Deliberately NOT depeg-suppressed — an active depeg is the alert case.
+  for (const stable of scan.stablecoins) {
+    if ((stable.usdValue ?? 0) < DUST_THRESHOLD_USD) {
+      continue;
+    }
+    if (DEPEG_WATCH_FEEDS[stable.chainId]?.[stable.symbol] === undefined) {
+      continue;
+    }
+    raw.push(buildDepegWatchSuggestion(stable));
+  }
+
+  // Gas balance alert: one per chain where the wallet holds non-dust assets.
+  const activeChains = new Set<number>();
+  for (const stable of scan.stablecoins) {
+    if ((stable.usdValue ?? 0) >= DUST_THRESHOLD_USD) {
+      activeChains.add(stable.chainId);
+    }
+  }
+  for (const pos of scan.positions) {
+    const collat =
+      pos.totalCollateralUsd ?? pos.suppliedAssets[0]?.usdValue ?? 0;
+    const debt = pos.totalDebtUsd ?? 0;
+    if (collat >= DUST_THRESHOLD_USD || debt >= DUST_THRESHOLD_USD) {
+      activeChains.add(pos.chainId);
+    }
+  }
+  for (const chainId of activeChains) {
+    raw.push(buildGasBalanceSuggestion(chainId, walletAddress));
   }
 
   // SUGGEST-01 + 07: Rank by category/USD and cap at MAX_SUGGESTIONS.

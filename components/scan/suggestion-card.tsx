@@ -19,6 +19,12 @@ import { ReadWritePill } from "./read-write-pill";
 type SuggestionCardProps = {
   suggestion: SuggestionDescriptor;
   onSelect: (suggestion: SuggestionDescriptor) => void;
+  /**
+   * Number of networks covered when this card fronts a grouped set of
+   * sibling suggestions. Above 1, the chain pill shows "N networks" instead
+   * of a single chain name.
+   */
+  networkCount?: number;
 };
 
 /** Protocol/venue logos served from public/protocols. */
@@ -85,6 +91,7 @@ function resolveProtocolIcon(suggestion: SuggestionDescriptor): string | null {
 export function SuggestionCard({
   suggestion,
   onSelect,
+  networkCount,
 }: SuggestionCardProps): React.ReactElement {
   const handleClick = (): void => {
     onSelect(suggestion);
@@ -138,7 +145,9 @@ export function SuggestionCard({
       </p>
       <div className="pointer-events-none relative z-[2] mt-auto flex items-center gap-2 pt-3">
         <span className="inline-flex items-center rounded-full border border-border/40 bg-muted/60 px-2 py-0.5 font-medium text-[0.625rem] text-foreground/80">
-          {getChainName(String(suggestion.chainId))}
+          {networkCount !== undefined && networkCount > 1
+            ? `${networkCount} networks`
+            : getChainName(String(suggestion.chainId))}
         </span>
         <Tooltip>
           <TooltipTrigger className="pointer-events-auto inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)]">

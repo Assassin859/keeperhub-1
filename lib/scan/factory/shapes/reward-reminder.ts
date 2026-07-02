@@ -1,7 +1,7 @@
 /**
  * Staking reward-claim reminder workflow shape.
  *
- * Topology: Schedule trigger -> check-token-balance -> Condition (balance > 0) -> HTTP reminder
+ * Topology: Schedule trigger -> check-token-balance -> Condition (balance > 0) -> Email reminder
  *
  * Polls every 6 hours and reminds the user to claim staking rewards when a
  * non-zero staked token balance is detected. Defaults to monitoring a
@@ -18,8 +18,9 @@ import {
   buildCheckTokenBalanceNode,
   buildConditionNode,
   buildEdge,
-  buildHttpAlertNode,
+  buildEmailAlertNode,
   buildScheduleTrigger,
+  resolveAddressPrefill,
 } from "@/lib/scan/factory/node-builders";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -43,7 +44,7 @@ export interface RewardReminderOutput {
 /**
  * Build the staking reward-claim reminder workflow shape.
  *
- * Reads the staked token balance on-chain and fires an HTTP reminder when the
+ * Reads the staked token balance on-chain and fires an email reminder when the
  * balance is above zero, prompting the user to consider claiming accumulated
  * staking rewards (e.g. Lido wstETH/stETH rewards).
  *
@@ -75,8 +76,12 @@ export function buildRewardReminder(
   const tokenConfig = JSON.stringify({
     mode: "custom",
     customToken: {
-      // Placeholder: Phase 53 confirm screen populates the real staking token address
-      address: "{{stakingTokenAddress}}",
+      // Real staking token address when the engine prefilled it (Sky carries
+      // the actual sUSDS address); placeholder otherwise
+      address: resolveAddressPrefill(
+        descriptor.confirmInputs.stakingTokenAddress,
+        "{{stakingTokenAddress}}"
+      ),
       symbol: "STAKING",
     },
   });
@@ -88,8 +93,11 @@ export function buildRewardReminder(
       {
         label: "Check Staking Balance",
         network,
-        // Placeholder replaced by the user's wallet address in Phase 53
-        address: "{{walletAddress}}",
+        // Real scanned address when the engine prefilled it; placeholder otherwise
+        address: resolveAddressPrefill(
+          descriptor.confirmInputs.walletAddress,
+          "{{walletAddress}}"
+        ),
         tokenConfig,
       },
       1
@@ -105,13 +113,12 @@ export function buildRewardReminder(
       },
       2
     ),
-    buildHttpAlertNode(
+    buildEmailAlertNode(
       alertId,
       {
         label: "Send Reward Reminder",
-        bodyTemplate: JSON.stringify({
-          message: `Staking rewards available to claim. Balance: ${balanceRef}`,
-        }),
+        subject: "KeeperHub reminder: staking balance update",
+        bodyTemplate: `Staking rewards available to claim. Balance: ${balanceRef}`,
       },
       3
     ),

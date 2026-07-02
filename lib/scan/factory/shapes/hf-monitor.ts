@@ -1,7 +1,7 @@
 /**
  * Aave V3 health-factor monitor workflow shape.
  *
- * Topology: Schedule trigger → read getUserAccountData → Condition (HF < threshold) → HTTP alert
+ * Topology: Schedule trigger → read getUserAccountData → Condition (HF < threshold) → Email alert
  *
  * Requirements: PREFILL-01, PREFILL-03, PREFILL-04, PREFILL-05, SC#1
  *
@@ -13,9 +13,10 @@
 import {
   buildConditionNode,
   buildEdge,
-  buildHttpAlertNode,
+  buildEmailAlertNode,
   buildReadContractNode,
   buildScheduleTrigger,
+  resolveAddressPrefill,
 } from "@/lib/scan/factory/node-builders";
 import { hfThresholdRaw } from "@/lib/scan/suggestions/ranking";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
@@ -157,8 +158,13 @@ export function buildHfMonitor(
         contractAddress: poolAddress,
         abi: GET_USER_ACCOUNT_DATA_ABI,
         abiFunction: "getUserAccountData",
-        // Placeholder replaced by the user's wallet address in Phase 53
-        functionArgs: '["{{walletAddress}}"]',
+        // Real scanned address when the engine prefilled it; placeholder otherwise
+        functionArgs: JSON.stringify([
+          resolveAddressPrefill(
+            descriptor.confirmInputs.walletAddress,
+            "{{walletAddress}}"
+          ),
+        ]),
       },
       1
     ),
@@ -173,13 +179,12 @@ export function buildHfMonitor(
       },
       2
     ),
-    buildHttpAlertNode(
+    buildEmailAlertNode(
       alertId,
       {
         label: "Send Alert",
-        bodyTemplate: JSON.stringify({
-          message: `Health factor below threshold: ${hfRef}`,
-        }),
+        subject: "KeeperHub alert: health factor below threshold",
+        bodyTemplate: `Health factor below threshold: ${hfRef}`,
       },
       3
     ),

@@ -44,6 +44,16 @@ export interface SuggestionDescriptor {
   protocol?: string;
   /** USD value of the underlying position — used for intra-category ranking. */
   usdValue: number | null;
+  /**
+   * Token symbol for stablecoin-derived suggestions (yield, balance-drop).
+   * Drives the token picker when sibling suggestions are grouped into one
+   * card. Absent on position-derived suggestions (health, claim).
+   */
+  symbol?: string;
+  /** Live APY (percent) when the suggestion carries an APY-aware venue. */
+  apy?: number;
+  /** Human-readable venue label (e.g. "Morpho Blue") for APY-aware yield suggestions. */
+  venue?: string;
 }
 
 /**

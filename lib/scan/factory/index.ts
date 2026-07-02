@@ -14,6 +14,8 @@
  * must be testable in a Node.js Vitest environment without a Next.js server
  * context. Shape builders avoid importing server-only modules.
  */
+import { buildDepegWatch } from "@/lib/scan/factory/shapes/depeg-watch";
+import { buildGasBalance } from "@/lib/scan/factory/shapes/gas-balance";
 import { buildGenericMonitor } from "@/lib/scan/factory/shapes/generic-monitor";
 import { buildHfMonitor } from "@/lib/scan/factory/shapes/hf-monitor";
 import { buildPriceAlert } from "@/lib/scan/factory/shapes/price-alert";
@@ -87,6 +89,14 @@ interface ShapeOutput {
 }
 
 function dispatchShape(descriptor: SuggestionDescriptor): ShapeOutput {
+  // Id-prefix dispatch for alert-category shapes with their own topology.
+  // The category switch below stays the fallback (PREFILL-02).
+  if (descriptor.id.startsWith("depeg-watch-")) {
+    return buildDepegWatch(descriptor);
+  }
+  if (descriptor.id.startsWith("gas-balance-")) {
+    return buildGasBalance(descriptor);
+  }
   switch (descriptor.category) {
     case "health": {
       return buildHfMonitor(descriptor);

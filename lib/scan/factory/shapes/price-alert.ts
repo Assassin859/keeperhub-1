@@ -1,7 +1,7 @@
 /**
  * Price/balance threshold-alert workflow shape.
  *
- * Topology: Schedule trigger -> check-token-balance -> Condition (balance < threshold) -> HTTP alert
+ * Topology: Schedule trigger -> check-token-balance -> Condition (balance < threshold) -> Email alert
  *
  * Polls every 15 minutes and alerts when a token balance drops below a
  * user-configured threshold. Phase 53 confirm screen populates walletAddress,
@@ -17,8 +17,10 @@ import {
   buildCheckTokenBalanceNode,
   buildConditionNode,
   buildEdge,
-  buildHttpAlertNode,
+  buildEmailAlertNode,
   buildScheduleTrigger,
+  resolveAddressPrefill,
+  resolveAmountPrefill,
 } from "@/lib/scan/factory/node-builders";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -74,8 +76,11 @@ export function buildPriceAlert(
   const tokenConfig = JSON.stringify({
     mode: "custom",
     customToken: {
-      // Placeholder: Phase 53 confirm screen populates the real token address
-      address: "{{tokenAddress}}",
+      // Real token address when the engine prefilled it; placeholder otherwise
+      address: resolveAddressPrefill(
+        descriptor.confirmInputs.tokenAddress,
+        "{{tokenAddress}}"
+      ),
       symbol: "TOKEN",
     },
   });
@@ -87,8 +92,11 @@ export function buildPriceAlert(
       {
         label: "Check Token Balance",
         network,
-        // Placeholder replaced by the user's wallet address in Phase 53
-        address: "{{walletAddress}}",
+        // Real scanned address when the engine prefilled it; placeholder otherwise
+        address: resolveAddressPrefill(
+          descriptor.confirmInputs.walletAddress,
+          "{{walletAddress}}"
+        ),
         tokenConfig,
       },
       1
@@ -100,18 +108,21 @@ export function buildPriceAlert(
         slug,
         leftOperand: balanceRef,
         operator: "<",
-        // Placeholder replaced by the user's threshold in Phase 53
-        rightOperand: "{{alertThreshold}}",
+        // Real base-unit threshold when the engine prefilled it (balance-drop
+        // tripwire descriptors carry the scanned raw amount); placeholder otherwise
+        rightOperand: resolveAmountPrefill(
+          descriptor.confirmInputs.alertThreshold,
+          "{{alertThreshold}}"
+        ),
       },
       2
     ),
-    buildHttpAlertNode(
+    buildEmailAlertNode(
       alertId,
       {
         label: "Send Price Alert",
-        bodyTemplate: JSON.stringify({
-          message: `Token balance below threshold: ${balanceRef}`,
-        }),
+        subject: "KeeperHub alert: balance below threshold",
+        bodyTemplate: `Token balance below threshold: ${balanceRef}`,
       },
       3
     ),

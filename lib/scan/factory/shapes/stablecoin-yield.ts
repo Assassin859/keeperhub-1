@@ -1,7 +1,7 @@
 /**
  * Stablecoin idle yield monitor workflow shape.
  *
- * Topology: Schedule trigger → check-token-balance → Condition (balance > 0) → HTTP alert
+ * Topology: Schedule trigger → check-token-balance → Condition (balance > 0) → Email alert
  *
  * Read-only — uses only read action types so validateWorkflow with
  * workflowType "read" produces zero errors and zero warnings (PREFILL-06).
@@ -13,8 +13,9 @@ import {
   buildCheckTokenBalanceNode,
   buildConditionNode,
   buildEdge,
-  buildHttpAlertNode,
+  buildEmailAlertNode,
   buildScheduleTrigger,
+  resolveAddressPrefill,
 } from "@/lib/scan/factory/node-builders";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -71,8 +72,11 @@ export function buildStablecoinYield(
   const tokenConfig = JSON.stringify({
     mode: "custom",
     customToken: {
-      // Placeholder: Phase 53 confirm screen populates the real token address
-      address: "{{tokenAddress}}",
+      // Real token address when the engine prefilled it; placeholder otherwise
+      address: resolveAddressPrefill(
+        descriptor.confirmInputs.tokenAddress,
+        "{{tokenAddress}}"
+      ),
       symbol: "STABLECOIN",
     },
   });
@@ -84,8 +88,11 @@ export function buildStablecoinYield(
       {
         label: "Get ERC20 Token Balance",
         network,
-        // Placeholder replaced by the user's wallet address in Phase 53
-        address: "{{walletAddress}}",
+        // Real scanned address when the engine prefilled it; placeholder otherwise
+        address: resolveAddressPrefill(
+          descriptor.confirmInputs.walletAddress,
+          "{{walletAddress}}"
+        ),
         tokenConfig,
       },
       1
@@ -101,18 +108,17 @@ export function buildStablecoinYield(
       },
       2
     ),
-    buildHttpAlertNode(
+    buildEmailAlertNode(
       alertId,
       {
         label: "Send Yield Alert",
-        bodyTemplate: JSON.stringify({
-          message:
-            `Idle stablecoin balance detected: ${balanceRef}.` +
-            (descriptor.confirmInputs.destinationAddress
-              ? ` Destination: ${descriptor.confirmInputs.destinationAddress}.`
-              : "") +
-            " Consider deploying to a yield protocol.",
-        }),
+        subject: "KeeperHub alert: idle stablecoin balance",
+        bodyTemplate:
+          `Idle stablecoin balance detected: ${balanceRef}.` +
+          (descriptor.confirmInputs.destinationAddress
+            ? ` Destination: ${descriptor.confirmInputs.destinationAddress}.`
+            : "") +
+          " Consider deploying to a yield protocol.",
       },
       3
     ),

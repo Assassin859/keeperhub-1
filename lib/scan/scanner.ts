@@ -270,6 +270,61 @@ async function scanOneChain(
   return { chainId, positions, stablecoins: pricedStablecoins };
 }
 
+/** Per-chain timeout for the getCode address-kind probe. */
+const ADDRESS_KIND_TIMEOUT_MS = 3000;
+
+/**
+ * Detect whether the scanned address is an EOA or a deployed contract.
+ *
+ * Probes `eth_getCode` on every scannable chain in parallel (bytecode can
+ * exist on some chains and not others, e.g. an L2-only Safe). A chain whose
+ * probe fails or times out is ignored. Returns `addressKind: undefined` when
+ * every probe failed — callers omit the field rather than guessing.
+ */
+async function detectAddressKind(
+  address: string,
+  chainIds: number[]
+): Promise<{
+  addressKind: "eoa" | "contract" | undefined;
+  contractChains: number[];
+}> {
+  const probes = await Promise.allSettled(
+    chainIds.map(async (chainId) => {
+      const rpcManager = await getRpcProvider({ chainId });
+      const code = await Promise.race([
+        rpcManager.executeWithFailover((provider: ethers.JsonRpcProvider) =>
+          provider.getCode(address)
+        ),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error("getCode timeout")),
+            ADDRESS_KIND_TIMEOUT_MS
+          );
+        }),
+      ]);
+      return { chainId, isContract: code !== "0x" };
+    })
+  );
+
+  const fulfilled = probes.filter(
+    (
+      p
+    ): p is PromiseFulfilledResult<{ chainId: number; isContract: boolean }> =>
+      p.status === "fulfilled"
+  );
+  const contractChains = fulfilled
+    .filter((p) => p.value.isContract)
+    .map((p) => p.value.chainId);
+
+  if (fulfilled.length === 0) {
+    return { addressKind: undefined, contractChains: [] };
+  }
+  return {
+    addressKind: contractChains.length > 0 ? "contract" : "eoa",
+    contractChains,
+  };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -316,11 +371,14 @@ export async function scanAddress(rawAddress: string): Promise<ScanResponse> {
   const enabledChainIds = enabledChains.map((c) => c.chainId);
   const chainIds = scannableChainIds(enabledChainIds);
 
-  // 3. Fan out per-chain with 4s timeout isolation (SCAN-08).
+  // 3. Fan out per-chain with 4s timeout isolation (SCAN-08). The address-kind
+  //    probe runs concurrently so it adds no wall-clock latency.
+  const addressKindPromise = detectAddressKind(rawAddress, chainIds);
   const { chainOutputs, unavailableChains } = await scanChains(
     chainIds,
     (chainId) => scanOneChain(chainId, rawAddress)
   );
+  const { addressKind, contractChains } = await addressKindPromise;
 
   // 4. Zerion breadth fallback (SCAN-12, Phase 51: no-op stub).
   //    Native positions take precedence by (protocol, chainId).
@@ -352,6 +410,8 @@ export async function scanAddress(rawAddress: string): Promise<ScanResponse> {
     stablecoins,
     unavailableChains,
     scannedAt: new Date().toISOString(),
+    ...(addressKind === undefined ? {} : { addressKind }),
+    ...(contractChains.length > 0 ? { contractChains } : {}),
   };
 
   // 6. Write cache row with 5-min TTL (SCAN-13). Upsert on the unique address

@@ -18,10 +18,15 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Minimum USD value for any position or balance to qualify for a suggestion (SUGGEST-07). */
-export const DUST_THRESHOLD_USD = 100;
+export const DUST_THRESHOLD_USD = 10;
 
-/** Maximum number of suggestions returned per scan (SUGGEST-07). */
-export const MAX_SUGGESTIONS = 7;
+/**
+ * Maximum number of suggestions returned per scan (SUGGEST-07).
+ * Raised from the original 7: the results grid now groups sibling
+ * suggestions into one card per family/venue, so the visible card count
+ * stays digestible even with many per-(token, network) descriptors.
+ */
+export const MAX_SUGGESTIONS = 20;
 
 /**
  * Priority order for categories (health > yield > alert > claim).

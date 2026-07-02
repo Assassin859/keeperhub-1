@@ -29,6 +29,9 @@ export default function ScanPage(): React.ReactElement {
   const [inputError, setInputError] = useState<string | undefined>(undefined);
   const [selectedSuggestion, setSelectedSuggestion] =
     useState<SuggestionDescriptor | null>(null);
+  const [selectedVariants, setSelectedVariants] = useState<
+    SuggestionDescriptor[]
+  >([]);
   const [previewOpen, setPreviewOpen] = useState<boolean>(false);
   const triggerRef = useRef<HTMLElement | null>(null);
 
@@ -95,10 +98,14 @@ export default function ScanPage(): React.ReactElement {
     });
   };
 
-  const handleCardSelect = (suggestion: SuggestionDescriptor): void => {
+  const handleCardSelect = (
+    suggestion: SuggestionDescriptor,
+    variants: SuggestionDescriptor[]
+  ): void => {
     // Capture the currently focused element so focus can return on drawer close.
     triggerRef.current = document.activeElement as HTMLElement | null;
     setSelectedSuggestion(suggestion);
+    setSelectedVariants(variants);
     setPreviewOpen(true);
   };
 
@@ -180,6 +187,7 @@ export default function ScanPage(): React.ReactElement {
         onOpenChange={handlePreviewOpenChange}
         open={previewOpen}
         suggestion={selectedSuggestion}
+        variants={selectedVariants}
       />
     </>
   );

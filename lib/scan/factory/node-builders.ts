@@ -17,6 +17,43 @@
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
+// Prefill helpers
+// ---------------------------------------------------------------------------
+
+const HEX_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const BASE_UNIT_AMOUNT_RE = /^\d+$/;
+
+/**
+ * Return the confirmInputs value when it is a real 0x address, otherwise the
+ * given `{{placeholder}}`. The engine prefills confirmInputs with scanned
+ * values, but test fixtures and degraded paths may carry placeholder prose
+ * ("Your wallet address to monitor") that must never land in node config.
+ */
+export function resolveAddressPrefill(
+  confirmValue: string | undefined,
+  placeholder: string
+): string {
+  if (confirmValue !== undefined && HEX_ADDRESS_RE.test(confirmValue)) {
+    return confirmValue;
+  }
+  return placeholder;
+}
+
+/**
+ * Return the confirmInputs value when it is a raw base-unit integer string,
+ * otherwise the given `{{placeholder}}`. Used for prefilled thresholds.
+ */
+export function resolveAmountPrefill(
+  confirmValue: string | undefined,
+  placeholder: string
+): string {
+  if (confirmValue !== undefined && BASE_UNIT_AMOUNT_RE.test(confirmValue)) {
+    return confirmValue;
+  }
+  return placeholder;
+}
+
+// ---------------------------------------------------------------------------
 // Position constants — nodes laid out left-to-right, 250px apart
 // ---------------------------------------------------------------------------
 
@@ -151,6 +188,44 @@ export function buildCheckTokenBalanceNode(
 }
 
 // ---------------------------------------------------------------------------
+// Check-balance (native token) action node
+// ---------------------------------------------------------------------------
+
+export interface CheckBalanceOptions {
+  label: string;
+  network: string;
+  address: string;
+}
+
+/**
+ * Build a web3/check-balance action node (native token balance).
+ *
+ * Output fields are flat: balance (human-readable), balanceWei (wei string).
+ * (from plugins/web3/index.ts outputFields for check-balance)
+ */
+export function buildCheckBalanceNode(
+  id: string,
+  options: CheckBalanceOptions,
+  positionIndex = 1
+): WorkflowNode {
+  return {
+    id,
+    type: "action",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "action",
+      label: options.label,
+      config: {
+        actionType: "web3/check-balance",
+        network: options.network,
+        address: options.address,
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Condition action node
 // ---------------------------------------------------------------------------
 
@@ -245,6 +320,54 @@ export function buildHttpAlertNode(
         httpMethod: "POST",
         httpBody: options.bodyTemplate,
         httpHeaders: "{}",
+      },
+      status: "idle",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Email alert action node (sendgrid/send-email)
+// ---------------------------------------------------------------------------
+
+export interface EmailAlertOptions {
+  label?: string;
+  subject: string;
+  bodyTemplate: string;
+  /**
+   * Recipient; defaults to empty. The user configures it on the node in the
+   * workflow builder after choosing the workflow (deliberate: no email is
+   * known at anonymous scan time and no confirm-screen field is wanted).
+   */
+  emailTo?: string;
+}
+
+/**
+ * Build a sendgrid/send-email action node used as the default alert step.
+ *
+ * The sendgrid plugin requires no user credentials (requiresCredentials:
+ * false — it uses the KeeperHub SendGrid API key by default), so email is a
+ * zero-setup alert channel for the scan funnel, unlike the previous HTTP
+ * webhook default which pointed at a placeholder endpoint a generic user
+ * would never have.
+ */
+export function buildEmailAlertNode(
+  id: string,
+  options: EmailAlertOptions,
+  positionIndex = 3
+): WorkflowNode {
+  return {
+    id,
+    type: "action",
+    position: stepPosition(positionIndex),
+    data: {
+      type: "action",
+      label: options.label ?? "Email Me",
+      config: {
+        actionType: "sendgrid/send-email",
+        emailTo: options.emailTo ?? "",
+        emailSubject: options.subject,
+        emailBody: options.bodyTemplate,
       },
       status: "idle",
     },

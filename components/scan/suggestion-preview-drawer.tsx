@@ -9,6 +9,13 @@ import { useAuthPrompt } from "@/components/auth/provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -16,6 +23,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { WorkflowCanvas } from "@/components/workflow/workflow-canvas";
+import { getChainName } from "@/lib/chain-utils";
 import { buildWorkflow } from "@/lib/scan/factory";
 import { persistSuggestion } from "@/lib/scan/persist-suggestion";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
@@ -28,6 +36,12 @@ import {
 
 type SuggestionPreviewDrawerProps = {
   suggestion: SuggestionDescriptor | null;
+  /**
+   * Sibling descriptors when the selected card grouped multiple
+   * (token, network) options. The drawer renders Token/Network pickers and
+   * swaps the previewed workflow to the matching variant.
+   */
+  variants?: SuggestionDescriptor[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isAuthenticated: boolean;
@@ -38,6 +52,7 @@ type SuggestionPreviewDrawerProps = {
 
 export function SuggestionPreviewDrawer({
   suggestion,
+  variants,
   open,
   onOpenChange,
   isAuthenticated,
@@ -53,19 +68,40 @@ export function SuggestionPreviewDrawer({
   const [isPersisting, setIsPersisting] = useState<boolean>(false);
   const [isProvisioning, setIsProvisioning] = useState<boolean>(false);
 
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [lastSuggestionId, setLastSuggestionId] = useState<string | null>(null);
+
+  // A new card selection resets the token/network choice
+  // (adjust-state-during-render pattern; avoids an effect round-trip).
+  if ((suggestion?.id ?? null) !== lastSuggestionId) {
+    setLastSuggestionId(suggestion?.id ?? null);
+    setActiveId(suggestion?.id ?? null);
+  }
+
+  const variantList = useMemo(() => {
+    if (variants && variants.length > 0) {
+      return variants;
+    }
+    return suggestion ? [suggestion] : [];
+  }, [variants, suggestion]);
+
+  // The descriptor currently previewed: the picked variant, falling back to
+  // the card's primary suggestion.
+  const active = variantList.find((v) => v.id === activeId) ?? suggestion;
+
   // Build the prefilled workflow client-side. Factory has no server-only
   // import (confirmed in RESEARCH). Guard with try/catch: buildWorkflow throws
   // on invalid template refs or MaxUint256 approvals.
   const workflow = useMemo(() => {
-    if (!suggestion) {
+    if (!active) {
       return null;
     }
     try {
-      return buildWorkflow(suggestion);
+      return buildWorkflow(active);
     } catch {
       return null;
     }
-  }, [suggestion]);
+  }, [active]);
 
   // Hydrate global Jotai workflow atoms when the drawer opens.
   // CRITICAL: cleanup MUST reset atoms on close so the homepage canvas
@@ -102,13 +138,39 @@ export function SuggestionPreviewDrawer({
     return null;
   }
 
-  const handleCta = async (mode: "run" | "schedule"): Promise<void> => {
-    // Guard: suggestion is always non-null here (early return above),
-    // but the closure type is SuggestionDescriptor | null.
-    if (!suggestion) {
-      return;
-    }
+  const activeSuggestion = active ?? suggestion;
+  const tokenOptions = [
+    ...new Set(variantList.map((v) => v.symbol ?? "").filter(Boolean)),
+  ];
+  const networkOptions = variantList.filter(
+    (v) => v.symbol === activeSuggestion.symbol
+  );
+  const showTokenPicker = tokenOptions.length > 1;
+  const showNetworkPicker = networkOptions.length > 1;
+  const showVariantPickers = showTokenPicker || showNetworkPicker;
 
+  const handleTokenChange = (symbol: string): void => {
+    // Prefer keeping the current network when the new token exists there.
+    const sameChain = variantList.find(
+      (v) => v.symbol === symbol && v.chainId === activeSuggestion.chainId
+    );
+    const target = sameChain ?? variantList.find((v) => v.symbol === symbol);
+    if (target) {
+      setActiveId(target.id);
+    }
+  };
+
+  const handleNetworkChange = (chainId: string): void => {
+    const target = variantList.find(
+      (v) =>
+        v.symbol === activeSuggestion.symbol && String(v.chainId) === chainId
+    );
+    if (target) {
+      setActiveId(target.id);
+    }
+  };
+
+  const handleCta = async (mode: "run" | "schedule"): Promise<void> => {
     if (!isAuthenticated) {
       // Anon path (T-54-30): set the pending_scan cookie, then open the
       // auth prompt. No create/PATCH/execute while unauthenticated — the
@@ -119,7 +181,7 @@ export function SuggestionPreviewDrawer({
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            intent: JSON.stringify({ ...suggestion, mode }),
+            intent: JSON.stringify({ ...activeSuggestion, mode }),
           }),
         });
       } catch {
@@ -135,7 +197,7 @@ export function SuggestionPreviewDrawer({
 
     // Write gate (FUNNEL-05, forward-compat): all v1.13 real suggestions are
     // read-only; this branch is exercised only by SYNTHETIC_WRITE_DESCRIPTOR.
-    if (suggestion.readOrWrite === "write") {
+    if (activeSuggestion.readOrWrite === "write") {
       try {
         const res = await fetch("/api/scan/wallet-check", {
           method: "GET",
@@ -160,7 +222,7 @@ export function SuggestionPreviewDrawer({
     // Authenticated + read suggestion (or write + wallet present): persist inline.
     setIsPersisting(true);
     try {
-      const { id } = await persistSuggestion(suggestion, mode);
+      const { id } = await persistSuggestion(activeSuggestion, mode);
       toast.success("Workflow saved!");
       router.push(`/workflows/${id}`);
     } catch (err) {
@@ -210,17 +272,17 @@ export function SuggestionPreviewDrawer({
     });
   };
 
-  const confirmEntries = Object.entries(suggestion.confirmInputs);
+  const confirmEntries = Object.entries(activeSuggestion.confirmInputs);
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
       <SheetContent className="sm:max-w-xl w-full overflow-y-auto" side="right">
         <SheetHeader className="border-b border-border/20">
           <SheetTitle className="text-base font-semibold text-foreground">
-            {suggestion.name}
+            {activeSuggestion.name}
           </SheetTitle>
           <SheetDescription className="mt-1 text-sm text-muted-foreground">
-            {suggestion.description}
+            {activeSuggestion.description}
           </SheetDescription>
         </SheetHeader>
 
@@ -234,6 +296,63 @@ export function SuggestionPreviewDrawer({
           >
             <WorkflowCanvas />
           </section>
+
+          {/* Token / network pickers — shown when the card grouped multiple
+              (token, network) sibling suggestions into one entry. */}
+          {showVariantPickers && (
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              {showTokenPicker && (
+                <div>
+                  <label
+                    className="mb-1 block text-xs text-muted-foreground"
+                    htmlFor="variant-token"
+                  >
+                    Token
+                  </label>
+                  <Select
+                    onValueChange={handleTokenChange}
+                    value={activeSuggestion.symbol ?? ""}
+                  >
+                    <SelectTrigger className="w-full" id="variant-token">
+                      <SelectValue placeholder="Select token" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tokenOptions.map((sym) => (
+                        <SelectItem key={sym} value={sym}>
+                          {sym}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {showNetworkPicker && (
+                <div>
+                  <label
+                    className="mb-1 block text-xs text-muted-foreground"
+                    htmlFor="variant-network"
+                  >
+                    Network
+                  </label>
+                  <Select
+                    onValueChange={handleNetworkChange}
+                    value={String(activeSuggestion.chainId)}
+                  >
+                    <SelectTrigger className="w-full" id="variant-network">
+                      <SelectValue placeholder="Select network" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {networkOptions.map((v) => (
+                        <SelectItem key={v.chainId} value={String(v.chainId)}>
+                          {getChainName(String(v.chainId))}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Workflow parameters — read-only prefilled values. Values rendered
               via React value prop only (T-53-07: no dangerouslySetInnerHTML). */}

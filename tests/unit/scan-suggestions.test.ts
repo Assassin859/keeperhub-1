@@ -4,11 +4,13 @@
  * Requirements covered: SUGGEST-01..10
  */
 import { describe, expect, it } from "vitest";
-import { buildSuggestions } from "@/lib/scan/suggestions/engine";
 import type { ApyContext } from "@/lib/scan/suggestions/engine";
+import { buildSuggestions } from "@/lib/scan/suggestions/engine";
 import {
   clampHfThreshold,
+  DUST_THRESHOLD_USD,
   hfThresholdRaw,
+  MAX_SUGGESTIONS,
 } from "@/lib/scan/suggestions/ranking";
 import type {
   SuggestionCategory,
@@ -113,7 +115,7 @@ const DEPEGGED_STABLE = {
 
 const DUST_STABLE = {
   ...USDC_STABLE,
-  usdValue: 50,
+  usdValue: DUST_THRESHOLD_USD / 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -255,11 +257,11 @@ describe("SUGGEST-05: claim suggestion", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SUGGEST-07: Dust filter ($100 min) and cap (max 7, ranked)
+// SUGGEST-07: Dust filter (DUST_THRESHOLD_USD min) and cap (MAX_SUGGESTIONS, ranked)
 // ---------------------------------------------------------------------------
 
 describe("SUGGEST-07: dust filter and cap/rank", () => {
-  it("dust: stablecoin below $100 USD produces no suggestion", () => {
+  it("dust: stablecoin below the dust threshold produces no suggestion", () => {
     const result = buildSuggestions({
       ...BASE_SCAN,
       stablecoins: [DUST_STABLE],
@@ -267,14 +269,14 @@ describe("SUGGEST-07: dust filter and cap/rank", () => {
     expect(result.length).toBe(0);
   });
 
-  it("cap: output never exceeds 7 suggestions regardless of input count", () => {
+  it("cap: output never exceeds MAX_SUGGESTIONS regardless of input count", () => {
     const manyStables = Array.from({ length: 10 }, (_, i) => ({
       ...USDC_STABLE,
       tokenAddress: `0x${String(i).padStart(40, "0")}`,
       chainId: 42_161 + i,
     }));
     const result = buildSuggestions({ ...BASE_SCAN, stablecoins: manyStables });
-    expect(result.length).toBeLessThanOrEqual(7);
+    expect(result.length).toBeLessThanOrEqual(MAX_SUGGESTIONS);
   });
 
   it("cap: health suggestions rank before yield suggestions", () => {
@@ -503,15 +505,18 @@ describe("SCAN-04: Sky suggestion routing", () => {
     expect(claim.length).toBeGreaterThan(0);
   });
 
-  it("sky null-HF: does NOT produce an alert suggestion", () => {
+  it("sky null-HF: does NOT produce a supply-only price alert suggestion", () => {
     const result = buildSuggestions({
       ...BASE_SCAN,
       positions: [SKY_POSITION],
     });
-    const alert = result.filter(
-      (s: SuggestionDescriptor) => s.category === "alert"
+    // The sky position must route to claim, never to the supply-only
+    // price-alert builder. Other alert families (gas-balance) may appear
+    // for the position's chain and are not part of this routing contract.
+    const priceAlerts = result.filter((s: SuggestionDescriptor) =>
+      s.id.startsWith("price-alert-")
     );
-    expect(alert.length).toBe(0);
+    expect(priceAlerts.length).toBe(0);
   });
 
   it("sky claim: card name is savings copy ('Sky Savings Balance Monitor')", () => {
@@ -617,8 +622,11 @@ const USDS_ETH_STABLE = {
 function makeApyContext(
   overrides?: Record<
     string,
-    | { apy: number; projectLabel: string; destinationAddress: string | null }
-    | null
+    {
+      apy: number;
+      projectLabel: string;
+      destinationAddress: string | null;
+    } | null
   >
 ): ApyContext {
   return {

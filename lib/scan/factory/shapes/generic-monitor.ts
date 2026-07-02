@@ -1,7 +1,7 @@
 /**
  * Generic token/balance-monitor fallback workflow shape.
  *
- * Topology: Schedule trigger -> check-token-balance -> Condition (balance > 0) -> HTTP alert
+ * Topology: Schedule trigger -> check-token-balance -> Condition (balance > 0) -> Email alert
  *
  * Used as the dispatcher default for any suggestion category not covered by a
  * specific shape. Runs a minimal daily read-only balance check and alerts when
@@ -18,8 +18,9 @@ import {
   buildCheckTokenBalanceNode,
   buildConditionNode,
   buildEdge,
-  buildHttpAlertNode,
+  buildEmailAlertNode,
   buildScheduleTrigger,
+  resolveAddressPrefill,
 } from "@/lib/scan/factory/node-builders";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -76,8 +77,11 @@ export function buildGenericMonitor(
   const tokenConfig = JSON.stringify({
     mode: "custom",
     customToken: {
-      // Placeholder: Phase 53 confirm screen populates the real token address
-      address: "{{tokenAddress}}",
+      // Real token address when the engine prefilled it; placeholder otherwise
+      address: resolveAddressPrefill(
+        descriptor.confirmInputs.tokenAddress,
+        "{{tokenAddress}}"
+      ),
       symbol: "TOKEN",
     },
   });
@@ -89,8 +93,11 @@ export function buildGenericMonitor(
       {
         label: "Check Token Balance",
         network,
-        // Placeholder replaced by the user's wallet address in Phase 53
-        address: "{{walletAddress}}",
+        // Real scanned address when the engine prefilled it; placeholder otherwise
+        address: resolveAddressPrefill(
+          descriptor.confirmInputs.walletAddress,
+          "{{walletAddress}}"
+        ),
         tokenConfig,
       },
       1
@@ -106,13 +113,12 @@ export function buildGenericMonitor(
       },
       2
     ),
-    buildHttpAlertNode(
+    buildEmailAlertNode(
       alertId,
       {
         label: "Send Monitor Alert",
-        bodyTemplate: JSON.stringify({
-          message: `Token balance update: ${balanceRef}`,
-        }),
+        subject: "KeeperHub alert: token balance update",
+        bodyTemplate: `Token balance update: ${balanceRef}`,
       },
       3
     ),

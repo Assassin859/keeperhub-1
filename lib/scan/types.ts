@@ -95,6 +95,14 @@ export interface ScanResponse {
   /** ISO 8601 timestamp of when the scan was executed (or served from cache). */
   scannedAt: string;
   /**
+   * "contract" when deployed bytecode exists on at least one scanned chain,
+   * "eoa" otherwise. Optional for backward compatibility: absent on cached
+   * rows that pre-date detection or when every getCode probe failed.
+   */
+  addressKind?: "eoa" | "contract";
+  /** Chains where bytecode was found. Present only when addressKind is "contract". */
+  contractChains?: number[];
+  /**
    * Ranked, capped suggestion descriptors derived from the scan output.
    * Optional for backward compatibility — Phase 51 callers and cached rows
    * that pre-date this field still validate. Absent when buildSuggestions
