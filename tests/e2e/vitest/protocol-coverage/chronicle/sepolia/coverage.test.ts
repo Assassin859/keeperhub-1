@@ -4,11 +4,13 @@ import { cleanupAll, createSharedCtx, runSetup } from "../../_shared/setup";
 
 const PROTOCOL = "chronicle";
 const CHAIN_ID = "11155111";
-// Requires a funded Sepolia EOA to top up the test wallet via ensureNativeGas.
-// The self-kiss setup steps also need gas to send transactions.
+// Runs against the anvil Sepolia fork CI stands up on localhost:8547
+// (gas for the self-kiss setup via anvil_setBalance; no live funder).
+// PROTOCOL_E2E_SEPOLIA_FORK signals the fork is up and the chains row
+// points at it; skip cleanly when absent.
 const SKIP_INFRA_TESTS =
   !process.env.DATABASE_URL ||
-  !process.env.TESTNET_FUNDER_PK ||
+  !process.env.PROTOCOL_E2E_SEPOLIA_FORK ||
   process.env.SKIP_INFRA_TESTS === "true";
 
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Sepolia)`, () => {

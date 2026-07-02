@@ -22,9 +22,18 @@ export const TESTNET_FUNDER_PK_ENV = "TESTNET_FUNDER_PK";
 /**
  * Chain IDs where anvil fork-mode provisioning applies. On these chains
  * ensureNativeGas uses anvil_setBalance and ensureErc20Acquired uses whale
- * impersonation instead of a real funder EOA + testnet faucets.
+ * impersonation or an impersonated faucet mint instead of a real funder
+ * EOA + testnet faucets.
+ *
+ * Sepolia (11155111) moved to fork mode after live-testnet runs proved
+ * economically unviable on ephemeral CI: each run seeds a fresh Turnkey
+ * wallet (stranding every top-up), and 2026-07-02 base-fee spikes of
+ * 40-105 gwei priced a single worst-case Superfluid tx above any top-up
+ * the shared funder could sustain. CI stands up the Sepolia fork on
+ * localhost:8547 (docker-compose `test-anvil-fork`) and patches the
+ * chains row before the suites run.
  */
-export const FORK_CHAIN_IDS: Set<string> = new Set(["1"]);
+export const FORK_CHAIN_IDS: Set<string> = new Set(["1", "11155111"]);
 
 export type TokenSymbol =
   | "WETH"
@@ -227,13 +236,10 @@ export const FORK_WHALES: Record<
  * concurrently across protocols sharing one wallet via NonceManager).
  * Fork-mode chains get a generous floor since anvil_setBalance is free.
  *
- * Sepolia sizing must survive base-fee spikes, not just typical prices:
- * on 2026-07-02 Sepolia ran at 30-90 gwei and the node's worst-case
- * check (gasLimit x maxFeePerGas) priced a single Superfluid create-flow
- * at ~0.065 ETH, so a 0.03 ETH balance failed with INSUFFICIENT_FUNDS
- * before submission. The floor is checked once per suite in beforeAll,
- * so it must cover a full suite's worst-case single tx, and actual spend
- * (gasUsed x effective price) stays far below the per-tx worst case.
+ * Fork sizing note: the node validates gasLimit x maxFeePerGas against
+ * the balance before submission, and forked chains inherit the live
+ * base fee at fork time, so fork floors are set generously (cheatcode
+ * balances are free).
  *
  * No entry for chain 8453 (Base): ajna is the only protocol-coverage suite
  * on it, every write action it has is marked skipped in TEST_DATA, and
@@ -243,7 +249,7 @@ export const FORK_WHALES: Record<
  */
 export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("1000000000000000000"), // 1 ETH (fork mode, free via anvil_setBalance)
-  "11155111": BigInt("70000000000000000"), // 0.07 ETH (covers one worst-case tx at spike prices)
+  "11155111": BigInt("1000000000000000000"), // 1 ETH (fork mode, free via anvil_setBalance)
 };
 
 /**
@@ -255,21 +261,15 @@ export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
  * concurrent NonceManager usage across protocols sharing one wallet.
  * Fork-mode: set once via anvil_setBalance to 10 ETH and never re-top-up.
  *
- * The shared TESTNET_FUNDER_PK wallet on Sepolia was topped up to ~0.15 ETH
- * on 2026-07-01 after briefly running dry mid-debug; re-top-up via a faucet
- * if this starts throwing "funder has X; need >= Y" again.
- *
- * Funder economics are bad by construction on ephemeral CI: each run
- * seeds a fresh Turnkey wallet, so every top-up is stranded on a dead
- * wallet when the run ends. 0.085 was sized from an observed failure:
- * the node's worst-case check priced create-flow (732k padded gas limit)
- * at ~0.063 ETH at 86 gwei, so 0.06 failed; 0.085 clears spikes to ~115
- * gwei. The durable fix is running Sepolia suites against the anvil
- * Sepolia fork CI already stands up (funding via cheatcodes, no funder),
- * tracked as follow-up.
+ * The TESTNET_FUNDER_PK EOA now matters only for live (non-fork) chains
+ * with spendable requirements. Sepolia moved to fork mode (see
+ * FORK_CHAIN_IDS) after live-testnet top-ups proved unsustainable: each
+ * ephemeral CI run seeds a fresh Turnkey wallet, stranding every top-up,
+ * and base-fee spikes priced single transactions above what the funder
+ * (~0.16 ETH) could keep covering.
  */
 export const FUND_NATIVE_AMOUNT_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("10000000000000000000"), // 10 ETH (fork mode)
-  "11155111": BigInt("85000000000000000"), // 0.085 ETH (survives base-fee spikes; see above)
+  "11155111": BigInt("10000000000000000000"), // 10 ETH (fork mode)
   "8453": BigInt("15000000000000000"), // 0.015 ETH real Base mainnet ETH
 };

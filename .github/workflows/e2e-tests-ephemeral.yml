@@ -254,8 +254,12 @@ jobs:
             sleep 2
           done
           echo "anvil Sepolia fork ready on localhost:8547"
-
-      - name: Start anvil Ethereum mainnet fork for protocol-coverage tests
+          # Point chain 11155111 at the local fork for protocol-coverage.
+          # Null the fallback too: the RPC manager retries failures on the
+          # fallback endpoint, which would leak fork transactions to live
+          # Sepolia (unfunded wallet, real gas) and mask fork problems.
+          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111"
         run: |
           docker network create keeperhub-network 2>/dev/null || true
           docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
@@ -283,7 +287,7 @@ jobs:
           # "keeperhub-db"-named container to docker exec into -- connect
           # directly on localhost:5432, same as "Wait for services" above.
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
-            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548' WHERE chain_id = 1"
+            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
 
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
@@ -328,15 +332,21 @@ jobs:
           AWS_REGION: us-east-1
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
-          # Funder EOA for protocol-coverage suites' ensureNativeGas top-up
-          # on testnet chains (aave-v3, superfluid, chronicle). When unset
-          # those suites skip cleanly (see coverage.test.ts gate).
+          # Funder EOA for protocol-coverage suites on live (non-fork)
+          # chains; only ajna on Base still gates on it, and it never
+          # spends (reads only). When unset that suite skips cleanly.
           TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
           # Archive-node URL for the Ethereum mainnet anvil fork started
           # above. When set, protocol-coverage suites for chain 1 (morpho,
           # wrapped, lido, ethena, curve, chainlink, spark, yearn, uniswap,
-          # pendle, sky) run for real. When unset those suites skip cleanly.
+          # pendle, sky, aave-v3, frax-ether-v2, rocket-pool, safe) run for
+          # real. When unset those suites skip cleanly.
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+          # Signals the anvil Sepolia fork (localhost:8547, started above)
+          # is up and the chains row points at it. Gates the superfluid and
+          # chronicle Sepolia suites, which fund via anvil cheatcodes - no
+          # live-testnet funder involved.
+          PROTOCOL_E2E_SEPOLIA_FORK: "1"
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
