@@ -29,7 +29,10 @@ import {
 } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
-import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
+import {
+  recordWorkflowExecutionError,
+  recordWorkflowExecutionFinished,
+} from "@/lib/metrics/collectors/prometheus";
 import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
 import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
@@ -779,15 +782,32 @@ export async function logWorkflowCompleteDb(
   // UPDATE actually flipped a row to 'error'. The WHERE clause excludes
   // already-cancelled/healed rows, so `updated` is empty in those races
   // and we correctly skip the counter increment for the lost write.
-  if (resolvedStatus === "error" && updated.length > 0 && classification) {
+  // The finished counter mirrors this: emit exactly once, for both success and
+  // error, so windowed success-rate SLIs can be derived per org. resolvedStatus
+  // is post-reconciliation, so spurious errors already flipped to success are
+  // counted as success here.
+  if (updated.length > 0) {
     const workflowId = updated[0].workflowId;
     try {
       const orgSlug = await resolveOrgSlugForCounter(workflowId);
-      recordWorkflowExecutionError({
-        orgSlug,
-        errorCategory: classification.errorCategory,
-        errorType: classification.errorType,
-      });
+      if (resolvedStatus === "error" && classification) {
+        recordWorkflowExecutionError({
+          orgSlug,
+          errorCategory: classification.errorCategory,
+          errorType: classification.errorType,
+        });
+        recordWorkflowExecutionFinished({
+          status: executionStatus,
+          orgSlug,
+          errorType: classification.errorType,
+        });
+      } else if (resolvedStatus === "success") {
+        recordWorkflowExecutionFinished({
+          status: "success",
+          orgSlug,
+          errorType: "na",
+        });
+      }
     } catch {
       // Counter emission must never break finalization.
     }

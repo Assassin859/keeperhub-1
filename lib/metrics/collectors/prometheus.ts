@@ -961,6 +961,31 @@ export function recordWorkflowExecutionError(labels: {
   });
 }
 
+// Per-execution terminal counter: incremented once per execution finalization
+// (success | error | system_error), gated on the CAS-guarded terminal write so
+// lost finalize races are not counted. Unlike errors_created it also counts
+// successes, so windowed success-rate SLIs can be computed per org from
+// increase() without reading the 30-day executions gauge. Non-error rows carry
+// error_type="na". Cardinality is the same order as errors_created.
+const workflowExecutionsFinished = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_finished_total",
+  "Workflow executions finished since pod start, by terminal status, org_slug and error_type",
+  ["status", "org_slug", "error_type"]
+);
+
+export function recordWorkflowExecutionFinished(labels: {
+  status: string;
+  orgSlug: string;
+  errorType: string;
+}): void {
+  workflowExecutionsFinished.inc({
+    status: labels.status,
+    org_slug: labels.orgSlug,
+    error_type: labels.errorType,
+  });
+}
+
 // Per-workflow error counter used exclusively for managed-client alert dedup.
 // Labels are kept to (workflow_id, org_slug, error_type) — no error_category —
 // so cardinality stays bounded: only workflows that actually fail contribute
@@ -1550,7 +1575,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     workflowDurationBucket.set(
       { le: "+Inf" },
       workflowStats.durationBuckets[WORKFLOW_DURATION_BUCKETS.length] ??
-      workflowStats.durationCount
+        workflowStats.durationCount
     );
 
     // Update workflow duration sum and count
@@ -1585,7 +1610,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     stepDurationBucket.set(
       { le: "+Inf" },
       stepStats.durationBuckets[STEP_DURATION_BUCKETS.length] ??
-      stepStats.durationCount
+        stepStats.durationCount
     );
 
     // Update step duration sum and count
