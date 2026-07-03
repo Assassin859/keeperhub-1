@@ -35,8 +35,14 @@ const counters = {
   errorsByType: makeCounter(),
 };
 
+const workflowCounters = {
+  executionErrorsCreated: makeCounter(),
+  executionsFinished: makeCounter(),
+};
+
 vi.mock("../../lib/metrics/collectors/prometheus", () => ({
   rpcMetrics: counters,
+  workflowCounterMetrics: workflowCounters,
 }));
 
 const {
@@ -49,7 +55,10 @@ const {
 
 describe("collectCounterDeltas", () => {
   beforeEach(() => {
-    for (const c of Object.values(counters)) {
+    for (const c of [
+      ...Object.values(counters),
+      ...Object.values(workflowCounters),
+    ]) {
       c.incCalls.length = 0;
     }
   });
@@ -105,7 +114,10 @@ describe("collectCounterDeltas", () => {
 
 describe("applyCounterDeltas", () => {
   beforeEach(() => {
-    for (const c of Object.values(counters)) {
+    for (const c of [
+      ...Object.values(counters),
+      ...Object.values(workflowCounters),
+    ]) {
       c.incCalls.length = 0;
     }
   });
@@ -128,6 +140,44 @@ describe("applyCounterDeltas", () => {
     expect(skipped).toBe(1);
     expect(counters.primaryAttempts.incCalls).toEqual([
       { labels: { chain: "ethereum", operation: "read" }, value: 5 },
+    ]);
+  });
+
+  it("applies workflow terminal counter deltas with labels preserved", async () => {
+    const { applied, skipped } = await applyCounterDeltas([
+      {
+        name: "keeperhub_workflow_executions_finished_total",
+        labels: { status: "success", org_slug: "acme", error_type: "na" },
+        value: 2,
+      },
+      {
+        name: "keeperhub_workflow_execution_errors_created_total",
+        labels: {
+          org_slug: "acme",
+          error_category: "infrastructure",
+          error_type: "system",
+        },
+        value: 1,
+      },
+    ]);
+
+    expect(applied).toBe(2);
+    expect(skipped).toBe(0);
+    expect(workflowCounters.executionsFinished.incCalls).toEqual([
+      {
+        labels: { status: "success", org_slug: "acme", error_type: "na" },
+        value: 2,
+      },
+    ]);
+    expect(workflowCounters.executionErrorsCreated.incCalls).toEqual([
+      {
+        labels: {
+          org_slug: "acme",
+          error_category: "infrastructure",
+          error_type: "system",
+        },
+        value: 1,
+      },
     ]);
   });
 
@@ -195,6 +245,15 @@ describe("SHIPPABLE_COUNTER_NAMES", () => {
     );
     expect(SHIPPABLE_COUNTER_NAMES).toContain(
       "keeperhub_rpc_errors_by_type_total"
+    );
+  });
+
+  it("includes the workflow terminal counters emitted inside runner pods", () => {
+    expect(SHIPPABLE_COUNTER_NAMES).toContain(
+      "keeperhub_workflow_executions_finished_total"
+    );
+    expect(SHIPPABLE_COUNTER_NAMES).toContain(
+      "keeperhub_workflow_execution_errors_created_total"
     );
   });
 });

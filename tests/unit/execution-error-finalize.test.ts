@@ -39,12 +39,12 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import {
   getPrometheusMetrics,
   recordWorkflowExecutionErrorByWorkflow,
+  recordWorkflowExecutionFinished,
 } from "@/lib/metrics/collectors/prometheus";
-
-import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 
 describe("recordWorkflowExecutionErrorByWorkflow", () => {
   it("increments keeperhub_workflow_execution_errors_by_workflow_total with correct labels", async () => {
@@ -59,9 +59,9 @@ describe("recordWorkflowExecutionErrorByWorkflow", () => {
     expect(output).toContain(
       "keeperhub_workflow_execution_errors_by_workflow_total"
     );
-    expect(output).toMatch(/workflow_id="wf_test_abc"/);
-    expect(output).toMatch(/org_slug="acme"/);
-    expect(output).toMatch(/error_type="system"/);
+    expect(output).toContain('workflow_id="wf_test_abc"');
+    expect(output).toContain('org_slug="acme"');
+    expect(output).toContain('error_type="system"');
   });
 
   it("accepts error_type user as well as system", async () => {
@@ -73,8 +73,25 @@ describe("recordWorkflowExecutionErrorByWorkflow", () => {
 
     const output = await getPrometheusMetrics();
 
-    expect(output).toMatch(/workflow_id="wf_user_err"/);
-    expect(output).toMatch(/error_type="user"/);
+    expect(output).toContain('workflow_id="wf_user_err"');
+    expect(output).toContain('error_type="user"');
+  });
+});
+
+describe("recordWorkflowExecutionFinished", () => {
+  it("increments keeperhub_workflow_executions_finished_total with status/org/error_type labels", async () => {
+    recordWorkflowExecutionFinished({
+      status: "success",
+      orgSlug: "acme-finished",
+      errorType: "na",
+    });
+
+    const output = await getPrometheusMetrics();
+
+    expect(output).toContain("keeperhub_workflow_executions_finished_total");
+    expect(output).toContain('status="success"');
+    expect(output).toContain('org_slug="acme-finished"');
+    expect(output).toContain('error_type="na"');
   });
 });
 
@@ -83,11 +100,62 @@ describe("recordExecutionErrorFinalized", () => {
     vi.restoreAllMocks();
   });
 
+  it("records the finished counter with the status the caller persisted", async () => {
+    mockLimit.mockResolvedValue([{ slug: "acme" }]);
+
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+    const recordFinishedSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionFinished"
+    );
+
+    // "step execution failed" gets the default (system) classification, but
+    // writers apply the isDefaultClassification carve-out and persist plain
+    // 'error'. The finished counter must mirror the persisted status, not
+    // re-derive system_error from the classified error_type.
+    await recordExecutionErrorFinalized({
+      workflowId: "wf_abc123",
+      errorMessage: "step execution failed",
+      persistedStatus: "error",
+    });
+
+    expect(recordFinishedSpy).toHaveBeenCalledWith({
+      status: "error",
+      orgSlug: "acme",
+      errorType: "system",
+    });
+  });
+
+  it("emits status system_error when the caller persisted system_error", async () => {
+    mockLimit.mockResolvedValue([{ slug: "acme" }]);
+
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+    const recordFinishedSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionFinished"
+    );
+
+    await recordExecutionErrorFinalized({
+      workflowId: "wf_reaped",
+      errorMessage: "Execution timed out: no progress for 30 minutes",
+      persistedStatus: "system_error",
+    });
+
+    expect(recordFinishedSpy).toHaveBeenCalledWith({
+      status: "system_error",
+      orgSlug: "acme",
+      errorType: "system",
+    });
+  });
+
   it("calls both counters with the org slug resolved from the DB", async () => {
     mockLimit.mockResolvedValue([{ slug: "acme" }]);
 
     const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
-    const recordErrorSpy = vi.spyOn(prometheusMod, "recordWorkflowExecutionError");
+    const recordErrorSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionError"
+    );
     const recordByWorkflowSpy = vi.spyOn(
       prometheusMod,
       "recordWorkflowExecutionErrorByWorkflow"
@@ -96,6 +164,7 @@ describe("recordExecutionErrorFinalized", () => {
     await recordExecutionErrorFinalized({
       workflowId: "wf_abc123",
       errorMessage: "step execution failed",
+      persistedStatus: "error",
     });
 
     expect(recordErrorSpy).toHaveBeenCalledWith({
@@ -114,7 +183,10 @@ describe("recordExecutionErrorFinalized", () => {
     mockLimit.mockResolvedValue([]);
 
     const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
-    const recordErrorSpy = vi.spyOn(prometheusMod, "recordWorkflowExecutionError");
+    const recordErrorSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionError"
+    );
     const recordByWorkflowSpy = vi.spyOn(
       prometheusMod,
       "recordWorkflowExecutionErrorByWorkflow"
@@ -123,13 +195,17 @@ describe("recordExecutionErrorFinalized", () => {
     await recordExecutionErrorFinalized({
       workflowId: "wf_personal",
       errorMessage: null,
+      persistedStatus: "error",
     });
 
     expect(recordErrorSpy).toHaveBeenCalledWith(
       expect.objectContaining({ orgSlug: "_anonymous" })
     );
     expect(recordByWorkflowSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ orgSlug: "_anonymous", workflowId: "wf_personal" })
+      expect.objectContaining({
+        orgSlug: "_anonymous",
+        workflowId: "wf_personal",
+      })
     );
   });
 
@@ -140,6 +216,7 @@ describe("recordExecutionErrorFinalized", () => {
       recordExecutionErrorFinalized({
         workflowId: "wf_db_fail",
         errorMessage: "some error",
+        persistedStatus: "error",
       })
     ).resolves.toBeUndefined();
   });

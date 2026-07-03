@@ -24,8 +24,10 @@ export type IngestPayload = {
   deltas: MetricDelta[];
 };
 
-async function loadRpcMetrics(): Promise<Record<string, Counter<string>>> {
-  const { rpcMetrics } = await import(
+async function loadShippableCounters(): Promise<
+  Record<string, Counter<string>>
+> {
+  const { rpcMetrics, workflowCounterMetrics } = await import(
     "../../lib/metrics/collectors/prometheus"
   );
   return {
@@ -37,6 +39,10 @@ async function loadRpcMetrics(): Promise<Record<string, Counter<string>>> {
     keeperhub_rpc_recovery_events_total: rpcMetrics.recoveryEvents,
     keeperhub_rpc_both_failed_total: rpcMetrics.bothFailedEvents,
     keeperhub_rpc_errors_by_type_total: rpcMetrics.errorsByType,
+    keeperhub_workflow_execution_errors_created_total:
+      workflowCounterMetrics.executionErrorsCreated,
+    keeperhub_workflow_executions_finished_total:
+      workflowCounterMetrics.executionsFinished,
   };
 }
 
@@ -49,10 +55,12 @@ export const SHIPPABLE_COUNTER_NAMES = [
   "keeperhub_rpc_recovery_events_total",
   "keeperhub_rpc_both_failed_total",
   "keeperhub_rpc_errors_by_type_total",
+  "keeperhub_workflow_execution_errors_created_total",
+  "keeperhub_workflow_executions_finished_total",
 ] as const;
 
 export async function collectCounterDeltas(): Promise<MetricDelta[]> {
-  const counters = await loadRpcMetrics();
+  const counters = await loadShippableCounters();
   const deltas: MetricDelta[] = [];
 
   for (const name of SHIPPABLE_COUNTER_NAMES) {
@@ -78,7 +86,7 @@ export async function collectCounterDeltas(): Promise<MetricDelta[]> {
 export async function applyCounterDeltas(
   deltas: readonly MetricDelta[]
 ): Promise<{ applied: number; skipped: number }> {
-  const counters = await loadRpcMetrics();
+  const counters = await loadShippableCounters();
   let applied = 0;
   let skipped = 0;
 

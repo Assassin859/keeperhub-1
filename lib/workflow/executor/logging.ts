@@ -5,6 +5,7 @@
 import "server-only";
 
 import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import {
   extractLogGasUsedWei,
@@ -12,11 +13,9 @@ import {
   logOutputField,
 } from "@/lib/db/execution-log-fields";
 import {
-  organization,
   type TransactionHashEntry,
   workflowExecutionLogs,
   workflowExecutions,
-  workflows,
 } from "@/lib/db/schema";
 import {
   classifyExecutionError,
@@ -29,8 +28,13 @@ import {
 } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
-import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
-import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
+import {
+  recordWorkflowExecutionError,
+  recordWorkflowExecutionFinished,
+  recordWorkflowExecutionHealed,
+} from "@/lib/metrics/collectors/prometheus";
+import { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
+import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -272,6 +276,7 @@ async function selfHealWorkflowAfterLateStepCommit(
       error: true,
       completedAt: true,
       startedAt: true,
+      workflowId: true,
     },
   });
 
@@ -383,6 +388,17 @@ async function selfHealWorkflowAfterLateStepCommit(
       "workflow.executor.self_heal_late_commit.total",
       { outcome: "flipped" }
     );
+
+    // The finished counter already recorded this execution as error/system_error
+    // at finalize time and cannot be decremented; emit the org-labelled healed
+    // series so per-org success-rate dashboards can compensate.
+    try {
+      recordWorkflowExecutionHealed({
+        orgSlug: await resolveOrgSlugForCounter(execution.workflowId),
+      });
+    } catch {
+      // Counter emission must never break the self-heal path.
+    }
 
     logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,
@@ -743,6 +759,13 @@ export async function logWorkflowCompleteDb(
         )
       : resolvedStatus;
 
+  // Self-join alias so RETURNING can expose the pre-update status (the FROM
+  // clause reads the statement snapshot, i.e. the row as it was before this
+  // UPDATE). The counters below must know whether this finalize was the
+  // first terminal transition or a re-finalization of an already-terminal
+  // row (reaped by the reaper, or a duplicate _workflowComplete).
+  const prevExecution = alias(workflowExecutions, "prev_execution");
+
   const updated = await db
     .update(workflowExecutions)
     .set({
@@ -760,9 +783,11 @@ export async function logWorkflowCompleteDb(
       transactionHashes,
       gasUsedWei,
     })
+    .from(prevExecution)
     .where(
       and(
         eq(workflowExecutions.id, params.executionId),
+        eq(prevExecution.id, workflowExecutions.id),
         ne(workflowExecutions.status, "cancelled"),
         // KEEP-431 follow-up: defense in depth. If selfHealWorkflowAfterLateStepCommit
         // already CAS-flipped status to 'success', a stray late call to
@@ -773,40 +798,40 @@ export async function logWorkflowCompleteDb(
         ne(workflowExecutions.status, "success")
       )
     )
-    .returning({ workflowId: workflowExecutions.workflowId });
+    .returning({
+      workflowId: workflowExecutions.workflowId,
+      previousStatus: prevExecution.status,
+    });
 
-  // KEEP-545: increment the per-execution-error counter only when this
-  // UPDATE actually flipped a row to 'error'. The WHERE clause excludes
-  // already-cancelled/healed rows, so `updated` is empty in those races
-  // and we correctly skip the counter increment for the lost write.
-  if (resolvedStatus === "error" && updated.length > 0 && classification) {
+  // KEEP-545: increment the counters only when this UPDATE performed the
+  // first non-terminal -> terminal transition. The WHERE clause excludes
+  // already-cancelled/healed rows (updated is empty in those races), and the
+  // previousStatus gate excludes rows that were already error/system_error:
+  // a reaped execution whose pod later finishes, or a duplicate
+  // _workflowComplete, still overwrites the row with the fresher result but
+  // must not emit a second sample - counters are append-only, so the first
+  // terminal sample stands. resolvedStatus is post-reconciliation, so
+  // spurious errors already flipped to success are counted as success here.
+  if (updated.length > 0 && !isErrorStatus(updated[0].previousStatus)) {
     const workflowId = updated[0].workflowId;
     try {
       const orgSlug = await resolveOrgSlugForCounter(workflowId);
-      recordWorkflowExecutionError({
+      if (classification) {
+        recordWorkflowExecutionError({
+          orgSlug,
+          errorCategory: classification.errorCategory,
+          errorType: classification.errorType,
+        });
+      }
+      recordWorkflowExecutionFinished({
+        status: executionStatus,
         orgSlug,
-        errorCategory: classification.errorCategory,
-        errorType: classification.errorType,
+        errorType: classification?.errorType ?? NA_ERROR_TYPE,
       });
     } catch {
       // Counter emission must never break finalization.
     }
   }
-}
-
-/**
- * Resolve the org slug that owns the workflow behind an execution, falling
- * back to ANONYMOUS_ORG_SLUG for personal/anonymous workflows so the
- * counter always emits a series (the SLA alert filters by `org_slug=~`).
- */
-async function resolveOrgSlugForCounter(workflowId: string): Promise<string> {
-  const row = await db
-    .select({ slug: organization.slug })
-    .from(workflows)
-    .leftJoin(organization, eq(workflows.organizationId, organization.id))
-    .where(eq(workflows.id, workflowId))
-    .limit(1);
-  return row[0]?.slug ?? ANONYMOUS_ORG_SLUG;
 }
 
 // ============================================================================
