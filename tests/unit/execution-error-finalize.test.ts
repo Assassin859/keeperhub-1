@@ -100,7 +100,33 @@ describe("recordExecutionErrorFinalized", () => {
     vi.restoreAllMocks();
   });
 
-  it("also records the finished counter with the terminal status derived from error_type", async () => {
+  it("records the finished counter with the status the caller persisted", async () => {
+    mockLimit.mockResolvedValue([{ slug: "acme" }]);
+
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+    const recordFinishedSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionFinished"
+    );
+
+    // "step execution failed" gets the default (system) classification, but
+    // writers apply the isDefaultClassification carve-out and persist plain
+    // 'error'. The finished counter must mirror the persisted status, not
+    // re-derive system_error from the classified error_type.
+    await recordExecutionErrorFinalized({
+      workflowId: "wf_abc123",
+      errorMessage: "step execution failed",
+      persistedStatus: "error",
+    });
+
+    expect(recordFinishedSpy).toHaveBeenCalledWith({
+      status: "error",
+      orgSlug: "acme",
+      errorType: "system",
+    });
+  });
+
+  it("emits status system_error when the caller persisted system_error", async () => {
     mockLimit.mockResolvedValue([{ slug: "acme" }]);
 
     const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
@@ -110,8 +136,9 @@ describe("recordExecutionErrorFinalized", () => {
     );
 
     await recordExecutionErrorFinalized({
-      workflowId: "wf_abc123",
-      errorMessage: "step execution failed",
+      workflowId: "wf_reaped",
+      errorMessage: "Execution timed out: no progress for 30 minutes",
+      persistedStatus: "system_error",
     });
 
     expect(recordFinishedSpy).toHaveBeenCalledWith({
@@ -137,6 +164,7 @@ describe("recordExecutionErrorFinalized", () => {
     await recordExecutionErrorFinalized({
       workflowId: "wf_abc123",
       errorMessage: "step execution failed",
+      persistedStatus: "error",
     });
 
     expect(recordErrorSpy).toHaveBeenCalledWith({
@@ -167,6 +195,7 @@ describe("recordExecutionErrorFinalized", () => {
     await recordExecutionErrorFinalized({
       workflowId: "wf_personal",
       errorMessage: null,
+      persistedStatus: "error",
     });
 
     expect(recordErrorSpy).toHaveBeenCalledWith(
@@ -187,6 +216,7 @@ describe("recordExecutionErrorFinalized", () => {
       recordExecutionErrorFinalized({
         workflowId: "wf_db_fail",
         errorMessage: "some error",
+        persistedStatus: "error",
       })
     ).resolves.toBeUndefined();
   });

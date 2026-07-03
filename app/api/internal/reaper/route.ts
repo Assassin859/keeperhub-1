@@ -147,6 +147,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       await recordExecutionErrorFinalized({
         workflowId: row.workflowId,
         errorMessage: reaperErrorMessage,
+        persistedStatus: "system_error",
         errorCategory: row.errorCategory ?? undefined,
       });
     }

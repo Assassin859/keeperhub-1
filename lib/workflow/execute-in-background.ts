@@ -139,15 +139,14 @@ export async function executeWorkflowInBackground(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     const classification = classifyExecutionError(errorMessage);
+    const persistedStatus = statusForErrorType(
+      isDefaultClassification(classification) ? null : classification.errorType
+    );
 
     const updated = await db
       .update(workflowExecutions)
       .set({
-        status: statusForErrorType(
-          isDefaultClassification(classification)
-            ? null
-            : classification.errorType
-        ),
+        status: persistedStatus,
         error: errorMessage,
         errorCategory: classification.errorCategory,
         errorType: classification.errorType,
@@ -161,6 +160,7 @@ export async function executeWorkflowInBackground(
       await recordExecutionErrorFinalized({
         workflowId: updated[0].workflowId,
         errorMessage,
+        persistedStatus,
       });
     }
   }
