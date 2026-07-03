@@ -141,9 +141,9 @@ export function encodeSetupSteps(
   protocolSlug: string,
   chainId: string,
   walletAddress: string
-): Array<Pick<EncodedAction, "to" | "data" | "value">> {
+): Pick<EncodedAction, "to" | "data" | "value">[] {
   const built = buildSetupWorkflow({ protocolSlug, chainId, walletAddress });
-  const steps: Array<Pick<EncodedAction, "to" | "data" | "value">> = [];
+  const steps: Pick<EncodedAction, "to" | "data" | "value">[] = [];
   for (const node of built.nodes) {
     const config = (node.data.config ?? {}) as Record<string, unknown>;
     const actionType = config.actionType as string | undefined;
