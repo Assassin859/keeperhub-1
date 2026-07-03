@@ -5,6 +5,7 @@
 import "server-only";
 
 import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import {
   extractLogGasUsedWei,
@@ -746,6 +747,13 @@ export async function logWorkflowCompleteDb(
         )
       : resolvedStatus;
 
+  // Self-join alias so RETURNING can expose the pre-update status (the FROM
+  // clause reads the statement snapshot, i.e. the row as it was before this
+  // UPDATE). The counters below must know whether this finalize was the
+  // first terminal transition or a re-finalization of an already-terminal
+  // row (reaped by the reaper, or a duplicate _workflowComplete).
+  const prevExecution = alias(workflowExecutions, "prev_execution");
+
   const updated = await db
     .update(workflowExecutions)
     .set({
@@ -763,9 +771,11 @@ export async function logWorkflowCompleteDb(
       transactionHashes,
       gasUsedWei,
     })
+    .from(prevExecution)
     .where(
       and(
         eq(workflowExecutions.id, params.executionId),
+        eq(prevExecution.id, workflowExecutions.id),
         ne(workflowExecutions.status, "cancelled"),
         // KEEP-431 follow-up: defense in depth. If selfHealWorkflowAfterLateStepCommit
         // already CAS-flipped status to 'success', a stray late call to
@@ -776,17 +786,21 @@ export async function logWorkflowCompleteDb(
         ne(workflowExecutions.status, "success")
       )
     )
-    .returning({ workflowId: workflowExecutions.workflowId });
+    .returning({
+      workflowId: workflowExecutions.workflowId,
+      previousStatus: prevExecution.status,
+    });
 
-  // KEEP-545: increment the per-execution-error counter only when this
-  // UPDATE actually flipped a row to 'error'. The WHERE clause excludes
-  // already-cancelled/healed rows, so `updated` is empty in those races
-  // and we correctly skip the counter increment for the lost write.
-  // The finished counter mirrors this: emit exactly once, for both success and
-  // error, so windowed success-rate SLIs can be derived per org. resolvedStatus
-  // is post-reconciliation, so spurious errors already flipped to success are
-  // counted as success here.
-  if (updated.length > 0) {
+  // KEEP-545: increment the counters only when this UPDATE performed the
+  // first non-terminal -> terminal transition. The WHERE clause excludes
+  // already-cancelled/healed rows (updated is empty in those races), and the
+  // previousStatus gate excludes rows that were already error/system_error:
+  // a reaped execution whose pod later finishes, or a duplicate
+  // _workflowComplete, still overwrites the row with the fresher result but
+  // must not emit a second sample - counters are append-only, so the first
+  // terminal sample stands. resolvedStatus is post-reconciliation, so
+  // spurious errors already flipped to success are counted as success here.
+  if (updated.length > 0 && !isErrorStatus(updated[0].previousStatus)) {
     const workflowId = updated[0].workflowId;
     try {
       const orgSlug = await resolveOrgSlugForCounter(workflowId);

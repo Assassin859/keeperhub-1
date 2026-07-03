@@ -71,6 +71,20 @@ vi.mock("@/lib/db/schema", () => ({
   organization: organizationMock,
 }));
 
+// The terminal UPDATE self-joins workflow_executions via alias() so RETURNING
+// can expose the pre-update status. Real alias() needs drizzle table internals
+// the schema stubs don't have, so substitute a plain aliased-column object.
+vi.mock("drizzle-orm/pg-core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("drizzle-orm/pg-core")>();
+  return {
+    ...actual,
+    alias: (_table: unknown, name: string) => ({
+      id: `${name}.id`,
+      status: `${name}.status`,
+    }),
+  };
+});
+
 // KEEP-545: stub classifier + counter so the test doesn't load the
 // server-only metric collector module.
 vi.mock("@/lib/errors/classify", () => ({
@@ -84,6 +98,7 @@ vi.mock("@/lib/errors/classify", () => ({
 }));
 vi.mock("@/lib/metrics/collectors/prometheus", () => ({
   recordWorkflowExecutionError: vi.fn(),
+  recordWorkflowExecutionFinished: vi.fn(),
 }));
 vi.mock("@/lib/metrics/db-metrics", () => ({
   ANONYMOUS_ORG_SLUG: "_anonymous",
@@ -113,6 +128,16 @@ let siblingErrorRows: Array<{ id: string }> = [];
 // rows[0].gasUsedWei. Default to a no-gas run; tests that exercise the gas
 // denormalisation set this to a summed value.
 let mockGasRows: Array<{ gasUsedWei: string | null }> = [{ gasUsedWei: null }];
+// Rows returned by the terminal UPDATE's .returning(). Tests exercising the
+// counter-emission gate seed workflowId + previousStatus here; the default
+// empty array means "no row flipped" so the counter path is skipped.
+let mockReturningRows: Array<{
+  workflowId?: string;
+  previousStatus?: string;
+}> = [];
+// resolveOrgSlugForCounter issues
+// `db.select(...).from(workflows).leftJoin(...).where(...).limit(1)`.
+let mockOrgRows: Array<{ slug: string | null }> = [{ slug: "acme" }];
 
 // KEEP-545: the workflow_executions UPDATE in logWorkflowCompleteDb now chains
 // `.returning({workflowId})` on the where() result so the per-execution error
@@ -132,9 +157,14 @@ type WhereChain = {
   catch: <T>(
     onRejected: (reason: unknown) => T | PromiseLike<T>
   ) => Promise<T | void>;
-  returning: (..._args: unknown[]) => Promise<Array<{ workflowId?: string }>>;
+  returning: (
+    ..._args: unknown[]
+  ) => Promise<Array<{ workflowId?: string; previousStatus?: string }>>;
 };
-type SetChain = { where: () => WhereChain };
+type SetChain = {
+  where: () => WhereChain;
+  from: (aliasTable: unknown) => { where: () => WhereChain };
+};
 type UpdateChain = { set: (values: Record<string, unknown>) => SetChain };
 
 function makeWhereChain(failure: Error | null): WhereChain {
@@ -144,7 +174,7 @@ function makeWhereChain(failure: Error | null): WhereChain {
   return {
     then: (onFulfilled, onRejected) => promise.then(onFulfilled, onRejected),
     catch: (onRejected) => promise.catch(onRejected),
-    returning: () => Promise.resolve([]),
+    returning: () => Promise.resolve(mockReturningRows),
   };
 }
 
@@ -155,6 +185,11 @@ function buildUpdate(target: unknown): UpdateChain {
       const failure = updateShouldThrow ? new Error("db down") : null;
       return {
         where: (): WhereChain => makeWhereChain(failure),
+        // The workflow_executions terminal UPDATE chains
+        // .from(prevExecution).where(...) for the pre-update status self-join.
+        from: (): { where: () => WhereChain } => ({
+          where: (): WhereChain => makeWhereChain(failure),
+        }),
       };
     },
   };
@@ -188,9 +223,16 @@ vi.mock("@/lib/db", () => ({
     },
     update: vi.fn((target: unknown) => buildUpdate(target)),
     // resolveGasTotal: db.select({...}).from(logs).where(...) -> rows[]
+    // resolveOrgSlugForCounter: db.select({...}).from(workflows)
+    //   .leftJoin(organization).where(...).limit(1) -> rows[]
     select: vi.fn(() => ({
       from: () => ({
         where: () => Promise.resolve(mockGasRows),
+        leftJoin: () => ({
+          where: () => ({
+            limit: () => Promise.resolve(mockOrgRows),
+          }),
+        }),
       }),
     })),
   },
@@ -223,6 +265,8 @@ describe("logWorkflowCompleteDb", () => {
     updateShouldThrow = false;
     siblingErrorRows = [];
     mockGasRows = [{ gasUsedWei: null }];
+    mockReturningRows = [];
+    mockOrgRows = [{ slug: "acme" }];
     vi.clearAllMocks();
   });
 
@@ -567,11 +611,11 @@ describe("logWorkflowCompleteDb", () => {
         const shouldThrow =
           callIndex === 0 && target === workflowExecutionLogsMock;
         callIndex += 1;
+        const whereChain = (): WhereChain =>
+          makeWhereChain(shouldThrow ? new Error("transient db failure") : null);
         return {
-          where: (): WhereChain =>
-            makeWhereChain(
-              shouldThrow ? new Error("transient db failure") : null
-            ),
+          where: whereChain,
+          from: (): { where: () => WhereChain } => ({ where: whereChain }),
         };
       },
     }));
@@ -597,6 +641,46 @@ describe("logWorkflowCompleteDb", () => {
     // Execution update still ran despite the log cleanup throwing.
     expect(getExecUpdate()).toBeDefined();
   });
+
+  it("emits the finished counter when the row transitions from a non-terminal status", async () => {
+    mockReturningRows = [{ workflowId: "wf_1", previousStatus: "running" }];
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+
+    await logWorkflowCompleteDb({
+      executionId: "exec_1",
+      status: "success",
+      startTime: Date.now() - 1000,
+    });
+
+    expect(prometheusMod.recordWorkflowExecutionFinished).toHaveBeenCalledWith({
+      status: "success",
+      orgSlug: "acme",
+      errorType: "na",
+    });
+  });
+
+  it("skips counter emission when re-finalizing an already-terminal row", async () => {
+    // Reaper race: the row was already flipped to system_error (and counted)
+    // before the slow pod finished. The UPDATE still overwrites the row with
+    // the fresher result, but no second finished/error sample may be emitted.
+    mockReturningRows = [
+      { workflowId: "wf_1", previousStatus: "system_error" },
+    ];
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+
+    await logWorkflowCompleteDb({
+      executionId: "exec_1",
+      status: "success",
+      startTime: Date.now() - 1000,
+    });
+
+    // The row overwrite itself still happened.
+    expect(getExecUpdate()).toBeDefined();
+    expect(
+      prometheusMod.recordWorkflowExecutionFinished
+    ).not.toHaveBeenCalled();
+    expect(prometheusMod.recordWorkflowExecutionError).not.toHaveBeenCalled();
+  });
 });
 
 // KEEP-470: top-level transactionHashes persistence at workflow completion.
@@ -617,6 +701,8 @@ describe("logWorkflowCompleteDb transactionHashes (KEEP-470)", () => {
     updateShouldThrow = false;
     siblingErrorRows = [];
     mockGasRows = [{ gasUsedWei: null }];
+    mockReturningRows = [];
+    mockOrgRows = [{ slug: "acme" }];
     vi.clearAllMocks();
   });
 
