@@ -4,20 +4,20 @@ import {
   Activity,
   BarChart3,
   Bookmark,
+  Check,
   ChevronDown,
   Copy,
   DollarSign,
   Globe,
   History,
   Info,
-  KeyRound,
   Plus,
-  Server,
   ShieldCheck,
+  Sparkles,
   Users,
   Workflow,
-  X,
 } from "lucide-react";
+import { useState } from "react";
 import { DiscordIcon } from "@/components/icons/discord-icon";
 import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
 import { Badge } from "@/components/ui/badge";
@@ -209,69 +209,61 @@ export function InvitePreview({
 }
 
 /** Step 3 preview: the API Keys modal where the agent key lives. */
-export function ConnectAgentPreview({
-  mcpUrl,
-  apiKey,
-}: {
-  mcpUrl: string;
-  apiKey?: string | null;
-}): React.ReactElement {
+const EXAMPLE_PROMPTS = [
+  "Create a yield monitor for my stETH position and alert me on Discord when rewards are ready to redeem",
+  "Notify me on Telegram whenever a withdrawal over 10 ETH leaves my treasury wallet",
+  "Watch my Aave v3 health factor hourly and message me if it drops below 1.5",
+  "Alert me when a new governance proposal opens for the protocols I follow",
+  "Send a daily summary of my LP fees and rebalance the position when it drifts over 5%",
+];
+
+export function ConnectAgentPreview(): React.ReactElement {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyPrompt = (prompt: string): void => {
+    navigator.clipboard
+      .writeText(prompt)
+      .then(() => {
+        setCopied(prompt);
+        setTimeout(
+          () => setCopied((current) => (current === prompt ? null : current)),
+          1500
+        );
+      })
+      .catch(() => undefined);
+  };
+
   return (
     <CenteredStage className="w-[440px]">
       <PreviewFrame className="bg-card">
-        <div className="flex items-center justify-between border-border border-b px-5 py-4">
-          <h3 className="font-semibold text-sm">API Keys</h3>
-          <X className="size-4 text-muted-foreground" />
+        <div className="flex items-center gap-2 border-border border-b px-5 py-4">
+          <Sparkles className="size-4 text-primary" />
+          <h3 className="font-semibold text-sm">Try these in your agent</h3>
         </div>
-        <div className="flex flex-col gap-4 p-5">
-          <div className="rounded-lg border border-border bg-muted/30 p-3">
-            <div className="mb-1 flex items-center gap-2">
-              <Server className="size-4 text-muted-foreground" />
-              <span className="font-medium text-sm">MCP endpoint</span>
-            </div>
-            <p className="mb-2 text-muted-foreground text-xs">
-              Connect an agent or MCP client to this URL.
-            </p>
-            <div className="flex items-center gap-2">
-              <span className="flex-1 truncate rounded border border-border bg-background px-2 py-1 font-mono text-xs">
-                {mcpUrl}
-              </span>
-              <span className="flex size-7 items-center justify-center rounded border border-border">
-                <Copy className="size-3.5 text-muted-foreground" />
-              </span>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 text-xs">
-            <span className="rounded-md bg-background px-3 py-1.5 text-center font-medium">
-              Organisation
-            </span>
-            <span className="px-3 py-1.5 text-center text-muted-foreground">
-              User
-            </span>
-          </div>
-          {apiKey ? (
-            <div className="flex items-center justify-between rounded-md border border-border p-2">
-              <span className="truncate font-mono text-xs">
-                {`${apiKey.slice(0, 10)}${"•".repeat(8)}`}
-              </span>
-              <span className="shrink-0 text-muted-foreground text-xs">
-                Just now
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2 py-4 text-muted-foreground">
-              <KeyRound className="size-6" />
-              <span className="text-xs">No API keys yet</span>
-            </div>
-          )}
-          <div className="flex items-center justify-end gap-2 border-border border-t pt-3">
-            <span className="rounded-md border border-border px-3 py-1.5 text-xs">
-              New API Key
-            </span>
-            <span className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-xs">
-              Done
-            </span>
-          </div>
+        <div className="flex flex-col gap-2 p-5">
+          {EXAMPLE_PROMPTS.map((prompt) => {
+            const isCopied = copied === prompt;
+            return (
+              <button
+                className={cn(
+                  "flex items-start gap-2.5 rounded-lg border bg-muted/30 px-3 py-2.5 text-left text-foreground text-sm transition-colors hover:bg-muted/60",
+                  isCopied
+                    ? "border-keeperhub-green"
+                    : "border-border hover:border-keeperhub-green"
+                )}
+                key={prompt}
+                onClick={() => copyPrompt(prompt)}
+                type="button"
+              >
+                {isCopied ? (
+                  <Check className="mt-0.5 size-4 shrink-0 text-keeperhub-green" />
+                ) : (
+                  <Copy className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                )}
+                <span>{prompt}</span>
+              </button>
+            );
+          })}
         </div>
       </PreviewFrame>
     </CenteredStage>

@@ -27,8 +27,8 @@ type WelcomeShellProps = {
   onSkip?: () => void;
   skipLabel?: string;
   contentClassName?: string;
-  // A stylized, non-interactive preview of the feature this step configures,
-  // rendered on the right on a translucent gradient.
+  // A stylized preview of the feature this step configures, rendered on the
+  // right panel on a translucent gradient.
   preview?: ReactNode;
 };
 
