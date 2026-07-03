@@ -419,11 +419,15 @@ jobs:
           # gates are absent, so a green exit code alone can mean "ran
           # nothing" (that is how coverage silently collapsed to ~35
           # executed tests). Fails when executed tests drop below the
-          # floor; publishes run/skip counts to the step summary. 30 =
-          # ajna (25) + superfluid (10) minus slack; raise it when
-          # ANVIL_FORK_MAINNET_URL is provisioned and the mainnet suites
-          # activate.
-          pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json 30
+          # floor; publishes run/skip counts to the step summary.
+          #
+          # The floor is coupled to PROTOCOL_E2E_REPRESENTATIVES: full
+          # mode expects ~35 executed today (ajna 25 + superfluid 10;
+          # raise when ANVIL_FORK_MAINNET_URL activates the mainnet
+          # suites), representatives mode expects ~2 per active suite.
+          # Deriving it here keeps the two from drifting apart.
+          if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=4; else FLOOR=30; fi
+          pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json "$FLOOR"
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
