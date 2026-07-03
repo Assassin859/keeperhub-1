@@ -1,9 +1,18 @@
 "use client";
 
 import { Boxes } from "lucide-react";
+import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { type ComponentType, useEffect, useState } from "react";
 import {
+  type ComponentType,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  ClaudeCodeIcon,
   ClaudeIcon,
   EveIcon,
   GeminiIcon,
@@ -26,7 +35,7 @@ import { markOnboardingComplete } from "@/lib/welcome-status";
 const BACK_PATH = "/welcome/invite-members";
 
 const TAB_ICONS: Record<string, ComponentType<{ className?: string }>> = {
-  "claude-code": ClaudeIcon,
+  "claude-code": ClaudeCodeIcon,
   "claude-desktop": ClaudeIcon,
   "claude-plugin": ClaudeIcon,
   openclaw: OpenClawIcon,
@@ -37,6 +46,44 @@ const TAB_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   eve: EveIcon,
   other: Boxes,
 };
+
+// Animates its own height as its children change size, so swapping tab content
+// of different heights eases instead of snapping. Zero-height reads (during the
+// tab-content swap) are ignored so the panel never collapses.
+function AnimatedHeight({
+  children,
+}: {
+  children: ReactNode;
+}): React.ReactElement {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      return;
+    }
+    const measure = (): void => {
+      const next = el.scrollHeight;
+      if (next > 0) {
+        setHeight(next);
+      }
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <motion.div
+      animate={{ height: height ?? "auto" }}
+      className="overflow-hidden"
+      initial={false}
+      transition={{ duration: 0.4, ease: "easeInOut" }}
+    >
+      <div ref={ref}>{children}</div>
+    </motion.div>
+  );
+}
 
 // One labeled tab group (its own heading + tabs + setup snippet). Both groups
 // render stacked so the whole step is visible without a second selector.
@@ -68,24 +115,28 @@ function FrameworkGroup({
             );
           })}
         </TabsList>
-        {frameworks.map((framework) => (
-          <TabsContent
-            className="flex flex-col gap-2 pt-2"
-            key={framework.id}
-            value={framework.id}
-          >
-            {framework.snippets.map((snippet) => (
-              <CopyBlock
-                body={snippet.body}
-                caption={snippet.caption}
-                key={snippet.caption}
-              />
-            ))}
-            {framework.note ? (
-              <p className="text-muted-foreground text-xs">{framework.note}</p>
-            ) : null}
-          </TabsContent>
-        ))}
+        <AnimatedHeight>
+          {frameworks.map((framework) => (
+            <TabsContent
+              className="flex flex-col gap-2 pt-2"
+              key={framework.id}
+              value={framework.id}
+            >
+              {framework.snippets.map((snippet) => (
+                <CopyBlock
+                  body={snippet.body}
+                  caption={snippet.caption}
+                  key={snippet.caption}
+                />
+              ))}
+              {framework.note ? (
+                <p className="text-muted-foreground text-xs">
+                  {framework.note}
+                </p>
+              ) : null}
+            </TabsContent>
+          ))}
+        </AnimatedHeight>
       </Tabs>
     </div>
   );

@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  ArrowUp,
   AudioLines,
   BarChart3,
   Bookmark,
@@ -21,7 +22,16 @@ import {
   Users,
   Workflow,
 } from "lucide-react";
-import { type ComponentType, Fragment, useEffect, useState } from "react";
+import { motion } from "motion/react";
+import {
+  type ComponentType,
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { toast } from "sonner";
 import {
   ClaudeCodeIcon,
   ClaudeIcon,
@@ -232,6 +242,7 @@ type FrameworkMeta = {
   Icon: ComponentType<{ className?: string }>;
   kind: InterfaceKind;
   launch: string;
+  model: string;
 };
 
 const FALLBACK_META: FrameworkMeta = {
@@ -239,6 +250,7 @@ const FALLBACK_META: FrameworkMeta = {
   Icon: ClaudeCodeIcon,
   kind: "cli",
   launch: "claude",
+  model: "Opus 4.8",
 };
 
 const FRAMEWORK_META: Record<string, FrameworkMeta> = {
@@ -248,30 +260,64 @@ const FRAMEWORK_META: Record<string, FrameworkMeta> = {
     Icon: ClaudeIcon,
     kind: "chat",
     launch: "claude",
+    model: "Opus 4.8",
   },
   openclaw: {
     name: "OpenClaw",
     Icon: OpenClawIcon,
-    kind: "chat",
+    kind: "cli",
     launch: "openclaw",
+    model: "GPT-5",
   },
-  codex: { name: "Codex", Icon: OpenAIIcon, kind: "cli", launch: "codex" },
+  codex: {
+    name: "Codex",
+    Icon: OpenAIIcon,
+    kind: "cli",
+    launch: "codex",
+    model: "GPT-5-Codex",
+  },
   "gemini-cli": {
     name: "Gemini CLI",
     Icon: GeminiIcon,
     kind: "cli",
     launch: "gemini",
+    model: "Gemini 3 Pro",
   },
-  goose: { name: "Goose", Icon: GooseIcon, kind: "cli", launch: "goose" },
-  other: { name: "Your agent", Icon: Boxes, kind: "chat", launch: "agent" },
-  "claude-plugin": {
-    name: "Claude",
-    Icon: ClaudeIcon,
+  goose: {
+    name: "Goose",
+    Icon: GooseIcon,
+    kind: "cli",
+    launch: "goose",
+    model: "GPT-5",
+  },
+  other: {
+    name: "Your agent",
+    Icon: Boxes,
     kind: "chat",
-    launch: "claude",
+    launch: "agent",
+    model: "Auto",
   },
-  hermes: { name: "Hermes", Icon: HermesIcon, kind: "chat", launch: "hermes" },
-  eve: { name: "Eve", Icon: EveIcon, kind: "chat", launch: "eve" },
+  "claude-plugin": {
+    name: "Claude Code",
+    Icon: ClaudeCodeIcon,
+    kind: "cli",
+    launch: "claude",
+    model: "Opus 4.8",
+  },
+  hermes: {
+    name: "Hermes",
+    Icon: HermesIcon,
+    kind: "cli",
+    launch: "hermes",
+    model: "Hermes 4",
+  },
+  eve: {
+    name: "Eve",
+    Icon: EveIcon,
+    kind: "cli",
+    launch: "eve",
+    model: "GPT-5",
+  },
 };
 
 // A turn: the user asks, the agent thinks, states its intent, calls a tool,
@@ -351,6 +397,18 @@ const CONVERSATIONS: Conversation[] = [
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, n));
 
+// Reveals a sentence word-by-word so the assistant text types out over `dur`
+// frames instead of appearing all at once.
+const wordSlice = (text: string, elapsed: number, dur: number): string => {
+  const words = text.split(" ");
+  const shown = clamp(
+    Math.ceil((elapsed / dur) * words.length),
+    0,
+    words.length
+  );
+  return words.slice(0, shown).join(" ");
+};
+
 type ToolState = "idle" | "running" | "done";
 
 type TurnState = {
@@ -358,14 +416,26 @@ type TurnState = {
   user: string;
   fullUser: string;
   typingUser: boolean;
+  sent: boolean;
   showAssistant: boolean;
   thinking: boolean;
   showIntent: boolean;
   intent: string;
+  intentTyping: boolean;
   toolState: ToolState;
   tool: string;
   showConfirm: boolean;
   confirm: string;
+  confirmTyping: boolean;
+};
+
+// Live state of the chat composer for the turn currently being typed. Null when
+// no turn is composing (assistant is responding or the run is idle).
+type ComposeState = {
+  text: string;
+  full: string;
+  typing: boolean;
+  canSend: boolean;
 };
 
 // Drives the whole multi-turn conversation on a single frame clock: each turn
@@ -373,6 +443,7 @@ type TurnState = {
 // Keyed by the parent so a new agent/prompt remounts and restarts it.
 function useConversation(convo: Conversation): {
   turns: TurnState[];
+  composing: ComposeState | null;
   resultShown: boolean;
   caret: boolean;
   dots: string;
@@ -384,6 +455,7 @@ function useConversation(convo: Conversation): {
   }, []);
 
   const T0 = 8;
+  const SEND = 6;
   const THINK = 12;
   const INTENT = 14;
   const TOOL = 16;
@@ -396,40 +468,58 @@ function useConversation(convo: Conversation): {
   for (const turn of convo.turns) {
     const typeDur = Math.ceil(turn.user.length / 2);
     plan.push({ turn, typeDur, start: acc });
-    acc += typeDur + THINK + INTENT + TOOL + CONFIRM + GAP;
+    acc += typeDur + SEND + THINK + INTENT + TOOL + CONFIRM + GAP;
   }
   const totalEnd = acc;
   const f = frame % (totalEnd + 50);
 
   const turns: TurnState[] = [];
+  let composing: ComposeState | null = null;
   for (const { turn, typeDur, start } of plan) {
     if (f < start) {
       continue;
     }
     const local = f - start;
-    const after = local - typeDur;
+    const sentDur = typeDur + SEND;
+    const after = local - sentDur;
+    if (local < sentDur) {
+      const text = turn.user.slice(0, clamp(local * 2, 0, turn.user.length));
+      composing = {
+        text,
+        full: turn.user,
+        typing: local < typeDur,
+        canSend: text.length > 0,
+      };
+    }
     let toolState: ToolState = "idle";
     if (after >= TOOL_START) {
       toolState = after < TOOL_START + TOOL ? "running" : "done";
     }
+    const intentElapsed = after - THINK;
+    const confirmStart = TOOL_START + TOOL;
+    const confirmElapsed = after - confirmStart;
     turns.push({
       key: turn.user,
       user: turn.user.slice(0, clamp(local * 2, 0, turn.user.length)),
       fullUser: turn.user,
       typingUser: local < typeDur,
+      sent: local >= sentDur,
       showAssistant: after >= 0,
       thinking: after >= 0 && after < THINK,
       showIntent: after >= THINK,
-      intent: turn.intent,
+      intent: wordSlice(turn.intent, intentElapsed, INTENT),
+      intentTyping: intentElapsed >= 0 && intentElapsed < INTENT,
       toolState,
       tool: turn.tool,
-      showConfirm: after >= TOOL_START + TOOL,
-      confirm: turn.confirm,
+      showConfirm: after >= confirmStart,
+      confirm: wordSlice(turn.confirm, confirmElapsed, CONFIRM),
+      confirmTyping: confirmElapsed >= 0 && confirmElapsed < CONFIRM,
     });
   }
 
   return {
     turns,
+    composing,
     resultShown: f >= totalEnd,
     caret: frame % 12 < 6,
     dots: ".".repeat((frame % 3) + 1),
@@ -475,6 +565,7 @@ function CliWindow({
                     <span className="shrink-0 text-keeperhub-green">●</span>
                     <span className="whitespace-pre-wrap break-words text-foreground">
                       {t.intent}
+                      {t.intentTyping && run.caret ? CARET : ""}
                     </span>
                   </div>
                 ) : null}
@@ -491,6 +582,7 @@ function CliWindow({
                     <span className="shrink-0 text-keeperhub-green">●</span>
                     <span className="whitespace-pre-wrap break-words text-foreground">
                       {t.confirm}
+                      {t.confirmTyping && run.caret ? CARET : ""}
                     </span>
                   </div>
                 ) : null}
@@ -498,12 +590,6 @@ function CliWindow({
             ) : null}
           </Fragment>
         ))}
-        {run.resultShown ? (
-          <p className="text-muted-foreground">
-            <span className="text-keeperhub-green">⎿ </span>
-            {conversation.result} is live
-          </p>
-        ) : null}
       </div>
     </div>
   );
@@ -531,17 +617,13 @@ function ChatWindow({
       <div className="flex min-h-[460px] flex-col gap-4 px-5 py-4">
         {run.turns.map((t) => (
           <Fragment key={t.key}>
-            <div className="ml-auto max-w-[80%]">
-              <div className="relative rounded-2xl bg-muted/60 px-4 py-2.5 text-foreground text-sm">
-                <span className="invisible whitespace-pre-wrap break-words">
+            {t.sent ? (
+              <div className="ml-auto max-w-[80%] fade-in slide-in-from-bottom-2 animate-in duration-300">
+                <div className="rounded-2xl bg-muted/60 px-4 py-2.5 text-foreground text-sm">
                   {t.fullUser}
-                </span>
-                <span className="absolute inset-0 whitespace-pre-wrap break-words px-4 py-2.5">
-                  {t.user}
-                  {t.typingUser && run.caret ? CARET : ""}
-                </span>
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {t.showAssistant ? (
               <div className="flex gap-3">
@@ -555,6 +637,7 @@ function ChatWindow({
                   {t.showIntent ? (
                     <p className="text-foreground text-sm leading-relaxed">
                       {t.intent}
+                      {t.intentTyping && run.caret ? CARET : ""}
                     </p>
                   ) : null}
                   {t.toolState === "idle" ? null : (
@@ -575,6 +658,7 @@ function ChatWindow({
                   {t.showConfirm ? (
                     <p className="text-foreground text-sm leading-relaxed">
                       {t.confirm}
+                      {t.confirmTyping && run.caret ? CARET : ""}
                     </p>
                   ) : null}
                 </div>
@@ -582,29 +666,38 @@ function ChatWindow({
             ) : null}
           </Fragment>
         ))}
-
-        {run.resultShown ? (
-          <div className="flex items-center gap-2 text-foreground text-sm">
-            <Check className="size-4 shrink-0 text-keeperhub-green" />
-            <span>
-              <span className="font-medium">{conversation.result}</span> is live
-              now.
-            </span>
-          </div>
-        ) : null}
       </div>
 
       <div className="px-4 pb-4">
         <div className="rounded-2xl border border-border bg-muted/30 px-3 pt-2.5 pb-2">
-          <p className="px-1 text-muted-foreground text-sm">
-            Reply to {meta.name}
-          </p>
+          <div className="min-h-5 px-1 text-sm">
+            {run.composing ? (
+              <span className="text-foreground">
+                {run.composing.text}
+                {run.composing.typing && run.caret ? CARET : ""}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">
+                How can I help today?
+              </span>
+            )}
+          </div>
           <div className="mt-2 flex items-center justify-between px-1">
             <Plus className="size-4 text-muted-foreground" />
             <div className="flex items-center gap-3 text-muted-foreground">
-              <span className="text-xs">Opus 4.8</span>
+              <span className="text-xs">{meta.model}</span>
               <Mic className="size-4" />
               <AudioLines className="size-4" />
+              <span
+                className={cn(
+                  "flex size-6 items-center justify-center rounded-full transition-colors",
+                  run.composing?.canSend
+                    ? "bg-foreground text-background"
+                    : "bg-muted-foreground/20 text-muted-foreground"
+                )}
+              >
+                <ArrowUp className="size-4" />
+              </span>
             </div>
           </div>
         </div>
@@ -623,12 +716,38 @@ export function ConnectAgentPreview({
   const meta = FRAMEWORK_META[frameworkId] ?? FALLBACK_META;
   const conversation = CONVERSATIONS[selected] ?? STETH_CONVO;
 
+  // Measure the active window so its height animates when switching between the
+  // terminal and chat layouts instead of snapping. A CSS height transition on
+  // the measured pixel value tweens both grow and shrink. Zero-height reads
+  // (during the key-remount swap) are ignored so the window never collapses.
+  const windowRef = useRef<HTMLDivElement>(null);
+  const [windowHeight, setWindowHeight] = useState<number | undefined>(
+    undefined
+  );
+  useLayoutEffect(() => {
+    const el = windowRef.current;
+    if (!el) {
+      return;
+    }
+    const measure = (): void => {
+      const next = el.scrollHeight;
+      if (next > 0) {
+        setWindowHeight(next);
+      }
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+
   const choose = (index: number, prompt: string): void => {
     setSelected(index);
     navigator.clipboard
       .writeText(prompt)
       .then(() => {
         setCopied(index);
+        toast.success("Copied to clipboard");
         setTimeout(
           () => setCopied((current) => (current === index ? null : current)),
           1500
@@ -674,11 +793,24 @@ export function ConnectAgentPreview({
           })}
         </div>
 
-        {meta.kind === "cli" ? (
-          <CliWindow conversation={conversation} key={runKey} meta={meta} />
-        ) : (
-          <ChatWindow conversation={conversation} key={runKey} meta={meta} />
-        )}
+        <motion.div
+          animate={{ height: windowHeight ?? "auto" }}
+          className="overflow-hidden"
+          initial={false}
+          transition={{ duration: 0.3, ease: "easeInOut" }}
+        >
+          <div ref={windowRef}>
+            {meta.kind === "cli" ? (
+              <CliWindow conversation={conversation} key={runKey} meta={meta} />
+            ) : (
+              <ChatWindow
+                conversation={conversation}
+                key={runKey}
+                meta={meta}
+              />
+            )}
+          </div>
+        </motion.div>
       </div>
     </div>
   );

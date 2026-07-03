@@ -53,8 +53,8 @@ export function WelcomeShell({
   preview,
 }: WelcomeShellProps): React.ReactElement {
   return (
-    <div className="grid min-h-screen grid-cols-1 lg:grid-cols-5">
-      <div className="flex flex-col justify-between p-8 lg:col-span-2 lg:p-12">
+    <div className="grid min-h-screen grid-cols-1 lg:h-screen lg:grid-cols-5">
+      <div className="flex flex-col justify-between p-8 lg:col-span-2 lg:overflow-y-auto lg:p-12">
         <div className="flex flex-col gap-6">
           <p className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
             Step {stepIndex + 1} / {WELCOME_STEP_COUNT}
