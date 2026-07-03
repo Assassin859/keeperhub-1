@@ -89,7 +89,20 @@ async function resolveSessionOrg(
   const raw = request.headers.get(ORG_HEADER)?.trim();
   if (!raw) {
     if (!defaultOrgId) {
-      return { organizationId: null };
+      // No active org on the session yet (e.g. a brand-new signup whose
+      // session.create active-org backfill has not landed). Fall back to the
+      // caller's first non-deactivated membership so their own writes are not
+      // rejected with a spurious "no active organization". This only ever
+      // resolves an org the user already belongs to.
+      const [membership] = await db
+        .select({ organizationId: member.organizationId })
+        .from(member)
+        .innerJoin(organization, eq(organization.id, member.organizationId))
+        .where(
+          and(eq(member.userId, userId), isNull(organization.deactivatedAt))
+        )
+        .limit(1);
+      return { organizationId: membership?.organizationId ?? null };
     }
     // A deactivated org (its owner was deactivated and the cascade fired) is
     // inaccessible to its members even though their session still points at
