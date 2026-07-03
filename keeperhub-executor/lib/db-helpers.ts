@@ -11,6 +11,7 @@ import { calculateTotalSteps } from "../../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../../lib/workflow/store";
 import type { executeWorkflow } from "../../lib/workflow/executor/executor.workflow";
 import { toJsonSafe } from "./serialize";
+import { recordTerminalSample } from "./terminal-counters";
 
 export type DbSchema = {
   workflows: typeof workflows;
@@ -49,7 +50,7 @@ export async function updateExecutionStatus(
   // (it can throw and only be logged), this closes the row instead of leaving
   // it stuck "running". Excluding all three terminal states keeps the backstop
   // from clobbering the engine's richer fields (KEEP-431).
-  await db
+  const updated = await db
     .update(workflowExecutions)
     .set(updateData)
     .where(
@@ -60,7 +61,24 @@ export async function updateExecutionStatus(
         ne(workflowExecutions.status, "system_error"),
         ne(workflowExecutions.status, "cancelled")
       )
-    );
+    )
+    .returning({ workflowId: workflowExecutions.workflowId });
+
+  // A matched row means the engine's own terminal write was lost (the CAS
+  // above excludes every terminal state), so this backstop is the execution's
+  // first and only terminal transition and must emit the terminal counters
+  // the engine would have emitted. Cancellation is intentionally not counted
+  // (the finished counter tracks success/error outcomes only).
+  if (
+    updated.length > 0 &&
+    (status === "success" || status === "error")
+  ) {
+    await recordTerminalSample(db, {
+      workflowId: updated[0].workflowId,
+      status,
+      errorMessage: result?.error,
+    });
+  }
 }
 
 /**
@@ -99,7 +117,23 @@ export async function failExecutionAsSystemError(
         inArray(workflowExecutions.status, ["phantom", "pending"])
       )
     )
-    .returning({ id: workflowExecutions.id });
+    .returning({
+      id: workflowExecutions.id,
+      workflowId: workflowExecutions.workflowId,
+    });
+
+  // The phantom/pending CAS means a match is the row's first terminal
+  // transition; these rows never reach logWorkflowCompleteDb or the reaper,
+  // so this is their only chance to be counted.
+  if (marked.length > 0) {
+    await recordTerminalSample(db, {
+      workflowId: marked[0].workflowId,
+      status: "system_error",
+      errorMessage: fields.error,
+      errorType: "system",
+      errorCategory: "infrastructure",
+    });
+  }
   return marked.length > 0;
 }
 
@@ -182,7 +216,7 @@ export async function resolvePhantomToError(
   if (!executionId) {
     return;
   }
-  await db
+  const resolved = await db
     .update(workflowExecutions)
     .set({
       status: "error",
@@ -196,7 +230,21 @@ export async function resolvePhantomToError(
         eq(workflowExecutions.id, executionId),
         inArray(workflowExecutions.status, ["phantom", "pending"])
       )
-    );
+    )
+    .returning({ workflowId: workflowExecutions.workflowId });
+
+  // Same reasoning as failExecutionAsSystemError: the phantom/pending CAS
+  // makes a match the first terminal transition, and billing-blocked rows
+  // never reach any other counted finalize path.
+  if (resolved.length > 0) {
+    await recordTerminalSample(db, {
+      workflowId: resolved[0].workflowId,
+      status: "error",
+      errorMessage: fields.error,
+      errorType: fields.errorType,
+      errorCategory: fields.errorCategory,
+    });
+  }
 }
 
 export async function initializeExecutionProgress(

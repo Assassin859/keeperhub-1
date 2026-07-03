@@ -970,7 +970,7 @@ export function recordWorkflowExecutionError(labels: {
 const workflowExecutionsFinished = getOrCreateCounter(
   apiRegistry,
   "keeperhub_workflow_executions_finished_total",
-  "Workflow executions finished since pod start, by terminal status, org_slug and error_type",
+  "Workflow executions finished since pod start, by terminal status (success, error, system_error; cancellations are not counted), org_slug and error_type",
   ["status", "org_slug", "error_type"]
 );
 
