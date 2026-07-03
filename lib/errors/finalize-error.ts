@@ -1,8 +1,5 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { organization, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
 import type { ErrorStatus } from "@/lib/errors/execution-status";
 import {
@@ -10,7 +7,7 @@ import {
   recordWorkflowExecutionErrorByWorkflow,
   recordWorkflowExecutionFinished,
 } from "@/lib/metrics/collectors/prometheus";
-import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
+import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 
 /**
  * Increment `keeperhub_workflow_execution_errors_created_total` after a
@@ -39,14 +36,7 @@ export async function recordExecutionErrorFinalized(args: {
     const errorCategory = args.errorCategory ?? classification.errorCategory;
     const { errorType } = classification;
 
-    const row = await db
-      .select({ slug: organization.slug })
-      .from(workflows)
-      .leftJoin(organization, eq(workflows.organizationId, organization.id))
-      .where(eq(workflows.id, args.workflowId))
-      .limit(1);
-
-    const orgSlug = row[0]?.slug ?? ANONYMOUS_ORG_SLUG;
+    const orgSlug = await resolveOrgSlugForCounter(args.workflowId);
 
     recordWorkflowExecutionError({
       orgSlug,

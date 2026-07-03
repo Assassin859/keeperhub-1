@@ -50,14 +50,15 @@ import {
 } from "@/lib/db/schema";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn } from "@/lib/logging";
+import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/metric-constants";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
 // (personal/anonymous workflows). Keeps the per-(status, org_slug) execution
 // gauge total equal to the global total instead of silently dropping these
-// rows. Also re-exported for the runtime finalization counter so personal
-// workflows still produce a series rather than silently dropping increments.
-export const ANONYMOUS_ORG_SLUG = "_anonymous";
+// rows. Lives in metric-constants.ts (dependency-free) so the standalone
+// executor can share it; re-exported here for existing import sites.
+export { ANONYMOUS_ORG_SLUG };
 
 // Org slugs for the managed clients (Sky, Ajna) whose per-workflow error series
 // power the managed-client user-error alerts. The per-workflow gauge is scoped

@@ -13,11 +13,9 @@ import {
   logOutputField,
 } from "@/lib/db/execution-log-fields";
 import {
-  organization,
   type TransactionHashEntry,
   workflowExecutionLogs,
   workflowExecutions,
-  workflows,
 } from "@/lib/db/schema";
 import {
   classifyExecutionError,
@@ -34,7 +32,7 @@ import {
   recordWorkflowExecutionError,
   recordWorkflowExecutionFinished,
 } from "@/lib/metrics/collectors/prometheus";
-import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
+import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -826,21 +824,6 @@ export async function logWorkflowCompleteDb(
       // Counter emission must never break finalization.
     }
   }
-}
-
-/**
- * Resolve the org slug that owns the workflow behind an execution, falling
- * back to ANONYMOUS_ORG_SLUG for personal/anonymous workflows so the
- * counter always emits a series (the SLA alert filters by `org_slug=~`).
- */
-async function resolveOrgSlugForCounter(workflowId: string): Promise<string> {
-  const row = await db
-    .select({ slug: organization.slug })
-    .from(workflows)
-    .leftJoin(organization, eq(workflows.organizationId, organization.id))
-    .where(eq(workflows.id, workflowId))
-    .limit(1);
-  return row[0]?.slug ?? ANONYMOUS_ORG_SLUG;
 }
 
 // ============================================================================
