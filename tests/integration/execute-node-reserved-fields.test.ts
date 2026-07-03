@@ -45,6 +45,10 @@ vi.mock("@/app/api/execute/_lib/spending-cap", () => ({
   checkAndReserveExecution: mocks.checkAndReserveExecution,
 }));
 
+vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
+  enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/app/api/execute/_lib/wallet-check", () => ({
   requireWallet: mocks.requireWallet,
 }));
@@ -191,6 +195,12 @@ describe("POST /api/execute/node reserved-field gating", () => {
       (mocks.capturedInput?._context as { organizationId: string })
         .organizationId
     ).toBe("org_a");
+    // The route reserved the value itself, so the step wrapper is told not to
+    // reserve again (prevents the node route double-charging the cap).
+    expect(
+      (mocks.capturedInput?._context as { valueCapReserved: boolean })
+        .valueCapReserved
+    ).toBe(true);
   });
 
   it("ignores a caller-supplied _context and always sets the trusted org", async () => {

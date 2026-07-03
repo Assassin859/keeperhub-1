@@ -24,6 +24,7 @@ import {
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
+import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -272,7 +273,6 @@ async function getWorkflowCounts(
 }> {
   const result = await db
     .select({
-      total: count(),
       success: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
       error: sql<number>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
@@ -291,10 +291,15 @@ async function getWorkflowCounts(
     );
 
   const row = result[0];
+  const success = Number(row?.success) || 0;
+  const error = Number(row?.error) || 0;
+  // Total counts only completed runs (success + error). Pending, running and
+  // cancelled runs are excluded so the success rate and Total Runs KPI ignore
+  // in-flight and cancelled executions.
   return {
-    total: Number(row?.total) || 0,
-    success: Number(row?.success) || 0,
-    error: Number(row?.error) || 0,
+    total: success + error,
+    success,
+    error,
     cancelled: Number(row?.cancelled) || 0,
     durationSum: Number(row?.durationSum) || 0,
     durationCount: Number(row?.durationCount) || 0,
@@ -315,7 +320,6 @@ async function getDirectCounts(
 }> {
   const result = await db
     .select({
-      total: count(),
       success: sql<number>`SUM(CASE WHEN ${directExecutions.status} = 'completed' THEN 1 ELSE 0 END)`,
       error: sql<number>`SUM(CASE WHEN ${directExecutions.status} = 'failed' THEN 1 ELSE 0 END)`,
       durationSum: sql<number>`COALESCE(SUM(EXTRACT(EPOCH FROM (${directExecutions.completedAt} - ${directExecutions.createdAt})) * 1000), 0)`,
@@ -332,10 +336,14 @@ async function getDirectCounts(
     );
 
   const row = result[0];
+  const success = Number(row?.success) || 0;
+  const error = Number(row?.error) || 0;
+  // Completed runs only (see getWorkflowCounts): pending and running direct
+  // executions are excluded from the total and the success rate.
   return {
-    total: Number(row?.total) || 0,
-    success: Number(row?.success) || 0,
-    error: Number(row?.error) || 0,
+    total: success + error,
+    success,
+    error,
     durationSum: Number(row?.durationSum) || 0,
     durationCount: Number(row?.durationCount) || 0,
     totalGasWei: row?.totalGasWei ?? "0",
@@ -685,7 +693,9 @@ async function computeNetworkBreakdown(
           .select({
             network: directExecutions.network,
             totalGasWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-            executionCount: count(),
+            // Completed runs only, so pending/running direct executions do not
+            // inflate the per-network execution count.
+            executionCount: sql<number>`SUM(CASE WHEN ${directExecutions.status} IN ('completed', 'failed') THEN 1 ELSE 0 END)`,
             successCount: sql<number>`SUM(CASE WHEN ${directExecutions.status} = 'completed' THEN 1 ELSE 0 END)`,
             errorCount: sql<number>`SUM(CASE WHEN ${directExecutions.status} = 'failed' THEN 1 ELSE 0 END)`,
           })
@@ -1292,54 +1302,23 @@ export async function getSpendCapData(organizationId: string): Promise<{
   dailyCapWei: string | null;
   dailyUsedWei: string;
 }> {
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
-  const [capResult, directUsageResult, workflowUsageResult] = await Promise.all(
-    [
-      db
-        .select({ dailyCapWei: organizationSpendCaps.dailyCapWei })
-        .from(organizationSpendCaps)
-        .where(eq(organizationSpendCaps.organizationId, organizationId))
-        .limit(1),
-      db
-        .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-        })
-        .from(directExecutions)
-        .where(
-          and(
-            eq(directExecutions.organizationId, organizationId),
-            eq(directExecutions.status, "completed"),
-            gte(directExecutions.createdAt, todayStart)
-          )
-        ),
-      db
-        // Same denormalised-column read as getWorkflowGasTotal: today's run
-        // gas straight off workflow_executions, no logs JSONB scan. gas_used_wei
-        // already reflects only gas-bearing (success) step output, so the
-        // previous log status='success' filter is subsumed. Windowed by run
-        // start rather than per-step time (see getWorkflowGasTotal).
-        .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-        })
-        .from(workflowExecutions)
-        .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
-        .where(
-          and(
-            eq(workflows.organizationId, organizationId),
-            gte(workflowExecutions.startedAt, todayStart)
-          )
-        ),
-    ]
-  );
+  // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
+  // per day, summed across BOTH stores (direct executions AND the workflow/
+  // protocol value ledger, with the same stale-window aging), against the org's
+  // daily value cap. Using the shared SUM keeps the gauge honest -- it shows the
+  // same number enforcement checks, so workflow spend counts too.
+  const [capResult, dailyUsedWei] = await Promise.all([
+    db
+      .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
+      .from(organizationSpendCaps)
+      .where(eq(organizationSpendCaps.organizationId, organizationId))
+      .limit(1),
+    sumOrgValueTodayWei(db, organizationId),
+  ]);
 
   return {
-    dailyCapWei: capResult[0]?.dailyCapWei ?? null,
-    dailyUsedWei: addBigIntStrings(
-      directUsageResult[0]?.totalWei ?? "0",
-      workflowUsageResult[0]?.totalWei ?? "0"
-    ),
+    dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
+    dailyUsedWei: dailyUsedWei.toString(),
   };
 }
 

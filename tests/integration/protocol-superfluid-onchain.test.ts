@@ -21,7 +21,7 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -41,6 +41,7 @@ import superfluidDef, {
   GDA_FORWARDER_ADDRESS,
 } from "@/protocols/superfluid";
 import { buildCalldata } from "./_shared/build-calldata";
+import { itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
@@ -170,258 +171,329 @@ describe("Superfluid on-chain integration", () => {
 
   // -- CFA reads -----------------------------------------------------------
 
-  it("get-flow: returns the four expected CFA flow-info outputs", async () => {
-    const { decoded, to } = await callAndDecode("get-flow", {
-      token: SEPOLIA_FUSDCX,
-      sender: TEST_ADDRESS,
-      receiver: TEST_ADDRESS,
-    });
-    expect(to).toBe(CFA_FORWARDER_ADDRESS);
-    expect(decoded).toHaveLength(4);
-  }, 15_000);
+  itOnchain(
+    "get-flow: returns the four expected CFA flow-info outputs",
+    async () => {
+      const { decoded, to } = await callAndDecode("get-flow", {
+        token: SEPOLIA_FUSDCX,
+        sender: TEST_ADDRESS,
+        receiver: TEST_ADDRESS,
+      });
+      expect(to).toBe(CFA_FORWARDER_ADDRESS);
+      expect(decoded).toHaveLength(4);
+    },
+    15_000
+  );
 
-  it("get-cfa-net-flow: dispatches to cfaForwarder.getAccountFlowrate", async () => {
-    const { decoded, to } = await callAndDecode("get-cfa-net-flow", {
-      token: SEPOLIA_FUSDCX,
-      account: TEST_ADDRESS,
-    });
-    expect(to).toBe(CFA_FORWARDER_ADDRESS);
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+  itOnchain(
+    "get-cfa-net-flow: dispatches to cfaForwarder.getAccountFlowrate",
+    async () => {
+      const { decoded, to } = await callAndDecode("get-cfa-net-flow", {
+        token: SEPOLIA_FUSDCX,
+        account: TEST_ADDRESS,
+      });
+      expect(to).toBe(CFA_FORWARDER_ADDRESS);
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
   // -- GDA reads -----------------------------------------------------------
 
-  it("get-net-flow: dispatches to gdaForwarder.getNetFlow (combined CFA+GDA)", async () => {
-    const { decoded, to } = await callAndDecode("get-net-flow", {
-      token: SEPOLIA_FUSDCX,
-      account: TEST_ADDRESS,
-    });
-    expect(to).toBe(GDA_FORWARDER_ADDRESS);
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+  itOnchain(
+    "get-net-flow: dispatches to gdaForwarder.getNetFlow (combined CFA+GDA)",
+    async () => {
+      const { decoded, to } = await callAndDecode("get-net-flow", {
+        token: SEPOLIA_FUSDCX,
+        account: TEST_ADDRESS,
+      });
+      expect(to).toBe(GDA_FORWARDER_ADDRESS);
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
   // -- SuperToken reads (userSpecifiedAddress) -----------------------------
 
-  it("get-super-token-balance: dispatches to the user-supplied SuperToken", async () => {
-    const { decoded } = await callAndDecode(
-      "get-super-token-balance",
-      { account: TEST_ADDRESS },
-      SEPOLIA_FUSDCX
-    );
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+  itOnchain(
+    "get-super-token-balance: dispatches to the user-supplied SuperToken",
+    async () => {
+      const { decoded } = await callAndDecode(
+        "get-super-token-balance",
+        { account: TEST_ADDRESS },
+        SEPOLIA_FUSDCX
+      );
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("get-underlying-token: returns the fUSDC underlying for fUSDCx", async () => {
-    const { decoded } = await callAndDecode(
-      "get-underlying-token",
-      {},
-      SEPOLIA_FUSDCX
-    );
-    expect((decoded[0] as string).toLowerCase()).toBe(
-      SEPOLIA_FUSDC.toLowerCase()
-    );
-  }, 15_000);
+  itOnchain(
+    "get-underlying-token: returns the fUSDC underlying for fUSDCx",
+    async () => {
+      const { decoded } = await callAndDecode(
+        "get-underlying-token",
+        {},
+        SEPOLIA_FUSDCX
+      );
+      expect((decoded[0] as string).toLowerCase()).toBe(
+        SEPOLIA_FUSDC.toLowerCase()
+      );
+    },
+    15_000
+  );
 
   // -- CFA writes ----------------------------------------------------------
 
-  it("create-flow: encodes against cfaForwarder.createFlow", async () => {
-    const msg = await estimateGasError("create-flow", {
-      token: SEPOLIA_FUSDCX,
-      sender: TEST_ADDRESS,
-      receiver: TEST_ADDRESS,
-      flowRate: DUMMY_FLOW_RATE,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "create-flow: encodes against cfaForwarder.createFlow",
+    async () => {
+      const msg = await estimateGasError("create-flow", {
+        token: SEPOLIA_FUSDCX,
+        sender: TEST_ADDRESS,
+        receiver: TEST_ADDRESS,
+        flowRate: DUMMY_FLOW_RATE,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("update-flow: encodes against cfaForwarder.updateFlow", async () => {
-    const msg = await estimateGasError("update-flow", {
-      token: SEPOLIA_FUSDCX,
-      sender: TEST_ADDRESS,
-      receiver: TEST_ADDRESS,
-      flowRate: DUMMY_FLOW_RATE,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "update-flow: encodes against cfaForwarder.updateFlow",
+    async () => {
+      const msg = await estimateGasError("update-flow", {
+        token: SEPOLIA_FUSDCX,
+        sender: TEST_ADDRESS,
+        receiver: TEST_ADDRESS,
+        flowRate: DUMMY_FLOW_RATE,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("delete-flow: encodes against cfaForwarder.deleteFlow", async () => {
-    const msg = await estimateGasError("delete-flow", {
-      token: SEPOLIA_FUSDCX,
-      sender: TEST_ADDRESS,
-      receiver: TEST_ADDRESS,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "delete-flow: encodes against cfaForwarder.deleteFlow",
+    async () => {
+      const msg = await estimateGasError("delete-flow", {
+        token: SEPOLIA_FUSDCX,
+        sender: TEST_ADDRESS,
+        receiver: TEST_ADDRESS,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
   // -- GDA writes ----------------------------------------------------------
 
-  it("create-pool: simulates successfully against gdaForwarder.createPool", async () => {
-    // GDA createPool only writes pool metadata -- no sender balance, no
-    // pre-existing state required. We can assert positive simulation
-    // success, which (unlike the loose .not.toMatch guard) catches the
-    // class of routing bug KEEP-456 surfaced.
-    const msg = await estimateGasError("create-pool", {
-      token: SEPOLIA_FUSDCX,
-      admin: TEST_ADDRESS,
-      transferabilityForUnitsOwner: "false",
-      distributionFromAnyAddress: "false",
-    });
-    expect(msg).toBe("");
-  }, 15_000);
+  itOnchain(
+    "create-pool: simulates successfully against gdaForwarder.createPool",
+    async () => {
+      // GDA createPool only writes pool metadata -- no sender balance, no
+      // pre-existing state required. We can assert positive simulation
+      // success, which (unlike the loose .not.toMatch guard) catches the
+      // class of routing bug KEEP-456 surfaced.
+      const msg = await estimateGasError("create-pool", {
+        token: SEPOLIA_FUSDCX,
+        admin: TEST_ADDRESS,
+        transferabilityForUnitsOwner: "false",
+        distributionFromAnyAddress: "false",
+      });
+      expect(msg).toBe("");
+    },
+    15_000
+  );
 
-  it("update-member-units: encodes against gdaForwarder.updateMemberUnits", async () => {
-    const msg = await estimateGasError("update-member-units", {
-      pool: TEST_ADDRESS,
-      member: TEST_ADDRESS,
-      units: DUMMY_UNITS,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "update-member-units: encodes against gdaForwarder.updateMemberUnits",
+    async () => {
+      const msg = await estimateGasError("update-member-units", {
+        pool: TEST_ADDRESS,
+        member: TEST_ADDRESS,
+        units: DUMMY_UNITS,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("distribute: encodes against gdaForwarder.distribute", async () => {
-    const msg = await estimateGasError("distribute", {
-      token: SEPOLIA_FUSDCX,
-      from: TEST_ADDRESS,
-      pool: TEST_ADDRESS,
-      amount: DUMMY_AMOUNT_WEI,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "distribute: encodes against gdaForwarder.distribute",
+    async () => {
+      const msg = await estimateGasError("distribute", {
+        token: SEPOLIA_FUSDCX,
+        from: TEST_ADDRESS,
+        pool: TEST_ADDRESS,
+        amount: DUMMY_AMOUNT_WEI,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("distribute-flow: encodes int96 flowRate against gdaForwarder.distributeFlow", async () => {
-    const msg = await estimateGasError("distribute-flow", {
-      token: SEPOLIA_FUSDCX,
-      from: TEST_ADDRESS,
-      pool: TEST_ADDRESS,
-      flowRate: DUMMY_FLOW_RATE,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "distribute-flow: encodes int96 flowRate against gdaForwarder.distributeFlow",
+    async () => {
+      const msg = await estimateGasError("distribute-flow", {
+        token: SEPOLIA_FUSDCX,
+        from: TEST_ADDRESS,
+        pool: TEST_ADDRESS,
+        flowRate: DUMMY_FLOW_RATE,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("connect-pool: encodes against gdaForwarder.connectPool", async () => {
-    // Not convertible to toBe(""): the GDA host dispatches into the pool
-    // address as a contract call during connectPool, and TEST_ADDRESS has
-    // no deployed code -- so estimateGas reverts with `CallUtils: target
-    // revert()`. That is not a routing/ABI failure (the revert *does*
-    // have data, just from a different source), so it correctly does not
-    // match DISPATCH_FAILURE_RE. Strengthening to toBe("") would need a
-    // deployed contract at the pool address that implements the expected
-    // pool interface (any Superfluid pool would do); out of scope for
-    // "no on-chain state dependency" tests.
-    const msg = await estimateGasError("connect-pool", {
-      pool: TEST_ADDRESS,
-      userData: DUMMY_BYTES,
-    });
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "connect-pool: encodes against gdaForwarder.connectPool",
+    async () => {
+      // Not convertible to toBe(""): the GDA host dispatches into the pool
+      // address as a contract call during connectPool, and TEST_ADDRESS has
+      // no deployed code -- so estimateGas reverts with `CallUtils: target
+      // revert()`. That is not a routing/ABI failure (the revert *does*
+      // have data, just from a different source), so it correctly does not
+      // match DISPATCH_FAILURE_RE. Strengthening to toBe("") would need a
+      // deployed contract at the pool address that implements the expected
+      // pool interface (any Superfluid pool would do); out of scope for
+      // "no on-chain state dependency" tests.
+      const msg = await estimateGasError("connect-pool", {
+        pool: TEST_ADDRESS,
+        userData: DUMMY_BYTES,
+      });
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
   // -- SuperToken writes (userSpecifiedAddress) ----------------------------
 
-  it("wrap: encodes uint256 amount against superToken.upgrade", async () => {
-    const msg = await estimateGasError(
-      "wrap",
-      { amount: DUMMY_AMOUNT_WEI },
-      SEPOLIA_FUSDCX
-    );
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "wrap: encodes uint256 amount against superToken.upgrade",
+    async () => {
+      const msg = await estimateGasError(
+        "wrap",
+        { amount: DUMMY_AMOUNT_WEI },
+        SEPOLIA_FUSDCX
+      );
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("unwrap: encodes uint256 amount against superToken.downgrade", async () => {
-    const msg = await estimateGasError(
-      "unwrap",
-      { amount: DUMMY_AMOUNT_WEI },
-      SEPOLIA_FUSDCX
-    );
-    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+  itOnchain(
+    "unwrap: encodes uint256 amount against superToken.downgrade",
+    async () => {
+      const msg = await estimateGasError(
+        "unwrap",
+        { amount: DUMMY_AMOUNT_WEI },
+        SEPOLIA_FUSDCX
+      );
+      expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
-  it("grant-flow-operator: simulates successfully against cfaForwarder.updateFlowOperatorPermissions", async () => {
-    // KEEP-456: routed through the CFAv1Forwarder, not the SuperToken proxy.
-    // Asserts the call actually simulates (estimateGas returns) -- the previous
-    // "tolerate any revert" pattern hid a routing bug because the SuperToken's
-    // proxy reverts on the Sepolia fUSDCx test token. The CFAv1Forwarder is
-    // the canonical entry point and works for any registered SuperToken.
-    //
-    // Note: this on-chain test is gated on INTEGRATION_TEST_RPC_URL and
-    // skipped in CI. The CI-side regression guard for the routing change
-    // lives in tests/unit/superfluid-protocol.test.ts ("grant-flow-operator
-    // action" describe block, asserting `contract === "cfaForwarder"`).
-    const msg = await estimateGasError("grant-flow-operator", {
-      token: SEPOLIA_FUSDCX,
-      flowOperator: TEST_OPERATOR,
-      permissions: DUMMY_PERMISSIONS_ALL,
-      flowRateAllowance: DUMMY_FLOW_RATE,
-    });
-    expect(msg).toBe("");
-  }, 15_000);
-
-  // -- Reroute regression --------------------------------------------------
-
-  it("reroute regression: misdispatched calldata triggers DISPATCH_FAILURE_RE", async () => {
-    // Acceptance criterion #2 of KEEP-459: "no test passes when its
-    // action is silently re-routed to a non-existent contract method."
-    //
-    // Reproduces the KEEP-456 failure mode end-to-end against the live
-    // Sepolia RPC: take a currently-passing action (grant-flow-operator,
-    // which routes correctly to the CFAv1Forwarder), then override its
-    // destination to SEPOLIA_FUSDC -- a real ERC20 contract that exists
-    // on chain but has no Superfluid methods. The EVM returns from the
-    // dispatch with empty revert data (no fallback, no matching selector),
-    // and ethers surfaces it as `missing revert data ... code=CALL_EXCEPTION`.
-    //
-    // If DISPATCH_FAILURE_RE is ever weakened or removed, this test fails
-    // -- which is the whole point. This is the load-bearing assertion of
-    // the hardening, validated against a real RPC rather than a regex
-    // shape sample.
-    const msg = await estimateGasError(
-      "grant-flow-operator",
-      {
+  itOnchain(
+    "grant-flow-operator: simulates successfully against cfaForwarder.updateFlowOperatorPermissions",
+    async () => {
+      // KEEP-456: routed through the CFAv1Forwarder, not the SuperToken proxy.
+      // Asserts the call actually simulates (estimateGas returns) -- the previous
+      // "tolerate any revert" pattern hid a routing bug because the SuperToken's
+      // proxy reverts on the Sepolia fUSDCx test token. The CFAv1Forwarder is
+      // the canonical entry point and works for any registered SuperToken.
+      //
+      // Note: this on-chain test is gated on INTEGRATION_TEST_RPC_URL and
+      // skipped in CI. The CI-side regression guard for the routing change
+      // lives in tests/unit/superfluid-protocol.test.ts ("grant-flow-operator
+      // action" describe block, asserting `contract === "cfaForwarder"`).
+      const msg = await estimateGasError("grant-flow-operator", {
         token: SEPOLIA_FUSDCX,
         flowOperator: TEST_OPERATOR,
         permissions: DUMMY_PERMISSIONS_ALL,
         flowRateAllowance: DUMMY_FLOW_RATE,
-      },
-      SEPOLIA_FUSDC
-    );
-    // Sanity: must not be the empty-string "simulated" case.
-    expect(msg).not.toBe("");
-    // The actual guard: a real misroute must surface as a dispatch failure.
-    expect(msg).toMatch(DISPATCH_FAILURE_RE);
-  }, 15_000);
+      });
+      expect(msg).toBe("");
+    },
+    15_000
+  );
+
+  // -- Reroute regression --------------------------------------------------
+
+  itOnchain(
+    "reroute regression: misdispatched calldata triggers DISPATCH_FAILURE_RE",
+    async () => {
+      // Acceptance criterion #2 of KEEP-459: "no test passes when its
+      // action is silently re-routed to a non-existent contract method."
+      //
+      // Reproduces the KEEP-456 failure mode end-to-end against the live
+      // Sepolia RPC: take a currently-passing action (grant-flow-operator,
+      // which routes correctly to the CFAv1Forwarder), then override its
+      // destination to SEPOLIA_FUSDC -- a real ERC20 contract that exists
+      // on chain but has no Superfluid methods. The EVM returns from the
+      // dispatch with empty revert data (no fallback, no matching selector),
+      // and ethers surfaces it as `missing revert data ... code=CALL_EXCEPTION`.
+      //
+      // If DISPATCH_FAILURE_RE is ever weakened or removed, this test fails
+      // -- which is the whole point. This is the load-bearing assertion of
+      // the hardening, validated against a real RPC rather than a regex
+      // shape sample.
+      const msg = await estimateGasError(
+        "grant-flow-operator",
+        {
+          token: SEPOLIA_FUSDCX,
+          flowOperator: TEST_OPERATOR,
+          permissions: DUMMY_PERMISSIONS_ALL,
+          flowRateAllowance: DUMMY_FLOW_RATE,
+        },
+        SEPOLIA_FUSDC
+      );
+      // Sanity: must not be the empty-string "simulated" case.
+      expect(msg).not.toBe("");
+      // The actual guard: a real misroute must surface as a dispatch failure.
+      expect(msg).toMatch(DISPATCH_FAILURE_RE);
+    },
+    15_000
+  );
 
   // -- Coverage check ------------------------------------------------------
 
-  it("every declared action has at least one dispatch test in this file", () => {
-    const declared = new Set(superfluidDef.actions.map((a) => a.slug));
-    const tested = new Set([
-      "get-flow",
-      "get-cfa-net-flow",
-      "get-net-flow",
-      "get-super-token-balance",
-      "get-underlying-token",
-      "create-flow",
-      "update-flow",
-      "delete-flow",
-      "create-pool",
-      "update-member-units",
-      "distribute",
-      "distribute-flow",
-      "connect-pool",
-      "wrap",
-      "unwrap",
-      "grant-flow-operator",
-    ]);
-    const missing = [...declared].filter((s) => !tested.has(s));
-    const stale = [...tested].filter((s) => !declared.has(s));
-    expect(missing).toEqual([]);
-    expect(stale).toEqual([]);
-  });
+  itOnchain(
+    "every declared action has at least one dispatch test in this file",
+    () => {
+      const declared = new Set(superfluidDef.actions.map((a) => a.slug));
+      const tested = new Set([
+        "get-flow",
+        "get-cfa-net-flow",
+        "get-net-flow",
+        "get-super-token-balance",
+        "get-underlying-token",
+        "create-flow",
+        "update-flow",
+        "delete-flow",
+        "create-pool",
+        "update-member-units",
+        "distribute",
+        "distribute-flow",
+        "connect-pool",
+        "wrap",
+        "unwrap",
+        "grant-flow-operator",
+      ]);
+      const missing = [...declared].filter((s) => !tested.has(s));
+      const stale = [...tested].filter((s) => !declared.has(s));
+      expect(missing).toEqual([]);
+      expect(stale).toEqual([]);
+    }
+  );
 });
 
 // Not gated on RPC: validates the regex shape that the on-chain block above
@@ -438,7 +510,7 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
     return String(err);
   }
 
-  it("matches `missing revert data` (revert: null branch)", () => {
+  itOnchain("matches `missing revert data` (revert: null branch)", () => {
     const err = ethers.makeError("missing revert data", "CALL_EXCEPTION", {
       action: "estimateGas",
       data: null,
@@ -450,33 +522,43 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
     expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
   });
 
-  it('matches empty revert data="0x" (proxy returned no revert data)', () => {
-    const err = ethers.makeError("execution reverted", "CALL_EXCEPTION", {
-      action: "estimateGas",
-      data: "0x",
-      reason: null,
-      transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
-      invocation: null,
-      revert: null,
-    });
-    expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
-  });
+  itOnchain(
+    'matches empty revert data="0x" (proxy returned no revert data)',
+    () => {
+      const err = ethers.makeError("execution reverted", "CALL_EXCEPTION", {
+        action: "estimateGas",
+        data: "0x",
+        reason: null,
+        transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
+        invocation: null,
+        revert: null,
+      });
+      expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
+    }
+  );
 
-  it('does NOT misfire on data="0x..." with actual revert payload', () => {
-    // Guards against the obvious regression of writing `/data="0x/`
-    // (no closing quote), which would match every revert.
-    const err = ethers.makeError('execution reverted: "X"', "CALL_EXCEPTION", {
-      action: "estimateGas",
-      data: "0x08c379a0deadbeef",
-      reason: "X",
-      transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
-      invocation: null,
-      revert: { args: ["X"], name: "Error", signature: "Error(string)" },
-    });
-    expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
-  });
+  itOnchain(
+    'does NOT misfire on data="0x..." with actual revert payload',
+    () => {
+      // Guards against the obvious regression of writing `/data="0x/`
+      // (no closing quote), which would match every revert.
+      const err = ethers.makeError(
+        'execution reverted: "X"',
+        "CALL_EXCEPTION",
+        {
+          action: "estimateGas",
+          data: "0x08c379a0deadbeef",
+          reason: "X",
+          transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
+          invocation: null,
+          revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+        }
+      );
+      expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
+    }
+  );
 
-  it("matches ABI encoding errors (INVALID_ARGUMENT)", () => {
+  itOnchain("matches ABI encoding errors (INVALID_ARGUMENT)", () => {
     const err = ethers.makeError(
       "invalid BigNumberish value",
       "INVALID_ARGUMENT",
@@ -485,46 +567,56 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
     expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
   });
 
-  it('does NOT misfire when only the nested transaction.data is "0x"', () => {
-    // Defense-in-depth: confirms the `,\s*data="0x"` anchor distinguishes
-    // top-level CALL_EXCEPTION fields (key=value) from nested JSON
-    // (`"key": value`). If a future ethers version (or a quirky calldata)
-    // ever produced a transaction object whose data was literally "0x"
-    // while the top-level data was populated, the old `data="0x"` pattern
-    // would have false-positived. The anchor prevents that.
-    const err = ethers.makeError('execution reverted: "X"', "CALL_EXCEPTION", {
-      action: "estimateGas",
-      data: "0x08c379a0deadbeef",
-      reason: "X",
-      // Nested transaction with empty data (hypothetical fallback call):
-      transaction: { data: "0x", to: TEST_ADDRESS },
-      invocation: null,
-      revert: { args: ["X"], name: "Error", signature: "Error(string)" },
-    });
-    expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
-  });
+  itOnchain(
+    'does NOT misfire when only the nested transaction.data is "0x"',
+    () => {
+      // Defense-in-depth: confirms the `,\s*data="0x"` anchor distinguishes
+      // top-level CALL_EXCEPTION fields (key=value) from nested JSON
+      // (`"key": value`). If a future ethers version (or a quirky calldata)
+      // ever produced a transaction object whose data was literally "0x"
+      // while the top-level data was populated, the old `data="0x"` pattern
+      // would have false-positived. The anchor prevents that.
+      const err = ethers.makeError(
+        'execution reverted: "X"',
+        "CALL_EXCEPTION",
+        {
+          action: "estimateGas",
+          data: "0x08c379a0deadbeef",
+          reason: "X",
+          // Nested transaction with empty data (hypothetical fallback call):
+          transaction: { data: "0x", to: TEST_ADDRESS },
+          invocation: null,
+          revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+        }
+      );
+      expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
+    }
+  );
 
-  it("does NOT match a normal business revert with populated revert data", () => {
-    // Models the real connect-pool revert against an EOA "pool": the GDA
-    // dispatches into the address and gets `CallUtils: target revert()`.
-    // Contract was reached, revert has data -- tolerate, do not flag as
-    // a routing/dispatch bug.
-    const err = ethers.makeError(
-      'execution reverted: "CallUtils: target revert()"',
-      "CALL_EXCEPTION",
-      {
-        action: "estimateGas",
-        data: "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a43616c6c5574696c733a20746172676574207265766572742829000000000000",
-        reason: "CallUtils: target revert()",
-        transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
-        invocation: null,
-        revert: {
-          args: ["CallUtils: target revert()"],
-          name: "Error",
-          signature: "Error(string)",
-        },
-      }
-    );
-    expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
-  });
+  itOnchain(
+    "does NOT match a normal business revert with populated revert data",
+    () => {
+      // Models the real connect-pool revert against an EOA "pool": the GDA
+      // dispatches into the address and gets `CallUtils: target revert()`.
+      // Contract was reached, revert has data -- tolerate, do not flag as
+      // a routing/dispatch bug.
+      const err = ethers.makeError(
+        'execution reverted: "CallUtils: target revert()"',
+        "CALL_EXCEPTION",
+        {
+          action: "estimateGas",
+          data: "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a43616c6c5574696c733a20746172676574207265766572742829000000000000",
+          reason: "CallUtils: target revert()",
+          transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
+          invocation: null,
+          revert: {
+            args: ["CallUtils: target revert()"],
+            name: "Error",
+            signature: "Error(string)",
+          },
+        }
+      );
+      expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
+    }
+  );
 });

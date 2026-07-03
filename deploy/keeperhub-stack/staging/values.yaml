@@ -849,6 +849,20 @@ schedule:
   podAnnotations:
     reloader.stakater.com/auto: "true"
 
+  # Staging Alloy scrapes via ServiceMonitor CRDs, not prometheus.io/* annotations.
+  # Same pattern the block component uses below (block.serviceMonitors). Without
+  # this block, the schedule-dispatcher /metrics endpoint (served on the health
+  # port) is never scraped, so the keeperhub_schedule_dispatcher_* series do not
+  # exist and the Grafana dispatcher alerts stay blind.
+  serviceMonitors:
+    enabled: true
+    monitors:
+      - name: schedule-dispatcher-metrics
+        port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
   resources:
     limits:
       memory: 256Mi

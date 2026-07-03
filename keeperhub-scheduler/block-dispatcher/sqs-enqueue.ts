@@ -7,6 +7,7 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { SQS_QUEUE_URL } from "../lib/config.js";
 import { sqs } from "../lib/sqs-client.js";
+import { signSqsMessageAttributes } from "../lib/sqs-message-auth.js";
 import type { BlockMessage } from "../lib/types.js";
 
 export async function enqueueBlockTrigger(
@@ -15,10 +16,11 @@ export async function enqueueBlockTrigger(
   console.log(
     `[SQS] Enqueuing block trigger: workflow=${message.workflowId}, block=${message.triggerData.blockNumber}`,
   );
+  const body = JSON.stringify(message);
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: SQS_QUEUE_URL,
-      MessageBody: JSON.stringify(message),
+      MessageBody: body,
       MessageAttributes: {
         TriggerType: {
           DataType: "String",
@@ -28,6 +30,7 @@ export async function enqueueBlockTrigger(
           DataType: "String",
           StringValue: message.workflowId,
         },
+        ...signSqsMessageAttributes("scheduler", SQS_QUEUE_URL, body),
       },
     }),
   );

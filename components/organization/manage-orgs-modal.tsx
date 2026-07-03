@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ExecutionDigestSection } from "@/components/organization/execution-digest-section";
 import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
+import { SpendCapSection } from "@/components/organization/spend-cap-section";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1320,7 +1321,7 @@ export function ManageOrgsModal({
             onValueChange={setActiveTab}
             value={activeTab}
           >
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="organizations">Organizations</TabsTrigger>
               <TabsTrigger value="invitations">
                 Invitations
@@ -1331,6 +1332,7 @@ export function ManageOrgsModal({
                 )}
               </TabsTrigger>
               <TabsTrigger value="notifications">Notifications</TabsTrigger>
+              <TabsTrigger value="limits">Limits</TabsTrigger>
             </TabsList>
 
             <TabsContent className="space-y-4" value="organizations">
@@ -1707,6 +1709,25 @@ export function ManageOrgsModal({
               ) : (
                 <div className="py-8 text-center text-muted-foreground">
                   Only organization owners and admins can manage notifications.
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent className="space-y-4" value="limits">
+              {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    Settings for{" "}
+                    <span className="font-medium text-foreground">
+                      {organization.name}
+                    </span>
+                  </p>
+                  <SpendCapSection key={organization.id} />
+                </>
+              ) : (
+                <div className="py-8 text-center text-muted-foreground">
+                  Only organization owners and admins can manage spending
+                  limits.
                 </div>
               )}
             </TabsContent>
