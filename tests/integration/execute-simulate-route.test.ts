@@ -67,6 +67,10 @@ vi.mock("../../app/api/execute/_lib/spending-cap", () => ({
   checkAndReserveExecution: spies.checkAndReserveExecution,
 }));
 
+vi.mock("../../app/api/execute/_lib/concurrency-limit", () => ({
+  enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("../../app/api/execute/_lib/execution-service", async (importActual) => {
   const actual =
     await importActual<

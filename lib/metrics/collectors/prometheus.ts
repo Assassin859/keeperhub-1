@@ -8,7 +8,9 @@
 import "server-only";
 
 import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import type { ErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
+import type { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
 import type { ErrorContext, MetricLabels, MetricsCollector } from "../types";
 
 // Use global singletons to prevent duplicate registration during hot reload
@@ -961,6 +963,49 @@ export function recordWorkflowExecutionError(labels: {
   });
 }
 
+// Per-execution terminal counter: incremented once per execution finalization
+// (success | error | system_error), gated on the CAS-guarded terminal write so
+// lost finalize races are not counted. Unlike errors_created it also counts
+// successes, so windowed success-rate SLIs can be computed per org from
+// increase() without reading the 30-day executions gauge. Non-error rows carry
+// error_type="na". Cardinality is the same order as errors_created.
+const workflowExecutionsFinished = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_finished_total",
+  "Workflow executions finished since pod start, by terminal status (success, error, system_error; cancellations are not counted), org_slug and error_type",
+  ["status", "org_slug", "error_type"]
+);
+
+export function recordWorkflowExecutionFinished(labels: {
+  status: "success" | ErrorStatus;
+  orgSlug: string;
+  errorType: "user" | "system" | typeof NA_ERROR_TYPE;
+}): void {
+  workflowExecutionsFinished.inc({
+    status: labels.status,
+    org_slug: labels.orgSlug,
+    error_type: labels.errorType,
+  });
+}
+
+// Compensation series for the finished counter. selfHealWorkflowAfterLateStepCommit
+// flips error -> success after finalization has already emitted
+// finished{status="error"|"system_error"}, and a counter cannot be
+// decremented, so dashboards correct the per-org SLI with this series
+// (successes += healed, failures -= healed).
+const workflowExecutionsHealed = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_healed_total",
+  "Workflow executions self-healed from error to success after finalization, by org_slug",
+  ["org_slug"]
+);
+
+export function recordWorkflowExecutionHealed(labels: {
+  orgSlug: string;
+}): void {
+  workflowExecutionsHealed.inc({ org_slug: labels.orgSlug });
+}
+
 // Per-workflow error counter used exclusively for managed-client alert dedup.
 // Labels are kept to (workflow_id, org_slug, error_type) — no error_category —
 // so cardinality stays bounded: only workflows that actually fail contribute
@@ -1550,7 +1595,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     workflowDurationBucket.set(
       { le: "+Inf" },
       workflowStats.durationBuckets[WORKFLOW_DURATION_BUCKETS.length] ??
-      workflowStats.durationCount
+        workflowStats.durationCount
     );
 
     // Update workflow duration sum and count
@@ -1585,7 +1630,7 @@ async function refreshDbMetricsNow(): Promise<void> {
     stepDurationBucket.set(
       { le: "+Inf" },
       stepStats.durationBuckets[STEP_DURATION_BUCKETS.length] ??
-      stepStats.durationCount
+        stepStats.durationCount
     );
 
     // Update step duration sum and count
@@ -1815,4 +1860,17 @@ export const rpcProbeMetrics = {
   latency: rpcProbeLatency,
   errorsTotal: rpcProbeErrorsTotal,
   lastSuccess: rpcProbeLastSuccess,
+};
+
+/**
+ * Workflow terminal counter accessors for the runner-pod metric shipping
+ * bridge (keeperhub-executor/lib/metrics-shipping.ts). In isolated (k8s-job)
+ * execution mode the workflow engine finalizes executions inside ephemeral
+ * runner pods whose registry is never scraped, so increments to these
+ * counters must be shipped to the long-lived executor to be visible to
+ * Prometheus.
+ */
+export const workflowCounterMetrics = {
+  executionErrorsCreated: workflowExecutionErrorsCreated,
+  executionsFinished: workflowExecutionsFinished,
 };

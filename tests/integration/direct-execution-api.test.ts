@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   validateApiKey: vi.fn(),
   checkRateLimit: vi.fn(),
   checkAndReserveExecution: vi.fn(),
+  enforceDirectExecutionConcurrency: vi.fn(),
   markRunning: vi.fn(),
   completeExecution: vi.fn(),
   failExecution: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock("@/app/api/execute/_lib/rate-limit", () => ({
 
 vi.mock("@/app/api/execute/_lib/spending-cap", () => ({
   checkAndReserveExecution: mocks.checkAndReserveExecution,
+}));
+
+vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
+  enforceDirectExecutionConcurrency: mocks.enforceDirectExecutionConcurrency,
 }));
 
 vi.mock("@/app/api/execute/_lib/execution-service", async (importActual) => {
@@ -179,6 +184,7 @@ function setupPassingGuards(): void {
     allowed: true,
     executionId: "exec_1",
   });
+  mocks.enforceDirectExecutionConcurrency.mockResolvedValue(null);
   mocks.redactInput.mockImplementation(
     (input: Record<string, unknown>) => input
   );
@@ -208,7 +214,10 @@ describe("Direct Execution API", () => {
     };
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
+      mocks.validateApiKey.mockResolvedValue({
+        error: "Unauthorized",
+        status: 401,
+      });
 
       const response = await transferPOST(postRequest("/transfer", validBody));
 
@@ -325,6 +334,71 @@ describe("Direct Execution API", () => {
       expect(mocks.transferFundsCore).not.toHaveBeenCalled();
     });
 
+    it("charges the native amount (wei) against the value cap", async () => {
+      setupPassingGuards();
+      mocks.transferFundsCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xabc",
+      });
+
+      await transferPOST(postRequest("/transfer", validBody));
+
+      expect(mocks.checkAndReserveExecution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "transfer",
+          reservedValueWei: "1000000000000000000",
+        })
+      );
+    });
+
+    it("reserves 0 native value for an ERC-20 transfer", async () => {
+      setupPassingGuards();
+      mocks.transferTokenCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xdef",
+      });
+
+      await transferPOST(
+        postRequest("/transfer", {
+          ...validBody,
+          tokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        })
+      );
+
+      expect(mocks.checkAndReserveExecution).toHaveBeenCalledWith(
+        expect.objectContaining({ reservedValueWei: "0" })
+      );
+    });
+
+    it("returns 400 for an unparseable native amount before reserving", async () => {
+      setupPassingGuards();
+
+      const response = await transferPOST(
+        postRequest("/transfer", { ...validBody, amount: "not-a-number" })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.field).toBe("amount");
+      expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+    });
+
+    it("returns 429 when direct-execution concurrency is exceeded", async () => {
+      setupPassingGuards();
+      const { NextResponse } = await import("next/server");
+      mocks.enforceDirectExecutionConcurrency.mockResolvedValue(
+        NextResponse.json(
+          { error: "Too many concurrent executions", running: 100, limit: 100 },
+          { status: 429 }
+        )
+      );
+
+      const response = await transferPOST(postRequest("/transfer", validBody));
+
+      expect(response.status).toBe(429);
+      expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+    });
+
     it("returns 202 with failed status when transfer fails", async () => {
       setupPassingGuards();
       mocks.transferFundsCore.mockResolvedValue({
@@ -393,7 +467,10 @@ describe("Direct Execution API", () => {
     };
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
+      mocks.validateApiKey.mockResolvedValue({
+        error: "Unauthorized",
+        status: 401,
+      });
 
       const response = await contractCallPOST(
         postRequest("/contract-call", validReadBody)
@@ -611,7 +688,10 @@ describe("Direct Execution API", () => {
     };
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
+      mocks.validateApiKey.mockResolvedValue({
+        error: "Unauthorized",
+        status: 401,
+      });
 
       const response = await checkAndExecutePOST(
         postRequest("/check-and-execute", validBody)
@@ -733,7 +813,10 @@ describe("Direct Execution API", () => {
   // ==========================================================================
   describe("GET /api/execute/{id}/status", () => {
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
+      mocks.validateApiKey.mockResolvedValue({
+        error: "Unauthorized",
+        status: 401,
+      });
 
       const response = await statusGET(getRequest("/exec_1/status"), {
         params: Promise.resolve({ executionId: "exec_1" }),
@@ -830,7 +913,10 @@ describe("Direct Execution API", () => {
     });
 
     it("returns 401 when auth fails", async () => {
-      mocks.validateApiKey.mockResolvedValue({ error: "Unauthorized", status: 401 });
+      mocks.validateApiKey.mockResolvedValue({
+        error: "Unauthorized",
+        status: 401,
+      });
 
       const response = await swapPOST(
         postRequest("/swap", { fromToken: "ETH" })

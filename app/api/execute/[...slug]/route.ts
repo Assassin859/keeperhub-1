@@ -29,6 +29,7 @@ import {
   writeContractCore,
 } from "@/plugins/web3/steps/write-contract-core";
 import { validateApiKey } from "../_lib/auth";
+import { enforceDirectExecutionConcurrency } from "../_lib/concurrency-limit";
 import {
   completeExecution,
   failExecution,
@@ -37,6 +38,7 @@ import {
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseNativeValueWei } from "../_lib/reserved-value";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -224,9 +226,28 @@ async function executeProtocolAction(
     return recordIdempotentResponse(idem, executionGuard.response, "release");
   }
 
+  const concurrency = await enforceDirectExecutionConcurrency(organizationId);
+  if (concurrency) {
+    return recordIdempotentResponse(idem, concurrency, "release");
+  }
+
   const walletError = await requireWallet(organizationId);
   if (walletError) {
     return recordIdempotentResponse(idem, walletError, "release");
+  }
+
+  const ethValue = body.ethValue ? String(body.ethValue) : undefined;
+  // Charge any native value forwarded by the protocol write against the cap.
+  const parsedValue = parseNativeValueWei(ethValue);
+  if (!parsedValue.ok) {
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { success: false, error: parsedValue.error },
+        { status: HttpStatus.BAD_REQUEST }
+      ),
+      "release"
+    );
   }
 
   const reserve = await checkAndReserveExecution({
@@ -235,6 +256,7 @@ async function executeProtocolAction(
     type: "protocol-action",
     network,
     input: redactInput(withRejectedSignerOverride(body, body)),
+    reservedValueWei: parsedValue.valueWei,
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(
@@ -249,7 +271,6 @@ async function executeProtocolAction(
   const { executionId } = reserve;
   await markRunning(executionId);
 
-  const ethValue = body.ethValue ? String(body.ethValue) : undefined;
   const coreInput: WriteContractCoreInput = {
     contractAddress,
     network,

@@ -52,7 +52,22 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 function makeMockDb(
   scheduleRow?: object | null
 ): PostgresJsDatabase<DbSchema> {
-  const mockWhere = vi.fn().mockResolvedValue([]);
+  // where() must be awaitable (updateScheduleStatus awaits it directly) AND
+  // expose .returning() (updateExecutionStatus chains it for the terminal
+  // counter gate). Modeled as a custom thenable; returning [] means "no row
+  // flipped" so no counter emission is attempted.
+  const mockWhere = vi.fn().mockImplementation(() => {
+    const promise = Promise.resolve([]);
+    return {
+      then: (
+        onFulfilled?: (value: unknown[]) => unknown,
+        onRejected?: (reason: unknown) => unknown
+      ) => promise.then(onFulfilled, onRejected),
+      catch: (onRejected: (reason: unknown) => unknown) =>
+        promise.catch(onRejected),
+      returning: vi.fn().mockResolvedValue([]),
+    };
+  });
   const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
   const mockUpdate = vi.fn().mockReturnValue({ set: mockSet });
   const mockFindFirst = vi.fn().mockResolvedValue(

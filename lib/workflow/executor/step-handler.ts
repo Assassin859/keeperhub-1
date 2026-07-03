@@ -33,6 +33,13 @@ export type StepContext = {
   iterationIndex?: number;
   forEachNodeId?: string;
   organizationId?: string;
+  // Set by direct-execution routes that already reserved this execution's
+  // native value against the daily cap (checkAndReserveExecution). Tells a
+  // value-moving step wrapper not to reserve again, so /api/execute/node -
+  // which dispatches the step wrappers, unlike the sibling routes that call the
+  // cores directly - is charged once, not twice. The workflow executor never
+  // sets it, so workflow-triggered steps still reserve via withStepValueCap.
+  valueCapReserved?: boolean;
   // Identifiers attached to every workflow error log line
   orgSlug?: string;
   createdBy?: string;

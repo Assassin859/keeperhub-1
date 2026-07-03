@@ -1,11 +1,16 @@
 import { and, eq, ne } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
 import { type ErrorCode, getErrorCodeEntry } from "@/lib/errors/error-codes";
 import { isErrorStatus } from "@/lib/errors/execution-status";
+import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory } from "@/lib/logging";
+import { recordWorkflowExecutionFinished } from "@/lib/metrics/collectors/prometheus";
+import { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
+import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 
 export async function PATCH(
   request: Request,
@@ -112,15 +117,57 @@ export async function PATCH(
     }
   }
 
-  await db
+  // Self-join alias exposing the pre-update status (the FROM clause reads the
+  // statement snapshot) so the terminal counters below emit only on the first
+  // non-terminal -> terminal transition. This route is a real terminal writer
+  // (scheduler/event-tracker phantom resolution marks enqueue failures as
+  // system_error here) that bypasses every other counted finalize path.
+  const prevExecution = alias(workflowExecutions, "prev_execution");
+
+  const updated = await db
     .update(workflowExecutions)
     .set(updateData)
+    .from(prevExecution)
     .where(
       and(
         eq(workflowExecutions.id, executionId),
+        eq(prevExecution.id, workflowExecutions.id),
         ne(workflowExecutions.status, "cancelled")
       )
-    );
+    )
+    .returning({
+      workflowId: workflowExecutions.workflowId,
+      previousStatus: prevExecution.status,
+    });
+
+  const previousStatus = updated[0]?.previousStatus;
+  const wasNonTerminal =
+    previousStatus !== undefined &&
+    previousStatus !== "success" &&
+    !isErrorStatus(previousStatus);
+
+  if (updated.length > 0 && isTerminal && wasNonTerminal) {
+    const workflowId = updated[0].workflowId;
+    if (isError) {
+      await recordExecutionErrorFinalized({
+        workflowId,
+        errorMessage: updateData.error,
+        persistedStatus:
+          typedStatus === "system_error" ? "system_error" : "error",
+        errorCategory: updateData.errorCategory,
+      });
+    } else {
+      try {
+        recordWorkflowExecutionFinished({
+          status: "success",
+          orgSlug: await resolveOrgSlugForCounter(workflowId),
+          errorType: NA_ERROR_TYPE,
+        });
+      } catch {
+        // Counter emission must never fail the status write.
+      }
+    }
+  }
 
   return NextResponse.json({ success: true });
 }
