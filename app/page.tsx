@@ -3,8 +3,9 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
@@ -87,8 +88,13 @@ const Home = () => {
   // Welcome gating: a visitor without a real session (none, or anonymous) lands
   // on the welcome page instead of the bare canvas, unless they explicitly chose
   // to continue without an account. A signed-in user who has not gone through
-  // the onboarding wizard is sent into it.
+  // the onboarding wizard is sent into it. Until the session resolves and this
+  // decision is made we render a loader over the canvas, so a redirected user
+  // never sees the canvas flash before being sent to /welcome.
   const welcomeRedirectedRef = useRef(false);
+  const [gate, setGate] = useState<"loading" | "canvas" | "redirecting">(
+    "loading"
+  );
   useEffect(() => {
     if (sessionPending || welcomeRedirectedRef.current) {
       return;
@@ -96,8 +102,11 @@ const Home = () => {
     const isSignedIn =
       Boolean(session?.user) && !isAnonymousUser(session?.user);
     if (!isSignedIn) {
-      if (!isContinueAsGuest()) {
+      if (isContinueAsGuest()) {
+        setGate("canvas");
+      } else {
         welcomeRedirectedRef.current = true;
+        setGate("redirecting");
         router.replace("/welcome");
       }
       return;
@@ -108,8 +117,11 @@ const Home = () => {
     const onboardingDone =
       (session?.user as { onboardingCompleted?: boolean } | undefined)
         ?.onboardingCompleted === true;
-    if (!onboardingDone) {
+    if (onboardingDone) {
+      setGate("canvas");
+    } else {
       welcomeRedirectedRef.current = true;
+      setGate("redirecting");
       router.replace("/welcome/create-org");
     }
   }, [sessionPending, session, router]);
@@ -215,6 +227,18 @@ const Home = () => {
     setCurrentWorkflowName("New Workflow");
     hasCreatedWorkflowRef.current = false;
   }, [setNodes, setEdges, setCurrentWorkflowId, setCurrentWorkflowName]);
+
+  // Until the session/onboarding gate resolves to "canvas", cover the
+  // layout's PersistentCanvas with a loader so a redirected user never sees a
+  // canvas flash before /welcome. Once decided, render nothing and let the
+  // canvas show through.
+  if (gate !== "canvas") {
+    return (
+      <div className="fixed inset-0 z-20 flex items-center justify-center bg-background">
+        <Spinner className="size-6 text-muted-foreground" />
+      </div>
+    );
+  }
 
   // Canvas and toolbar are rendered by PersistentCanvas in the layout
   return null;
