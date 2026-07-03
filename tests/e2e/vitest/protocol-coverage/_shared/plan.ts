@@ -33,7 +33,18 @@ export function planPhaseFixtures(
   protocol: ProtocolDefinition | undefined,
   protocolSlug: string,
   chainId: string,
-  phase: "read" | "write"
+  phase: "read" | "write",
+  opts?: {
+    /**
+     * Representatives mode: keep only the first runnable action per
+     * phase and mark the rest as documented skips. The full per-action
+     * breadth is Tier 0/1's job; the end-to-end path this suite proves
+     * (webhook, executor, signing, receipt) is shared by every action,
+     * so one representative read and write per chain suffices for the
+     * PR gate while the full sweep runs nightly.
+     */
+    representatives?: boolean;
+  }
 ): FixtureCase[] {
   if (!protocol) {
     return [{ kind: "no-protocol", protocolSlug }];
@@ -43,11 +54,30 @@ export function planPhaseFixtures(
     return [{ kind: "no-actions", protocolSlug, phase }];
   }
   const skipped = protocol.testData?.[chainId]?.skipped ?? {};
-  return actions.map((action) => {
+  const plan: FixtureCase[] = actions.map((action) => {
     const reason = skipped[action.slug];
     if (reason) {
       return { kind: "skip", action, reason };
     }
     return { kind: "run", action };
+  });
+  if (!opts?.representatives) {
+    return plan;
+  }
+  let kept = false;
+  return plan.map((c) => {
+    if (c.kind !== "run") {
+      return c;
+    }
+    if (kept) {
+      return {
+        kind: "skip",
+        action: c.action,
+        reason:
+          "representatives mode: covered by Tier 0/1; first runnable action represents this phase",
+      };
+    }
+    kept = true;
+    return c;
   });
 }

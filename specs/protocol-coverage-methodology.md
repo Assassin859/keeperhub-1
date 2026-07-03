@@ -99,6 +99,31 @@ code.
    the date in a comment, as done in `protocols/safe.ts` and
    `protocols/aave-v3.ts`.
 
+## Validating workflow changes locally (act + rig)
+
+Division of labor when touching the CI workflows:
+
+- The rig (`scripts/protocol-local.sh`) validates step logic: run the
+  exact command sequence a step executes (e.g. the vitest+floor pair)
+  against the local stack before pushing.
+- `act` validates workflow structure and wiring: parse, job graph,
+  reusable-workflow resolution, gate conditions, and that jobs launch
+  with their service containers. Recipe:
+
+  ```
+  act pull_request -W .github/workflows/ci-pipeline.yml \
+    -e <event.json with the run-e2e-tests-ephemeral label> \
+    --var ENABLE_E2E_EPHEMERAL_TESTS=true \
+    [-n for dry-run | -j <job> to execute one job]
+  ```
+
+  Known boundaries: dry-run cannot traverse jobs whose `if:` reads
+  another job's outputs (dry steps produce none); executing jobs that
+  use artifact actions needs a runner image with node
+  (`-P ubuntu-latest=catthehacker/ubuntu:act-latest`); service ports
+  bind on the host, so local containers holding 5432 collide with the
+  postgres service.
+
 ## Measured progress
 
 Numbers come from `pnpm coverage:report` (the same planPhaseFixtures the
@@ -113,3 +138,4 @@ timed local runs unless marked CI.
 | 2026-07-02 | Tier 0 calldata tests (tests/unit/protocol-calldata.test.ts) | first 100% layer: all 394 registry actions encode-tested (synthetic), plus bound-encode goldens for every testData chain (18 golden files) | n/a (encoding layer has no skips; skipped-and-unencodable states recorded in goldens) | exact-calldata assertion for every bound action | adds 476 tests to the unit gate that already runs on every PR | 2.4s for the full layer; mutation check (scripts/protocol-mutation-check.sh) confirms a renamed ABI input goes red |
 | 2026-07-03 | Tier 1 fork simulations (tests/e2e/vitest/protocol-simulation, scripts/protocol-local.sh sim) | chain 1: 275 tests collected (13 protocols), 144 pass through real fork execution (impersonation replaces signing, direct RPC replaces the executor; setup provisioning, ordered writes, oracle-asserted reads), 86 documented skips, 45 fail | unchanged | oracle assertions run per read at this tier too | not wired to CI yet (env-gated) | 155s for the chain-1 sweep with zero app/signing infrastructure. The 45 failures are newly exposed latent defects, not harness bugs: yearn's fallback vault is a 45-byte proxy with no implementation (27 reads), chainlink CCIP and curve bindings target codeless or reverting addresses on chain 1, morpho's set-authorization fixture duplicates its setup step, and rocket-pool's deposit reverts "Invalid or outdated contract" (stale registry address - a user-facing bug). None of these could surface before: the mainnet e2e suites have never executed in CI. Catalogued for the skip-unlock/testData-repair phase. |
 | 2026-07-03 | Latent defect repairs (Tier 1 catalogue) | chain-1 Tier 1 sweep fully green: 185 pass, 90 documented skips, 0 fail in ~3 min. +41 actions actually work now: yearn (27) and curve (5) bind live contracts (userSpecifiedAddress contracts ignore the registry fallback, so unbound actions had no target at all), chainlink's generic feed reads bind the canonical ETH/USD aggregator (5), morpho's set-authorization polarity and its ABI order (supplyCollateral before borrow) fixed (3), and rocket-pool's deposit-pool registry address updated to the current deployment resolved from RocketStorage (1) - that one was a live user-facing bug. 4 CCIP token checks became honest skips (testnet-only surface). Tier 0 now rejects runnable actions that resolve no target address, closing the defect class. Output-to-binding piping (superfluid GDA pools, morpho vaults, pendle markets) remains open. | runnable 228 (was 232; 4 false-runnables became documented skips) | 121 | 8 | unit gate unchanged (goldens regenerated) | Tier 1 re-verification per fix: ~3 min |
+| 2026-07-03 | CI alignment: executed-test floor + representatives mode | unchanged | unchanged | unchanged | the protocol step now fails when executed tests drop below 30 (floor verified both ways locally: 185-executed results pass, an all-skipped file trips it) and publishes counts to the step summary; PROTOCOL_E2E_REPRESENTATIVES=1 shrinks each phase to its first runnable action for a future PR-gate/nightly split | workflow changes validated locally: step logic on the rig, structure/gating/job-launch via act (recipe above); parallel-job refactor and the nightly workflow remain follow-ups |

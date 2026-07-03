@@ -361,7 +361,17 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
-          pnpm test:protocol
+          pnpm vitest run tests/e2e/vitest/protocol-coverage \
+            --reporter=default --reporter=json --outputFile=protocol-results.json
+          # Executed-test floor: every suite self-skips when its infra
+          # gates are absent, so a green exit code alone can mean "ran
+          # nothing" (that is how coverage silently collapsed to ~35
+          # executed tests). Fails when executed tests drop below the
+          # floor; publishes run/skip counts to the step summary. 30 =
+          # ajna (25) + superfluid (10) minus slack; raise it when
+          # ANVIL_FORK_MAINNET_URL is provisioned and the mainnet suites
+          # activate.
+          pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json 30
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}

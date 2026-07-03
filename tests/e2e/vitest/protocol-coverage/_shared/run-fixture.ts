@@ -43,7 +43,8 @@ export function runPhaseFixtures(opts: {
     protocol,
     opts.protocol,
     opts.chainId,
-    opts.phase
+    opts.phase,
+    { representatives: process.env.PROTOCOL_E2E_REPRESENTATIVES === "1" }
   );
 
   for (const c of plan) {
