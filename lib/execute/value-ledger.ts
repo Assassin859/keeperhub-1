@@ -212,6 +212,9 @@ type StepValueCapArgs = {
   // Correlation id for audit; the workflow execution id when available.
   executionId?: string;
   source?: string;
+  // True when a direct-execution route already reserved this execution's value
+  // (see StepContext.valueCapReserved); the step must not reserve again.
+  valueCapReserved?: boolean;
 };
 
 /**
@@ -230,7 +233,9 @@ export function withStepValueCap<T extends { success: boolean }>(
   const parsed = parseNativeValueWei(args.amountEth);
   const valueWei = parsed.ok ? parsed.valueWei : "0";
 
-  if (!args.organizationId || valueWei === "0") {
+  // Skip when the caller already reserved (direct-execution route), when there
+  // is no org to charge, or when no native value moves.
+  if (args.valueCapReserved || !args.organizationId || valueWei === "0") {
     return run();
   }
 

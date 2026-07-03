@@ -64,6 +64,7 @@ export async function transferFundsStep(
             organizationId: input._context?.organizationId,
             amountEth: input.amount,
             executionId: input._context?.executionId,
+            valueCapReserved: input._context?.valueCapReserved,
           },
           () => transferFundsCore(input)
         )

@@ -305,6 +305,7 @@ export async function protocolWriteStep(
         amountEth: ethValue,
         executionId: input._context?.executionId,
         source: "protocol",
+        valueCapReserved: input._context?.valueCapReserved,
       },
       () => writeContractCore(coreInput)
     );

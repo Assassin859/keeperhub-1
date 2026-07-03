@@ -59,6 +59,7 @@ export async function writeContractStep(
             organizationId: input._context?.organizationId,
             amountEth: input.ethValue,
             executionId: input._context?.executionId,
+            valueCapReserved: input._context?.valueCapReserved,
           },
           () => writeContractCore(input)
         )

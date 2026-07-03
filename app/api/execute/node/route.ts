@@ -384,6 +384,11 @@ async function executeNode(
       nodeName: resolved.label,
       nodeType: "action",
       organizationId: apiKeyCtx.organizationId,
+      // A pre-created execution id means the caller already reserved this
+      // execution's value against the cap (checkAndReserveExecution, in the
+      // networked branch below). Flag it so a value-moving step wrapper does
+      // not reserve a second time and double-charge the cap.
+      valueCapReserved: Boolean(preCreatedExecutionId),
     },
   };
 

@@ -300,4 +300,27 @@ describe("withStepValueCap", () => {
       expect.objectContaining({ status: "settled" }),
     ]);
   });
+
+  it("does not reserve when the caller already reserved (valueCapReserved)", async () => {
+    // /api/execute/node dispatches the step wrappers but has already reserved
+    // this execution's value via checkAndReserveExecution. The step must not
+    // reserve a second time, or a single node-route transfer double-charges.
+    state.caps = [{ dailyValueCapWei: ONE_ETH_WEI }];
+    const run = vi.fn().mockResolvedValue({ success: true });
+
+    const result = await withStepValueCap(
+      {
+        organizationId: "org_1",
+        amountEth: "0.5",
+        executionId: "exec_1",
+        valueCapReserved: true,
+      },
+      run
+    );
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(result).toEqual({ success: true });
+    expect(state.inserted).toHaveLength(0);
+    expect(state.updates).toHaveLength(0);
+  });
 });
