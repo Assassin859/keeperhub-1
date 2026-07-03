@@ -22,6 +22,14 @@ function main(): void {
     process.exit(2);
   }
   const floor = Number(floorArg);
+  if (!(Number.isFinite(floor) && floor >= 0)) {
+    // NaN would make `executed < floor` always false, silently disabling
+    // the guard - the exact failure mode this script exists to prevent.
+    process.stderr.write(
+      `invalid floor argument "${floorArg}": expected a non-negative number\n`
+    );
+    process.exit(2);
+  }
   const raw = JSON.parse(readFileSync(file, "utf8")) as {
     testResults?: Array<{
       assertionResults?: Array<{ status: string }>;
