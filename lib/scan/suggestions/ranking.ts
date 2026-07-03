@@ -61,7 +61,10 @@ export function clampHfThreshold(currentHf: number): number {
   if (currentHf > HF_DEFAULT) {
     return HF_DEFAULT;
   }
-  return Math.max(currentHf - 0.1, HF_FLOOR);
+  // Round to 2 decimals so the value survives display formatting unchanged
+  // (1.45 - 0.1 is 1.3499999999999999 in FP, which would render as 1.35 but
+  // convert to a raw condition operand of 1.3499...e18).
+  return Math.round(Math.max(currentHf - 0.1, HF_FLOOR) * 100) / 100;
 }
 
 /**

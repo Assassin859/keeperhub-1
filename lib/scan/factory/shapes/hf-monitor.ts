@@ -17,6 +17,7 @@ import {
   buildReadContractNode,
   buildScheduleTrigger,
   resolveAddressPrefill,
+  resolveAmountPrefill,
 } from "@/lib/scan/factory/node-builders";
 import { hfThresholdRaw } from "@/lib/scan/suggestions/ranking";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
@@ -141,11 +142,16 @@ export function buildHfMonitor(
 
   // Threshold in Aave's 1e18 base units.
   // Prefer the clamped value pre-computed by the engine (confirmInputs.threshold),
-  // which is the same value shown in the description (WR-01). Fall back to the
-  // module default only when the factory is called with a hand-written descriptor
-  // that lacks the pre-computed key (e.g. test fixtures).
-  const thresholdStr =
-    descriptor.confirmInputs.threshold ?? hfThresholdRaw(DEFAULT_HF_THRESHOLD);
+  // which is the same value shown in the description (WR-01). resolveAmountPrefill
+  // enforces the ^\d+$ base-unit shape (same guard as the sibling shapes): a
+  // human-scale value like "1.5" from a crafted or drifted descriptor would
+  // otherwise become a BigInt-vs-float condition that silently never fires.
+  // Falls back to the module default for descriptors lacking the key or
+  // carrying a non-base-unit value (e.g. hand-written test fixtures).
+  const thresholdStr = resolveAmountPrefill(
+    descriptor.confirmInputs.threshold,
+    hfThresholdRaw(DEFAULT_HF_THRESHOLD)
+  );
 
   const nodes: WorkflowNode[] = [
     buildScheduleTrigger(triggerId, { cron: HF_MONITOR_CRON }, 0),

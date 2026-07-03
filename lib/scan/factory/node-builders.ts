@@ -5,7 +5,7 @@
  * verified against real fixtures in tests/fixtures/workflows.ts and
  * lib/test-data/build-workflow.ts.
  *
- * CRITICAL wire-shape invariants (KEEP-571 / PR #1246):
+ * CRITICAL wire-shape invariants (a malformed shape broke workflow saves once):
  *   - node.type MUST equal node.data.type ("trigger" | "action")
  *   - actionType lives at node.data.config.actionType (never node.data.actionType)
  *   - Schedule trigger: config.scheduleCron / config.scheduleTimezone (not cron/timezone)
@@ -119,7 +119,7 @@ export interface ReadContractOptions {
 /**
  * Build a web3/read-contract action node.
  *
- * actionType lives at data.config.actionType (KEEP-571 wire-shape).
+ * actionType lives at data.config.actionType (wire-shape invariant, see header).
  */
 export function buildReadContractNode(
   id: string,

@@ -146,7 +146,10 @@ function buildHealthSuggestion(
     name: `${protName} Health Factor Alert`,
     description:
       `Monitor your ${protName} health factor (currently ${hf.toFixed(2)}) ` +
-      `on ${chain}. Alert when HF drops below ${threshold.toFixed(1)}. ` +
+      // Two decimals so the displayed level always equals the enforced
+      // rightOperand: toFixed(1) rounded 1.38 up to "1.4" and promised an
+      // alert level the condition never fires at.
+      `on ${chain}. Alert when HF drops below ${Number.parseFloat(threshold.toFixed(2))}. ` +
       `Total debt: $${Math.round(debt)}.`,
     category: "health",
     chainId: pos.chainId,
@@ -343,7 +346,11 @@ function buildAlertSuggestion(
 ): SuggestionDescriptor {
   const asset = pos.suppliedAssets[0];
   const symbol = asset?.symbol ?? "Token";
-  const slug = `price-alert-${symbol.toLowerCase()}-${pos.chainId}`;
+  // Protocol is part of the slug: the symbol alone falls back to "Token" for
+  // adapters that leave suppliedAssets empty (Aave, Spark), so two supply-only
+  // positions on the same chain would otherwise collide on the same id
+  // (duplicate React keys, wrong rank lookup, idempotency-key collision).
+  const slug = `price-alert-${symbol.toLowerCase()}-${pos.protocol}-${pos.chainId}`;
   const collat = pos.totalCollateralUsd ?? asset?.usdValue ?? 0;
   const protName = protocolLabel(pos.protocol);
   const chain = chainLabel(pos.chainId);

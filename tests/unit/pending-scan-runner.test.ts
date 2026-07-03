@@ -25,14 +25,27 @@ import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 
 // vi.hoisted ensures these variables are initialized before vi.mock factories
 // run (factories are hoisted to the top of the file by Vitest).
-const { mockPush, mockRefresh, mockExecute } = vi.hoisted(() => ({
-  mockPush: vi.fn(),
-  mockRefresh: vi.fn(),
-  mockExecute: vi.fn(),
-}));
+const { mockPush, mockRefresh, mockExecute, mockUseSession } = vi.hoisted(
+  () => ({
+    mockPush: vi.fn(),
+    mockRefresh: vi.fn(),
+    mockExecute: vi.fn(),
+    mockUseSession: vi.fn(),
+  })
+);
 
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(() => ({ push: mockPush, refresh: mockRefresh })),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock @/lib/auth-client (real impl gates cookie consumption on useSession).
+// Defaults to an authenticated session in beforeEach; the session-gate tests
+// override it per-case.
+// ---------------------------------------------------------------------------
+
+vi.mock("@/lib/auth-client", () => ({
+  useSession: mockUseSession,
 }));
 
 // ---------------------------------------------------------------------------
@@ -126,6 +139,11 @@ beforeEach(() => {
   mockPush.mockClear();
   mockRefresh.mockClear();
   mockExecute.mockClear();
+  mockUseSession.mockReset();
+  mockUseSession.mockReturnValue({
+    data: { user: { id: "user_test" } },
+    isPending: false,
+  });
   fakeSessionStorage.getItem.mockClear();
   fakeSessionStorage.setItem.mockClear();
 
@@ -310,6 +328,38 @@ describe("PendingScanRunner", () => {
         String(url).endsWith("/api/workflows/create")
       );
       expect(createCalls).toHaveLength(1);
+    });
+  });
+
+  describe("session gate (guard d)", () => {
+    it("does not consume the intent cookie while anonymous", async () => {
+      mockUseSession.mockReturnValue({ data: null, isPending: false });
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      PendingScanRunner();
+      for (const effect of capturedEffects) {
+        await effect();
+      }
+
+      // The effect must bail before touching GET /api/auth/scan-intent (which
+      // atomically clears the cookie) and before wiring the auth listener.
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(registeredListeners[AUTH_SUCCESS_EVENT] ?? []).toHaveLength(0);
+    });
+
+    it("does not consume the intent cookie while the session is still loading", async () => {
+      mockUseSession.mockReturnValue({ data: null, isPending: true });
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      PendingScanRunner();
+      for (const effect of capturedEffects) {
+        await effect();
+      }
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(registeredListeners[AUTH_SUCCESS_EVENT] ?? []).toHaveLength(0);
     });
   });
 });

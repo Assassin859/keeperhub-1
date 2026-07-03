@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
+import { useSession } from "@/lib/auth-client";
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 
 const SESSION_KEY_PREFIX = "pending_template:";
@@ -74,8 +75,21 @@ function isFlagFresh(flag: StoredFlag): boolean {
 export function PendingTemplateRunner(): null {
   const router = useRouter();
   const inFlight = useRef(false);
+  const { data: session, isPending } = useSession();
+  const isAuthenticated = Boolean(session?.user);
 
   useEffect(() => {
+    // Only consume the pending_template cookie once a session exists. The GET
+    // clears the cookie atomically, so an anonymous page load (reload / second
+    // tab while the auth dialog is open) would otherwise destroy the intent
+    // and surface an error toast to a signed-out user. Both post-auth resume
+    // paths land authenticated: OAuth via a full reload with the session
+    // cookie set, email+password via AUTH_SUCCESS_EVENT after which
+    // useSession() re-renders this effect.
+    if (isPending || !isAuthenticated) {
+      return;
+    }
+
     let cancelled = false;
 
     const run = async (): Promise<void> => {
@@ -139,7 +153,7 @@ export function PendingTemplateRunner(): null {
       cancelled = true;
       window.removeEventListener(AUTH_SUCCESS_EVENT, handler);
     };
-  }, [router]);
+  }, [router, isPending, isAuthenticated]);
 
   return null;
 }

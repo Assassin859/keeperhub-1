@@ -210,9 +210,42 @@ async function scanOneChain(
     }
   }
 
+  // Price Lido staking assets via resolveUsdPrice (no Chainlink feed is
+  // registered for stETH/wstETH, so this resolves through the DefiLlama
+  // fallback by token address). Without this pass a Lido-only wallet carries
+  // usdValue null everywhere, fails the suggestion engine's dust filter, and
+  // the funnel renders "No positions found" for a large staker. Same
+  // never-throws contract as the Sky pricing pass above: a price miss leaves
+  // usdValue null and keeps the position (T-56-04 guard).
+  const lidoPositions = decodeLidoResults(lidoResults, userAddress, chainId);
+  for (const lidoPos of lidoPositions) {
+    const pricedAssets = await Promise.all(
+      lidoPos.suppliedAssets.map(async (asset) => ({
+        asset,
+        priceUsd: await resolveUsdPrice(
+          chainId,
+          asset.tokenAddress,
+          asset.symbol,
+          {}
+        ).catch(() => null),
+      }))
+    );
+    let lidoTotalUsd: number | null = null;
+    for (const { asset, priceUsd } of pricedAssets) {
+      if (priceUsd !== null) {
+        // Number precision loss acceptable for display value — raw amount preserved.
+        const usdValue =
+          (Number(BigInt(asset.amount)) / 10 ** asset.decimals) * priceUsd;
+        asset.usdValue = usdValue;
+        lidoTotalUsd = (lidoTotalUsd ?? 0) + usdValue;
+      }
+    }
+    lidoPos.totalCollateralUsd = lidoTotalUsd;
+  }
+
   const positions: ProtocolPosition[] = [
     ...decodeAaveV3Results(aaveResults, userAddress, chainId),
-    ...decodeLidoResults(lidoResults, userAddress, chainId),
+    ...lidoPositions,
     ...sparkPositions,
     ...skyPositions,
   ];
