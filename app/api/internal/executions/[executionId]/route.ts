@@ -9,6 +9,7 @@ import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory } from "@/lib/logging";
 import { recordWorkflowExecutionFinished } from "@/lib/metrics/collectors/prometheus";
+import { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
 import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 
 export async function PATCH(
@@ -159,7 +160,7 @@ export async function PATCH(
         recordWorkflowExecutionFinished({
           status: "success",
           orgSlug: await resolveOrgSlugForCounter(workflowId),
-          errorType: "na",
+          errorType: NA_ERROR_TYPE,
         });
       } catch {
         // Counter emission must never fail the status write.

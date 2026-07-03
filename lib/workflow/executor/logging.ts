@@ -33,6 +33,7 @@ import {
   recordWorkflowExecutionFinished,
   recordWorkflowExecutionHealed,
 } from "@/lib/metrics/collectors/prometheus";
+import { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
 import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
@@ -815,24 +816,18 @@ export async function logWorkflowCompleteDb(
     const workflowId = updated[0].workflowId;
     try {
       const orgSlug = await resolveOrgSlugForCounter(workflowId);
-      if (resolvedStatus === "error" && classification) {
+      if (classification) {
         recordWorkflowExecutionError({
           orgSlug,
           errorCategory: classification.errorCategory,
           errorType: classification.errorType,
         });
-        recordWorkflowExecutionFinished({
-          status: executionStatus,
-          orgSlug,
-          errorType: classification.errorType,
-        });
-      } else if (resolvedStatus === "success") {
-        recordWorkflowExecutionFinished({
-          status: "success",
-          orgSlug,
-          errorType: "na",
-        });
       }
+      recordWorkflowExecutionFinished({
+        status: executionStatus,
+        orgSlug,
+        errorType: classification?.errorType ?? NA_ERROR_TYPE,
+      });
     } catch {
       // Counter emission must never break finalization.
     }

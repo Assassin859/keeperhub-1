@@ -8,7 +8,9 @@
 import "server-only";
 
 import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import type { ErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
+import type { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
 import type { ErrorContext, MetricLabels, MetricsCollector } from "../types";
 
 // Use global singletons to prevent duplicate registration during hot reload
@@ -975,9 +977,9 @@ const workflowExecutionsFinished = getOrCreateCounter(
 );
 
 export function recordWorkflowExecutionFinished(labels: {
-  status: string;
+  status: "success" | ErrorStatus;
   orgSlug: string;
-  errorType: string;
+  errorType: "user" | "system" | typeof NA_ERROR_TYPE;
 }): void {
   workflowExecutionsFinished.inc({
     status: labels.status,

@@ -50,7 +50,10 @@ import {
 } from "@/lib/db/schema";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn } from "@/lib/logging";
-import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/metric-constants";
+import {
+  ANONYMOUS_ORG_SLUG,
+  NA_ERROR_TYPE,
+} from "@/lib/metrics/metric-constants";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
@@ -152,7 +155,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
         errorType: sql<string>`CASE
-          WHEN ${notInArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 'na'
+          WHEN ${notInArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN ${NA_ERROR_TYPE}
           WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
           ELSE ${workflowExecutions.errorType}
         END`,

@@ -8,6 +8,7 @@ import {
   recordWorkflowExecutionErrorByWorkflow,
   recordWorkflowExecutionFinished,
 } from "../../lib/metrics/collectors/prometheus";
+import { NA_ERROR_TYPE } from "../../lib/metrics/metric-constants";
 import { resolveOrgSlugCached } from "../../lib/metrics/org-slug-cache";
 import type { DbSchema } from "./db-helpers";
 
@@ -44,7 +45,7 @@ export async function recordTerminalSample(
       recordWorkflowExecutionFinished({
         status: "success",
         orgSlug,
-        errorType: "na",
+        errorType: NA_ERROR_TYPE,
       });
       return;
     }
