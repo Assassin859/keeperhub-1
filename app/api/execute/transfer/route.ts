@@ -20,6 +20,7 @@ import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { transferFundsCore } from "@/plugins/web3/steps/transfer-funds-core";
 import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
 import { validateApiKey } from "../_lib/auth";
+import { enforceDirectExecutionConcurrency } from "../_lib/concurrency-limit";
 import {
   completeExecution,
   failExecution,
@@ -28,6 +29,7 @@ import {
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseNativeValueWei } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
@@ -155,6 +157,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
+  // 5.55 Concurrency back-pressure: gate the state-changing write path only
+  // (reads/simulations/replays are not throttled). Checked before reserving the
+  // idempotency key so a 429 leaves no key to release.
+  const concurrency = await enforceDirectExecutionConcurrency(
+    apiKeyCtx.organizationId
+  );
+  if (concurrency) {
+    return concurrency;
+  }
+
   // 5.6 Idempotency: an Idempotency-Key lets clients retry a broadcast safely.
   // Reserve the key (per-org, across direct-execution endpoints) before doing
   // any state-changing work; a replay/conflict/in-progress short-circuits here.
@@ -174,14 +186,35 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  // 6. Spending cap + create execution atomically
+  // 6. Spending cap + create execution atomically. Native transfers charge
+  // their ETH value against the daily value cap; ERC-20 transfers move no
+  // native value (token value is not yet priced into the cap) so reserve 0.
   const redactedInput = redactInput(withRejectedSignerOverride(body, body));
+  let reservedValueWei = "0";
+  if (!isTokenTransfer) {
+    const parsedValue = parseNativeValueWei(amount);
+    if (!parsedValue.ok) {
+      return applyRateLimitHeaders(
+        await recordIdempotentResponse(
+          idem,
+          NextResponse.json(
+            { error: parsedValue.error, field: "amount" },
+            { status: HttpStatus.BAD_REQUEST }
+          ),
+          "release"
+        ),
+        rateLimit
+      );
+    }
+    reservedValueWei = parsedValue.valueWei;
+  }
   const reserve = await checkAndReserveExecution({
     organizationId: apiKeyCtx.organizationId,
     apiKeyId: apiKeyCtx.apiKeyId,
     type: "transfer",
     network,
     input: redactedInput,
+    reservedValueWei,
   });
   if (!reserve.allowed) {
     // Pre-broadcast gating failure: release so the same key can be retried.

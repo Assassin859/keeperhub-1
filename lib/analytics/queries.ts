@@ -24,6 +24,7 @@ import {
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
+import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -1301,54 +1302,23 @@ export async function getSpendCapData(organizationId: string): Promise<{
   dailyCapWei: string | null;
   dailyUsedWei: string;
 }> {
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
-  const [capResult, directUsageResult, workflowUsageResult] = await Promise.all(
-    [
-      db
-        .select({ dailyCapWei: organizationSpendCaps.dailyCapWei })
-        .from(organizationSpendCaps)
-        .where(eq(organizationSpendCaps.organizationId, organizationId))
-        .limit(1),
-      db
-        .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-        })
-        .from(directExecutions)
-        .where(
-          and(
-            eq(directExecutions.organizationId, organizationId),
-            eq(directExecutions.status, "completed"),
-            gte(directExecutions.createdAt, todayStart)
-          )
-        ),
-      db
-        // Same denormalised-column read as getWorkflowGasTotal: today's run
-        // gas straight off workflow_executions, no logs JSONB scan. gas_used_wei
-        // already reflects only gas-bearing (success) step output, so the
-        // previous log status='success' filter is subsumed. Windowed by run
-        // start rather than per-step time (see getWorkflowGasTotal).
-        .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-        })
-        .from(workflowExecutions)
-        .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
-        .where(
-          and(
-            eq(workflows.organizationId, organizationId),
-            gte(workflowExecutions.startedAt, todayStart)
-          )
-        ),
-    ]
-  );
+  // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
+  // per day, summed across BOTH stores (direct executions AND the workflow/
+  // protocol value ledger, with the same stale-window aging), against the org's
+  // daily value cap. Using the shared SUM keeps the gauge honest -- it shows the
+  // same number enforcement checks, so workflow spend counts too.
+  const [capResult, dailyUsedWei] = await Promise.all([
+    db
+      .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
+      .from(organizationSpendCaps)
+      .where(eq(organizationSpendCaps.organizationId, organizationId))
+      .limit(1),
+    sumOrgValueTodayWei(db, organizationId),
+  ]);
 
   return {
-    dailyCapWei: capResult[0]?.dailyCapWei ?? null,
-    dailyUsedWei: addBigIntStrings(
-      directUsageResult[0]?.totalWei ?? "0",
-      workflowUsageResult[0]?.totalWei ?? "0"
-    ),
+    dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
+    dailyUsedWei: dailyUsedWei.toString(),
   };
 }
 

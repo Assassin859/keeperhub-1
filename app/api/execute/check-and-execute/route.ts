@@ -20,6 +20,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
 import { validateApiKey } from "../_lib/auth";
+import { enforceDirectExecutionConcurrency } from "../_lib/concurrency-limit";
 import type { ConditionInput, ConditionResult } from "../_lib/condition";
 import { evaluateCondition } from "../_lib/condition";
 import {
@@ -144,6 +145,9 @@ async function executeConditionalWrite(
     type: "check-and-execute",
     network,
     input: redactedInput,
+    // The conditional write never forwards native value (writeContractCore is
+    // called without ethValue), so nothing is charged to the value cap here.
+    reservedValueWei: "0",
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(
@@ -356,6 +360,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
       rateLimit
     );
+  }
+
+  // Concurrency back-pressure: gate the broadcasting write path only (reads and
+  // simulations already returned above). Before reserving the idempotency key so
+  // a 429 leaves no key to release.
+  const concurrency = await enforceDirectExecutionConcurrency(
+    apiKeyCtx.organizationId
+  );
+  if (concurrency) {
+    return concurrency;
   }
 
   // Idempotency applies only to the broadcasting write path.

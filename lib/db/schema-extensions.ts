@@ -628,6 +628,11 @@ export const directExecutions = pgTable(
     error: text("error"),
     gasUsedWei: text("gas_used_wei"),
     gasPriceWei: text("gas_price_wei"),
+    // Native notional value (wei) this execution moves, reserved at request time
+    // and summed per org per day by spending-cap enforcement. Null for executions
+    // that move no native value (treated as 0). ERC-20 token value is not yet
+    // priced into this figure.
+    valueWei: text("value_wei"),
     // Populated by a future price-oracle integration; null until then
     estimatedCostUsd: text("estimated_cost_usd"),
     retryCount: integer("retry_count").notNull().default(0),
@@ -697,9 +702,15 @@ export type NewIdempotencyRecord = typeof idempotencyRecords.$inferInsert;
  *
  * Per-organization daily spending limits for the direct execution API.
  * One row per organization (enforced by unique constraint on organizationId).
- * dailyCapWei is stored as text for BigInt compatibility.
+ * Wei amounts are stored as text for BigInt compatibility.
  *
- * When no row exists for an org, spending is unlimited (no cap enforced).
+ * `dailyValueCapWei` caps the native notional value moved per org per day and is
+ * the enforced limit, set by org admins/owners. `dailyCapWei` is a legacy
+ * gas-denominated figure, no longer enforced or displayed; nullable so a
+ * value-only cap row can be created without it.
+ *
+ * When no row exists for an org, or `dailyValueCapWei` is null, value spending
+ * is unlimited (no cap enforced).
  */
 export const organizationSpendCaps = pgTable("organization_spend_caps", {
   id: text("id")
@@ -709,7 +720,8 @@ export const organizationSpendCaps = pgTable("organization_spend_caps", {
     .notNull()
     .unique()
     .references(() => organization.id),
-  dailyCapWei: text("daily_cap_wei").notNull(),
+  dailyCapWei: text("daily_cap_wei"),
+  dailyValueCapWei: text("daily_value_cap_wei"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -717,6 +729,46 @@ export const organizationSpendCaps = pgTable("organization_spend_caps", {
 // Type exports for Organization Spend Caps table
 export type OrganizationSpendCap = typeof organizationSpendCaps.$inferSelect;
 export type NewOrganizationSpendCap = typeof organizationSpendCaps.$inferInsert;
+
+/**
+ * Organization Value Reservations ledger
+ *
+ * Unified per-org record of native value moved by execution so the daily value
+ * cap covers every path -- direct API, workflow steps, and protocol writes --
+ * rather than only the direct-execution routes. Every value-moving core reserves
+ * a row before broadcast and settles or releases it afterward.
+ *
+ * status: `reserved` (in-flight) -> `settled` (broadcast succeeded) | `released`
+ * (denied or failed; excluded from the cap SUM). Wei stored as text for BigInt.
+ */
+export const orgValueReservations = pgTable(
+  "org_value_reservations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id),
+    valueWei: text("value_wei").notNull(),
+    status: text("status").notNull().default("reserved"), // reserved | settled | released
+    // Origin of the value-moving execution, for audit only.
+    source: text("source"), // direct | workflow | protocol
+    // Correlation id (executionId when available), for audit only.
+    ref: text("ref"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_org_value_reservations_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
+  ]
+);
+
+export type OrgValueReservation = typeof orgValueReservations.$inferSelect;
+export type NewOrgValueReservation = typeof orgValueReservations.$inferInsert;
 
 /**
  * Overage Billing Records table

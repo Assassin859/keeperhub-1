@@ -87,6 +87,10 @@ vi.mock("../../app/api/execute/_lib/spending-cap", () => ({
     .fn()
     .mockResolvedValue({ allowed: true, executionId: "exec_1" }),
 }));
+
+vi.mock("../../app/api/execute/_lib/concurrency-limit", () => ({
+  enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("../../app/api/execute/_lib/execution-service", () => ({
   markRunning: vi.fn().mockResolvedValue(undefined),
   completeExecution: vi.fn().mockResolvedValue(undefined),

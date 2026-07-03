@@ -23,6 +23,7 @@ import type { ResolvedAction } from "../_lib/action-resolver";
 import { resolveAction } from "../_lib/action-resolver";
 import type { ApiKeyContext } from "../_lib/auth";
 import { validateApiKey } from "../_lib/auth";
+import { enforceDirectExecutionConcurrency } from "../_lib/concurrency-limit";
 import {
   completeExecution,
   createExecution,
@@ -33,6 +34,7 @@ import {
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseNodeNativeValueWei } from "../_lib/reserved-value";
 import {
   DEFAULT_TIMEOUT_MS as DEFAULT_RETRY_TIMEOUT_MS,
   executeWithRetry,
@@ -382,6 +384,11 @@ async function executeNode(
       nodeName: resolved.label,
       nodeType: "action",
       organizationId: apiKeyCtx.organizationId,
+      // A pre-created execution id means the caller already reserved this
+      // execution's value against the cap (checkAndReserveExecution, in the
+      // networked branch below). Flag it so a value-moving step wrapper does
+      // not reserve a second time and double-charge the cap.
+      valueCapReserved: Boolean(preCreatedExecutionId),
     },
   };
 
@@ -574,6 +581,33 @@ export async function POST(request: Request): Promise<NextResponse> {
       return recordIdempotentResponse(idem, walletError, "release");
     }
 
+    // Concurrency back-pressure before broadcasting. Release the idempotency
+    // key on a 429 so a retry is not blocked by a stale in-progress record.
+    const concurrency = await enforceDirectExecutionConcurrency(
+      apiKeyCtx.organizationId
+    );
+    if (concurrency) {
+      return recordIdempotentResponse(idem, concurrency, "release");
+    }
+
+    // Charge native value moved against the daily cap: transfer-funds forwards
+    // `amount`, a contract write forwards `ethValue`. Other actions (token
+    // transfer/approve, off-chain steps) move no native value.
+    const parsedValue = parseNodeNativeValueWei(
+      resolved.importer.stepFunction,
+      validation.data.config
+    );
+    if (!parsedValue.ok) {
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: parsedValue.error },
+          { status: HttpStatus.BAD_REQUEST }
+        ),
+        "release"
+      );
+    }
+
     // Strip the same reserved keys executeNode removes so the persisted audit
     // input matches what the step actually received (see stripReservedConfig),
     // but preserve a non-honored web3Connection under _rejectedConfig so the
@@ -593,6 +627,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       type: resolved.actionType,
       network: effectiveNetwork,
       input: redactedInput,
+      reservedValueWei: parsedValue.valueWei,
     });
     if (!reserve.allowed) {
       return applyRateLimitHeaders(

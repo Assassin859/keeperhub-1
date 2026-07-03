@@ -62,6 +62,10 @@ vi.mock("@/app/api/execute/_lib/spending-cap", () => ({
     mockCheckAndReserveExecution(...args),
 }));
 
+vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
+  enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
+}));
+
 const mockValidateCheckAndExecuteInput = vi.fn();
 vi.mock("@/app/api/execute/_lib/validate", () => ({
   validateCheckAndExecuteInput: (...args: unknown[]) =>
