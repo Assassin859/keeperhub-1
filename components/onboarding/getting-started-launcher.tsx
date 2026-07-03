@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import { Check, ChevronDown, Compass, Info, Sparkles, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { usePathname, useRouter } from "next/navigation";
@@ -36,7 +36,6 @@ import {
   editorTourRequestedAtom,
   gettingStartedOpenAtom,
   pendingAiPromptAtom,
-  rightPanelWidthAtom,
 } from "@/lib/workflow/store";
 
 const SUPPRESSED_PATHS = new Set([
@@ -290,14 +289,12 @@ function StepInfoDialog({
 function ExpandedCard({
   gs,
   creditLabel,
-  panelOpen,
   onAction,
   onChip,
   onTour,
 }: {
   gs: GettingStarted;
   creditLabel: string;
-  panelOpen: boolean;
   onAction: (step: Step) => void;
   onChip: (step: Step, chip: Chip) => void;
   onTour: (step: Step) => void;
@@ -320,7 +317,7 @@ function ExpandedCard({
       data-testid="gs-launcher-card"
       exit={{ height: 0, opacity: 0, scale: 0.5 }}
       initial={{ height: 0, opacity: 0, scale: 0.5 }}
-      style={{ transformOrigin: panelOpen ? "bottom left" : "bottom right" }}
+      style={{ transformOrigin: "bottom left" }}
       transition={{ duration: 0.2, ease: "easeOut" }}
     >
       <div className="flex items-center justify-between border-b px-4 py-3">
@@ -389,7 +386,12 @@ function ExpandedCard({
   );
 }
 
-export function GettingStartedLauncher(): React.ReactElement | null {
+export function GettingStartedLauncher({
+  compact = false,
+}: {
+  // Icon-only pill for a collapsed sidebar. The label + count show otherwise.
+  compact?: boolean;
+} = {}): React.ReactElement | null {
   const gs = useGettingStarted();
   const gsRef = useRef(gs);
   gsRef.current = gs;
@@ -399,13 +401,6 @@ export function GettingStartedLauncher(): React.ReactElement | null {
   const [, setPendingAiPrompt] = useAtom(pendingAiPromptAtom);
   const [forceOpen, setForceOpen] = useAtom(gettingStartedOpenAtom);
   const requestTour = useSetAtom(editorTourRequestedAtom);
-  // The builder's right Properties panel is on-screen exactly when the page
-  // sets a width on it (open, not collapsed, not mobile -- see the
-  // rightPanelWidthAtom effect in the workflow page); it's null otherwise.
-  // Deriving the pill side from this atom flips it in lockstep with the panel,
-  // instead of racing the panel's open/close animation with a DOM measurement.
-  const rightPanelWidth = useAtomValue(rightPanelWidthAtom);
-  const panelOpen = rightPanelWidth !== null;
   const [creditLabel, setCreditLabel] = useState("$1");
 
   // The user-menu "Getting started" entry flips this to reopen the launcher.
@@ -616,33 +611,30 @@ export function GettingStartedLauncher(): React.ReactElement | null {
     void startStepWorkflow(step, prompt, { tour: true });
   };
 
-  // Panel open -> bottom-left (clears it on any width); closed -> bottom-right.
-  // The pill stays mounted in every state so the expanded card floats above it;
-  // when open the pill carries a brand-green border to signal the active state.
+  // Lives in the sidebar, just above the Discord/Documentation footer. The pill
+  // sits in-flow; the expanded card floats up from it (bottom-full) and bleeds
+  // to the right over the canvas, which the sidebar does not clip.
   const expanded = gs.state === "expanded";
   return (
-    <div
-      className={cn(
-        "fixed bottom-4 z-50 flex flex-col gap-2",
-        panelOpen ? "left-4 items-start" : "right-4 items-end"
-      )}
-    >
+    <div className="relative px-2.5 pb-2">
       <AnimatePresence>
         {expanded && (
-          <ExpandedCard
-            creditLabel={creditLabel}
-            gs={gs}
-            key="gs-card"
-            onAction={onAction}
-            onChip={onChip}
-            onTour={onTour}
-            panelOpen={panelOpen}
-          />
+          <div className="absolute bottom-full left-2.5 z-50 mb-2">
+            <ExpandedCard
+              creditLabel={creditLabel}
+              gs={gs}
+              key="gs-card"
+              onAction={onAction}
+              onChip={onChip}
+              onTour={onTour}
+            />
+          </div>
         )}
       </AnimatePresence>
       <button
         className={cn(
-          "flex items-center gap-2 rounded-full border bg-popover py-2 pr-4 pl-3 shadow-lg transition-colors hover:bg-muted",
+          "flex items-center gap-2 rounded-full border bg-popover shadow-sm transition-colors hover:bg-muted",
+          compact ? "size-9 justify-center p-0" : "w-full py-2 pr-4 pl-3",
           expanded && "border-keeperhub-green"
         )}
         data-open={expanded}
@@ -651,10 +643,14 @@ export function GettingStartedLauncher(): React.ReactElement | null {
         type="button"
       >
         <ProgressRing done={launcherDone(gs)} total={launcherTotal(gs)} />
-        <Sparkles aria-hidden="true" className="size-3.5 text-primary" />
-        <span className="font-medium text-sm">
-          Getting started {launcherDone(gs)}/{launcherTotal(gs)}
-        </span>
+        {compact ? null : (
+          <>
+            <Sparkles aria-hidden="true" className="size-3.5 text-primary" />
+            <span className="truncate font-medium text-sm">
+              Getting started {launcherDone(gs)}/{launcherTotal(gs)}
+            </span>
+          </>
+        )}
       </button>
     </div>
   );
@@ -662,14 +658,14 @@ export function GettingStartedLauncher(): React.ReactElement | null {
 
 function launcherTotal(gs: GettingStarted): number {
   const branch = getBranches({ resolvedIds: gs.recommendedIds }).find(
-    (b) => b.key === gs.branch
+    (b) => b.key === "agent"
   );
   return branch?.steps.length ?? 0;
 }
 
 function launcherDone(gs: GettingStarted): number {
   const branch = getBranches({ resolvedIds: gs.recommendedIds }).find(
-    (b) => b.key === gs.branch
+    (b) => b.key === "agent"
   );
   if (!branch) {
     return 0;

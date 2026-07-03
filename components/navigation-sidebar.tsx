@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { DiscordIcon } from "@/components/icons/discord-icon";
+import { GettingStartedLauncher } from "@/components/onboarding/getting-started-launcher";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
@@ -960,6 +961,8 @@ export function NavigationSidebar(): React.ReactNode {
             />
           ))}
         </nav>
+
+        <GettingStartedLauncher compact={!showLabels} />
 
         <div className="flex flex-col gap-1 border-t px-2.5 py-3">
           {(

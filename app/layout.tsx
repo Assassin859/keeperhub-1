@@ -13,7 +13,6 @@ import { PendingTemplateRunner } from "@/components/hub/pending-template-runner"
 import { LayoutContent } from "@/components/layout-content";
 import { MobileWarningDialog } from "@/components/mobile-warning-dialog";
 import { EditorWalkthrough } from "@/components/onboarding/editor-walkthrough";
-import { GettingStartedLauncher } from "@/components/onboarding/getting-started-launcher";
 import { SignInTourDriver } from "@/components/onboarding/signin-tour-driver";
 import { OverlayProvider } from "@/components/overlays/overlay-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -136,7 +135,6 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
                 <MobileWarningDialog />
                 <SignInTourDriver />
                 <EditorWalkthrough />
-                <GettingStartedLauncher />
               </OverlayProvider>
             </AuthProvider>
           </Provider>
