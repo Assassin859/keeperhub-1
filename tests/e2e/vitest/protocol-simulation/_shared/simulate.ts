@@ -23,6 +23,7 @@
 import { Contract, type Interface, JsonRpcProvider, parseUnits } from "ethers";
 import { expect, test } from "vitest";
 import { getProtocol } from "@/lib/protocol-registry";
+import { resolveBinding } from "@/lib/test-data/build-workflow";
 import {
   FAUCETS,
   FORK_WHALES,
@@ -152,18 +153,16 @@ async function provisionSetup(
     if (!entry) {
       throw new Error(`TOKEN_REGISTRY missing ${approval.token}`);
     }
-    // Spender resolution mirrors the builder: token symbol, protocol
-    // contract binding, or literal address.
-    let spender: string;
-    const s = approval.spender;
-    if (typeof s === "string") {
-      spender = TOKEN_REGISTRY[chainId]?.[s as TokenSymbol]?.address ?? s;
-    } else if ("_contract" in s) {
-      const contract = protocol.contracts[s._contract.key];
-      spender = contract?.addresses[chainId] ?? "";
-    } else {
-      throw new Error("unsupported spender binding in simulation setup");
-    }
+    // Same resolver the builder uses for approval.spender, including its
+    // throw on a missing contract address (an empty spender would encode
+    // approve(0x0) and revert opaquely downstream).
+    const spender = resolveBinding(
+      approval.spender,
+      "address",
+      protocol,
+      chainId,
+      SIM_WALLET
+    );
     const token = new Contract(entry.address, ERC20_ABI, provider);
     await impersonatedSend(provider, SIM_WALLET, {
       to: entry.address,
