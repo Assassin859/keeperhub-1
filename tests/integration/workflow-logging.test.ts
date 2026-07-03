@@ -99,6 +99,7 @@ vi.mock("@/lib/errors/classify", () => ({
 vi.mock("@/lib/metrics/collectors/prometheus", () => ({
   recordWorkflowExecutionError: vi.fn(),
   recordWorkflowExecutionFinished: vi.fn(),
+  recordWorkflowExecutionHealed: vi.fn(),
 }));
 vi.mock("@/lib/metrics/db-metrics", () => ({
   ANONYMOUS_ORG_SLUG: "_anonymous",

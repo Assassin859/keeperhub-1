@@ -31,6 +31,7 @@ import { getMetricsCollector } from "@/lib/metrics";
 import {
   recordWorkflowExecutionError,
   recordWorkflowExecutionFinished,
+  recordWorkflowExecutionHealed,
 } from "@/lib/metrics/collectors/prometheus";
 import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 import { toJsonSafe } from "@/lib/utils/json-safe";
@@ -274,6 +275,7 @@ async function selfHealWorkflowAfterLateStepCommit(
       error: true,
       completedAt: true,
       startedAt: true,
+      workflowId: true,
     },
   });
 
@@ -385,6 +387,17 @@ async function selfHealWorkflowAfterLateStepCommit(
       "workflow.executor.self_heal_late_commit.total",
       { outcome: "flipped" }
     );
+
+    // The finished counter already recorded this execution as error/system_error
+    // at finalize time and cannot be decremented; emit the org-labelled healed
+    // series so per-org success-rate dashboards can compensate.
+    try {
+      recordWorkflowExecutionHealed({
+        orgSlug: await resolveOrgSlugForCounter(execution.workflowId),
+      });
+    } catch {
+      // Counter emission must never break the self-heal path.
+    }
 
     logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,

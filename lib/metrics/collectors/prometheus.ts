@@ -986,6 +986,24 @@ export function recordWorkflowExecutionFinished(labels: {
   });
 }
 
+// Compensation series for the finished counter. selfHealWorkflowAfterLateStepCommit
+// flips error -> success after finalization has already emitted
+// finished{status="error"|"system_error"}, and a counter cannot be
+// decremented, so dashboards correct the per-org SLI with this series
+// (successes += healed, failures -= healed).
+const workflowExecutionsHealed = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_healed_total",
+  "Workflow executions self-healed from error to success after finalization, by org_slug",
+  ["org_slug"]
+);
+
+export function recordWorkflowExecutionHealed(labels: {
+  orgSlug: string;
+}): void {
+  workflowExecutionsHealed.inc({ org_slug: labels.orgSlug });
+}
+
 // Per-workflow error counter used exclusively for managed-client alert dedup.
 // Labels are kept to (workflow_id, org_slug, error_type) — no error_category —
 // so cardinality stays bounded: only workflows that actually fail contribute
