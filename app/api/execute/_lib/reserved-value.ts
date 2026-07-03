@@ -1,10 +1,14 @@
 import "server-only";
 
-import { parseNativeValueWei } from "@/lib/execute/native-value";
+import {
+  parseNativeValueWei,
+  type ReservedValue,
+} from "@/lib/execute/native-value";
 
 // parseNativeValueWei lives in lib/execute so both the direct-execution routes
 // (here) and the workflow step wrappers can charge native value against the
-// same cap. Re-exported for the routes/tests that import it from this path.
+// same cap. Imported above for local use (parseNodeNativeValueWei), and
+// re-exported for the routes/tests that import it from this path.
 export {
   parseNativeValueWei,
   type ReservedValue,
