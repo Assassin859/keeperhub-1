@@ -6,6 +6,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { ConnectAuthPanel } from "@/components/auth/connect-auth-panel";
 import { WalletPicker } from "@/components/auth/wallet-picker";
 import { Button } from "@/components/ui/button";
+import { resolvePostAuthDestination } from "@/lib/post-auth-destination";
 
 /**
  * Single-column sign-in: email + social (ConnectAuthPanel) with an "OR" divider
@@ -51,7 +52,11 @@ export function SignInChoices(): React.ReactElement {
               <p className="text-muted-foreground text-sm">
                 Nothing leaves your device but a signature.
               </p>
-              <WalletPicker onConnected={() => window.location.assign("/")} />
+              <WalletPicker
+                onConnected={async () => {
+                  window.location.assign(await resolvePostAuthDestination());
+                }}
+              />
               <Button
                 className="w-full justify-center"
                 onClick={() => setShowWallet(false)}
