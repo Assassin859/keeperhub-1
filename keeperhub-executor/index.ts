@@ -448,6 +448,15 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     // redelivery whose row already advanced (still running past the 300s
     // visibility timeout, or terminal) is a duplicate and must be dropped -
     // re-dispatching would double-execute (a second on-chain transaction).
+    //
+    // TRADEOFF: flipping to 'running' before dispatch means a k8s-target run
+    // whose pod never schedules (no step logs) is reaped by the reaper's 30-min
+    // 'running' branch (E-0001/workflow_engine) instead of its 5-min 'pending'
+    // branch (P-0001/infrastructure) - slower failure surfacing and a
+    // misclassified error series. The clean fix is to have the app pre-create
+    // manual/webhook rows as 'phantom' (like the scheduler) so a single
+    // phantom->pending claim serves every trigger type; deferred as it touches
+    // the app execute/webhook routes (and their immediate-visibility UX).
     const claim = await claimPendingForExecution(db, message.executionId);
     if (claim !== "claimed") {
       dropDuplicateDelivery(claim, triggerType, message.executionId);

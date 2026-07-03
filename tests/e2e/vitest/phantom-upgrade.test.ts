@@ -50,9 +50,8 @@ type ExecutionStatus =
 describe.skipIf(SKIP)("consume-path claim helpers", () => {
   let queryClient: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
-  // upgradePhantomToPending is typed against the executor's DbSchema; the
-  // test's schema-less handle is structurally compatible for the .update() it
-  // issues.
+  // The claim helpers are typed against the executor's DbSchema; the test's
+  // schema-less handle is structurally compatible for the .update() they issue.
   let execDb: PostgresJsDatabase<DbSchema>;
 
   const ownerId = `${PREFIX}user`;
@@ -232,7 +231,12 @@ describe.skipIf(SKIP)("consume-path claim helpers", () => {
       completedAt: new Date(),
     });
 
-    const outcome = await claimPhantomForExecution(execDb, id, { retry: 1 }, HASH);
+    const outcome = await claimPhantomForExecution(
+      execDb,
+      id,
+      { retry: 1 },
+      HASH
+    );
 
     expect(outcome).toBe("claimed");
     const row = await readExecution(id);
