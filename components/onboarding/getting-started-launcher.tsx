@@ -620,8 +620,14 @@ export function GettingStartedLauncher(): React.ReactElement | null {
         gs.setStepWorkflowId(key, id);
         // The new clone won't appear in the sidebar list until it refetches.
         refetchSidebar();
-      } catch {
-        toast.error("Could not add that workflow.");
+      } catch (error) {
+        console.error(
+          `[GettingStarted] Failed to clone starter workflow ${chip.workflowId}`,
+          error
+        );
+        toast.error(
+          error instanceof Error ? error.message : "Could not add that workflow."
+        );
         return;
       }
     }
