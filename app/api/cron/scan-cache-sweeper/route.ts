@@ -6,7 +6,7 @@
  * internal-service HMAC scheme; fails closed (non-scheduler callers → 401).
  *
  * Deployment: invoked by a Kubernetes CronJob every 30 minutes (the
- * `scan-cache-sweeper` job in `deploy/keeperhub/{prod,staging}/values.yaml`,
+ * `scan-cache-sweeper` job in `deploy/keeperhub-stack/{prod,staging}/values.yaml`,
  * which runs `deploy/scripts/reaper.sh` against this path). Authorized via
  * the internal-service HMAC scheme through `authenticateInternalService`.
  * No NODE_ENV bypass — endpoint fails closed when the signature does not verify.

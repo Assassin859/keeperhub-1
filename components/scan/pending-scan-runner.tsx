@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useSession } from "@/lib/auth-client";
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 import { persistSuggestion } from "@/lib/scan/persist-suggestion";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 
@@ -106,16 +107,23 @@ export function PendingScanRunner(): null {
   const router = useRouter();
   const inFlight = useRef(false);
   const { data: session, isPending } = useSession();
-  const isAuthenticated = Boolean(session?.user);
+  // A Better Auth ANONYMOUS session must not satisfy the gate: the funnel mints
+  // anonymous sessions on many surfaces (homepage/hub "try building" flows), and
+  // the intent cookie is only ever set for a not-yet-signed-up visitor. Mirror
+  // the scan page's own check (app/scan/page.tsx) so consumption waits for a
+  // real signed-in user, not the throwaway anonymous account.
+  const isAuthenticated =
+    Boolean(session?.user) && !isAnonymousUser(session?.user);
 
   useEffect(() => {
-    // Guard (d): only consume the pending_scan cookie once a session exists.
-    // GET /api/auth/scan-intent clears the cookie atomically, so an anonymous
-    // page load (reload / second tab while the auth dialog is open) would
-    // otherwise destroy the intent and surface a 401 toast to a signed-out
-    // user. The post-auth resume paths both land authenticated: OAuth via a
-    // full reload with the session cookie set, email+password via
-    // AUTH_SUCCESS_EVENT after which useSession() re-renders this effect.
+    // Guard (d): only consume the pending_scan cookie once a real (non-anonymous)
+    // session exists. GET /api/auth/scan-intent clears the cookie atomically, so
+    // an anonymous page load (reload / second tab while the auth dialog is open)
+    // would otherwise destroy the intent and either persist the workflow under
+    // the throwaway anonymous account or surface an "Unauthorized" toast. The
+    // post-auth resume paths land authenticated via the auth dialog's hard
+    // navigation (window.location.assign), which reloads this runner with the
+    // real session cookie set.
     if (isPending || !isAuthenticated) {
       return;
     }

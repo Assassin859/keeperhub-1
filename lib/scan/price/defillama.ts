@@ -3,6 +3,19 @@ import "server-only";
 import { safeFetch } from "@/lib/safe-fetch";
 
 /**
+ * Per-request timeout for the DefiLlama price fetch.
+ *
+ * The pricing passes run inside `scanOneChain`, which is raced against the 4s
+ * per-chain wall-clock budget (CHAIN_TIMEOUT_MS in lib/scan/scan-chains.ts).
+ * safeFetch inherits undici's default timeouts (effectively minutes), so
+ * without an explicit bound a single slow coins.llama.fi response would burn
+ * the whole chain budget and drop every protocol's positions on that chain.
+ * Capping the fetch degrades a pricing stall to `usdValue: null` (a
+ * first-class state) instead of losing the chain.
+ */
+const DEFILLAMA_FETCH_TIMEOUT_MS = 2500;
+
+/**
  * DefiLlama chain slug map for the `coins.llama.fi/prices/current` API.
  *
  * DefiLlama uses its own slug convention (not EVM chain IDs or standard
@@ -52,7 +65,10 @@ export async function fetchDefillamaPrice(
   const url = `https://coins.llama.fi/prices/current/${coinId}`;
 
   try {
-    const resp = await safeFetch(url, { plugin: "scan-defillama" });
+    const resp = await safeFetch(url, {
+      plugin: "scan-defillama",
+      signal: AbortSignal.timeout(DEFILLAMA_FETCH_TIMEOUT_MS),
+    });
     if (!resp.ok) {
       return null;
     }

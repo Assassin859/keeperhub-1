@@ -361,5 +361,26 @@ describe("PendingScanRunner", () => {
       expect(mockFetch).not.toHaveBeenCalled();
       expect(registeredListeners[AUTH_SUCCESS_EVENT] ?? []).toHaveLength(0);
     });
+
+    it("does not consume the intent cookie for a Better Auth anonymous session", async () => {
+      // The funnel mints anonymous sessions on many surfaces; they carry a
+      // user object (id + org) but name "Anonymous". Consuming the cookie under
+      // one would persist the workflow to the throwaway account and 401/403 at
+      // execute — the gate must treat anonymous sessions as unauthenticated.
+      mockUseSession.mockReturnValue({
+        data: { user: { id: "anon_1", name: "Anonymous" } },
+        isPending: false,
+      });
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      PendingScanRunner();
+      for (const effect of capturedEffects) {
+        await effect();
+      }
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(registeredListeners[AUTH_SUCCESS_EVENT] ?? []).toHaveLength(0);
+    });
   });
 });
