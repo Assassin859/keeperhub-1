@@ -1,5 +1,6 @@
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { start } from "workflow/api";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
@@ -7,7 +8,10 @@ import {
   classifyExecutionError,
   isDefaultClassification,
 } from "@/lib/errors/classify";
-import { statusForErrorType } from "@/lib/errors/execution-status";
+import {
+  isErrorStatus,
+  statusForErrorType,
+} from "@/lib/errors/execution-status";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
@@ -143,6 +147,15 @@ export async function executeWorkflowInBackground(
       isDefaultClassification(classification) ? null : classification.errorType
     );
 
+    // This catch is also reachable after start() has durably enqueued the run
+    // (the runId UPDATE above sits in the same try). The workflow may already
+    // have finished, or may still finish, through logWorkflowCompleteDb, so
+    // this write must not clobber a terminal row and must not emit a second
+    // finished sample: exclude success/cancelled rows via the WHERE, and gate
+    // the counter on the pre-update status (exposed via the self-join alias,
+    // which reads the statement snapshot) not already being terminal.
+    const prevExecution = alias(workflowExecutions, "prev_execution");
+
     const updated = await db
       .update(workflowExecutions)
       .set({
@@ -153,10 +166,21 @@ export async function executeWorkflowInBackground(
         errorCode: classification.code,
         completedAt: new Date(),
       })
-      .where(eq(workflowExecutions.id, executionId))
-      .returning({ workflowId: workflowExecutions.workflowId });
+      .from(prevExecution)
+      .where(
+        and(
+          eq(workflowExecutions.id, executionId),
+          eq(prevExecution.id, workflowExecutions.id),
+          ne(workflowExecutions.status, "cancelled"),
+          ne(workflowExecutions.status, "success")
+        )
+      )
+      .returning({
+        workflowId: workflowExecutions.workflowId,
+        previousStatus: prevExecution.status,
+      });
 
-    if (updated.length > 0) {
+    if (updated.length > 0 && !isErrorStatus(updated[0].previousStatus)) {
       await recordExecutionErrorFinalized({
         workflowId: updated[0].workflowId,
         errorMessage,
