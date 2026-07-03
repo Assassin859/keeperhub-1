@@ -145,6 +145,7 @@ packages/*/dist/
 # Local protocol-coverage rig output (scripts/protocol-local.sh)
 .claude/protocol-local-results.json
 .claude/protocol-sim-results.json
+.claude/floor-test-*.json
 
 # Local dev session cookie minted by scripts/dev-mint-session.ts
 .claude/.dev-session-cookie-LOCAL
