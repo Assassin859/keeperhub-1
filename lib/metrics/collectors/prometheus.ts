@@ -1841,3 +1841,16 @@ export const rpcProbeMetrics = {
   errorsTotal: rpcProbeErrorsTotal,
   lastSuccess: rpcProbeLastSuccess,
 };
+
+/**
+ * Workflow terminal counter accessors for the runner-pod metric shipping
+ * bridge (keeperhub-executor/lib/metrics-shipping.ts). In isolated (k8s-job)
+ * execution mode the workflow engine finalizes executions inside ephemeral
+ * runner pods whose registry is never scraped, so increments to these
+ * counters must be shipped to the long-lived executor to be visible to
+ * Prometheus.
+ */
+export const workflowCounterMetrics = {
+  executionErrorsCreated: workflowExecutionErrorsCreated,
+  executionsFinished: workflowExecutionsFinished,
+};
