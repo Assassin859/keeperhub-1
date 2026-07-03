@@ -22,8 +22,14 @@ if ! git diff --quiet "$TARGET"; then
 fi
 
 run_tests() {
-  docker run --rm --network host -v "$REPO_DIR":/app -w /app node:22 bash -c \
-    "corepack enable >/dev/null 2>&1 && corepack prepare pnpm@9 --activate >/dev/null 2>&1 && pnpm vitest run tests/unit/protocol-calldata.test.ts >/dev/null 2>&1"
+  # RUN_LOCAL=1 (CI, or any host with node): run pnpm directly.
+  # Default: containerized node for hosts without a node toolchain.
+  if [ "${RUN_LOCAL:-}" = "1" ]; then
+    pnpm vitest run tests/unit/protocol-calldata.test.ts >/dev/null 2>&1
+  else
+    docker run --rm --network host -v "$REPO_DIR":/app -w /app node:22 bash -c \
+      "corepack enable >/dev/null 2>&1 && corepack prepare pnpm@9 --activate >/dev/null 2>&1 && pnpm vitest run tests/unit/protocol-calldata.test.ts >/dev/null 2>&1"
+  fi
 }
 
 restore() { git checkout -- "$TARGET"; }

@@ -1,0 +1,34 @@
+name: Protocol Nightly
+
+# Nightly depth for protocol node coverage: the full ephemeral e2e run
+# (including the per-action protocol suites and Tier 1 simulations) plus
+# the Tier 0 mutation check that proves the calldata tests still have
+# teeth. PR runs stay fast; breadth and falsification live here. See
+# specs/protocol-coverage-methodology.md.
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+jobs:
+  e2e-full:
+    uses: ./.github/workflows/e2e-tests-ephemeral.yml
+    with:
+      caller_event: schedule
+    secrets: inherit
+
+  mutation-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Run mutation check
+        run: RUN_LOCAL=1 scripts/protocol-mutation-check.sh
