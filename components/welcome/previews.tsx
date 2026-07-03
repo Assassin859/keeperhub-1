@@ -26,6 +26,7 @@ import { motion } from "motion/react";
 import {
   type ComponentType,
   Fragment,
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -347,6 +348,20 @@ const STETH_CONVO: Conversation = {
       tool: "update_workflow",
       confirm: "Updated. It now waits for gas to fall below 40 gwei.",
     },
+    {
+      user: "Also post each payout to our treasury channel on Slack",
+      intent:
+        "I'll add a step that posts each payout to your Slack treasury channel.",
+      tool: "add_action",
+      confirm: "Added. Every payout now posts to your Slack channel.",
+    },
+    {
+      user: "And if a reward is over 5 stETH, tag the team in the Discord message",
+      intent:
+        "I'll branch on the reward size and tag the team when it goes above 5 stETH.",
+      tool: "update_workflow",
+      confirm: "Updated. Rewards above 5 stETH now tag the team.",
+    },
   ],
   result: "stETH yield monitor",
 };
@@ -450,7 +465,7 @@ function useConversation(convo: Conversation): {
 } {
   const [frame, setFrame] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setFrame((f) => f + 1), 55);
+    const id = setInterval(() => setFrame((f) => f + 1), 68);
     return () => clearInterval(id);
   }, []);
 
@@ -528,6 +543,45 @@ function useConversation(convo: Conversation): {
 
 const CARET = "▉";
 
+// Fixed-height message log that keeps the newest messages in view by sliding
+// the content upward as the conversation grows, like a real chat window.
+function ChatViewport({
+  height,
+  children,
+}: {
+  height: number;
+  children: ReactNode;
+}): React.ReactElement {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [offset, setOffset] = useState(0);
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) {
+      return;
+    }
+    const measure = (): void => {
+      setOffset(Math.max(0, el.scrollHeight - height));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  }, [height]);
+  return (
+    <div className="overflow-hidden" style={{ height }}>
+      <div
+        ref={contentRef}
+        style={{
+          transform: `translateY(-${offset}px)`,
+          transition: "transform 0.35s ease-out",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function CliWindow({
   meta,
   conversation,
@@ -546,51 +600,53 @@ function CliWindow({
           keeperhub
         </span>
       </div>
-      <div className="flex min-h-[300px] flex-col gap-2 px-4 py-3 leading-relaxed">
-        <p className="text-muted-foreground">$ {meta.launch}</p>
-        {run.turns.map((t) => (
-          <Fragment key={t.key}>
-            <p className="whitespace-pre-wrap break-words text-foreground">
-              <span className="text-muted-foreground">&gt; </span>
-              {t.user}
-              {t.typingUser && run.caret ? CARET : ""}
-            </p>
-            {t.showAssistant ? (
-              <>
-                {t.thinking ? (
-                  <p className="text-muted-foreground">✳ Working{run.dots}</p>
-                ) : null}
-                {t.showIntent ? (
-                  <div className="flex gap-2">
-                    <span className="shrink-0 text-keeperhub-green">●</span>
-                    <span className="whitespace-pre-wrap break-words text-foreground">
-                      {t.intent}
-                      {t.intentTyping && run.caret ? CARET : ""}
-                    </span>
-                  </div>
-                ) : null}
-                {t.toolState === "idle" ? null : (
-                  <p className="flex items-center gap-2 text-muted-foreground">
-                    Called keeperhub ({t.tool})
-                    {t.toolState === "running" ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : null}
-                  </p>
-                )}
-                {t.showConfirm ? (
-                  <div className="flex gap-2">
-                    <span className="shrink-0 text-keeperhub-green">●</span>
-                    <span className="whitespace-pre-wrap break-words text-foreground">
-                      {t.confirm}
-                      {t.confirmTyping && run.caret ? CARET : ""}
-                    </span>
-                  </div>
-                ) : null}
-              </>
-            ) : null}
-          </Fragment>
-        ))}
-      </div>
+      <ChatViewport height={340}>
+        <div className="flex flex-col gap-2 px-4 py-3 leading-relaxed">
+          <p className="text-muted-foreground">$ {meta.launch}</p>
+          {run.turns.map((t) => (
+            <Fragment key={t.key}>
+              <p className="whitespace-pre-wrap break-words text-foreground">
+                <span className="text-muted-foreground">&gt; </span>
+                {t.user}
+                {t.typingUser && run.caret ? CARET : ""}
+              </p>
+              {t.showAssistant ? (
+                <>
+                  {t.thinking ? (
+                    <p className="text-muted-foreground">✳ Working{run.dots}</p>
+                  ) : null}
+                  {t.showIntent ? (
+                    <div className="flex gap-2">
+                      <span className="shrink-0 text-keeperhub-green">●</span>
+                      <span className="whitespace-pre-wrap break-words text-foreground">
+                        {t.intent}
+                        {t.intentTyping && run.caret ? CARET : ""}
+                      </span>
+                    </div>
+                  ) : null}
+                  {t.toolState === "idle" ? null : (
+                    <p className="flex items-center gap-2 text-muted-foreground">
+                      Called keeperhub ({t.tool})
+                      {t.toolState === "running" ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : null}
+                    </p>
+                  )}
+                  {t.showConfirm ? (
+                    <div className="flex gap-2">
+                      <span className="shrink-0 text-keeperhub-green">●</span>
+                      <span className="whitespace-pre-wrap break-words text-foreground">
+                        {t.confirm}
+                        {t.confirmTyping && run.caret ? CARET : ""}
+                      </span>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </Fragment>
+          ))}
+        </div>
+      </ChatViewport>
     </div>
   );
 }
@@ -614,59 +670,61 @@ function ChatWindow({
         </span>
       </div>
 
-      <div className="flex min-h-[460px] flex-col gap-4 px-5 py-4">
-        {run.turns.map((t) => (
-          <Fragment key={t.key}>
-            {t.sent ? (
-              <div className="ml-auto max-w-[80%] fade-in slide-in-from-bottom-2 animate-in duration-300">
-                <div className="rounded-2xl bg-muted/60 px-4 py-2.5 text-foreground text-sm">
-                  {t.fullUser}
+      <ChatViewport height={400}>
+        <div className="flex flex-col gap-4 px-5 py-4">
+          {run.turns.map((t) => (
+            <Fragment key={t.key}>
+              {t.sent ? (
+                <div className="ml-auto max-w-[80%] fade-in slide-in-from-bottom-2 animate-in duration-300">
+                  <div className="rounded-2xl bg-muted/60 px-4 py-2.5 text-foreground text-sm">
+                    {t.fullUser}
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {t.showAssistant ? (
-              <div className="flex gap-3">
-                <meta.Icon className="mt-0.5 size-5 shrink-0" />
-                <div className="flex min-w-0 flex-1 flex-col gap-3">
-                  {t.thinking ? (
-                    <p className="text-muted-foreground text-sm">
-                      Thinking{run.dots}
-                    </p>
-                  ) : null}
-                  {t.showIntent ? (
-                    <p className="text-foreground text-sm leading-relaxed">
-                      {t.intent}
-                      {t.intentTyping && run.caret ? CARET : ""}
-                    </p>
-                  ) : null}
-                  {t.toolState === "idle" ? null : (
-                    <div className="flex items-center gap-2 self-start rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
-                      {t.toolState === "running" ? (
-                        <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-                      ) : (
-                        <Check className="size-3.5 text-keeperhub-green" />
-                      )}
-                      <span className="text-muted-foreground">
-                        Using KeeperHub
-                      </span>
-                      <span className="font-mono text-foreground">
-                        {t.tool}
-                      </span>
-                    </div>
-                  )}
-                  {t.showConfirm ? (
-                    <p className="text-foreground text-sm leading-relaxed">
-                      {t.confirm}
-                      {t.confirmTyping && run.caret ? CARET : ""}
-                    </p>
-                  ) : null}
+              {t.showAssistant ? (
+                <div className="flex gap-3">
+                  <meta.Icon className="mt-0.5 size-5 shrink-0" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-3">
+                    {t.thinking ? (
+                      <p className="text-muted-foreground text-sm">
+                        Thinking{run.dots}
+                      </p>
+                    ) : null}
+                    {t.showIntent ? (
+                      <p className="text-foreground text-sm leading-relaxed">
+                        {t.intent}
+                        {t.intentTyping && run.caret ? CARET : ""}
+                      </p>
+                    ) : null}
+                    {t.toolState === "idle" ? null : (
+                      <div className="flex items-center gap-2 self-start rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+                        {t.toolState === "running" ? (
+                          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <Check className="size-3.5 text-keeperhub-green" />
+                        )}
+                        <span className="text-muted-foreground">
+                          Using KeeperHub
+                        </span>
+                        <span className="font-mono text-foreground">
+                          {t.tool}
+                        </span>
+                      </div>
+                    )}
+                    {t.showConfirm ? (
+                      <p className="text-foreground text-sm leading-relaxed">
+                        {t.confirm}
+                        {t.confirmTyping && run.caret ? CARET : ""}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ) : null}
-          </Fragment>
-        ))}
-      </div>
+              ) : null}
+            </Fragment>
+          ))}
+        </div>
+      </ChatViewport>
 
       <div className="px-4 pb-4">
         <div className="rounded-2xl border border-border bg-muted/30 px-3 pt-2.5 pb-2">
