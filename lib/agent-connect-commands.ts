@@ -92,6 +92,22 @@ url = "${mcpUrl}"`,
       ],
     },
     {
+      id: "goose",
+      label: "Goose",
+      group: "mcp",
+      snippets: [
+        {
+          caption: "~/.config/goose/config.yaml",
+          body: `extensions:
+  keeperhub:
+    type: streamable_http
+    uri: ${mcpUrl}
+    enabled: true`,
+        },
+      ],
+      note: "Or run `goose configure` -> Add Extension -> Remote Extension (Streaming HTTP), then approve the browser sign-in.",
+    },
+    {
       id: "gemini-cli",
       label: "Gemini CLI",
       group: "mcp",
@@ -108,22 +124,6 @@ url = "${mcpUrl}"`,
         },
       ],
       note: "Edit your settings file, restart Gemini CLI, then approve the browser sign-in.",
-    },
-    {
-      id: "goose",
-      label: "Goose",
-      group: "mcp",
-      snippets: [
-        {
-          caption: "~/.config/goose/config.yaml",
-          body: `extensions:
-  keeperhub:
-    type: streamable_http
-    uri: ${mcpUrl}
-    enabled: true`,
-        },
-      ],
-      note: "Or run `goose configure` -> Add Extension -> Remote Extension (Streaming HTTP), then approve the browser sign-in.",
     },
     {
       id: "other",

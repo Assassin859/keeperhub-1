@@ -11,8 +11,8 @@ describe("getAgentFrameworks", () => {
       "claude-desktop",
       "openclaw",
       "codex",
-      "gemini-cli",
       "goose",
+      "gemini-cli",
       "other",
       "claude-plugin",
       "hermes",
@@ -42,8 +42,8 @@ describe("getAgentFrameworks", () => {
       "claude-desktop",
       "openclaw",
       "codex",
-      "gemini-cli",
       "goose",
+      "gemini-cli",
       "other",
     ]) {
       expect(byId.get(id)?.snippets[0].body).toContain(MCP_URL);

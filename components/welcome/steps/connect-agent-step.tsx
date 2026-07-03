@@ -51,7 +51,7 @@ function FrameworkGroup({
     <div className="flex flex-col gap-2">
       <p className="font-medium text-sm">{label}</p>
       <Tabs defaultValue={frameworks[0]?.id}>
-        <TabsList className="h-auto flex-wrap justify-start gap-1">
+        <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/20">
           {frameworks.map((framework) => {
             const Icon = TAB_ICONS[framework.id] ?? Boxes;
             return (
