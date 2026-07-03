@@ -262,6 +262,23 @@ function recordConsumeClaim(
   });
 }
 
+// A claim that did not win is a duplicate delivery (its row already ran/advanced
+// or is gone): record the outcome and warn. The caller returns so processMessage
+// deletes the message and it stops redelivering.
+function dropDuplicateDelivery(
+  claim: "already_advanced" | "not_found",
+  triggerType: string,
+  executionId: string | undefined
+): void {
+  recordConsumeClaim(
+    claim === "already_advanced" ? "dropped_advanced" : "dropped_missing",
+    triggerType
+  );
+  console.warn(
+    `[Executor] Duplicate ${triggerType} delivery (${claim}) for execution ${executionId}; dropping without re-running`
+  );
+}
+
 async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   const { workflowId, triggerType } = message;
 
@@ -433,13 +450,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     // re-dispatching would double-execute (a second on-chain transaction).
     const claim = await claimPendingForExecution(db, message.executionId);
     if (claim !== "claimed") {
-      recordConsumeClaim(
-        claim === "already_advanced" ? "dropped_advanced" : "dropped_missing",
-        triggerType
-      );
-      console.warn(
-        `[Executor] Duplicate ${triggerType} delivery (${claim}) for execution ${message.executionId}; dropping without re-running`
-      );
+      dropDuplicateDelivery(claim, triggerType, message.executionId);
       return;
     }
     recordConsumeClaim("claimed", triggerType);
@@ -518,13 +529,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       // fund-moving on-chain transaction; there is no downstream dedup).
       // Returning lets processMessage delete the message so it stops
       // redelivering.
-      recordConsumeClaim(
-        claim === "already_advanced" ? "dropped_advanced" : "dropped_missing",
-        triggerType
-      );
-      console.warn(
-        `[Executor] Duplicate ${triggerType} delivery (${claim}) for execution ${message.executionId}; dropping without re-running`
-      );
+      dropDuplicateDelivery(claim, triggerType, message.executionId);
       return;
     }
     executionId = message.executionId;
