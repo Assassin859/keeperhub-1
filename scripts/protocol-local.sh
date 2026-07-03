@@ -227,17 +227,39 @@ cmd_test() {
 }
 
 cmd_sim() {
-  local suite="${1:-}"
+  local chain="${1:-}"
   local target="tests/e2e/vitest/protocol-simulation"
-  if [ -n "$suite" ]; then
-    target="tests/e2e/vitest/protocol-simulation/${suite}.test.ts"
-  fi
+  # Chain selection is env-driven: chains.test.ts gates each chain on its
+  # PROTOCOL_SIM_RPC_<chainId> var, so export only the requested one(s).
+  local env_rpc
+  case "$chain" in
+    "")
+      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} ${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453}"
+      ;;
+    ethereum)
+      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548}"
+      ;;
+    sepolia)
+      env_rpc="PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547}"
+      ;;
+    base)
+      # The rig runs no Base fork; the caller must provide the endpoint.
+      if [ -z "${PROTOCOL_SIM_RPC_8453:-}" ]; then
+        log "PROTOCOL_SIM_RPC_8453 is not set - every base test will self-skip"
+      fi
+      env_rpc="${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453}"
+      ;;
+    *)
+      log "unknown chain '${chain}' (expected: ethereum, sepolia, base)"
+      exit 1
+      ;;
+  esac
   # Tier 1 needs only the forks - no app, no database beyond none at all.
   start_forks
-  log "running Tier 1 simulations: ${target}"
+  log "running Tier 1 simulations: ${target}${chain:+ (${chain})}"
   local started ended
   started=$(date +%s)
-  run_node "PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} ${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || true
+  run_node "${env_rpc} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || true
   ended=$(date +%s)
   log "simulation wall-clock: $((ended - started))s"
 }
