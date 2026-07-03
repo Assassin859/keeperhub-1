@@ -1,8 +1,9 @@
 import "server-only";
 
-import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { directExecutions, organizationSpendCaps } from "@/lib/db/schema";
+import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
 import { generateId } from "@/lib/utils/id";
 
 export type SpendCapResult =
@@ -72,31 +73,11 @@ export async function checkAndReserveExecution(
       return { allowed: true, executionId: id } as const;
     }
 
-    const todayStart = new Date();
-    todayStart.setUTCHours(0, 0, 0, 0);
-
-    const result = await tx
-      .select({
-        totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.valueWei} AS NUMERIC)), 0)::text`,
-      })
-      .from(directExecutions)
-      .where(
-        and(
-          eq(directExecutions.organizationId, params.organizationId),
-          ne(directExecutions.status, "failed"),
-          gte(directExecutions.createdAt, todayStart),
-          // Exclude stale in-flight reservations: a pending/running row from a
-          // crashed pod or a throwing core would otherwise hold its reserved
-          // value against the cap for the rest of the UTC day. Completed rows
-          // always count; pending/running only within a 15m window (matches the
-          // concurrency limiter's stale window). Legitimate in-flight requests
-          // settle in seconds, so this never drops a real concurrent reservation.
-          sql`(${directExecutions.status} = 'completed' OR ${directExecutions.createdAt} > now() - interval '15 minutes')`
-        )
-      )
-      .then((rows) => rows[0]);
-
-    const totalWei = BigInt(result?.totalWei ?? "0");
+    // Sum today's value across BOTH stores (direct executions AND the workflow/
+    // protocol value ledger) so a direct-API request is charged against value
+    // moved by workflow runs too, and cannot exceed the cap by racing them.
+    // Runs inside this FOR UPDATE tx, so it is consistent under concurrency.
+    const totalWei = await sumOrgValueTodayWei(tx, params.organizationId);
     const reservedWei = BigInt(params.reservedValueWei);
     const dailyCap = BigInt(cap.dailyValueCapWei);
 

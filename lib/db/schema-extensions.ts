@@ -731,6 +731,46 @@ export type OrganizationSpendCap = typeof organizationSpendCaps.$inferSelect;
 export type NewOrganizationSpendCap = typeof organizationSpendCaps.$inferInsert;
 
 /**
+ * Organization Value Reservations ledger
+ *
+ * Unified per-org record of native value moved by execution so the daily value
+ * cap covers every path -- direct API, workflow steps, and protocol writes --
+ * rather than only the direct-execution routes. Every value-moving core reserves
+ * a row before broadcast and settles or releases it afterward.
+ *
+ * status: `reserved` (in-flight) -> `settled` (broadcast succeeded) | `released`
+ * (denied or failed; excluded from the cap SUM). Wei stored as text for BigInt.
+ */
+export const orgValueReservations = pgTable(
+  "org_value_reservations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id),
+    valueWei: text("value_wei").notNull(),
+    status: text("status").notNull().default("reserved"), // reserved | settled | released
+    // Origin of the value-moving execution, for audit only.
+    source: text("source"), // direct | workflow | protocol
+    // Correlation id (executionId when available), for audit only.
+    ref: text("ref"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_org_value_reservations_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
+  ]
+);
+
+export type OrgValueReservation = typeof orgValueReservations.$inferSelect;
+export type NewOrgValueReservation = typeof orgValueReservations.$inferInsert;
+
+/**
  * Overage Billing Records table
  *
  * Tracks overage charges applied at the end of each billing period.

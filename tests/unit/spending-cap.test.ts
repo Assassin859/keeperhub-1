@@ -7,12 +7,14 @@ vi.mock("@/lib/utils/id", () => ({ generateId: () => "exec_test" }));
 const state = vi.hoisted(() => ({
   caps: [] as Array<{ dailyValueCapWei: string | null }>,
   sumRows: [] as Array<{ totalWei: string }>,
+  ledgerRows: [] as Array<{ totalWei: string }>,
   inserted: [] as Record<string, unknown>[],
 }));
 
 // Fake db.transaction whose tx supports what the reservation uses: the cap
-// FOR UPDATE lookup (.for().limit()), the value SUM (a thenable .where()), and
-// the reservation insert.
+// FOR UPDATE lookup (.for().limit()), the value SUM -- now two thenable
+// .where() selects (direct executions, then the value ledger) via
+// sumOrgValueTodayWei -- and the reservation insert.
 vi.mock("@/lib/db", () => ({
   db: {
     transaction: (cb: (tx: unknown) => unknown) => {
@@ -31,9 +33,11 @@ vi.mock("@/lib/db", () => ({
               }),
             };
           }
+          // select #2 = direct-executions SUM, select #3 = ledger SUM.
+          const rows = selectCall === 2 ? state.sumRows : state.ledgerRows;
           return {
             from: () => ({
-              where: () => Promise.resolve(state.sumRows),
+              where: () => Promise.resolve(rows),
             }),
           };
         },
@@ -62,6 +66,7 @@ const baseParams = {
 beforeEach(() => {
   state.caps = [];
   state.sumRows = [{ totalWei: "0" }];
+  state.ledgerRows = [{ totalWei: "0" }];
   state.inserted = [];
 });
 
@@ -120,6 +125,23 @@ describe("checkAndReserveExecution value cap", () => {
       allowed: false,
       reason: "Daily spending cap exceeded",
     });
+    expect(state.inserted).toHaveLength(0);
+  });
+
+  it("counts workflow/protocol value (the ledger) against a direct reservation", async () => {
+    // Direct spend 600 + ledger (workflow) spend 300 = 900; a further 200
+    // direct reservation would reach 1100 > 1000 -> denied. Without the ledger
+    // in the SUM this would wrongly pass (600 + 200 = 800).
+    state.caps = [{ dailyValueCapWei: "1000" }];
+    state.sumRows = [{ totalWei: "600" }];
+    state.ledgerRows = [{ totalWei: "300" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reservedValueWei: "200",
+    });
+
+    expect(result.allowed).toBe(false);
     expect(state.inserted).toHaveLength(0);
   });
 

@@ -9,6 +9,7 @@ import {
 } from "@/plugins/web3/steps/write-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
+import { withStepValueCap } from "@/lib/execute/value-ledger";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getProtocol, resolveContractAddress } from "@/lib/protocol-registry";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
@@ -295,7 +296,18 @@ export async function protocolWriteStep(
         : undefined,
     };
 
-    return await writeContractCore(coreInput);
+    // Charge the payable value against the org's daily cap. `ethValue` is the
+    // resolved native value forwarded to writeContractCore; a non-payable /
+    // absent value reserves nothing.
+    return await withStepValueCap(
+      {
+        organizationId: input._context?.organizationId,
+        amountEth: ethValue,
+        executionId: input._context?.executionId,
+        source: "protocol",
+      },
+      () => writeContractCore(coreInput)
+    );
   });
 }
 
