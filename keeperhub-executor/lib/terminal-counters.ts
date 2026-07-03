@@ -3,11 +3,6 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { organization, workflows } from "../../lib/db/schema";
 import { classifyExecutionError } from "../../lib/errors/classify";
 import type { ErrorStatus } from "../../lib/errors/execution-status";
-import {
-  recordWorkflowExecutionError,
-  recordWorkflowExecutionErrorByWorkflow,
-  recordWorkflowExecutionFinished,
-} from "../../lib/metrics/collectors/prometheus";
 import { NA_ERROR_TYPE } from "../../lib/metrics/metric-constants";
 import { resolveOrgSlugCached } from "../../lib/metrics/org-slug-cache";
 import type { DbSchema } from "./db-helpers";
@@ -32,6 +27,16 @@ export async function recordTerminalSample(
   }
 ): Promise<void> {
   try {
+    // Deferred so importing this module (and db-helpers) never pulls in the
+    // prometheus collector's "server-only" guard at load time - same pattern
+    // as metrics-shipping.ts. The Docker images shim server-only, but vitest
+    // and any non-shimmed context would throw on a static import.
+    const {
+      recordWorkflowExecutionError,
+      recordWorkflowExecutionErrorByWorkflow,
+      recordWorkflowExecutionFinished,
+    } = await import("../../lib/metrics/collectors/prometheus");
+
     const orgSlug = await resolveOrgSlugCached(args.workflowId, (id) =>
       db
         .select({ slug: organization.slug })
