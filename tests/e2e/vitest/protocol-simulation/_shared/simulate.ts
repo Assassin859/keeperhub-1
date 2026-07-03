@@ -24,12 +24,7 @@ import { Contract, type Interface, JsonRpcProvider, parseUnits } from "ethers";
 import { expect, test } from "vitest";
 import { getProtocol } from "@/lib/protocol-registry";
 import { resolveBinding } from "@/lib/test-data/build-workflow";
-import {
-  FAUCETS,
-  FORK_WHALES,
-  TOKEN_REGISTRY,
-  type TokenSymbol,
-} from "@/lib/test-data/chain-test-data";
+import { TOKEN_REGISTRY } from "@/lib/test-data/chain-test-data";
 import {
   type EncodedAction,
   encodeBoundAction,
@@ -37,8 +32,8 @@ import {
 } from "@/lib/test-data/encode-action";
 import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
-  type AbiFunction,
-  bindFaucetArgs,
+  ERC20_ABI,
+  ensureErc20Acquired,
 } from "../../protocol-coverage/_shared/funding";
 import { checkOutputExpectation } from "../../protocol-coverage/_shared/oracle";
 import { planPhaseFixtures } from "../../protocol-coverage/_shared/plan";
@@ -47,12 +42,6 @@ import { planPhaseFixtures } from "../../protocol-coverage/_shared/plan";
  *  keeps behavior reproducible across runs. Distinct from anvil's dev
  *  accounts to avoid colliding with their pre-existing nonces/balances. */
 export const SIM_WALLET = "0x5115000000000000000000000000000000000051";
-
-const ERC20_ABI = [
-  "function balanceOf(address) view returns (uint256)",
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function approve(address spender, uint256 amount) returns (bool)",
-];
 
 const WRITE_TIMEOUT_MS = 120_000;
 const READ_TIMEOUT_MS = 30_000;
@@ -75,65 +64,11 @@ async function impersonatedSend(
   }
 }
 
-async function ensureErc20(
-  provider: JsonRpcProvider,
-  chainId: string,
-  symbol: TokenSymbol,
-  human: string
-): Promise<void> {
-  const entry = TOKEN_REGISTRY[chainId]?.[symbol];
-  if (!entry) {
-    throw new Error(`TOKEN_REGISTRY missing ${symbol} on chain ${chainId}`);
-  }
-  const token = new Contract(entry.address, ERC20_ABI, provider);
-  const needed = parseUnits(human, entry.decimals);
-  const balance: bigint = await token.balanceOf(SIM_WALLET);
-  if (balance >= needed) {
-    return;
-  }
-  const gap = needed - balance;
-
-  const whale = FORK_WHALES[chainId]?.[symbol];
-  if (whale) {
-    // Whales are chosen for token balance, not ETH; fund their gas.
-    await provider.send("anvil_setBalance", [
-      whale.address,
-      "0x8ac7230489e80000",
-    ]);
-    const iface = token.interface;
-    await impersonatedSend(provider, whale.address, {
-      to: entry.address,
-      data: iface.encodeFunctionData("transfer", [SIM_WALLET, gap]),
-    });
-    return;
-  }
-  const faucet = FAUCETS[chainId]?.[symbol];
-  if (faucet) {
-    const abi = JSON.parse(faucet.abi) as AbiFunction[];
-    const fn = abi.find((f) => f.name === faucet.functionName);
-    if (!fn) {
-      throw new Error(`faucet ABI missing ${faucet.functionName}`);
-    }
-    const args = bindFaucetArgs(fn, entry.address, SIM_WALLET, gap);
-    const faucetContract = new Contract(faucet.contract, abi, provider);
-    await impersonatedSend(provider, SIM_WALLET, {
-      to: faucet.contract,
-      data: faucetContract.interface.encodeFunctionData(
-        faucet.functionName,
-        args
-      ),
-    });
-    return;
-  }
-  throw new Error(
-    `no whale or faucet for ${symbol} on chain ${chainId}; cannot provision`
-  );
-}
-
 async function provisionSetup(
   provider: JsonRpcProvider,
   protocolSlug: string,
-  chainId: string
+  chainId: string,
+  rpcUrl: string
 ): Promise<void> {
   const protocol = getProtocol(protocolSlug);
   const setup = protocol?.testData?.[chainId]?.setup;
@@ -145,7 +80,15 @@ async function provisionSetup(
   await provider.send("anvil_setBalance", [SIM_WALLET, "0x8ac7230489e80000"]);
 
   for (const required of setup.requiredTokens) {
-    await ensureErc20(provider, chainId, required.symbol, required.human);
+    // Shared with the coverage suites' preflight; the rpcUrl override
+    // skips its chains-table lookup (this tier has no database).
+    await ensureErc20Acquired(
+      chainId,
+      SIM_WALLET,
+      required.symbol,
+      required.human,
+      rpcUrl
+    );
   }
 
   for (const approval of setup.approvals) {
@@ -229,7 +172,7 @@ export function runSimulation(opts: {
   test(
     `setup: provision ${opts.protocol} state`,
     async () => {
-      await provisionSetup(provider, opts.protocol, opts.chainId);
+      await provisionSetup(provider, opts.protocol, opts.chainId, opts.rpcUrl);
     },
     WRITE_TIMEOUT_MS * 3
   );
