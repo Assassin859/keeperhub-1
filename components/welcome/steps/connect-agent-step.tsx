@@ -43,14 +43,16 @@ const TAB_ICONS: Record<string, ComponentType<{ className?: string }>> = {
 function FrameworkGroup({
   label,
   frameworks,
+  onSelect,
 }: {
   label: string;
   frameworks: AgentFramework[];
+  onSelect: (id: string) => void;
 }): React.ReactElement {
   return (
     <div className="flex flex-col gap-2">
       <p className="font-medium text-sm">{label}</p>
-      <Tabs defaultValue={frameworks[0]?.id}>
+      <Tabs defaultValue={frameworks[0]?.id} onValueChange={onSelect}>
         <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/20">
           {frameworks.map((framework) => {
             const Icon = TAB_ICONS[framework.id] ?? Boxes;
@@ -97,6 +99,8 @@ function FrameworkGroup({
 export function ConnectAgentStep(): React.ReactElement {
   const router = useRouter();
   const [finishing, setFinishing] = useState(false);
+  // The tab last selected in either group drives the preview's branded UI.
+  const [activeId, setActiveId] = useState("claude-code");
   const [mcpUrl, setMcpUrl] = useState(
     process.env.NEXT_PUBLIC_APP_URL
       ? `${process.env.NEXT_PUBLIC_APP_URL}/mcp`
@@ -143,7 +147,7 @@ export function ConnectAgentStep(): React.ReactElement {
       nextLabel="Finish"
       onBack={() => router.push(BACK_PATH)}
       onNext={finish}
-      preview={<ConnectAgentPreview />}
+      preview={<ConnectAgentPreview frameworkId={activeId} />}
       stepIndex={2}
       title="Connect your AI agent"
     >
@@ -153,8 +157,16 @@ export function ConnectAgentStep(): React.ReactElement {
           <CopyBlock body={mcpUrl || `${"{origin}"}/mcp`} />
         </div>
 
-        <FrameworkGroup frameworks={agents} label="Agents" />
-        <FrameworkGroup frameworks={plugins} label="Plugins" />
+        <FrameworkGroup
+          frameworks={agents}
+          label="Agents"
+          onSelect={setActiveId}
+        />
+        <FrameworkGroup
+          frameworks={plugins}
+          label="Plugins"
+          onSelect={setActiveId}
+        />
       </div>
     </WelcomeShell>
   );
