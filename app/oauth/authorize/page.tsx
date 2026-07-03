@@ -282,7 +282,7 @@ export default async function AuthorizePage({
   const scopeDescriptions: Record<string, string> = {
     "mcp:read": "Read your workflows, executions, and plugin schemas",
     "mcp:write": "Write your workflows, executions, and integrations",
-    "mcp:admin": "Full access to your KeeperHub organization",
+    "mcp:admin": "Full access to all existing and future actions",
   };
 
   const scopeOptions = SUPPORTED_SCOPES.map((s) => ({

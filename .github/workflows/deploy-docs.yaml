@@ -10,6 +10,7 @@ on:
     paths:
       - 'docs/**'
       - 'docs-site/**'
+      - 'deploy/docs-site/**'
       - '.github/workflows/build-docs-image.yml'
       - '.github/workflows/deploy-docs.yaml'
   workflow_dispatch:
@@ -39,7 +40,7 @@ jobs:
       SERVICE_NAME: keeperhub-docs
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -48,6 +49,13 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.REGION }}
+
+      - name: Connect to EKS
+        uses: ./.github/actions/eks-connect
+        with:
+          enabled: ${{ vars.TO_EKS_CONNECT }}
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          region: ${{ env.REGION }}
 
       - name: Replace variables in the Helm values file
         id: replace-vars

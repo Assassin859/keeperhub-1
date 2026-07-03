@@ -38,7 +38,7 @@ jobs:
       REGION: ${{ vars.TO_REGION }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 

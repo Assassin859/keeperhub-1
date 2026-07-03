@@ -88,7 +88,7 @@ function DeltaDisplay({
       )}
     >
       <Icon className="size-3" />
-      {Math.abs(delta).toFixed(1)}%
+      {Math.abs(delta).toFixed(2)}%
     </span>
   );
 }

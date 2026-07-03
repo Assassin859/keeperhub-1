@@ -580,6 +580,33 @@ app:
         failedJobsHistoryLimit: 3
         restartPolicy: OnFailure
         backoffLimit: 2
+      - name: scan-cache-sweeper
+        image:
+          repository: ${ECR_REGISTRY}/keeperhub-prod
+          tag: app-${IMAGE_TAG}
+          imagePullPolicy: Always
+        schedule: "*/30 * * * *" # every 30 minutes
+        command: ["/bin/sh"]
+        args:
+          - "/app/deploy/scripts/reaper.sh"
+          - "http://keeperhub-common:3000/api/cron/scan-cache-sweeper"
+        env:
+          INTERNAL_SERVICE_HMAC_SECRET:
+            type: parameterStore
+            name: internal-service-hmac-secret
+            parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "10m"
+        concurrencyPolicy: Forbid
+        successfulJobsHistoryLimit: 3
+        failedJobsHistoryLimit: 3
+        restartPolicy: OnFailure
+        backoffLimit: 2
 
 executor:
   enabled: true
@@ -730,7 +757,7 @@ executor:
       value: "noreply@keeperhub.com"
     # Billing guard. Read by keeperhub-executor/billing-guard.ts to gate
     # SQS-triggered runs (schedule / block / event) on the monthly tier.
-    # Must mirror NEXT_PUBLIC_BILLING_ENABLED in deploy/keeperhub/prod/values.yaml.
+    # Must mirror NEXT_PUBLIC_BILLING_ENABLED under the app component above.
     NEXT_PUBLIC_BILLING_ENABLED:
       type: kv
       value: "true"
@@ -920,7 +947,7 @@ block:
     reloader.stakater.com/auto: "true"
 
   # Prod Alloy scrapes via ServiceMonitor CRDs, not prometheus.io/* annotations.
-  # Same pattern the executor uses (deploy/executor/prod/values.yaml). Without
+  # Same pattern the executor component uses above (executor.serviceMonitors). Without
   # this block, the block-dispatcher /metrics endpoint is unreachable to Alloy
   # even with annotations set, so Grafana panels stay empty.
   serviceMonitors:

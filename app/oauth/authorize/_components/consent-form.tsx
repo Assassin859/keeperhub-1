@@ -50,8 +50,16 @@ export function ConsentForm({
 
   const hasScopeSelected = Object.values(checkedScopes).some(Boolean);
 
+  const isAdminSelected = checkedScopes["mcp:admin"] ?? false;
+
   const toggleScope = (id: string, checked: boolean): void => {
-    setCheckedScopes((previous) => ({ ...previous, [id]: checked }));
+    if (id === "mcp:admin" && checked) {
+      setCheckedScopes((previous) =>
+        Object.fromEntries(Object.keys(previous).map((k) => [k, true]))
+      );
+    } else {
+      setCheckedScopes((previous) => ({ ...previous, [id]: checked }));
+    }
   };
 
   return (
@@ -63,27 +71,31 @@ export function ConsentForm({
             Permissions
           </p>
           <ul className="space-y-3">
-            {scopeOptions.map((option) => (
-              <li key={option.id}>
-                <label className="flex cursor-pointer items-center gap-3 text-sm text-foreground">
-                  {/* Associated with the approve form by id so the checkboxes
-                      can live in the content area while still submitting with
-                      the Approve action. */}
-                  <input
-                    checked={checkedScopes[option.id] ?? false}
-                    className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
-                    form={APPROVE_FORM_ID}
-                    name="scope"
-                    onChange={(event) =>
-                      toggleScope(option.id, event.target.checked)
-                    }
-                    type="checkbox"
-                    value={option.id}
-                  />
-                  {option.label}
-                </label>
-              </li>
-            ))}
+            {scopeOptions.map((option) => {
+              const lockedByAdmin =
+                option.id !== "mcp:admin" && isAdminSelected;
+              return (
+                <li key={option.id}>
+                  <label
+                    className={`flex items-center gap-3 text-sm text-foreground ${lockedByAdmin ? "cursor-default opacity-50" : "cursor-pointer"}`}
+                  >
+                    <input
+                      checked={checkedScopes[option.id] ?? false}
+                      className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
+                      disabled={lockedByAdmin}
+                      form={APPROVE_FORM_ID}
+                      name="scope"
+                      onChange={(event) =>
+                        toggleScope(option.id, event.target.checked)
+                      }
+                      type="checkbox"
+                      value={option.id}
+                    />
+                    {option.label}
+                  </label>
+                </li>
+              );
+            })}
           </ul>
         </div>
 

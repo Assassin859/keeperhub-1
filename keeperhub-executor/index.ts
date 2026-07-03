@@ -31,7 +31,7 @@ import {
   ReceiveMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -141,6 +141,10 @@ function buildInput(message: ExecutorMessage): Record<string, unknown> {
         triggerType: "event",
         ...message.triggerData,
       };
+    case "manual":
+      return { triggerType: "manual" as const, ...message.input };
+    case "webhook":
+      return { triggerType: "webhook" as const, ...message.input };
     default: {
       const _exhaustive: never = message;
       throw new Error(
@@ -321,10 +325,12 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     const blockedUserId =
       "userId" in message ? message.userId : workflow.userId;
 
-    // KEEP-693: if a phantom row was pre-created for this trigger, resolve it
-    // in place to the blocked (billing/user) state rather than inserting a
-    // second row -- and so the reaper does not later age the orphaned phantom
-    // to a system P-code. Falls through to an insert when there is no phantom.
+    // KEEP-693: if a pre-created row exists for this trigger, resolve it in
+    // place to the blocked (billing/user) state rather than inserting a second
+    // row -- and so the reaper does not later age the orphan to a system P-code.
+    // Matches both 'phantom' (scheduler/event-tracker pre-created) and 'pending'
+    // (API pre-created for manual triggers). Falls through to an insert when
+    // there is no executionId (legacy messages or no pre-create).
     let blockedResolved = false;
     if (message.executionId) {
       const resolved = await db
@@ -340,7 +346,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
         .where(
           and(
             eq(workflowExecutions.id, message.executionId),
-            eq(workflowExecutions.status, "phantom")
+            inArray(workflowExecutions.status, ["phantom", "pending"])
           )
         )
         .returning({ id: workflowExecutions.id });
@@ -383,6 +389,36 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     throw new RequeueSignal(
       `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
     );
+  }
+
+  // Manual and webhook triggers: the API pre-created the execution row as
+  // 'pending' before enqueueing. Skip phantom handling entirely and dispatch
+  // directly. All billing/feature/concurrency guards above still run.
+  if (message.triggerType === "manual" || message.triggerType === "webhook") {
+    const nodes = workflow.nodes as WorkflowNode[];
+    const target = resolveDispatchTarget(nodes);
+    if (target === "api") {
+      // EXECUTION_MODE=process routes dispatch back to the app's execute route,
+      // which calls executeWorkflowInBackground, which (if
+      // WORKFLOW_DISPATCH_VIA_EXECUTOR=1 is set) re-enqueues to SQS — loop.
+      throw new Error(
+        "EXECUTION_MODE=process is incompatible with WORKFLOW_DISPATCH_VIA_EXECUTOR: " +
+          "it routes manual executions back to the API which re-enqueues to SQS. " +
+          "Use EXECUTION_MODE=in-process instead."
+      );
+    }
+    console.log(
+      `[Executor] Manual trigger dispatch target: ${target} (mode: ${CONFIG.executionMode})`
+    );
+    await dispatchExecution({
+      target,
+      workflowId,
+      executionId: message.executionId,
+      input: message.input,
+      triggerType: "manual",
+      scheduleId: undefined,
+    });
+    return;
   }
 
   const input = buildInput(message);

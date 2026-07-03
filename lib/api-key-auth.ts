@@ -94,6 +94,7 @@ export async function authenticateApiKey(
         id: organizationApiKeys.id,
         organizationId: organizationApiKeys.organizationId,
         createdBy: organizationApiKeys.createdBy,
+        scope: organizationApiKeys.scope,
         creatorDeactivatedAt: users.deactivatedAt,
         creatorIsAnonymous: users.isAnonymous,
         creatorName: users.name,
@@ -213,6 +214,7 @@ export async function authenticateApiKey(
       organizationId: apiKey.organizationId,
       apiKeyId: apiKey.id,
       userId: apiKey.createdBy ?? undefined,
+      scope: apiKey.scope ?? undefined,
     };
   } catch (error) {
     logSystemError(

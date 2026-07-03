@@ -15,7 +15,7 @@ import {
 } from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
-import { getProtocol } from "@/lib/protocol-registry";
+import { getProtocol, resolveContractAddress } from "@/lib/protocol-registry";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
@@ -150,9 +150,11 @@ async function executeProtocolAction(
   }
   const network = String(resolvedChainId);
 
-  const contractAddress = contract.userSpecifiedAddress
-    ? String(body.contractAddress ?? "")
-    : contract.addresses[network];
+  const contractAddress = resolveContractAddress(
+    contract,
+    network,
+    String(body.contractAddress ?? "")
+  );
 
   if (!contractAddress) {
     return recordIdempotentResponse(

@@ -214,6 +214,15 @@ services:
       # all workflow runs sit at status=pending until the worker hits its
       # 5-minute timeout. Pinning to the IPv4 loopback bypasses DNS.
       WORKFLOW_LOCAL_BASE_URL: "http://127.0.0.1:3000"
+      # Route UI-triggered executions through the standalone executor via SQS
+      # so /.well-known/workflow/v1/step is never compiled in dev. The executor
+      # runs all steps in-process (tsc-compiled, no turbopack), bypassing the
+      # DevKit's embedded graphile worker which deadlocks on the 91-step bundle.
+      WORKFLOW_DISPATCH_VIA_EXECUTOR: "1"
+      # Override the minikube-targeted anchor URLs with the in-container hostnames
+      # so the SQS client can reach localstack from within the app-dev container.
+      AWS_ENDPOINT_URL: http://localstack:4566
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/keeperhub-workflow-queue
     deploy:
       resources:
         limits:
@@ -334,6 +343,10 @@ services:
       TURNKEY_API_PUBLIC_KEY: ${TURNKEY_API_PUBLIC_KEY:-}
       TURNKEY_API_PRIVATE_KEY: ${TURNKEY_API_PRIVATE_KEY:-}
       TURNKEY_ORGANIZATION_ID: ${TURNKEY_ORGANIZATION_ID:-}
+      # Run steps directly in the executor process instead of K8s Jobs.
+      # In dev there is no Kubernetes; in-process bypasses the isolation overhead
+      # and lets the executor run on a plain Docker Compose stack.
+      EXECUTION_MODE: in-process
     depends_on:
       db:
         condition: service_healthy
@@ -343,6 +356,7 @@ services:
         condition: service_started
     profiles:
       - dev
+      - dev-min
 
   # ===========================================================================
   # Internal-service HMAC secret seeder (one-shot)
@@ -373,6 +387,7 @@ services:
       pnpm tsx scripts/seed-internal-service-hmac.ts || true"
     profiles:
       - dev
+      - dev-min
       - minikube
 
   # ===========================================================================
@@ -665,6 +680,32 @@ services:
       - ${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}
       - --chain-id
       - "11155111"
+      - --block-time
+      - "1"
+    healthcheck:
+      test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles:
+      - test
+
+  # Ethereum mainnet fork for protocol-coverage tests that require mainnet state
+  # (morpho, wrapped). Set ANVIL_FORK_MAINNET_URL to a private archive node
+  # for higher rate limits and consistent block pinning.
+  test-anvil-fork-mainnet:
+    image: ghcr.io/foundry-rs/foundry:latest
+    container_name: keeperhub-test-anvil-fork-mainnet
+    ports:
+      - "8548:8545"
+    entrypoint: anvil
+    command:
+      - --host
+      - 0.0.0.0
+      - --fork-url
+      - ${ANVIL_FORK_MAINNET_URL:-https://ethereum-rpc.publicnode.com}
+      - --chain-id
+      - "1"
       - --block-time
       - "1"
     healthcheck:

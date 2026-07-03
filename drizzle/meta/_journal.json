@@ -839,7 +839,21 @@
       "idx": 119,
       "version": "7",
       "when": 1782648000003,
-      "tag": "0119_scan_results_cache",
+      "tag": "0119_keep_855_finished_completed_at_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1782765380000,
+      "tag": "0120_api_key_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1782765380001,
+      "tag": "0121_scan_results_cache",
       "breakpoints": true
     }
   ]

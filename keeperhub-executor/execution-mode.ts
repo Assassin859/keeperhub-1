@@ -11,6 +11,7 @@ import type { DispatchTarget } from "./types";
  * - "process": Always call the KeeperHub API endpoint (no isolation)
  * - "complex": Inspect workflow nodes at runtime — K8s Job for web3 writes,
  *              in-process for everything else
+ * - "in-process": Always run steps directly in the executor process (dev/docker-compose)
  */
 export function resolveDispatchTarget(nodes: WorkflowNode[]): DispatchTarget {
   switch (CONFIG.executionMode) {
@@ -20,6 +21,8 @@ export function resolveDispatchTarget(nodes: WorkflowNode[]): DispatchTarget {
       return "api";
     case "complex":
       return hasWeb3Writes(nodes) ? "k8s-job" : "in-process";
+    case "in-process":
+      return "in-process";
     default: {
       const _exhaustive: never = CONFIG.executionMode;
       throw new Error(`Unknown EXECUTION_MODE: ${_exhaustive}`);

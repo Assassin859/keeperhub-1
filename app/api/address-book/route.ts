@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
+import { curateDbError } from "@/lib/db/errors";
 import { addressBookEntry, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
@@ -68,14 +69,12 @@ export async function GET(request: Request) {
       error,
       { endpoint: "/api/address-book", operation: "list" }
     );
+    const curated = curateDbError(error, {
+      fallback: "Failed to list address book entries",
+    });
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to list address book entries",
-      },
-      { status: 500 }
+      { error: curated.message },
+      { status: curated.status }
     );
   }
 }
@@ -140,20 +139,21 @@ export async function POST(request: Request) {
 
     return NextResponse.json(newEntry, { status: 201 });
   } catch (error) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[Address Book] Failed to create entry",
-      error,
-      { endpoint: "/api/address-book", operation: "create" }
-    );
+    const curated = curateDbError(error, {
+      messages: { "23505": "This address is already in your address book." },
+      fallback: "Failed to create address book entry",
+    });
+    if (curated.status >= 500) {
+      logSystemError(
+        ErrorCategory.DATABASE,
+        "[Address Book] Failed to create entry",
+        error,
+        { endpoint: "/api/address-book", operation: "create" }
+      );
+    }
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create address book entry",
-      },
-      { status: 500 }
+      { error: curated.message },
+      { status: curated.status }
     );
   }
 }

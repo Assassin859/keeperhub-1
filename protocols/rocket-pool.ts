@@ -1,8 +1,41 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import depositPoolAbi from "./abis/rocket-pool-deposit-pool.json";
 import rethAbi from "./abis/rocket-pool-reth.json";
 
 const ROCKET_POOL_DOCS = "https://docs.rocketpool.net";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-exchange-rate": {},
+      "balance-of": { account: wallet() },
+      "total-supply": {},
+      "get-total-collateral": {},
+      burn: {},
+      // Deposits are open with ~6M ETH of headroom and a 0.01 ETH minimum
+      // (verified 2026-07-02 via getMaximumDepositAmount/getBalance).
+      deposit: { ethValue: "0.02" },
+    },
+    skipped: {
+      burn: "requires rETH balance and deposit-pool excess liquidity, which can legitimately be zero",
+    },
+    // Chain invariants: the exchange rate only ratchets up from 1e18 and
+    // rETH supply is nine figures; both being zero means the read decoded
+    // garbage. No expectation on balance-of: the deposit fixture mints the
+    // wallet rETH mid-run, so its value depends on run history on a
+    // long-lived fork.
+    expectations: {
+      "get-exchange-rate": [{ field: "rate", nonZero: true }],
+      "total-supply": [{ field: "totalSupply", nonZero: true }],
+    },
+  },
+};
 
 export default defineAbiProtocol({
   name: "Rocket Pool",
@@ -11,6 +44,8 @@ export default defineAbiProtocol({
     "Decentralized Ethereum liquid staking: deposit ETH for rETH, monitor exchange rates, and manage staking positions",
   website: "https://rocketpool.net",
   icon: "/protocols/rocket-pool.png",
+
+  testData: TEST_DATA,
 
   contracts: {
     reth: {

@@ -1,7 +1,220 @@
-import { defineProtocol } from "@/lib/protocol-registry";
-import { erc4626VaultActions } from "@/lib/web3/standards/erc4626";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
+import { wallet, amount } from "@/lib/test-data/types";
 
-export default defineProtocol({
+// Standard ERC-4626 interface. Input param names must match the keys in
+// erc4626AbiOverrides so overrides bind correctly. All outputs are unnamed
+// (single-output functions resolve to "result").
+const ERC4626_VAULT_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "deposit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "assets", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "mint",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "shares", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "assets", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "owner", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "redeem",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "shares", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "owner", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "asset",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "totalAssets",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "convertToAssets",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "convertToShares",
+    stateMutability: "view",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewDeposit",
+    stateMutability: "view",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewMint",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewWithdraw",
+    stateMutability: "view",
+    inputs: [{ name: "assets", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "previewRedeem",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxDeposit",
+    stateMutability: "view",
+    inputs: [{ name: "receiver", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxMint",
+    stateMutability: "view",
+    inputs: [{ name: "receiver", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxWithdraw",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "maxRedeem",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+]);
+
+const ERC20_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+]);
+
+const ERC20_READONLY_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+]);
+
+const DAI_USDS_CONVERTER_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "daiToUsds",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "usr", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "usdsToDai",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "usr", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+]);
+
+const MKR_SKY_CONVERTER_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "mkrToSky",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "usr", type: "address" },
+      { name: "mkrAmt", type: "uint256" },
+    ],
+    outputs: [],
+  },
+]);
+
+export default defineAbiProtocol({
   name: "Sky",
   slug: "sky",
   description:
@@ -9,206 +222,231 @@ export default defineProtocol({
   website: "https://sky.money",
   icon: "/protocols/sky.png",
 
+  testData: {
+    "1": {
+      setup: {
+        minNativeHuman: "0.01",
+        requiredTokens: [],
+        approvals: [],
+      },
+      actions: {
+        // sUSDS vault reads
+        "vault-asset": {},
+        "vault-total-assets": {},
+        "vault-total-supply": {},
+        "vault-balance": { account: wallet() },
+        "vault-convert-to-assets": { shares: amount("USDS", "1") },
+        "vault-convert-to-shares": { assets: amount("USDS", "1") },
+        "vault-preview-deposit": { assets: amount("USDS", "1") },
+        "vault-preview-mint": { shares: amount("USDS", "1") },
+        "vault-preview-withdraw": { assets: amount("USDS", "1") },
+        "vault-preview-redeem": { shares: amount("USDS", "1") },
+        "vault-max-deposit": { receiver: wallet() },
+        "vault-max-mint": { receiver: wallet() },
+        "vault-max-withdraw": { owner: wallet() },
+        "vault-max-redeem": { owner: wallet() },
+        // stUSDS vault reads
+        "st-usds-vault-asset": {},
+        "st-usds-vault-total-assets": {},
+        "st-usds-vault-total-supply": {},
+        "st-usds-vault-balance": { account: wallet() },
+        "st-usds-vault-convert-to-assets": { shares: amount("USDS", "1") },
+        "st-usds-vault-convert-to-shares": { assets: amount("USDS", "1") },
+        "st-usds-vault-preview-deposit": { assets: amount("USDS", "1") },
+        "st-usds-vault-preview-mint": { shares: amount("USDS", "1") },
+        "st-usds-vault-preview-withdraw": { assets: amount("USDS", "1") },
+        "st-usds-vault-preview-redeem": { shares: amount("USDS", "1") },
+        "st-usds-vault-max-deposit": { receiver: wallet() },
+        "st-usds-vault-max-mint": { receiver: wallet() },
+        "st-usds-vault-max-withdraw": { owner: wallet() },
+        "st-usds-vault-max-redeem": { owner: wallet() },
+        // Token balances
+        "get-usds-balance": { account: wallet() },
+        "get-dai-balance": { account: wallet() },
+        "get-sky-balance": { account: wallet() },
+        "approve-dai": { spender: wallet() },
+        "approve-usds": { spender: wallet() },
+        "convert-dai-to-usds": { usr: wallet() },
+        "convert-usds-to-dai": { usr: wallet() },
+        "convert-mkr-to-sky": { usr: wallet() },
+        "vault-deposit": { receiver: wallet() },
+        "vault-mint": { receiver: wallet() },
+        "vault-withdraw": { receiver: wallet(), owner: wallet() },
+        "vault-redeem": { receiver: wallet(), owner: wallet() },
+        "st-usds-vault-deposit": { receiver: wallet() },
+        "st-usds-vault-mint": { receiver: wallet() },
+        "st-usds-vault-withdraw": { receiver: wallet(), owner: wallet() },
+        "st-usds-vault-redeem": { receiver: wallet(), owner: wallet() },
+      },
+      skipped: {
+        "vault-deposit": "requires USDS balance + approval",
+        "vault-mint": "requires USDS balance + approval",
+        "vault-withdraw": "requires sUSDS balance",
+        "vault-redeem": "requires sUSDS balance",
+        "st-usds-vault-deposit": "requires USDS balance + approval",
+        "st-usds-vault-mint": "requires USDS balance + approval",
+        "st-usds-vault-withdraw": "requires stUSDS balance",
+        "st-usds-vault-redeem": "requires stUSDS balance",
+        "approve-usds": "write action requiring prior USDS balance",
+        "approve-dai": "write action requiring prior DAI balance",
+        "convert-dai-to-usds": "requires DAI balance",
+        "convert-usds-to-dai": "requires USDS balance",
+        "convert-mkr-to-sky": "requires MKR balance",
+      },
+    },
+  },
+
   contracts: {
     sUsds: {
       label: "sUSDS (Savings USDS)",
-      // Proxy contract
+      abi: ERC4626_VAULT_ABI,
       addresses: {
-        // Ethereum Mainnet
+        // Ethereum Mainnet -- proxy
         "1": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
         // Base
         "8453": "0x5875eEE11Cf8398102FdAd704C9E96607675467a",
         // Arbitrum One
         "42161": "0xdDb46999F8891663a8F2828d25298f70416d7610",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: erc4626AbiOverrides(),
     },
     stUsds: {
       label: "stUSDS (Staked USDS)",
+      abi: ERC4626_VAULT_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0x99CD4Ec3f88A45940936F469E4bB72A2A701EEB9",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: erc4626AbiOverrides({ slugPrefix: "st-usds", labelPrefix: "stUSDS" }),
     },
     usds: {
       label: "USDS Stablecoin",
-      // Proxy contract
+      abi: ERC20_ABI,
       addresses: {
-        // Ethereum Mainnet
+        // Ethereum Mainnet -- proxy
         "1": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
         // Base
         "8453": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc",
         // Arbitrum One
         "42161": "0x6491c05A82219b8D1479057361ff1654749b876b",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: {
+        balanceOf: {
+          slug: "get-usds-balance",
+          label: "Get USDS Balance",
+          description: "Check the USDS balance of an address",
+          inputs: { account: { label: "Wallet Address" } },
+          outputs: {
+            result: { name: "balance", label: "USDS Balance (wei)", decimals: 18 },
+          },
+        },
+        approve: {
+          slug: "approve-usds",
+          label: "Approve USDS Spending",
+          description: "Approve a spender to transfer USDS on your behalf",
+          inputs: {
+            spender: { label: "Spender Address" },
+            amount: { label: "Approval Amount (wei)" },
+          },
+        },
+      },
     },
     dai: {
       label: "DAI Stablecoin (Legacy)",
+      abi: ERC20_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: {
+        balanceOf: {
+          slug: "get-dai-balance",
+          label: "Get DAI Balance",
+          description: "Check the DAI balance of an address",
+          inputs: { account: { label: "Wallet Address" } },
+          outputs: {
+            result: { name: "balance", label: "DAI Balance (wei)", decimals: 18 },
+          },
+        },
+        approve: {
+          slug: "approve-dai",
+          label: "Approve DAI Spending",
+          description: "Approve a spender to transfer DAI on your behalf",
+          inputs: {
+            spender: { label: "Spender Address" },
+            amount: { label: "Approval Amount (wei)" },
+          },
+        },
+      },
     },
     sky: {
       label: "SKY Governance Token",
+      abi: ERC20_READONLY_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0x56072C95FAA701256059aa122697B133aDEd9279",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: {
+        balanceOf: {
+          slug: "get-sky-balance",
+          label: "Get SKY Balance",
+          description: "Check the SKY balance of an address",
+          inputs: { account: { label: "Wallet Address" } },
+          outputs: {
+            result: { name: "balance", label: "SKY Balance (wei)", decimals: 18 },
+          },
+        },
+      },
     },
     daiUsdsConverter: {
       label: "DAI-USDS Converter",
+      abi: DAI_USDS_CONVERTER_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: {
+        daiToUsds: {
+          slug: "convert-dai-to-usds",
+          label: "Convert DAI to USDS",
+          description:
+            "Convert DAI to USDS at a 1:1 rate via the official converter (Ethereum only)",
+          inputs: {
+            usr: { label: "Recipient Address" },
+            amount: { label: "DAI Amount (wei)" },
+          },
+        },
+        usdsToDai: {
+          slug: "convert-usds-to-dai",
+          label: "Convert USDS to DAI",
+          description:
+            "Convert USDS back to DAI at a 1:1 rate via the official converter (Ethereum only)",
+          inputs: {
+            usr: { label: "Recipient Address" },
+            amount: { label: "USDS Amount (wei)" },
+          },
+        },
+      },
     },
     mkrSkyConverter: {
       label: "MKR-SKY Converter",
+      abi: MKR_SKY_CONVERTER_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0xA1Ea1bA18E88C381C724a75F23a130420C403f9a",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: {
+        mkrToSky: {
+          slug: "convert-mkr-to-sky",
+          label: "Convert MKR to SKY",
+          description:
+            "Convert MKR governance tokens to SKY via the official converter (Ethereum only)",
+          inputs: {
+            usr: { label: "Recipient Address" },
+            mkrAmt: { label: "MKR Amount (wei)" },
+          },
+        },
+      },
     },
   },
-
-  actions: [
-    // ERC-4626 Vault (sUSDS Savings)
-    ...erc4626VaultActions("sUsds"),
-
-    // ERC-4626 Vault (stUSDS Staked)
-    ...erc4626VaultActions("stUsds", {
-      slugPrefix: "st-usds",
-      labelPrefix: "stUSDS",
-    }),
-
-    // Token Balances
-
-    {
-      slug: "get-usds-balance",
-      label: "Get USDS Balance",
-      description: "Check the USDS balance of an address",
-      type: "read",
-      contract: "usds",
-      function: "balanceOf",
-      inputs: [{ name: "account", type: "address", label: "Wallet Address" }],
-      outputs: [
-        {
-          name: "balance",
-          type: "uint256",
-          label: "USDS Balance (wei)",
-          decimals: 18,
-        },
-      ],
-    },
-    {
-      slug: "get-dai-balance",
-      label: "Get DAI Balance",
-      description: "Check the DAI balance of an address",
-      type: "read",
-      contract: "dai",
-      function: "balanceOf",
-      inputs: [{ name: "account", type: "address", label: "Wallet Address" }],
-      outputs: [
-        {
-          name: "balance",
-          type: "uint256",
-          label: "DAI Balance (wei)",
-          decimals: 18,
-        },
-      ],
-    },
-    {
-      slug: "get-sky-balance",
-      label: "Get SKY Balance",
-      description: "Check the SKY balance of an address",
-      type: "read",
-      contract: "sky",
-      function: "balanceOf",
-      inputs: [{ name: "account", type: "address", label: "Wallet Address" }],
-      outputs: [
-        {
-          name: "balance",
-          type: "uint256",
-          label: "SKY Balance (wei)",
-          decimals: 18,
-        },
-      ],
-    },
-
-    // Approvals
-
-    {
-      slug: "approve-usds",
-      label: "Approve USDS Spending",
-      description: "Approve a spender to transfer USDS on your behalf",
-      type: "write",
-      contract: "usds",
-      function: "approve",
-      inputs: [
-        { name: "spender", type: "address", label: "Spender Address" },
-        { name: "amount", type: "uint256", label: "Approval Amount (wei)" },
-      ],
-    },
-    {
-      slug: "approve-dai",
-      label: "Approve DAI Spending",
-      description: "Approve a spender to transfer DAI on your behalf",
-      type: "write",
-      contract: "dai",
-      function: "approve",
-      inputs: [
-        { name: "spender", type: "address", label: "Spender Address" },
-        { name: "amount", type: "uint256", label: "Approval Amount (wei)" },
-      ],
-    },
-
-    // Converters
-
-    {
-      slug: "convert-dai-to-usds",
-      label: "Convert DAI to USDS",
-      description:
-        "Convert DAI to USDS at a 1:1 rate via the official converter (Ethereum only)",
-      type: "write",
-      contract: "daiUsdsConverter",
-      function: "daiToUsds",
-      inputs: [
-        { name: "usr", type: "address", label: "Recipient Address" },
-        { name: "amount", type: "uint256", label: "DAI Amount (wei)" },
-      ],
-    },
-    {
-      slug: "convert-usds-to-dai",
-      label: "Convert USDS to DAI",
-      description:
-        "Convert USDS back to DAI at a 1:1 rate via the official converter (Ethereum only)",
-      type: "write",
-      contract: "daiUsdsConverter",
-      function: "usdsToDai",
-      inputs: [
-        { name: "usr", type: "address", label: "Recipient Address" },
-        { name: "amount", type: "uint256", label: "USDS Amount (wei)" },
-      ],
-    },
-    {
-      slug: "convert-mkr-to-sky",
-      label: "Convert MKR to SKY",
-      description:
-        "Convert MKR governance tokens to SKY via the official converter (Ethereum only)",
-      type: "write",
-      contract: "mkrSkyConverter",
-      function: "mkrToSky",
-      inputs: [
-        { name: "usr", type: "address", label: "Recipient Address" },
-        { name: "mkrAmt", type: "uint256", label: "MKR Amount (wei)" },
-      ],
-    },
-  ],
 });

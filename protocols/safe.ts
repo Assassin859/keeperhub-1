@@ -1,6 +1,176 @@
-import { defineProtocol } from "@/lib/protocol-registry";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
 
-export default defineProtocol({
+// The contract is userSpecifiedAddress, so every action binds a concrete
+// Safe. The registry's chain-1 fallback (the canonical v1.4.1 singleton,
+// 0x41675C...) is NOT usable: its storage is uninitialized, so getOwners()
+// reverts with INVALID (verified 2026-07-02 via eth_call). Target the
+// GnosisDAO treasury Safe instead -- long-lived, threshold 3, six owners.
+const MAINNET_TEST_SAFE = "0x849D52316331967b6fF1198e5E32A0eB168D039d";
+
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    actions: {
+      "get-owners": { contractAddress: MAINNET_TEST_SAFE },
+      "get-threshold": { contractAddress: MAINNET_TEST_SAFE },
+      "is-owner": { contractAddress: MAINNET_TEST_SAFE, owner: wallet() },
+      "get-nonce": { contractAddress: MAINNET_TEST_SAFE },
+      "is-module-enabled": {
+        contractAddress: MAINNET_TEST_SAFE,
+        module: wallet(),
+      },
+      "get-modules-paginated": {
+        contractAddress: MAINNET_TEST_SAFE,
+        start: "0x0000000000000000000000000000000000000001",
+        pageSize: "10",
+      },
+    },
+    skipped: {},
+    // Invariants of any live Safe: a nonzero threshold and at least one
+    // owner. The test wallet is a Turnkey EOA that is not an owner of the
+    // treasury, so is-owner is a known constant false.
+    expectations: {
+      "get-owners": [{ notEmpty: true }],
+      "get-threshold": [{ nonZero: true }],
+      "is-owner": [{ equals: "false" }],
+    },
+  },
+};
+
+const SAFE_ABI = JSON.stringify([
+  // Functions
+  {
+    type: "function",
+    name: "getOwners",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address[]" }],
+  },
+  {
+    type: "function",
+    name: "getThreshold",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "isOwner",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "nonce",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "isModuleEnabled",
+    stateMutability: "view",
+    inputs: [{ name: "module", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "getModulesPaginated",
+    stateMutability: "view",
+    inputs: [
+      { name: "start", type: "address" },
+      { name: "pageSize", type: "uint256" },
+    ],
+    outputs: [
+      { name: "array", type: "address[]" },
+      { name: "next", type: "address" },
+    ],
+  },
+  // Events
+  {
+    type: "event",
+    name: "AddedOwner",
+    inputs: [{ name: "owner", type: "address", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "RemovedOwner",
+    inputs: [{ name: "owner", type: "address", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "ChangedThreshold",
+    inputs: [{ name: "threshold", type: "uint256", indexed: false }],
+  },
+  {
+    type: "event",
+    name: "EnabledModule",
+    inputs: [{ name: "module", type: "address", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "DisabledModule",
+    inputs: [{ name: "module", type: "address", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "ChangedGuard",
+    inputs: [{ name: "guard", type: "address", indexed: false }],
+  },
+  {
+    type: "event",
+    name: "ExecutionSuccess",
+    inputs: [
+      { name: "txHash", type: "bytes32", indexed: false },
+      { name: "payment", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "ExecutionFailure",
+    inputs: [
+      { name: "txHash", type: "bytes32", indexed: false },
+      { name: "payment", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "ApproveHash",
+    inputs: [
+      { name: "approvedHash", type: "bytes32", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+    ],
+  },
+  {
+    type: "event",
+    name: "SignMsg",
+    inputs: [{ name: "msgHash", type: "bytes32", indexed: true }],
+  },
+  {
+    type: "event",
+    name: "ChangedFallbackHandler",
+    inputs: [{ name: "handler", type: "address", indexed: false }],
+  },
+  {
+    type: "event",
+    name: "SafeSetup",
+    inputs: [
+      { name: "initiator", type: "address", indexed: true },
+      { name: "owners", type: "address[]", indexed: false },
+      { name: "threshold", type: "uint256", indexed: false },
+      { name: "initializer", type: "address", indexed: false },
+      { name: "fallbackHandler", type: "address", indexed: false },
+    ],
+  },
+]);
+
+export default defineAbiProtocol({
   name: "Safe",
   slug: "safe",
   description:
@@ -8,263 +178,142 @@ export default defineProtocol({
   website: "https://safe.global",
   icon: "/protocols/safe.png",
 
+  testData: TEST_DATA,
+
   contracts: {
     safe: {
       label: "Safe Multisig",
       userSpecifiedAddress: true,
-      // Reference addresses (Safe v1.4.1 Singleton) for chain-availability metadata.
-      // Runtime address comes from user input via the contractAddress config field.
       addresses: {
-        // Ethereum Mainnet
         "1": "0x41675C099F32341bf84BFc5382aF534df5C7461a",
-        // Base
         "8453": "0x41675C099F32341bf84BFc5382aF534df5C7461a",
-        // Arbitrum One
         "42161": "0x41675C099F32341bf84BFc5382aF534df5C7461a",
-        // Optimism
         "10": "0x41675C099F32341bf84BFc5382aF534df5C7461a",
+      },
+      abi: SAFE_ABI,
+      overrides: {
+        getOwners: {
+          label: "Get Owners",
+          description: "Get the list of owner addresses for a Safe multisig",
+          outputs: {
+            result: { name: "owners", label: "Owner Addresses" },
+          },
+        },
+        getThreshold: {
+          label: "Get Threshold",
+          description:
+            "Get the number of required confirmations for a Safe transaction",
+          outputs: {
+            result: { name: "threshold", label: "Required Confirmations" },
+          },
+        },
+        isOwner: {
+          label: "Is Owner",
+          description: "Check if an address is an owner of the Safe multisig",
+          inputs: {
+            owner: { label: "Address to Check" },
+          },
+          outputs: {
+            result: { name: "isOwner", label: "Is Owner" },
+          },
+        },
+        nonce: {
+          slug: "get-nonce",
+          label: "Get Nonce",
+          description: "Get the current transaction nonce of the Safe multisig",
+          outputs: {
+            result: { name: "nonce", label: "Current Nonce" },
+          },
+        },
+        isModuleEnabled: {
+          label: "Is Module Enabled",
+          description: "Check if a module is enabled on the Safe multisig",
+          inputs: {
+            module: { label: "Module Address" },
+          },
+          outputs: {
+            result: { name: "isEnabled", label: "Module Enabled" },
+          },
+        },
+        getModulesPaginated: {
+          label: "Get Modules Paginated",
+          description:
+            "Get a paginated list of enabled modules on the Safe multisig",
+          inputs: {
+            start: {
+              label: "Start Address",
+              default: "0x0000000000000000000000000000000000000001",
+            },
+            pageSize: { label: "Page Size", default: "10" },
+          },
+          outputs: {
+            array: { label: "Module Addresses" },
+            next: { label: "Next Pagination Address" },
+          },
+        },
+      },
+      events: {
+        AddedOwner: {
+          slug: "added-owner",
+          label: "Owner Added",
+          description: "Fires when a new owner is added to the Safe",
+        },
+        RemovedOwner: {
+          slug: "removed-owner",
+          label: "Owner Removed",
+          description: "Fires when an owner is removed from the Safe",
+        },
+        ChangedThreshold: {
+          slug: "changed-threshold",
+          label: "Threshold Changed",
+          description: "Fires when the confirmation threshold is changed",
+        },
+        EnabledModule: {
+          slug: "enabled-module",
+          label: "Module Enabled",
+          description: "Fires when a module is enabled on the Safe",
+        },
+        DisabledModule: {
+          slug: "disabled-module",
+          label: "Module Disabled",
+          description: "Fires when a module is disabled on the Safe",
+        },
+        ChangedGuard: {
+          slug: "changed-guard",
+          label: "Guard Changed",
+          description: "Fires when the transaction guard is changed",
+        },
+        ExecutionSuccess: {
+          slug: "execution-success",
+          label: "Transaction Executed (Success)",
+          description: "Fires when a Safe transaction is executed successfully",
+        },
+        ExecutionFailure: {
+          slug: "execution-failure",
+          label: "Transaction Executed (Failure)",
+          description: "Fires when a Safe transaction execution fails",
+        },
+        ApproveHash: {
+          slug: "approve-hash",
+          label: "Hash Approved",
+          description: "Fires when an owner approves a transaction hash",
+        },
+        SignMsg: {
+          slug: "sign-msg",
+          label: "Message Signed",
+          description: "Fires when a message is signed by the Safe",
+        },
+        ChangedFallbackHandler: {
+          slug: "changed-fallback-handler",
+          label: "Fallback Handler Changed",
+          description: "Fires when the fallback handler is changed",
+        },
+        SafeSetup: {
+          slug: "safe-setup",
+          label: "Safe Setup",
+          description: "Fires when a new Safe is initialized",
+        },
       },
     },
   },
-
-  events: [
-    {
-      slug: "added-owner",
-      label: "Owner Added",
-      description: "Fires when a new owner is added to the Safe",
-      eventName: "AddedOwner",
-      contract: "safe",
-      inputs: [{ name: "owner", type: "address", indexed: true }],
-    },
-    {
-      slug: "removed-owner",
-      label: "Owner Removed",
-      description: "Fires when an owner is removed from the Safe",
-      eventName: "RemovedOwner",
-      contract: "safe",
-      inputs: [{ name: "owner", type: "address", indexed: true }],
-    },
-    {
-      slug: "changed-threshold",
-      label: "Threshold Changed",
-      description: "Fires when the confirmation threshold is changed",
-      eventName: "ChangedThreshold",
-      contract: "safe",
-      inputs: [{ name: "threshold", type: "uint256", indexed: false }],
-    },
-    {
-      slug: "enabled-module",
-      label: "Module Enabled",
-      description: "Fires when a module is enabled on the Safe",
-      eventName: "EnabledModule",
-      contract: "safe",
-      inputs: [{ name: "module", type: "address", indexed: true }],
-    },
-    {
-      slug: "disabled-module",
-      label: "Module Disabled",
-      description: "Fires when a module is disabled on the Safe",
-      eventName: "DisabledModule",
-      contract: "safe",
-      inputs: [{ name: "module", type: "address", indexed: true }],
-    },
-    {
-      slug: "changed-guard",
-      label: "Guard Changed",
-      description: "Fires when the transaction guard is changed",
-      eventName: "ChangedGuard",
-      contract: "safe",
-      inputs: [{ name: "guard", type: "address", indexed: false }],
-    },
-    {
-      slug: "execution-success",
-      label: "Transaction Executed (Success)",
-      description: "Fires when a Safe transaction is executed successfully",
-      eventName: "ExecutionSuccess",
-      contract: "safe",
-      inputs: [
-        { name: "txHash", type: "bytes32", indexed: false },
-        { name: "payment", type: "uint256", indexed: false },
-      ],
-    },
-    {
-      slug: "execution-failure",
-      label: "Transaction Executed (Failure)",
-      description: "Fires when a Safe transaction execution fails",
-      eventName: "ExecutionFailure",
-      contract: "safe",
-      inputs: [
-        { name: "txHash", type: "bytes32", indexed: false },
-        { name: "payment", type: "uint256", indexed: false },
-      ],
-    },
-    {
-      slug: "approve-hash",
-      label: "Hash Approved",
-      description: "Fires when an owner approves a transaction hash",
-      eventName: "ApproveHash",
-      contract: "safe",
-      inputs: [
-        { name: "approvedHash", type: "bytes32", indexed: true },
-        { name: "owner", type: "address", indexed: true },
-      ],
-    },
-    {
-      slug: "sign-msg",
-      label: "Message Signed",
-      description: "Fires when a message is signed by the Safe",
-      eventName: "SignMsg",
-      contract: "safe",
-      inputs: [{ name: "msgHash", type: "bytes32", indexed: true }],
-    },
-    {
-      slug: "changed-fallback-handler",
-      label: "Fallback Handler Changed",
-      description: "Fires when the fallback handler is changed",
-      eventName: "ChangedFallbackHandler",
-      contract: "safe",
-      inputs: [{ name: "handler", type: "address", indexed: false }],
-    },
-    {
-      slug: "safe-setup",
-      label: "Safe Setup",
-      description: "Fires when a new Safe is initialized",
-      eventName: "SafeSetup",
-      contract: "safe",
-      inputs: [
-        { name: "initiator", type: "address", indexed: true },
-        { name: "owners", type: "address[]", indexed: false },
-        { name: "threshold", type: "uint256", indexed: false },
-        { name: "initializer", type: "address", indexed: false },
-        { name: "fallbackHandler", type: "address", indexed: false },
-      ],
-    },
-  ],
-
-  actions: [
-    // Ownership
-
-    {
-      slug: "get-owners",
-      label: "Get Owners",
-      description: "Get the list of owner addresses for a Safe multisig",
-      type: "read",
-      contract: "safe",
-      function: "getOwners",
-      inputs: [],
-      outputs: [
-        {
-          name: "owners",
-          type: "address[]",
-          label: "Owner Addresses",
-        },
-      ],
-    },
-    {
-      slug: "get-threshold",
-      label: "Get Threshold",
-      description:
-        "Get the number of required confirmations for a Safe transaction",
-      type: "read",
-      contract: "safe",
-      function: "getThreshold",
-      inputs: [],
-      outputs: [
-        {
-          name: "threshold",
-          type: "uint256",
-          label: "Required Confirmations",
-        },
-      ],
-    },
-    {
-      slug: "is-owner",
-      label: "Is Owner",
-      description: "Check if an address is an owner of the Safe multisig",
-      type: "read",
-      contract: "safe",
-      function: "isOwner",
-      inputs: [{ name: "owner", type: "address", label: "Address to Check" }],
-      outputs: [
-        {
-          name: "isOwner",
-          type: "bool",
-          label: "Is Owner",
-        },
-      ],
-    },
-
-    // Transaction State
-
-    {
-      slug: "get-nonce",
-      label: "Get Nonce",
-      description: "Get the current transaction nonce of the Safe multisig",
-      type: "read",
-      contract: "safe",
-      function: "nonce",
-      inputs: [],
-      outputs: [
-        {
-          name: "nonce",
-          type: "uint256",
-          label: "Current Nonce",
-        },
-      ],
-    },
-
-    // Modules
-
-    {
-      slug: "is-module-enabled",
-      label: "Is Module Enabled",
-      description: "Check if a module is enabled on the Safe multisig",
-      type: "read",
-      contract: "safe",
-      function: "isModuleEnabled",
-      inputs: [{ name: "module", type: "address", label: "Module Address" }],
-      outputs: [
-        {
-          name: "isEnabled",
-          type: "bool",
-          label: "Module Enabled",
-        },
-      ],
-    },
-    {
-      slug: "get-modules-paginated",
-      label: "Get Modules Paginated",
-      description:
-        "Get a paginated list of enabled modules on the Safe multisig",
-      type: "read",
-      contract: "safe",
-      function: "getModulesPaginated",
-      inputs: [
-        {
-          name: "start",
-          type: "address",
-          label: "Start Address",
-          default: "0x0000000000000000000000000000000000000001",
-        },
-        {
-          name: "pageSize",
-          type: "uint256",
-          label: "Page Size",
-          default: "10",
-        },
-      ],
-      outputs: [
-        {
-          name: "array",
-          type: "address[]",
-          label: "Module Addresses",
-        },
-        {
-          name: "next",
-          type: "address",
-          label: "Next Pagination Address",
-        },
-      ],
-    },
-  ],
 });

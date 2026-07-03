@@ -265,7 +265,7 @@ describe("Chronicle Protocol Definition", () => {
   });
 
   it("oracle ABI is valid JSON with 4 functions", () => {
-    const abi = JSON.parse(chronicleDef.contracts.ethUsd.abi ?? "[]");
+    const abi = JSON.parse(chronicleDef.contracts.customOracle.abi ?? "[]");
     expect(Array.isArray(abi)).toBe(true);
     expect(abi).toHaveLength(4);
     const names = abi.map((entry: { name: string }) => entry.name);

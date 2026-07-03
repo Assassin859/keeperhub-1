@@ -7,7 +7,7 @@ import {
   readContractCore,
 } from "@/plugins/web3/steps/read-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
-import { getProtocol } from "@/lib/protocol-registry";
+import { getProtocol, resolveContractAddress } from "@/lib/protocol-registry";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
 import {
@@ -94,9 +94,11 @@ export async function protocolReadStep(
       };
     }
 
-    const contractAddress = contract.userSpecifiedAddress
-      ? input.contractAddress
-      : contract.addresses[input.network];
+    const contractAddress = resolveContractAddress(
+      contract,
+      input.network,
+      input.contractAddress
+    );
     if (!contractAddress) {
       return {
         success: false,
