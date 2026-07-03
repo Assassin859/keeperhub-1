@@ -21,7 +21,7 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -37,10 +37,12 @@ import {
 } from "@/lib/rpc/rpc-config";
 import rocketPoolDef from "@/protocols/rocket-pool";
 import { buildCalldata } from "./_shared/build-calldata";
+import { isRpcNetworkError, itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+const HEX_PREFIX = /^0x/;
 
 // Resolve Ethereum mainnet RPC URLs via the shared config pipeline:
 // CHAIN_RPC_CONFIG first, individual env vars second, public default last.
@@ -60,10 +62,11 @@ const MAINNET_FALLBACK_URL = resolveRpcUrl(
 );
 
 // Assertion model:
-//  - Read tests: let the RPC call fail loudly. A success path asserts the
-//    decoded return has the expected shape; anything else (network error,
-//    ABI mismatch, decode failure) surfaces as a real test failure instead
-//    of being swallowed.
+//  - Read tests: a success path asserts the decoded return has the expected
+//    shape. An ABI mismatch or decode failure fails the test. A transient
+//    RPC-infrastructure fault (rate limit, node error, missing revert data)
+//    is retried with backoff by itOnchain, so a rate-limit blip does not
+//    flake the suite; a persistent fault still fails.
 //  - Write tests: use provider.call against a zero-balance TEST_ADDRESS.
 //    The contract should either (a) revert with CALL_EXCEPTION on business
 //    logic (insufficient balance for burn, deposit pool not accepting
@@ -86,99 +89,123 @@ describe("Rocket Pool on-chain integration", () => {
     );
   });
 
-  it("getExchangeRate: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: rocketPoolDef,
-      actionSlug: "get-exchange-rate",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "getExchangeRate: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: rocketPoolDef,
+        actionSlug: "get-exchange-rate",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("getExchangeRate", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("getExchangeRate", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: rocketPoolDef,
-      actionSlug: "balance-of",
-      sampleInputs: { account: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "balanceOf: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: rocketPoolDef,
+        actionSlug: "balance-of",
+        sampleInputs: { account: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("balanceOf", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("balanceOf", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("totalSupply: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: rocketPoolDef,
-      actionSlug: "total-supply",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "totalSupply: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: rocketPoolDef,
+        actionSlug: "total-supply",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("totalSupply", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("totalSupply", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("getTotalCollateral: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: rocketPoolDef,
-      actionSlug: "get-total-collateral",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "getTotalCollateral: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: rocketPoolDef,
+        actionSlug: "get-total-collateral",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("getTotalCollateral", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("getTotalCollateral", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("deposit: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: rocketPoolDef,
-      actionSlug: "deposit",
-      sampleInputs: {},
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "deposit: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: rocketPoolDef,
+        actionSlug: "deposit",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
-  }, 15_000);
+      await expectCallAcceptedByBytecode(manager, { to, data });
+    },
+    15_000
+  );
 
-  it("burn: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: rocketPoolDef,
-      actionSlug: "burn",
-      sampleInputs: { amount: "1000000000000000000" },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "burn: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: rocketPoolDef,
+        actionSlug: "burn",
+        sampleInputs: { amount: "1000000000000000000" },
+        chainId: CHAIN_ID,
+      });
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
-  }, 15_000);
+      await expectCallAcceptedByBytecode(manager, { to, data });
+    },
+    15_000
+  );
 });
 
 /**
@@ -196,8 +223,14 @@ async function expectCallAcceptedByBytecode(
     const result = await manager.executeWithFailover((p) =>
       p.call({ ...tx, from: TEST_ADDRESS })
     );
-    expect(result).toMatch(/^0x/);
+    expect(result).toMatch(HEX_PREFIX);
   } catch (err: unknown) {
+    // A transport fault (rate limit, node error, timeout) is not evidence
+    // about the calldata; let itOnchain retry it. A CALL_EXCEPTION is the
+    // deployed bytecode reverting, which is a passing outcome here.
+    if (isRpcNetworkError(err)) {
+      throw err;
+    }
     expect(err).toMatchObject({ code: "CALL_EXCEPTION" });
   }
 }

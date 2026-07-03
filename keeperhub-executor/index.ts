@@ -28,6 +28,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import {
   DeleteMessageCommand,
   type Message,
+  type MessageAttributeValue,
   ReceiveMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
@@ -43,6 +44,7 @@ import { getMetricsCollector } from "../lib/metrics";
 import { LabelKeys, MetricNames } from "../lib/metrics/types";
 import { withBackstopCapture } from "../lib/security/backstop-capture";
 import { buildAttribution } from "../lib/security/request-attribution";
+import { verifySqsMessageSignature } from "../lib/sqs-message-auth";
 import { generateId } from "../lib/utils/id";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
@@ -63,6 +65,7 @@ import {
 } from "./lib/db-helpers";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
 import { toJsonSafe } from "./lib/serialize";
+import { executorMessageSchema } from "./message-schema";
 import {
   assertHmacSecretSet,
   assertTurnkeyEnvForActiveWallets,
@@ -535,6 +538,38 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   }
 }
 
+/**
+ * Verify a trigger message's HMAC signature and validate its shape
+ * before it can drive an execution. Returns the first hard failure (or null),
+ * plus whether a validly-signed message is older than the advisory freshness
+ * threshold. Freshness never produces a failure - a backlog can legitimately
+ * hold old messages, so age alone must not drop a real trigger.
+ */
+export function evaluateSqsMessageAuth(
+  rawBody: string,
+  attributes: Record<string, MessageAttributeValue> | undefined,
+  body: ExecutorMessage
+): {
+  failure:
+    | "unsigned"
+    | "unknown_caller"
+    | "bad_signature"
+    | "invalid_schema"
+    | null;
+  stale: boolean;
+} {
+  const sig = verifySqsMessageSignature(CONFIG.sqsQueueUrl, rawBody, attributes);
+  if (!sig.ok) {
+    return { failure: sig.reason, stale: false };
+  }
+  const stale = Math.abs(sig.ageSeconds) > CONFIG.sqsHmacMaxAgeSeconds;
+  const parsed = executorMessageSchema.safeParse(body);
+  if (!parsed.success) {
+    return { failure: "invalid_schema", stale };
+  }
+  return { failure: null, stale };
+}
+
 export async function processMessage(
   message: Message,
   // The message processor is injectable so tests can drive the success and
@@ -558,6 +593,52 @@ export async function processMessage(
       })
     );
     return;
+  }
+
+  // Authenticate + validate the message before it can drive a
+  // fund-moving execution. In "warn" mode we record metrics but still process
+  // (so shipping this ahead of every producer signing cannot cause an outage);
+  // in "enforce" mode a hard failure drops the message (no DLQ configured, and a
+  // forged/corrupt message cannot be made valid by redelivery).
+  if (CONFIG.sqsHmacMode !== "off") {
+    const auth = evaluateSqsMessageAuth(
+      message.Body,
+      message.MessageAttributes,
+      body
+    );
+    // Exactly one auth_result per message (a failure outranks stale, stale
+    // outranks valid) so the metric's total across labels equals messages
+    // processed - the rollout gate reads these series.
+    const result = auth.failure ?? (auth.stale ? "stale" : "valid");
+    getMetricsCollector().incrementCounter(MetricNames.SQS_MESSAGE_AUTH, {
+      [LabelKeys.AUTH_RESULT]: result,
+      [LabelKeys.MODE]: CONFIG.sqsHmacMode,
+    });
+
+    // Staleness is advisory unless SQS_HMAC_MAX_AGE_ENFORCE is set, in which case
+    // an over-age message becomes a hard failure (bounds replay to the window).
+    const staleRejected = auth.stale && CONFIG.sqsHmacMaxAgeEnforce;
+    if (auth.stale && !staleRejected) {
+      console.warn(
+        `[Executor] SQS message older than ${CONFIG.sqsHmacMaxAgeSeconds}s (advisory) for workflow ${body.workflowId}`
+      );
+    }
+
+    const failure = auth.failure ?? (staleRejected ? "stale" : null);
+    if (failure) {
+      console.warn(
+        `[Executor] SQS message rejected (${failure}, mode=${CONFIG.sqsHmacMode}) for workflow ${body.workflowId}`
+      );
+      if (CONFIG.sqsHmacMode === "enforce") {
+        await sqs.send(
+          new DeleteMessageCommand({
+            QueueUrl: CONFIG.sqsQueueUrl,
+            ReceiptHandle: message.ReceiptHandle,
+          })
+        );
+        return;
+      }
+    }
   }
 
   try {

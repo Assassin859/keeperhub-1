@@ -25,7 +25,7 @@
  */
 
 import { ethers } from "ethers";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -40,6 +40,7 @@ import {
 } from "@/lib/rpc/rpc-config";
 import uniswapDef from "@/protocols/uniswap-v3";
 import { buildCalldata } from "./_shared/build-calldata";
+import { itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "11155111"; // Sepolia
 const CHAIN_ID_NUMBER = 11_155_111;
@@ -83,267 +84,311 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
 
   // -- factory ---------------------------------------------------------------
 
-  it("get-pool: eth_call returns a decodable address", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "get-pool",
-      sampleInputs: {
-        tokenA: SEPOLIA_WETH,
-        tokenB: SEPOLIA_USDC,
-        fee: FEE_TIER_030,
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "get-pool: eth_call returns a decodable address",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "get-pool",
+        sampleInputs: {
+          tokenA: SEPOLIA_WETH,
+          tokenB: SEPOLIA_USDC,
+          fee: FEE_TIER_030,
+        },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    const result = await provider.executeWithFailover(
-      async (p) => await p.call({ to, data })
-    );
-    const iface = new ethers.Interface(JSON.parse(contract.abi as string));
-    const decoded = iface.decodeFunctionResult("getPool", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("string");
-    expect(decoded[0]).toMatch(HEX_ADDRESS_REGEX);
-  }, 30_000);
+      const provider = await makeProvider();
+      const result = await provider.executeWithFailover(
+        async (p) => await p.call({ to, data })
+      );
+      const iface = new ethers.Interface(JSON.parse(contract.abi as string));
+      const decoded = iface.decodeFunctionResult("getPool", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("string");
+      expect(decoded[0]).toMatch(HEX_ADDRESS_REGEX);
+    },
+    30_000
+  );
 
   // -- positionManager -------------------------------------------------------
 
-  it("balance-of: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "balance-of",
-      sampleInputs: { owner: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "balance-of: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "balance-of",
+        sampleInputs: { owner: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    const result = await provider.executeWithFailover(
-      async (p) => await p.call({ to, data })
-    );
-    const iface = new ethers.Interface(JSON.parse(contract.abi as string));
-    const decoded = iface.decodeFunctionResult("balanceOf", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 30_000);
-
-  it("owner-of: calldata encodes (business revert expected for invalid tokenId)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "owner-of",
-      sampleInputs: { tokenId: "1" },
-      chainId: CHAIN_ID,
-    });
-
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
+      const provider = await makeProvider();
+      const result = await provider.executeWithFailover(
         async (p) => await p.call({ to, data })
       );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const iface = new ethers.Interface(JSON.parse(contract.abi as string));
+      const decoded = iface.decodeFunctionResult("balanceOf", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    30_000
+  );
 
-  it("get-position: calldata encodes (business revert expected for invalid tokenId)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "get-position",
-      sampleInputs: { tokenId: "1" },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "owner-of: calldata encodes (business revert expected for invalid tokenId)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "owner-of",
+        sampleInputs: { tokenId: "1" },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.call({ to, data })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.call({ to, data })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
-  it("approve-position: estimateGas calldata is valid (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "approve-position",
-      sampleInputs: { to: TEST_ADDRESS, tokenId: "1" },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "get-position: calldata encodes (business revert expected for invalid tokenId)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "get-position",
+        sampleInputs: { tokenId: "1" },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.call({ to, data })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
-  it("transfer-position: estimateGas calldata is valid (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "transfer-position",
-      sampleInputs: { from: TEST_ADDRESS, to: TEST_ADDRESS, tokenId: "1" },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "approve-position: estimateGas calldata is valid (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "approve-position",
+        sampleInputs: { to: TEST_ADDRESS, tokenId: "1" },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
-  it("burn-position: estimateGas calldata is valid (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "burn-position",
-      sampleInputs: { tokenId: "1" },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "transfer-position: estimateGas calldata is valid (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "transfer-position",
+        sampleInputs: { from: TEST_ADDRESS, to: TEST_ADDRESS, tokenId: "1" },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
+
+  itOnchain(
+    "burn-position: estimateGas calldata is valid (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "burn-position",
+        sampleInputs: { tokenId: "1" },
+        chainId: CHAIN_ID,
+      });
+
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
   // -- quoter (tuple-flattened inputs) ---------------------------------------
 
-  it("quote-exact-input: calldata encodes (business revert OK if pool lacks liquidity)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "quote-exact-input",
-      sampleInputs: {
-        tokenIn: SEPOLIA_WETH,
-        tokenOut: SEPOLIA_USDC,
-        amountIn: ONE_ETH,
-        fee: FEE_TIER_030,
-        sqrtPriceLimitX96: "0",
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "quote-exact-input: calldata encodes (business revert OK if pool lacks liquidity)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "quote-exact-input",
+        sampleInputs: {
+          tokenIn: SEPOLIA_WETH,
+          tokenOut: SEPOLIA_USDC,
+          amountIn: ONE_ETH,
+          fee: FEE_TIER_030,
+          sqrtPriceLimitX96: "0",
+        },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.call({ to, data })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.call({ to, data })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
-  it("quote-exact-output: calldata encodes (business revert OK if pool lacks liquidity)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "quote-exact-output",
-      sampleInputs: {
-        tokenIn: SEPOLIA_WETH,
-        tokenOut: SEPOLIA_USDC,
-        amount: ONE_ETH,
-        fee: FEE_TIER_030,
-        sqrtPriceLimitX96: "0",
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "quote-exact-output: calldata encodes (business revert OK if pool lacks liquidity)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "quote-exact-output",
+        sampleInputs: {
+          tokenIn: SEPOLIA_WETH,
+          tokenOut: SEPOLIA_USDC,
+          amount: ONE_ETH,
+          fee: FEE_TIER_030,
+          sqrtPriceLimitX96: "0",
+        },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.call({ to, data })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.call({ to, data })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
   // -- swapRouter (tuple-flattened inputs) -----------------------------------
 
-  it("swap-exact-input: estimateGas calldata is valid (business revert expected - no approval)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "swap-exact-input",
-      sampleInputs: {
-        tokenIn: SEPOLIA_WETH,
-        tokenOut: SEPOLIA_USDC,
-        fee: FEE_TIER_030,
-        recipient: TEST_ADDRESS,
-        amountIn: ONE_ETH,
-        amountOutMinimum: "0",
-        sqrtPriceLimitX96: "0",
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "swap-exact-input: estimateGas calldata is valid (business revert expected - no approval)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "swap-exact-input",
+        sampleInputs: {
+          tokenIn: SEPOLIA_WETH,
+          tokenOut: SEPOLIA_USDC,
+          fee: FEE_TIER_030,
+          recipient: TEST_ADDRESS,
+          amountIn: ONE_ETH,
+          amountOutMinimum: "0",
+          sqrtPriceLimitX96: "0",
+        },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
-  it("swap-exact-output: estimateGas calldata is valid (business revert expected - no approval)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: uniswapDef,
-      actionSlug: "swap-exact-output",
-      sampleInputs: {
-        tokenIn: SEPOLIA_WETH,
-        tokenOut: SEPOLIA_USDC,
-        fee: FEE_TIER_030,
-        recipient: TEST_ADDRESS,
-        amountOut: ONE_ETH,
-        amountInMaximum: ONE_ETH,
-        sqrtPriceLimitX96: "0",
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "swap-exact-output: estimateGas calldata is valid (business revert expected - no approval)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: uniswapDef,
+        actionSlug: "swap-exact-output",
+        sampleInputs: {
+          tokenIn: SEPOLIA_WETH,
+          tokenOut: SEPOLIA_USDC,
+          fee: FEE_TIER_030,
+          recipient: TEST_ADDRESS,
+          amountOut: ONE_ETH,
+          amountInMaximum: ONE_ETH,
+          sqrtPriceLimitX96: "0",
+        },
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 });

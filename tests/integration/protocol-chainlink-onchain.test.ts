@@ -21,7 +21,7 @@
  */
 
 import { ethers } from "ethers";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -36,6 +36,7 @@ import {
 } from "@/lib/rpc/rpc-config";
 import chainlinkDef from "@/protocols/chainlink";
 import { buildCalldata } from "./_shared/build-calldata";
+import { itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "11155111"; // Sepolia
 const CHAIN_ID_NUMBER = 11_155_111;
@@ -84,147 +85,171 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
       "Sepolia (CCIP integration test)"
     );
 
-  it("ccip-get-fee: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: chainlinkDef,
-      actionSlug: "ccip-get-fee",
-      sampleInputs: CCIP_MESSAGE_SAMPLE,
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "ccip-get-fee: eth_call returns decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: chainlinkDef,
+        actionSlug: "ccip-get-fee",
+        sampleInputs: CCIP_MESSAGE_SAMPLE,
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
+      const provider = await makeProvider();
+      try {
+        const result = await provider.executeWithFailover(
+          async (p) => await p.call({ to, data })
+        );
+        const abi = JSON.parse(contract.abi as string);
+        const iface = new ethers.Interface(abi);
+        const decoded = iface.decodeFunctionResult("getFee", result);
+        expect(decoded).toBeDefined();
+        expect(typeof decoded[0]).toBe("bigint");
+      } catch (error) {
+        // getFee can revert for business reasons (e.g. unsupported lane),
+        // but the error must not be an ABI-level encoding/decoding failure.
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
+
+  itOnchain(
+    "ccip-check-bridge-balance: eth_call returns decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: chainlinkDef,
+        actionSlug: "ccip-check-bridge-balance",
+        sampleInputs: { account: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+        toOverride: CCIP_BNM_SEPOLIA,
+      });
+
+      const provider = await makeProvider();
       const result = await provider.executeWithFailover(
         async (p) => await p.call({ to, data })
       );
       const abi = JSON.parse(contract.abi as string);
       const iface = new ethers.Interface(abi);
-      const decoded = iface.decodeFunctionResult("getFee", result);
+      const decoded = iface.decodeFunctionResult("balanceOf", result);
       expect(decoded).toBeDefined();
       expect(typeof decoded[0]).toBe("bigint");
-    } catch (error) {
-      // getFee can revert for business reasons (e.g. unsupported lane),
-      // but the error must not be an ABI-level encoding/decoding failure.
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+    },
+    30_000
+  );
 
-  it("ccip-check-bridge-balance: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: chainlinkDef,
-      actionSlug: "ccip-check-bridge-balance",
-      sampleInputs: { account: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-      toOverride: CCIP_BNM_SEPOLIA,
-    });
+  itOnchain(
+    "ccip-check-bridge-allowance: eth_call returns decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: chainlinkDef,
+        actionSlug: "ccip-check-bridge-allowance",
+        sampleInputs: { owner: TEST_ADDRESS, spender: ethers.ZeroAddress },
+        chainId: CHAIN_ID,
+        toOverride: CCIP_BNM_SEPOLIA,
+      });
 
-    const provider = await makeProvider();
-    const result = await provider.executeWithFailover(
-      async (p) => await p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("balanceOf", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 30_000);
-
-  it("ccip-check-bridge-allowance: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: chainlinkDef,
-      actionSlug: "ccip-check-bridge-allowance",
-      sampleInputs: { owner: TEST_ADDRESS, spender: ethers.ZeroAddress },
-      chainId: CHAIN_ID,
-      toOverride: CCIP_BNM_SEPOLIA,
-    });
-
-    const provider = await makeProvider();
-    const result = await provider.executeWithFailover(
-      async (p) => await p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("allowance", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 30_000);
-
-  it("ccip-approve-bridge-token: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: chainlinkDef,
-      actionSlug: "ccip-approve-bridge-token",
-      sampleInputs: {
-        spender: ethers.ZeroAddress,
-        amount: "1000000000000000000",
-      },
-      chainId: CHAIN_ID,
-      toOverride: CCIP_BNM_SEPOLIA,
-    });
-
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+      const provider = await makeProvider();
+      const result = await provider.executeWithFailover(
+        async (p) => await p.call({ to, data })
       );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("allowance", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    30_000
+  );
 
-  it("ccip-send: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: chainlinkDef,
-      actionSlug: "ccip-send",
-      sampleInputs: CCIP_MESSAGE_SAMPLE,
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "ccip-approve-bridge-token: calldata encodes (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: chainlinkDef,
+        actionSlug: "ccip-approve-bridge-token",
+        sampleInputs: {
+          spender: ethers.ZeroAddress,
+          amount: "1000000000000000000",
+        },
+        chainId: CHAIN_ID,
+        toOverride: CCIP_BNM_SEPOLIA,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) =>
-          await p.estimateGas({
-            to,
-            data,
-            // Pay native for fee; any non-zero value is fine - estimateGas
-            // will revert for real-world reasons (fee mismatch, no balance)
-            // but the calldata itself must be ABI-valid.
-            value: ethers.parseEther("0.01"),
-            from: TEST_ADDRESS,
-          })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 
-  it("ccip-bnm-drip: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata({
-      protocol: chainlinkDef,
-      actionSlug: "ccip-bnm-drip",
-      sampleInputs: { to: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "ccip-send: calldata encodes (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: chainlinkDef,
+        actionSlug: "ccip-send",
+        sampleInputs: CCIP_MESSAGE_SAMPLE,
+        chainId: CHAIN_ID,
+      });
 
-    const provider = await makeProvider();
-    try {
-      await provider.executeWithFailover(
-        async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-    } catch (error) {
-      const msg = String(error);
-      expect(msg).not.toContain("INVALID_ARGUMENT");
-      expect(msg).not.toContain("could not decode");
-      expect(msg).not.toContain("invalid function");
-    }
-  }, 30_000);
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) =>
+            await p.estimateGas({
+              to,
+              data,
+              // Pay native for fee; any non-zero value is fine - estimateGas
+              // will revert for real-world reasons (fee mismatch, no balance)
+              // but the calldata itself must be ABI-valid.
+              value: ethers.parseEther("0.01"),
+              from: TEST_ADDRESS,
+            })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
+
+  itOnchain(
+    "ccip-bnm-drip: calldata encodes (business revert expected)",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: chainlinkDef,
+        actionSlug: "ccip-bnm-drip",
+        sampleInputs: { to: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
+
+      const provider = await makeProvider();
+      try {
+        await provider.executeWithFailover(
+          async (p) => await p.estimateGas({ to, data, from: TEST_ADDRESS })
+        );
+      } catch (error) {
+        const msg = String(error);
+        expect(msg).not.toContain("INVALID_ARGUMENT");
+        expect(msg).not.toContain("could not decode");
+        expect(msg).not.toContain("invalid function");
+      }
+    },
+    30_000
+  );
 });

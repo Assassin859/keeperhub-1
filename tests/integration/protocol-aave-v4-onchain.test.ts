@@ -17,7 +17,7 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, vi } from "vitest";
 
 // `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
 // safe-ethers adapter), which declares `import "server-only"` and would
@@ -33,11 +33,13 @@ import {
 } from "@/lib/rpc/rpc-config";
 import aaveV4Def from "@/protocols/aave-v4";
 import { buildCalldata } from "./_shared/build-calldata";
+import { isRpcNetworkError, itOnchain } from "./_shared/onchain-rpc";
 
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 const CORE_HUB = "0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9";
+const HEX_PREFIX = /^0x/;
 
 // Resolve Ethereum mainnet RPC URLs via the shared config pipeline:
 // CHAIN_RPC_CONFIG first, individual env vars second, public default last.
@@ -57,10 +59,11 @@ const MAINNET_FALLBACK_URL = resolveRpcUrl(
 );
 
 // Assertion model:
-//  - Read tests: let the RPC call fail loudly. A success path asserts the
-//    decoded return has the expected shape; anything else (network error,
-//    ABI mismatch, decode failure) surfaces as a real test failure instead
-//    of being swallowed.
+//  - Read tests: a success path asserts the decoded return has the expected
+//    shape. An ABI mismatch or decode failure fails the test. A transient
+//    RPC-infrastructure fault (rate limit, node error, missing revert data)
+//    is retried with backoff by itOnchain, so a rate-limit blip does not
+//    flake the suite; a persistent fault still fails.
 //  - Write tests: use provider.call (not estimateGas) against a zero-balance
 //    TEST_ADDRESS. The contract should either (a) revert with CALL_EXCEPTION
 //    on business logic, or (b) succeed and return "0x" for void functions.
@@ -84,113 +87,140 @@ describe("Aave V4 Lido Spoke on-chain integration", () => {
     );
   });
 
-  it("getReserveId: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: aaveV4Def,
-      actionSlug: "get-reserve-id",
-      sampleInputs: { hub: CORE_HUB, assetId: "0" },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "getReserveId: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: aaveV4Def,
+        actionSlug: "get-reserve-id",
+        sampleInputs: { hub: CORE_HUB, assetId: "0" },
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("getReserveId", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("getReserveId", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("getUserSuppliedAssets: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: aaveV4Def,
-      actionSlug: "get-user-supplied-assets",
-      sampleInputs: { reserveId: "0", user: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "getUserSuppliedAssets: eth_call returns a decodable uint256",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: aaveV4Def,
+        actionSlug: "get-user-supplied-assets",
+        sampleInputs: { reserveId: "0", user: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("getUserSuppliedAssets", result);
-    expect(decoded).toBeDefined();
-    expect(typeof decoded[0]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult(
+        "getUserSuppliedAssets",
+        result
+      );
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("getUserDebt: eth_call returns two decodable uint256 values", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: aaveV4Def,
-      actionSlug: "get-user-debt",
-      sampleInputs: { reserveId: "0", user: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "getUserDebt: eth_call returns two decodable uint256 values",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: aaveV4Def,
+        actionSlug: "get-user-debt",
+        sampleInputs: { reserveId: "0", user: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("getUserDebt", result);
-    expect(decoded).toBeDefined();
-    expect(decoded.length).toBeGreaterThanOrEqual(2);
-    expect(typeof decoded[0]).toBe("bigint");
-    expect(typeof decoded[1]).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("getUserDebt", result);
+      expect(decoded).toBeDefined();
+      expect(decoded.length).toBeGreaterThanOrEqual(2);
+      expect(typeof decoded[0]).toBe("bigint");
+      expect(typeof decoded[1]).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("getUserAccountData: eth_call returns a decodable struct with named fields", async () => {
-    const { to, data, contract } = buildCalldata({
-      protocol: aaveV4Def,
-      actionSlug: "get-user-account-data",
-      sampleInputs: { user: TEST_ADDRESS },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "getUserAccountData: eth_call returns a decodable struct with named fields",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: aaveV4Def,
+        actionSlug: "get-user-account-data",
+        sampleInputs: { user: TEST_ADDRESS },
+        chainId: CHAIN_ID,
+      });
 
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ to, data })
-    );
-    const abi = JSON.parse(contract.abi as string);
-    const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult("getUserAccountData", result);
-    expect(decoded).toBeDefined();
-    const struct = decoded[0];
-    expect(typeof struct.healthFactor).toBe("bigint");
-    expect(typeof struct.totalCollateralValue).toBe("bigint");
-    expect(typeof struct.riskPremium).toBe("bigint");
-    expect(typeof struct.borrowCount).toBe("bigint");
-  }, 15_000);
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("getUserAccountData", result);
+      expect(decoded).toBeDefined();
+      const struct = decoded[0];
+      expect(typeof struct.healthFactor).toBe("bigint");
+      expect(typeof struct.totalCollateralValue).toBe("bigint");
+      expect(typeof struct.riskPremium).toBe("bigint");
+      expect(typeof struct.borrowCount).toBe("bigint");
+    },
+    15_000
+  );
 
-  it("supply: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: aaveV4Def,
-      actionSlug: "supply",
-      sampleInputs: {
-        reserveId: "0",
-        amount: "1000000000000000000",
-        onBehalfOf: TEST_ADDRESS,
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "supply: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: aaveV4Def,
+        actionSlug: "supply",
+        sampleInputs: {
+          reserveId: "0",
+          amount: "1000000000000000000",
+          onBehalfOf: TEST_ADDRESS,
+        },
+        chainId: CHAIN_ID,
+      });
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
-  }, 15_000);
+      await expectCallAcceptedByBytecode(manager, { to, data });
+    },
+    15_000
+  );
 
-  it("setUsingAsCollateral: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata({
-      protocol: aaveV4Def,
-      actionSlug: "set-collateral",
-      sampleInputs: {
-        reserveId: "0",
-        usingAsCollateral: "true",
-        onBehalfOf: TEST_ADDRESS,
-      },
-      chainId: CHAIN_ID,
-    });
+  itOnchain(
+    "setUsingAsCollateral: deployed bytecode accepts the calldata",
+    async () => {
+      const { to, data } = buildCalldata({
+        protocol: aaveV4Def,
+        actionSlug: "set-collateral",
+        sampleInputs: {
+          reserveId: "0",
+          usingAsCollateral: "true",
+          onBehalfOf: TEST_ADDRESS,
+        },
+        chainId: CHAIN_ID,
+      });
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
-  }, 15_000);
+      await expectCallAcceptedByBytecode(manager, { to, data });
+    },
+    15_000
+  );
 });
 
 /**
@@ -208,8 +238,14 @@ async function expectCallAcceptedByBytecode(
     const result = await manager.executeWithFailover((p) =>
       p.call({ ...tx, from: TEST_ADDRESS })
     );
-    expect(result).toMatch(/^0x/);
+    expect(result).toMatch(HEX_PREFIX);
   } catch (err: unknown) {
+    // A transport fault (rate limit, node error, timeout) is not evidence
+    // about the calldata; let itOnchain retry it. A CALL_EXCEPTION is the
+    // deployed bytecode reverting, which is a passing outcome here.
+    if (isRpcNetworkError(err)) {
+      throw err;
+    }
     expect(err).toMatchObject({ code: "CALL_EXCEPTION" });
   }
 }
