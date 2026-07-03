@@ -613,7 +613,9 @@ describe("logWorkflowCompleteDb", () => {
           callIndex === 0 && target === workflowExecutionLogsMock;
         callIndex += 1;
         const whereChain = (): WhereChain =>
-          makeWhereChain(shouldThrow ? new Error("transient db failure") : null);
+          makeWhereChain(
+            shouldThrow ? new Error("transient db failure") : null
+          );
         return {
           where: whereChain,
           from: (): { where: () => WhereChain } => ({ where: whereChain }),

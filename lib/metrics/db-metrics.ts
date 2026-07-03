@@ -61,7 +61,7 @@ import type { BillingStatus } from "./types";
 // gauge total equal to the global total instead of silently dropping these
 // rows. Lives in metric-constants.ts (dependency-free) so the standalone
 // executor can share it; re-exported here for existing import sites.
-export { ANONYMOUS_ORG_SLUG };
+export { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/metric-constants";
 
 // Org slugs for the managed clients (Sky, Ajna) whose per-workflow error series
 // power the managed-client user-error alerts. The per-workflow gauge is scoped
@@ -164,9 +164,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
-      .where(
-        gte(workflowExecutions.startedAt, sql`now() - interval '30 days'`)
-      )
+      .where(gte(workflowExecutions.startedAt, sql`now() - interval '30 days'`))
       .groupBy(
         workflowExecutions.status,
         organization.slug,

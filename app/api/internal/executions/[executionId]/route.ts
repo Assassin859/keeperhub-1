@@ -152,7 +152,8 @@ export async function PATCH(
       await recordExecutionErrorFinalized({
         workflowId,
         errorMessage: updateData.error,
-        persistedStatus: typedStatus === "system_error" ? "system_error" : "error",
+        persistedStatus:
+          typedStatus === "system_error" ? "system_error" : "error",
         errorCategory: updateData.errorCategory,
       });
     } else {
