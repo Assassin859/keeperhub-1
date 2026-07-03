@@ -10,7 +10,6 @@ import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { WalletOverlay } from "@/components/overlays/wallet-overlay";
-import { ContactSupportDialog } from "@/components/support/contact-support-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,14 +19,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api-client";
 import {
   type GettingStarted,
   useGettingStarted,
 } from "@/lib/hooks/use-getting-started";
 import {
-  type BranchKey,
   type Chip,
   type DeepLinkTarget,
   getBranches,
@@ -297,8 +294,6 @@ function ExpandedCard({
   onAction,
   onChip,
   onTour,
-  onTakeTour,
-  onContact,
 }: {
   gs: GettingStarted;
   creditLabel: string;
@@ -306,14 +301,14 @@ function ExpandedCard({
   onAction: (step: Step) => void;
   onChip: (step: Step, chip: Chip) => void;
   onTour: (step: Step) => void;
-  onTakeTour: () => void;
-  onContact: () => void;
 }): React.ReactElement {
   const [infoStep, setInfoStep] = useState<Step | null>(null);
   const branches = getBranches({ resolvedIds: gs.recommendedIds });
-  const active = branches.find((b) => b.key === gs.branch) ?? branches[0];
-  const total = active.steps.length;
-  const done = active.steps.filter((s) => gs.isStepComplete(s)).length;
+  // Single linear checklist: the agent branch (Wallet ready -> Connect your
+  // agent -> Run your first workflow). Monitor / Yield are no longer surfaced.
+  const steps = (branches.find((b) => b.key === "agent") ?? branches[0]).steps;
+  const total = steps.length;
+  const done = steps.filter((s) => gs.isStepComplete(s)).length;
 
   return (
     // Grow in height (and scale in from the pill corner) on open; shrink height
@@ -360,26 +355,9 @@ function ExpandedCard({
         </div>
       </div>
 
-      <Tabs
-        onValueChange={(v) => gs.setBranch(v as BranchKey)}
-        value={active.key}
-      >
-        <TabsList className="grid w-full grid-cols-3 rounded-none border-b bg-transparent p-0">
-          {branches.map((b) => (
-            <TabsTrigger
-              className="rounded-none text-xs data-[state=active]:bg-muted/50"
-              key={b.key}
-              value={b.key}
-            >
-              {b.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
       <div className="max-h-[60vh] space-y-1 overflow-y-auto px-2 py-2">
-        {active.steps.map((step, idx) => {
-          const locked = active.steps
+        {steps.map((step, idx) => {
+          const locked = steps
             .slice(0, idx)
             .some((s) => !gs.isStepComplete(s));
           return (
@@ -398,23 +376,6 @@ function ExpandedCard({
             />
           );
         })}
-      </div>
-
-      <div className="flex items-center justify-between border-t px-4 py-2 text-muted-foreground text-xs">
-        <button
-          className="font-medium text-foreground underline-offset-2 hover:underline"
-          onClick={onContact}
-          type="button"
-        >
-          Stuck? Contact us
-        </button>
-        <button
-          className="font-medium text-foreground underline-offset-2 hover:underline"
-          onClick={onTakeTour}
-          type="button"
-        >
-          Take a tour
-        </button>
       </div>
 
       <StepInfoDialog
@@ -674,8 +635,6 @@ export function GettingStartedLauncher(): React.ReactElement | null {
             key="gs-card"
             onAction={onAction}
             onChip={onChip}
-            onContact={() => open(ContactSupportDialog)}
-            onTakeTour={() => requestTour(true)}
             onTour={onTour}
             panelOpen={panelOpen}
           />
