@@ -251,6 +251,28 @@ The dashboard and alert rules for these metrics are defined in `techops-infrastr
 
 ---
 
+## 7. SCHEDULE DISPATCHER
+
+Dispatch-pass latency and enqueue signals from the schedule-dispatcher pod (`keeperhub-scheduler/schedule-dispatcher`). The dispatcher evaluates cron schedules once per minute and enqueues matching workflows to SQS. All metrics live in the dispatcher's own in-process Prometheus registry exposed at `:3000/metrics` on the health server (separate from the main app's `/api/metrics`), scraped via the `schedule.serviceMonitors` block in `deploy/keeperhub-stack/<env>/values.yaml`. Source code: `keeperhub-scheduler/schedule-dispatcher/metrics.ts`.
+
+The alert rules for these metrics are defined in `techops-infrastructure/grafana/keeperhub-dashboards/` (see its `ALERTS_REFERENCE.md`, Schedule Dispatcher section).
+
+### Counters
+
+| Metric Name | Description | Labels |
+|-------------|-------------|--------|
+| `keeperhub_schedule_dispatcher_runs_total` | Dispatch passes completed (fetch succeeded and loop ran). `rate()` gives passes/min - should hold at ~1/min. | - |
+| `keeperhub_schedule_dispatcher_triggered_total` | Workflow trigger messages successfully enqueued to SQS. A sustained zero over 90 minutes while schedules exist is the missed-hourly-trigger signal. | - |
+| `keeperhub_schedule_dispatcher_errors_total` | Per-schedule errors during a dispatch pass (SQS failure, bad cron caught late). Distinct from fetch errors, which abort the whole pass and are not counted here. | - |
+
+### Histograms
+
+| Metric Name | Description | Labels | Buckets (s) |
+|-------------|-------------|--------|-------------|
+| `keeperhub_schedule_dispatcher_run_duration_seconds` | Wall-clock seconds per dispatch pass (fetch + evaluate + enqueue). The primary latency signal - p95 > 10s indicates DB or SQS slowness severe enough to threaten the trigger window. | - | 0.1, 0.5, 1, 2, 5, 10, 20, 30, 60 |
+
+---
+
 ## Label Keys Reference
 
 | Label Key | Description | Example Values |
