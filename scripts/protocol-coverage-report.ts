@@ -25,6 +25,11 @@ import { join } from "node:path";
 import "../protocols";
 import { getRegisteredProtocols } from "../lib/protocol-registry";
 import { planPhaseFixtures } from "../tests/e2e/vitest/protocol-coverage/_shared/plan";
+import {
+  countAssertions,
+  type VitestAssertionCounts,
+  type VitestJsonResults,
+} from "./vitest-assertion-counts";
 
 const COVERAGE_DIR = "tests/e2e/vitest/protocol-coverage";
 
@@ -35,11 +40,7 @@ type SuiteInfo = {
   hardSkipped: boolean;
 };
 
-type SuiteResult = {
-  executed: number;
-  passed: number;
-  failed: number;
-  skipped: number;
+type SuiteResult = VitestAssertionCounts & {
   durationMs: number;
 };
 
@@ -90,39 +91,18 @@ function discoverSuites(): SuiteInfo[] {
 }
 
 function parseResults(file: string): Map<string, SuiteResult> {
-  const raw = JSON.parse(readFileSync(file, "utf8")) as {
-    testResults?: Array<{
-      name: string;
-      startTime?: number;
-      endTime?: number;
-      assertionResults?: Array<{ status: string }>;
-    }>;
-  };
+  const raw = JSON.parse(readFileSync(file, "utf8")) as VitestJsonResults;
   const bySuite = new Map<string, SuiteResult>();
   for (const tr of raw.testResults ?? []) {
-    const rel = tr.name.includes(COVERAGE_DIR)
-      ? tr.name.slice(tr.name.indexOf(COVERAGE_DIR))
-      : tr.name;
-    const counts: SuiteResult = {
-      executed: 0,
-      passed: 0,
-      failed: 0,
-      skipped: 0,
+    const name = tr.name ?? "";
+    const rel = name.includes(COVERAGE_DIR)
+      ? name.slice(name.indexOf(COVERAGE_DIR))
+      : name;
+    bySuite.set(rel, {
+      ...countAssertions(tr.assertionResults),
       durationMs:
         tr.endTime && tr.startTime ? Math.round(tr.endTime - tr.startTime) : 0,
-    };
-    for (const a of tr.assertionResults ?? []) {
-      if (a.status === "passed") {
-        counts.passed += 1;
-        counts.executed += 1;
-      } else if (a.status === "failed") {
-        counts.failed += 1;
-        counts.executed += 1;
-      } else {
-        counts.skipped += 1;
-      }
-    }
-    bySuite.set(rel, counts);
+    });
   }
   return bySuite;
 }

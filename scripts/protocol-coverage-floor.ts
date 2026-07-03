@@ -12,6 +12,10 @@
  */
 
 import { appendFileSync, readFileSync } from "node:fs";
+import {
+  countTotals,
+  type VitestJsonResults,
+} from "./vitest-assertion-counts";
 
 function main(): void {
   const [file, floorArg] = process.argv.slice(2);
@@ -30,28 +34,8 @@ function main(): void {
     );
     process.exit(2);
   }
-  const raw = JSON.parse(readFileSync(file, "utf8")) as {
-    testResults?: Array<{
-      assertionResults?: Array<{ status: string }>;
-    }>;
-  };
-  let executed = 0;
-  let passed = 0;
-  let failed = 0;
-  let skipped = 0;
-  for (const tr of raw.testResults ?? []) {
-    for (const a of tr.assertionResults ?? []) {
-      if (a.status === "passed") {
-        passed += 1;
-        executed += 1;
-      } else if (a.status === "failed") {
-        failed += 1;
-        executed += 1;
-      } else {
-        skipped += 1;
-      }
-    }
-  }
+  const raw = JSON.parse(readFileSync(file, "utf8")) as VitestJsonResults;
+  const { executed, passed, failed, skipped } = countTotals(raw);
 
   const summary = `Protocol coverage: executed ${executed} (passed ${passed}, failed ${failed}), skipped ${skipped}, floor ${floor}`;
   process.stdout.write(`${summary}\n`);
