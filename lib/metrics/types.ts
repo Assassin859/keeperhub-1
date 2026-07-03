@@ -195,10 +195,13 @@ export const MetricNames = {
   SQS_MESSAGE_AUTH: "sqs.message.auth.total",
 
   // SQS consume-path idempotency claim outcome. One increment per consumed
-  // trigger, labelled by claim_result (claimed | duplicate_advanced |
-  // duplicate_missing | idless_insert) and trigger_type. A nonzero duplicate_*
-  // rate means redelivered messages are being dropped instead of re-run (a
-  // double-execution that would otherwise send a second on-chain transaction).
+  // trigger, labelled by claim_result and trigger_type:
+  //  - claimed:          dispatched (incl. re-claim of a reaped-never-ran row).
+  //  - dropped_advanced: a duplicate whose row already ran/advanced - dropped
+  //                      (this is a prevented double-execution).
+  //  - dropped_missing:  the row was gone (discarded/retention) - dropped.
+  //  - idless_insert:    legacy id-less message, insert-fresh + run (cannot be
+  //                      deduped; a rise signals upstream phantom-create failures).
   SQS_CONSUME_CLAIM: "sqs.consume.claim.total",
 } as const;
 

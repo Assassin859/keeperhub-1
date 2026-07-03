@@ -248,8 +248,8 @@ async function dispatchExecution(params: {
 
 type ConsumeClaimResult =
   | "claimed"
-  | "duplicate_advanced"
-  | "duplicate_missing"
+  | "dropped_advanced"
+  | "dropped_missing"
   | "idless_insert";
 
 function recordConsumeClaim(
@@ -434,7 +434,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     const claim = await claimPendingForExecution(db, message.executionId);
     if (claim !== "claimed") {
       recordConsumeClaim(
-        claim === "already_advanced" ? "duplicate_advanced" : "duplicate_missing",
+        claim === "already_advanced" ? "dropped_advanced" : "dropped_missing",
         triggerType
       );
       console.warn(
@@ -519,7 +519,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       // Returning lets processMessage delete the message so it stops
       // redelivering.
       recordConsumeClaim(
-        claim === "already_advanced" ? "duplicate_advanced" : "duplicate_missing",
+        claim === "already_advanced" ? "dropped_advanced" : "dropped_missing",
         triggerType
       );
       console.warn(
