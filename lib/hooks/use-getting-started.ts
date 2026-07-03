@@ -166,14 +166,6 @@ export type GettingStarted = {
   hasLiveStepWorkflow: (key: string) => boolean;
   refetch: () => void;
   isAuthenticated: boolean;
-  /** True while the 5-second wallet scan is in progress. */
-  scanningWallet: boolean;
-  /**
-   * Trigger a wallet holdings scan. Shows a loading state for 5 seconds then
-   * latches the scan-wallet step as complete. No-op when already scanning or
-   * already done. Call-site stub: swap the body for a real holdings fetch.
-   */
-  triggerWalletScan: () => void;
   /**
    * Chip slug -> live hub workflow id, resolved from /api/onboarding/recommendations.
    * Pass this into getBranches({ resolvedIds }) so chips clone the seeded hub
@@ -222,28 +214,6 @@ export function useGettingStarted(): GettingStarted {
     [userId]
   );
 
-  const [scanningWallet, setScanningWallet] = useState(false);
-  const scanningWalletRef = useRef(scanningWallet);
-  scanningWalletRef.current = scanningWallet;
-
-  const triggerWalletScan = useCallback(() => {
-    if (
-      persistedRef.current.done.includes("scan-wallet") ||
-      scanningWalletRef.current
-    ) {
-      return;
-    }
-    setScanningWallet(true);
-    setTimeout(() => {
-      persist((prev) =>
-        prev.done.includes("scan-wallet")
-          ? prev
-          : { ...prev, done: [...prev.done, "scan-wallet"] }
-      );
-      setScanningWallet(false);
-    }, 5000);
-  }, [persist]);
-
   const workflowIds = Object.values(persisted.workflows).join(",");
   const fetchStatus = useCallback(() => {
     if (!isAuthenticated) {
@@ -275,7 +245,9 @@ export function useGettingStarted(): GettingStarted {
   // only when workflows are reseeded, so a single fetch per session is enough.
   useEffect(() => {
     fetch("/api/onboarding/recommendations")
-      .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : null))
+      .then((r) =>
+        r.ok ? (r.json() as Promise<Record<string, string>>) : null
+      )
       .then((data) => {
         if (data) {
           setRecommendedIds(data);
@@ -407,8 +379,6 @@ export function useGettingStarted(): GettingStarted {
     hasLiveStepWorkflow,
     refetch: fetchStatus,
     isAuthenticated,
-    scanningWallet,
-    triggerWalletScan,
     recommendedIds,
   };
 }

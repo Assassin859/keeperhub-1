@@ -1,15 +1,7 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import {
-  Check,
-  ChevronDown,
-  Compass,
-  Info,
-  Loader2,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { Check, ChevronDown, Compass, Info, Sparkles, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -97,13 +89,7 @@ function ProgressRing({
   );
 }
 
-function StepCheck({
-  complete,
-  scanning,
-}: {
-  complete: boolean;
-  scanning?: boolean;
-}): React.ReactElement {
+function StepCheck({ complete }: { complete: boolean }): React.ReactElement {
   return (
     <span
       className={cn(
@@ -113,14 +99,7 @@ function StepCheck({
           : "border-muted-foreground/40"
       )}
     >
-      {scanning ? (
-        <Loader2
-          aria-hidden="true"
-          className="size-3 animate-spin text-keeperhub-green"
-        />
-      ) : (
-        complete && <Check aria-hidden="true" className="size-3" />
-      )}
+      {complete && <Check aria-hidden="true" className="size-3" />}
     </span>
   );
 }
@@ -128,9 +107,7 @@ function StepCheck({
 function StepRow({
   step,
   complete,
-  scanning,
   locked,
-  chipsGated,
   isChipCloned,
   onAction,
   onChip,
@@ -139,9 +116,7 @@ function StepRow({
 }: {
   step: Step;
   complete: boolean;
-  scanning?: boolean;
   locked?: boolean;
-  chipsGated?: boolean;
   isChipCloned: (chip: Chip) => boolean;
   onAction: (step: Step) => void;
   onChip: (step: Step, chip: Chip) => void;
@@ -179,12 +154,12 @@ function StepRow({
             onClick={() => onAction(step)}
             type="button"
           >
-            <StepCheck complete={complete} scanning={scanning} />
+            <StepCheck complete={complete} />
             {body}
           </button>
         ) : (
           <div className="flex flex-1 items-start gap-3">
-            <StepCheck complete={complete} scanning={scanning} />
+            <StepCheck complete={complete} />
             {body}
           </div>
         )}
@@ -198,7 +173,7 @@ function StepRow({
           <Info aria-hidden="true" className="size-3.5" />
         </button>
       </div>
-      {step.chips && !chipsGated && !locked && (
+      {step.chips && !locked && (
         <div className="flex flex-wrap gap-1.5 px-2 pb-2 pl-9">
           {step.chips.map((chip) => {
             const cloned = isChipCloned(chip);
@@ -340,11 +315,6 @@ function ExpandedCard({
   const total = active.steps.length;
   const done = active.steps.filter((s) => gs.isStepComplete(s)).length;
 
-  const scanWalletStep = branches
-    .flatMap((b) => b.steps)
-    .find((s) => s.key === "scan-wallet");
-  const scanWalletDone = !scanWalletStep || gs.isStepComplete(scanWalletStep);
-
   return (
     // Grow in height (and scale in from the pill corner) on open; shrink height
     // and width back toward the pill on close. overflow-hidden clips the rows as
@@ -414,7 +384,6 @@ function ExpandedCard({
             .some((s) => !gs.isStepComplete(s));
           return (
             <StepRow
-              chipsGated={Boolean(step.chipsGatedBy) && !scanWalletDone}
               complete={gs.isStepComplete(step)}
               isChipCloned={(chip) =>
                 gs.hasLiveStepWorkflow(`${step.key}:${chip.id}`)
@@ -425,7 +394,6 @@ function ExpandedCard({
               onChip={onChip}
               onInfo={setInfoStep}
               onTour={onTour}
-              scanning={step.key === "scan-wallet" && gs.scanningWallet}
               step={step}
             />
           );
@@ -620,9 +588,6 @@ export function GettingStartedLauncher(): React.ReactElement | null {
       openDeepLink(action.target);
     } else if (action?.kind === "ai-prompt") {
       void startStepWorkflow(step, action.prompt);
-    } else if (action?.kind === "scan-wallet") {
-      gs.triggerWalletScan();
-      return;
     }
     gs.refetch();
   };
