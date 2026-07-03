@@ -2,12 +2,10 @@
 
 import { useSetAtom } from "jotai";
 import {
-  Compass,
   Copy,
   CreditCard,
   FolderTree,
   Key,
-  LifeBuoy,
   LogOut,
   Plug,
   Rocket,
@@ -28,7 +26,6 @@ import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay"
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
-import { ContactSupportDialog } from "@/components/support/contact-support-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,7 +48,6 @@ import {
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import {
-  editorTourRequestedAtom,
   gettingStartedOpenAtom,
 } from "@/lib/workflow/store";
 
@@ -135,7 +131,6 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
   const { organization } = useOrganization();
   const { isOwner } = useActiveMember();
   const router = useRouter();
-  const requestTour = useSetAtom(editorTourRequestedAtom);
   const openGettingStarted = useSetAtom(gettingStartedOpenAtom);
   const showBilling = isOwner && isBillingEnabled();
   const { status: notificationStatus, refresh: refreshNotifications } =
@@ -237,10 +232,6 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </div>
-          <DropdownMenuItem onClick={() => openGettingStarted(true)}>
-            <Rocket className="size-4" />
-            <span>Getting started</span>
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openOverlay(SettingsOverlay)}>
             <Settings className="size-4" />
             <span>Settings</span>
@@ -271,18 +262,9 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
             <span>Projects and Tags</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => {
-              requestTour(true);
-              router.push("/");
-            }}
-          >
-            <Compass className="size-4" />
-            <span>Take a tour</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => openOverlay(ContactSupportDialog)}>
-            <LifeBuoy className="size-4" />
-            <span>Contact support</span>
+          <DropdownMenuItem onClick={() => openGettingStarted(true)}>
+            <Rocket className="size-4" />
+            <span>Getting started</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout}>
