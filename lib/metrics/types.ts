@@ -193,6 +193,13 @@ export const MetricNames = {
   // invalid_schema | stale) and mode (warn | enforce). Drives the rollout gate:
   // flip the executor to enforce only once unsigned/invalid series hit zero.
   SQS_MESSAGE_AUTH: "sqs.message.auth.total",
+
+  // SQS consume-path idempotency claim outcome. One increment per consumed
+  // trigger, labelled by claim_result (claimed | duplicate_advanced |
+  // duplicate_missing | idless_insert) and trigger_type. A nonzero duplicate_*
+  // rate means redelivered messages are being dropped instead of re-run (a
+  // double-execution that would otherwise send a second on-chain transaction).
+  SQS_CONSUME_CLAIM: "sqs.consume.claim.total",
 } as const;
 
 /**
@@ -224,6 +231,7 @@ export const LabelKeys = {
   TIER: "tier",
   AUTH_RESULT: "auth_result",
   MODE: "mode",
+  CLAIM_RESULT: "claim_result",
 } as const;
 
 /**

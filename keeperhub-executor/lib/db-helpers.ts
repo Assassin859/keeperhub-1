@@ -18,6 +18,32 @@ export type DbSchema = {
   workflowSchedules: typeof workflowSchedules;
 };
 
+/**
+ * Result of a gated status compare-and-set claim on an execution row:
+ * - "claimed":          the CAS won (this delivery owns the dispatch).
+ * - "already_advanced": a row exists but is no longer in the claimable status
+ *                       (a prior/duplicate SQS delivery already claimed it, or
+ *                       it is running/terminal) - the caller must NOT re-run.
+ * - "not_found":        no row with this id exists.
+ */
+export type ClaimOutcome = "claimed" | "already_advanced" | "not_found";
+
+/**
+ * After a gated CAS matched zero rows, disambiguate "row exists but not in the
+ * expected status" from "no such row" with a single point lookup on the id PK.
+ */
+async function classifyClaimMiss(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string
+): Promise<"already_advanced" | "not_found"> {
+  const existing = await db
+    .select({ id: workflowExecutions.id })
+    .from(workflowExecutions)
+    .where(eq(workflowExecutions.id, executionId))
+    .limit(1);
+  return existing.length > 0 ? "already_advanced" : "not_found";
+}
+
 export async function updateExecutionStatus(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
@@ -104,28 +130,29 @@ export async function failExecutionAsSystemError(
 }
 
 /**
- * KEEP-693: upgrade a pre-created 'phantom' execution row to 'pending' in place
- * and stamp its input.
+ * Claim a pre-created 'phantom' execution row for a schedule/block/event run:
+ * compare-and-set 'phantom' -> 'pending' and stamp its input.
  *
  * The scheduler/event-tracker pre-creates a 'phantom' row and passes its id on
- * the SQS message; the executor calls this to claim it. The compare-and-set on
- * status='phantom' makes the claim idempotent: a duplicate SQS delivery (or a
- * missing phantom, when the best-effort create failed, or one already advanced
- * past phantom) matches no row and returns false, so the caller falls back to a
- * fresh insert and a run is never dropped.
+ * the SQS message. The CAS on status='phantom' makes the claim exactly-once:
+ * only the first delivery wins ("claimed"). A duplicate delivery whose row was
+ * already claimed/advanced returns "already_advanced" and MUST be dropped by the
+ * caller - re-running would send a second, fund-moving execution (there is no
+ * downstream dedup). "not_found" is a message whose phantom was discarded or
+ * never persisted; also dropped for an id-bearing message.
  */
-export async function upgradePhantomToPending(
+export async function claimPhantomForExecution(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
   input: Record<string, unknown>,
   executedWorkflowHash: string
-): Promise<boolean> {
+): Promise<ClaimOutcome> {
   const result = await db
     .update(workflowExecutions)
-    // KEEP-693: the phantom was created billable=false (it had not run yet);
-    // upgrading to pending means it is now a real execution, so it becomes
-    // billable like any owner-initiated run. Stamp the hash of the definition
-    // the executor just loaded so the run links to its workflow_history version.
+    // The phantom was created billable=false (it had not run yet); claiming it
+    // means it is now a real execution, so it becomes billable like any
+    // owner-initiated run. Stamp the hash of the definition the executor just
+    // loaded so the run links to its workflow_history version.
     .set({ status: "pending", input, billable: true, executedWorkflowHash })
     .where(
       and(
@@ -134,7 +161,39 @@ export async function upgradePhantomToPending(
       )
     )
     .returning({ id: workflowExecutions.id });
-  return result.length > 0;
+  if (result.length > 0) {
+    return "claimed";
+  }
+  return classifyClaimMiss(db, executionId);
+}
+
+/**
+ * Claim a pre-created 'pending' execution row for a manual/webhook run:
+ * compare-and-set 'pending' -> 'running'. The app pre-creates the row as
+ * 'pending' before enqueueing, so unlike schedule/block/event there is no
+ * phantom to upgrade; this CAS is what makes the consume exactly-once. Only the
+ * first delivery wins ("claimed"); a duplicate whose row already advanced
+ * returns "already_advanced" and MUST be dropped. The runner's own later
+ * 'running' write is then an idempotent no-op.
+ */
+export async function claimPendingForExecution(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string
+): Promise<ClaimOutcome> {
+  const result = await db
+    .update(workflowExecutions)
+    .set({ status: "running" })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        eq(workflowExecutions.status, "pending")
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  if (result.length > 0) {
+    return "claimed";
+  }
+  return classifyClaimMiss(db, executionId);
 }
 
 /**

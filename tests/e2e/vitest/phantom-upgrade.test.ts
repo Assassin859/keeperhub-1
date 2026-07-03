@@ -4,10 +4,11 @@ import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  claimPendingForExecution,
+  claimPhantomForExecution,
   type DbSchema,
   discardPhantomRow,
   resolvePhantomToError,
-  upgradePhantomToPending,
 } from "../../../keeperhub-executor/lib/db-helpers";
 import {
   organization,
@@ -16,9 +17,8 @@ import {
   workflows,
 } from "../../../lib/db/schema";
 
-// tests/setup.ts globally mocks @/lib/db. This suite drives
-// upgradePhantomToPending against a real database via its own handle, so
-// restore the genuine module.
+// tests/setup.ts globally mocks @/lib/db. This suite drives the claim helpers
+// against a real database via its own handle, so restore the genuine module.
 vi.unmock("@/lib/db");
 
 // The phantom -> pending claim is a compare-and-set in SQL (WHERE
@@ -44,9 +44,10 @@ type ExecutionStatus =
   | "success"
   | "error"
   | "cancelled"
-  | "phantom";
+  | "phantom"
+  | "system_error";
 
-describe.skipIf(SKIP)("upgradePhantomToPending", () => {
+describe.skipIf(SKIP)("consume-path claim helpers", () => {
   let queryClient: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
   // upgradePhantomToPending is typed against the executor's DbSchema; the
@@ -125,68 +126,83 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
     await queryClient.end();
   });
 
-  it("upgrades a phantom row to pending and stamps its input", async () => {
+  it("claims a phantom row to pending and stamps its input", async () => {
     const id = `${PREFIX}claim`;
     await seedExecution(id, "phantom");
 
-    const upgraded = await upgradePhantomToPending(
+    const outcome = await claimPhantomForExecution(
       execDb,
       id,
       { triggered: 1 },
       HASH
     );
 
-    expect(upgraded).toBe(true);
+    expect(outcome).toBe("claimed");
     const row = await readExecution(id);
     expect(row.status).toBe("pending");
     expect(row.input).toEqual({ triggered: 1 });
     expect(row.executedWorkflowHash).toBe(HASH);
   });
 
-  it("is a no-op (returns false) when the row is not phantom", async () => {
+  it("returns already_advanced (no-op) when the row is not phantom", async () => {
     const id = `${PREFIX}running`;
     await seedExecution(id, "running", { original: true });
 
-    const upgraded = await upgradePhantomToPending(
+    const outcome = await claimPhantomForExecution(
       execDb,
       id,
       { stamped: 2 },
       HASH
     );
 
-    expect(upgraded).toBe(false);
+    expect(outcome).toBe("already_advanced");
     const row = await readExecution(id);
     expect(row.status).toBe("running");
     // Input must be untouched -- the CAS matched no row.
     expect(row.input).toEqual({ original: true });
   });
 
-  it("returns false when the execution id does not exist", async () => {
-    const upgraded = await upgradePhantomToPending(
+  it("returns already_advanced for every terminal status", async () => {
+    for (const status of [
+      "success",
+      "error",
+      "cancelled",
+      "system_error",
+    ] as const) {
+      const id = `${PREFIX}term_${status}`;
+      await seedExecution(id, status);
+      expect(await claimPhantomForExecution(execDb, id, {}, HASH)).toBe(
+        "already_advanced"
+      );
+    }
+  });
+
+  it("returns not_found when the execution id does not exist", async () => {
+    const outcome = await claimPhantomForExecution(
       execDb,
       `${PREFIX}missing`,
       {},
       HASH
     );
-    expect(upgraded).toBe(false);
+    expect(outcome).toBe("not_found");
   });
 
-  it("is idempotent: a second claim of an already-upgraded row returns false", async () => {
+  it("is exactly-once: a duplicate claim of an already-claimed row is dropped", async () => {
     const id = `${PREFIX}dup`;
     await seedExecution(id, "phantom");
 
-    const first = await upgradePhantomToPending(execDb, id, { n: 1 }, HASH);
-    const second = await upgradePhantomToPending(execDb, id, { n: 2 }, HASH);
+    const first = await claimPhantomForExecution(execDb, id, { n: 1 }, HASH);
+    const second = await claimPhantomForExecution(execDb, id, { n: 2 }, HASH);
 
-    expect(first).toBe(true);
-    expect(second).toBe(false);
+    expect(first).toBe("claimed");
+    expect(second).toBe("already_advanced");
     const row = await readExecution(id);
     expect(row.status).toBe("pending");
     // The losing duplicate must not overwrite the input the winner stamped.
     expect(row.input).toEqual({ n: 1 });
   });
 
-  it("upgrade flips a non-billable phantom to billable (it now runs)", async () => {
+  it("claiming a phantom flips a non-billable row to billable (it now runs)", async () => {
     const id = `${PREFIX}billable`;
     await db.insert(workflowExecutions).values({
       id,
@@ -196,12 +212,37 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
       billable: false,
     });
 
-    const upgraded = await upgradePhantomToPending(execDb, id, {}, HASH);
+    const outcome = await claimPhantomForExecution(execDb, id, {}, HASH);
 
-    expect(upgraded).toBe(true);
+    expect(outcome).toBe("claimed");
     const row = await readExecution(id);
     expect(row.status).toBe("pending");
     expect(row.billable).toBe(true);
+  });
+
+  it("claimPendingForExecution claims a pending row to running", async () => {
+    const id = `${PREFIX}pending_claim`;
+    await seedExecution(id, "pending");
+
+    const outcome = await claimPendingForExecution(execDb, id);
+
+    expect(outcome).toBe("claimed");
+    expect((await readExecution(id)).status).toBe("running");
+  });
+
+  it("claimPendingForExecution drops a duplicate (row already running)", async () => {
+    const id = `${PREFIX}pending_dup`;
+    await seedExecution(id, "running");
+
+    expect(await claimPendingForExecution(execDb, id)).toBe("already_advanced");
+    // Second delivery of an already-claimed manual/webhook row.
+    expect((await readExecution(id)).status).toBe("running");
+  });
+
+  it("claimPendingForExecution returns not_found for a missing row", async () => {
+    expect(
+      await claimPendingForExecution(execDb, `${PREFIX}pending_missing`)
+    ).toBe("not_found");
   });
 
   it("discardPhantomRow deletes a phantom row (intentional skip)", async () => {

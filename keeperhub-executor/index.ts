@@ -58,10 +58,11 @@ import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import {
+  claimPendingForExecution,
+  claimPhantomForExecution,
   discardPhantomRow,
   failExecutionAsSystemError,
   resolvePhantomToError,
-  upgradePhantomToPending,
 } from "./lib/db-helpers";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
 import { toJsonSafe } from "./lib/serialize";
@@ -245,6 +246,22 @@ async function dispatchExecution(params: {
   }
 }
 
+type ConsumeClaimResult =
+  | "claimed"
+  | "duplicate_advanced"
+  | "duplicate_missing"
+  | "idless_insert";
+
+function recordConsumeClaim(
+  result: ConsumeClaimResult,
+  triggerType: string
+): void {
+  getMetricsCollector().incrementCounter(MetricNames.SQS_CONSUME_CLAIM, {
+    [LabelKeys.CLAIM_RESULT]: result,
+    [LabelKeys.TRIGGER_TYPE]: triggerType,
+  });
+}
+
 async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   const { workflowId, triggerType } = message;
 
@@ -410,17 +427,60 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
           "Use EXECUTION_MODE=in-process instead."
       );
     }
+    // Claim the pre-created 'pending' row exactly once (pending -> running). A
+    // redelivery whose row already advanced (still running past the 300s
+    // visibility timeout, or terminal) is a duplicate and must be dropped -
+    // re-dispatching would double-execute (a second on-chain transaction).
+    const claim = await claimPendingForExecution(db, message.executionId);
+    if (claim !== "claimed") {
+      recordConsumeClaim(
+        claim === "already_advanced" ? "duplicate_advanced" : "duplicate_missing",
+        triggerType
+      );
+      console.warn(
+        `[Executor] Duplicate ${triggerType} delivery (${claim}) for execution ${message.executionId}; dropping without re-running`
+      );
+      return;
+    }
+    recordConsumeClaim("claimed", triggerType);
+
     console.log(
       `[Executor] Manual trigger dispatch target: ${target} (mode: ${CONFIG.executionMode})`
     );
-    await dispatchExecution({
-      target,
-      workflowId,
-      executionId: message.executionId,
-      input: message.input,
-      triggerType: "manual",
-      scheduleId: undefined,
-    });
+    try {
+      await dispatchExecution({
+        target,
+        workflowId,
+        executionId: message.executionId,
+        input: message.input,
+        triggerType: "manual",
+        scheduleId: undefined,
+      });
+    } catch (error) {
+      // We claimed pending -> running above, so the phantom/pending backstop in
+      // processMessage no longer matches this row. Mark it system_error here
+      // (mirrors the schedule/block/event dispatch guard below) then re-throw.
+      await db
+        .update(workflowExecutions)
+        .set({
+          status: "system_error",
+          error:
+            error instanceof Error
+              ? `Dispatch failed: ${error.message}`
+              : "Dispatch failed",
+          errorCode: "P-0004",
+          errorType: "system",
+          errorCategory: "infrastructure",
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(workflowExecutions.id, message.executionId),
+            eq(workflowExecutions.status, "running")
+          )
+        );
+      throw error;
+    }
     return;
   }
 
@@ -443,27 +503,43 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   );
 
   let executionId = generateId();
-  let upgraded = false;
   if (message.executionId) {
-    upgraded = await upgradePhantomToPending(
+    const claim = await claimPhantomForExecution(
       db,
       message.executionId,
       serializedInput,
       executedWorkflowHash
     );
-    if (upgraded) {
-      executionId = message.executionId;
+    if (claim !== "claimed") {
+      // Duplicate delivery: the phantom was already claimed/advanced (a
+      // redelivery of a run still in flight past the 300s visibility timeout, or
+      // one that crashed before delete), or it was discarded/never persisted.
+      // Dropping is correct - re-running would double-execute (a second
+      // fund-moving on-chain transaction; there is no downstream dedup).
+      // Returning lets processMessage delete the message so it stops
+      // redelivering.
+      recordConsumeClaim(
+        claim === "already_advanced" ? "duplicate_advanced" : "duplicate_missing",
+        triggerType
+      );
+      console.warn(
+        `[Executor] Duplicate ${triggerType} delivery (${claim}) for execution ${message.executionId}; dropping without re-running`
+      );
+      return;
     }
-  }
-
-  if (!upgraded) {
-    // KEEP-612: insert for SQS-dispatched runs with no phantom to upgrade.
-    // Downstream dispatch (executeViaApi / k8s) reuses this row, so the
-    // app-route attribution never runs here -- set it directly. Only
-    // trigger_source applies: SQS dispatch has no inbound client request, so
-    // ip/country/api-key stay null. withBackstopCapture emits
-    // security.backstop_execution_blocked if the 0082 trigger rejects (e.g.
-    // owner deactivated in the check->insert race).
+    executionId = message.executionId;
+    recordConsumeClaim("claimed", triggerType);
+  } else {
+    // Legacy / best-effort path: no phantom id, which happens only when the
+    // producer's createPhantomExecution failed upstream. Insert a fresh row and
+    // run so the trigger is not silently lost. These cannot be deduped without a
+    // message nonce (a messageId nonce would break RequeueSignal redelivery and
+    // cannot catch a re-SendMessage replay), and they only occur when phantom
+    // pre-creation is already failing, so a rare duplicate here is an accepted
+    // residual. Downstream dispatch reuses this row, so set attribution directly
+    // (SQS dispatch has no inbound client request, so ip/country/api-key stay
+    // null). withBackstopCapture emits security.backstop_execution_blocked if the
+    // trigger rejects (e.g. owner deactivated in the check->insert race).
     const attribution = buildAttribution({ source: triggerType });
     await withBackstopCapture({ workflowId, userId, source: triggerType }, () =>
       db.insert(workflowExecutions).values({
@@ -476,6 +552,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
         executedWorkflowHash,
       })
     );
+    recordConsumeClaim("idless_insert", triggerType);
   }
 
   console.log(`[Executor] Created execution record: ${executionId}`);
