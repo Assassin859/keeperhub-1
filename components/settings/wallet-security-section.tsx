@@ -16,64 +16,15 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
-  DEFAULT_STEP_UP_POLICY,
-  STEP_UP_ACTIONS,
-  type StepUpFactor,
-} from "@/lib/mfa/step-up-policy";
-import {
   runWalletStepUp,
   type StepUpExtra,
 } from "@/lib/wallet/step-up-client";
 
 type Enrolled = { wallet: boolean; totp: boolean; email: boolean };
-type Policy = Record<string, StepUpFactor[]>;
 
-type PolicyResponse = {
+type EnrollmentResponse = {
   walletUser: boolean;
-  policy: Policy;
   enrolled: Enrolled;
-};
-
-// Actions a wallet user can harden, with friendly labels. Wallet signature is
-// always required; these toggles add TOTP / email on top. Withdraw and export
-// default to requiring TOTP when it is enrolled (DEFAULT_STEP_UP_POLICY).
-const CONFIGURABLE_ACTIONS: { action: string; label: string }[] = [
-  { action: STEP_UP_ACTIONS.walletWithdraw, label: "Withdraw funds" },
-  { action: STEP_UP_ACTIONS.walletExportKey, label: "Export wallet key" },
-  { action: STEP_UP_ACTIONS.apiKeyManage, label: "Manage API keys" },
-  {
-    action: STEP_UP_ACTIONS.orgApiKeyManage,
-    label: "Manage org API keys",
-  },
-  {
-    action: STEP_UP_ACTIONS.agenticWalletApprove,
-    label: "Approve an agent transaction",
-  },
-  {
-    action: STEP_UP_ACTIONS.agenticWalletReject,
-    label: "Reject an agent transaction",
-  },
-  { action: STEP_UP_ACTIONS.auditExport, label: "Export the audit log" },
-  {
-    action: STEP_UP_ACTIONS.accountDeactivate,
-    label: "Deactivate your account",
-  },
-];
-
-// The factors shown for an action: the user's explicit policy if set, otherwise
-// the default (so withdraw / export-key show TOTP on until the user opts out).
-function effectiveFactors(
-  policy: Record<string, StepUpFactor[]>,
-  action: string
-): StepUpFactor[] {
-  return action in policy
-    ? policy[action]
-    : (DEFAULT_STEP_UP_POLICY[action] ?? []);
-}
-
-const FACTOR_LABELS: Record<Exclude<StepUpFactor, "wallet">, string> = {
-  totp: "Authenticator",
-  email: "Email code",
 };
 
 async function readError(response: Response): Promise<string> {
@@ -198,19 +149,18 @@ function AddEmailDialog({
 }
 
 export function WalletSecuritySection(): React.ReactElement {
-  const [data, setData] = useState<PolicyResponse | null>(null);
+  const [data, setData] = useState<EnrollmentResponse | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const [addEmailOpen, setAddEmailOpen] = useState(false);
-  const [actionsOpen, setActionsOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(false);
     try {
       const res = await fetch("/api/user/step-up/policy");
       if (res.ok) {
-        setData((await res.json()) as PolicyResponse);
+        setData((await res.json()) as EnrollmentResponse);
       } else {
         setLoadError(true);
       }
@@ -269,41 +219,6 @@ export function WalletSecuritySection(): React.ReactElement {
     }
   };
 
-  const toggleActionFactor = async (
-    action: string,
-    factor: Exclude<StepUpFactor, "wallet">
-  ): Promise<void> => {
-    if (!data) {
-      return;
-    }
-    const current = new Set(effectiveFactors(data.policy, action));
-    if (current.has(factor)) {
-      current.delete(factor);
-    } else {
-      current.add(factor);
-    }
-    const factors = [...current];
-    setBusy(true);
-    try {
-      const res = await runWalletStepUp((extra: StepUpExtra) =>
-        fetch("/api/user/step-up/policy", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, factors, ...extra }),
-        })
-      );
-      if (!res.ok) {
-        toast.error(await readError(res));
-        return;
-      }
-      await load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!data) {
     if (loadError) {
       return (
@@ -326,26 +241,14 @@ export function WalletSecuritySection(): React.ReactElement {
     );
   }
 
-  const enrolledData = data;
-  const noFactors = !(enrolledData.enrolled.totp || enrolledData.enrolled.email);
-
-  // A factor only counts as "required" when it is both selected and enrolled --
-  // an unenrolled factor cannot be enforced, so it must not read as active.
-  const requiredCount = CONFIGURABLE_ACTIONS.filter(({ action }) => {
-    const selected = new Set(effectiveFactors(enrolledData.policy, action));
-    return (["totp", "email"] as const).some(
-      (factor) => enrolledData.enrolled[factor] && selected.has(factor)
-    );
-  }).length;
-
   return (
     <div className="space-y-6">
       <div>
         <h3 className="font-medium text-sm">Extra confirmation factors</h3>
         <p className="text-muted-foreground text-sm">
           Your wallet signature confirms every sensitive action. Add an
-          authenticator or email for extra protection, then require them per
-          action below.
+          authenticator or email for extra protection -- once enabled, we ask
+          for it on every sensitive action.
         </p>
       </div>
 
@@ -392,75 +295,6 @@ export function WalletSecuritySection(): React.ReactElement {
           />
         </CardContent>
       </Card>
-
-      <Card className="border py-0 shadow-none">
-        <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
-          <div>
-            <p className="font-medium text-sm">Require for specific actions</p>
-            <p className="text-muted-foreground text-xs">
-              {requiredCount > 0
-                ? `Extra factor required on ${requiredCount} action${
-                    requiredCount === 1 ? "" : "s"
-                  }.`
-                : "Add an extra factor to sensitive actions."}
-            </p>
-          </div>
-          <Button
-            disabled={noFactors}
-            onClick={() => setActionsOpen(true)}
-            size="sm"
-            variant="outline"
-          >
-            Configure
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Dialog onOpenChange={setActionsOpen} open={actionsOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Require factors per action</DialogTitle>
-            <DialogDescription>
-              Your wallet signature always applies. Turning a factor on is
-              instant; turning one off asks you to sign first.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="-mr-2 max-h-[60vh] space-y-2 overflow-y-auto pr-2">
-            {CONFIGURABLE_ACTIONS.map(({ action, label }) => {
-              const selected = new Set(effectiveFactors(data.policy, action));
-              return (
-                <Card className="border py-0 shadow-none" key={action}>
-                  <CardContent className="flex flex-wrap items-center justify-between gap-4 p-3">
-                    <span className="font-medium text-sm">{label}</span>
-                    <div className="flex items-center gap-5">
-                      {(["totp", "email"] as const).map((factor) => {
-                        const enrolled = data.enrolled[factor];
-                        // Only show on when enrolled: an unenrolled factor is
-                        // never enforced, so a green toggle would be a lie.
-                        const active = enrolled && selected.has(factor);
-                        return (
-                          <div className="flex items-center gap-2" key={factor}>
-                            <span className="text-muted-foreground text-xs">
-                              {FACTOR_LABELS[factor]}
-                            </span>
-                            <Switch
-                              checked={active}
-                              disabled={busy || !enrolled}
-                              onCheckedChange={() =>
-                                toggleActionFactor(action, factor)
-                              }
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <TotpSetupDialog
         onEnrolled={load}

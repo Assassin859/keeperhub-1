@@ -19,7 +19,6 @@ import {
   resetDualFactor,
 } from "@/lib/mfa/dual-factor-rate-limit";
 import {
-  parseStepUpPolicy,
   resolveRequiredFactors,
   type StepUpFactor,
 } from "@/lib/mfa/step-up-policy";
@@ -118,7 +117,6 @@ type WalletContext = {
   hasTotp: boolean;
   totpSecret: string | null;
   stepUpEmail: string | null;
-  policy: ReturnType<typeof parseStepUpPolicy>;
 };
 
 async function loadWalletContext(userId: string): Promise<WalletContext> {
@@ -137,7 +135,6 @@ async function loadWalletContext(userId: string): Promise<WalletContext> {
     db
       .select({
         stepUpEmail: users.stepUpEmail,
-        stepUpPolicy: users.stepUpPolicy,
       })
       .from(users)
       .where(eq(users.id, userId))
@@ -148,7 +145,6 @@ async function loadWalletContext(userId: string): Promise<WalletContext> {
     hasTotp: Boolean(tf),
     totpSecret: tf?.secret ?? null,
     stepUpEmail: user?.stepUpEmail ?? null,
-    policy: parseStepUpPolicy(user?.stepUpPolicy),
   };
 }
 
@@ -351,8 +347,6 @@ async function requireWalletStepUp(args: {
       totp: ctx.hasTotp,
       email: Boolean(ctx.stepUpEmail),
     },
-    policy: ctx.policy,
-    action,
   });
 
   const signature =
