@@ -125,10 +125,12 @@ start_forks() {
 patch_chains() {
   # Same patch CI applies: point forked chains at the local forks and
   # null the fallback so nothing leaks to live networks on failure.
+  # Ports must track the same overrides start_forks honors, or a port
+  # override would leave the chains rows pointing at dead sockets.
   psql_local -d "$DB_NAME" \
-    -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
-    -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1" >/dev/null
-  log "chains rows patched to local forks"
+    -c "UPDATE chains SET default_primary_rpc = 'http://localhost:${SEPOLIA_FORK_PORT:-8547}', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
+    -c "UPDATE chains SET default_primary_rpc = 'http://localhost:${MAINNET_FORK_PORT:-8548}', default_fallback_rpc = NULL WHERE chain_id = 1" >/dev/null
+  log "chains rows patched to local forks (:${SEPOLIA_FORK_PORT:-8547}, :${MAINNET_FORK_PORT:-8548})"
 }
 
 cmd_up() {
