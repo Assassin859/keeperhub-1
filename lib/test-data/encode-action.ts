@@ -11,7 +11,11 @@
  */
 
 import { Interface, parseEther } from "ethers";
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import {
+  coerceArgsForAbi,
+  type FunctionAbiEntry,
+  reshapeArgsForAbi,
+} from "@/lib/abi/struct-args";
 import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
 import {
   getProtocol,
@@ -19,6 +23,10 @@ import {
   type ProtocolDefinition,
   resolveContractAddress,
 } from "@/lib/protocol-registry";
+import {
+  buildActionWorkflow,
+  buildSetupWorkflow,
+} from "@/lib/test-data/build-workflow";
 
 function requireProtocol(slug: string): ProtocolDefinition {
   const def = getProtocol(slug);
@@ -27,17 +35,6 @@ function requireProtocol(slug: string): ProtocolDefinition {
   }
   return def;
 }
-
-import {
-  buildActionWorkflow,
-  buildSetupWorkflow,
-} from "@/lib/test-data/build-workflow";
-
-export type FunctionAbiEntry = {
-  name?: string;
-  type?: string;
-  inputs?: Array<{ name?: string; type: string; components?: unknown[] }>;
-};
 
 export type EncodedAction = {
   to: string;
@@ -52,17 +49,29 @@ export type EncodedAction = {
   ethersFragment: unknown;
 };
 
+/** Interfaces are immutable and ABI parsing is the hot cost of a sweep
+ *  (every action of a contract re-parsed its full ABI); cache per
+ *  registry contract. */
+const ifaceCache = new Map<string, Interface>();
+
 export function ifaceFor(
   protocol: ProtocolDefinition,
   action: ProtocolAction
 ): Interface {
+  const key = `${protocol.slug}/${action.contract}`;
+  const cached = ifaceCache.get(key);
+  if (cached) {
+    return cached;
+  }
   const contract = protocol.contracts[action.contract];
   if (!contract?.abi) {
     throw new Error(
       `${protocol.slug}: action ${action.slug} references missing contract or ABI "${action.contract}"`
     );
   }
-  return new Interface(JSON.parse(contract.abi));
+  const iface = new Interface(JSON.parse(contract.abi));
+  ifaceCache.set(key, iface);
+  return iface;
 }
 
 /** Resolve the exact fragment for an action. Bare-name lookup throws on
@@ -192,8 +201,8 @@ export function encodeFromConfig(
   // Same pipeline the runtime steps run: flattened string args are
   // reshaped against tuple params, then coerced per ABI type.
   let args: unknown[] = transformed.map((t) => t.value);
-  args = reshapeArgsForAbi(args, abi as never);
-  args = coerceArgsForAbi(args, abi as never);
+  args = reshapeArgsForAbi(args, abi);
+  args = coerceArgsForAbi(args, abi);
   const data = iface.encodeFunctionData(ethersFragment as never, args);
   const contract = protocol.contracts[action.contract];
   const to =
