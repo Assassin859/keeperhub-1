@@ -220,6 +220,45 @@ describe.skipIf(SKIP)("consume-path claim helpers", () => {
     expect(row.billable).toBe(true);
   });
 
+  it("re-claims a reaped-never-ran row (system_error P-0005) and clears the reaper stamp", async () => {
+    const id = `${PREFIX}reaped_phantom`;
+    await db.insert(workflowExecutions).values({
+      id,
+      workflowId,
+      userId: ownerId,
+      status: "system_error",
+      errorCode: "P-0005",
+      error: "Execution timed out",
+      completedAt: new Date(),
+    });
+
+    const outcome = await claimPhantomForExecution(execDb, id, { retry: 1 }, HASH);
+
+    expect(outcome).toBe("claimed");
+    const row = await readExecution(id);
+    expect(row.status).toBe("pending");
+    expect(row.input).toEqual({ retry: 1 });
+    expect(row.errorCode).toBeNull();
+    expect(row.error).toBeNull();
+    expect(row.completedAt).toBeNull();
+  });
+
+  it("does NOT re-claim a system_error from a run failure (E-0001)", async () => {
+    const id = `${PREFIX}reaped_running`;
+    await db.insert(workflowExecutions).values({
+      id,
+      workflowId,
+      userId: ownerId,
+      status: "system_error",
+      errorCode: "E-0001",
+    });
+
+    expect(await claimPhantomForExecution(execDb, id, {}, HASH)).toBe(
+      "already_advanced"
+    );
+    expect((await readExecution(id)).status).toBe("system_error");
+  });
+
   it("claimPendingForExecution claims a pending row to running", async () => {
     const id = `${PREFIX}pending_claim`;
     await seedExecution(id, "pending");
@@ -227,6 +266,20 @@ describe.skipIf(SKIP)("consume-path claim helpers", () => {
     const outcome = await claimPendingForExecution(execDb, id);
 
     expect(outcome).toBe("claimed");
+    expect((await readExecution(id)).status).toBe("running");
+  });
+
+  it("claimPendingForExecution re-claims a reaped-never-ran row (P-0001)", async () => {
+    const id = `${PREFIX}pending_reaped`;
+    await db.insert(workflowExecutions).values({
+      id,
+      workflowId,
+      userId: ownerId,
+      status: "system_error",
+      errorCode: "P-0001",
+    });
+
+    expect(await claimPendingForExecution(execDb, id)).toBe("claimed");
     expect((await readExecution(id)).status).toBe("running");
   });
 

@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
@@ -27,6 +27,19 @@ export type DbSchema = {
  * - "not_found":        no row with this id exists.
  */
 export type ClaimOutcome = "claimed" | "already_advanced" | "not_found";
+
+/**
+ * Reaper error codes that mark a row `system_error` WITHOUT it ever having
+ * dispatched: P-0005 (phantom never picked up) and P-0001 (pending timed out,
+ * and the reaper only assigns it when there are NO step logs). A row in either
+ * state provably produced no side effects, so a message redelivered after a
+ * concurrency-requeue whose row was reaped in the meantime can safely RE-CLAIM
+ * and re-run it rather than be dropped as a duplicate - which restores the
+ * RequeueSignal "retry later" intent. Any other terminal/advanced state
+ * (running, success, error, cancelled, or system_error from a dispatch/run
+ * failure: E-0001/P-0004/E-0004) means work may have started and is dropped.
+ */
+const REAPED_NEVER_RAN_CODES: ErrorCode[] = ["P-0001", "P-0005"];
 
 /**
  * After a gated CAS matched zero rows, disambiguate "row exists but not in the
@@ -134,12 +147,17 @@ export async function failExecutionAsSystemError(
  * compare-and-set 'phantom' -> 'pending' and stamp its input.
  *
  * The scheduler/event-tracker pre-creates a 'phantom' row and passes its id on
- * the SQS message. The CAS on status='phantom' makes the claim exactly-once:
- * only the first delivery wins ("claimed"). A duplicate delivery whose row was
- * already claimed/advanced returns "already_advanced" and MUST be dropped by the
- * caller - re-running would send a second, fund-moving execution (there is no
- * downstream dedup). "not_found" is a message whose phantom was discarded or
- * never persisted; also dropped for an id-bearing message.
+ * the SQS message. The CAS makes the claim exactly-once: only the first delivery
+ * wins ("claimed"). A duplicate delivery whose row was already claimed/advanced
+ * returns "already_advanced" and MUST be dropped by the caller - re-running would
+ * send a second, fund-moving execution (there is no downstream dedup).
+ * "not_found" is a message whose phantom was discarded or never persisted; also
+ * dropped for an id-bearing message.
+ *
+ * The CAS also matches a reaped-never-ran row (system_error with a
+ * REAPED_NEVER_RAN_CODES errorCode) so a concurrency-requeued message whose
+ * phantom the reaper marked in the meantime is re-claimed and re-run rather than
+ * dropped - a run that provably never dispatched, so re-running is side-effect-safe.
  */
 export async function claimPhantomForExecution(
   db: PostgresJsDatabase<DbSchema>,
@@ -152,12 +170,27 @@ export async function claimPhantomForExecution(
     // The phantom was created billable=false (it had not run yet); claiming it
     // means it is now a real execution, so it becomes billable like any
     // owner-initiated run. Stamp the hash of the definition the executor just
-    // loaded so the run links to its workflow_history version.
-    .set({ status: "pending", input, billable: true, executedWorkflowHash })
+    // loaded so the run links to its workflow_history version. Clear any reaper
+    // stamp when re-claiming a reaped-never-ran row.
+    .set({
+      status: "pending",
+      input,
+      billable: true,
+      executedWorkflowHash,
+      error: null,
+      errorCode: null,
+      completedAt: null,
+    })
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        eq(workflowExecutions.status, "phantom")
+        or(
+          eq(workflowExecutions.status, "phantom"),
+          and(
+            eq(workflowExecutions.status, "system_error"),
+            inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+          )
+        )
       )
     )
     .returning({ id: workflowExecutions.id });
@@ -174,7 +207,9 @@ export async function claimPhantomForExecution(
  * phantom to upgrade; this CAS is what makes the consume exactly-once. Only the
  * first delivery wins ("claimed"); a duplicate whose row already advanced
  * returns "already_advanced" and MUST be dropped. The runner's own later
- * 'running' write is then an idempotent no-op.
+ * 'running' write is then an idempotent no-op. Like claimPhantomForExecution,
+ * the CAS also re-claims a reaped-never-ran row (system_error with a
+ * REAPED_NEVER_RAN_CODES errorCode).
  */
 export async function claimPendingForExecution(
   db: PostgresJsDatabase<DbSchema>,
@@ -182,11 +217,18 @@ export async function claimPendingForExecution(
 ): Promise<ClaimOutcome> {
   const result = await db
     .update(workflowExecutions)
-    .set({ status: "running" })
+    // Clear any reaper stamp when re-claiming a reaped-never-ran row.
+    .set({ status: "running", error: null, errorCode: null, completedAt: null })
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        eq(workflowExecutions.status, "pending")
+        or(
+          eq(workflowExecutions.status, "pending"),
+          and(
+            eq(workflowExecutions.status, "system_error"),
+            inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+          )
+        )
       )
     )
     .returning({ id: workflowExecutions.id });
