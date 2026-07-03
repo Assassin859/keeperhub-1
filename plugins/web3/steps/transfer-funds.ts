@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { withStepValueCap } from "@/lib/execute/value-ledger";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type {
@@ -56,7 +57,17 @@ export async function transferFundsStep(
       actionName: "transfer-funds",
       executionId: input._context?.executionId,
     },
-    () => withStepLogging(enrichedInput, () => transferFundsCore(input))
+    () =>
+      withStepLogging(enrichedInput, () =>
+        withStepValueCap(
+          {
+            organizationId: input._context?.organizationId,
+            amountEth: input.amount,
+            executionId: input._context?.executionId,
+          },
+          () => transferFundsCore(input)
+        )
+      )
   );
 }
 

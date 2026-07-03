@@ -9,7 +9,6 @@ import {
   inArray,
   isNotNull,
   lt,
-  ne,
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -25,6 +24,7 @@ import {
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
+import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -1293,35 +1293,23 @@ export async function getSpendCapData(organizationId: string): Promise<{
   dailyCapWei: string | null;
   dailyUsedWei: string;
 }> {
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-
   // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
-  // per day (SUM value_wei over non-failed direct executions -- pending/running
-  // reservations included) against the org's daily value cap.
-  const [capResult, usageResult] = await Promise.all([
+  // per day, summed across BOTH stores (direct executions AND the workflow/
+  // protocol value ledger, with the same stale-window aging), against the org's
+  // daily value cap. Using the shared SUM keeps the gauge honest -- it shows the
+  // same number enforcement checks, so workflow spend counts too.
+  const [capResult, dailyUsedWei] = await Promise.all([
     db
       .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
       .from(organizationSpendCaps)
       .where(eq(organizationSpendCaps.organizationId, organizationId))
       .limit(1),
-    db
-      .select({
-        totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.valueWei} AS NUMERIC)), 0)::text`,
-      })
-      .from(directExecutions)
-      .where(
-        and(
-          eq(directExecutions.organizationId, organizationId),
-          ne(directExecutions.status, "failed"),
-          gte(directExecutions.createdAt, todayStart)
-        )
-      ),
+    sumOrgValueTodayWei(db, organizationId),
   ]);
 
   return {
     dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
-    dailyUsedWei: usageResult[0]?.totalWei ?? "0",
+    dailyUsedWei: dailyUsedWei.toString(),
   };
 }
 

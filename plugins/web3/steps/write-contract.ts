@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { withStepValueCap } from "@/lib/execute/value-ledger";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import {
@@ -51,7 +52,17 @@ export async function writeContractStep(
       actionName: "write-contract",
       executionId: input._context?.executionId,
     },
-    () => withStepLogging(enrichedInput, () => writeContractCore(input))
+    () =>
+      withStepLogging(enrichedInput, () =>
+        withStepValueCap(
+          {
+            organizationId: input._context?.organizationId,
+            amountEth: input.ethValue,
+            executionId: input._context?.executionId,
+          },
+          () => writeContractCore(input)
+        )
+      )
   );
 }
 
