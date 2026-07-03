@@ -1,14 +1,15 @@
 "use client";
 
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
+import { rootGateAtom } from "@/lib/onboarding/root-gate";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { isContinueAsGuest } from "@/lib/welcome-status";
 import {
@@ -92,9 +93,7 @@ const Home = () => {
   // decision is made we render a loader over the canvas, so a redirected user
   // never sees the canvas flash before being sent to /welcome.
   const welcomeRedirectedRef = useRef(false);
-  const [gate, setGate] = useState<"loading" | "canvas" | "redirecting">(
-    "loading"
-  );
+  const [gate, setGate] = useAtom(rootGateAtom);
   useEffect(() => {
     if (sessionPending || welcomeRedirectedRef.current) {
       return;
@@ -124,7 +123,7 @@ const Home = () => {
       setGate("redirecting");
       router.replace("/welcome/create-org");
     }
-  }, [sessionPending, session, router]);
+  }, [sessionPending, session, router, setGate]);
 
   // Update page title when workflow name changes
   useEffect(() => {
