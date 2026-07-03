@@ -12,6 +12,7 @@ import { CopyBlock } from "@/components/welcome/copy-block";
 import { ConnectAgentPreview } from "@/components/welcome/previews";
 import { WelcomeShell } from "@/components/welcome/welcome-shell";
 import { getAgentFrameworks } from "@/lib/agent-connect-commands";
+import { api } from "@/lib/api-client";
 import { markOnboardingComplete } from "@/lib/welcome-status";
 
 const BACK_PATH = "/welcome/invite-members";
@@ -51,9 +52,9 @@ export function ConnectAgentStep(): React.ReactElement {
     });
   };
 
-  // Persist completion, then hard-navigate home so the session is refetched
-  // server-side with the new flag; the root gate then keeps the user on the
-  // canvas instead of bouncing back here.
+  // Persist completion, then hard-navigate so the session is refetched
+  // server-side with the new flag. Open the first seeded example workflow on
+  // the canvas instead of an empty one; fall back home if there are none.
   const finish = async (): Promise<void> => {
     if (!apiKey) {
       await apiKeyBoxControls.start({
@@ -64,6 +65,19 @@ export function ConnectAgentStep(): React.ReactElement {
     }
     setFinishing(true);
     await markOnboardingComplete();
+    try {
+      const all = await api.workflow.getAll();
+      const first = [...all].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      )[0];
+      if (first) {
+        window.location.assign(`/workflows/${first.id}`);
+        return;
+      }
+    } catch {
+      // fall through to home
+    }
     window.location.assign("/");
   };
 

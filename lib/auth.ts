@@ -47,6 +47,7 @@ import {
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { generateHandle } from "@/lib/utils/wallet-handle";
+import { ONBOARDING_WORKFLOW_FIXTURES } from "@/scripts/seed/fixtures/onboarding-workflows";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -813,6 +814,40 @@ export const auth = betterAuth({
               role: "owner",
               createdAt: new Date(),
             });
+
+            // New signups (not anonymous exploration) start with three example
+            // workflows in their org so the app is not an empty canvas. They are
+            // seeded disabled with placeholder fields for the user to fill in;
+            // onboarding opens the first one on the canvas. Best-effort: a seed
+            // failure must not fail signup.
+            if (!isAnonymous) {
+              try {
+                const seededAt = Date.now();
+                await db.insert(workflows).values(
+                  ONBOARDING_WORKFLOW_FIXTURES.slice(0, 3).map(
+                    (fixture, index) => ({
+                      name: fixture.name,
+                      description: fixture.description,
+                      userId: user.id,
+                      organizationId: org.id,
+                      nodes: fixture.nodes,
+                      edges: fixture.edges,
+                      // Stagger timestamps so the first fixture is the oldest,
+                      // and onboarding can open it deterministically.
+                      createdAt: new Date(seededAt + index),
+                      updatedAt: new Date(seededAt + index),
+                    })
+                  )
+                );
+              } catch (error) {
+                logSystemError(
+                  ErrorCategory.AUTH,
+                  "[Auth] Failed to seed example workflows for new org",
+                  error,
+                  { userId: user.id }
+                );
+              }
+            }
 
             // Auto-add the signing wallet to the address book so it is
             // immediately available for use in workflows.
