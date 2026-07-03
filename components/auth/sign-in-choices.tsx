@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Wallet } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { ConnectAuthPanel } from "@/components/auth/connect-auth-panel";
@@ -9,11 +9,12 @@ import { Button } from "@/components/ui/button";
 import { resolvePostAuthDestination } from "@/lib/post-auth-destination";
 
 /**
- * Single-column sign-in: email + social (ConnectAuthPanel) with an "OR" divider
- * and a "Sign in with your wallet" action that reveals the wallet picker. The
- * height animates as the two views swap. Shared by the welcome landing and the
- * in-app Connect modal so both present the same interface. On success the panel
- * navigates home, where the onboarding gate takes over.
+ * Single-column sign-in: a Google / GitHub / Wallet row, an "OR" divider, and
+ * the email + password form (ConnectAuthPanel). Clicking Wallet reveals the
+ * wallet picker; the height animates as the two views swap. Shared by the
+ * welcome landing and the in-app Connect modal so both present the same
+ * interface. On success the panel navigates home, where the onboarding gate
+ * takes over.
  */
 export function SignInChoices(): React.ReactElement {
   const [showWallet, setShowWallet] = useState(false);
@@ -76,21 +77,10 @@ export function SignInChoices(): React.ReactElement {
               key="socials"
               transition={{ opacity: { duration: 0.15, delay: 0.2 } }}
             >
-              <ConnectAuthPanel hideChooserHeader />
-              <div className="flex items-center gap-3">
-                <span className="h-px flex-1 bg-border" />
-                <span className="text-muted-foreground text-xs">OR</span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-              <Button
-                className="w-full justify-start"
-                onClick={() => setShowWallet(true)}
-                type="button"
-                variant="outline"
-              >
-                <Wallet className="size-4" />
-                Sign in with your wallet
-              </Button>
+              <ConnectAuthPanel
+                hideChooserHeader
+                onWalletClick={() => setShowWallet(true)}
+              />
             </motion.div>
           )}
         </AnimatePresence>

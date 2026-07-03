@@ -1,7 +1,7 @@
 "use client";
 
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
-import { Mail } from "lucide-react";
+import { Wallet } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import Image from "next/image";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -17,8 +17,7 @@ import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 import { getEnabledAuthProviders } from "@/lib/auth-providers";
 
 type View =
-  | "chooser"
-  | "signin"
+  | "main"
   | "signup"
   | "forgot"
   | "reset"
@@ -58,16 +57,20 @@ function reloadHome(): void {
  */
 export function ConnectAuthPanel({
   hideChooserHeader = false,
+  onWalletClick,
 }: {
   // When the surrounding surface already carries a title (e.g. the welcome
-  // page), suppress the chooser's own "Log in or sign up" header to avoid
-  // repeating the same phrase. Contextual step headers (verify, MFA) stay.
+  // page), suppress the default view's own header to avoid repeating the same
+  // phrase. Contextual step headers (verify, MFA) stay.
   hideChooserHeader?: boolean;
+  // When provided, a "Wallet" button is shown in the social row; clicking it
+  // hands off to the surrounding surface to reveal the wallet picker.
+  onWalletClick?: () => void;
 } = {}): React.ReactElement {
   const providers = getEnabledAuthProviders();
   const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
-  const [view, setView] = useState<View>("chooser");
+  const [view, setView] = useState<View>("main");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -277,7 +280,7 @@ export function ConnectAuthPanel({
     }
     if (mfaEmailOtp.trim().length !== 6) {
       setError("Missing email code. Start sign-in again.");
-      setView("signin");
+      setView("main");
       return;
     }
     setError("");
@@ -387,7 +390,7 @@ export function ConnectAuthPanel({
       }
       toast.success("Password reset! Please sign in.");
       setPassword("");
-      setView("signin");
+      setView("main");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reset password");
     } finally {
@@ -396,8 +399,7 @@ export function ConnectAuthPanel({
   };
 
   const titles: Record<View, string> = {
-    chooser: "Log in or sign up",
-    signin: "Sign in with email",
+    main: "Log in or sign up",
     signup: "Create your account",
     forgot: "Reset your password",
     reset: "Enter your reset code",
@@ -406,8 +408,7 @@ export function ConnectAuthPanel({
     "mfa-totp": "Authenticator code",
   };
   const descriptions: Record<View, string> = {
-    chooser: "Use email or a social account to get started.",
-    signin: "Enter your email and password.",
+    main: "Use email, a social account, or your wallet to get started.",
     signup: "Sign up with your email and a password.",
     forgot: "We'll email you a code to reset your password.",
     reset: "Enter the code we emailed and choose a new password.",
@@ -417,7 +418,7 @@ export function ConnectAuthPanel({
   };
 
   const onSubmit = (e: React.FormEvent): void => {
-    if (view === "signin") {
+    if (view === "main") {
       handleSignIn(e);
     } else if (view === "signup") {
       handleSignUp(e);
@@ -437,7 +438,7 @@ export function ConnectAuthPanel({
   };
 
   const items: Item[] = [];
-  if (!(hideChooserHeader && view === "chooser")) {
+  if (!(hideChooserHeader && view === "main")) {
     items.push({
       key: "header",
       node: (
@@ -464,61 +465,60 @@ export function ConnectAuthPanel({
     </div>
   );
 
-  if (view === "chooser") {
-    if (providers.google) {
-      items.push({
-        key: "google",
-        node: (
-          <Button
-            className="w-full justify-start"
-            disabled={social !== null}
-            onClick={() => handleSocial("google")}
-            type="button"
-            variant="outline"
-          >
-            {social === "google" ? <Spinner /> : <GoogleIcon />}
-            Continue with Google
-          </Button>
-        ),
-      });
-    }
-    if (providers.github) {
-      items.push({
-        key: "github",
-        node: (
-          <Button
-            className="w-full justify-start"
-            disabled={social !== null}
-            onClick={() => handleSocial("github")}
-            type="button"
-            variant="outline"
-          >
-            {social === "github" ? <Spinner /> : <GitHubIcon />}
-            Continue with GitHub
-          </Button>
-        ),
-      });
-    }
+  if (view === "main") {
     items.push({
-      key: "email-cta",
+      key: "socials",
       node: (
-        <Button
-          className="w-full justify-start"
-          onClick={() => {
-            setError("");
-            setView("signin");
-          }}
-          type="button"
-          variant="outline"
-        >
-          <Mail className="size-4" />
-          Continue with email
-        </Button>
+        <div className="flex gap-2">
+          {providers.google ? (
+            <Button
+              className="min-w-0 flex-1 justify-center"
+              disabled={social !== null}
+              onClick={() => handleSocial("google")}
+              type="button"
+              variant="outline"
+            >
+              {social === "google" ? <Spinner /> : <GoogleIcon />}
+              Google
+            </Button>
+          ) : null}
+          {providers.github ? (
+            <Button
+              className="min-w-0 flex-1 justify-center"
+              disabled={social !== null}
+              onClick={() => handleSocial("github")}
+              type="button"
+              variant="outline"
+            >
+              {social === "github" ? <Spinner /> : <GitHubIcon />}
+              GitHub
+            </Button>
+          ) : null}
+          {onWalletClick ? (
+            <Button
+              className="min-w-0 flex-1 justify-center"
+              disabled={social !== null}
+              onClick={onWalletClick}
+              type="button"
+              variant="outline"
+            >
+              <Wallet className="size-4" />
+              Wallet
+            </Button>
+          ) : null}
+        </div>
       ),
     });
-  }
-
-  if (view === "signin") {
+    items.push({
+      key: "or",
+      node: (
+        <div className="flex items-center gap-3">
+          <span className="h-px flex-1 bg-border" />
+          <span className="text-muted-foreground text-xs">OR</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+      ),
+    });
     items.push({ key: "email", node: emailField("email") });
     items.push({
       key: "password",
@@ -573,21 +573,6 @@ export function ConnectAuthPanel({
             Create an account
           </button>
         </p>
-      ),
-    });
-    items.push({
-      key: "signin-other",
-      node: (
-        <button
-          className="text-center text-muted-foreground text-xs hover:text-foreground"
-          onClick={() => {
-            setError("");
-            setView("chooser");
-          }}
-          type="button"
-        >
-          Other ways to sign in
-        </button>
       ),
     });
   }
@@ -647,7 +632,7 @@ export function ConnectAuthPanel({
             className="font-medium text-foreground underline underline-offset-2"
             onClick={() => {
               setError("");
-              setView("signin");
+              setView("main");
             }}
             type="button"
           >
@@ -779,7 +764,7 @@ export function ConnectAuthPanel({
           className="text-center text-muted-foreground text-sm hover:text-foreground"
           onClick={() => {
             setError("");
-            setView("signin");
+            setView("main");
           }}
           type="button"
         >
