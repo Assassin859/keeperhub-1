@@ -471,25 +471,14 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       // We claimed pending -> running above, so the phantom/pending backstop in
       // processMessage no longer matches this row. Mark it system_error here
       // (mirrors the schedule/block/event dispatch guard below) then re-throw.
-      await db
-        .update(workflowExecutions)
-        .set({
-          status: "system_error",
-          error:
-            error instanceof Error
-              ? `Dispatch failed: ${error.message}`
-              : "Dispatch failed",
-          errorCode: "P-0004",
-          errorType: "system",
-          errorCategory: "infrastructure",
-          completedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(workflowExecutions.id, message.executionId),
-            eq(workflowExecutions.status, "running")
-          )
-        );
+      await failExecutionAsSystemError(db, message.executionId, {
+        error:
+          error instanceof Error
+            ? `Dispatch failed: ${error.message}`
+            : "Dispatch failed",
+        errorCode: "P-0004",
+        statuses: ["running"],
+      });
       throw error;
     }
     return;
@@ -597,25 +586,14 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     // api / in-process / future targets uniformly. The status='pending'
     // filter prevents overwriting a status the runtime already set if
     // the failure happened after the workflow started running.
-    await db
-      .update(workflowExecutions)
-      .set({
-        status: "system_error",
-        error:
-          error instanceof Error
-            ? `Dispatch failed: ${error.message}`
-            : "Dispatch failed",
-        errorCode: "P-0004",
-        errorType: "system",
-        errorCategory: "infrastructure",
-        completedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(workflowExecutions.id, executionId),
-          eq(workflowExecutions.status, "pending")
-        )
-      );
+    await failExecutionAsSystemError(db, executionId, {
+      error:
+        error instanceof Error
+          ? `Dispatch failed: ${error.message}`
+          : "Dispatch failed",
+      errorCode: "P-0004",
+      statuses: ["pending"],
+    });
     throw error;
   }
 }

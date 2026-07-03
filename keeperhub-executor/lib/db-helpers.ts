@@ -103,21 +103,26 @@ export async function updateExecutionStatus(
 }
 
 /**
- * KEEP-853: backstop for the SQS consumer. When message processing throws for a
- * reason the inner dispatch handlers did not already record, mark the in-flight
- * row as a system error right away instead of leaving it for the reaper (which
- * runs minutes later). Compare-and-set on status IN ('phantom','pending') so it
- * never clobbers a row the runtime already advanced to running/terminal.
+ * KEEP-853: mark an in-flight row system_error right away instead of leaving it
+ * for the reaper (which runs minutes later). Compare-and-set on the caller's
+ * expected status(es) - defaulting to ('phantom','pending') for the
+ * processMessage backstop - so it never clobbers a row the runtime already
+ * advanced past. The dispatch-failure guards pass their own single expected
+ * status (e.g. 'pending' or 'running') and errorCode.
  *
  * Returns true when a row was marked, false when the CAS matched nothing (no
- * executionId, or the row already advanced past phantom/pending). The caller
- * surfaces the false case instead of treating the backstop as resolved, since
- * such a row is left for the reaper rather than marked immediately.
+ * executionId, or the row was not in an expected status). The caller surfaces
+ * the false case instead of treating the backstop as resolved, since such a row
+ * is left for the reaper rather than marked immediately.
  */
 export async function failExecutionAsSystemError(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string | undefined,
-  fields: { error: string; errorCode: ErrorCode }
+  fields: {
+    error: string;
+    errorCode: ErrorCode;
+    statuses?: ("phantom" | "pending" | "running")[];
+  }
 ): Promise<boolean> {
   if (!executionId) {
     return false;
@@ -135,7 +140,10 @@ export async function failExecutionAsSystemError(
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        inArray(workflowExecutions.status, ["phantom", "pending"])
+        inArray(
+          workflowExecutions.status,
+          fields.statuses ?? ["phantom", "pending"]
+        )
       )
     )
     .returning({ id: workflowExecutions.id });
