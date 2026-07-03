@@ -142,7 +142,11 @@ export default defineAbiProtocol({
       label: "Rocket Deposit Pool",
       abi: JSON.stringify(depositPoolAbi),
       addresses: {
-        "1": "0xDD3f50F8A6CafbE9b31a427582963f465E745AF8",
+        // Resolved from RocketStorage getAddress(keccak("contract.address" +
+        // "rocketDepositPool")) on 2026-07-03. Rocket Pool upgrades this
+        // contract; deposits to superseded deployments revert with
+        // "Invalid or outdated contract" even though reads still work.
+        "1": "0xCE15294273CFb9D9b628F4D61636623decDF4fdC",
       },
       overrides: {
         deposit: {

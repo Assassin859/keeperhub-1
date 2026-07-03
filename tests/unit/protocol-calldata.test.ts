@@ -133,6 +133,15 @@ describe("protocol calldata: bound-encode goldens (testData chains)", () => {
               chainId,
               WALLET
             );
+            if (!(skipped || to)) {
+              // A runnable action with no target is a latent defect: a
+              // userSpecifiedAddress contract with no contractAddress
+              // binding (resolveContractAddress ignores the fallback map
+              // for user-specified contracts).
+              throw new Error(
+                `${protocol.slug}/${action.slug} on ${chainId}: runnable action resolves no target address`
+              );
+            }
             current[chainId][action.slug] = { to, data, skipped };
           } catch (err) {
             if (skipped) {

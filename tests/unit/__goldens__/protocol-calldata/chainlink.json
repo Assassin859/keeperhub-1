@@ -23,12 +23,12 @@
     "ccip-check-bridge-balance": {
       "to": "",
       "data": "0x70a082310000000000000000000000001111111111111111111111111111111111111111",
-      "skipped": false
+      "skipped": true
     },
     "ccip-check-bridge-allowance": {
       "to": "",
       "data": "0xdd62ed3e000000000000000000000000111111111111111111111111111111111111111100000000000000000000000080226fc0ee2b096224eeac085bb9a8cba1146f7d",
-      "skipped": false
+      "skipped": true
     },
     "ccip-approve-fee-token": {
       "to": "",
@@ -38,12 +38,12 @@
     "ccip-check-fee-balance": {
       "to": "",
       "data": "0x70a082310000000000000000000000001111111111111111111111111111111111111111",
-      "skipped": false
+      "skipped": true
     },
     "ccip-check-fee-allowance": {
       "to": "",
       "data": "0xdd62ed3e000000000000000000000000111111111111111111111111111111111111111100000000000000000000000080226fc0ee2b096224eeac085bb9a8cba1146f7d",
-      "skipped": false
+      "skipped": true
     },
     "eth-usd-latest-round-data": {
       "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
@@ -126,7 +126,7 @@
       "skipped": false
     },
     "latest-round-data": {
-      "to": "",
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
       "data": "0xfeaf968c",
       "skipped": false
     },
@@ -136,22 +136,22 @@
       "skipped": true
     },
     "latest-answer": {
-      "to": "",
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
       "data": "0x50d25bcd",
       "skipped": false
     },
     "decimals": {
-      "to": "",
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
       "data": "0x313ce567",
       "skipped": false
     },
     "description": {
-      "to": "",
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
       "data": "0x7284e416",
       "skipped": false
     },
     "version": {
-      "to": "",
+      "to": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
       "data": "0x54fd4d50",
       "skipped": false
     }

@@ -101,7 +101,9 @@ export const TEST_DATA: ProtocolTestData = {
       "accrue-interest": { ...WSTETH_USDC_MARKET },
       "set-authorization": {
         authorized: "0x000000000000000000000000000000000000dEaD",
-        newIsAuthorized: "false",
+        // Must flip state or Morpho reverts "already set": fresh forks
+        // start unauthorized, so grant rather than revoke.
+        newIsAuthorized: "true",
       },
       "supply-collateral": {
         ...WSTETH_USDC_MARKET,
@@ -302,6 +304,21 @@ export default defineAbiProtocol({
           ],
           outputs: [],
         },
+        // Action order is registry order: supplyCollateral must precede
+        // borrow so the coverage and simulation write sequences have
+        // collateral before borrowing against it (cf. aave-v3 POOL_ABI).
+        {
+          type: "function",
+          name: "supplyCollateral",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
         {
           type: "function",
           name: "borrow",
@@ -323,18 +340,6 @@ export default defineAbiProtocol({
             MARKET_PARAMS_TUPLE,
             { name: "assets", type: "uint256" },
             { name: "shares", type: "uint256" },
-            { name: "onBehalf", type: "address" },
-            { name: "data", type: "bytes" },
-          ],
-          outputs: [],
-        },
-        {
-          type: "function",
-          name: "supplyCollateral",
-          stateMutability: "nonpayable",
-          inputs: [
-            MARKET_PARAMS_TUPLE,
-            { name: "assets", type: "uint256" },
             { name: "onBehalf", type: "address" },
             { name: "data", type: "bytes" },
           ],

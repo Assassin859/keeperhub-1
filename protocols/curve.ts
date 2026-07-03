@@ -1,6 +1,11 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 
+// The pool contract is userSpecifiedAddress; bind the canonical mainnet
+// 3pool explicitly (same address as the registry fallback, which
+// resolveContractAddress ignores for user-specified contracts).
+const MAINNET_3POOL = "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7";
+
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
@@ -9,11 +14,20 @@ const TEST_DATA: ProtocolTestData = {
       approvals: [],
     },
     actions: {
-      "get-dy": { i: "0", j: "1", dx: native("1") },
-      "get-virtual-price": {},
-      "get-coin": { arg0: "0" },
-      "get-pool-balance": { arg0: "0" },
-      "calc-withdraw-one-coin": { _token_amount: native("1"), i: "0" },
+      "get-dy": {
+        contractAddress: MAINNET_3POOL,
+        i: "0",
+        j: "1",
+        dx: native("1"),
+      },
+      "get-virtual-price": { contractAddress: MAINNET_3POOL },
+      "get-coin": { contractAddress: MAINNET_3POOL, arg0: "0" },
+      "get-pool-balance": { contractAddress: MAINNET_3POOL, arg0: "0" },
+      "calc-withdraw-one-coin": {
+        contractAddress: MAINNET_3POOL,
+        _token_amount: native("1"),
+        i: "0",
+      },
       "crv-balance-of": { account: wallet() },
       "crv-approve": { spender: wallet() },
       "crv-transfer": { to: wallet() },
