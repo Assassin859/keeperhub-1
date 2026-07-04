@@ -43,6 +43,7 @@ export type StepAction =
 
 export type DeepLinkTarget =
   | "api-keys"
+  | "connect-agent"
   | "integrations"
   | "wallet"
   | "wallet-fund";
@@ -219,7 +220,7 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
           key: "connect-agent",
           title: "Connect your agent",
           description:
-            "Add KeeperHub to Claude or Cursor, then run `list my workflows` to confirm.",
+            "Add KeeperHub to Claude, Codex, or any MCP client, then run `list my workflows` to confirm.",
           info: {
             summary:
               "Connect KeeperHub to your AI agent over MCP so it can read and run your workflows.",
@@ -227,16 +228,16 @@ export function getBranches(ctx: ChipContext = {}): Branch[] {
               {
                 heading: "What you can do",
                 points: [
-                  "Generate an API key for your account.",
-                  "Add KeeperHub as an MCP server in Claude, Cursor, or any MCP client.",
+                  "Add KeeperHub as an MCP server in Claude, Codex, Gemini CLI, or any MCP client.",
+                  "Sign in through your browser when prompted -- no API key required.",
                   "Ask your agent to `list my workflows` to confirm the connection.",
                 ],
               },
             ],
           },
           signal: "agentConnected",
-          action: { kind: "deeplink", target: "api-keys" },
-          actionLabel: "Get your key",
+          action: { kind: "deeplink", target: "connect-agent" },
+          actionLabel: "Connect agent",
         },
         {
           key: "run-workflow",

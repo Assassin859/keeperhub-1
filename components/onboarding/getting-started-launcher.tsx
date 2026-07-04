@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
+import { ConnectAgentOverlay } from "@/components/overlays/connect-agent-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { WalletOverlay } from "@/components/overlays/wallet-overlay";
@@ -354,9 +355,7 @@ function ExpandedCard({
 
       <div className="max-h-[60vh] space-y-1 overflow-y-auto px-2 py-2">
         {steps.map((step, idx) => {
-          const locked = steps
-            .slice(0, idx)
-            .some((s) => !gs.isStepComplete(s));
+          const locked = steps.slice(0, idx).some((s) => !gs.isStepComplete(s));
           return (
             <StepRow
               complete={gs.isStepComplete(step)}
@@ -443,6 +442,8 @@ export function GettingStartedLauncher({
   const openDeepLink = (target: DeepLinkTarget): void => {
     if (target === "api-keys") {
       open(ApiKeysOverlay);
+    } else if (target === "connect-agent") {
+      open(ConnectAgentOverlay, undefined, { size: "2xl" });
     } else if (target === "integrations") {
       open(IntegrationsOverlay);
     } else {
@@ -582,7 +583,9 @@ export function GettingStartedLauncher({
           error
         );
         toast.error(
-          error instanceof Error ? error.message : "Could not add that workflow."
+          error instanceof Error
+            ? error.message
+            : "Could not add that workflow."
         );
         return;
       }
