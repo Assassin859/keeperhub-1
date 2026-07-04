@@ -30,6 +30,7 @@ export const DEFILLAMA_CHAIN_SLUGS: Record<number, string> = {
   137: "polygon",
   8453: "base",
   42161: "arbitrum",
+  4217: "tempo",
 };
 
 type DefillamaCoinsResponse = {

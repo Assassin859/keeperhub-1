@@ -99,7 +99,13 @@ function protocolLabel(protocol: string): string {
 
 /** Native gas token symbol per chain; every other supported chain uses ETH. */
 function nativeSymbol(chainId: number): string {
-  return chainId === 137 ? "POL" : "ETH";
+  if (chainId === 137) {
+    return "POL";
+  }
+  if (chainId === 4217) {
+    return "TEMPO";
+  }
+  return "ETH";
 }
 
 function chainLabel(chainId: number): string {

@@ -145,9 +145,22 @@ export const STABLECOIN_CHAINLINK_FEEDS: Record<
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Returns the subset of `enabledChainIds` that have at least one registered
- * protocol address (Aave V3 Pool or Lido tokens). Chains absent from both
- * registries are silently skipped — there is nothing to scan there.
+ * Chains with no lending/staking protocol registered above, but which still
+ * hold seeded stablecoins worth scanning for balances (priced via DefiLlama).
+ * Tempo is stablecoin-native — no Aave/Lido/Spark/Sky — so it would otherwise
+ * be filtered out of the scan entirely. Keep in sync with SCAN_NETWORK_IDS in
+ * lib/scan/networks.ts (the client-visible mirror) and the DefiLlama slug map
+ * in lib/scan/price/defillama.ts.
+ */
+export const STABLECOIN_ONLY_SCAN_CHAIN_IDS: readonly number[] = [
+  4217, // Tempo
+];
+
+/**
+ * Returns the subset of `enabledChainIds` that are worth scanning: chains with
+ * at least one registered protocol address (Aave V3 / Lido / Spark / Sky) OR a
+ * stablecoin-only chain from STABLECOIN_ONLY_SCAN_CHAIN_IDS. Chains matching
+ * neither are silently skipped — there is nothing to scan there.
  *
  * Usage: const chainIds = scannableChainIds(await getEnabledChainIds());
  */
@@ -157,6 +170,7 @@ export function scannableChainIds(enabledChainIds: number[]): number[] {
     ...Object.keys(LIDO_TOKENS).map(Number),
     ...Object.keys(SPARK_POOLS).map(Number),
     ...Object.keys(SKY_SAVINGS).map(Number),
+    ...STABLECOIN_ONLY_SCAN_CHAIN_IDS,
   ]);
 
   return enabledChainIds.filter((chainId) => registeredChainIds.has(chainId));
