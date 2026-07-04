@@ -335,18 +335,12 @@ type Conversation = { turns: Turn[]; result: string };
 const STETH_CONVO: Conversation = {
   turns: [
     {
-      user: "Create a workflow that monitors my stETH rewards and alerts me on Discord when they are ready to redeem",
+      user: "Create a workflow that checks my stETH rewards every hour, alerts me on Discord when they are ready to redeem, and holds the alert whenever gas is above 40 gwei",
       intent:
-        "I'll create a workflow that checks your stETH rewards hourly and posts to Discord when they are ready.",
+        "I'll create a workflow that checks your stETH rewards hourly, posts to Discord when they are ready, and holds the alert while gas is above 40 gwei.",
       tool: "create_workflow",
-      confirm: "Done. Your stETH yield monitor is live.",
-    },
-    {
-      user: "Now update it to skip the alert when gas is above 40 gwei",
-      intent:
-        "I'll add a gas guard so it holds the alert when gas is above 40 gwei.",
-      tool: "update_workflow",
-      confirm: "Updated. It now waits for gas to fall below 40 gwei.",
+      confirm:
+        "Done. Your stETH yield monitor is live with the gas guard in place.",
     },
     {
       user: "Also post each payout to our treasury channel on Slack",
@@ -356,7 +350,7 @@ const STETH_CONVO: Conversation = {
       confirm: "Added. Every payout now posts to your Slack channel.",
     },
     {
-      user: "And if a reward is over 5 stETH, tag the team in the Discord message",
+      user: "And tag the team when a reward is over 5 stETH",
       intent:
         "I'll branch on the reward size and tag the team when it goes above 5 stETH.",
       tool: "update_workflow",
