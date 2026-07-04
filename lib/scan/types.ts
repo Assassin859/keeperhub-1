@@ -89,6 +89,12 @@ export interface ScanResponse {
   schemaVersion: number;
   /** EIP-55 checksummed address. */
   address: string;
+  /**
+   * The ENS name the caller entered, when the request was an ENS lookup that
+   * resolved to `address`. Absent for raw-address scans. Lets the UI show the
+   * name → address mapping the user typed.
+   */
+  ensName?: string;
   positions: ProtocolPosition[];
   stablecoins: StablecoinBalance[];
   unavailableChains: UnavailableChain[];

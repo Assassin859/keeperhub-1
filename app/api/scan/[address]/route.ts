@@ -34,6 +34,7 @@ import {
   fetchDefillamaYieldPools,
 } from "@/lib/scan/price/defillama-yields";
 import { incrementAndCheckWithBackoff } from "@/lib/scan/rate-limit";
+import { ENS_NAME_REGEX, resolveEnsName } from "@/lib/scan/resolve-ens";
 import { scanAddress } from "@/lib/scan/scanner";
 import {
   type ApyContext,
@@ -61,9 +62,15 @@ export async function GET(
     );
   }
 
-  const { address } = await params;
+  const { address: rawQuery } = await params;
 
-  if (!ethers.isAddress(address)) {
+  // Accept a raw EVM address or a name-shaped ENS query. Reject anything that
+  // is neither BEFORE any rate-limit or RPC work (no cost on garbage input).
+  // Annotated as boolean (not the inferred `value is string` predicate) so the
+  // ENS branch below keeps rawQuery typed as string rather than narrowing it
+  // to `never`.
+  const isRawAddress: boolean = ethers.isAddress(rawQuery);
+  if (!(isRawAddress || ENS_NAME_REGEX.test(rawQuery))) {
     return Response.json(
       { error: "Invalid address" },
       { status: HttpStatus.BAD_REQUEST }
@@ -89,7 +96,7 @@ export async function GET(
     logAnonymousExecutionBlock("scan", null, {
       ip: trustedIp,
       rateLimitCount: String(rate.count),
-      address,
+      address: rawQuery,
     });
     return applyRateLimitHeaders(
       Response.json(
@@ -98,6 +105,27 @@ export async function GET(
       ),
       rate
     );
+  }
+
+  // Resolve an ENS query to its address now that the request has passed the
+  // rate limit (ENS resolution is one RPC call, so it must be gated). Raw
+  // addresses skip this. An unresolvable name is a 400 — the rate-limit slot
+  // is already spent, which is acceptable for a well-formed but dead name.
+  let address = rawQuery;
+  let ensName: string | undefined;
+  if (!isRawAddress) {
+    const resolved = await resolveEnsName(rawQuery);
+    if (!resolved) {
+      return applyRateLimitHeaders(
+        Response.json(
+          { error: "Could not resolve ENS name" },
+          { status: HttpStatus.BAD_REQUEST }
+        ),
+        rate
+      );
+    }
+    address = resolved;
+    ensName = rawQuery.toLowerCase();
   }
 
   const metricsCollector = getMetricsCollector();
@@ -131,7 +159,7 @@ export async function GET(
       // Engine error — return empty suggestions, do not fail the scan response.
     }
     return applyRateLimitHeaders(
-      Response.json({ ...result, suggestions }),
+      Response.json({ ...result, ensName, suggestions }),
       rate
     );
   } catch (error) {

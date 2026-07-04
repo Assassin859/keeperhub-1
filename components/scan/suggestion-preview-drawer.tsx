@@ -290,9 +290,12 @@ export function SuggestionPreviewDrawer({
           {/* Canvas preview area — WorkflowCanvas fills the container at
               100% height. [data-testid="workflow-canvas"] is on the canvas
               root div inside WorkflowCanvas (verified in source). */}
+          {/* Height fits the single-row node chain: the shapes are always a
+              4-node horizontal flow, so a tall canvas was mostly empty space
+              (UAT feedback). fitView scales the row to this shorter band. */}
           <section
             aria-label="Workflow preview"
-            className="h-80 w-full rounded-lg border border-border/20 bg-[var(--color-hub-overlay)] overflow-hidden"
+            className="h-48 w-full rounded-lg border border-border/20 bg-[var(--color-hub-overlay)] overflow-hidden"
           >
             <WorkflowCanvas />
           </section>

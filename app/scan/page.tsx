@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ScanDisclaimer } from "@/components/scan/scan-disclaimer";
 import { ScanInput } from "@/components/scan/scan-input";
+import { ScanNetworkStrip } from "@/components/scan/scan-network-strip";
 import { ScanResults } from "@/components/scan/scan-results";
 import { SuggestionPreviewDrawer } from "@/components/scan/suggestion-preview-drawer";
 import { Button } from "@/components/ui/button";
@@ -22,21 +23,34 @@ type ScanState =
   | "error";
 
 const ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
+// Name-shaped query (mirrors ENS_NAME_REGEX on the server): at least one dot,
+// no whitespace, not an 0x address. The server resolves it via ENS.
+const ENS_QUERY_REGEX = /^(?!0x)[^\s.]+(?:\.[^\s.]+)+$/i;
+
+/** A query is scannable if it is a raw EVM address or a name we can resolve. */
+function isScannableQuery(query: string): boolean {
+  return ADDRESS_REGEX.test(query) || ENS_QUERY_REGEX.test(query);
+}
 
 const EXAMPLE_WALLETS = [
   {
     label: "Stablecoin holder",
-    address: "0x6ea08ca8f313d860808ef7431fc72c6fbcf4a72d",
+    query: "0x6ea08ca8f313d860808ef7431fc72c6fbcf4a72d",
   },
   {
     label: "Aave borrower",
-    address: "0xE33230364C7379DD0026f3ec714283d03535E77a",
+    query: "0xE33230364C7379DD0026f3ec714283d03535E77a",
   },
   {
-    label: "Sky saver",
-    address: "0xc6891787230F68b1E3485094A3b55a436f3E7de5",
+    label: "ENS name",
+    query: "vitalik.eth",
   },
 ] as const;
+
+/** Example chips show the ENS name verbatim but truncate raw addresses. */
+function exampleDisplay(query: string): string {
+  return ENS_QUERY_REGEX.test(query) ? query : truncateAddress(query);
+}
 
 export default function ScanPage(): React.ReactElement {
   // useSearchParams in ScanPageContent requires a Suspense boundary so the
@@ -82,8 +96,8 @@ function ScanPageContent(): React.ReactElement {
   };
 
   const runScan = useCallback(async (target: string): Promise<void> => {
-    if (!ADDRESS_REGEX.test(target)) {
-      setInputError("Enter a valid EVM address (0x...)");
+    if (!isScannableQuery(target)) {
+      setInputError("Enter a wallet address, contract address, or ENS name");
       return;
     }
 
@@ -166,7 +180,7 @@ function ScanPageContent(): React.ReactElement {
   const searchParams = useSearchParams();
   const urlAddress = searchParams.get("address");
   useEffect(() => {
-    if (urlAddress && ADDRESS_REGEX.test(urlAddress)) {
+    if (urlAddress && isScannableQuery(urlAddress)) {
       if (autoScanDone.current) {
         return;
       }
@@ -246,10 +260,12 @@ function ScanPageContent(): React.ReactElement {
             ) : (
               <div className="mx-auto max-w-2xl py-12 text-center sm:py-16">
                 <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-foreground">
-                  Scan onchain address
+                  Scan any wallet or contract
                 </h1>
                 <p className="mb-8 text-muted-foreground text-sm">
-                  See DeFi positions and suggested automations
+                  Paste an address or ENS name to see live DeFi positions across
+                  every major network — and turn them into ready-to-run
+                  monitors.
                 </p>
                 <ScanInput
                   disabled={isLoading}
@@ -258,23 +274,24 @@ function ScanPageContent(): React.ReactElement {
                   onSubmit={handleScanSubmit}
                   value={address}
                 />
-                <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                   <span className="text-muted-foreground text-xs">
                     Try an example:
                   </span>
                   {EXAMPLE_WALLETS.map((example) => (
                     <Button
                       className="rounded-full font-normal text-muted-foreground text-xs hover:text-foreground"
-                      key={example.address}
-                      onClick={() => handleExampleSelect(example.address)}
+                      key={example.query}
+                      onClick={() => handleExampleSelect(example.query)}
                       size="sm"
                       type="button"
                       variant="outline"
                     >
-                      {example.label} · {truncateAddress(example.address)}
+                      {example.label} · {exampleDisplay(example.query)}
                     </Button>
                   ))}
                 </div>
+                <ScanNetworkStrip />
               </div>
             )}
 

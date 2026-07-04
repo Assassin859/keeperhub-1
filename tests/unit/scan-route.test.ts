@@ -19,11 +19,20 @@ const {
   mockGetRequestSourceIp,
   mockScanAddress,
   mockLogAnonymousExecutionBlock,
+  mockResolveEnsName,
 } = vi.hoisted(() => ({
   mockIncrementAndCheck: vi.fn(),
   mockGetRequestSourceIp: vi.fn(),
   mockScanAddress: vi.fn(),
   mockLogAnonymousExecutionBlock: vi.fn(),
+  mockResolveEnsName: vi.fn(),
+}));
+
+// Keep the real ENS_NAME_REGEX (used for the shape check) and override only
+// the resolver so tests control resolution without hitting an RPC.
+vi.mock("@/lib/scan/resolve-ens", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/scan/resolve-ens")>()),
+  resolveEnsName: mockResolveEnsName,
 }));
 
 vi.mock("@/lib/scan/rate-limit", () => ({
@@ -80,6 +89,7 @@ describe("GET /api/scan/[address]", () => {
     mockGetRequestSourceIp.mockReset();
     mockScanAddress.mockReset();
     mockLogAnonymousExecutionBlock.mockReset();
+    mockResolveEnsName.mockReset();
     mockGetRequestSourceIp.mockReturnValue(MOCK_IP);
     mockIncrementAndCheck.mockResolvedValue(ALLOWED_RATE);
     mockScanAddress.mockResolvedValue({
@@ -104,6 +114,31 @@ describe("GET /api/scan/[address]", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Invalid address");
     expect(mockIncrementAndCheck).not.toHaveBeenCalled();
+    expect(mockScanAddress).not.toHaveBeenCalled();
+    expect(mockResolveEnsName).not.toHaveBeenCalled();
+  });
+
+  it("ENS name: resolves to an address, scans it, and echoes ensName", async () => {
+    mockResolveEnsName.mockResolvedValue(VALID_ADDRESS);
+    const res = await GET(
+      makeRequest("vitalik.eth"),
+      makeParams("vitalik.eth")
+    );
+    expect(res.status).toBe(200);
+    expect(mockResolveEnsName).toHaveBeenCalledWith("vitalik.eth");
+    expect(mockScanAddress).toHaveBeenCalledWith(VALID_ADDRESS);
+    const body = (await res.json()) as { ensName?: string };
+    expect(body.ensName).toBe("vitalik.eth");
+  });
+
+  it("unresolvable ENS name: 400 after rate limit, scanner not called", async () => {
+    mockResolveEnsName.mockResolvedValue(null);
+    const res = await GET(makeRequest("nope.eth"), makeParams("nope.eth"));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Could not resolve ENS name");
+    // ENS resolution is RPC work, so it must sit behind the rate limit.
+    expect(mockIncrementAndCheck).toHaveBeenCalledTimes(1);
     expect(mockScanAddress).not.toHaveBeenCalled();
   });
 

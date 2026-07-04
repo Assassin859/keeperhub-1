@@ -37,12 +37,12 @@ export function ScanInput({
         <Input
           aria-describedby="scan-error"
           aria-invalid={!!error || undefined}
-          aria-label="EVM wallet address"
+          aria-label="Wallet address, contract address, or ENS name"
           autoComplete="off"
           id="scan-address"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="0x... or paste address"
+          placeholder="0x address, ENS name (vitalik.eth), or contract"
           spellCheck={false}
           type="text"
           value={value}

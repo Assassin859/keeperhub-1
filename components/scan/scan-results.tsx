@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertCircle, Clock, Wallet } from "lucide-react";
+import { AlertCircle, Clock } from "lucide-react";
 import { useMemo } from "react";
 import { ResultsHeader } from "@/components/scan/results-header";
 import { SuggestionCard } from "@/components/scan/suggestion-card";
 import { SuggestionCardSkeleton } from "@/components/scan/suggestion-card-skeleton";
+import { buildBaselineSuggestions } from "@/lib/scan/suggestions/baseline";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import type { ScanResponse } from "@/lib/scan/types";
 
@@ -237,8 +238,10 @@ export function ScanResults({
       {scanState === "populated" && data && (
         <>
           <ResultsHeader
+            address={data.address}
             addressKind={data.addressKind}
             contractChains={data.contractChains}
+            ensName={data.ensName}
             stablecoins={data.stablecoins}
             unavailableChains={data.unavailableChains}
           />
@@ -258,21 +261,38 @@ export function ScanResults({
       )}
 
       {scanState === "empty" && (
-        <div
-          className="flex flex-col items-center justify-center py-16 text-center"
-          data-testid="scan-results-empty"
-        >
-          <Wallet
-            aria-hidden="true"
-            className="mb-3 size-8 text-muted-foreground/40"
-          />
-          <h3 className="mb-2 font-semibold text-foreground text-sm">
-            No positions found
-          </h3>
-          <p className="text-muted-foreground text-sm">
-            Try a different address or check back after interacting with a
-            supported protocol.
-          </p>
+        <div data-testid="scan-results-empty">
+          {data?.addressKind !== undefined && (
+            <ResultsHeader
+              address={data.address}
+              addressKind={data.addressKind}
+              contractChains={data.contractChains}
+              ensName={data.ensName}
+              stablecoins={data.stablecoins}
+              unavailableChains={data.unavailableChains}
+            />
+          )}
+          <div className="mb-5">
+            <h3 className="font-semibold text-foreground text-sm">
+              No DeFi positions detected
+            </h3>
+            <p className="mt-1 text-muted-foreground text-sm">
+              We scanned every supported network and found no lending, staking,
+              or stablecoin positions. These monitors work for any address — set
+              one up to get started.
+            </p>
+          </div>
+          {data?.address ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {buildBaselineSuggestions(data.address).map((suggestion) => (
+                <SuggestionCard
+                  key={suggestion.id}
+                  onSelect={() => onCardSelect(suggestion, [suggestion])}
+                  suggestion={suggestion}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
 

@@ -1,6 +1,13 @@
 "use client";
 
-import { Bell, Box, Coins, Gift, ShieldCheck } from "lucide-react";
+import {
+  Bell,
+  Box,
+  ChevronRight,
+  Coins,
+  Gift,
+  ShieldCheck,
+} from "lucide-react";
 import Image from "next/image";
 import type { KeyboardEvent } from "react";
 import {
@@ -111,7 +118,7 @@ export function SuggestionCard({
     // biome-ignore lint/a11y/useSemanticElements: card uses an <article> with role="link" + ::before overlay per UI-SPEC §1; wrapping <a> is forbidden to preserve nested-button a11y
     <article
       aria-label={`Open ${suggestion.name} preview`}
-      className="group relative flex min-h-[160px] cursor-pointer flex-col rounded-xl border border-border/20 bg-[var(--color-hub-card)] p-4 shadow-sm transition-colors duration-150 before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:rounded-xl before:content-[''] hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-hub-overlay)] motion-reduce:transition-none"
+      className="group relative flex min-h-[160px] cursor-pointer flex-col rounded-xl border border-border/20 bg-[var(--color-hub-card)] p-4 shadow-sm transition-all duration-150 before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:rounded-xl before:content-[''] hover:-translate-y-0.5 hover:border-[var(--color-border-accent)]/50 hover:shadow-md hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-hub-overlay)] motion-reduce:transition-none motion-reduce:hover:translate-y-0"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: card uses article role="link" per UI-SPEC §1; click is delivered via the ::before overlay and onKeyDown handler
@@ -157,6 +164,13 @@ export function SuggestionCard({
             {suggestion.riskNote}
           </TooltipContent>
         </Tooltip>
+        <span className="ml-auto inline-flex items-center gap-0.5 font-medium text-[0.6875rem] text-muted-foreground/70 transition-colors group-hover:text-[var(--color-text-accent)]">
+          Preview
+          <ChevronRight
+            aria-hidden="true"
+            className="size-3 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0"
+          />
+        </span>
       </div>
     </article>
   );
