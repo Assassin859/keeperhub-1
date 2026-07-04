@@ -22,28 +22,23 @@ export async function signUp(
     .addCookies([
       { name: "kh_disable_tours", value: "1", url: "http://localhost:3000" },
     ]);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Logged-out visitors land on /welcome, which renders the shared
+  // SignInChoices panel inline. Open the email panel, switch to the sign-up
+  // view, and submit; the verify view then shows the OTP input.
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-  // Open the Connect modal (replaced the bare "Sign In" button), switch to the
-  // email panel, then to the sign-up view.
+  // The sign-in form renders inline; switch it to the sign-up view.
+  await page.getByRole("button", { name: "Create an account" }).click();
+
+  await page.locator("#auth-email").fill(testEmail);
+  await page.locator("#auth-password").fill(testPassword);
   await page
-    .getByRole("button", { name: "Connect", exact: true })
-    .first()
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Connect to KeeperHub" });
-  await expect(dialog).toBeVisible({ timeout: 5000 });
-
-  await dialog.getByRole("button", { name: "Continue with email" }).click();
-  await dialog.getByRole("button", { name: "Create an account" }).click();
-
-  await dialog.locator("#auth-email").fill(testEmail);
-  await dialog.locator("#auth-password").fill(testPassword);
-  await dialog
     .getByRole("button", { name: "Create account", exact: true })
     .click();
 
-  // Wait for verify view.
-  await expect(dialog.locator("h2")).toHaveText("Verify your email", {
+  // Verify view: the OTP input (a plain field, keyed by its placeholder) is the
+  // unambiguous signal it rendered.
+  await expect(page.getByPlaceholder("123456")).toBeVisible({
     timeout: 15_000,
   });
 
@@ -254,8 +249,8 @@ export async function completeTotpEnrollment(page: Page): Promise<string> {
     .locator("#totp-verify-code")
     .fill(generateTotpCode(manualEntryKey));
   await dialog.locator('button:has-text("Continue")').click();
-  // Backup-codes step: dismiss it to finish enrollment and close the dialog.
-  const finishButton = dialog.locator('button:has-text("Skip")');
+  // Backup-codes step: confirm it to finish enrollment and close the dialog.
+  const finishButton = dialog.locator('button:has-text("Done")');
   await expect(finishButton).toBeVisible({ timeout: 15_000 });
   await finishButton.click();
   return manualEntryKey;
@@ -276,20 +271,16 @@ export async function signUpAndVerify(
   // Get OTP from database
   const otp = await getOtpFromDb(email);
 
-  // Enter OTP
-  const dialog = page.locator('[role="dialog"]');
-  const otpInput = dialog.locator("#otp");
+  // Enter OTP. On /welcome the verify view is inline in the panel (no dialog),
+  // and the field is keyed by its placeholder rather than an id.
+  const otpInput = page.getByPlaceholder("123456");
   await fillOtpInput(otpInput, otp);
 
-  // Click verify
-  const verifyButton = dialog.locator(
-    'button[type="submit"]:has-text("Verify")'
-  );
-  await verifyButton.click();
+  await page.locator('button[type="submit"]:has-text("Verify")').click();
 
   // Fresh signups are forced through TOTP enrollment after email verification
   // (components/settings/totp-setup-dialog.tsx). Complete it when it appears so
-  // the auth dialog can close; gated so any flow without it is unaffected.
+  // the enrollment dialog can close; gated so any flow without it is unaffected.
   const totpRequired = await page
     .locator("#totp-verify-code")
     .waitFor({ state: "visible", timeout: 8000 })
@@ -300,8 +291,13 @@ export async function signUpAndVerify(
     totpKey = await completeTotpEnrollment(page);
   }
 
-  // Wait for dialog to close (successful verification)
-  await expect(dialog).not.toBeVisible({ timeout: 15_000 });
+  // A fresh signup is routed into the onboarding wizard by the welcome gating.
+  // Mark onboarding complete so this helper lands the user on the canvas,
+  // preserving its contract for the tests that build on a signed-in session.
+  await page.request.post("/api/user/onboarding/complete", {
+    headers: { Origin: new URL(page.url()).origin },
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
 
   // Wait for org switcher to appear (org auto-created after first sign-in)
   await expect(page.locator('button[role="combobox"]')).toBeVisible({
@@ -363,35 +359,31 @@ export async function signIn(
       url: "http://localhost:3000",
     },
   ]);
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Logged-out visitors are routed to the /welcome landing, which renders the
+  // shared SignInChoices panel inline (no modal). Open the email panel and sign
+  // in with credentials; on success the panel navigates to "/".
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-  // The Connect modal replaced the bare "Sign In" button: open it, switch to
-  // the email panel, then sign in with credentials.
-  const connectButton = page
-    .getByRole("button", { name: "Connect", exact: true })
-    .first();
-  await expect(connectButton).toBeVisible({ timeout: 15_000 });
-  await connectButton.click();
+  // The email/password form renders inline (no chooser step on the landing).
+  const emailField = page.locator("#auth-email");
+  await expect(emailField).toBeVisible({ timeout: 15_000 });
+  await emailField.fill(email);
+  await page.locator("#auth-password").fill(password);
 
-  // Scope to the Connect modal by name; the driver.js sign-in tour is also a
-  // role="dialog", so a bare [role="dialog"] would be ambiguous.
-  const dialog = page.getByRole("dialog", { name: "Connect to KeeperHub" });
-  await expect(dialog).toBeVisible({ timeout: 5000 });
-
-  await dialog.getByRole("button", { name: "Continue with email" }).click();
-  await dialog.locator("#auth-email").fill(email);
-  await dialog.locator("#auth-password").fill(password);
-  await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
-
-  // Wait for dialog to close (successful sign in)
-  await expect(dialog).not.toBeVisible({ timeout: 15_000 });
-
-  // Wait for org switcher to appear (indicates session and org are resolved)
-  // Use role selector -- data-testid only exists on the "ready" render branch,
-  // but role="combobox" achieves the same: only the resolved org switcher has it.
-  await expect(page.locator('button[role="combobox"]')).toBeVisible({
-    timeout: 15_000,
+  // Retry the submit: right after navigation the first click can land before
+  // the client handler is wired and be dropped, leaving the form in place.
+  // toPass re-clicks until the org switcher (canvas) resolves.
+  const signInButton = page.getByRole("button", {
+    name: "Sign in",
+    exact: true,
   });
+  const orgSwitcher = page.locator('button[role="combobox"]');
+  await expect(async () => {
+    if (await signInButton.isVisible()) {
+      await signInButton.click();
+    }
+    await expect(orgSwitcher).toBeVisible({ timeout: 4000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 /**
