@@ -511,10 +511,11 @@ describe("MFA gate", () => {
     expect(res.headers.get("location")).toContain("/enroll-mfa");
   });
 
-  it("does not block the root path for signed-out visitors", async () => {
+  it("redirects signed-out visitors from the root path to welcome", async () => {
     mockGetSession.mockResolvedValue(null);
     const res = await proxy(make("/"));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/welcome");
   });
 });
 
