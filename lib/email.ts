@@ -723,10 +723,14 @@ export async function sendWorkflowExecutionDigestEmail(
   const period = DIGEST_PERIOD_LABEL[cadence];
   const summaryLabel = DIGEST_SUMMARY_LABEL[cadence];
   const periodRange = `${formatUtcStamp(since)} to ${formatUtcStamp(until)}`;
+  // Rate the run against completed runs only (success + error); pending,
+  // running and cancelled runs are excluded so an org with many in-flight runs
+  // is not reported as low success rate.
+  const completed = stats.success + stats.error;
   const successRate =
-    stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
+    completed > 0 ? Math.round((stats.success / completed) * 100) : 0;
   const failRate =
-    stats.total > 0 ? Math.round((stats.error / stats.total) * 100) : 0;
+    completed > 0 ? Math.round((stats.error / completed) * 100) : 0;
   const gasEth = formatWeiToEth(stats.gasUsedWei);
   const subject = `${orgName} workflow digest: ${stats.total} run${
     stats.total === 1 ? "" : "s"

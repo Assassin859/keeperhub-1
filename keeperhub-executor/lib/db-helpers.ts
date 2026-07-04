@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
@@ -11,12 +11,52 @@ import { calculateTotalSteps } from "../../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../../lib/workflow/store";
 import type { executeWorkflow } from "../../lib/workflow/executor/executor.workflow";
 import { toJsonSafe } from "./serialize";
+import { recordTerminalSample } from "./terminal-counters";
 
 export type DbSchema = {
   workflows: typeof workflows;
   workflowExecutions: typeof workflowExecutions;
   workflowSchedules: typeof workflowSchedules;
 };
+
+/**
+ * Result of a gated status compare-and-set claim on an execution row:
+ * - "claimed":          the CAS won (this delivery owns the dispatch).
+ * - "already_advanced": a row exists but is no longer in the claimable status
+ *                       (a prior/duplicate SQS delivery already claimed it, or
+ *                       it is running/terminal) - the caller must NOT re-run.
+ * - "not_found":        no row with this id exists.
+ */
+export type ClaimOutcome = "claimed" | "already_advanced" | "not_found";
+
+/**
+ * Reaper error codes that mark a row `system_error` WITHOUT it ever having
+ * dispatched: P-0005 (phantom never picked up) and P-0001 (pending timed out,
+ * and the reaper only assigns it when there are NO step logs). A row in either
+ * state provably produced no side effects, so a message redelivered after a
+ * concurrency-requeue whose row was reaped in the meantime can safely RE-CLAIM
+ * and re-run it rather than be dropped as a duplicate - which restores the
+ * RequeueSignal "retry later" intent. Any other terminal/advanced state
+ * (running, success, error, cancelled, or system_error from a dispatch/run
+ * failure: E-0001/P-0004/E-0004) means work may have started and is dropped.
+ */
+const REAPED_NEVER_RAN_CODES: ErrorCode[] = ["P-0001", "P-0005"];
+
+/**
+ * After a gated CAS matched zero rows, disambiguate "row exists but not in the
+ * expected status" from "no such row" with a single point lookup on the id PK.
+ */
+async function classifyClaimMiss(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string
+): Promise<"already_advanced" | "not_found"> {
+  const existing = await db
+    .select({ id: workflowExecutions.id })
+    .from(workflowExecutions)
+    .where(eq(workflowExecutions.id, executionId))
+    .limit(1);
+  return existing.length > 0 ? "already_advanced" : "not_found";
+}
 
 export async function updateExecutionStatus(
   db: PostgresJsDatabase<DbSchema>,
@@ -49,7 +89,7 @@ export async function updateExecutionStatus(
   // (it can throw and only be logged), this closes the row instead of leaving
   // it stuck "running". Excluding all three terminal states keeps the backstop
   // from clobbering the engine's richer fields (KEEP-431).
-  await db
+  const updated = await db
     .update(workflowExecutions)
     .set(updateData)
     .where(
@@ -60,25 +100,47 @@ export async function updateExecutionStatus(
         ne(workflowExecutions.status, "system_error"),
         ne(workflowExecutions.status, "cancelled")
       )
-    );
+    )
+    .returning({ workflowId: workflowExecutions.workflowId });
+
+  // A matched row means the engine's own terminal write was lost (the CAS
+  // above excludes every terminal state), so this backstop is the execution's
+  // first and only terminal transition and must emit the terminal counters
+  // the engine would have emitted. Cancellation is intentionally not counted
+  // (the finished counter tracks success/error outcomes only).
+  if (
+    updated.length > 0 &&
+    (status === "success" || status === "error")
+  ) {
+    await recordTerminalSample(db, {
+      workflowId: updated[0].workflowId,
+      status,
+      errorMessage: result?.error,
+    });
+  }
 }
 
 /**
- * KEEP-853: backstop for the SQS consumer. When message processing throws for a
- * reason the inner dispatch handlers did not already record, mark the in-flight
- * row as a system error right away instead of leaving it for the reaper (which
- * runs minutes later). Compare-and-set on status IN ('phantom','pending') so it
- * never clobbers a row the runtime already advanced to running/terminal.
+ * KEEP-853: mark an in-flight row system_error right away instead of leaving it
+ * for the reaper (which runs minutes later). Compare-and-set on the caller's
+ * expected status(es) - defaulting to ('phantom','pending') for the
+ * processMessage backstop - so it never clobbers a row the runtime already
+ * advanced past. The dispatch-failure guards pass their own single expected
+ * status (e.g. 'pending' or 'running') and errorCode.
  *
  * Returns true when a row was marked, false when the CAS matched nothing (no
- * executionId, or the row already advanced past phantom/pending). The caller
- * surfaces the false case instead of treating the backstop as resolved, since
- * such a row is left for the reaper rather than marked immediately.
+ * executionId, or the row was not in an expected status). The caller surfaces
+ * the false case instead of treating the backstop as resolved, since such a row
+ * is left for the reaper rather than marked immediately.
  */
 export async function failExecutionAsSystemError(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string | undefined,
-  fields: { error: string; errorCode: ErrorCode }
+  fields: {
+    error: string;
+    errorCode: ErrorCode;
+    statuses?: ("phantom" | "pending" | "running")[];
+  }
 ): Promise<boolean> {
   if (!executionId) {
     return false;
@@ -96,45 +158,126 @@ export async function failExecutionAsSystemError(
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        inArray(workflowExecutions.status, ["phantom", "pending"])
+        inArray(
+          workflowExecutions.status,
+          fields.statuses ?? ["phantom", "pending"]
+        )
       )
     )
-    .returning({ id: workflowExecutions.id });
+    .returning({
+      id: workflowExecutions.id,
+      workflowId: workflowExecutions.workflowId,
+    });
+
+  // The phantom/pending CAS means a match is the row's first terminal
+  // transition; these rows never reach logWorkflowCompleteDb or the reaper,
+  // so this is their only chance to be counted.
+  if (marked.length > 0) {
+    await recordTerminalSample(db, {
+      workflowId: marked[0].workflowId,
+      status: "system_error",
+      errorMessage: fields.error,
+      errorType: "system",
+      errorCategory: "infrastructure",
+    });
+  }
   return marked.length > 0;
 }
 
 /**
- * KEEP-693: upgrade a pre-created 'phantom' execution row to 'pending' in place
- * and stamp its input.
+ * Claim a pre-created 'phantom' execution row for a schedule/block/event run:
+ * compare-and-set 'phantom' -> 'pending' and stamp its input.
  *
  * The scheduler/event-tracker pre-creates a 'phantom' row and passes its id on
- * the SQS message; the executor calls this to claim it. The compare-and-set on
- * status='phantom' makes the claim idempotent: a duplicate SQS delivery (or a
- * missing phantom, when the best-effort create failed, or one already advanced
- * past phantom) matches no row and returns false, so the caller falls back to a
- * fresh insert and a run is never dropped.
+ * the SQS message. The CAS makes the claim exactly-once: only the first delivery
+ * wins ("claimed"). A duplicate delivery whose row was already claimed/advanced
+ * returns "already_advanced" and MUST be dropped by the caller - re-running would
+ * send a second, fund-moving execution (there is no downstream dedup).
+ * "not_found" is a message whose phantom was discarded or never persisted; also
+ * dropped for an id-bearing message.
+ *
+ * The CAS also matches a reaped-never-ran row (system_error with a
+ * REAPED_NEVER_RAN_CODES errorCode) so a concurrency-requeued message whose
+ * phantom the reaper marked in the meantime is re-claimed and re-run rather than
+ * dropped - a run that provably never dispatched, so re-running is side-effect-safe.
  */
-export async function upgradePhantomToPending(
+export async function claimPhantomForExecution(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
   input: Record<string, unknown>,
   executedWorkflowHash: string
-): Promise<boolean> {
+): Promise<ClaimOutcome> {
   const result = await db
     .update(workflowExecutions)
-    // KEEP-693: the phantom was created billable=false (it had not run yet);
-    // upgrading to pending means it is now a real execution, so it becomes
-    // billable like any owner-initiated run. Stamp the hash of the definition
-    // the executor just loaded so the run links to its workflow_history version.
-    .set({ status: "pending", input, billable: true, executedWorkflowHash })
+    // The phantom was created billable=false (it had not run yet); claiming it
+    // means it is now a real execution, so it becomes billable like any
+    // owner-initiated run. Stamp the hash of the definition the executor just
+    // loaded so the run links to its workflow_history version. Clear any reaper
+    // stamp when re-claiming a reaped-never-ran row.
+    .set({
+      status: "pending",
+      input,
+      billable: true,
+      executedWorkflowHash,
+      error: null,
+      errorCode: null,
+      completedAt: null,
+    })
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        eq(workflowExecutions.status, "phantom")
+        or(
+          eq(workflowExecutions.status, "phantom"),
+          and(
+            eq(workflowExecutions.status, "system_error"),
+            inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+          )
+        )
       )
     )
     .returning({ id: workflowExecutions.id });
-  return result.length > 0;
+  if (result.length > 0) {
+    return "claimed";
+  }
+  return classifyClaimMiss(db, executionId);
+}
+
+/**
+ * Claim a pre-created 'pending' execution row for a manual/webhook run:
+ * compare-and-set 'pending' -> 'running'. The app pre-creates the row as
+ * 'pending' before enqueueing, so unlike schedule/block/event there is no
+ * phantom to upgrade; this CAS is what makes the consume exactly-once. Only the
+ * first delivery wins ("claimed"); a duplicate whose row already advanced
+ * returns "already_advanced" and MUST be dropped. The runner's own later
+ * 'running' write is then an idempotent no-op. Like claimPhantomForExecution,
+ * the CAS also re-claims a reaped-never-ran row (system_error with a
+ * REAPED_NEVER_RAN_CODES errorCode).
+ */
+export async function claimPendingForExecution(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string
+): Promise<ClaimOutcome> {
+  const result = await db
+    .update(workflowExecutions)
+    // Clear any reaper stamp when re-claiming a reaped-never-ran row.
+    .set({ status: "running", error: null, errorCode: null, completedAt: null })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        or(
+          eq(workflowExecutions.status, "pending"),
+          and(
+            eq(workflowExecutions.status, "system_error"),
+            inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+          )
+        )
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  if (result.length > 0) {
+    return "claimed";
+  }
+  return classifyClaimMiss(db, executionId);
 }
 
 /**
@@ -182,7 +325,7 @@ export async function resolvePhantomToError(
   if (!executionId) {
     return;
   }
-  await db
+  const resolved = await db
     .update(workflowExecutions)
     .set({
       status: "error",
@@ -196,7 +339,21 @@ export async function resolvePhantomToError(
         eq(workflowExecutions.id, executionId),
         inArray(workflowExecutions.status, ["phantom", "pending"])
       )
-    );
+    )
+    .returning({ workflowId: workflowExecutions.workflowId });
+
+  // Same reasoning as failExecutionAsSystemError: the phantom/pending CAS
+  // makes a match the first terminal transition, and billing-blocked rows
+  // never reach any other counted finalize path.
+  if (resolved.length > 0) {
+    await recordTerminalSample(db, {
+      workflowId: resolved[0].workflowId,
+      status: "error",
+      errorMessage: fields.error,
+      errorType: fields.errorType,
+      errorCategory: fields.errorCategory,
+    });
+  }
 }
 
 export async function initializeExecutionProgress(

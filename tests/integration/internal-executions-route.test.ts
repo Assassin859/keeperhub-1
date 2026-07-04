@@ -60,6 +60,12 @@ let mockWorkflow: {
 let mockExistingExecution: { id: string; status: string } | null;
 let insertedValues: Record<string, unknown> | null;
 let updatedSet: Record<string, unknown> | null;
+// Rows the PATCH terminal UPDATE's .returning() resolves to; seed with
+// workflowId + previousStatus to exercise the counter-emission gate.
+let mockUpdateReturning: Array<{
+  workflowId: string;
+  previousStatus: string;
+}> = [];
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -79,10 +85,18 @@ vi.mock("@/lib/db", () => ({
         };
       },
     })),
+    // PATCH chains .set().from(prevExecution).where().returning() for the
+    // pre-update-status self-join.
     update: vi.fn(() => ({
       set: (values: Record<string, unknown>) => {
         updatedSet = values;
-        return { where: () => Promise.resolve(undefined) };
+        return {
+          from: () => ({
+            where: () => ({
+              returning: () => Promise.resolve(mockUpdateReturning),
+            }),
+          }),
+        };
       },
     })),
   },
@@ -91,6 +105,28 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/db/schema", () => ({
   workflowExecutions: { id: "id", status: "status" },
   workflows: { id: "id" },
+}));
+
+// The alias() self-join needs drizzle table internals the schema stub lacks.
+vi.mock("drizzle-orm/pg-core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("drizzle-orm/pg-core")>();
+  return {
+    ...actual,
+    alias: (_table: unknown, name: string) => ({
+      id: `${name}.id`,
+      status: `${name}.status`,
+    }),
+  };
+});
+
+vi.mock("@/lib/errors/finalize-error", () => ({
+  recordExecutionErrorFinalized: vi.fn(),
+}));
+vi.mock("@/lib/metrics/collectors/prometheus", () => ({
+  recordWorkflowExecutionFinished: vi.fn(),
+}));
+vi.mock("@/lib/metrics/org-slug.server", () => ({
+  resolveOrgSlugForCounter: vi.fn(async () => "acme"),
 }));
 
 import { PATCH } from "@/app/api/internal/executions/[executionId]/route";
@@ -230,6 +266,7 @@ describe("PATCH /api/internal/executions/[executionId]", () => {
     mockAuthResult.authenticated = true;
     mockExistingExecution = { id: "exec_1", status: "phantom" };
     updatedSet = null;
+    mockUpdateReturning = [];
   });
 
   it("writes a valid error code and derives type/category from the registry", async () => {
@@ -281,5 +318,63 @@ describe("PATCH /api/internal/executions/[executionId]", () => {
       patchContext
     );
     expect(response.status).toBe(400);
+  });
+
+  it("emits the error counters when a phantom row is first finalized as system_error", async () => {
+    mockUpdateReturning = [{ workflowId: "wf_1", previousStatus: "phantom" }];
+    const { recordExecutionErrorFinalized } = await import(
+      "@/lib/errors/finalize-error"
+    );
+
+    const response = await PATCH(
+      patchRequest({ status: "system_error", error: "enqueue failed" }),
+      patchContext
+    );
+
+    expect(response.status).toBe(200);
+    expect(recordExecutionErrorFinalized).toHaveBeenCalledWith({
+      workflowId: "wf_1",
+      errorMessage: "enqueue failed",
+      persistedStatus: "system_error",
+      errorCategory: "infrastructure",
+    });
+  });
+
+  it("emits the finished counter on a first success transition", async () => {
+    mockUpdateReturning = [{ workflowId: "wf_1", previousStatus: "running" }];
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+
+    const response = await PATCH(
+      patchRequest({ status: "success" }),
+      patchContext
+    );
+
+    expect(response.status).toBe(200);
+    expect(prometheusMod.recordWorkflowExecutionFinished).toHaveBeenCalledWith({
+      status: "success",
+      orgSlug: "acme",
+      errorType: "na",
+    });
+  });
+
+  it("emits nothing when re-finalizing an already-terminal row", async () => {
+    mockUpdateReturning = [
+      { workflowId: "wf_1", previousStatus: "system_error" },
+    ];
+    const { recordExecutionErrorFinalized } = await import(
+      "@/lib/errors/finalize-error"
+    );
+    const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
+
+    const response = await PATCH(
+      patchRequest({ status: "success" }),
+      patchContext
+    );
+
+    expect(response.status).toBe(200);
+    expect(recordExecutionErrorFinalized).not.toHaveBeenCalled();
+    expect(
+      prometheusMod.recordWorkflowExecutionFinished
+    ).not.toHaveBeenCalled();
   });
 });

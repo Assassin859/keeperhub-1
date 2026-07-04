@@ -1337,6 +1337,125 @@ describe("ChainProviderManager", () => {
     });
   });
 
+  describe("block-staleness watchdog", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // A short staleness ceiling so the watchdog trips within a couple of
+    // heartbeat ticks under fake timers, without advancing past the
+    // production threshold.
+    function makeStalenessManager(
+      timeoutMs: number,
+    ): ReturnType<typeof makeFactory> & { mgr: ChainProviderManager } {
+      const bundle = makeFactory();
+      const mgr = new ChainProviderManager({
+        factory: bundle.factory,
+        onPermanentFailure,
+        blockStalenessTimeoutMs: timeoutMs,
+      });
+      return { ...bundle, mgr };
+    }
+
+    it("reconnects when the heartbeat passes but no block arrives (silent subscription drop)", async () => {
+      const { created, mgr } = makeStalenessManager(60_000);
+      await mgr.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      // Deliver one block, then go silent while the heartbeat keeps
+      // answering (MockProvider.eth_blockNumber returns a value by default).
+      await created[0].emitBlock(1000);
+
+      // Advance past the 60s ceiling (trips at the 90s heartbeat) plus the
+      // reconnect backoff so the replacement provider is created.
+      await vi.advanceTimersByTimeAsync(92_100);
+
+      expect(reasons).toContain("block_staleness");
+      // A fresh provider was created by the reconnect.
+      expect(created.length).toBeGreaterThanOrEqual(2);
+      await mgr.destroy();
+    });
+
+    it("does not reconnect while blocks keep arriving within the ceiling", async () => {
+      const { created, mgr } = makeStalenessManager(60_000);
+      await mgr.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      // Emit a block every 30s for 2 minutes - each within the 60s ceiling.
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(30_000);
+        await created[0].emitBlock(2000 + i);
+      }
+
+      expect(reasons).not.toContain("block_staleness");
+      expect(created).toHaveLength(1);
+      await mgr.destroy();
+    });
+
+    it("does not run the staleness check when there are no subscribers", async () => {
+      const { created, mgr } = makeStalenessManager(60_000);
+      // Provider created but never subscribed: no block listener, so the
+      // provider is legitimately silent and must not be reconnected.
+      await mgr.getOrCreateProvider(CHAIN_A, "ws://a");
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(reasons).toEqual([]);
+      expect(created).toHaveLength(1);
+      await mgr.destroy();
+    });
+
+    it("gives a reconnected provider a fresh window instead of tripping immediately", async () => {
+      const { created, mgr } = makeStalenessManager(60_000);
+      await mgr.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+
+      await created[0].emitBlock(3000);
+      // Trip the watchdog: silence past the ceiling plus reconnect backoff
+      // forces a reconnect and a fresh provider.
+      await vi.advanceTimersByTimeAsync(92_100);
+      expect(created.length).toBeGreaterThanOrEqual(2);
+
+      const afterReconnect = created.length;
+      // The new provider has not delivered a block yet, but its attach time
+      // is fresh. One more heartbeat tick within the ceiling must NOT spawn
+      // yet another reconnect.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(created).toHaveLength(afterReconnect);
+      await mgr.destroy();
+    });
+  });
+
   describe("destroy", () => {
     it("tears down every chain's provider and clears subscriber state", async () => {
       await manager.subscribeToLogs({

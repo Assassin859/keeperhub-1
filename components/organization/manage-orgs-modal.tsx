@@ -22,6 +22,7 @@ import { isAddress } from "viem";
 import { ExecutionDigestSection } from "@/components/organization/execution-digest-section";
 import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
 import { MfaEnforcementSection } from "@/components/organization/mfa-enforcement-section";
+import { SpendCapSection } from "@/components/organization/spend-cap-section";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1415,6 +1416,7 @@ export function ManageOrgsModal({
               </TabsTrigger>
               <TabsTrigger value="notifications">Notifications</TabsTrigger>
               <TabsTrigger value="security">Security</TabsTrigger>
+              <TabsTrigger value="limits">Limits</TabsTrigger>
             </TabsList>
 
             <TabsContent className="space-y-4" value="organizations">
@@ -1856,6 +1858,25 @@ export function ManageOrgsModal({
                 <div className="py-8 text-center text-muted-foreground">
                   Only organization admins and owners can view security
                   settings.
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent className="space-y-4" value="limits">
+              {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    Settings for{" "}
+                    <span className="font-medium text-foreground">
+                      {organization.name}
+                    </span>
+                  </p>
+                  <SpendCapSection key={organization.id} />
+                </>
+              ) : (
+                <div className="py-8 text-center text-muted-foreground">
+                  Only organization owners and admins can manage spending
+                  limits.
                 </div>
               )}
             </TabsContent>

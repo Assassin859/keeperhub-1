@@ -79,6 +79,10 @@ vi.mock("../../app/api/execute/_lib/spending-cap", () => ({
     checkAndReserveExecutionMock(params),
 }));
 
+vi.mock("../../app/api/execute/_lib/concurrency-limit", () => ({
+  enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
+}));
+
 const markRunningMock = vi.fn();
 const completeExecutionMock = vi.fn();
 const failExecutionMock = vi.fn();

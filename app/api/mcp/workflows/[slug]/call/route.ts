@@ -440,6 +440,7 @@ async function handlePaidWorkflow(
             await recordExecutionErrorFinalized({
               workflowId: updated[0].workflowId,
               errorMessage,
+              persistedStatus: "error",
             });
           }
           throw err;

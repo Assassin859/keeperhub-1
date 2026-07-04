@@ -21,6 +21,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
 import { validateApiKey } from "../_lib/auth";
+import { enforceDirectExecutionConcurrency } from "../_lib/concurrency-limit";
 import {
   completeExecution,
   failExecution,
@@ -29,6 +30,7 @@ import {
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseNativeValueWei } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateContractCallInput } from "../_lib/validate";
@@ -144,12 +146,25 @@ async function handleWriteCall(
   }
 
   const redactedInput = redactInput(withRejectedSignerOverride(body, body));
+  // Charge any native ETH value sent with the call against the daily value cap.
+  const parsedValue = parseNativeValueWei(body.value as string | undefined);
+  if (!parsedValue.ok) {
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { error: parsedValue.error, field: "value" },
+        { status: HttpStatus.BAD_REQUEST }
+      ),
+      "release"
+    );
+  }
   const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId,
     type: "contract-call",
     network: body.network as string,
     input: redactedInput,
+    reservedValueWei: parsedValue.valueWei,
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(
@@ -302,6 +317,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       await handleSimulateCall(body, resolvedAbi, apiKeyCtx.organizationId),
       rateLimit
     );
+  }
+
+  // Concurrency back-pressure: gate the state-changing write path only (reads
+  // and simulations already returned above). Before reserving the idempotency
+  // key so a 429 leaves no key to release.
+  const concurrency = await enforceDirectExecutionConcurrency(
+    apiKeyCtx.organizationId
+  );
+  if (concurrency) {
+    return concurrency;
   }
 
   // Idempotency applies only to the state-changing write path.

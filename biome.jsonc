@@ -97,6 +97,17 @@
         "instrumentation.ts"
       ],
       "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+    },
+    {
+      // The protocol on-chain tests declare cases via `itOnchain` (a custom
+      // wrapper around `it` in tests/integration/_shared/onchain-rpc.ts that
+      // retries RPC-infrastructure faults). noMisplacedAssertion only knows
+      // it/test/Deno.test, so it flags every expect() inside an itOnchain
+      // body as misplaced. Scope just that rule off for these files.
+      "includes": ["tests/integration/*onchain*.test.ts"],
+      "linter": {
+        "rules": { "suspicious": { "noMisplacedAssertion": "off" } }
+      }
     }
   ]
 }
