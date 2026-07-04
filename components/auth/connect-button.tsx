@@ -23,7 +23,7 @@ export function ConnectButton(): React.ReactElement {
     <Dialog onOpenChange={setOpen} open={open}>
       <DialogTrigger asChild>
         <Button className="h-9" size="sm" variant="default">
-          Connect
+          Sign in
         </Button>
       </DialogTrigger>
       <DialogContent className="gap-8 p-8 sm:max-w-md">
