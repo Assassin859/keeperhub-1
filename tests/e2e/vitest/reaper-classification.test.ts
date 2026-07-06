@@ -183,6 +183,12 @@ describe.skipIf(SKIP)(
       await seedExecution(ID.runningWithLogFresh, "running", minutesAgo(10));
       await seedStepLog(ID.runningWithLogFresh, "running", null);
 
+      // NOTE: reapStaleExecutions is GLOBAL - it reaps every stale row in the DB,
+      // not just this suite's PREFIX. On the shared local/CI database this can
+      // flip stale rows another suite left behind. Assertions below are therefore
+      // scoped by fixture id (toContain / not.toContain), never by the exact
+      // contents of reapedIds, and vitest runs test files serially
+      // (fileParallelism:false) so no other suite is mutating rows concurrently.
       reapedIds = await reapStaleExecutions(THRESHOLD_MINUTES);
     });
 
