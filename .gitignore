@@ -142,10 +142,12 @@ packages/*/dist/
 .claude/test-*-output.txt
 .claude/worktrees/
 
-# Local protocol-coverage rig output (scripts/protocol-local.sh)
-.claude/protocol-local-results.json
-.claude/protocol-sim-results.json
+# Local protocol-coverage rig and tier output (scripts/protocol-local.sh,
+# vitest --outputFile dumps); pattern, not filenames, so new tiers cannot
+# leak results artifacts into the repo again
+.claude/protocol-*-results.json
 .claude/floor-test-*.json
+.claude/tier*.json
 
 # Local dev session cookie minted by scripts/dev-mint-session.ts
 .claude/.dev-session-cookie-LOCAL
