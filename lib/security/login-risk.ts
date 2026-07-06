@@ -23,9 +23,12 @@ import {
  *
  * `country` is the resolved Cloudflare-attested country for the login.
  * Null when the request did not arrive via Cloudflare (local dev, direct
- * origin access). When null, the geo check is treated as inconclusive
- * (anomaly = false) — we do not flag based on missing signal, because
- * doing so would trip every local-dev login and self-hosted setup.
+ * origin access). A null country with no prior country history is treated
+ * as inconclusive (anomaly = false) — we do not flag on a missing signal
+ * for users who have never been placed, because doing so would trip every
+ * local-dev login and self-hosted setup. But a null country for a user who
+ * DOES have a country history is itself the anomaly (unknown_country): a
+ * session we can no longer place is as suspicious as one from a new country.
  */
 export type LoginRiskSignal = {
   anomaly: boolean;
@@ -52,16 +55,6 @@ const MAX_PLAUSIBLE_VELOCITY_KMH = 800;
 // instead of dividing by zero.
 const MIN_ELAPSED_HOURS = 1 / 3600;
 const EARTH_RADIUS_KM = 6371;
-const NULL_RISK: LoginRiskSignal = {
-  anomaly: false,
-  reasons: [],
-  country: null,
-  region: null,
-  city: null,
-  latitude: null,
-  longitude: null,
-  recentCountries: [],
-};
 
 /**
  * Resolves the geographic location of the current request. CF-IPCountry
@@ -251,7 +244,9 @@ function isImpossibleTravel(
  *
  * Two independent signals are merged into one `anomaly`:
  *  - Country: empty history -> first_geo_attestation; known country ->
- *    clean; unseen country -> new_country anomaly.
+ *    clean; unseen country -> new_country anomaly; no country attested but
+ *    a country history exists -> unknown_country anomaly (a login we can no
+ *    longer place, treated the same as a change to a new country).
  *  - Impossible travel: when the current login carries coordinates and a
  *    prior located session exists, an implausible velocity between them
  *    flags impossible_travel — even when the country is familiar, which
@@ -262,21 +257,28 @@ export async function assessLoginRisk(
 ): Promise<LoginRiskSignal> {
   const location = await resolveLoginLocation();
   const { country, region, city, latitude, longitude } = location;
-  if (!country) {
-    return NULL_RISK;
-  }
   const priorCountries = await loadRecentCountries(userId);
   const reasons: string[] = [];
   let anomaly = false;
   let recentCountries: string[] = [];
 
-  if (priorCountries.length === 0) {
-    reasons.push("first_geo_attestation");
-  } else if (priorCountries.includes(country)) {
-    recentCountries = priorCountries.filter((c) => c !== country);
-  } else {
+  if (country) {
+    if (priorCountries.length === 0) {
+      reasons.push("first_geo_attestation");
+    } else if (priorCountries.includes(country)) {
+      recentCountries = priorCountries.filter((c) => c !== country);
+    } else {
+      anomaly = true;
+      reasons.push("new_country");
+      recentCountries = priorCountries;
+    }
+  } else if (priorCountries.length > 0) {
+    // No country attested for this login, but the user has an established
+    // country history. Falling off the map is as suspicious as moving to a
+    // new one, so flag it. With no prior history (local dev, self-hosted,
+    // first login) a missing country stays inconclusive and never flags.
     anomaly = true;
-    reasons.push("new_country");
+    reasons.push("unknown_country");
     recentCountries = priorCountries;
   }
 
