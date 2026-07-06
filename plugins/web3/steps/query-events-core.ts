@@ -82,10 +82,10 @@ async function fetchTipBatch(
   const eventFilter = resolveEventFilter(contract, eventName);
   const events = await contract.queryFilter(eventFilter, start, "latest");
 
-  const actualEnd =
-    events.length > 0
-      ? Math.max(...events.map((event) => event.blockNumber))
-      : start - 1;
+  const actualEnd = events.reduce(
+    (max, event) => Math.max(max, event.blockNumber),
+    start - 1
+  );
 
   return { events, actualEnd };
 }
