@@ -37,7 +37,12 @@ export function buildProtocolMeta(
   functionName: string,
   actionType: "read" | "write"
 ): string {
-  return JSON.stringify({ protocolSlug, contractKey, functionName, actionType });
+  return JSON.stringify({
+    protocolSlug,
+    contractKey,
+    functionName,
+    actionType,
+  });
 }
 
 export function buildTriggerNode(
@@ -107,6 +112,27 @@ export function buildDiscordNode(
       actionType: "discord/send-message",
       integrationId: "",
       discordMessage: message,
+    },
+    yOffset
+  );
+}
+
+export function buildEmailNode(
+  id: string,
+  subject: string,
+  body: string,
+  yOffset: number
+): WorkflowNodeJson {
+  return buildActionNode(
+    id,
+    "Send Email Alert",
+    "Send an email notification",
+    {
+      actionType: "sendgrid/send-email",
+      useKeeperHubApiKey: true,
+      emailTo: "",
+      emailSubject: subject,
+      emailBody: body,
     },
     yOffset
   );

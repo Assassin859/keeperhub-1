@@ -9,13 +9,16 @@
  * integration) are left as empty strings; the user fills them in after cloning.
  */
 
+import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import {
   buildActionNode,
   buildConditionNode,
   buildDiscordNode,
   buildEdge,
+  buildEmailNode,
   buildProtocolMeta,
   buildTriggerNode,
+  type WorkflowNodeJson,
 } from "@/lib/workflow/node-builders";
 
 export type OnboardingWorkflowFixture = {
@@ -28,13 +31,30 @@ export type OnboardingWorkflowFixture = {
   edges: unknown[];
 };
 
-export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
+// Lay each fixture out with the same algorithm the editor's "Auto-layout"
+// button uses, so a freshly seeded workflow already reads left-to-right and
+// clicking Auto-layout is a no-op instead of rearranging the nodes.
+function withAutoLayout(
+  fixture: OnboardingWorkflowFixture
+): OnboardingWorkflowFixture {
+  const positions = computeAutoLayout(
+    fixture.nodes as unknown as Parameters<typeof computeAutoLayout>[0],
+    fixture.edges as unknown as Parameters<typeof computeAutoLayout>[1]
+  );
+  const nodes = (fixture.nodes as WorkflowNodeJson[]).map((node) => {
+    const pos = positions.get(node.id);
+    return pos ? { ...node, position: pos } : node;
+  });
+  return { ...fixture, nodes };
+}
+
+const RAW_FIXTURES: OnboardingWorkflowFixture[] = [
   {
     id: "onb-aave-health",
     listedSlug: "aave-health",
     name: "Aave Health Factor Monitor",
     description:
-      "Check your Aave v3 health factor every hour and send a Discord alert with the current value.",
+      "Check your Aave v3 health factor hourly, and when it drops below the 1.5 safety threshold alert both Discord and email.",
     featuredProtocol: "aave-v3",
     nodes: [
       buildTriggerNode("trigger-1", {
@@ -59,13 +79,45 @@ export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
         },
         400
       ),
-      buildDiscordNode(
+      buildConditionNode(
         "step-2",
-        "Aave v3 health factor: {{step-1.healthFactor}}",
+        {
+          condition:
+            "{{@step-1:Get Aave Health Factor.healthFactor}} < 1500000000000000000",
+          group: {
+            id: "group-1",
+            logic: "AND",
+            rules: [
+              {
+                id: "rule-1",
+                leftOperand:
+                  "{{@step-1:Get Aave Health Factor.healthFactor}}",
+                operator: "<",
+                rightOperand: "1500000000000000000",
+              },
+            ],
+          },
+        },
         600
       ),
+      buildDiscordNode(
+        "step-3",
+        "Aave v3 health factor dropped to {{step-1.healthFactor}}, below the 1.5 safety threshold. Consider adding collateral or repaying debt.",
+        800
+      ),
+      buildEmailNode(
+        "step-4",
+        "Aave health factor alert",
+        "Your Aave v3 health factor is {{step-1.healthFactor}}, below the 1.5 safety threshold. Consider adding collateral or repaying debt to avoid liquidation.",
+        1000
+      ),
     ],
-    edges: [buildEdge("trigger-1", "step-1"), buildEdge("step-1", "step-2")],
+    edges: [
+      buildEdge("trigger-1", "step-1"),
+      buildEdge("step-1", "step-2"),
+      buildEdge("step-2", "step-3", "true"),
+      buildEdge("step-2", "step-4", "true"),
+    ],
   },
 
   {
@@ -73,7 +125,7 @@ export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
     listedSlug: "whale-withdrawal",
     name: "Large Withdrawal Alert",
     description:
-      "Watch for USDT transfers above 100,000 USDT on mainnet and send a Discord notification.",
+      "Watch for USDT transfers on mainnet and send a Discord alert only when the amount is above 100,000 USDT.",
     featuredProtocol: "erc20",
     nodes: [
       buildTriggerNode("trigger-1", {
@@ -103,7 +155,7 @@ export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
       ),
       buildDiscordNode(
         "step-2",
-        "Large USDT transfer detected — from: {{trigger.from}}, to: {{trigger.to}}, value: {{trigger.value}}",
+        "Large USDT transfer detected. From {{trigger.from}} to {{trigger.to}}, value {{trigger.value}}.",
         600
       ),
     ],
@@ -118,7 +170,7 @@ export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
     listedSlug: "governance",
     name: "Aave Governance Proposal Alert",
     description:
-      "Watch for new Aave governance proposals on mainnet and send a Discord notification when one is created.",
+      "Watch for new Aave governance proposals on mainnet and send an email when one is created.",
     featuredProtocol: "aave-v3",
     nodes: [
       buildTriggerNode("trigger-1", {
@@ -127,9 +179,10 @@ export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
         contractAddress: "0x9AEE0B04504CeF83A65AC3f0e838D0593BCb2BC7",
         eventName: "ProposalCreated",
       }),
-      buildDiscordNode(
+      buildEmailNode(
         "step-1",
-        "New Aave governance proposal — id: {{trigger.proposalId}}, proposer: {{trigger.creator}}",
+        "New Aave governance proposal",
+        "A new Aave governance proposal was created. Proposal id {{trigger.proposalId}}, proposer {{trigger.creator}}.",
         400
       ),
     ],
@@ -267,3 +320,6 @@ export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] = [
     edges: [buildEdge("trigger-1", "step-1"), buildEdge("step-1", "step-2")],
   },
 ];
+
+export const ONBOARDING_WORKFLOW_FIXTURES: OnboardingWorkflowFixture[] =
+  RAW_FIXTURES.map(withAutoLayout);
