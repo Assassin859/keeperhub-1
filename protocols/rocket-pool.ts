@@ -34,6 +34,14 @@ const TEST_DATA: ProtocolTestData = {
       "get-exchange-rate": [{ field: "rate", nonZero: true }],
       "total-supply": [{ field: "totalSupply", nonZero: true }],
     },
+    // Simulation-tier post-write oracle: deposit must actually credit
+    // rETH (a mined receipt alone misses the stale-deposit-pool failure
+    // class). nonZero is history-safe on a long-lived fork.
+    writeExpectations: {
+      deposit: [
+        { read: "balance-of", expect: { field: "balance", nonZero: true } },
+      ],
+    },
   },
 };
 

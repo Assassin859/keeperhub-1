@@ -178,6 +178,8 @@ export function runSimulation(opts: {
   );
 
   const expectations = protocol.testData?.[opts.chainId]?.expectations ?? {};
+  const writeExpectations =
+    protocol.testData?.[opts.chainId]?.writeExpectations ?? {};
 
   for (const phase of ["read", "write"] as const) {
     const plan = planPhaseFixtures(
@@ -225,6 +227,32 @@ export function runSimulation(opts: {
               data: encoded.data,
               value: encoded.value,
             });
+            // Post-write oracle: a mined receipt alone cannot prove the
+            // write did the right thing, so probe declared read actions
+            // against the post-state. See writeExpectations in
+            // lib/test-data/types.ts.
+            for (const check of writeExpectations[action.slug] ?? []) {
+              const readAction = protocol.actions.find(
+                (a) => a.slug === check.read
+              );
+              if (!readAction) {
+                throw new Error(
+                  `writeExpectations for ${action.slug} references unknown read action "${check.read}"`
+                );
+              }
+              const probe = encodeBoundAction(
+                protocol,
+                readAction,
+                opts.chainId,
+                SIM_WALLET
+              );
+              const result = await runRead(provider, probe);
+              const failure = checkOutputExpectation(
+                { success: true, result },
+                check.expect
+              );
+              expect(failure, failure ?? "").toBeNull();
+            }
           }
         },
         phase === "read" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS
