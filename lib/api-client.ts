@@ -704,7 +704,7 @@ export const workflowApi = {
         input: unknown;
         output: unknown;
         error: string | null;
-        errorType: "user" | "system" | null;
+        errorType: "user" | "system" | "external" | null;
         errorCategory: string | null;
         errorCode: string | null;
         startedAt: Date;
@@ -744,7 +744,7 @@ export const workflowApi = {
         input: unknown;
         output: unknown;
         error: string | null;
-        errorType: "user" | "system" | null;
+        errorType: "user" | "system" | "external" | null;
         errorCategory: string | null;
         errorCode: string | null;
         startedAt: Date;

@@ -70,7 +70,7 @@ type WorkflowExecution = {
   completedAt: Date | null;
   duration: string | null;
   error: string | null;
-  errorType: "user" | "system" | null;
+  errorType: "user" | "system" | "external" | null;
   errorCategory: string | null;
   errorCode: string | null;
   // Progress tracking fields

@@ -107,19 +107,22 @@ async function fetchUnclassifiedBatch(args: {
     .limit(BATCH_SIZE);
 }
 
-type Summary = Record<string, Record<string, { user: number; system: number }>>;
+type Summary = Record<
+  string,
+  Record<string, { user: number; system: number; external: number }>
+>;
 
 function recordInSummary(
   summary: Summary,
   orgSlug: string,
   errorCategory: string,
-  errorType: "user" | "system"
+  errorType: "user" | "system" | "external"
 ): void {
   if (!summary[orgSlug]) {
     summary[orgSlug] = {};
   }
   if (!summary[orgSlug][errorCategory]) {
-    summary[orgSlug][errorCategory] = { user: 0, system: 0 };
+    summary[orgSlug][errorCategory] = { user: 0, system: 0, external: 0 };
   }
   summary[orgSlug][errorCategory][errorType] += 1;
 }
@@ -127,16 +130,16 @@ function recordInSummary(
 function formatSummary(summary: Summary): string {
   const lines: string[] = [];
   lines.push(
-    "org_slug              | error_category       |   user |  system | total"
+    "org_slug              | error_category       |   user |  system | external | total"
   );
   lines.push(
-    "----------------------+----------------------+--------+---------+-------"
+    "----------------------+----------------------+--------+---------+----------+-------"
   );
   for (const orgSlug of Object.keys(summary).sort()) {
     for (const cat of Object.keys(summary[orgSlug]).sort()) {
-      const { user, system } = summary[orgSlug][cat];
+      const { user, system, external } = summary[orgSlug][cat];
       lines.push(
-        `${orgSlug.padEnd(22)}| ${cat.padEnd(21)}| ${String(user).padStart(6)} | ${String(system).padStart(7)} | ${String(user + system).padStart(5)}`
+        `${orgSlug.padEnd(22)}| ${cat.padEnd(21)}| ${String(user).padStart(6)} | ${String(system).padStart(7)} | ${String(external).padStart(8)} | ${String(user + system + external).padStart(5)}`
       );
     }
   }

@@ -583,7 +583,7 @@ export const workflowExecutions = pgTable(
       | "workflow_engine"
       | "unknown"
     >(),
-    errorType: text("error_type").$type<"user" | "system">(),
+    errorType: text("error_type").$type<"user" | "system" | "external">(),
     errorCode: text("error_code").$type<ErrorCode>(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
