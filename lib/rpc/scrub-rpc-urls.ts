@@ -69,3 +69,56 @@ export function scrubRpcUrls(text: string): string {
   }
   return text.replace(URL_RE, maskUrl);
 }
+
+const URL_PLACEHOLDER = "[REDACTED-URL]";
+
+/**
+ * Hosts we operate or configure as RPC providers (CHAIN_RPC_CONFIG and the
+ * public fallbacks). Used by `redactSecretUrls` to drop provider URLs whose
+ * path carries no detectable secret - the host itself is what must not reach
+ * users.
+ */
+const KNOWN_PROVIDER_HOSTS =
+  /\/\/[^/\s]*(g\.alchemy\.com|infura\.io|quiknode\.pro|rpc\.ankr\.com|drpc\.(live|org)|chain\.techops\.services|publicnode\.com|flashbots\.net|arbitrum\.io|binance\.org|polygon\.technology|solana\.com|tempo\.xyz)/i;
+
+/**
+ * Replace EVERY URL with a placeholder. For contexts where any URL is a
+ * provider endpoint by construction (RPC failover errors, web3 step errors)
+ * and provider identity - including the host - must not reach users.
+ * Idempotent: the placeholder contains no URL.
+ */
+export function redactAllUrls(text: string): string {
+  if (!text) {
+    return text;
+  }
+  return text.replace(URL_RE, URL_PLACEHOLDER);
+}
+
+/**
+ * Replace a URL with a placeholder only when it looks provider- or
+ * secret-related: known provider host, a key-shaped path segment, a query
+ * string, or a previously masked `[REDACTED]` segment. Plain URLs (e.g. a
+ * user's own webhook endpoint in a webhook step error) pass through, so this
+ * is safe on error text from arbitrary steps.
+ */
+export function redactSecretUrls(text: string): string {
+  if (!text) {
+    return text;
+  }
+  return text.replace(URL_RE, (url) => {
+    if (url.includes("?") || url.includes("[REDACTED]")) {
+      return URL_PLACEHOLDER;
+    }
+    if (KNOWN_PROVIDER_HOSTS.test(url)) {
+      return URL_PLACEHOLDER;
+    }
+    for (const pattern of PROVIDER_KEY_PATTERNS) {
+      // Reset lastIndex: these are /g/ regexes shared with maskUrl.
+      pattern.lastIndex = 0;
+      if (pattern.test(url)) {
+        return URL_PLACEHOLDER;
+      }
+    }
+    return url;
+  });
+}
