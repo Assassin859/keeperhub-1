@@ -83,24 +83,16 @@ wait_for_fork() {
 }
 
 mainnet_upstream() {
-  # Precedence: explicit env, then an archive upstream adopted from an
-  # already-present fork container (a developer may run one with their
-  # own archive key), then the public default - which only sustains a
-  # fork for ~15 minutes (see the spec).
+  # Explicit env, else the public default. No upstream is ever adopted
+  # from other containers: a scraped URL carries no chain guarantee (a
+  # Sepolia archive key would fork "mainnet" from Sepolia state, and
+  # anvil reports the configured chain id regardless, so the readiness
+  # probe cannot catch it) and could silently burn dRPC quota.
   if [ -n "${ANVIL_FORK_MAINNET_URL:-}" ]; then
     printf '%s' "$ANVIL_FORK_MAINNET_URL"
     return
   fi
-  local adopted
-  adopted=$(docker ps -a --filter "name=anvil" --format '{{.Names}}' \
-    | while read -r c; do docker inspect "$c" --format '{{join .Config.Cmd " "}}' 2>/dev/null; done \
-    | grep -oE 'https://[^ ]*(alchemy|infura|chainstack|drpc)[^ ]*' | head -n1) || true
-  if [ -n "$adopted" ]; then
-    log "adopting archive mainnet upstream from an existing fork container"
-    printf '%s' "$adopted"
-    return
-  fi
-  log "WARNING: mainnet fork on public upstream - healthy for ~15 minutes only"
+  log "WARNING: mainnet fork on public upstream - healthy for ~15 minutes only; export ANVIL_FORK_MAINNET_URL for an archive upstream"
   printf '%s' "https://ethereum-rpc.publicnode.com"
 }
 
