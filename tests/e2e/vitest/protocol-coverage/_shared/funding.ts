@@ -23,9 +23,9 @@ import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { chains } from "@/lib/db/schema";
 import {
+  FAUCETS,
   FORK_CHAIN_IDS,
   FORK_WHALES,
-  FAUCETS,
   FUND_NATIVE_AMOUNT_WEI_BY_CHAIN,
   MIN_NATIVE_BALANCE_WEI_BY_CHAIN,
   TESTNET_FUNDER_PK_ENV,
@@ -33,9 +33,10 @@ import {
   type TokenSymbol,
 } from "@/lib/test-data/chain-test-data";
 
-const ERC20_ABI = [
+export const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
+  "function approve(address spender, uint256 amount) returns (bool)",
 ];
 
 // chains.defaultPrimaryRpc is bootstrap-time data; memoize per process so a
@@ -181,7 +182,8 @@ async function ensureErc20OnFork(
   chainId: string,
   walletAddress: string,
   symbol: TokenSymbol,
-  human: string
+  human: string,
+  rpcUrlOverride?: string
 ): Promise<void> {
   const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
   if (!tokenEntry) {
@@ -198,7 +200,7 @@ async function ensureErc20OnFork(
   }
 
   const needed = ethers.parseUnits(human, tokenEntry.decimals);
-  const rpcUrl = await getChainRpcUrl(chainId);
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
   const provider = new ethers.JsonRpcProvider(rpcUrl);
 
   const token = new ethers.Contract(tokenEntry.address, ERC20_ABI, provider);
@@ -208,6 +210,11 @@ async function ensureErc20OnFork(
   }
   const gap = needed - balance;
 
+  // Whales are chosen for token balance, not ETH; fund their gas.
+  await provider.send("anvil_setBalance", [
+    whale.address,
+    "0x8ac7230489e80000",
+  ]);
   await provider.send("anvil_impersonateAccount", [whale.address]);
   try {
     const whaleSigner = await provider.getSigner(whale.address);
@@ -235,7 +242,8 @@ async function mintViaFaucetOnFork(
   chainId: string,
   walletAddress: string,
   symbol: TokenSymbol,
-  human: string
+  human: string,
+  rpcUrlOverride?: string
 ): Promise<void> {
   const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
   if (!tokenEntry) {
@@ -251,7 +259,7 @@ async function mintViaFaucetOnFork(
   }
 
   const needed = ethers.parseUnits(human, tokenEntry.decimals);
-  const rpcUrl = await getChainRpcUrl(chainId);
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const token = new ethers.Contract(tokenEntry.address, ERC20_ABI, provider);
   const balance: bigint = await token.balanceOf(walletAddress);
@@ -295,19 +303,37 @@ export async function ensureErc20Acquired(
   chainId: string,
   walletAddress: string,
   symbol: TokenSymbol,
-  human: string
+  human: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
 ): Promise<void> {
-  if (FORK_CHAIN_IDS.has(chainId)) {
+  // An override asserts "this endpoint is a fork": only cheatcode-based
+  // provisioning may run against it. Falling through to the live branch
+  // would silently ignore the override (DB lookup, funder-signed txs).
+  if (FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride) {
     if (FORK_WHALES[chainId]?.[symbol]) {
-      await ensureErc20OnFork(chainId, walletAddress, symbol, human);
+      await ensureErc20OnFork(
+        chainId,
+        walletAddress,
+        symbol,
+        human,
+        rpcUrlOverride
+      );
       return;
     }
     if (FAUCETS[chainId]?.[symbol]) {
-      await mintViaFaucetOnFork(chainId, walletAddress, symbol, human);
+      await mintViaFaucetOnFork(
+        chainId,
+        walletAddress,
+        symbol,
+        human,
+        rpcUrlOverride
+      );
       return;
     }
     throw new Error(
-      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire.`
+      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire. Add entries to lib/test-data/chain-test-data.ts.`
     );
   }
 

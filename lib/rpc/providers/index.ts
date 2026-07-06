@@ -1,6 +1,7 @@
 import { ethers, isError } from "ethers";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeEthersGetUrl } from "../safe-ethers-fetch";
+import { redactAllUrls, scrubRpcUrls } from "../scrub-rpc-urls";
 import { isNonRetryableError } from "./error-classification";
 
 export {
@@ -372,8 +373,13 @@ export class RpcProviderManager {
             chain: this.config.chainName,
           }
         );
+        // Thrown messages reach end users via step errors; drop provider
+        // URLs entirely (host included). Internal logs above keep the
+        // host-visible masked form.
         throw new Error(
-          `RPC failed on both endpoints. Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`
+          redactAllUrls(
+            `RPC failed on both endpoints. Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`
+          )
         );
       }
     }
@@ -438,11 +444,15 @@ export class RpcProviderManager {
         }
       );
       throw new Error(
-        `RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`
+        redactAllUrls(
+          `RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`
+        )
       );
     }
 
-    throw new Error(`RPC failed on primary endpoint: ${primaryResult.error}`);
+    throw new Error(
+      redactAllUrls(`RPC failed on primary endpoint: ${primaryResult.error}`)
+    );
   }
 
   private recordAttempt(
@@ -596,7 +606,9 @@ export class RpcProviderManager {
 
     return {
       success: false,
-      error: lastError?.message || "Unknown error",
+      // Ethers v6 inlines info.requestUrl (keyed RPC URL) into Error.message;
+      // mask the key before the message reaches thrown errors and logs.
+      error: scrubRpcUrls(lastError?.message ?? "") || "Unknown error",
     };
   }
 

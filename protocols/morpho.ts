@@ -1,8 +1,10 @@
 import { AbiCoder, keccak256 } from "ethers";
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
+  type ActionInputBindings,
   amount,
   contract,
+  native,
   type ProtocolTestData,
   wallet,
 } from "@/lib/test-data/types";
@@ -33,14 +35,14 @@ const MARKET_ID = keccak256(
   )
 );
 
-// MetaMorpho vault actions (userSpecifiedAddress) are skipped: the vault
-// contract address is unknown at test time and must come from user input.
+// MetaMorpho vault actions target a live mainnet vault: the contract is
+// userSpecifiedAddress, so every action binds Steakhouse USDC explicitly
+// (verified 2026-07-03 via eth_call: name, asset=USDC, totalAssets ~94M).
 //
 // Single source for the 18 standard ERC-4626 vault action slugs (must match
-// the "vault-*" slugs produced by contracts.vault.overrides below). The
-// skip-reason map and the vault action bindings are both keyed off this
-// array via a Record<VaultActionSlug, _> type, so a missing or misspelled
-// slug in either place is a compile error instead of a silent gap.
+// the "vault-*" slugs produced by contracts.vault.overrides below), typed
+// as Record<VaultActionSlug, _> so a missing or misspelled slug is a
+// compile error instead of a silent gap.
 const VAULT_ACTION_SLUGS = [
   "vault-deposit",
   "vault-mint",
@@ -63,12 +65,81 @@ const VAULT_ACTION_SLUGS = [
 ] as const;
 type VaultActionSlug = (typeof VAULT_ACTION_SLUGS)[number];
 
-const VAULT_SKIPS: Record<VaultActionSlug, string> = Object.fromEntries(
-  VAULT_ACTION_SLUGS.map((slug) => [
-    slug,
-    "vault address required (userSpecifiedAddress)",
-  ])
-) as Record<VaultActionSlug, string>;
+const MAINNET_TEST_METAMORPHO = "0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB";
+
+const VAULT_BINDINGS: Record<VaultActionSlug, ActionInputBindings> = {
+  "vault-asset": { contractAddress: MAINNET_TEST_METAMORPHO },
+  "vault-total-assets": { contractAddress: MAINNET_TEST_METAMORPHO },
+  "vault-total-supply": { contractAddress: MAINNET_TEST_METAMORPHO },
+  "vault-balance": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    account: wallet(),
+  },
+  "vault-convert-to-assets": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    shares: native("1"),
+  },
+  "vault-convert-to-shares": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    assets: amount("USDC", "1"),
+  },
+  "vault-preview-deposit": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    assets: amount("USDC", "1"),
+  },
+  "vault-preview-mint": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    shares: native("1"),
+  },
+  "vault-preview-withdraw": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    assets: amount("USDC", "1"),
+  },
+  "vault-preview-redeem": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    shares: native("1"),
+  },
+  "vault-max-deposit": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    receiver: wallet(),
+  },
+  "vault-max-mint": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    receiver: wallet(),
+  },
+  "vault-max-withdraw": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    owner: wallet(),
+  },
+  "vault-max-redeem": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    owner: wallet(),
+  },
+  // Write order follows the registry: deposit provides the share balance
+  // the later writes consume.
+  "vault-deposit": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    assets: amount("USDC", "50"),
+    receiver: wallet(),
+  },
+  "vault-mint": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    shares: native("0.000001"),
+    receiver: wallet(),
+  },
+  "vault-withdraw": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    assets: amount("USDC", "10"),
+    receiver: wallet(),
+    owner: wallet(),
+  },
+  "vault-redeem": {
+    contractAddress: MAINNET_TEST_METAMORPHO,
+    shares: native("0.000001"),
+    receiver: wallet(),
+    owner: wallet(),
+  },
+};
 
 export const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -81,14 +152,16 @@ export const TEST_DATA: ProtocolTestData = {
       approvals: [
         { token: "WSTETH", spender: contract("morpho"), human: "0.15" },
         { token: "USDC", spender: contract("morpho"), human: "150" },
+        // MetaMorpho vault deposits pull USDC from the wallet directly.
+        { token: "USDC", spender: MAINNET_TEST_METAMORPHO, human: "60" },
       ],
     },
     skipped: {
-      ...VAULT_SKIPS,
       liquidate: "requires undercollateralized position",
       "flash-loan": "requires callback contract implementation",
     },
     actions: {
+      ...VAULT_BINDINGS,
       // Read actions
       "get-market": { id: MARKET_ID },
       "get-position": { id: MARKET_ID, user: wallet() },
@@ -101,7 +174,9 @@ export const TEST_DATA: ProtocolTestData = {
       "accrue-interest": { ...WSTETH_USDC_MARKET },
       "set-authorization": {
         authorized: "0x000000000000000000000000000000000000dEaD",
-        newIsAuthorized: "false",
+        // Must flip state or Morpho reverts "already set": fresh forks
+        // start unauthorized, so grant rather than revoke.
+        newIsAuthorized: "true",
       },
       "supply-collateral": {
         ...WSTETH_USDC_MARKET,
@@ -118,14 +193,19 @@ export const TEST_DATA: ProtocolTestData = {
       },
       borrow: {
         ...WSTETH_USDC_MARKET,
-        assets: amount("USDC", "20"),
+        // Small relative to the 0.1 wstETH collateral so the health check
+        // holds with wide margin at every later step regardless of accrued
+        // interest between writes (one borderline failure observed at 20).
+        assets: amount("USDC", "10"),
         shares: "0",
         onBehalf: wallet(),
         receiver: wallet(),
       },
       repay: {
         ...WSTETH_USDC_MARKET,
-        assets: amount("USDC", "15"),
+        // Must stay below the outstanding debt (borrow of 10 plus interest):
+        // Morpho reverts when repaying more assets than are owed.
+        assets: amount("USDC", "8"),
         shares: "0",
         onBehalf: wallet(),
         data: "0x",
@@ -139,7 +219,9 @@ export const TEST_DATA: ProtocolTestData = {
       },
       "withdraw-collateral": {
         ...WSTETH_USDC_MARKET,
-        assets: amount("WSTETH", "0.05"),
+        // Withdraw a small fraction: residual interest debt after repay
+        // means removing too much collateral trips the health check.
+        assets: amount("WSTETH", "0.02"),
         onBehalf: wallet(),
         receiver: wallet(),
       },
@@ -302,6 +384,21 @@ export default defineAbiProtocol({
           ],
           outputs: [],
         },
+        // Action order is registry order: supplyCollateral must precede
+        // borrow so the coverage and simulation write sequences have
+        // collateral before borrowing against it (cf. aave-v3 POOL_ABI).
+        {
+          type: "function",
+          name: "supplyCollateral",
+          stateMutability: "nonpayable",
+          inputs: [
+            MARKET_PARAMS_TUPLE,
+            { name: "assets", type: "uint256" },
+            { name: "onBehalf", type: "address" },
+            { name: "data", type: "bytes" },
+          ],
+          outputs: [],
+        },
         {
           type: "function",
           name: "borrow",
@@ -323,18 +420,6 @@ export default defineAbiProtocol({
             MARKET_PARAMS_TUPLE,
             { name: "assets", type: "uint256" },
             { name: "shares", type: "uint256" },
-            { name: "onBehalf", type: "address" },
-            { name: "data", type: "bytes" },
-          ],
-          outputs: [],
-        },
-        {
-          type: "function",
-          name: "supplyCollateral",
-          stateMutability: "nonpayable",
-          inputs: [
-            MARKET_PARAMS_TUPLE,
-            { name: "assets", type: "uint256" },
             { name: "onBehalf", type: "address" },
             { name: "data", type: "bytes" },
           ],

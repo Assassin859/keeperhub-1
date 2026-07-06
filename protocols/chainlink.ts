@@ -1,9 +1,13 @@
-import { defineAbiProtocol } from "@/lib/protocol-registry";
 import type { AbiFunctionOverride } from "@/lib/protocol-registry";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { contract, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import ccipBnmAbi from "./abis/ccip-bnm.json";
 import ccipErc20Abi from "./abis/ccip-erc20.json";
 import ccipRouterAbi from "./abis/ccip-router.json";
-import { contract, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+// The generic feed contract is userSpecifiedAddress; bind the canonical
+// mainnet ETH/USD aggregator proxy (verified 2026-07-03 via eth_call).
+const MAINNET_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -29,11 +33,11 @@ const TEST_DATA: ProtocolTestData = {
       "link-eth-decimals": {},
       "btc-eth-latest-round-data": {},
       "btc-eth-decimals": {},
-      "latest-round-data": {},
-      "latest-answer": {},
-      decimals: {},
-      description: {},
-      version: {},
+      "latest-round-data": { contractAddress: MAINNET_ETH_USD_FEED },
+      "latest-answer": { contractAddress: MAINNET_ETH_USD_FEED },
+      decimals: { contractAddress: MAINNET_ETH_USD_FEED },
+      description: { contractAddress: MAINNET_ETH_USD_FEED },
+      version: { contractAddress: MAINNET_ETH_USD_FEED },
       "ccip-check-bridge-balance": { account: wallet() },
       "ccip-check-bridge-allowance": {
         owner: wallet(),
@@ -52,13 +56,23 @@ const TEST_DATA: ProtocolTestData = {
       "ccip-approve-fee-token": { spender: contract("ccipRouter") },
     },
     skipped: {
+      "ccip-check-bridge-balance":
+        "CCIP-BnM test token surface is testnet-only; no code at the bound address on mainnet",
+      "ccip-check-bridge-allowance":
+        "CCIP-BnM test token surface is testnet-only; no code at the bound address on mainnet",
+      "ccip-check-fee-balance":
+        "CCIP-BnM test token surface is testnet-only; no code at the bound address on mainnet",
+      "ccip-check-fee-allowance":
+        "CCIP-BnM test token surface is testnet-only; no code at the bound address on mainnet",
       "get-round-data": "requires a valid historical round ID",
       "ccip-get-fee":
         "requires CCIP message struct with destination chain and encoded data",
       "ccip-send":
         "requires CCIP message struct, bridge token balance, and fee token balance",
-      "ccip-bnm-drip": "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
-      "ccip-approve-bridge-token": "write action requiring bridge token balance",
+      "ccip-bnm-drip":
+        "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
+      "ccip-approve-bridge-token":
+        "write action requiring bridge token balance",
       "ccip-approve-fee-token": "write action requiring fee token balance",
     },
   },

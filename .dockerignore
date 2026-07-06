@@ -45,6 +45,10 @@ scripts/dev-mint-session.ts
 scripts/dev-login.ts
 scripts/dev-login-browser.ts
 
+# Coverage yardstick (pnpm coverage:report). CI/local-only and imports the
+# fixture planner from tests/, which is excluded above.
+scripts/protocol-coverage-report.ts
+
 # Dev-only config files
 playwright.config.ts
 vitest.config.mts

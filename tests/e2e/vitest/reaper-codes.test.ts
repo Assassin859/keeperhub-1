@@ -14,6 +14,7 @@ import {
 import {
   organization,
   users,
+  workflowExecutionLogs,
   workflowExecutions,
   workflows,
 } from "../../../lib/db/schema";
@@ -41,9 +42,11 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "";
 const PREFIX = "test_keep693_reaper_";
 const MIN = 60 * 1000;
 
-// The reaper's error_code is a CASE on the pre-update status, applied across
-// three OR'd stuck-state predicates. The CASE and the WHERE live in SQL, so
-// this exercises them against a real database rather than a mock.
+// The reaper's error_code is a CASE on the pre-update status AND step-log
+// presence, applied across the OR'd stuck-state predicates. A running row that
+// produced a step log then stalled is workflow_engine/E-0001; a running row that
+// never logged a step is infrastructure/P-0001, like pending/phantom. The CASE
+// and the WHERE live in SQL, so this exercises them against a real database.
 describe.skipIf(SKIP)("reaper error codes", () => {
   let queryClient: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
@@ -52,6 +55,7 @@ describe.skipIf(SKIP)("reaper error codes", () => {
   const workflowId = `${PREFIX}wf`;
 
   async function cleanupRows(): Promise<void> {
+    await queryClient`DELETE FROM workflow_execution_logs WHERE execution_id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
   }
 
@@ -86,6 +90,7 @@ describe.skipIf(SKIP)("reaper error codes", () => {
   beforeAll(async () => {
     queryClient = postgres(DATABASE_URL);
     db = drizzle(queryClient);
+    await queryClient`DELETE FROM workflow_execution_logs WHERE execution_id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM organization WHERE id LIKE ${`${PREFIX}%`}`;
@@ -132,6 +137,16 @@ describe.skipIf(SKIP)("reaper error codes", () => {
 
   it("codes each reaped row by its pre-update status", async () => {
     await seed(`${PREFIX}running`, "running", 31 * MIN);
+    // Give the running row a step log (never completed) so it counts as
+    // progressed-then-stalled -> workflow_engine/E-0001, not never-started.
+    await db.insert(workflowExecutionLogs).values({
+      executionId: `${PREFIX}running`,
+      nodeId: "trigger",
+      nodeName: "Trigger",
+      nodeType: "trigger",
+      status: "running",
+      startedAt: new Date(Date.now() - 31 * MIN),
+    });
     await seed(`${PREFIX}pending`, "pending", 10 * MIN);
     await seed(`${PREFIX}phantom`, "phantom", 10 * MIN);
 

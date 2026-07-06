@@ -44,6 +44,7 @@
     "test:executor": "vitest run keeperhub-executor",
     "test:integration": "vitest run tests/integration",
     "test:protocol": "vitest run tests/e2e/vitest/protocol-coverage",
+    "coverage:report": "tsx scripts/protocol-coverage-report.ts",
     "test:e2e": "playwright test",
     "test:e2e:bfcache:dev": "playwright test back-forward-hydration",
     "test:e2e:bfcache:prod": "NEXT_BUILD_MODE=production playwright test back-forward-hydration",

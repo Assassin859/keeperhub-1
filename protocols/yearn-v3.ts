@@ -1,6 +1,13 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
 import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
+
+// The vault contract is userSpecifiedAddress, so every action binds a
+// concrete vault. The registry's chain-1 fallback (a 45-byte proxy with
+// no live implementation) is not callable; target the live USDC-1 yVault
+// instead - verified 2026-07-03 via eth_call (name, asset=USDC,
+// totalAssets ~25.6M).
+const MAINNET_TEST_VAULT = "0xBe53A109B494E5c9f97b9Cd39Fe969BE68BF6204";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -10,37 +17,81 @@ const TEST_DATA: ProtocolTestData = {
       approvals: [],
     },
     actions: {
-      "vault-asset": {},
-      "vault-total-assets": {},
-      "vault-total-supply": {},
-      "vault-balance": { account: wallet() },
-      "vault-convert-to-assets": { shares: native("1") },
-      "vault-convert-to-shares": { assets: native("1") },
-      "vault-preview-deposit": { assets: native("1") },
-      "vault-preview-mint": { shares: native("1") },
-      "vault-preview-withdraw": { assets: native("1") },
-      "vault-preview-redeem": { shares: native("1") },
-      "vault-max-deposit": { receiver: wallet() },
-      "vault-max-mint": { receiver: wallet() },
-      "vault-max-withdraw": { owner: wallet() },
-      "vault-max-redeem": { owner: wallet() },
-      "get-price-per-share": {},
-      "get-total-idle": {},
-      "get-total-debt": {},
-      "get-is-shutdown": {},
-      "get-api-version": {},
-      "get-profit-max-unlock-time": {},
-      "get-full-profit-unlock-date": {},
-      "get-accountant": {},
-      "get-deposit-limit": {},
-      "get-role-manager": {},
-      "get-use-default-queue": {},
-      "get-minimum-total-idle": {},
-      "get-vault-decimals": {},
-      "vault-deposit": { receiver: wallet() },
-      "vault-mint": { receiver: wallet() },
-      "vault-withdraw": { receiver: wallet(), owner: wallet() },
-      "vault-redeem": { receiver: wallet(), owner: wallet() },
+      "vault-asset": { contractAddress: MAINNET_TEST_VAULT },
+      "vault-total-assets": { contractAddress: MAINNET_TEST_VAULT },
+      "vault-total-supply": { contractAddress: MAINNET_TEST_VAULT },
+      "vault-balance": {
+        contractAddress: MAINNET_TEST_VAULT,
+        account: wallet(),
+      },
+      "vault-convert-to-assets": {
+        contractAddress: MAINNET_TEST_VAULT,
+        shares: native("1"),
+      },
+      "vault-convert-to-shares": {
+        contractAddress: MAINNET_TEST_VAULT,
+        assets: native("1"),
+      },
+      "vault-preview-deposit": {
+        contractAddress: MAINNET_TEST_VAULT,
+        assets: native("1"),
+      },
+      "vault-preview-mint": {
+        contractAddress: MAINNET_TEST_VAULT,
+        shares: native("1"),
+      },
+      "vault-preview-withdraw": {
+        contractAddress: MAINNET_TEST_VAULT,
+        assets: native("1"),
+      },
+      "vault-preview-redeem": {
+        contractAddress: MAINNET_TEST_VAULT,
+        shares: native("1"),
+      },
+      "vault-max-deposit": {
+        contractAddress: MAINNET_TEST_VAULT,
+        receiver: wallet(),
+      },
+      "vault-max-mint": {
+        contractAddress: MAINNET_TEST_VAULT,
+        receiver: wallet(),
+      },
+      "vault-max-withdraw": {
+        contractAddress: MAINNET_TEST_VAULT,
+        owner: wallet(),
+      },
+      "vault-max-redeem": {
+        contractAddress: MAINNET_TEST_VAULT,
+        owner: wallet(),
+      },
+      "get-price-per-share": { contractAddress: MAINNET_TEST_VAULT },
+      "get-total-idle": { contractAddress: MAINNET_TEST_VAULT },
+      "get-total-debt": { contractAddress: MAINNET_TEST_VAULT },
+      "get-is-shutdown": { contractAddress: MAINNET_TEST_VAULT },
+      "get-api-version": { contractAddress: MAINNET_TEST_VAULT },
+      "get-profit-max-unlock-time": { contractAddress: MAINNET_TEST_VAULT },
+      "get-full-profit-unlock-date": { contractAddress: MAINNET_TEST_VAULT },
+      "get-accountant": { contractAddress: MAINNET_TEST_VAULT },
+      "get-deposit-limit": { contractAddress: MAINNET_TEST_VAULT },
+      "get-role-manager": { contractAddress: MAINNET_TEST_VAULT },
+      "get-use-default-queue": { contractAddress: MAINNET_TEST_VAULT },
+      "get-minimum-total-idle": { contractAddress: MAINNET_TEST_VAULT },
+      "get-vault-decimals": { contractAddress: MAINNET_TEST_VAULT },
+      "vault-deposit": {
+        contractAddress: MAINNET_TEST_VAULT,
+        receiver: wallet(),
+      },
+      "vault-mint": { contractAddress: MAINNET_TEST_VAULT, receiver: wallet() },
+      "vault-withdraw": {
+        contractAddress: MAINNET_TEST_VAULT,
+        receiver: wallet(),
+        owner: wallet(),
+      },
+      "vault-redeem": {
+        contractAddress: MAINNET_TEST_VAULT,
+        receiver: wallet(),
+        owner: wallet(),
+      },
     },
     skipped: {
       "vault-deposit": "requires vault asset balance + approval",
@@ -369,7 +420,10 @@ export default defineAbiProtocol({
           description:
             "Get the time in seconds over which profits are linearly unlocked",
           outputs: {
-            result: { name: "profitMaxUnlockTime", label: "Unlock Duration (seconds)" },
+            result: {
+              name: "profitMaxUnlockTime",
+              label: "Unlock Duration (seconds)",
+            },
           },
         },
         fullProfitUnlockDate: {

@@ -22,6 +22,12 @@ export const TEST_DATA: ProtocolTestData = {
       // balanceOf: input is renamed to "account" via override, so binding key is "account".
       "balance-of": { account: wallet() },
     },
+    // Simulation-tier post-write oracle: wrap must actually credit WETH
+    // to the wallet, not just mine. The WETH balanceOf output is unnamed,
+    // so the structured result is the bare value (no field path).
+    writeExpectations: {
+      wrap: [{ read: "balance-of", expect: { nonZero: true } }],
+    },
   },
 };
 
