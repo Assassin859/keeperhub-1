@@ -110,10 +110,16 @@ function parseResults(file: string): Map<string, SuiteResult> {
 function buildRows(results?: Map<string, SuiteResult>): {
   rows: ChainRow[];
   noHarness: Array<{ protocol: string; actions: number }>;
+  orphanSuites: Array<{ path: string; protocol: string; chainId: string }>;
 } {
   const suites = discoverSuites();
   const rows: ChainRow[] = [];
   const noHarness: Array<{ protocol: string; actions: number }> = [];
+  // Suites consumed by a (registered protocol, testData chain) row. Any
+  // suite left over is orphaned - its protocol lost its testData (or was
+  // never registered), so it would otherwise vanish from the report:
+  // zero rows AND no noHarness entry, silently understating the gap.
+  const consumed = new Set<string>();
 
   for (const def of getRegisteredProtocols()) {
     const chainIds = Object.keys(def.testData ?? {});
@@ -131,6 +137,9 @@ function buildRows(results?: Map<string, SuiteResult>): {
       const skippedCases = plan.filter((c) => c.kind === "skip");
       const expectations = def.testData?.[chainId]?.expectations ?? {};
       const suite = protoSuites.find((s) => s.chainId === chainId);
+      if (suite) {
+        consumed.add(suite.path);
+      }
       const skipReasons: Record<string, string> = {};
       for (const c of skippedCases) {
         if (c.kind === "skip") {
@@ -153,7 +162,10 @@ function buildRows(results?: Map<string, SuiteResult>): {
       rows.push(row);
     }
   }
-  return { rows, noHarness };
+  const orphanSuites = suites
+    .filter((s) => !consumed.has(s.path))
+    .map((s) => ({ path: s.path, protocol: s.protocol, chainId: s.chainId }));
+  return { rows, noHarness, orphanSuites };
 }
 
 function pad(value: string | number, width: number): string {
@@ -169,7 +181,7 @@ function main(): void {
       ? parseResults(args[resultsIdx + 1])
       : undefined;
 
-  const { rows, noHarness } = buildRows(results);
+  const { rows, noHarness, orphanSuites } = buildRows(results);
   const registryTotal = getRegisteredProtocols().reduce(
     (n, d) => n + d.actions.length,
     0
@@ -184,6 +196,7 @@ function main(): void {
     suitesHardSkipped: rows.filter((r) => r.suite === "hard-skip").length,
     suitesMissing: rows.filter((r) => r.suite === "none").length,
     protocolsWithoutHarness: noHarness,
+    orphanSuites,
     executed: results
       ? rows.reduce((n, r) => n + (r.result?.executed ?? 0), 0)
       : undefined,
@@ -222,6 +235,11 @@ function main(): void {
   lines.push(
     `suites hard-skipped: ${totals.suitesHardSkipped} | testData chains without a suite: ${totals.suitesMissing} | protocols with no harness at all: ${noHarness.map((p) => `${p.protocol}(${p.actions})`).join(", ") || "none"}`
   );
+  if (orphanSuites.length > 0) {
+    lines.push(
+      `ORPHANED suites (on disk but no registry testData chain matches them): ${orphanSuites.map((s) => `${s.protocol}/${s.chainId}`).join(", ")}`
+    );
+  }
   if (results) {
     lines.push(
       `executed: ${totals.executed} | passed: ${totals.passed} | failed: ${totals.failed}`
