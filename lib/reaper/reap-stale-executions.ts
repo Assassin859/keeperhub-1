@@ -6,14 +6,14 @@ import { classifyExecutionError } from "@/lib/errors/classify";
 import type { ErrorCode } from "@/lib/errors/error-codes";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 
-export const DEFAULT_THRESHOLD_MINUTES = 30;
+const DEFAULT_THRESHOLD_MINUTES = 30;
 
 // Pending rows that have produced no step logs are unambiguously stuck:
 // the executor inserted but the runtime never started. A few minutes is
 // generous for image pulls and k8s scheduling; beyond that, it's dead.
-export const PENDING_THRESHOLD_MINUTES = 5;
+const PENDING_THRESHOLD_MINUTES = 5;
 
-export function getThresholdMinutes(): number {
+function getThresholdMinutes(): number {
   const envValue = process.env.STALE_EXECUTION_THRESHOLD_MINUTES;
   if (!envValue) {
     return DEFAULT_THRESHOLD_MINUTES;
