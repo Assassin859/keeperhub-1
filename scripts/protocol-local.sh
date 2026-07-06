@@ -47,6 +47,7 @@ run_node() {
     ${TURNKEY_API_PUBLIC_KEY:+-e TURNKEY_API_PUBLIC_KEY} \
     ${TURNKEY_API_PRIVATE_KEY:+-e TURNKEY_API_PRIVATE_KEY} \
     ${TURNKEY_ORGANIZATION_ID:+-e TURNKEY_ORGANIZATION_ID} \
+    ${TESTNET_FUNDER_PK:+-e TESTNET_FUNDER_PK} \
     "$NODE_IMAGE" bash -c "corepack enable >/dev/null 2>&1 && corepack prepare pnpm@9 --activate >/dev/null 2>&1 && $*"
 }
 
@@ -218,8 +219,9 @@ cmd_test() {
   started=$(date +%s)
   # ANVIL_FORK_MAINNET_URL gates the mainnet suites (the actual RPC the
   # app uses comes from the patched chains row); TESTNET_FUNDER_PK gates
-  # ajna's live-Base reads and passes through only when the caller set it.
-  run_node "PROTOCOL_E2E_BASE_URL=http://localhost:${APP_PORT} PROTOCOL_E2E_SEPOLIA_FORK=1 ANVIL_FORK_MAINNET_URL=http://localhost:${MAINNET_FORK_PORT:-8548} ${TESTNET_FUNDER_PK:+TESTNET_FUNDER_PK=$TESTNET_FUNDER_PK} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=${RESULTS_FILE}" || true
+  # ajna's live-Base reads and reaches the container by name via run_node
+  # (-e, value resolved out-of-band) so the key never appears in argv.
+  run_node "PROTOCOL_E2E_BASE_URL=http://localhost:${APP_PORT} PROTOCOL_E2E_SEPOLIA_FORK=1 ANVIL_FORK_MAINNET_URL=http://localhost:${MAINNET_FORK_PORT:-8548} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=${RESULTS_FILE}" || true
   ended=$(date +%s)
   log "suite wall-clock: $((ended - started))s"
   log "coverage report with executed results:"
