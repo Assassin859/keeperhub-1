@@ -308,7 +308,10 @@ export async function ensureErc20Acquired(
    *  defaults to the chains-table lookup the coverage suites use. */
   rpcUrlOverride?: string
 ): Promise<void> {
-  if (FORK_CHAIN_IDS.has(chainId)) {
+  // An override asserts "this endpoint is a fork": only cheatcode-based
+  // provisioning may run against it. Falling through to the live branch
+  // would silently ignore the override (DB lookup, funder-signed txs).
+  if (FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride) {
     if (FORK_WHALES[chainId]?.[symbol]) {
       await ensureErc20OnFork(
         chainId,
@@ -330,7 +333,7 @@ export async function ensureErc20Acquired(
       return;
     }
     throw new Error(
-      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire.`
+      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire. Add entries to lib/test-data/chain-test-data.ts.`
     );
   }
 
