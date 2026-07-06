@@ -2,6 +2,7 @@
 
 import { useSetAtom } from "jotai";
 import {
+  Bot,
   Copy,
   CreditCard,
   FolderTree,
@@ -22,6 +23,7 @@ import {
 } from "@/components/auth/dialog";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
+import { ConnectAgentOverlay } from "@/components/overlays/connect-agent-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
@@ -47,9 +49,7 @@ import {
 } from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 import { isAnonymousUser } from "@/lib/is-anonymous";
-import {
-  gettingStartedOpenAtom,
-} from "@/lib/workflow/store";
+import { gettingStartedOpenAtom } from "@/lib/workflow/store";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
@@ -235,6 +235,14 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           <DropdownMenuItem onClick={() => openOverlay(SettingsOverlay)}>
             <Settings className="size-4" />
             <span>Settings</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() =>
+              openOverlay(ConnectAgentOverlay, undefined, { size: "2xl" })
+            }
+          >
+            <Bot className="size-4" />
+            <span>Connect an agent</span>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openOverlay(IntegrationsOverlay)}>
             <Plug className="size-4" />

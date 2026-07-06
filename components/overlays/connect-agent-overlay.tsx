@@ -144,7 +144,7 @@ export function ConnectAgentOverlay({
           </p>
           {SUGGESTED_PROMPTS.map((prompt) => (
             <button
-              className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-left text-muted-foreground text-sm transition-colors hover:border-keeperhub-green/60 hover:text-foreground"
+              className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-left text-foreground text-sm transition-colors hover:border-keeperhub-green/60"
               key={prompt}
               onClick={() => copyPrompt(prompt)}
               type="button"
