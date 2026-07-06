@@ -25,7 +25,7 @@ import {
 } from "@/lib/db/schema-extensions";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
-import { scrubRpcUrls } from "@/lib/rpc/scrub-rpc-urls";
+import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -1050,9 +1050,9 @@ async function fetchWorkflowRuns(
       row.gasUsedWei && row.gasUsedWei !== "0" ? row.gasUsedWei : null,
     totalSteps: row.totalSteps ? Number(row.totalSteps) : null,
     completedSteps: row.completedSteps ? Number(row.completedSteps) : null,
-    // Scrub on read so rows persisted before URL masking existed do not
-    // re-display keyed RPC URLs.
-    error: row.error === null ? null : scrubRpcUrls(row.error),
+    // Redact on read so rows persisted before URL redaction existed do not
+    // re-display provider RPC URLs.
+    error: row.error === null ? null : redactSecretUrls(row.error),
     errorCode: row.errorCode ?? null,
     errorType: row.errorType ?? null,
     errorCategory: row.errorCategory ?? null,
@@ -1289,9 +1289,16 @@ export async function getStepLogs(
     startedAt: row.startedAt.toISOString(),
     completedAt: row.completedAt?.toISOString() ?? null,
     durationMs: row.duration ? Number(row.duration) : null,
-    // Scrub on read so rows persisted before URL masking existed do not
-    // re-display keyed RPC URLs.
-    error: row.error === null ? null : scrubRpcUrls(row.error),
+    // Redact on read so rows persisted before URL redaction existed do not
+    // re-display provider RPC URLs. web3 step errors only ever contain
+    // provider URLs, so drop every URL there; other steps may legitimately
+    // reference user-owned URLs.
+    error:
+      row.error === null
+        ? null
+        : row.nodeType.startsWith("web3/")
+          ? redactAllUrls(row.error)
+          : redactSecretUrls(row.error),
     iterationIndex: row.iterationIndex,
     forEachNodeId: row.forEachNodeId,
     network: row.network,

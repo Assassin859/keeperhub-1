@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { scrubRpcUrls } from "@/lib/rpc/scrub-rpc-urls";
+import {
+  redactAllUrls,
+  redactSecretUrls,
+  scrubRpcUrls,
+} from "@/lib/rpc/scrub-rpc-urls";
 
 // Fake key markers. Long enough to trip the generic 32+ char path mask;
 // recognizable in greps so any regression that lets them through is loud.
@@ -113,6 +117,60 @@ describe("scrubRpcUrls", () => {
       const once = scrubRpcUrls(input);
       expect(scrubRpcUrls(once)).toBe(once);
     }
+  });
+});
+
+describe("redactAllUrls", () => {
+  it("replaces every URL with the placeholder, host included", () => {
+    const input =
+      `RPC failed on both endpoints. Primary: fetch https://lb.drpc.live/ethereum/${FAKE_ALCHEMY_KEY} failed. ` +
+      "Fallback: fetch wss://chain.techops.services/eth-mainnet failed";
+    const out = redactAllUrls(input);
+    expect(out).not.toContain("lb.drpc.live");
+    expect(out).not.toContain("chain.techops.services");
+    expect(out).not.toContain(FAKE_ALCHEMY_KEY);
+    expect(out).toContain("[REDACTED-URL]");
+    expect(out).toContain("RPC failed on both endpoints");
+  });
+
+  it("is idempotent and a no-op on URL-free prose", () => {
+    const once = redactAllUrls("fetch https://example.com/a failed");
+    expect(redactAllUrls(once)).toBe(once);
+    expect(redactAllUrls("connection refused")).toBe("connection refused");
+  });
+});
+
+describe("redactSecretUrls", () => {
+  it("drops known provider hosts even without a key in the path", () => {
+    const out = redactSecretUrls(
+      "fetch https://chain.techops.services/eth-mainnet failed"
+    );
+    expect(out).not.toContain("chain.techops.services");
+    expect(out).toContain("[REDACTED-URL]");
+  });
+
+  it("drops key-bearing, query-bearing, and already-masked URLs entirely", () => {
+    const inputs = [
+      `https://lb.drpc.live/ethereum/${FAKE_ALCHEMY_KEY}`,
+      `https://my-custom-node.example.com/rpc?apikey=${FAKE_INFURA_KEY}`,
+      "https://my-custom-node.example.com/[REDACTED]",
+      `https://my-custom-node.example.com/${FAKE_QUICKNODE_KEY}`,
+    ];
+    for (const input of inputs) {
+      const out = redactSecretUrls(`request to ${input} failed`);
+      expect(out).toBe("request to [REDACTED-URL] failed");
+    }
+  });
+
+  it("keeps plain user-owned URLs readable", () => {
+    const input = "Failed to send webhook: https://users-own-site.com/hook returned 404";
+    expect(redactSecretUrls(input)).toBe(input);
+  });
+
+  it("is idempotent", () => {
+    const input = `mixed: https://users-own-site.com/hook and https://lb.drpc.live/base/${FAKE_ALCHEMY_KEY}`;
+    const once = redactSecretUrls(input);
+    expect(redactSecretUrls(once)).toBe(once);
   });
 });
 

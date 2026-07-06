@@ -1,7 +1,7 @@
 import { type Commitment, Connection } from "@solana/web3.js";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeFetch } from "@/lib/safe-fetch";
-import { scrubRpcUrls } from "../scrub-rpc-urls";
+import { redactAllUrls, scrubRpcUrls } from "../scrub-rpc-urls";
 import {
   RPC_CONNECTION_ERROR_PATTERNS,
   type RpcErrorType,
@@ -369,13 +369,20 @@ export class SolanaProviderManager {
           chain: this.config.chainName,
         }
       );
+      // Thrown messages reach end users via step errors; drop provider URLs
+      // entirely (host included). Internal logs above keep the host-visible
+      // masked form.
       throw new Error(
-        `Solana RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`
+        redactAllUrls(
+          `Solana RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`
+        )
       );
     }
 
     throw new Error(
-      `Solana RPC failed on primary endpoint: ${primaryResult.error}`
+      redactAllUrls(
+        `Solana RPC failed on primary endpoint: ${primaryResult.error}`
+      )
     );
   }
 

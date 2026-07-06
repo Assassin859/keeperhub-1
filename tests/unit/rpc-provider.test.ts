@@ -295,8 +295,10 @@ describe("RpcProviderManager", () => {
         const message = (error as Error).message;
         expect(message).toContain("RPC failed on both endpoints");
         expect(message).not.toContain(fakeDrpcKey);
-        expect(message).toContain("lb.drpc.live");
-        expect(message).toContain("[REDACTED]");
+        // Provider identity must not reach users: the whole URL goes,
+        // host included.
+        expect(message).not.toContain("lb.drpc.live");
+        expect(message).toContain("[REDACTED-URL]");
         return true;
       });
     });

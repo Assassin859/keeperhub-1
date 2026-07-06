@@ -29,14 +29,21 @@ import {
 const FAKE_DRPC_KEY = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAAAAAAAAAAAA";
 const KEYED_URL = `https://lb.drpc.live/ethereum/${FAKE_DRPC_KEY}`;
 
-const context: StepContext = {
+const web3Context: StepContext = {
   executionId: "exec-1",
   nodeId: "node-1",
   nodeName: "Query Poke Events",
   nodeType: "web3/query-events",
 };
 
-describe("withStepLogging error scrubbing", () => {
+const webhookContext: StepContext = {
+  executionId: "exec-1",
+  nodeId: "node-2",
+  nodeName: "Notify",
+  nodeType: "webhook/send-webhook",
+};
+
+describe("withStepLogging error redaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(logStepStartDb).mockResolvedValue({
@@ -45,52 +52,65 @@ describe("withStepLogging error scrubbing", () => {
     });
   });
 
-  it("scrubs keyed RPC URLs from returned error results before persisting and returning", async () => {
+  it("drops entire provider URLs (host included) from web3 step error results", async () => {
     const rawError = `Event query failed: RPC failed on both endpoints. Fallback: server response 400 Bad Request (info={ "requestUrl": "${KEYED_URL}" })`;
 
-    const result = await withStepLogging({ _context: context }, () =>
+    const result = await withStepLogging({ _context: web3Context }, () =>
       Promise.resolve({ success: false, error: rawError })
     );
 
     expect(result.error).not.toContain(FAKE_DRPC_KEY);
-    expect(result.error).toContain("lb.drpc.live");
-    expect(result.error).toContain("[REDACTED]");
+    expect(result.error).not.toContain("lb.drpc.live");
+    expect(result.error).toContain("[REDACTED-URL]");
     expect(result.error).toContain("RPC failed on both endpoints");
 
     expect(logStepCompleteDb).toHaveBeenCalledTimes(1);
     const persisted = vi.mocked(logStepCompleteDb).mock.calls[0][0];
-    expect(persisted.error).not.toContain(FAKE_DRPC_KEY);
+    expect(persisted.error).not.toContain("lb.drpc.live");
     // The result object is persisted whole as output/outputRaw; its error
-    // field must carry the scrubbed string too.
+    // field must carry the redacted string too.
     expect((persisted.outputRaw as { error: string }).error).not.toContain(
-      FAKE_DRPC_KEY
+      "lb.drpc.live"
     );
     expect((persisted.output as { error: string }).error).not.toContain(
-      FAKE_DRPC_KEY
+      "lb.drpc.live"
     );
 
     const metrics = vi.mocked(recordStepMetrics).mock.calls[0][0];
-    expect(metrics.error).not.toContain(FAKE_DRPC_KEY);
+    expect(metrics.error).not.toContain("lb.drpc.live");
   });
 
-  it("scrubs keyed RPC URLs from thrown errors and rethrows with the masked message", async () => {
+  it("keeps user-owned URLs in non-web3 step errors while dropping keyed ones", async () => {
+    const rawError = `Failed to send webhook: https://users-own-site.com/hook returned 502 (upstream ${KEYED_URL})`;
+
+    const result = await withStepLogging({ _context: webhookContext }, () =>
+      Promise.resolve({ success: false, error: rawError })
+    );
+
+    expect(result.error).toContain("https://users-own-site.com/hook");
+    expect(result.error).not.toContain(FAKE_DRPC_KEY);
+    expect(result.error).not.toContain("lb.drpc.live");
+    expect(result.error).toContain("[REDACTED-URL]");
+  });
+
+  it("redacts thrown web3 step errors and rethrows with the clean message", async () => {
     const thrown = new Error(
       `could not coalesce error (info={ "requestUrl": "${KEYED_URL}" }, code=UNKNOWN_ERROR, version=6.16.0)`
     );
 
     await expect(
-      withStepLogging({ _context: context }, () => Promise.reject(thrown))
+      withStepLogging({ _context: web3Context }, () => Promise.reject(thrown))
     ).rejects.toSatisfy((error: unknown) => {
       const message = (error as Error).message;
       expect(message).not.toContain(FAKE_DRPC_KEY);
-      expect(message).toContain("lb.drpc.live");
-      expect(message).toContain("[REDACTED]");
+      expect(message).not.toContain("lb.drpc.live");
+      expect(message).toContain("[REDACTED-URL]");
       return true;
     });
 
     expect(logStepCompleteDb).toHaveBeenCalledTimes(1);
     const persisted = vi.mocked(logStepCompleteDb).mock.calls[0][0];
-    expect(persisted.error).not.toContain(FAKE_DRPC_KEY);
+    expect(persisted.error).not.toContain("lb.drpc.live");
   });
 
   it("survives frozen thrown errors without masking the failure", async () => {
@@ -99,7 +119,7 @@ describe("withStepLogging error scrubbing", () => {
     );
 
     await expect(
-      withStepLogging({ _context: context }, () => Promise.reject(frozen))
+      withStepLogging({ _context: web3Context }, () => Promise.reject(frozen))
     ).rejects.toBe(frozen);
   });
 });

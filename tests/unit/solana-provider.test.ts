@@ -235,8 +235,10 @@ describe("SolanaProviderManager", () => {
         const message = (error as Error).message;
         expect(message).toContain("Solana RPC failed on both endpoints");
         expect(message).not.toContain(fakeAlchemyKey);
-        expect(message).toContain("solana-mainnet.g.alchemy.com");
-        expect(message).toContain("[REDACTED]");
+        // Provider identity must not reach users: the whole URL goes,
+        // host included.
+        expect(message).not.toContain("solana-mainnet.g.alchemy.com");
+        expect(message).toContain("[REDACTED-URL]");
         return true;
       });
     });

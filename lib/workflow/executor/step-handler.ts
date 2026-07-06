@@ -7,7 +7,7 @@ import "server-only";
 
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordStepMetrics } from "@/lib/metrics/instrumentation/workflow";
-import { scrubRpcUrls } from "@/lib/rpc/scrub-rpc-urls";
+import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { redactSensitiveData } from "@/lib/utils/redact";
 import {
   runWithWorkflowErrorContext,
@@ -82,6 +82,21 @@ type LogInfo = {
   logId: string;
   startTime: number;
 };
+
+/**
+ * User-facing error redaction for a step's error string. In web3 steps every
+ * URL is an RPC provider endpoint, and provider identity (host included)
+ * must not reach users. In other steps a URL may be user-owned (webhook
+ * endpoints), so only provider/secret-looking URLs are dropped.
+ */
+function redactStepError(
+  message: string,
+  context: StepContext | undefined
+): string {
+  return context?.nodeType?.startsWith("web3/")
+    ? redactAllUrls(message)
+    : redactSecretUrls(message);
+}
 
 /**
  * Log the start of a step execution
@@ -288,11 +303,11 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
         error?: string;
         code?: string;
       };
-      // Mutate in place: errorResult aliases result, so the scrubbed string
+      // Mutate in place: errorResult aliases result, so the redacted string
       // is what gets persisted (output/outputRaw), returned to the executor,
       // and threaded into the run-level error.
       if (errorResult.error) {
-        errorResult.error = scrubRpcUrls(errorResult.error);
+        errorResult.error = redactStepError(errorResult.error, context);
       }
       await logStepComplete(
         logInfo,
@@ -378,11 +393,11 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
   } catch (error) {
     if (error instanceof Error) {
       try {
-        // Scrub before rethrow so the executor's fatal catch and every
-        // downstream consumer of the thrown error see the masked message.
-        error.message = scrubRpcUrls(error.message);
+        // Redact before rethrow so the executor's fatal catch and every
+        // downstream consumer of the thrown error see the clean message.
+        error.message = redactStepError(error.message, context);
       } catch {
-        // Frozen/proxied error object; read-path scrubbing still applies.
+        // Frozen/proxied error object; read-path redaction still applies.
       }
     }
     const errorMessage =
