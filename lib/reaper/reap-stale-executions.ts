@@ -33,9 +33,17 @@ export function getThresholdMinutes(): number {
  * entered the workflow body - the pod died/never scheduled - which is an
  * infrastructure failure (P-0001), classified like `pending`/`phantom`, not a
  * workflow_engine fault (E-0001). This keeps a FailedCreatePodSandBox burst in
- * the infrastructure series the SLA alert watches, and reaps such a row at the
- * (short) pending threshold instead of the (long) running threshold. A `running`
- * row that DID log a step but then stalled is still a workflow_engine timeout.
+ * the infrastructure series the SLA alert watches. A `running` row that DID log
+ * a step but then stalled is a workflow_engine timeout (E-0001).
+ *
+ * A never-progressed `running` row is reaped at the same (long) running
+ * threshold as a stalled one, NOT the (short) pending threshold - only the
+ * classification differs by step-log presence, the timing does not. A durably
+ * enqueued run also sits `running` with no step logs until a worker picks it up,
+ * and is indistinguishable in the DB from a pod that never scheduled; reaping
+ * running+no-logs at the pending cutoff would false-fail healthy runs waiting on
+ * a backed-up worker queue - exactly the incident conditions this reaper runs
+ * in - and inflate the infrastructure counter it exists to keep accurate.
  */
 export async function reapStaleExecutions(
   thresholdMinutes: number = getThresholdMinutes()
@@ -64,22 +72,18 @@ export async function reapStaleExecutions(
   const excludeIds = activeExecutionIds.map((row) => row.executionId);
 
   const staleConditions = or(
-    // running + progressed-then-stalled: has step logs but none completed
-    // recently, older than the running threshold (default 30 min) -> E-0001.
+    // running, older than the running threshold (default 30 min), not recently
+    // active. Covers both a run that progressed then stalled and one that never
+    // produced a step log; the CASEs below split them by step-log presence into
+    // workflow_engine/E-0001 vs infrastructure/P-0001. Both wait the full
+    // running threshold: a never-progressed running row is indistinguishable in
+    // the DB from a healthy run still queued for a worker (see the doc above).
     and(
       eq(workflowExecutions.status, "running"),
       lt(workflowExecutions.startedAt, runningCutoff),
       excludeIds.length > 0
         ? notInArray(workflowExecutions.id, excludeIds)
         : undefined
-    ),
-    // running + NEVER progressed: no step logs at all, older than the pending
-    // threshold (5 min). The pod died/never scheduled before the trigger step,
-    // so this is an infrastructure failure reaped like 'pending' -> P-0001.
-    and(
-      eq(workflowExecutions.status, "running"),
-      lt(workflowExecutions.startedAt, pendingCutoff),
-      noStepLogs
     ),
     // pending + no step logs, older than the pending threshold -> P-0001.
     and(

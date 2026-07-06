@@ -22,9 +22,11 @@ vi.mock("server-only", () => ({}));
 
 // The reaper classifies a stuck execution by whether it ever produced a step
 // log, not by its raw status. A `running` row with NO step logs never entered
-// the workflow body (pod died/never scheduled) and must be reaped promptly as
-// infrastructure/P-0001, exactly like `pending`/`phantom` - not held to the
-// 30-min running threshold and booked as workflow_engine/E-0001. This exercises
+// the workflow body (pod died/never scheduled) and is booked as
+// infrastructure/P-0001, like `pending`/`phantom` - NOT workflow_engine/E-0001.
+// It is still reaped at the full 30-min running threshold (not the 5-min pending
+// cutoff): a durably enqueued run also sits running+no-logs until a worker picks
+// it up, so reaping early would false-fail healthy queued runs. This exercises
 // that CASE + the OR of stale conditions against a real Postgres.
 
 const SKIP =
@@ -66,7 +68,7 @@ describe.skipIf(SKIP)(
       runningRecentlyActive: `${PREFIX}running_recent`,
       pendingNoLogsStale: `${PREFIX}pending_nolog_stale`,
       phantomStale: `${PREFIX}phantom_stale`,
-      runningNoLogsFresh: `${PREFIX}running_nolog_fresh`,
+      runningNoLogsQueued: `${PREFIX}running_nolog_queued`,
       runningWithLogFresh: `${PREFIX}running_log_fresh`,
     };
 
@@ -149,9 +151,10 @@ describe.skipIf(SKIP)(
         updatedAt: new Date(),
       });
 
-      // running, never produced a step log, older than the 5-min pending cutoff:
-      // the fix - reaped as infrastructure/P-0001, not held to 30 min.
-      await seedExecution(ID.runningNoLogsStale, "running", minutesAgo(6));
+      // running, never produced a step log, older than the 30-min running
+      // threshold: reaped as infrastructure/P-0001 (not workflow_engine/E-0001)
+      // because it never entered the workflow body.
+      await seedExecution(ID.runningNoLogsStale, "running", minutesAgo(31));
 
       // running, produced a step log that never completed, older than 30 min:
       // genuinely stalled after progressing - workflow_engine/E-0001.
@@ -169,9 +172,11 @@ describe.skipIf(SKIP)(
       // phantom, older than 5 min: unchanged - infrastructure/P-0005.
       await seedExecution(ID.phantomStale, "phantom", minutesAgo(6));
 
-      // running, no logs, younger than 5 min: give the pod time to boot - not
-      // reaped yet.
-      await seedExecution(ID.runningNoLogsFresh, "running", minutesAgo(3));
+      // running, no logs, but only 20 min in (past the 5-min pending cutoff, well
+      // under the 30-min running threshold): a durably enqueued run waiting on a
+      // worker looks identical to this, so it must NOT be reaped early - this is
+      // the regression guard against false-failing healthy queued runs.
+      await seedExecution(ID.runningNoLogsQueued, "running", minutesAgo(20));
 
       // running, has a step log, only 10 min in: progressing normally, well under
       // the 30-min running threshold - not reaped.
@@ -226,9 +231,9 @@ describe.skipIf(SKIP)(
       expect(row.errorCode).toBe("P-0005");
     });
 
-    it("does NOT reap a running-no-logs row younger than the pending cutoff", async () => {
-      expect(reapedIds).not.toContain(ID.runningNoLogsFresh);
-      expect((await readExecution(ID.runningNoLogsFresh)).status).toBe(
+    it("does NOT reap a running-no-logs row still under the running threshold (queued-run guard)", async () => {
+      expect(reapedIds).not.toContain(ID.runningNoLogsQueued);
+      expect((await readExecution(ID.runningNoLogsQueued)).status).toBe(
         "running"
       );
     });
