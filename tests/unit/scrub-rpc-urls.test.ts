@@ -99,6 +99,21 @@ describe("scrubRpcUrls", () => {
     expect(out).not.toContain(fakeDrpcKey);
     expect(out).toContain("/0g-galileo-testnet/");
   });
+
+  it("is idempotent - scrubbing already-scrubbed output is a no-op", () => {
+    // The runtime applies the scrubber at multiple layers (provider source,
+    // step-handler backstop, read path), so masked output must be a fixed
+    // point - including the query-string replacement shape.
+    const inputs = [
+      `Primary: https://lb.drpc.live/ethereum/${FAKE_ALCHEMY_KEY}. Fallback: https://mainnet.infura.io/v3/${FAKE_INFURA_KEY}`,
+      `https://rpc.example.com/foo?apikey=${FAKE_ALCHEMY_KEY}&debug=1`,
+      "connection refused",
+    ];
+    for (const input of inputs) {
+      const once = scrubRpcUrls(input);
+      expect(scrubRpcUrls(once)).toBe(once);
+    }
+  });
 });
 
 // Regression-style coverage: every distinct URL shape currently present in

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { workflowExecutionLogs } from "@/lib/db/schema";
+import { scrubRpcUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { redactSensitiveData } from "@/lib/utils/redact";
 import { resolveAuthorizedExecution } from "@/lib/workflow/execution-access";
 
@@ -64,6 +65,12 @@ export async function GET(
       );
     }
     const { execution } = resolved;
+    // Scrub on read so rows persisted before URL masking existed do not
+    // re-display keyed RPC URLs.
+    const scrubbedExecution = {
+      ...execution,
+      error: execution.error === null ? null : scrubRpcUrls(execution.error),
+    };
 
     const logs = await db.query.workflowExecutionLogs.findMany({
       where: eq(workflowExecutionLogs.executionId, executionId),
@@ -74,11 +81,12 @@ export async function GET(
       ...log,
       input: redactSensitiveData(log.input),
       output: redactSensitiveData(log.output),
+      error: log.error === null ? null : scrubRpcUrls(log.error),
     }));
 
     if (!hasAnyPartialParam) {
       return NextResponse.json({
-        execution,
+        execution: scrubbedExecution,
         logs: redactedLogs,
       });
     }
@@ -105,7 +113,7 @@ export async function GET(
     });
 
     return NextResponse.json({
-      execution,
+      execution: scrubbedExecution,
       logs: transformedLogs,
     });
   } catch (error) {

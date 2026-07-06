@@ -266,6 +266,41 @@ describe("RpcProviderManager", () => {
       );
     });
 
+    it("masks keyed RPC URLs that provider errors inline into the thrown message", async () => {
+      const manager = new RpcProviderManager({
+        config: {
+          primaryRpcUrl: "https://primary.example.com",
+          fallbackRpcUrl: "https://fallback.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Ethereum",
+        },
+        metricsCollector,
+      });
+
+      // Ethers v6 SERVER_ERROR shape: info.requestUrl (keyed URL) is inlined
+      // into Error.message.
+      const fakeDrpcKey = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAAAAAAAAAAAA";
+      const mockOperation = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            `server response 400 Bad Request (request={ }, response={ }, error=null, info={ "requestUrl": "https://lb.drpc.live/ethereum/${fakeDrpcKey}" }, code=SERVER_ERROR, version=6.16.0)`
+          )
+        );
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        const message = (error as Error).message;
+        expect(message).toContain("RPC failed on both endpoints");
+        expect(message).not.toContain(fakeDrpcKey);
+        expect(message).toContain("lb.drpc.live");
+        expect(message).toContain("[REDACTED]");
+        return true;
+      });
+    });
+
     it("should throw error when primary fails and no fallback configured", async () => {
       const manager = new RpcProviderManager({
         config: {

@@ -208,6 +208,39 @@ describe("SolanaProviderManager", () => {
       );
     });
 
+    it("masks keyed RPC URLs that provider errors inline into the thrown message", async () => {
+      const manager = new SolanaProviderManager({
+        config: {
+          primaryRpcUrl: "https://primary.example.com",
+          fallbackRpcUrl: "https://fallback.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Solana",
+        },
+        metricsCollector,
+      });
+
+      const fakeAlchemyKey = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAA";
+      const mockOperation = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            `failed to get balance: fetch https://solana-mainnet.g.alchemy.com/v2/${fakeAlchemyKey} returned 401`
+          )
+        );
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        const message = (error as Error).message;
+        expect(message).toContain("Solana RPC failed on both endpoints");
+        expect(message).not.toContain(fakeAlchemyKey);
+        expect(message).toContain("solana-mainnet.g.alchemy.com");
+        expect(message).toContain("[REDACTED]");
+        return true;
+      });
+    });
+
     it("should throw error when primary fails and no fallback configured", async () => {
       const manager = new SolanaProviderManager({
         config: {

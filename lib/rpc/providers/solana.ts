@@ -1,6 +1,7 @@
 import { type Commitment, Connection } from "@solana/web3.js";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeFetch } from "@/lib/safe-fetch";
+import { scrubRpcUrls } from "../scrub-rpc-urls";
 import {
   RPC_CONNECTION_ERROR_PATTERNS,
   type RpcErrorType,
@@ -482,7 +483,9 @@ export class SolanaProviderManager {
 
     return {
       success: false,
-      error: lastError?.message || "Unknown error",
+      // Mask keyed RPC URLs that providers inline into error messages
+      // before the message reaches thrown errors and logs.
+      error: scrubRpcUrls(lastError?.message ?? "") || "Unknown error",
     };
   }
 

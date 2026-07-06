@@ -1,6 +1,7 @@
 import { ethers, isError } from "ethers";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeEthersGetUrl } from "../safe-ethers-fetch";
+import { scrubRpcUrls } from "../scrub-rpc-urls";
 import { isNonRetryableError } from "./error-classification";
 
 export {
@@ -596,7 +597,9 @@ export class RpcProviderManager {
 
     return {
       success: false,
-      error: lastError?.message || "Unknown error",
+      // Ethers v6 inlines info.requestUrl (keyed RPC URL) into Error.message;
+      // mask the key before the message reaches thrown errors and logs.
+      error: scrubRpcUrls(lastError?.message ?? "") || "Unknown error",
     };
   }
 

@@ -7,6 +7,7 @@ import "server-only";
 
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordStepMetrics } from "@/lib/metrics/instrumentation/workflow";
+import { scrubRpcUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { redactSensitiveData } from "@/lib/utils/redact";
 import {
   runWithWorkflowErrorContext,
@@ -287,6 +288,12 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
         error?: string;
         code?: string;
       };
+      // Mutate in place: errorResult aliases result, so the scrubbed string
+      // is what gets persisted (output/outputRaw), returned to the executor,
+      // and threaded into the run-level error.
+      if (errorResult.error) {
+        errorResult.error = scrubRpcUrls(errorResult.error);
+      }
       await logStepComplete(
         logInfo,
         "error",
@@ -369,6 +376,15 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
 
     return result;
   } catch (error) {
+    if (error instanceof Error) {
+      try {
+        // Scrub before rethrow so the executor's fatal catch and every
+        // downstream consumer of the thrown error see the masked message.
+        error.message = scrubRpcUrls(error.message);
+      } catch {
+        // Frozen/proxied error object; read-path scrubbing still applies.
+      }
+    }
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     await logStepComplete(
