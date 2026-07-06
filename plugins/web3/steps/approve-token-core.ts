@@ -36,11 +36,11 @@ import {
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
+import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import type { ExecutedCall } from "@/lib/web3/trace-decode";
 import { traceExecutedCallWithFailover } from "@/lib/web3/trace-executed-call";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
-import { isSponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import {
   type TransactionContext,
   withNonceSession,
@@ -341,35 +341,14 @@ export async function approveTokenCore(
         }
       );
     } catch (error) {
-      if (isSponsoredTxRevertError(error)) {
-        logUserError(
-          ErrorCategory.TRANSACTION,
-          "[Approve Token] Sponsored transaction reverted on-chain",
-          error,
-          {
-            plugin_name: "web3",
-            action_name: "approve-token",
-            chain_id: String(chainId),
-            tx_hash: error.txHash,
-            send_transaction_status_id: error.sendTransactionStatusId,
-            revert_chain_depth: String(error.revertChain.length),
-          }
-        );
-        return {
-          success: false,
-          error: `Transaction reverted: ${error.message}`,
-        };
+      const decision = resolveSponsoredSendError(error, {
+        logPrefix: "[Approve Token]",
+        actionName: "approve-token",
+        chainId,
+      });
+      if (!decision.fallback) {
+        return { success: false, error: decision.error };
       }
-      logUserError(
-        ErrorCategory.TRANSACTION,
-        "[Approve Token] Sponsorship attempted but failed, falling back to direct signing",
-        error,
-        {
-          plugin_name: "web3",
-          action_name: "approve-token",
-          chain_id: String(chainId),
-        }
-      );
     }
   }
 

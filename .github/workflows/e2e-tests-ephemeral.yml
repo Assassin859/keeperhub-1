@@ -86,7 +86,7 @@ jobs:
             fi
           fi
 
-          if [[ "$EFFECTIVE_EVENT" == "push" || "$EFFECTIVE_EVENT" == "workflow_dispatch" ]]; then
+          if [[ "$EFFECTIVE_EVENT" == "push" || "$EFFECTIVE_EVENT" == "workflow_dispatch" || "$EFFECTIVE_EVENT" == "schedule" ]]; then
             echo "run-e2e=true" >> "$GITHUB_OUTPUT"
           elif [[ "$EFFECTIVE_EVENT" == "pull_request" ]]; then
             # Run if the e2e label is present (covers both labeled and synchronize events)
@@ -94,6 +94,58 @@ jobs:
               echo "run-e2e=true" >> "$GITHUB_OUTPUT"
             fi
           fi
+
+  # Tier 1 fork simulations: every registry action executed directly
+  # against an anvil mainnet fork (impersonation instead of signing, no
+  # app build), asserting encoding and on-chain semantics with the same
+  # output oracle as the e2e suites. Runs in parallel with the full e2e
+  # jobs and finishes in a fraction of their time; the executed-test
+  # floor guards against silent self-skips. See
+  # specs/protocol-coverage-methodology.md.
+  tier1-simulations:
+    needs: should-run
+    if: needs.should-run.outputs.run-e2e == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Start anvil Ethereum mainnet fork
+        run: |
+          docker network create keeperhub-network 2>/dev/null || true
+          docker compose --profile test up -d test-anvil-fork-mainnet
+          retries=0
+          until curl -sf -X POST http://localhost:8548 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0x1"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil mainnet fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-mainnet || true
+              exit 1
+            fi
+            sleep 2
+          done
+        env:
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+
+      - name: Run Tier 1 simulations (chain 1)
+        run: |
+          pnpm vitest run tests/e2e/vitest/protocol-simulation \
+            --reporter=default --reporter=json --outputFile=sim-results.json
+          # Floor 150: the chain-1 sweep currently executes ~200 tests;
+          # below 150 means suites are self-skipping or a protocol lost
+          # its bindings.
+          pnpm tsx scripts/protocol-coverage-floor.ts sim-results.json 150
+        env:
+          PROTOCOL_SIM_RPC_1: http://localhost:8548
 
   # DISABLED: ephemeral E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-vitest-ephemeral:
@@ -361,7 +413,21 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
-          pnpm test:protocol
+          pnpm vitest run tests/e2e/vitest/protocol-coverage \
+            --reporter=default --reporter=json --outputFile=protocol-results.json
+          # Executed-test floor: every suite self-skips when its infra
+          # gates are absent, so a green exit code alone can mean "ran
+          # nothing" (that is how coverage silently collapsed to ~35
+          # executed tests). Fails when executed tests drop below the
+          # floor; publishes run/skip counts to the step summary.
+          #
+          # The floor is coupled to PROTOCOL_E2E_REPRESENTATIVES: full
+          # mode expects ~35 executed today (ajna 25 + superfluid 10;
+          # raise when ANVIL_FORK_MAINNET_URL activates the mainnet
+          # suites), representatives mode expects ~2 per active suite.
+          # Deriving it here keeps the two from drifting apart.
+          if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=4; else FLOOR=30; fi
+          pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json "$FLOOR"
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}

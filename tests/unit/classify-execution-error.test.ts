@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { classifyExecutionError } from "@/lib/errors/classify";
 import { ErrorCategory } from "@/lib/logging";
+import { redactAllUrls } from "@/lib/rpc/scrub-rpc-urls";
 
 describe("classifyExecutionError", () => {
   it("classifies a missing integration credential as a user config error", () => {
@@ -25,5 +26,21 @@ describe("classifyExecutionError", () => {
   it("classifies null/empty messages as system", () => {
     expect(classifyExecutionError(null).errorType).toBe("system");
     expect(classifyExecutionError("   ").errorType).toBe("system");
+  });
+
+  it("still classifies RPC failover errors after URL redaction", () => {
+    // Error messages have provider URLs fully redacted before
+    // classification; the redaction must not disturb the prose the patterns
+    // match on.
+    const fakeDrpcKey = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAAAAAAAAAAAA";
+    const raw =
+      "Event query failed: RPC failed on both endpoints. Primary: could not coalesce error. " +
+      `Fallback: server response 400 Bad Request (info={ "requestUrl": "https://lb.drpc.live/ethereum/${fakeDrpcKey}" })`;
+    const result = classifyExecutionError(redactAllUrls(raw));
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.NETWORK_RPC,
+      errorType: "system",
+      code: "N-0001",
+    });
   });
 });

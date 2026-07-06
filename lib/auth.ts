@@ -1020,6 +1020,12 @@ export const auth = betterAuth({
           // cookie expires before a legitimate user finishes the
           // /verify-mfa flow.
           const PRE_STEPUP_TTL_MS = 10 * 60 * 1000;
+          // Persist the risk blob whenever there is signal: a resolved
+          // country, or an anomaly with no country (unknown_country — a
+          // login we could no longer place). A null country with no anomaly
+          // is inconclusive (local dev / self-hosted) and stored as null.
+          const riskFlagsJson =
+            risk.country || risk.anomaly ? serializeRiskFlags(risk) : null;
           // IP-verification does not write to the session row. The
           // atomic flow in strict-signin / oauth-mfa-finalize / the
           // /verify-ip endpoint resolves IP trust BEFORE any session
@@ -1040,7 +1046,7 @@ export const auth = betterAuth({
           return {
             data: {
               requiresMfa: false,
-              riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
+              riskFlagsJson,
             },
           };
         },
