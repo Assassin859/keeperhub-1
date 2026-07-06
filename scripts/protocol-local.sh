@@ -99,9 +99,23 @@ mainnet_upstream() {
 start_fork() {
   local name="$1" port="$2" chain_id="$3" chain_hex="$4" upstream="$5"
   docker rm -f "$name" 2>/dev/null || true
+  # Pin the fork a few blocks behind head so every node behind a load
+  # balanced public upstream already has the block. This removes one
+  # source of transient bad state (reason-less reverts that replay green
+  # one block earlier - observed on morpho/aave under a degraded
+  # upstream); it does not make a throttled public upstream reliable.
+  # The durable fix is exporting an archive ANVIL_FORK_*_URL.
+  local pin="" pin_args=""
+  pin=$(curl -sf -X POST -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+    "$upstream" | grep -oE '"result":"0x[0-9a-f]+"' | cut -d'"' -f4) || true
+  if [ -n "$pin" ]; then
+    pin_args="--fork-block-number $((pin - 12))"
+  fi
+  # shellcheck disable=SC2086 # pin_args is intentionally word-split
   docker run -d --name "$name" -p "${port}:8545" --entrypoint anvil \
     ghcr.io/foundry-rs/foundry:latest \
-    --host 0.0.0.0 --fork-url "$upstream" --chain-id "$chain_id" --block-time 1 >/dev/null
+    --host 0.0.0.0 --fork-url "$upstream" $pin_args --chain-id "$chain_id" --block-time 1 >/dev/null
   wait_for_fork "$port" "$chain_hex" "$name"
 }
 
