@@ -46,7 +46,7 @@ export const SIM_WALLET = "0x5115000000000000000000000000000000000051";
 const WRITE_TIMEOUT_MS = 120_000;
 const READ_TIMEOUT_MS = 30_000;
 
-async function impersonatedSend(
+async function sendImpersonatedOnce(
   provider: JsonRpcProvider,
   from: string,
   tx: { to: string; data?: string; value?: bigint }
@@ -61,6 +61,24 @@ async function impersonatedSend(
     }
   } finally {
     await provider.send("anvil_stopImpersonatingAccount", [from]);
+  }
+}
+
+async function impersonatedSend(
+  provider: JsonRpcProvider,
+  from: string,
+  tx: { to: string; data?: string; value?: bigint }
+): Promise<void> {
+  try {
+    await sendImpersonatedOnce(provider, from, tx);
+  } catch {
+    // A reverted send left no state behind, so one retry is safe. Public
+    // fork upstreams intermittently serve stale slots to mid-execution
+    // state fetches, producing reason-less reverts that replay green on
+    // the same fork moments later; the retry absorbs exactly that class,
+    // while a genuine revert fails again deterministically.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await sendImpersonatedOnce(provider, from, tx);
   }
 }
 
