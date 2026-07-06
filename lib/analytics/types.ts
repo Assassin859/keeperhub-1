@@ -30,6 +30,7 @@ export type NormalizedStatus =
   | "success"
   | "error"
   | "system_error"
+  | "external_error"
   | "cancelled";
 
 export type UnifiedRun = {
@@ -62,7 +63,7 @@ export type UnifiedRun = {
   completedSteps: number | null;
   error: string | null;
   errorCode: string | null;
-  errorType: "user" | "system" | null;
+  errorType: "user" | "system" | "external" | null;
   errorCategory: string | null;
 };
 

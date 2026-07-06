@@ -48,6 +48,16 @@ describe("GET /api/analytics/runs status filter", () => {
     );
   });
 
+  it("forwards external_error so the dedicated filter isolates dependency failures", async () => {
+    await GET(requestForStatus("external_error"));
+
+    expect(getUnifiedRuns).toHaveBeenCalledWith(
+      "org_1",
+      expect.anything(),
+      expect.objectContaining({ status: "external_error" })
+    );
+  });
+
   it("forwards the other known statuses unchanged", async () => {
     for (const status of [
       "pending",

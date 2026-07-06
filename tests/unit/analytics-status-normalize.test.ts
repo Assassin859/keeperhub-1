@@ -25,6 +25,18 @@ describe("normalizeStatus", () => {
     expect(normalizeStatus("completed", "direct")).toBe("success");
     expect(normalizeStatus("failed", "direct")).toBe("error");
   });
+
+  it("lifts error rows tagged error_type=external to external_error", () => {
+    expect(normalizeStatus("error", "workflow", "external")).toBe(
+      "external_error"
+    );
+  });
+
+  it("keeps user/system/null error rows as plain error", () => {
+    expect(normalizeStatus("error", "workflow", "user")).toBe("error");
+    expect(normalizeStatus("error", "workflow", "system")).toBe("error");
+    expect(normalizeStatus("error", "workflow", null)).toBe("error");
+  });
 });
 
 describe("workflowDbStatuses", () => {
@@ -35,6 +47,10 @@ describe("workflowDbStatuses", () => {
   it("keeps error and system_error as distinct single-value filters", () => {
     expect(workflowDbStatuses("error")).toEqual(["error"]);
     expect(workflowDbStatuses("system_error")).toEqual(["system_error"]);
+  });
+
+  it("maps external_error onto the error DB status (split out by error_type)", () => {
+    expect(workflowDbStatuses("external_error")).toEqual(["error"]);
   });
 
   it("leaves other statuses as a single-value filter", () => {
