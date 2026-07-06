@@ -58,6 +58,7 @@ type LoadState =
 // risk_flags_json onto labels an org admin can read at a glance.
 const REASON_LABELS: Record<string, string> = {
   new_country: "New country",
+  unknown_country: "Unknown location",
   impossible_travel: "Impossible travel",
   first_geo_attestation: "First sign-in location",
 };
