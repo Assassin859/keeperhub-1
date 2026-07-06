@@ -9,11 +9,18 @@ import { ErrorCategory } from "@/lib/logging";
  *   - errorCategory: one of the ErrorCategory enum values
  *   - errorType:     "user" if the failure was caused by the workflow author's
  *                    configuration (template variables, contract args, code
- *                    typos, missing tokens, etc.) and "system" if the failure
- *                    was caused by KeeperHub itself (database, infra, plugin
- *                    registry, missing secret, etc.).
+ *                    typos, missing tokens, etc.); "system" if the failure was
+ *                    caused by KeeperHub itself (database, infra, plugin
+ *                    registry, missing secret, etc.); and "external" if the
+ *                    failure originated in a third-party endpoint the customer
+ *                    configured the workflow to call (HTTP request / webhook
+ *                    transport failures such as timeouts, connection resets, DNS
+ *                    failures) where neither the customer's config nor KeeperHub
+ *                    is at fault. RPC endpoints are KeeperHub-managed, so their
+ *                    failures stay "system", not "external".
  *   - code:          a `PREFIX-NNNN` system error code for system failures, or
- *                    null for user failures (which surface their raw message).
+ *                    null for user and external failures (which surface their
+ *                    raw message).
  *
  * The classifier is intentionally pattern-driven against real production
  * messages observed for managed clients (Sky/Ajna) so the resulting
@@ -26,17 +33,22 @@ import { ErrorCategory } from "@/lib/logging";
  * and a new user-config family shows up in dashboards as engine-classified
  * until a pattern is added.
  */
+export type ExecutionErrorType = "user" | "system" | "external";
+
 export type ExecutionErrorClassification = {
   errorCategory: ErrorCategory;
-  errorType: "user" | "system";
+  errorType: ExecutionErrorType;
   code: ErrorCode | null;
 };
 
 type Rule = {
   pattern: RegExp;
   errorCategory: ErrorCategory;
-  errorType: "user" | "system";
-  /** null for user rules (raw message is shown); a code for system rules. */
+  errorType: ExecutionErrorType;
+  /**
+   * A code for system rules; null for user and external rules (their raw
+   * message is shown to the customer).
+   */
   code: ErrorCode | null;
 };
 
@@ -76,8 +88,10 @@ const RULES: readonly Rule[] = [
     errorType: "user",
     code: null,
   },
+  // Unanchored so the `HTTP request failed: URL is required` step-wrapped form
+  // stays a user config fault rather than falling into the HTTP transport rule.
   {
-    pattern: /^URL is required/i,
+    pattern: /URL is required/i,
     errorCategory: ErrorCategory.VALIDATION,
     errorType: "user",
     code: null,
@@ -189,7 +203,8 @@ const RULES: readonly Rule[] = [
     code: null,
   },
 
-  // External-service / network: dependencies outside KeeperHub
+  // System: RPC endpoints are KeeperHub-managed infrastructure, so a failover
+  // exhaustion is a platform fault, not a third-party dependency failure.
   {
     pattern: /^Failed to check balance:\s*RPC failed/i,
     errorCategory: ErrorCategory.NETWORK_RPC,
@@ -202,33 +217,73 @@ const RULES: readonly Rule[] = [
     errorType: "system",
     code: "N-0001",
   },
+  // User-config: webhook hostname does not resolve -- the configured URL points
+  // at a host that does not exist. Must come before the generic webhook rule.
   {
-    pattern: /^Failed to send webhook:\s*fetch failed:\s*getaddrinfo/i,
+    pattern: /^Failed to send webhook:.*getaddrinfo/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
     errorType: "user",
     code: null,
   },
+  // External dependency: webhook send transport failure (ECONNRESET, timeout,
+  // TLS, connection refused) to the customer's configured endpoint -- we
+  // attempted the send and the endpoint did not complete it. A non-2xx response
+  // is caught by the `^HTTP \d{3}:` rules below.
   {
     pattern: /^Failed to send webhook/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "system",
-    code: "N-0002",
+    errorType: "external",
+    code: null,
   },
-  // User-config: external endpoint returned non-2xx (webhook/safe/discord/etc.)
+  // External dependency: endpoint answered with a 5xx (webhook/safe/discord/etc.)
+  // -- the upstream service itself is failing, not the author's request. Must
+  // come before the general `^HTTP \d{3}:` user rule.
+  {
+    pattern: /^HTTP 5\d{2}:/,
+    errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+    errorType: "external",
+    code: null,
+  },
+  // User-config: endpoint answered with a non-5xx non-2xx (401/403/404/400,
+  // etc.) -- a bad request/auth the author configured.
   {
     pattern: /^HTTP \d{3}:/,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
     errorType: "user",
     code: null,
   },
-  // User-config: HTTP request step couldn't reach the external endpoint
-  // (DNS, ECONNRESET, connection timeout, TLS) or got a non-2xx response.
-  // Falls below the more specific `Missing template variable` /
-  // `GET/HEAD method` rules above.
+  // User-config: HTTP request step DNS resolution failed -- the configured URL's
+  // hostname does not resolve. Must come before the generic transport rule.
   {
-    pattern: /^HTTP request failed(:\s|\s+with status\s+\d+)/i,
+    pattern: /^HTTP request failed:.*getaddrinfo/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
     errorType: "user",
+    code: null,
+  },
+  // External dependency: HTTP request step got a 5xx from the endpoint -- the
+  // upstream service is failing. Must come before the general status rule.
+  {
+    pattern: /^HTTP request failed\s+with status\s+5\d{2}/i,
+    errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+    errorType: "external",
+    code: null,
+  },
+  // User-config: HTTP request step got a non-5xx non-2xx status -- a bad
+  // request/auth the author configured. Falls below the more specific
+  // `Missing template variable` / `GET/HEAD method` rules above.
+  {
+    pattern: /^HTTP request failed\s+with status\s+\d+/i,
+    errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+    errorType: "user",
+    code: null,
+  },
+  // External dependency: HTTP request step reached DNS but the endpoint did not
+  // respond (ECONNRESET, connection timeout, TLS). DNS-resolution failures are
+  // caught by the getaddrinfo rule above and stay "user".
+  {
+    pattern: /^HTTP request failed:\s/i,
+    errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+    errorType: "external",
     code: null,
   },
 

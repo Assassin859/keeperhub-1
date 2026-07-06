@@ -18,7 +18,7 @@ import type { ErrorCategory } from "@/lib/logging";
 type RunErrorInput = {
   status: string;
   error: string | null;
-  errorType: "user" | "system" | null;
+  errorType: "user" | "system" | "external" | null;
   errorCategory: ErrorCategory | string | null;
   errorCode?: string | null;
 };
@@ -30,7 +30,11 @@ export function getCustomerRunErrorMessage(run: RunErrorInput): string | null {
     return null;
   }
 
-  if (run.errorType === "user") {
+  // User-config faults and external-dependency failures both surface their raw
+  // message: it is actionable by the author (fix the config) or informative
+  // about the upstream outage (their endpoint timed out), and reveals no
+  // KeeperHub internals.
+  if (run.errorType === "user" || run.errorType === "external") {
     return run.error ?? "The workflow failed. See the step details below.";
   }
 

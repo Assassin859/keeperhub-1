@@ -45,6 +45,17 @@ describe("getCustomerRunErrorMessage", () => {
     ).toBe("The workflow failed. See the step details below.");
   });
 
+  it("returns the raw error for external dependency failures", () => {
+    expect(
+      getCustomerRunErrorMessage({
+        status: "error",
+        error: "HTTP request failed: fetch failed: read ECONNRESET",
+        errorType: "external",
+        errorCategory: "external_service",
+      })
+    ).toBe("HTTP request failed: fetch failed: read ECONNRESET");
+  });
+
   it("returns the network message for system network_rpc failures", () => {
     expect(
       getCustomerRunErrorMessage({

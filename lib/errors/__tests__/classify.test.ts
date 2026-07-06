@@ -171,12 +171,12 @@ describe("classifyExecutionError", () => {
     });
   });
 
-  describe("user-config: external HTTP endpoint failures", () => {
+  describe("user-config: bad request/auth to an external endpoint (4xx)", () => {
     it.each([
       'HTTP 401: {"error":"unauthorized"}',
       "HTTP 404: Not Found",
-      "HTTP 500: Internal Server Error",
-      "HTTP 502: Failed to send Discord message",
+      "HTTP 400: Bad Request",
+      "HTTP request failed with status 403: Forbidden",
     ])("classifies %s as external_service + user", (input) => {
       const r = classifyExecutionError(input);
       expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
@@ -184,24 +184,61 @@ describe("classifyExecutionError", () => {
     });
 
     it.each([
-      "HTTP request failed: fetch failed: read ECONNRESET",
+      "URL is required",
+      "HTTP request failed: URL is required",
+    ])("keeps %s as validation + user (config fault, not transport)", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
+      expect(r.errorType).toBe("user");
+    });
+
+    it.each([
+      "Failed to send webhook: fetch failed: getaddrinfo EAI_AGAIN events.pagerduty.com",
       "HTTP request failed: fetch failed: getaddrinfo ENOTFOUND api.example.com",
+    ])(
+      "keeps DNS-resolution failure %s as user (configured host does not resolve)",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+        expect(r.errorType).toBe("user");
+      }
+    );
+  });
+
+  describe("external: third-party dependency failures", () => {
+    it.each([
+      "HTTP request failed: fetch failed: read ECONNRESET",
       "HTTP request failed: The operation was aborted",
-      "HTTP request failed with status 503: Service Unavailable",
-    ])("classifies %s as external_service + user", (input) => {
+      "Failed to send webhook: fetch failed: read ECONNRESET",
+      "Failed to send webhook: socket hang up",
+    ])("classifies transport failure %s as external", (input) => {
       const r = classifyExecutionError(input);
       expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
-      expect(r.errorType).toBe("user");
+      expect(r.errorType).toBe("external");
+      expect(r.code).toBeNull();
+    });
+
+    it.each([
+      "HTTP 500: Internal Server Error",
+      "HTTP 502: Failed to send Discord message",
+      "HTTP 503: Service Unavailable",
+      "HTTP request failed with status 503: Service Unavailable",
+    ])("classifies 5xx endpoint response %s as external", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+      expect(r.errorType).toBe("external");
+      expect(r.code).toBeNull();
     });
   });
 
-  describe("network / RPC: external dependencies", () => {
+  describe("system: KeeperHub-managed RPC failures", () => {
     it("RPC failed on both endpoints: network_rpc + system", () => {
       const r = classifyExecutionError(
         "RPC failed on both endpoints. Primary: request timeout. Fallback: request timeout"
       );
       expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
       expect(r.errorType).toBe("system");
+      expect(r.code).toBe("N-0001");
     });
 
     it("Failed to check balance: RPC failed: network_rpc + system", () => {
@@ -210,14 +247,6 @@ describe("classifyExecutionError", () => {
       );
       expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
       expect(r.errorType).toBe("system");
-    });
-
-    it("Failed to send webhook DNS failure: external_service + user (likely bad URL)", () => {
-      const r = classifyExecutionError(
-        "Failed to send webhook: fetch failed: getaddrinfo EAI_AGAIN events.pagerduty.com"
-      );
-      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
-      expect(r.errorType).toBe("user");
     });
   });
 
@@ -309,7 +338,11 @@ describe("classifyExecutionError", () => {
       for (const s of samples) {
         const r = classifyExecutionError(s);
         expect(allCategoryValues.has(r.errorCategory)).toBe(true);
-        expect(r.errorType === "user" || r.errorType === "system").toBe(true);
+        expect(
+          r.errorType === "user" ||
+            r.errorType === "system" ||
+            r.errorType === "external"
+        ).toBe(true);
       }
     });
   });
