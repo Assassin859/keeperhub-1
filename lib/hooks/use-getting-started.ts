@@ -35,6 +35,9 @@ export type LauncherState = "expanded" | "collapsed" | "dismissed";
 const CLICK_DRIVEN: ReadonlySet<SignalId> = new Set<SignalId>([
   "walletReady",
   "walletFunded",
+  // Connecting an agent happens in the user's own MCP client; opening the
+  // in-app modal is all there is to do here, so complete the step on open.
+  "agentConnected",
 ]);
 
 type OnboardingStatus = {
@@ -78,7 +81,13 @@ function readPersisted(userId: string | undefined): Persisted {
   try {
     const raw = localStorage.getItem(storageKey(userId));
     if (!raw) {
-      return fallback;
+      // No stored entry for a known user means they have never seen the
+      // launcher (e.g. a fresh signup): open it expanded so onboarding is
+      // visible by default. Once they collapse or dismiss it, that choice is
+      // persisted and honored. Guard on userId so the pre-hydration render
+      // (userId undefined) stays collapsed and existing users do not flash open
+      // before their stored collapsed state loads.
+      return userId ? { ...fallback, state: "expanded" } : fallback;
     }
     const parsed = JSON.parse(raw) as Partial<Persisted>;
     return {
