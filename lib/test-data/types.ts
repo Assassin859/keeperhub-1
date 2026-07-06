@@ -172,6 +172,22 @@ export type ProtocolChainTestData = {
    */
   expectations?: Record<string, OutputExpectation[]>;
   /**
+   * Post-write oracles for the fork simulation tier, keyed by write
+   * action slug. After the write mines, the harness runs the referenced
+   * read action of the same protocol/chain (with its normal testData
+   * bindings) and asserts on the structured result, so a write that
+   * mines but does the wrong thing cannot pass on receipt status alone.
+   * Simulation tier only: the coverage suites' shared wallet makes
+   * post-write state nondeterministic, but the simulation tier's
+   * dedicated impersonated wallet does not. Keep assertions
+   * history-safe on a long-lived fork (nonZero on a balance that only
+   * grows; never equals on accumulated state).
+   */
+  writeExpectations?: Record<
+    string,
+    Array<{ read: string; expect: OutputExpectation }>
+  >;
+  /**
    * Action slugs the test runner should mark as `test.skip` with a reason.
    * Builders still produce these workflows (so the seeder surfaces them in
    * the dashboard), but the integration suite skips execution. Use for

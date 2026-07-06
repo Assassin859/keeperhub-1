@@ -144,3 +144,25 @@ describe("planPhaseFixtures", () => {
     expect(plan).toEqual([{ kind: "run", action: supply }]);
   });
 });
+
+describe("planPhaseFixtures representatives mode", () => {
+  const proto = makeProtocol(
+    "p",
+    [makeAction("w1"), makeAction("w2"), makeAction("w3")],
+    { w1: "documented skip" }
+  );
+
+  it("keeps only the first runnable action, preserving documented skips", () => {
+    const plan = planPhaseFixtures(proto, "p", "11155111", "write", {
+      representatives: true,
+    });
+    expect(plan.map((c) => c.kind)).toEqual(["skip", "run", "skip"]);
+    const last = plan[2];
+    expect(last.kind === "skip" && last.reason).toContain("representatives");
+  });
+
+  it("is a no-op when disabled", () => {
+    const plan = planPhaseFixtures(proto, "p", "11155111", "write");
+    expect(plan.map((c) => c.kind)).toEqual(["skip", "run", "run"]);
+  });
+});
