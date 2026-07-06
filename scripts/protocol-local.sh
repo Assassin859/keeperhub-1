@@ -48,7 +48,7 @@ run_node() {
     ${TURNKEY_API_PRIVATE_KEY:+-e TURNKEY_API_PRIVATE_KEY} \
     ${TURNKEY_ORGANIZATION_ID:+-e TURNKEY_ORGANIZATION_ID} \
     ${TESTNET_FUNDER_PK:+-e TESTNET_FUNDER_PK} \
-    "$NODE_IMAGE" bash -c "corepack enable >/dev/null 2>&1 && corepack prepare pnpm@9 --activate >/dev/null 2>&1 && $*"
+    "$NODE_IMAGE" bash -c "set -o pipefail && corepack enable >/dev/null 2>&1 && corepack prepare pnpm@9 --activate >/dev/null 2>&1 && $*"
 }
 
 db_container() {
@@ -213,11 +213,16 @@ cmd_test() {
   # app uses comes from the patched chains row); TESTNET_FUNDER_PK gates
   # ajna's live-Base reads and reaches the container by name via run_node
   # (-e, value resolved out-of-band) so the key never appears in argv.
-  run_node "PROTOCOL_E2E_BASE_URL=http://localhost:${APP_PORT} PROTOCOL_E2E_SEPOLIA_FORK=1 ANVIL_FORK_MAINNET_URL=http://localhost:${MAINNET_FORK_PORT:-8548} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=${RESULTS_FILE}" || true
+  # Keep the vitest exit status but run the report first (|| alone would
+  # let set -e abort before it); re-exit with it so callers and automation
+  # see red runs as red.
+  local rc=0
+  run_node "PROTOCOL_E2E_BASE_URL=http://localhost:${APP_PORT} PROTOCOL_E2E_SEPOLIA_FORK=1 ANVIL_FORK_MAINNET_URL=http://localhost:${MAINNET_FORK_PORT:-8548} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=${RESULTS_FILE}" || rc=$?
   ended=$(date +%s)
   log "suite wall-clock: $((ended - started))s"
   log "coverage report with executed results:"
   run_node "pnpm coverage:report --results ${RESULTS_FILE}"
+  return "$rc"
 }
 
 cmd_sim() {
@@ -253,9 +258,11 @@ cmd_sim() {
   log "running Tier 1 simulations: ${target}${chain:+ (${chain})}"
   local started ended
   started=$(date +%s)
-  run_node "${env_rpc} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || true
+  local rc=0
+  run_node "${env_rpc} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || rc=$?
   ended=$(date +%s)
   log "simulation wall-clock: $((ended - started))s"
+  return "$rc"
 }
 
 cmd_down() {
