@@ -8,6 +8,8 @@ test.describe.configure({ mode: "serial" });
 
 const newEmail = (): string => `test+${Date.now()}@techops.services`;
 
+const VERIFY_ERROR_REGEX = /verify/i;
+
 // Right after navigation the "Create an account" toggle can be clicked before
 // the client handler is wired, dropping the click and leaving the main
 // (sign-in) view in place. Retry the toggle until the signup heading resolves.
@@ -24,23 +26,34 @@ async function openSignupView(
   }).toPass({ timeout: 20_000 });
 }
 
-// Same hydration race as the signup toggle: the "Sign in" submit can be dropped
-// if it lands before the client handler is wired. Retry it until the expected
-// outcome (an error message, or the verify view) resolves.
-async function submitSignInUntil(
+// Sign in, retrying until the expected outcome resolves. Two hydration races
+// are handled each attempt: a too-early controlled-input fill can be dropped
+// before onChange is wired (React state stays empty even though the DOM shows a
+// value, so the submit posts empty credentials), and the submit click can land
+// before its handler is wired. Re-fill both fields then submit on every attempt.
+// The submit is targeted by type -- the sign-up view's "Already have an account?
+// Sign in" toggle shares the name -- and turns into a spinner (no "Sign in"
+// text) while the request is in flight. Pass a text-specific outcome so an
+// empty-credential "required" error does not satisfy it.
+async function signInUntil(
   page: import("@playwright/test").Page,
+  email: string,
+  password: string,
   outcome: import("@playwright/test").Locator
 ): Promise<void> {
-  const signInButton = page.getByRole("button", {
-    name: "Sign in",
-    exact: true,
+  const emailField = page.locator("#auth-email");
+  const passwordField = page.locator("#auth-password");
+  const signInButton = page.locator('button[type="submit"]', {
+    hasText: "Sign in",
   });
   await expect(async () => {
+    await emailField.fill(email);
+    await passwordField.fill(password);
     if (await signInButton.isVisible()) {
       await signInButton.click();
     }
-    await expect(outcome).toBeVisible({ timeout: 4000 });
-  }).toPass({ timeout: 20_000 });
+    await expect(outcome).toBeVisible({ timeout: 8000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 test.describe("Authentication", () => {
@@ -156,9 +169,12 @@ test.describe("Authentication", () => {
       await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
       });
-      await page.locator("#auth-email").fill("nonexistent@example.com");
-      await page.locator("#auth-password").fill("WrongPassword123!");
-      await submitSignInUntil(page, page.locator(".text-destructive"));
+      await signInUntil(
+        page,
+        "nonexistent@example.com",
+        "WrongPassword123!",
+        page.locator(".text-destructive")
+      );
     });
 
     test("unverified user signing in is told to verify their email", async ({
@@ -190,12 +206,13 @@ test.describe("Authentication", () => {
       await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
       });
-      await page.locator("#auth-email").fill(email);
-      await page.locator("#auth-password").fill(password);
-
-      const error = page.locator(".text-destructive");
-      await submitSignInUntil(page, error);
-      await expect(error).toContainText(/verify/i);
+      // The outcome is the verify-specific error so an empty-credential
+      // "required" error (from a hydration-dropped fill) does not satisfy it.
+      const error = page.locator(".text-destructive", {
+        hasText: VERIFY_ERROR_REGEX,
+      });
+      await signInUntil(page, email, password, error);
+      await expect(error).toBeVisible();
     });
 
     test("can navigate between sign in and create account views", async ({
