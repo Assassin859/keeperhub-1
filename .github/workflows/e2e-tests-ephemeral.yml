@@ -163,7 +163,11 @@ jobs:
         with:
           name: nextjs-production-build
           path: /tmp/next-build.tgz
-          retention-days: 1
+          # overwrite: a rerun-all otherwise 409s against the immutable
+          # artifact left by the prior attempt. 3-day retention: a
+          # re-run-failed after a weekend must still find the artifact.
+          overwrite: true
+          retention-days: 3
 
   # Tier 1 fork simulations: every registry action executed directly
   # against an anvil mainnet fork (impersonation instead of signing, no
@@ -229,11 +233,12 @@ jobs:
   # DISABLED: ephemeral E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-vitest-ephemeral:
     needs: [should-run, build-app]
-    # build-app is skipped (not failed) on the Docker path, so gate on
-    # "did not fail" rather than success; !cancelled() overrides the
-    # implicit success() that would otherwise skip this job whenever
-    # build-app skips.
-    if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && needs.build-app.result != 'failure' }}
+    # build-app is skipped (not failed) on the Docker path, so admit
+    # success or skipped explicitly - a cancelled build-app must not
+    # admit this job, which would only die on artifact-not-found.
+    # !cancelled() overrides the implicit success() that would
+    # otherwise skip this job whenever build-app skips.
+    if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') }}
     runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && inputs.caller_event != 'pull_request' && 'arc-keeperhub-build' || 'ubuntu-latest' }}
     # Always staging: e2e validates against test credentials, never prod.
     environment: staging
@@ -500,9 +505,9 @@ jobs:
   # the pre-run Sepolia fork restart are unchanged from the old in-job step.
   protocol-coverage-ephemeral:
     needs: [should-run, build-app]
-    # Same gate as e2e-vitest-ephemeral: build-app is skipped (not failed)
-    # on the Docker path, so only a real build failure blocks this job.
-    if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && needs.build-app.result != 'failure' }}
+    # Same gate as e2e-vitest-ephemeral: build-app skipped (Docker path)
+    # or succeeded admits this job; failed or cancelled blocks it.
+    if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') }}
     runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && inputs.caller_event != 'pull_request' && 'arc-keeperhub-build' || 'ubuntu-latest' }}
     # Always staging: e2e validates against test credentials, never prod.
     environment: staging
