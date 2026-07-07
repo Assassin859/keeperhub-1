@@ -40,9 +40,9 @@ type AuthDialogProps = {
   controlledOpen?: boolean;
   onControlledOpenChange?: (open: boolean) => void;
   /**
-   * Accepted for API compatibility. Post-sign-in routing is handled by the
-   * shared sign-in flow, which is onboarding-aware (new users land in the
-   * wizard, returning users on the canvas).
+   * Post-sign-in routing hint. `redirectTo` sends the user back to where they
+   * started the flow (e.g. an accept-invite page) instead of the default "/".
+   * The onboarding-aware gate still runs at the destination.
    */
   intent?: AuthPromptIntent;
 };
@@ -58,6 +58,7 @@ export const AuthDialog = ({
   children,
   controlledOpen,
   onControlledOpenChange,
+  intent,
 }: AuthDialogProps): React.ReactElement => {
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
@@ -78,7 +79,7 @@ export const AuthDialog = ({
           <KeeperHubLogo className="size-10" />
           <DialogTitle className="text-2xl">Sign in to KeeperHub</DialogTitle>
         </DialogHeader>
-        <SignInChoices />
+        <SignInChoices redirectTo={intent?.redirectTo} />
       </DialogContent>
     </Dialog>
   );

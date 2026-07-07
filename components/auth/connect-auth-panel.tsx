@@ -45,9 +45,39 @@ const GoogleIcon = (): React.ReactElement => (
   <Image alt="" className="size-4" height={16} src="/google.svg" width={16} />
 );
 
-function reloadHome(): void {
+// Auth / gate surfaces we must never redirect back into after a sign-in:
+// bouncing to one of these would immediately re-prompt and loop.
+const UNSAFE_REDIRECT_PREFIXES = [
+  "/welcome",
+  "/enroll-mfa",
+  "/verify-mfa",
+  "/enforce-mfa",
+  "/verify-ip",
+];
+
+const REDIRECT_QUERY_HASH_REGEX = /[?#]/;
+
+// Only honor a redirect target that is a same-origin in-app path and not an
+// auth/gate surface; anything else (off-site, protocol-relative, or an auth
+// page) falls back to "/" to avoid open redirects and sign-in loops.
+function safePostAuthTarget(target: string | undefined): string {
+  if (!target?.startsWith("/") || target.startsWith("//")) {
+    return "/";
+  }
+  const path = target.split(REDIRECT_QUERY_HASH_REGEX)[0];
+  if (
+    UNSAFE_REDIRECT_PREFIXES.some(
+      (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+    )
+  ) {
+    return "/";
+  }
+  return target;
+}
+
+function reloadHome(target = "/"): void {
   window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
-  window.location.assign("/");
+  window.location.assign(target);
 }
 
 /**
@@ -58,6 +88,7 @@ function reloadHome(): void {
 export function ConnectAuthPanel({
   hideChooserHeader = false,
   onWalletClick,
+  redirectTo,
 }: {
   // When the surrounding surface already carries a title (e.g. the welcome
   // page), suppress the default view's own header to avoid repeating the same
@@ -66,7 +97,11 @@ export function ConnectAuthPanel({
   // When provided, a "Wallet" button is shown in the social row; clicking it
   // hands off to the surrounding surface to reveal the wallet picker.
   onWalletClick?: () => void;
+  // Where to land after a successful sign-in. Defaults to "/"; the shared
+  // AuthDialog passes the caller's intent (e.g. back to an accept-invite page).
+  redirectTo?: string;
 } = {}): React.ReactElement {
+  const postAuthTarget = safePostAuthTarget(redirectTo);
   const providers = getEnabledAuthProviders();
   const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
@@ -108,8 +143,9 @@ export function ConnectAuthPanel({
   const handleSocial = async (provider: "github" | "google"): Promise<void> => {
     setSocial(provider);
     try {
-      // Land on "/" so the onboarding gate runs (a new social user goes to the
-      // wizard; a returning user goes home).
+      // Always land on "/" so the onboarding gate runs: social can be a new
+      // signup, and the gate only fires on "/", so a redirectTo here would let
+      // a first-time social user skip onboarding.
       await signIn.social({ provider, callbackURL: "/" });
     } catch {
       setSocial(null);
@@ -137,7 +173,7 @@ export function ConnectAuthPanel({
       }
       if (body.signedIn) {
         toast.success("Signed in successfully!");
-        reloadHome();
+        reloadHome(postAuthTarget);
         return;
       }
       setMfaEmailOtp("");
@@ -321,7 +357,7 @@ export function ConnectAuthPanel({
         return;
       }
       toast.success("Signed in successfully!");
-      reloadHome();
+      reloadHome(postAuthTarget);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
     } finally {
