@@ -267,9 +267,8 @@ function ScanPageContent(): React.ReactElement {
                   Scan any wallet or contract
                 </h1>
                 <p className="mb-8 text-muted-foreground text-sm">
-                  Paste an address or ENS name to see live DeFi positions across
-                  every major network — and turn them into ready-to-run
-                  monitors.
+                  See live DeFi positions across every major network and turn
+                  them into ready-to-run monitors.
                 </p>
                 <ScanInput
                   disabled={isLoading}
