@@ -1030,6 +1030,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      # This job builds the app bare-metal AND installs browser binaries on
+      # top of the full service stack - the most disk-hungry job here.
+      # Measured ENOSPC mid-build twice on 2026-07-07; free the unused
+      # preinstalled toolchains up front like the vitest and protocol jobs.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - name: Setup Node.js, pnpm, and Playwright
         uses: ./.github/actions/setup-node-pnpm
         with:
