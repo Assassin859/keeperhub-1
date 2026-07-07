@@ -1,16 +1,14 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
-import { toast } from "sonner";
+import { Suspense, useEffect, useRef } from "react";
+import { ScanLanding } from "@/components/scan/scan-landing";
 import { Spinner } from "@/components/ui/spinner";
-import { api } from "@/lib/api-client";
-import { authClient, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
+import { useStartBuilding } from "@/lib/hooks/use-start-building";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { rootGateAtom } from "@/lib/onboarding/root-gate";
-import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { isContinueAsGuest } from "@/lib/welcome-status";
 import {
   currentWorkflowIdAtom,
@@ -18,52 +16,15 @@ import {
   edgesAtom,
   editorTourRequestedAtom,
   hasSidebarBeenShownAtom,
-  isTransitioningFromHomepageAtom,
   nodesAtom,
   type WorkflowNode,
 } from "@/lib/workflow/store";
 
-function createDefaultNodes() {
-  const triggerId = nanoid();
-  const actionId = nanoid();
-  const edgeId = nanoid();
-
-  const triggerNode: WorkflowNode = {
-    id: triggerId,
-    type: "trigger" as const,
-    position: { x: 0, y: 0 },
-    data: {
-      label: "",
-      description: "",
-      type: "trigger" as const,
-      config: { triggerType: "Manual" },
-      status: "idle" as const,
-    },
-  };
-
-  const actionNode: WorkflowNode = {
-    id: actionId,
-    type: "action" as const,
-    position: { x: 272, y: 0 },
-    selected: true,
-    data: {
-      label: "",
-      description: "",
-      type: "action" as const,
-      config: {},
-      status: "idle" as const,
-    },
-  };
-
-  const edge = {
-    id: edgeId,
-    source: triggerId,
-    target: actionId,
-    type: "animated",
-  };
-
-  return { nodes: [triggerNode, actionNode], edges: [edge] };
-}
+// When scanning is enabled, "/" is the scan landing page instead of the blank
+// canvas: the funnel entry point (input + suggestions) plus the builder entry
+// points ("Start building" / "Browse the Hub"). Build-time inlined, so the
+// value is constant per build.
+const SCAN_LANDING = process.env.NEXT_PUBLIC_SCAN_ENABLED === "true";
 
 const Home = () => {
   const router = useRouter();
@@ -73,13 +34,9 @@ const Home = () => {
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
   const setCurrentWorkflowName = useSetAtom(currentWorkflowNameAtom);
   const setHasSidebarBeenShown = useSetAtom(hasSidebarBeenShownAtom);
-  const setIsTransitioningFromHomepage = useSetAtom(
-    isTransitioningFromHomepageAtom
-  );
-  const hasCreatedWorkflowRef = useRef(false);
   const currentWorkflowName = useAtomValue(currentWorkflowNameAtom);
   const tourRequested = useAtomValue(editorTourRequestedAtom);
-  const setTourRequested = useSetAtom(editorTourRequestedAtom);
+  const { startBuilding } = useStartBuilding();
 
   // Reset sidebar animation state when on homepage
   useEffect(() => {
@@ -125,88 +82,32 @@ const Home = () => {
     }
   }, [sessionPending, session, router, setGate]);
 
-  // Update page title when workflow name changes
+  // Update page title when workflow name changes. On the scan landing the
+  // canvas is not shown, so keep the app-level title instead of "New Workflow".
   useEffect(() => {
+    if (SCAN_LANDING) {
+      return;
+    }
     document.title = `${currentWorkflowName} - KeeperHub`;
   }, [currentWorkflowName]);
 
-  // Helper to create anonymous session if needed
-  const ensureSession = useCallback(async () => {
-    if (!session) {
-      await authClient.signIn.anonymous();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }, [session]);
-
-  // Handler to add initial nodes and create the workflow.
-  // If the user already has workflows, navigate to the most recent one instead
-  // of creating a new one. Anonymous users are limited to a single workflow.
-  const handleAddNode = useCallback(async () => {
-    if (hasCreatedWorkflowRef.current) {
-      return;
-    }
-    hasCreatedWorkflowRef.current = true;
-
-    try {
-      await ensureSession();
-
-      if (isAnonymousUser(session?.user)) {
-        const existing = await api.workflow.getAll();
-        if (existing.length > 0) {
-          const latest = existing.sort(
-            (a, b) =>
-              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          )[0];
-          setIsTransitioningFromHomepage(true);
-          router.replace(`/workflows/${latest.id}`);
-          return;
-        }
-      }
-
-      const { nodes: defaultNodes, edges: defaultEdges } = createDefaultNodes();
-      setNodes(defaultNodes);
-      setEdges(defaultEdges);
-
-      const newWorkflow = await api.workflow.create({
-        name: "Untitled Workflow",
-        description: "",
-        nodes: defaultNodes,
-        edges: defaultEdges,
-      });
-
-      refetchSidebar();
-      sessionStorage.setItem("animate-sidebar", "true");
-      setIsTransitioningFromHomepage(true);
-      router.replace(`/workflows/${newWorkflow.id}`);
-    } catch (error) {
-      console.error("Failed to create workflow:", error);
-      toast.error("Failed to create workflow");
-      hasCreatedWorkflowRef.current = false;
-      setTourRequested(false);
-    }
-  }, [
-    session,
-    setNodes,
-    setEdges,
-    ensureSession,
-    router,
-    setIsTransitioningFromHomepage,
-    setTourRequested,
-  ]);
-
   // Launch the editor walkthrough when "Take a tour" was requested (from the
   // account menu or the Setup Guide): build the fresh default workflow the
-  // walkthrough controller drives. handleAddNode then navigates into the editor.
-  const handleAddNodeRef = useRef(handleAddNode);
-  handleAddNodeRef.current = handleAddNode;
+  // walkthrough controller drives. startBuilding then navigates into the editor.
+  const startBuildingRef = useRef(startBuilding);
+  startBuildingRef.current = startBuilding;
 
   useEffect(() => {
     if (tourRequested && session && !isAnonymousUser(session.user)) {
-      void handleAddNodeRef.current();
+      startBuildingRef.current().catch(() => {
+        // Errors are surfaced via toast inside startBuilding.
+      });
     }
   }, [tourRequested, session]);
 
-  // Initialize with a temporary "add" node on mount
+  // Initialize with a temporary "add" node on mount. On the scan landing the
+  // canvas never mounts, but the reset still matters: it clears any workflow
+  // state left behind by a previous /workflows/{id} visit (toolbar, autosave).
   useEffect(() => {
     const addNodePlaceholder: WorkflowNode = {
       id: "add-node-placeholder",
@@ -215,7 +116,11 @@ const Home = () => {
       data: {
         label: "",
         type: "add",
-        onClick: () => void handleAddNodeRef.current(),
+        onClick: () => {
+          startBuildingRef.current().catch(() => {
+            // Errors are surfaced via toast inside startBuilding.
+          });
+        },
       },
       draggable: false,
       selectable: false,
@@ -224,18 +129,24 @@ const Home = () => {
     setEdges([]);
     setCurrentWorkflowId(null);
     setCurrentWorkflowName("New Workflow");
-    hasCreatedWorkflowRef.current = false;
   }, [setNodes, setEdges, setCurrentWorkflowId, setCurrentWorkflowName]);
 
-  // Until the session/onboarding gate resolves to "canvas", cover the
-  // layout's PersistentCanvas with a loader so a redirected user never sees a
-  // canvas flash before /welcome. Once decided, render nothing and let the
-  // canvas show through.
+  // Until the session/onboarding gate resolves, cover the layout's
+  // PersistentCanvas with a loader so a redirected user never sees a canvas
+  // (or scan landing) flash before /welcome.
   if (gate !== "canvas") {
     return (
       <div className="fixed inset-0 z-20 flex items-center justify-center bg-background">
         <Spinner className="size-6 text-muted-foreground" />
       </div>
+    );
+  }
+
+  if (SCAN_LANDING) {
+    return (
+      <Suspense fallback={null}>
+        <ScanLanding />
+      </Suspense>
     );
   }
 

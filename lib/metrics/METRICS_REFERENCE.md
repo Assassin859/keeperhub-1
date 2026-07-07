@@ -75,6 +75,18 @@ Counter/Gauge metrics tracking request/event counts.
 | `plugin.invocations.total` | Plugin action invocations | `plugin_name`, `action_name` | count | API |
 | `user.active.daily` | Daily active users (24h) | - | gauge | DB |
 
+### Scan Funnel Metrics (scan-to-automate landing)
+
+Per-pod counters in `apiRegistry`, scraped from `/api/metrics/api`. Usage and
+conversion signals for the anonymous scan landing page.
+
+| Metric Name | Description | Labels | Unit | Source |
+|-------------|-------------|--------|------|--------|
+| `keeperhub_scan_requests_total` | Scan API requests by outcome (`success` = suggestions returned, `empty` = scan ran but produced none, `failure`, `rate_limited`, `invalid_query`, `ens_unresolved`) | `status` | count | API |
+| `keeperhub_scan_cache_lookups_total` | Scan result cache lookups; `miss` approximates unique addresses per 5-min TTL window | `result` (`hit`/`miss`) | count | API |
+| `keeperhub_scan_intents_total` | Anonymous funnel round-trip: `created` = pre-auth "Use this workflow" click, `consumed` = post-auth resume; consumed/created is the anon-to-signup conversion rate | `stage` | count | API |
+| `keeperhub_workflows_created_total` | Workflows created via the create API by originating surface; scan persists send `x-keeperhub-source`, unrecognised values coerce to `other` | `source` (`scan-run`/`scan-schedule`/`other`) | count | API |
+
 ---
 
 ## 3. ERRORS (Error Rate)
