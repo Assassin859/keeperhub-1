@@ -12,7 +12,9 @@ import {
 // and a fresh signup is routed through the onboarding wizard to the canvas.
 
 const CANVAS = '[data-testid="workflow-canvas"]';
-const ORG_SWITCHER = 'button[role="combobox"]';
+// The org switcher is a role=combobox, but so are the wizard's Select inputs,
+// so target it by its stable testid to avoid strict-mode collisions.
+const ORG_SWITCHER = '[data-testid="org-switcher"]';
 
 const WELCOME_ROOT = /\/welcome$/;
 const WELCOME_ANY = /\/welcome/;
@@ -51,13 +53,17 @@ test.describe("welcome gating: visitors", () => {
       }
       await expect(page).not.toHaveURL(WELCOME_ANY, { timeout: 4000 });
     }).toPass({ timeout: 30_000 });
-    await expect(page.locator(CANVAS)).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: "Start building" })
+    ).toBeVisible({ timeout: 15_000 });
 
     // The continue-as-guest flag persists: reloading the root does not bounce
     // the guest back to the welcome wall.
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page).not.toHaveURL(WELCOME_ANY, { timeout: 15_000 });
-    await expect(page.locator(CANVAS)).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: "Start building" })
+    ).toBeVisible({ timeout: 15_000 });
   });
 });
 

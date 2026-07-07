@@ -161,7 +161,7 @@ test.describe("TEST-03: scan auth round-trip", () => {
       // -----------------------------------------------------------------
       // 3. Fill the address input (aria-label from ScanInput component)
       // -----------------------------------------------------------------
-      const addressInput = page.getByLabel("EVM wallet address");
+      const addressInput = page.locator("#scan-address");
       await expect(addressInput).toBeVisible({ timeout: 10_000 });
       await addressInput.fill(KNOWN_ADDRESS);
 

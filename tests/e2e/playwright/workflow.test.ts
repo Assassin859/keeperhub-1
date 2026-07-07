@@ -1,17 +1,13 @@
 import { expect, test } from "./fixtures";
+import { gotoCanvas } from "./utils/workflow";
 
 const SELECTED_CLASS_REGEX = /selected/;
 
 test.describe("Workflow Editor", () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the homepage which has an embedded workflow canvas
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    // Wait for the canvas to be fully ready (data-ready="true" set after fitView)
-    await expect(page.getByTestId("workflow-canvas")).toHaveAttribute(
-      "data-ready",
-      "true",
-      { timeout: 60_000 }
-    );
+    // "/" is the wallet-scanner landing now; enter the builder to reach the
+    // workflow canvas and wait until it is ready.
+    await gotoCanvas(page);
   });
 
   test("workflow canvas loads", async ({ page }) => {
@@ -142,12 +138,11 @@ test.describe("Workflow Editor", () => {
       // Verify node is selected (has border-primary class or selected attribute)
       await expect(triggerNode).toHaveClass(SELECTED_CLASS_REGEX);
 
-      // Click on canvas to deselect
-      const canvas = page.locator('[data-testid="workflow-canvas"]');
-      const canvasBox = await canvas.boundingBox();
-      if (canvasBox) {
-        await page.mouse.click(canvasBox.x + 50, canvasBox.y + 50);
-      }
+      // Click the empty React Flow pane to deselect (a fixed canvas offset can
+      // land on a node or the promo banner and fail to clear the selection).
+      await page
+        .locator(".react-flow__pane")
+        .click({ position: { x: 20, y: 20 }, force: true });
 
       // Verify node is deselected
       await expect(triggerNode).not.toHaveClass(SELECTED_CLASS_REGEX);

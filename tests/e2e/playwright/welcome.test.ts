@@ -6,6 +6,8 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 const WELCOME_ROOT = /\/welcome$/;
 const WELCOME_ANY = /\/welcome/;
+// Production builds prefix the session cookie with `__Secure-` (useSecureCookies).
+const SESSION_COOKIE_NAME_RE = /^(?:__Secure-)?better-auth\.session_token$/;
 
 test.describe("welcome landing", () => {
   test("redirects a logged-out visitor from / to /welcome", async ({
@@ -68,9 +70,11 @@ test.describe("welcome landing", () => {
 
     // The guest path must actually create the anonymous account: without a
     // better-auth session cookie the proxy would bounce "/" back to /welcome.
+    // The production build sets a `__Secure-`-prefixed cookie (useSecureCookies),
+    // so match with or without the prefix.
     const cookies = await context.cookies();
     expect(
-      cookies.some((c) => c.name.startsWith("better-auth.session_token")),
+      cookies.some((c) => SESSION_COOKIE_NAME_RE.test(c.name)),
       "guest entry did not mint an anonymous session cookie"
     ).toBe(true);
 

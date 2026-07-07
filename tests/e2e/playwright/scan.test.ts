@@ -148,8 +148,8 @@ test.describe("scan", () => {
       .locator('[data-testid="workflow-canvas"]')
       .waitFor({ state: "visible", timeout: 10_000 });
 
-    // Click Run CTA — triggers openAuthPrompt({ action: "scan-run" })
-    await page.getByRole("button", { name: "Run" }).click();
+    // Click the Run CTA (labeled "Use this workflow") -> openAuthPrompt scan-run.
+    await page.getByRole("button", { name: "Use this workflow" }).click();
 
     // Auth dialog must open. The Sheet drawer is also role="dialog"; filter to
     // the one containing sign-in copy (AuthDialog shows "Sign in" or equivalent).
