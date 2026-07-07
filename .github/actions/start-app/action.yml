@@ -91,6 +91,10 @@ inputs:
     description: 'SANDBOX_URL - base URL of the code-execution sandbox (e.g. http://localhost:8787) the app dispatches step bundles to (lib/sandbox/client.ts). Forwarded to the container on the Docker path.'
     required: false
     default: ''
+  prebuilt:
+    description: 'Set "true" when the job already downloaded a production .next (build-app artifact). Skips the bare-metal build and its cache steps; the start step runs pnpm start against the unpacked output. Ignored on the Docker path.'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -197,7 +201,7 @@ runs:
 
     # --- Bare-metal path ---
     - name: Cache Next.js build
-      if: inputs.image_tag == ''
+      if: inputs.image_tag == '' && inputs.prebuilt != 'true'
       uses: actions/cache@v5
       with:
         path: .next/cache
@@ -207,7 +211,7 @@ runs:
           ${{ runner.os }}-nextjs-
 
     - name: Build application
-      if: inputs.image_tag == ''
+      if: inputs.image_tag == '' && inputs.prebuilt != 'true'
       shell: bash
       run: pnpm build
       env:
