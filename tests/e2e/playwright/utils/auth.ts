@@ -6,6 +6,42 @@ import postgres from "postgres";
 import { getAdminFetchHeaders } from "./admin-fetch";
 
 /**
+ * Switch the inline /welcome panel from the sign-in view to the sign-up view.
+ * Right after navigation the "Create an account" toggle can be clicked before
+ * the client handler is wired, dropping the click and leaving the sign-in view
+ * in place; retry until the signup heading resolves.
+ */
+export async function openSignupView(page: Page): Promise<void> {
+  const toggle = page.getByRole("button", { name: "Create an account" });
+  const heading = page.getByRole("heading", { name: "Create your account" });
+  await expect(async () => {
+    if (await toggle.isVisible()) {
+      await toggle.click();
+    }
+    await expect(heading).toBeVisible({ timeout: 4000 });
+  }).toPass({ timeout: 30_000 });
+}
+
+/**
+ * Enter the app as an anonymous guest from /welcome. The "Explore without
+ * signing in" button mints an anonymous session then navigates to "/"; the
+ * first click can race hydration, so retry until we leave /welcome.
+ */
+export async function enterAsGuest(page: Page): Promise<void> {
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+  const guest = page.getByRole("button", {
+    name: "Explore without signing in",
+  });
+  await expect(guest).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    if (await guest.isVisible()) {
+      await guest.click();
+    }
+    await expect(page).not.toHaveURL(/\/welcome/, { timeout: 4000 });
+  }).toPass({ timeout: 30_000 });
+}
+
+/**
  * Sign up a new user and navigate to verification view.
  * Returns the test email for later use.
  */
@@ -28,7 +64,7 @@ export async function signUp(
   await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
   // The sign-in form renders inline; switch it to the sign-up view.
-  await page.getByRole("button", { name: "Create an account" }).click();
+  await openSignupView(page);
 
   await page.locator("#auth-email").fill(testEmail);
   await page.locator("#auth-password").fill(testPassword);

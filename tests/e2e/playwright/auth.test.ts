@@ -161,7 +161,7 @@ test.describe("Authentication", () => {
       await submitSignInUntil(page, page.locator(".text-destructive"));
     });
 
-    test("unverified user signing in redirects to verification", async ({
+    test("unverified user signing in is told to verify their email", async ({
       page,
     }) => {
       await page.goto("/welcome", { waitUntil: "domcontentloaded" });
@@ -182,8 +182,10 @@ test.describe("Authentication", () => {
         page.getByRole("heading", { name: "Verify your email" })
       ).toBeVisible({ timeout: 15_000 });
 
-      // Reload to reset the panel to the sign-in view (the verify view has no
-      // back button), then sign in with the unverified account.
+      // Reload to reset the panel to the sign-in view, then sign in with the
+      // still-unverified account. strict-signin/start rejects it as
+      // email_not_verified, which the panel surfaces as an inline error on the
+      // sign-in view (email verification is a prerequisite before sign-in).
       await page.goto("/welcome", { waitUntil: "domcontentloaded" });
       await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
@@ -191,15 +193,9 @@ test.describe("Authentication", () => {
       await page.locator("#auth-email").fill(email);
       await page.locator("#auth-password").fill(password);
 
-      // The submit can land before the client handler is wired right after
-      // navigation; retry it until the verify view resolves.
-      await submitSignInUntil(
-        page,
-        page.getByRole("heading", { name: "Verify your email" })
-      );
-      await expect(page.locator("[data-sonner-toast]").first()).toBeVisible({
-        timeout: 5000,
-      });
+      const error = page.locator(".text-destructive");
+      await submitSignInUntil(page, error);
+      await expect(error).toContainText(/verify/i);
     });
 
     test("can navigate between sign in and create account views", async ({

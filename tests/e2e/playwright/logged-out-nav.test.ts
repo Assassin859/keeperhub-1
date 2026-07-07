@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { enterAsGuest } from "./utils/auth";
 
 // Force a fresh anonymous context for every test in this file. The default
 // Playwright project may carry over the persisted "authenticated" storageState
@@ -16,13 +17,7 @@ test.describe("Logged-out navigation sidebar (NAV-01..05, NAV-08)", () => {
   // guest path, which mints an anonymous session and sets the continue-as-guest
   // flag. Establish that once per test so the sidebar renders.
   test.beforeEach(async ({ page }) => {
-    await page.goto("/welcome", { waitUntil: "domcontentloaded" });
-    const guest = page.getByRole("button", {
-      name: "Explore without signing in",
-    });
-    await expect(guest).toBeVisible({ timeout: 15_000 });
-    await guest.click();
-    await expect(page).not.toHaveURL(/\/welcome/, { timeout: 15_000 });
+    await enterAsGuest(page);
   });
 
   test("Anonymous load: every nav item is visible (NAV-01)", async ({

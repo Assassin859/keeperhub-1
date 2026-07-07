@@ -137,11 +137,15 @@ export async function completeWalletLogin(page: Page): Promise<void> {
 
   // SIWE login mints the session and redirects into the app (the onboarding
   // wizard for a new account). Wait until we leave the landing, then mark
-  // onboarding complete so helper-based tests land straight in-app.
+  // onboarding complete so helper-based tests land straight in-app. The proxy's
+  // CSRF guard rejects state-changing POSTs without an Origin header, so pass
+  // one explicitly or the complete call 403s and the wizard redirect persists.
   await page.waitForURL((url) => !url.pathname.endsWith("/welcome"), {
     timeout: 20_000,
   });
-  await page.request.post("/api/user/onboarding/complete");
+  await page.request.post("/api/user/onboarding/complete", {
+    headers: { Origin: new URL(page.url()).origin },
+  });
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator('button[role="combobox"]')).toBeVisible({
     timeout: 15_000,
