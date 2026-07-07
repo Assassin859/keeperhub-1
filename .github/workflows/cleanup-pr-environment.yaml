@@ -56,6 +56,17 @@ jobs:
       NAMESPACE: pr-${{ github.event.pull_request.number }}
 
     steps:
+      # The eks-connect step below is a local action, so the repo must be
+      # checked out first. Without this every cleanup run fails at
+      # "Can't find 'action.yml' under .github/actions/eks-connect".
+      # Check out the PR's base branch: on closed events the PR merge ref
+      # may already be gone, and the action code should come from the
+      # trusted base rather than the PR head.
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
