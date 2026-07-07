@@ -191,7 +191,7 @@ test.describe("TEST-03: scan auth round-trip", () => {
       // -----------------------------------------------------------------
       // 7. Click "Save on schedule" CTA — triggers auth prompt for anon user
       // -----------------------------------------------------------------
-      await page.getByRole("button", { name: "Save on schedule" }).click();
+      await page.getByRole("button", { name: "Use this workflow" }).click();
 
       // -----------------------------------------------------------------
       // 8. Auth dialog opens on top of the scan page (openAuthPrompt).
@@ -203,10 +203,10 @@ test.describe("TEST-03: scan auth round-trip", () => {
       // -----------------------------------------------------------------
       const authDialog = page
         .locator('[role="dialog"]')
-        .filter({ has: page.locator("#email") });
+        .filter({ has: page.locator("#auth-email") });
       await expect(authDialog).toBeVisible({ timeout: 10_000 });
-      await authDialog.locator("#email").fill(PERSISTENT_TEST_USER_EMAIL);
-      await authDialog.locator("#password").fill(PERSISTENT_TEST_PASSWORD);
+      await authDialog.locator("#auth-email").fill(PERSISTENT_TEST_USER_EMAIL);
+      await authDialog.locator("#auth-password").fill(PERSISTENT_TEST_PASSWORD);
       await authDialog
         .locator('button[type="submit"]:has-text("Sign in")')
         .click();

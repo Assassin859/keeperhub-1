@@ -138,11 +138,13 @@ test.describe("Workflow Editor", () => {
       // Verify node is selected (has border-primary class or selected attribute)
       await expect(triggerNode).toHaveClass(SELECTED_CLASS_REGEX);
 
-      // Click the empty React Flow pane to deselect (a fixed canvas offset can
-      // land on a node or the promo banner and fail to clear the selection).
+      // Click an empty part of the React Flow pane to deselect. Use a real
+      // click (not force, which bypasses React Flow's onPaneClick) at a lower
+      // offset that clears the promo banner overlapping the canvas top and the
+      // centered trigger node.
       await page
         .locator(".react-flow__pane")
-        .click({ position: { x: 20, y: 20 }, force: true });
+        .click({ position: { x: 100, y: 320 } });
 
       // Verify node is deselected
       await expect(triggerNode).not.toHaveClass(SELECTED_CLASS_REGEX);
