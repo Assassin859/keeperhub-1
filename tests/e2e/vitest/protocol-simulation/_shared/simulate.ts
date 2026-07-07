@@ -45,7 +45,11 @@ import { checkOutputExpectation } from "../../protocol-coverage/_shared/oracle";
 export const SIM_WALLET = "0x5115000000000000000000000000000000000051";
 
 const WRITE_TIMEOUT_MS = 120_000;
-const READ_TIMEOUT_MS = 30_000;
+// Hang guard, not a performance assertion. 30s was measured too tight for
+// the largest cold-read fan-outs through an archive upstream (a MetaMorpho
+// totalAssets first touch exceeded it); cache-loaded forks make warmed
+// reads near-instant, so the headroom costs nothing on the happy path.
+const READ_TIMEOUT_MS = 90_000;
 
 async function sendImpersonatedOnce(
   provider: JsonRpcProvider,

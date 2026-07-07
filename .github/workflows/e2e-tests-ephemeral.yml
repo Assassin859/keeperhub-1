@@ -49,6 +49,9 @@ on:
 permissions:
   contents: read
   id-token: write
+  # Listing/downloading the nightly fork-cache artifact (tier1 job);
+  # callers must grant it too or the download falls back to a live fork.
+  actions: read
 
 jobs:
   should-run:
@@ -182,7 +185,11 @@ jobs:
     if: needs.should-run.outputs.run-e2e == 'true'
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 20
+    # Sized for the sweep's worst case, not its happy path: the 90s
+    # per-read hang guard (simulate.ts READ_TIMEOUT_MS) across
+    # sequential cold reads through an archive upstream can pass 20
+    # minutes, which would kill the job before the floor report writes.
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -192,10 +199,98 @@ jobs:
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
+      # The cache is produced by protocol-nightly.yml, a different
+      # workflow, and actions/download-artifact cannot fetch across
+      # workflows without a concrete run id - list and download through
+      # gh api with github.token instead (the token this repo's other
+      # workflows already use for API access; the cross-workflow
+      # artifact listing itself is new here). Consumption requires
+      # ANVIL_FORK_MAINNET_URL: the cache serves warmed state locally,
+      # but cold reads at a day-old pin need an archive upstream.
+      # Every failure mode (no secret, no fresh staging artifact, API
+      # error, corrupt zip/tar, bad name) exits 0 with empty outputs so
+      # the fork-start step falls back to the live fork.
+      - name: Download latest fork RPC cache
+        id: fork-cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+        run: |
+          if [ -z "$ANVIL_FORK_MAINNET_URL" ]; then
+            echo "ANVIL_FORK_MAINNET_URL not set; cold reads at a stale pin need an archive upstream - will start a live fork"
+            exit 0
+          fi
+          # Freshness gates: only a non-expired artifact from the last
+          # 36 hours whose producing run was on staging (a nightly on
+          # the default branch, not a fork-cache job from a topic
+          # branch experiment).
+          cutoff=$(date -u -d '36 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=fork-cache-mainnet&per_page=10" \
+            --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"staging\" and .created_at > \"${cutoff}\")] | sort_by(.created_at) | last | .id // empty" \
+            2>/dev/null) || artifact_id=""
+          if [ -z "$artifact_id" ]; then
+            echo "no fresh fork-cache-mainnet artifact from staging; will start a live fork"
+            exit 0
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > fork-cache.zip; then
+            echo "artifact ${artifact_id} download failed; will start a live fork"
+            exit 0
+          fi
+          if ! unzip -o fork-cache.zip -d fork-cache-artifact; then
+            echo "artifact ${artifact_id} unzip failed; will start a live fork"
+            exit 0
+          fi
+          tarball=$(find fork-cache-artifact -maxdepth 1 -name 'fork-cache-mainnet-*.tgz' | head -n 1)
+          block=""
+          if [ -n "$tarball" ]; then
+            block=$(basename "$tarball" .tgz | grep -oE '[0-9]+$') || true
+          fi
+          if [ -z "$tarball" ] || [ -z "$block" ]; then
+            echo "artifact has no fork-cache-mainnet-<block>.tgz; will start a live fork"
+            exit 0
+          fi
+          mkdir -p fork-cache
+          if ! tar -xzf "$tarball" -C fork-cache; then
+            echo "cache tar extraction failed; will start a live fork"
+            rm -rf fork-cache
+            exit 0
+          fi
+          if [ ! -f "fork-cache/rpc/mainnet/${block}/storage.json" ]; then
+            echo "cache tar lacks rpc/mainnet/${block}/storage.json; will start a live fork"
+            rm -rf fork-cache
+            exit 0
+          fi
+          # anvil runs as uid 1000 (foundry) in the container; the
+          # runner user extracting the tar is a different uid.
+          chmod -R a+rX fork-cache
+          echo "using fork cache at pinned block ${block}"
+          echo "dir=fork-cache" >> "$GITHUB_OUTPUT"
+          echo "block=$block" >> "$GITHUB_OUTPUT"
+
       - name: Start anvil Ethereum mainnet fork
         run: |
-          docker network create keeperhub-network 2>/dev/null || true
-          docker compose --profile test up -d test-anvil-fork-mainnet
+          CACHE_DIR="${{ steps.fork-cache.outputs.dir }}"
+          if [ -n "$CACHE_DIR" ]; then
+            # Cache-loaded fork: mount the nightly RPC fetch cache at
+            # foundry's cache path and re-pin to the block its values
+            # were fetched at. Everything the nightly sweep touched is
+            # served locally with zero upstream requests, and the fork
+            # starts pristine (the cache holds upstream fetches, not
+            # sweep mutations); cold state lazy-fetches from the
+            # archive upstream at the pin, which the download step
+            # guaranteed is configured. Measured cache behavior is
+            # documented in scripts/protocol-local.sh (start_fork).
+            docker run -d --name keeperhub-test-anvil-fork-mainnet -p 8548:8545 \
+              -v "$PWD/$CACHE_DIR:/home/foundry/.foundry/cache" \
+              --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+              --host 0.0.0.0 \
+              --fork-url "$ANVIL_FORK_MAINNET_URL" \
+              --fork-block-number "${{ steps.fork-cache.outputs.block }}" \
+              --chain-id 1 --block-time 1
+          else
+            docker network create keeperhub-network 2>/dev/null || true
+            docker compose --profile test up -d test-anvil-fork-mainnet
+          fi
           retries=0
           until curl -sf -X POST http://localhost:8548 \
                 -H "Content-Type: application/json" \
@@ -213,7 +308,10 @@ jobs:
 
       # Fail in seconds on a dead fork or upstream instead of as vitest
       # timeouts. eth_getBalance of the beacon deposit contract forces a
-      # pinned-block upstream fetch (untouched by local test state).
+      # pinned-block upstream fetch: the address is untouched by local
+      # test state and never referenced by the sweep, so it cannot be
+      # served from the mounted cache - the probe validates the archive
+      # upstream at the pin even on a cache-loaded fork.
       - name: Fork health probe
         uses: ./.github/actions/probe-forks
         with:
@@ -514,6 +612,10 @@ jobs:
     # Same gate as e2e-vitest-ephemeral: build-app skipped (Docker path)
     # or succeeded admits this job; failed or cancelled blocks it.
     if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') }}
+    # Suites run concurrently with 10-minute setup hooks (cold archive
+    # fan-outs on a fresh fork); 45 min bounds a hung run without a
+    # 6-hour default runaway.
+    timeout-minutes: 45
     runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && inputs.caller_event != 'pull_request' && 'arc-keeperhub-build' || 'ubuntu-latest' }}
     # Always staging: e2e validates against test credentials, never prod.
     environment: staging
@@ -927,6 +1029,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+
+      # This job builds the app bare-metal AND installs browser binaries on
+      # top of the full service stack - the most disk-hungry job here.
+      # Measured ENOSPC mid-build twice on 2026-07-07; free the unused
+      # preinstalled toolchains up front like the vitest and protocol jobs.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
 
       - name: Setup Node.js, pnpm, and Playwright
         uses: ./.github/actions/setup-node-pnpm
