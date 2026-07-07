@@ -286,13 +286,15 @@ export function ScanLanding(): React.ReactElement {
           <div className="mx-auto max-w-5xl px-4 pb-16 sm:px-6">
             {isCompact ? (
               <div className="mx-auto max-w-2xl py-4">
-                <ScanInput
-                  disabled={isLoading}
-                  error={inputError}
-                  onChange={handleAddressChange}
-                  onSubmit={handleScanSubmit}
-                  value={address}
-                />
+                <div className="mx-auto max-w-lg">
+                  <ScanInput
+                    disabled={isLoading}
+                    error={inputError}
+                    onChange={handleAddressChange}
+                    onSubmit={handleScanSubmit}
+                    value={address}
+                  />
+                </div>
                 <ExampleChips
                   disabled={isLoading}
                   onSelect={handleExampleSelect}
@@ -311,13 +313,15 @@ export function ScanLanding(): React.ReactElement {
                   Scan any wallet or contract to see live DeFi positions and
                   turn them into ready-to-run Keeper Workflows
                 </p>
-                <ScanInput
-                  disabled={isLoading}
-                  error={inputError}
-                  onChange={handleAddressChange}
-                  onSubmit={handleScanSubmit}
-                  value={address}
-                />
+                <div className="mx-auto max-w-lg">
+                  <ScanInput
+                    disabled={isLoading}
+                    error={inputError}
+                    onChange={handleAddressChange}
+                    onSubmit={handleScanSubmit}
+                    value={address}
+                  />
+                </div>
                 <ExampleChips
                   disabled={isLoading}
                   onSelect={handleExampleSelect}
