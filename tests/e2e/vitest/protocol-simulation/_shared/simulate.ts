@@ -161,11 +161,8 @@ async function runRead(
     Interface["decodeFunctionResult"]
   >[0];
   const decoded = encoded.iface.decodeFunctionResult(fragment, ret);
-  const outputs =
-    JSON.parse((fragment as { format: (f: string) => string }).format("json"))
-      .outputs ?? [];
   const values = serializeResult([...decoded]);
-  return structureAbiOutputs(values as unknown[], outputs);
+  return structureAbiOutputs(values as unknown[], encoded.abiOutputs);
 }
 
 export function runSimulation(opts: {

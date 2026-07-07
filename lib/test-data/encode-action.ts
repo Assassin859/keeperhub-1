@@ -27,6 +27,7 @@ import {
   buildActionWorkflow,
   buildSetupWorkflow,
 } from "@/lib/test-data/build-workflow";
+import type { AbiOutputParam } from "@/plugins/web3/steps/structure-abi-result";
 
 function requireProtocol(slug: string): ProtocolDefinition {
   const def = getProtocol(slug);
@@ -41,9 +42,10 @@ export type EncodedAction = {
   data: string;
   /** msg.value in wei when the testData binds the virtual ethValue key. */
   value: bigint;
-  skipped: boolean;
   iface: Interface;
-  fragment: FunctionAbiEntry;
+  /** ABI output params from the resolved fragment JSON, retained so read
+   *  simulations can structure decoded results without re-deriving them. */
+  abiOutputs: AbiOutputParam[];
   /** The live ethers fragment; use for decodeFunctionResult (string
    *  re-resolution mangles tuple signatures). */
   ethersFragment: unknown;
@@ -74,6 +76,11 @@ export function ifaceFor(
   return iface;
 }
 
+/** The fragment JSON carries the outputs alongside the inputs
+ *  FunctionAbiEntry declares; retaining them here saves consumers from
+ *  re-parsing the fragment to structure decoded read results. */
+type ParsedFragment = FunctionAbiEntry & { outputs?: AbiOutputParam[] };
+
 /** Resolve the exact fragment for an action. Bare-name lookup throws on
  *  overload ambiguity, and registry actions flatten single-tuple params
  *  (deriveTupleInputs), so fragment arity can differ from the action's
@@ -82,13 +89,13 @@ export function ifaceFor(
 export function fragmentFor(
   iface: Interface,
   action: ProtocolAction
-): { ethersFragment: unknown; abi: FunctionAbiEntry } {
+): { ethersFragment: unknown; abi: ParsedFragment } {
   const byName = iface.fragments.filter(
     (f) =>
       f.type === "function" && (f as { name?: string }).name === action.function
   );
   const parsed = byName.map(
-    (f) => JSON.parse(f.format("json")) as FunctionAbiEntry
+    (f) => JSON.parse(f.format("json")) as ParsedFragment
   );
   const flatArity = (f: FunctionAbiEntry): number =>
     (f.inputs ?? []).reduce(
@@ -212,15 +219,12 @@ export function encodeFromConfig(
       (config.contractAddress as string | undefined) ?? undefined
     ) ?? "";
   const ethValue = config.ethValue as string | undefined;
-  const skipped =
-    protocol.testData?.[chainId]?.skipped?.[action.slug] !== undefined;
   return {
     to,
     data,
     value: ethValue ? parseEther(ethValue) : BigInt(0),
-    skipped,
     iface,
-    fragment: abi,
+    abiOutputs: abi.outputs ?? [],
     ethersFragment,
   };
 }
