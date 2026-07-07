@@ -11,7 +11,16 @@
 #   scripts/protocol-local.sh up            # build + start everything
 #   scripts/protocol-local.sh test [suite]  # run all suites or one (e.g. superfluid)
 #   scripts/protocol-local.sh sim [chain]   # Tier 1 fork simulations (no app needed)
+#   scripts/protocol-local.sh snapshot [chain]  # warm a fork + dump its state
 #   scripts/protocol-local.sh down [--purge]
+#
+# Warm-state snapshots: `snapshot` runs the Tier 1 sweep against a
+# freshly pinned fork and dumps every transaction-committed slot to
+# .claude/fork-snapshots/<chain>-<block>.json. Exporting
+# MAINNET_SNAPSHOT_FILE / SEPOLIA_SNAPSHOT_FILE points start_fork at
+# such a file, which re-pins the fork to the snapshot's block and adds
+# --load-state, so warmed state is served locally with zero hot-path
+# upstream reads.
 #
 # Signing: real on-chain writes need TURNKEY_API_PUBLIC_KEY,
 # TURNKEY_API_PRIVATE_KEY, and TURNKEY_ORGANIZATION_ID exported in the
@@ -96,8 +105,13 @@ mainnet_upstream() {
   printf '%s' "https://ethereum-rpc.publicnode.com"
 }
 
+# Set by start_fork to the fork's pinned base block (empty when the
+# head probe failed and the fork runs unpinned). cmd_snapshot names the
+# dump file after it so consumers re-pin to the exact dump block.
+LAST_FORK_PIN=""
+
 start_fork() {
-  local name="$1" port="$2" chain_id="$3" chain_hex="$4" upstream="$5"
+  local name="$1" port="$2" chain_id="$3" chain_hex="$4" upstream="$5" snapshot_file="${6:-}"
   docker rm -f "$name" 2>/dev/null || true
   # Pin the fork a few blocks behind head so every node behind a load
   # balanced public upstream already has the block. This removes one
@@ -105,15 +119,49 @@ start_fork() {
   # one block earlier - observed on morpho/aave under a degraded
   # upstream); it does not make a throttled public upstream reliable.
   # The durable fix is exporting an archive ANVIL_FORK_*_URL.
-  local pin="" pin_args=""
-  pin=$(curl -sf -X POST -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
-    "$upstream" | grep -oE '"result":"0x[0-9a-f]+"' | cut -d'"' -f4) || true
-  if [ -n "$pin" ]; then
-    pin_args="--fork-block-number $((pin - 12))"
+  local pin="" pin_args="" head=""
+  local -a mount_args=()
+  LAST_FORK_PIN=""
+  if [ -n "$snapshot_file" ]; then
+    # Warm-state snapshot (see cmd_snapshot). Measured behavior
+    # (foundry:latest, 2026-07-07):
+    # - --load-state only accepts the decompressed SerializableState
+    #   JSON, not the raw hex-gzip blob anvil_dumpState returns.
+    # - Loaded state is served locally with zero upstream reads
+    #   (verified by killing the upstream: dump-covered slots keep
+    #   answering); cold accounts/slots still lazy-fetch from
+    #   --fork-url and fail loudly when they cannot.
+    # - Without --fork-url, missing state silently reads as zero/empty,
+    #   so the fork always keeps its upstream for cold-state fallback.
+    # The snapshot's values were fetched at its dump-time pin, so the
+    # fork must re-pin there: the <chain>-<block>.json name carries it.
+    if [ ! -f "$snapshot_file" ]; then
+      log "snapshot file not found: ${snapshot_file}"
+      exit 1
+    fi
+    pin=$(basename "$snapshot_file" .json | grep -oE '[0-9]+$') || true
+    if [ -z "$pin" ]; then
+      log "cannot derive the pinned block from '${snapshot_file}' (expected <chain>-<block>.json)"
+      exit 1
+    fi
+    local snap_dir snap_base
+    snap_dir="$(cd "$(dirname "$snapshot_file")" && pwd)"
+    snap_base="$(basename "$snapshot_file")"
+    mount_args=(-v "${snap_dir}:/snapshot:ro")
+    pin_args="--fork-block-number ${pin} --load-state /snapshot/${snap_base}"
+    log "${name}: loading warm state ${snap_base} (pinned to its dump block ${pin})"
+  else
+    head=$(curl -sf -X POST -H 'Content-Type: application/json' \
+      --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+      "$upstream" | grep -oE '"result":"0x[0-9a-f]+"' | cut -d'"' -f4) || true
+    if [ -n "$head" ]; then
+      pin=$((head - 12))
+      pin_args="--fork-block-number ${pin}"
+    fi
   fi
+  LAST_FORK_PIN="$pin"
   # shellcheck disable=SC2086 # pin_args is intentionally word-split
-  docker run -d --name "$name" -p "${port}:8545" --entrypoint anvil \
+  docker run -d --name "$name" -p "${port}:8545" ${mount_args[@]+"${mount_args[@]}"} --entrypoint anvil \
     ghcr.io/foundry-rs/foundry:latest \
     --host 0.0.0.0 --fork-url "$upstream" $pin_args --chain-id "$chain_id" --block-time 1 >/dev/null
   wait_for_fork "$port" "$chain_hex" "$name"
@@ -124,9 +172,12 @@ start_forks() {
   # services declare fixed container_names that collide across checkouts
   # and with manually started forks. Ports must match the chains-row
   # patch below; override holders must be stopped or ports overridden.
+  # Snapshot files are per-chain envs (not one shared var) so a mainnet
+  # dump can never be loaded into the Sepolia fork.
   start_fork kh-protocol-local-fork-sepolia "${SEPOLIA_FORK_PORT:-8547}" 11155111 "0xaa36a7" \
-    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
-  start_fork kh-protocol-local-fork-mainnet "${MAINNET_FORK_PORT:-8548}" 1 "0x1" "$(mainnet_upstream)"
+    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_SNAPSHOT_FILE:-}"
+  start_fork kh-protocol-local-fork-mainnet "${MAINNET_FORK_PORT:-8548}" 1 "0x1" "$(mainnet_upstream)" \
+    "${MAINNET_SNAPSHOT_FILE:-}"
 }
 
 patch_chains() {
@@ -217,7 +268,7 @@ cmd_test() {
   # current head), then re-assert the chains patch (some general e2e
   # tests rewrite the Sepolia row).
   start_fork kh-protocol-local-fork-sepolia "${SEPOLIA_FORK_PORT:-8547}" 11155111 "0xaa36a7" \
-    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
+    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_SNAPSHOT_FILE:-}"
   patch_chains
 
   log "running ${target}"
@@ -279,6 +330,66 @@ cmd_sim() {
   return "$rc"
 }
 
+cmd_snapshot() {
+  # Produce a warm-state snapshot: start the chain's fork freshly pinned
+  # behind head, run the Tier 1 sweep once so every account and storage
+  # slot the sweep touches through transactions is committed locally,
+  # then dump to .claude/fork-snapshots/<chain>-<block>.json for later
+  # --load-state consumption (see start_fork).
+  #
+  # Scope caveat (measured): anvil_dumpState serializes only state
+  # committed by transactions. eth_call warms nothing, but slots merely
+  # SLOAD-ed inside an executed transaction ARE dumped with their
+  # upstream values, so the write-heavy sweep covers its own hot path.
+  # Read-only actions exercised purely via eth_call still lazy-fetch
+  # from the upstream on a loaded fork.
+  local chain="${1:-ethereum}"
+  local name port upstream cid chex env_rpc
+  case "$chain" in
+    ethereum)
+      name=kh-protocol-local-fork-mainnet
+      port="${MAINNET_FORK_PORT:-8548}"
+      upstream="$(mainnet_upstream)"
+      cid=1 chex="0x1"
+      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${port}"
+      ;;
+    sepolia)
+      name=kh-protocol-local-fork-sepolia
+      port="${SEPOLIA_FORK_PORT:-8547}"
+      upstream="${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
+      cid=11155111 chex="0xaa36a7"
+      env_rpc="PROTOCOL_SIM_RPC_11155111=http://localhost:${port}"
+      ;;
+    *)
+      log "unknown chain '${chain}' (expected: ethereum, sepolia)"
+      exit 1
+      ;;
+  esac
+  start_fork "$name" "$port" "$cid" "$chex" "$upstream"
+  if [ -z "$LAST_FORK_PIN" ]; then
+    log "could not resolve a pinned block from ${upstream}; a snapshot without a pin is not reproducible"
+    exit 1
+  fi
+  local out=".claude/fork-snapshots/${chain}-${LAST_FORK_PIN}.json"
+  log "warming ${chain} fork (pin ${LAST_FORK_PIN}) with the Tier 1 sweep"
+  local rc=0
+  run_node "${env_rpc} pnpm vitest run tests/e2e/vitest/protocol-simulation --reporter=default" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # A red sweep still leaves pinned-block-consistent state behind;
+    # dump it, but propagate the failure so automation treats the run
+    # as degraded rather than publishing it silently.
+    log "WARNING: sweep exited ${rc}; dumping the partially warmed state anyway"
+  fi
+  run_node "pnpm tsx scripts/dump-anvil-state.ts http://localhost:${port} ${out}"
+  local snapshot_var=MAINNET_SNAPSHOT_FILE
+  if [ "$chain" = "sepolia" ]; then
+    snapshot_var=SEPOLIA_SNAPSHOT_FILE
+  fi
+  log "snapshot written: ${out}"
+  log "consume with: ${snapshot_var}=${out} scripts/protocol-local.sh sim"
+  return "$rc"
+}
+
 cmd_down() {
   docker rm -f "$APP_CONTAINER" kh-protocol-local-fork-sepolia kh-protocol-local-fork-mainnet 2>/dev/null || true
   if [ "${1:-}" = "--purge" ]; then
@@ -292,6 +403,7 @@ case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   test) shift; cmd_test "$@" ;;
   sim) shift; cmd_sim "$@" ;;
+  snapshot) shift; cmd_snapshot "$@" ;;
   down) shift; cmd_down "$@" ;;
-  *) grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -20; exit 1 ;;
+  *) grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -25; exit 1 ;;
 esac
