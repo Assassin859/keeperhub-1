@@ -307,6 +307,25 @@ async function scanOneChain(
 const ADDRESS_KIND_TIMEOUT_MS = 3000;
 
 /**
+ * EIP-7702 delegation designator prefix (0xef0100 || delegate address).
+ * An EOA with a live delegation returns this 23-byte designator from
+ * eth_getCode, but the account is still an EOA — EIP-3541 guarantees no
+ * deployed contract's code can start with 0xEF, so the prefix check is
+ * unambiguous.
+ */
+const EIP7702_DELEGATION_PREFIX = "0xef0100";
+
+/**
+ * True when eth_getCode output indicates deployed contract bytecode.
+ * Empty code and EIP-7702 delegation designators both classify as EOA.
+ */
+export function isContractCode(code: string): boolean {
+  return (
+    code !== "0x" && !code.toLowerCase().startsWith(EIP7702_DELEGATION_PREFIX)
+  );
+}
+
+/**
  * Detect whether the scanned address is an EOA or a deployed contract.
  *
  * Probes `eth_getCode` on every scannable chain in parallel (bytecode can
@@ -335,7 +354,7 @@ async function detectAddressKind(
           );
         }),
       ]);
-      return { chainId, isContract: code !== "0x" };
+      return { chainId, isContract: isContractCode(code) };
     })
   );
 

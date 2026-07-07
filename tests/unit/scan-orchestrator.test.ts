@@ -470,4 +470,33 @@ describe("scan orchestrator", () => {
       expect(skyPos?.totalCollateralUsd).toBeNull();
     });
   });
+
+  describe("isContractCode — address-kind bytecode classification", () => {
+    it("classifies empty code as EOA", async () => {
+      const { isContractCode } = await import("@/lib/scan/scanner");
+      expect(isContractCode("0x")).toBe(false);
+    });
+
+    it("classifies deployed bytecode as contract", async () => {
+      const { isContractCode } = await import("@/lib/scan/scanner");
+      expect(isContractCode("0x608060405234801561001057600080fd5b50")).toBe(
+        true
+      );
+    });
+
+    it("classifies an EIP-7702 delegation designator as EOA", async () => {
+      const { isContractCode } = await import("@/lib/scan/scanner");
+      // vitalik.eth's live mainnet designator: 0xef0100 || delegate address.
+      expect(
+        isContractCode("0xef01005a7fc11397e9a8ad41bf10bf13f22b0a63f96f6d")
+      ).toBe(false);
+    });
+
+    it("is case-insensitive on the designator prefix", async () => {
+      const { isContractCode } = await import("@/lib/scan/scanner");
+      expect(
+        isContractCode("0xEF01005A7FC11397E9A8AD41BF10BF13F22B0A63F96F6D")
+      ).toBe(false);
+    });
+  });
 });
