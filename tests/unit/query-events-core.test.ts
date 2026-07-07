@@ -183,3 +183,86 @@ describe("queryBatchWithRetry", () => {
     );
   });
 });
+
+describe("cross-replica head divergence (regression coverage)", () => {
+  // A pooled RPC endpoint load-balances each call independently: a fast
+  // replica and a slower, not-yet-synced replica can each end up serving
+  // one of two calls that a caller assumes are consistent with each other.
+  const FAST_REPLICA_HEAD = 205;
+  const SLOW_REPLICA_SYNCED_HEAD = 203;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockQueryFilter.mockReset();
+    mockQueryFilter.mockImplementation(
+      (_filter: unknown, _start: number, end: number | string) => {
+        if (end === "latest") {
+          // Whichever replica serves this call resolves "latest" against
+          // its own head, so it can never ask itself for a range beyond
+          // what it has.
+          return Promise.resolve([{ blockNumber: SLOW_REPLICA_SYNCED_HEAD }]);
+        }
+        if (typeof end === "number" && end > SLOW_REPLICA_SYNCED_HEAD) {
+          return Promise.reject(
+            new Error(
+              "could not coalesce error: -32602 block range extends beyond current head"
+            )
+          );
+        }
+        return Promise.resolve([{ blockNumber: end }]);
+      }
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("regression: a fixed toBlock (isTipBatch: false) resolved from one replica gets rejected by a slower replica serving the eth_getLogs call", async () => {
+    const executeWithFailover = vi.fn((operation) => operation(fakeProvider()));
+
+    const promise = queryBatchWithRetry(
+      mockRpc(executeWithFailover),
+      "0xabc",
+      [],
+      "Lift",
+      200,
+      FAST_REPLICA_HEAD, // resolved by an earlier, separate call that hit the fast replica
+      false // fixed toBlock -- see fetchFixedBatch in query-events-core.ts
+    );
+    const expectation = expect(promise).rejects.toThrow(
+      /block range extends beyond current head/
+    );
+    await vi.runAllTimersAsync();
+    await expectation;
+
+    expect(executeWithFailover).toHaveBeenCalledTimes(MAX_BATCH_RETRIES);
+  });
+
+  it("the tip batch (isTipBatch: true), queried against the literal 'latest' tag, survives the same lagging replica that just rejected the fixed-toBlock query above", async () => {
+    const executeWithFailover = vi.fn((operation) => operation(fakeProvider()));
+
+    const promise = queryBatchWithRetry(
+      mockRpc(executeWithFailover),
+      "0xabc",
+      [],
+      "Lift",
+      200,
+      200, // ignored for a tip batch
+      true
+    );
+    const expectation = expect(promise).resolves.toEqual({
+      events: [{ blockNumber: SLOW_REPLICA_SYNCED_HEAD }],
+      actualEnd: SLOW_REPLICA_SYNCED_HEAD,
+    });
+    await vi.runAllTimersAsync();
+    await expectation;
+
+    expect(mockQueryFilter).toHaveBeenCalledWith(
+      expect.anything(),
+      200,
+      "latest"
+    );
+    expect(executeWithFailover).toHaveBeenCalledTimes(1);
+  });
+});
