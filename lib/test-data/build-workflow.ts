@@ -212,8 +212,7 @@ const EVENT_TRIGGER_TOKEN_PRIORITY: TokenSymbol[] = [
   "DAI",
   "USDS",
   "LINK",
-  "FUSDC",
-  "FUSDCX",
+  "DAIX",
 ];
 
 function pickEventContractAddress(chainId: string): string {

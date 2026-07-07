@@ -1,114 +1,117 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 
-// KEEP-458 protocol-coverage test data. Sepolia uses the canonical fUSDC /
-// fUSDCx pair (matches tests/integration/protocol-superfluid-onchain.test.ts).
-// The fUSDC ERC20 exposes a permissionless `mint(to, amount)`; the funder
-// calls it in the TS preflight (FAUCETS entry in chain-test-data.ts).
+// KEEP-458 protocol-coverage test data. Ethereum mainnet (fork mode) uses
+// the canonical DAI / DAIx pair: DAIx resolved from the on-chain Superfluid
+// resolver ("supertokens.v1.DAIx", verified 2026-07-07) and funded via the
+// existing DAI whale. DAIx was chosen over USDCx (whose upgrade() routes
+// underlying into Sky savings and reliably runs out of gas under
+// exact-estimate sends on an anvil fork) and over ETHx (a native super
+// token: underlying is address(0), so the registry's wrap/unwrap actions
+// - SuperToken.upgrade/downgrade - revert on it; funding would also need
+// upgradeByETH, which is not a registry action).
 const TEST_DATA: ProtocolTestData = {
-  "11155111": {
+  "1": {
     setup: {
       minNativeHuman: "0.001",
-      // 10 FUSDC wrapped to FUSDCX in setup + headroom for per-test wraps.
-      requiredTokens: [{ symbol: "FUSDC", human: "20" }],
+      // Mainnet governance sets DAIx's CFA minimum deposit to 69 DAI
+      // (read from SuperfluidGovernance 2026-07-07): a create-flow at any
+      // rate locks that much, so wrap 100 in setup - 10 (the sepolia
+      // sizing) reverts with CFA_INSUFFICIENT_BALANCE.
+      requiredTokens: [{ symbol: "DAI", human: "200" }],
       approvals: [
-        // Wrap requires the SuperToken (FUSDCX) to spend underlying FUSDC.
-        { token: "FUSDC", spender: "FUSDCX", human: "20" },
+        // Wrap requires the SuperToken (DAIX) to spend underlying DAI.
+        { token: "DAI", spender: "DAIX", human: "200" },
       ],
       protocolSteps: [
         {
           protocol: "superfluid",
           action: "wrap",
           inputs: {
-            contractAddress: "FUSDCX",
-            amount: amount("FUSDC", "10"),
+            contractAddress: "DAIX",
+            amount: amount("DAIX", "100"),
           },
         },
       ],
     },
     // GDA pool actions reference a zero-address placeholder pool (we don't
-    // capture the create-pool tx receipt to extract the deployed address in
-    // Phase 1). Skip on-chain execution; the seeder still surfaces them in
-    // the dashboard for discoverability.
+    // capture the create-pool tx receipt to extract the deployed address).
+    // Skip on-chain execution; the seeder still surfaces them in the
+    // dashboard for discoverability. Output-to-binding piping would unlock
+    // them. Unlike the retired Sepolia fixtures, create-pool and
+    // grant-flow-operator run here: their old skip reason (cold-contract
+    // fetches through the throttled public Sepolia upstream) does not
+    // apply to the mainnet fork, and both were verified green on a fork
+    // 2026-07-07.
     skipped: {
       "update-member-units": "pool dependency; needs real pool address",
       distribute: "pool dependency; needs real pool address",
       "distribute-flow": "pool dependency; needs real pool address",
       "connect-pool": "pool dependency; needs real pool address",
-      // These two touch contracts the setup workflow does not warm (the
-      // GDA forwarder, and the CFA flow-operator storage). On the CI
-      // anvil fork, first-touch state fetches through the throttled
-      // public upstream take ~200s per contract (measured 2026-07-02),
-      // exceeding the fixture timeout; the CFA flow actions pass because
-      // setup warms that contract. Unlock with an archive-grade
-      // ANVIL_FORK_SEPOLIA_URL upstream, then remove these skips.
-      "grant-flow-operator":
-        "cold-contract state fetch exceeds fixture timeout on the public fork upstream",
-      "create-pool":
-        "cold-contract state fetch exceeds fixture timeout on the public fork upstream",
     },
     actions: {
-      // Reads
+      // Reads. get-flow reads the wallet -> sink flow the write fixtures
+      // manage, so the post-write oracles below can assert on it (before
+      // create-flow it reads as all-zero, which is fine for liveness).
       "get-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         sender: wallet(),
-        receiver: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
       },
       // superToken contract is userSpecifiedAddress: pass `contractAddress`.
       "get-super-token-balance": {
-        contractAddress: "FUSDCX",
+        contractAddress: "DAIX",
         account: wallet(),
       },
-      "get-underlying-token": { contractAddress: "FUSDCX" },
+      "get-underlying-token": { contractAddress: "DAIX" },
       "get-cfa-net-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         account: wallet(),
       },
       "get-net-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         account: wallet(),
       },
       // Writes -- wallet -> burn address. Superfluid CFA reverts with
       // CFA_NO_SELF_FLOW (0xa47338ef) when sender == receiver, so self-streams
       // aren't usable. 0x...dEaD is a stable, contract-free sink: streaming a
-      // few wei/sec there costs only the SuperToken buffer (~14400 wei at
-      // flowRate=1). Sender stays as the test wallet so create/update/delete
-      // operate on the same flow row.
+      // few wei/sec there costs only the SuperToken buffer (69 DAI minimum
+      // deposit on mainnet, returned on delete-flow). Sender stays as the
+      // test wallet so create/update/delete operate on the same flow row.
       "create-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         sender: wallet(),
         receiver: "0x000000000000000000000000000000000000dEaD",
         flowRate: "1",
         userData: "0x",
       },
       "update-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         sender: wallet(),
         receiver: "0x000000000000000000000000000000000000dEaD",
         flowRate: "2",
         userData: "0x",
       },
       "delete-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         sender: wallet(),
         receiver: "0x000000000000000000000000000000000000dEaD",
         userData: "0x",
       },
       // SuperToken is userSpecifiedAddress: pass contractAddress explicitly.
       wrap: {
-        contractAddress: "FUSDCX",
-        amount: amount("FUSDC", "1"),
+        contractAddress: "DAIX",
+        amount: amount("DAIX", "1"),
       },
       unwrap: {
-        contractAddress: "FUSDCX",
-        amount: amount("FUSDCX", "1"),
+        contractAddress: "DAIX",
+        amount: amount("DAIX", "1"),
       },
-      // GDA pool actions. No pool is provisioned in Phase 1, so the `pool`
-      // address is the zero placeholder -- the seeded workflow loads but
-      // on-chain execution reverts until a pool is created (a setup step
-      // for a future iteration).
+      // GDA pool actions. No pool is provisioned, so the `pool` address is
+      // the zero placeholder -- the seeded workflow loads but on-chain
+      // execution reverts until a pool is created (needs output piping).
       "create-pool": {
-        token: "FUSDCX",
+        token: "DAIX",
         admin: wallet(),
         // bools transferabilityForUnitsOwner / distributionFromAnyAddress
         // have `default: "false"` in the protocol def; the resolver picks
@@ -121,14 +124,14 @@ const TEST_DATA: ProtocolTestData = {
         userData: "0x",
       },
       distribute: {
-        token: "FUSDCX",
+        token: "DAIX",
         from: wallet(),
         pool: "0x0000000000000000000000000000000000000000",
-        amount: amount("FUSDCX", "1"),
+        amount: amount("DAIX", "1"),
         userData: "0x",
       },
       "distribute-flow": {
-        token: "FUSDCX",
+        token: "DAIX",
         from: wallet(),
         pool: "0x0000000000000000000000000000000000000000",
         flowRate: "1",
@@ -139,15 +142,35 @@ const TEST_DATA: ProtocolTestData = {
         userData: "0x",
       },
       // CFA flow-operator permissions: grant the burn address full permissions
-      // on FUSDCX. Self-operator (flowOperator == msg.sender) reverts with a
+      // on DAIX. Self-operator (flowOperator == msg.sender) reverts with a
       // CFA forwarder ACL custom error; using a stable sink address sidesteps
       // it without affecting any real account.
       "grant-flow-operator": {
-        token: "FUSDCX",
+        token: "DAIX",
         flowOperator: "0x000000000000000000000000000000000000dEaD",
         permissions: "7", // CREATE | UPDATE | DELETE = 1 | 2 | 4
         flowRateAllowance: "1",
       },
+    },
+    expectations: {
+      // Setup wraps 100 DAIx for the wallet; on a long-lived fork the
+      // balance only accumulates across runs, so nonZero is history-safe.
+      "get-super-token-balance": [{ nonZero: true }],
+      // Long-lived chain invariant: DAIx always wraps canonical DAI.
+      "get-underlying-token": [
+        { equals: "0x6B175474E89094C44Da98b954EedeAC495271d0F" },
+      ],
+    },
+    // Simulation-tier post-write oracles: a mined receipt alone cannot
+    // prove the flow actually opened or closed. get-flow reads the same
+    // wallet -> sink pair the write fixtures bind.
+    writeExpectations: {
+      "create-flow": [
+        { read: "get-flow", expect: { field: "flowRate", nonZero: true } },
+      ],
+      "delete-flow": [
+        { read: "get-flow", expect: { field: "flowRate", equals: "0" } },
+      ],
     },
   },
 };
@@ -406,7 +429,8 @@ const SUPER_TOKEN_ABI = JSON.stringify([
 //   - delete-flow MUST follow create-flow (cfaForwarder: createFlow before deleteFlow)
 //   - wrap / unwrap operate on the SuperToken balance and are independent
 //   - grant-flow-operator is independent
-//   - GDA pool actions (create-pool/update-member-units/distribute/
+//   - create-pool is independent (the pool it creates is not consumed);
+//     the remaining GDA pool actions (update-member-units/distribute/
 //     distribute-flow/connect-pool) are in `skipped` so ordering doesn't
 //     affect on-chain state.
 export default defineAbiProtocol({
