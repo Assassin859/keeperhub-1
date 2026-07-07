@@ -11,6 +11,20 @@ const SIGN_IN_TEXT_REGEX = /sign in|welcome|log in|create account/i;
 const ANALYTICS_PATH_REGEX = /\/analytics/;
 
 test.describe("Logged-out navigation sidebar (NAV-01..05, NAV-08)", () => {
+  // A visitor with no session is now walled at /welcome; the logged-out canvas
+  // (with its sidebar) is reached through the "Explore without signing in"
+  // guest path, which mints an anonymous session and sets the continue-as-guest
+  // flag. Establish that once per test so the sidebar renders.
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+    const guest = page.getByRole("button", {
+      name: "Explore without signing in",
+    });
+    await expect(guest).toBeVisible({ timeout: 15_000 });
+    await guest.click();
+    await expect(page).not.toHaveURL(/\/welcome/, { timeout: 15_000 });
+  });
+
   test("Anonymous load: every nav item is visible (NAV-01)", async ({
     page,
   }) => {

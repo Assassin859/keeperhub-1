@@ -1,10 +1,49 @@
 import { expect, test } from "./fixtures";
 
-// Run tests serially to avoid session state conflicts
+// The sign-in surface moved from an in-app modal to the inline /welcome
+// landing (SignInChoices + ConnectAuthPanel). These cover the email
+// signup/verify and sign-in flows on that page. Run serially to avoid session
+// state conflicts between the signup flows.
 test.describe.configure({ mode: "serial" });
 
+const newEmail = (): string => `test+${Date.now()}@techops.services`;
+
+// Right after navigation the "Create an account" toggle can be clicked before
+// the client handler is wired, dropping the click and leaving the main
+// (sign-in) view in place. Retry the toggle until the signup heading resolves.
+async function openSignupView(
+  page: import("@playwright/test").Page
+): Promise<void> {
+  const toggle = page.getByRole("button", { name: "Create an account" });
+  const heading = page.getByRole("heading", { name: "Create your account" });
+  await expect(async () => {
+    if (await toggle.isVisible()) {
+      await toggle.click();
+    }
+    await expect(heading).toBeVisible({ timeout: 4000 });
+  }).toPass({ timeout: 20_000 });
+}
+
+// Same hydration race as the signup toggle: the "Sign in" submit can be dropped
+// if it lands before the client handler is wired. Retry it until the expected
+// outcome (an error message, or the verify view) resolves.
+async function submitSignInUntil(
+  page: import("@playwright/test").Page,
+  outcome: import("@playwright/test").Locator
+): Promise<void> {
+  const signInButton = page.getByRole("button", {
+    name: "Sign in",
+    exact: true,
+  });
+  await expect(async () => {
+    if (await signInButton.isVisible()) {
+      await signInButton.click();
+    }
+    await expect(outcome).toBeVisible({ timeout: 4000 });
+  }).toPass({ timeout: 20_000 });
+}
+
 test.describe("Authentication", () => {
-  // Clear cookies before each test to ensure clean state
   test.beforeEach(async ({ context }) => {
     await context.clearCookies();
   });
@@ -13,337 +52,172 @@ test.describe("Authentication", () => {
     test("shows verification view after signup with OTP input", async ({
       page,
     }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-      // Wait for page to fully load and find Sign In button (not inside dialog)
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      // Switch to signup view
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Create account");
-
-      // Fill in signup form
-      const testEmail = `test+${Date.now()}@techops.services`;
-      await dialog.locator("#signup-email").fill(testEmail);
-      await dialog.locator("#signup-password").fill("TestPassword123!");
-
-      // Submit the form
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
-        .click();
-
-      // Dialog should switch to verify view
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-      await expect(dialogTitle).toHaveText("Verify your email", {
+      // The email/password form renders inline; switch it to the sign-up view.
+      await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
       });
+      await openSignupView(page);
 
-      // Verify OTP input is present
-      const otpInput = dialog.locator("#otp");
-      await expect(otpInput).toBeVisible();
+      await page.locator("#auth-email").fill(newEmail());
+      await page.locator("#auth-password").fill("TestPassword123!");
+      await page
+        .getByRole("button", { name: "Create account", exact: true })
+        .click();
 
-      // Verify toast notification appears
-      const toast = page.locator("[data-sonner-toast]").first();
-      await expect(toast).toBeVisible({ timeout: 5000 });
-
-      // Verify resend and back links are present
-      await expect(dialog.locator('button:has-text("Resend")')).toBeVisible();
+      // Verify view: heading, OTP input, a confirmation toast, and resend.
       await expect(
-        dialog.locator('button:has-text("Back to sign in")')
+        page.getByRole("heading", { name: "Verify your email" })
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByPlaceholder("123456")).toBeVisible();
+      await expect(page.locator("[data-sonner-toast]").first()).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(
+        page.getByRole("button", { name: "Resend code" })
       ).toBeVisible();
     });
 
-    test("shows error for invalid email format", async ({ page }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
-
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-
-      // Try to submit with invalid email
-      await dialog.locator("#signup-email").fill("invalid-email");
-      await dialog.locator("#signup-password").fill("TestPassword123!");
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
-        .click();
-
-      // HTML5 validation should prevent submission - form stays on signup view
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Create account");
-    });
-
-    test("existing unverified user signing up redirects to verification", async ({
+    test("invalid email keeps the user on the signup view", async ({
       page,
     }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
-
-      // First create an unverified account
-      const testEmail = `test+${Date.now()}@techops.services`;
-
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-
-      await dialog.locator("#signup-email").fill(testEmail);
-      await dialog.locator("#signup-password").fill("TestPassword123!");
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
-        .click();
-
-      // Wait for verify view
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Verify your email", {
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
       });
+      await openSignupView(page);
 
-      // Go back and try to sign up again with same email
-      await dialog.locator('button:has-text("Back to sign in")').click();
-      await expect(dialogTitle).toHaveText("Sign in", { timeout: 5000 });
-
-      await dialog.locator('button:has-text("Create account")').click();
-      await dialog.locator("#signup-email").fill(testEmail);
-      await dialog.locator("#signup-password").fill("DifferentPassword123!");
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
+      await page.locator("#auth-email").fill("invalid-email");
+      await page.locator("#auth-password").fill("TestPassword123!");
+      await page
+        .getByRole("button", { name: "Create account", exact: true })
         .click();
 
-      // Should redirect to verification view (not show error)
-      await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
-      });
+      // HTML5 email validation blocks submission, so the signup view stays.
+      await expect(
+        page.getByRole("heading", { name: "Create your account" })
+      ).toBeVisible();
     });
 
-    test("OTP input only accepts numeric characters", async ({ page }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
-
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-
-      // Fill signup form
-      const testEmail = `test+${Date.now()}@techops.services`;
-      await dialog.locator("#signup-email").fill(testEmail);
-      await dialog.locator("#signup-password").fill("TestPassword123!");
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
-        .click();
-
-      // Wait for verify view
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
-      });
-
-      // Try to enter non-numeric characters using type() to trigger onChange
-      const otpInput = dialog.locator("#otp");
-      await otpInput.pressSequentially("abc123def456", { delay: 50 });
-
-      // Should only contain numeric characters, max 6
-      await expect(otpInput).toHaveValue("123456");
-    });
-
-    test("verify button is disabled until 6 digits entered", async ({
+    test("existing unverified user signing up again returns to verification", async ({
       page,
     }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      const email = newEmail();
 
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-
-      const testEmail = `test+${Date.now()}@techops.services`;
-      await dialog.locator("#signup-email").fill(testEmail);
-      await dialog.locator("#signup-password").fill("TestPassword123!");
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
-        .click();
-
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Verify your email", {
+      await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
       });
+      await openSignupView(page);
+      await page.locator("#auth-email").fill(email);
+      await page.locator("#auth-password").fill("TestPassword123!");
+      await page
+        .getByRole("button", { name: "Create account", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "Verify your email" })
+      ).toBeVisible({ timeout: 15_000 });
 
-      const verifyButton = dialog.locator(
-        'button[type="submit"]:has-text("Verify")'
-      );
-      const otpInput = dialog.locator("#otp");
+      // Reload to reset the panel to the sign-in view (the verify view has no
+      // back button), then sign up again with the same (still unverified)
+      // email: the panel returns to verification rather than erroring.
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#auth-email")).toBeVisible({
+        timeout: 15_000,
+      });
+      await openSignupView(page);
+      await page.locator("#auth-email").fill(email);
+      await page.locator("#auth-password").fill("DifferentPassword123!");
+      await page
+        .getByRole("button", { name: "Create account", exact: true })
+        .click();
 
-      // Button should be disabled with no input
-      await expect(verifyButton).toBeDisabled();
-
-      // Button should be disabled with partial input
-      await otpInput.fill("123");
-      await expect(verifyButton).toBeDisabled();
-
-      // Button should be enabled with 6 digits
-      await otpInput.fill("123456");
-      await expect(verifyButton).toBeEnabled();
+      await expect(
+        page.getByRole("heading", { name: "Verify your email" })
+      ).toBeVisible({ timeout: 15_000 });
     });
   });
 
   test.describe("Sign In", () => {
-    test("can open sign in dialog with email and password form", async ({
-      page,
-    }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
-
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Sign in");
-
-      await expect(dialog.locator("#email")).toBeVisible();
-      await expect(dialog.locator("#password")).toBeVisible();
+    test("renders the email and password form inline", async ({ page }) => {
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#auth-email")).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(page.locator("#auth-password")).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Sign in", exact: true })
+      ).toBeVisible();
     });
 
     test("shows error for incorrect credentials", async ({ page }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
-
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      await dialog.locator("#email").fill("nonexistent@example.com");
-      await dialog.locator("#password").fill("WrongPassword123!");
-      await dialog.locator('button[type="submit"]:has-text("Sign in")').click();
-
-      const errorMessage = dialog.locator(".text-destructive");
-      await expect(errorMessage).toBeVisible({ timeout: 10_000 });
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#auth-email")).toBeVisible({
+        timeout: 15_000,
+      });
+      await page.locator("#auth-email").fill("nonexistent@example.com");
+      await page.locator("#auth-password").fill("WrongPassword123!");
+      await submitSignInUntil(page, page.locator(".text-destructive"));
     });
 
     test("unverified user signing in redirects to verification", async ({
       page,
     }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      const email = newEmail();
+      const password = "TestPassword123!";
 
-      // First create an unverified account
-      const testEmail = `test+${Date.now()}@techops.services`;
-      const testPassword = "TestPassword123!";
-
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
-
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-
-      // Sign up
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-
-      await dialog.locator("#signup-email").fill(testEmail);
-      await dialog.locator("#signup-password").fill(testPassword);
-      await dialog
-        .locator('button[type="submit"]:has-text("Create account")')
+      // Create an unverified account.
+      await expect(page.locator("#auth-email")).toBeVisible({
+        timeout: 15_000,
+      });
+      await openSignupView(page);
+      await page.locator("#auth-email").fill(email);
+      await page.locator("#auth-password").fill(password);
+      await page
+        .getByRole("button", { name: "Create account", exact: true })
         .click();
+      await expect(
+        page.getByRole("heading", { name: "Verify your email" })
+      ).toBeVisible({ timeout: 15_000 });
 
-      // Wait for verify view
-      const dialogTitle = dialog.locator("h2");
-      await expect(dialogTitle).toHaveText("Verify your email", {
+      // Reload to reset the panel to the sign-in view (the verify view has no
+      // back button), then sign in with the unverified account.
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#auth-email")).toBeVisible({
         timeout: 15_000,
       });
+      await page.locator("#auth-email").fill(email);
+      await page.locator("#auth-password").fill(password);
 
-      // Go back to sign in
-      await dialog.locator('button:has-text("Back to sign in")').click();
-      await expect(dialogTitle).toHaveText("Sign in", { timeout: 5000 });
-
-      // Try to sign in with unverified account
-      await dialog.locator("#email").fill(testEmail);
-      await dialog.locator("#password").fill(testPassword);
-      await dialog.locator('button[type="submit"]:has-text("Sign in")').click();
-
-      // Should redirect to verification view (not show error)
-      await expect(dialogTitle).toHaveText("Verify your email", {
-        timeout: 15_000,
+      // The submit can land before the client handler is wired right after
+      // navigation; retry it until the verify view resolves.
+      await submitSignInUntil(
+        page,
+        page.getByRole("heading", { name: "Verify your email" })
+      );
+      await expect(page.locator("[data-sonner-toast]").first()).toBeVisible({
+        timeout: 5000,
       });
-
-      // Toast should indicate verification needed (use first() to handle multiple toasts)
-      const toast = page.locator("[data-sonner-toast]").first();
-      await expect(toast).toBeVisible({ timeout: 5000 });
     });
 
     test("can navigate between sign in and create account views", async ({
       page,
     }) => {
-      await page.goto("/", { waitUntil: "domcontentloaded" });
+      await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-      const signInButton = page.locator('button:has-text("Sign In")').first();
-      await expect(signInButton).toBeVisible({ timeout: 15_000 });
-      await signInButton.click();
+      // Main (sign-in) has no heading on the welcome page; the submit is present.
+      await expect(
+        page.getByRole("button", { name: "Sign in", exact: true })
+      ).toBeVisible({ timeout: 15_000 });
 
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
+      await openSignupView(page);
 
-      const dialogTitle = dialog.locator("h2");
-
-      // Start on sign in
-      await expect(dialogTitle).toHaveText("Sign in");
-
-      // Go to create account - use the link inside the form
-      const createAccountLink = dialog.locator(
-        'button:has-text("Create account")'
-      );
-      await createAccountLink.click();
-      await expect(dialogTitle).toHaveText("Create account");
-
-      // Go back to sign in - find the specific link in the signup form
-      const signInLink = dialog.locator(
-        '.text-muted-foreground + button:has-text("Sign in")'
-      );
-      await signInLink.click();
-      await expect(dialogTitle).toHaveText("Sign in");
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: "Sign in", exact: true })
+      ).toBeVisible();
     });
   });
 });

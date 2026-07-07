@@ -15,7 +15,13 @@ test.describe("onboarding: sign-in card", () => {
   test("shows the sign-in card and does not return once dismissed", async ({
     page,
   }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    // A no-session visitor is walled at /welcome; reach the logged-out canvas
+    // (where the one-card sign-in tour is anchored) via the guest path.
+    await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+    await page
+      .getByRole("button", { name: "Explore without signing in" })
+      .click();
+    await expect(page).not.toHaveURL(/\/welcome/, { timeout: 15_000 });
 
     const popover = page.locator(".driver-popover");
     await expect(popover).toBeVisible({ timeout: 20_000 });
@@ -58,9 +64,14 @@ test.describe("onboarding: editor walkthrough", () => {
     });
     await page.reload({ waitUntil: "domcontentloaded" });
 
-    // Expand the launcher, then launch the tour from its footer.
-    await page.getByTestId("gs-launcher-pill").click();
-    const takeTour = page.getByRole("button", { name: "Take a tour" });
+    // The launcher auto-expands for a fresh (never-seen) user; launch the tour
+    // from a step's footer.
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
+    const takeTour = page
+      .getByRole("button", { name: "Take a guided tour" })
+      .first();
     await expect(takeTour).toBeVisible({ timeout: 20_000 });
     await takeTour.click();
 

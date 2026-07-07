@@ -132,7 +132,7 @@ export async function installWalletStub(
  */
 export async function completeWalletLogin(page: Page): Promise<void> {
   await page.goto("/welcome", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Sign in with your wallet" }).click();
+  await page.getByRole("button", { name: "Wallet" }).click();
   await page.getByTestId("connect-wallet-io.metamask").click();
 
   // SIWE login mints the session and redirects into the app (the onboarding

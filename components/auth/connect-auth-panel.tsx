@@ -129,9 +129,23 @@ export function ConnectAuthPanel({
       });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
+        code?: string;
         signedIn?: boolean;
       };
       if (!response.ok) {
+        // An existing but unverified account can't sign in yet. Re-send the
+        // verification code and route to the verify view so the user can
+        // finish, rather than dead-ending on an inline error with no input.
+        if (body.code === "email_not_verified") {
+          await authClient.emailOtp.sendVerificationOtp({
+            email,
+            type: "email-verification",
+          });
+          setOtp("");
+          setView("verify");
+          toast.info("Verify your email to continue.");
+          return;
+        }
         setError(body.error ?? "Sign in failed");
         return;
       }
