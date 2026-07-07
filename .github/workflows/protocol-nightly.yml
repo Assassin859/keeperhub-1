@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
   packages: read
+  # Granted through to e2e-tests-ephemeral.yml (called workflows can
+  # only downgrade caller permissions): the tier1 job lists/downloads
+  # the nightly fork-snapshot artifact.
+  actions: read
 
 jobs:
   e2e-full:

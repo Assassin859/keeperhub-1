@@ -12,6 +12,10 @@ permissions:
   contents: write
   pull-requests: write
   id-token: write
+  # Granted through to e2e-tests-ephemeral.yml (called workflows can
+  # only downgrade caller permissions): the tier1 job lists/downloads
+  # the nightly fork-snapshot artifact.
+  actions: read
 
 jobs:
   # Build Docker images once for push/dispatch events (staging/prod).
