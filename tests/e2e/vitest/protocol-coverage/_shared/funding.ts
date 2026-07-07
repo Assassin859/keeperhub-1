@@ -39,6 +39,25 @@ export const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
 ];
 
+/**
+ * Run `fn` with `address` impersonated on an anvil fork, guaranteeing
+ * anvil_stopImpersonatingAccount runs even when the callback throws.
+ * Shared by the fork provisioning paths below and the Tier 1 simulation
+ * harness so the impersonate/stop bracket cannot drift between copies.
+ */
+export async function withImpersonation<T>(
+  provider: ethers.JsonRpcProvider,
+  address: string,
+  fn: (signer: ethers.JsonRpcSigner) => Promise<T>
+): Promise<T> {
+  await provider.send("anvil_impersonateAccount", [address]);
+  try {
+    return await fn(await provider.getSigner(address));
+  } finally {
+    await provider.send("anvil_stopImpersonatingAccount", [address]);
+  }
+}
+
 // chains.defaultPrimaryRpc is bootstrap-time data; memoize per process so a
 // test session opening 3+ helpers (ensureNativeGas + one per requiredTokens)
 // pays one Postgres round-trip per chain on the first miss and zero on every
@@ -102,7 +121,7 @@ export async function ensureNativeGas(
     // anvil_setBalance sets the balance to an absolute value in hex wei.
     await provider.send("anvil_setBalance", [
       address,
-      "0x" + topUpWei.toString(16),
+      `0x${topUpWei.toString(16)}`,
     ]);
     return;
   }
@@ -215,9 +234,7 @@ async function ensureErc20OnFork(
     whale.address,
     "0x8ac7230489e80000",
   ]);
-  await provider.send("anvil_impersonateAccount", [whale.address]);
-  try {
-    const whaleSigner = await provider.getSigner(whale.address);
+  await withImpersonation(provider, whale.address, async (whaleSigner) => {
     const tokenAsWhale = new ethers.Contract(
       tokenEntry.address,
       ERC20_ABI,
@@ -225,9 +242,7 @@ async function ensureErc20OnFork(
     );
     const tx = await tokenAsWhale.transfer(walletAddress, gap);
     await tx.wait();
-  } finally {
-    await provider.send("anvil_stopImpersonatingAccount", [whale.address]);
-  }
+  });
 }
 
 /**
@@ -277,15 +292,11 @@ async function mintViaFaucetOnFork(
   }
   const args = bindFaucetArgs(fn, tokenEntry.address, walletAddress, gap);
 
-  await provider.send("anvil_impersonateAccount", [walletAddress]);
-  try {
-    const signer = await provider.getSigner(walletAddress);
+  await withImpersonation(provider, walletAddress, async (signer) => {
     const contract = new ethers.Contract(faucet.contract, abi, signer);
     const tx = await contract[faucet.functionName](...args);
     await tx.wait();
-  } finally {
-    await provider.send("anvil_stopImpersonatingAccount", [walletAddress]);
-  }
+  });
 }
 
 /**

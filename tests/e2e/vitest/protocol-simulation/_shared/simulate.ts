@@ -30,13 +30,14 @@ import {
   encodeBoundAction,
   encodeSetupSteps,
 } from "@/lib/test-data/encode-action";
+import { planPhaseFixtures } from "@/lib/test-data/plan";
 import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
   ERC20_ABI,
   ensureErc20Acquired,
+  withImpersonation,
 } from "../../protocol-coverage/_shared/funding";
 import { checkOutputExpectation } from "../../protocol-coverage/_shared/oracle";
-import { planPhaseFixtures } from "../../protocol-coverage/_shared/plan";
 
 /** Fixed simulation wallet: any address works under impersonation; fixed
  *  keeps behavior reproducible across runs. Distinct from anvil's dev
@@ -51,17 +52,13 @@ async function sendImpersonatedOnce(
   from: string,
   tx: { to: string; data?: string; value?: bigint }
 ): Promise<void> {
-  await provider.send("anvil_impersonateAccount", [from]);
-  try {
-    const signer = await provider.getSigner(from);
+  await withImpersonation(provider, from, async (signer) => {
     const sent = await signer.sendTransaction(tx);
     const receipt = await sent.wait();
     if (!receipt || receipt.status !== 1) {
       throw new Error(`impersonated tx to ${tx.to} reverted`);
     }
-  } finally {
-    await provider.send("anvil_stopImpersonatingAccount", [from]);
-  }
+  });
 }
 
 async function impersonatedSend(
@@ -164,11 +161,8 @@ async function runRead(
     Interface["decodeFunctionResult"]
   >[0];
   const decoded = encoded.iface.decodeFunctionResult(fragment, ret);
-  const outputs =
-    JSON.parse((fragment as { format: (f: string) => string }).format("json"))
-      .outputs ?? [];
   const values = serializeResult([...decoded]);
-  return structureAbiOutputs(values as unknown[], outputs);
+  return structureAbiOutputs(values as unknown[], encoded.abiOutputs);
 }
 
 export function runSimulation(opts: {
