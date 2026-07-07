@@ -281,7 +281,7 @@ export function ScanLanding(): React.ReactElement {
 
   return (
     <>
-      <main className="pointer-events-auto fixed inset-0 overflow-y-auto bg-[var(--color-hub-overlay)] pt-[calc(5rem+var(--app-banner-height,0px))]">
+      <main className="pointer-events-auto fixed inset-0 overflow-y-auto bg-[var(--color-hub-overlay)] bg-[radial-gradient(ellipse_80%_60%_at_50%_-10%,color-mix(in_oklab,var(--keeperhub-green)_7%,transparent),transparent)] pt-[calc(5rem+var(--app-banner-height,0px))]">
         <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-content-offset,var(--nav-sidebar-width,60px))]">
           <div className="mx-auto max-w-5xl px-4 pb-16 sm:px-6">
             {isCompact ? (
@@ -304,10 +304,10 @@ export function ScanLanding(): React.ReactElement {
                 <h1 className="mb-1 font-bold text-3xl leading-tight tracking-tight text-foreground">
                   {appName}
                 </h1>
-                <p className="mb-4 text-muted-foreground">
+                <p className="mb-7 text-muted-foreground">
                   Automate anything onchain
                 </p>
-                <p className="mb-8 text-foreground/80 text-sm">
+                <p className="mb-4 text-foreground/80 text-sm">
                   Scan any wallet or contract to see live DeFi positions and
                   turn them into ready-to-run Keeper Workflows
                 </p>
