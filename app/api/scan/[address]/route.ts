@@ -45,7 +45,10 @@ import { getRequestSourceIp } from "@/lib/security/request-attribution";
 export const dynamic = "force-dynamic";
 
 /** Scans that pass with no wait within one hour bucket. */
-const FREE_SCAN_LIMIT = 6;
+// 30/hour: generous enough that a real user exploring several addresses (and
+// re-scans, which also consume budget) never hits it, while the backoff tail
+// below still throttles scripted abuse of the anonymous endpoint.
+const FREE_SCAN_LIMIT = 30;
 /** First backoff step; doubles per additional scan (30s, 60s, 120s, ...). */
 const BACKOFF_BASE_SECONDS = 30;
 
