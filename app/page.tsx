@@ -20,12 +20,6 @@ import {
   type WorkflowNode,
 } from "@/lib/workflow/store";
 
-// When scanning is enabled, "/" is the scan landing page instead of the blank
-// canvas: the funnel entry point (input + suggestions) plus the builder entry
-// points ("Start building" / "Browse the Hub"). Build-time inlined, so the
-// value is constant per build.
-const SCAN_LANDING = process.env.NEXT_PUBLIC_SCAN_ENABLED === "true";
-
 const Home = () => {
   const router = useRouter();
   const { data: session, isPending: sessionPending } = useSession();
@@ -34,7 +28,6 @@ const Home = () => {
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
   const setCurrentWorkflowName = useSetAtom(currentWorkflowNameAtom);
   const setHasSidebarBeenShown = useSetAtom(hasSidebarBeenShownAtom);
-  const currentWorkflowName = useAtomValue(currentWorkflowNameAtom);
   const tourRequested = useAtomValue(editorTourRequestedAtom);
   const { startBuilding } = useStartBuilding();
 
@@ -82,15 +75,6 @@ const Home = () => {
     }
   }, [sessionPending, session, router, setGate]);
 
-  // Update page title when workflow name changes. On the scan landing the
-  // canvas is not shown, so keep the app-level title instead of "New Workflow".
-  useEffect(() => {
-    if (SCAN_LANDING) {
-      return;
-    }
-    document.title = `${currentWorkflowName} - KeeperHub`;
-  }, [currentWorkflowName]);
-
   // Launch the editor walkthrough when "Take a tour" was requested (from the
   // account menu or the Setup Guide): build the fresh default workflow the
   // walkthrough controller drives. startBuilding then navigates into the editor.
@@ -105,8 +89,8 @@ const Home = () => {
     }
   }, [tourRequested, session]);
 
-  // Initialize with a temporary "add" node on mount. On the scan landing the
-  // canvas never mounts, but the reset still matters: it clears any workflow
+  // Canvas-atom reset on mount. The canvas never mounts on "/" (the scan
+  // landing owns it), but the reset still matters: it clears any workflow
   // state left behind by a previous /workflows/{id} visit (toolbar, autosave).
   useEffect(() => {
     const addNodePlaceholder: WorkflowNode = {
@@ -142,16 +126,11 @@ const Home = () => {
     );
   }
 
-  if (SCAN_LANDING) {
-    return (
-      <Suspense fallback={null}>
-        <ScanLanding />
-      </Suspense>
-    );
-  }
-
-  // Canvas and toolbar are rendered by PersistentCanvas in the layout
-  return null;
+  return (
+    <Suspense fallback={null}>
+      <ScanLanding />
+    </Suspense>
+  );
 };
 
 export default Home;

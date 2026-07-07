@@ -57,15 +57,6 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ address: string }> }
 ): Promise<Response> {
-  // HARDEN-04: fail-closed feature flag gate. Any absent/empty/non-"true"
-  // value → 404 with no validation, rate-limit, or RPC work performed.
-  if (process.env.NEXT_PUBLIC_SCAN_ENABLED !== "true") {
-    return Response.json(
-      { error: "Not found" },
-      { status: HttpStatus.NOT_FOUND }
-    );
-  }
-
   const { address: rawQuery } = await params;
 
   // Accept a raw EVM address or a name-shaped ENS query. Reject anything that
