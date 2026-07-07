@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
+import { AddressActions } from "@/components/scan/address-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -41,6 +42,9 @@ import {
   nodesAtom,
   rightPanelWidthAtom,
 } from "@/lib/workflow/store";
+
+/** A confirmInputs value that is a raw EVM address. */
+const ADDRESS_DISPLAY_RE = /^0x[0-9a-fA-F]{40}$/;
 
 type SuggestionPreviewDrawerProps = {
   suggestion: SuggestionDescriptor | null;
@@ -394,14 +398,24 @@ export function SuggestionPreviewDrawer({
       key === "walletAddress" && addressKind === "contract"
         ? "Contract address"
         : addressFieldLabel(key);
+    const isAddress = ADDRESS_DISPLAY_RE.test(value);
     return (
       <div className="mb-3" key={key}>
-        <label
-          className="mb-1 block text-muted-foreground text-xs"
-          htmlFor={`param-${key}`}
-        >
-          {label}
-        </label>
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <label
+            className="block text-muted-foreground text-xs"
+            htmlFor={`param-${key}`}
+          >
+            {label}
+          </label>
+          {isAddress ? (
+            <AddressActions
+              address={value}
+              canBookmark={isAuthenticated}
+              chainId={activeSuggestion.chainId}
+            />
+          ) : null}
+        </div>
         <Input
           className="cursor-default bg-muted font-mono text-sm"
           id={`param-${key}`}
