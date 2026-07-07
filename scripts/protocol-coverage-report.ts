@@ -24,7 +24,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import "../protocols";
 import { getRegisteredProtocols } from "../lib/protocol-registry";
-import { planPhaseFixtures } from "../tests/e2e/vitest/protocol-coverage/_shared/plan";
+import { planPhaseFixtures } from "../lib/test-data/plan";
 import {
   countAssertions,
   type VitestAssertionCounts,

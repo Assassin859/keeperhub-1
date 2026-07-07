@@ -5,7 +5,9 @@
  * which throws when loaded outside a test run - and this logic is also
  * consumed by scripts/protocol-coverage-report.ts (a tsx CLI). The
  * coverage report must agree exactly with what the runner registers, so
- * both import this single implementation.
+ * both import this single implementation. Placed under lib/test-data
+ * (its only import is type-only) so non-test consumers do not have to
+ * reach into tests/.
  */
 
 import type {

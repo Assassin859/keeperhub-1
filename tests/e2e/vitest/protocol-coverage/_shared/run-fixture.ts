@@ -15,6 +15,7 @@ import {
   buildActionWorkflow,
   toWebhookTriggered,
 } from "@/lib/test-data/build-workflow";
+import { planPhaseFixtures } from "@/lib/test-data/plan";
 import {
   createApiKey,
   createTestWorkflow,
@@ -23,12 +24,12 @@ import {
   waitForWorkflowExecution,
 } from "@/tests/utils/db";
 import { checkOutputExpectation, fetchNodeOutput } from "./oracle";
-import { planPhaseFixtures } from "./plan";
 import type { SharedCtx } from "./setup";
 
-// Planning logic lives in ./plan (vitest-free) so the coverage report CLI
-// can share it; re-exported here to keep existing import sites working.
-export { type FixtureCase, planPhaseFixtures } from "./plan";
+// Planning logic lives in lib/test-data/plan (vitest-free) so the coverage
+// report CLI can share it; re-exported here to keep existing import sites
+// working.
+export { type FixtureCase, planPhaseFixtures } from "@/lib/test-data/plan";
 
 const TIMEOUT_MS = 120_000;
 

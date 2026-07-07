@@ -30,13 +30,13 @@ import {
   encodeBoundAction,
   encodeSetupSteps,
 } from "@/lib/test-data/encode-action";
+import { planPhaseFixtures } from "@/lib/test-data/plan";
 import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
   ERC20_ABI,
   ensureErc20Acquired,
 } from "../../protocol-coverage/_shared/funding";
 import { checkOutputExpectation } from "../../protocol-coverage/_shared/oracle";
-import { planPhaseFixtures } from "../../protocol-coverage/_shared/plan";
 
 /** Fixed simulation wallet: any address works under impersonation; fixed
  *  keeps behavior reproducible across runs. Distinct from anvil's dev
