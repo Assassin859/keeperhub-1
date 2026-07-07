@@ -14,7 +14,7 @@ permissions:
   id-token: write
   # Granted through to e2e-tests-ephemeral.yml (called workflows can
   # only downgrade caller permissions): the tier1 job lists/downloads
-  # the nightly fork-snapshot artifact.
+  # the nightly fork-cache artifact.
   actions: read
 
 jobs:

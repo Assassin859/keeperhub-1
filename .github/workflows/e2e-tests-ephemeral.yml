@@ -49,7 +49,7 @@ on:
 permissions:
   contents: read
   id-token: write
-  # Listing/downloading the nightly fork-snapshot artifact (tier1 job);
+  # Listing/downloading the nightly fork-cache artifact (tier1 job);
   # callers must grant it too or the download falls back to a live fork.
   actions: read
 
@@ -195,62 +195,93 @@ jobs:
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
-      # The snapshot is produced by protocol-nightly.yml, a different
+      # The cache is produced by protocol-nightly.yml, a different
       # workflow, and actions/download-artifact cannot fetch across
       # workflows without a concrete run id - list and download through
-      # gh api instead (this repo's existing pattern for cross-run API
-      # access, see pr-checks.yml). Every failure mode (no artifact yet,
-      # expired, API error, malformed contents) exits 0 with empty
-      # outputs so the fork-start step falls back to the live fork.
-      - name: Download latest warm fork-state snapshot
-        id: fork-snapshot
+      # gh api with github.token instead (the token this repo's other
+      # workflows already use for API access; the cross-workflow
+      # artifact listing itself is new here). Consumption requires
+      # ANVIL_FORK_MAINNET_URL: the cache serves warmed state locally,
+      # but cold reads at a day-old pin need an archive upstream.
+      # Every failure mode (no secret, no fresh staging artifact, API
+      # error, corrupt zip/tar, bad name) exits 0 with empty outputs so
+      # the fork-start step falls back to the live fork.
+      - name: Download latest fork RPC cache
+        id: fork-cache
         env:
           GH_TOKEN: ${{ github.token }}
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
         run: |
-          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=fork-snapshot-mainnet&per_page=10" \
-            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' \
-            2>/dev/null) || artifact_id=""
-          if [ -z "$artifact_id" ]; then
-            echo "no fork-snapshot-mainnet artifact available; will start a live fork"
+          if [ -z "$ANVIL_FORK_MAINNET_URL" ]; then
+            echo "ANVIL_FORK_MAINNET_URL not set; cold reads at a stale pin need an archive upstream - will start a live fork"
             exit 0
           fi
-          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > fork-snapshot.zip; then
+          # Freshness gates: only a non-expired artifact from the last
+          # 36 hours whose producing run was on staging (a nightly on
+          # the default branch, not a fork-cache job from a topic
+          # branch experiment).
+          cutoff=$(date -u -d '36 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=fork-cache-mainnet&per_page=10" \
+            --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"staging\" and .created_at > \"${cutoff}\")] | sort_by(.created_at) | last | .id // empty" \
+            2>/dev/null) || artifact_id=""
+          if [ -z "$artifact_id" ]; then
+            echo "no fresh fork-cache-mainnet artifact from staging; will start a live fork"
+            exit 0
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > fork-cache.zip; then
             echo "artifact ${artifact_id} download failed; will start a live fork"
             exit 0
           fi
-          mkdir -p fork-snapshot
-          unzip -o fork-snapshot.zip -d fork-snapshot
-          file=$(find fork-snapshot -maxdepth 1 -name 'ethereum-*.json' | head -n 1)
-          block=""
-          if [ -n "$file" ]; then
-            block=$(basename "$file" .json | grep -oE '[0-9]+$') || true
-          fi
-          if [ -z "$file" ] || [ -z "$block" ]; then
-            echo "snapshot artifact has no ethereum-<block>.json; will start a live fork"
+          if ! unzip -o fork-cache.zip -d fork-cache-artifact; then
+            echo "artifact ${artifact_id} unzip failed; will start a live fork"
             exit 0
           fi
-          echo "using snapshot ${file} (pinned block ${block})"
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          tarball=$(find fork-cache-artifact -maxdepth 1 -name 'fork-cache-mainnet-*.tgz' | head -n 1)
+          block=""
+          if [ -n "$tarball" ]; then
+            block=$(basename "$tarball" .tgz | grep -oE '[0-9]+$') || true
+          fi
+          if [ -z "$tarball" ] || [ -z "$block" ]; then
+            echo "artifact has no fork-cache-mainnet-<block>.tgz; will start a live fork"
+            exit 0
+          fi
+          mkdir -p fork-cache
+          if ! tar -xzf "$tarball" -C fork-cache; then
+            echo "cache tar extraction failed; will start a live fork"
+            rm -rf fork-cache
+            exit 0
+          fi
+          if [ ! -f "fork-cache/rpc/mainnet/${block}/storage.json" ]; then
+            echo "cache tar lacks rpc/mainnet/${block}/storage.json; will start a live fork"
+            rm -rf fork-cache
+            exit 0
+          fi
+          # anvil runs as uid 1000 (foundry) in the container; the
+          # runner user extracting the tar is a different uid.
+          chmod -R a+rX fork-cache
+          echo "using fork cache at pinned block ${block}"
+          echo "dir=fork-cache" >> "$GITHUB_OUTPUT"
           echo "block=$block" >> "$GITHUB_OUTPUT"
 
       - name: Start anvil Ethereum mainnet fork
         run: |
-          SNAPSHOT_FILE="${{ steps.fork-snapshot.outputs.file }}"
-          if [ -n "$SNAPSHOT_FILE" ]; then
-            # Warm-state fork: load last night's dump and re-pin to its
-            # dump block, so every slot the sweep touched is served
-            # locally with zero hot-path upstream reads; only cold state
-            # lazy-fetches from the fork URL. The dump is only valid at
-            # the block its values were fetched at, hence the explicit
-            # --fork-block-number. Measured dump/load behavior is
+          CACHE_DIR="${{ steps.fork-cache.outputs.dir }}"
+          if [ -n "$CACHE_DIR" ]; then
+            # Cache-loaded fork: mount the nightly RPC fetch cache at
+            # foundry's cache path and re-pin to the block its values
+            # were fetched at. Everything the nightly sweep touched is
+            # served locally with zero upstream requests, and the fork
+            # starts pristine (the cache holds upstream fetches, not
+            # sweep mutations); cold state lazy-fetches from the
+            # archive upstream at the pin, which the download step
+            # guaranteed is configured. Measured cache behavior is
             # documented in scripts/protocol-local.sh (start_fork).
             docker run -d --name keeperhub-test-anvil-fork-mainnet -p 8548:8545 \
-              -v "$PWD/fork-snapshot:/snapshot:ro" --entrypoint anvil \
-              ghcr.io/foundry-rs/foundry:latest \
+              -v "$PWD/$CACHE_DIR:/home/foundry/.foundry/cache" \
+              --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
               --host 0.0.0.0 \
-              --fork-url "${ANVIL_FORK_MAINNET_URL:-https://ethereum-rpc.publicnode.com}" \
-              --fork-block-number "${{ steps.fork-snapshot.outputs.block }}" \
-              --load-state "/snapshot/$(basename "$SNAPSHOT_FILE")" \
+              --fork-url "$ANVIL_FORK_MAINNET_URL" \
+              --fork-block-number "${{ steps.fork-cache.outputs.block }}" \
               --chain-id 1 --block-time 1
           else
             docker network create keeperhub-network 2>/dev/null || true
@@ -273,7 +304,10 @@ jobs:
 
       # Fail in seconds on a dead fork or upstream instead of as vitest
       # timeouts. eth_getBalance of the beacon deposit contract forces a
-      # pinned-block upstream fetch (untouched by local test state).
+      # pinned-block upstream fetch: the address is untouched by local
+      # test state and never referenced by the sweep, so it cannot be
+      # served from the mounted cache - the probe validates the archive
+      # upstream at the pin even on a cache-loaded fork.
       - name: Fork health probe
         uses: ./.github/actions/probe-forks
         with:
