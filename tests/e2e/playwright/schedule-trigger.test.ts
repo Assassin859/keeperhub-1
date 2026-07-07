@@ -1,9 +1,7 @@
 import { expect, test } from "./fixtures";
 import { gotoCanvas } from "./utils/workflow";
 
-// Top-level regex patterns
 const SELECTED_CLASS_REGEX = /selected/;
-const DATA_SELECTED_REGEX = /true/;
 
 test.describe("Schedule Trigger", () => {
   test.beforeEach(async ({ page }) => {
@@ -65,23 +63,13 @@ test.describe("Schedule Trigger", () => {
     const triggerNode = page.locator(".react-flow__node-trigger").first();
     if (await triggerNode.isVisible()) {
       await triggerNode.click();
-      // Wait for selection state to update
-      await expect(triggerNode).toHaveAttribute(
-        "data-selected",
-        DATA_SELECTED_REGEX
-      );
+      // React Flow marks selection with the "selected" class, not an attribute.
+      await expect(triggerNode).toHaveClass(SELECTED_CLASS_REGEX);
 
-      // Click elsewhere to deselect
-      const canvas = page.locator('[data-testid="workflow-canvas"]');
-      const canvasBox = await canvas.boundingBox();
-      if (canvasBox) {
-        await page.mouse.click(canvasBox.x + 50, canvasBox.y + 50);
-        // Wait for deselection
-        await expect(triggerNode).not.toHaveAttribute(
-          "data-selected",
-          DATA_SELECTED_REGEX
-        );
-      }
+      // Deselect with Escape (same as getWebhookUrl); a pane click is
+      // intercepted by the left flyout and the top promo banner overlays.
+      await page.keyboard.press("Escape");
+      await expect(triggerNode).not.toHaveClass(SELECTED_CLASS_REGEX);
     }
 
     // Verify node count is preserved
