@@ -125,14 +125,15 @@ jobs:
             ${{ runner.os }}-nextjs-
 
       # Same env the start-app action's bare-metal build step used when it
-      # lived inside the e2e vitest job, so the artifact is byte-equivalent
-      # to what that job built for itself. DATABASE_URL is presence-only:
-      # the Docker image build runs pnpm build with no database at all, so
-      # nothing connects during the build.
+      # lived inside the e2e vitest job, except DATABASE_URL, which must be
+      # ABSENT here: build-time prerenders (app/sitemap.ts, tag pages) fall
+      # back to static-only output when it is unset, but rethrow DB errors
+      # when it is set - by design, so misconfigured real builds fail loud.
+      # This job has no postgres, so absent is correct and matches the
+      # Docker image build, the path production artifacts actually use.
       - name: Build application
         run: pnpm build
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           CI: true
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
