@@ -763,6 +763,16 @@ jobs:
             sleep 2
           done
           echo "anvil Sepolia fork restarted with a fresh window"
+          # The restart re-pinned the fork to a new block; verify the
+          # upstream serves state through the fresh pin before spending
+          # minutes in the suites (mirrors the probe-forks action, which
+          # ran before the restart and no longer vouches for this pin).
+          if ! curl -sf -m 15 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' \
+              | grep -q '"result"'; then
+            echo "FORK UPSTREAM DEAD: sepolia (http://localhost:8547) failed the post-restart eth_getBalance probe - the upstream is throttled or not serving the fresh pinned block"
+            exit 1
+          fi
           # Re-point both forked chains at their local anvil forks right
           # before the suites read the rows. Defensive in this job (nothing
           # here rewrites the rows after the fork-start patches, unlike the
@@ -848,6 +858,13 @@ jobs:
           echo "--- sepolia fork eth_getCode (Superfluid CFA forwarder, forces upstream fetch):"
           time curl -sf -m 60 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
+          echo ""
+          echo "--- mainnet fork eth_blockNumber:"
+          time curl -sf -m 20 -X POST http://localhost:8548 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' || echo "PROBE FAILED"
+          echo "--- mainnet fork eth_getCode (beacon deposit contract, forces upstream fetch):"
+          time curl -sf -m 60 -X POST http://localhost:8548 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x00000000219ab540356cBB839Cbe05303d7705Fa","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
           echo ""
           echo "--- anvil sepolia fork logs:"
           docker logs keeperhub-test-anvil-fork 2>&1 | tail -40 || true

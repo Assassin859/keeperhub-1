@@ -38,15 +38,27 @@ runs:
             fail=1
             continue
           fi
-          # Upstream window: force a state read served from the pinned block.
-          if ! resp=$(curl -sf -m 15 -X POST "$url" -H 'Content-Type: application/json' \
-              -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBalance\",\"params\":[\"$addr\",\"latest\"],\"id\":1}"); then
-            echo "FORK UPSTREAM DEAD: $label ($url) did not answer eth_getBalance($addr) within 15s - the upstream is throttled or the pinned block left its window"
-            fail=1
-            continue
-          fi
-          if ! echo "$resp" | grep -q '"result"'; then
-            echo "FORK UPSTREAM ERROR: $label ($url) eth_getBalance($addr) returned: $resp"
+          # Upstream window: force a state read served from the pinned
+          # block. Two attempts with a short pause so a merely-slow
+          # upstream is not declared dead on a single shot.
+          upstream_ok=0
+          upstream_err=""
+          for attempt in 1 2; do
+            if ! resp=$(curl -sf -m 15 -X POST "$url" -H 'Content-Type: application/json' \
+                -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBalance\",\"params\":[\"$addr\",\"latest\"],\"id\":1}"); then
+              upstream_err="FORK UPSTREAM DEAD: $label ($url) did not answer eth_getBalance($addr) within 15s (attempt $attempt of 2) - the upstream is throttled or the pinned block left its window"
+            elif ! echo "$resp" | grep -q '"result"'; then
+              upstream_err="FORK UPSTREAM ERROR: $label ($url) eth_getBalance($addr) returned: $resp"
+            else
+              upstream_ok=1
+              break
+            fi
+            if [ "$attempt" -lt 2 ]; then
+              sleep 5
+            fi
+          done
+          if [ "$upstream_ok" -ne 1 ]; then
+            echo "$upstream_err"
             fail=1
             continue
           fi
