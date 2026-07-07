@@ -16,7 +16,13 @@ import { resolvePostAuthDestination } from "@/lib/post-auth-destination";
  * interface. On success the panel navigates home, where the onboarding gate
  * takes over.
  */
-export function SignInChoices(): React.ReactElement {
+export function SignInChoices({
+  redirectTo,
+}: {
+  // Where to land after a successful sign-in; forwarded to the email panel and
+  // the wallet path. Defaults to the resolved post-auth destination.
+  redirectTo?: string;
+} = {}): React.ReactElement {
   const [showWallet, setShowWallet] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
@@ -55,7 +61,9 @@ export function SignInChoices(): React.ReactElement {
               </p>
               <WalletPicker
                 onConnected={async () => {
-                  window.location.assign(await resolvePostAuthDestination());
+                  window.location.assign(
+                    redirectTo ?? (await resolvePostAuthDestination())
+                  );
                 }}
               />
               <Button
@@ -80,6 +88,7 @@ export function SignInChoices(): React.ReactElement {
               <ConnectAuthPanel
                 hideChooserHeader
                 onWalletClick={() => setShowWallet(true)}
+                redirectTo={redirectTo}
               />
             </motion.div>
           )}

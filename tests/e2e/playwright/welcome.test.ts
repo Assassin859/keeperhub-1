@@ -49,7 +49,10 @@ test.describe("welcome landing", () => {
     ).toBeVisible();
   });
 
-  test("guest link leaves /welcome for the app", async ({ page }) => {
+  test("guest link mints an anonymous session and lands on the app", async ({
+    page,
+    context,
+  }) => {
     await page.goto("/welcome", { waitUntil: "domcontentloaded" });
     const guestButton = page.getByRole("button", {
       name: "Explore without signing in",
@@ -62,5 +65,31 @@ test.describe("welcome landing", () => {
       }
       await expect(page).not.toHaveURL(WELCOME_ANY, { timeout: 4000 });
     }).toPass({ timeout: 30_000 });
+
+    // The guest path must actually create the anonymous account: without a
+    // better-auth session cookie the proxy would bounce "/" back to /welcome.
+    const cookies = await context.cookies();
+    expect(
+      cookies.some((c) => c.name.startsWith("better-auth.session_token")),
+      "guest entry did not mint an anonymous session cookie"
+    ).toBe(true);
+
+    // The session resolves to an anonymous user (name "Anonymous").
+    const sessionUser = await page.evaluate(async () => {
+      const res = await fetch("/api/auth/get-session", {
+        headers: { "Content-Type": "application/json" },
+      });
+      const body = (await res.json().catch(() => null)) as {
+        user?: { name?: string | null; isAnonymous?: boolean | null };
+      } | null;
+      return body?.user ?? null;
+    });
+    expect(sessionUser?.isAnonymous ?? sessionUser?.name === "Anonymous").toBe(
+      true
+    );
+
+    // The guest is not re-walled to /welcome on reload.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page).not.toHaveURL(WELCOME_ANY, { timeout: 10_000 });
   });
 });

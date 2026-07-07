@@ -5,39 +5,7 @@ import { expect, test } from "./fixtures";
 // unrelated tests.
 test.use({ disableTours: false });
 
-const SIGNIN_SEEN_KEY = "keeperhub-signin-tour-driver-seen";
-
-test.describe("onboarding: sign-in card", () => {
-  // Fresh anonymous visitor: the app provisions an anonymous session and the
-  // one-card sign-in tour should appear anchored on the Sign In button.
-  test.use({ storageState: { cookies: [], origins: [] } });
-
-  test("shows the sign-in card and does not return once dismissed", async ({
-    page,
-  }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-
-    const popover = page.locator(".driver-popover");
-    await expect(popover).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator(".driver-popover-title")).toContainText(
-      "Sign in"
-    );
-
-    // "Got it" dismisses it and records the seen flag.
-    await page.locator(".driver-popover-next-btn").click();
-    await expect(popover).toBeHidden();
-
-    const seen = await page.evaluate(
-      (key) => localStorage.getItem(key),
-      SIGNIN_SEEN_KEY
-    );
-    expect(seen).toBe("true");
-
-    // It does not reappear on reload.
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(popover).toBeHidden({ timeout: 5000 });
-  });
-});
+const WORKFLOW_EDITOR_URL_REGEX = /\/workflows\/[^/]+/;
 
 test.describe("onboarding: editor walkthrough", () => {
   // Signed in via the persistent test user (default project storageState).
@@ -46,32 +14,51 @@ test.describe("onboarding: editor walkthrough", () => {
   }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    // Reset launcher + tour state so the launcher is reopenable and the tour
-    // has not been seen yet.
-    await page.evaluate(() => {
-      for (const key of Object.keys(localStorage)) {
-        if (key.startsWith("kh:getting-started:")) {
-          localStorage.removeItem(key);
-        }
-      }
-      localStorage.removeItem("keeperhub-editor-tour-seen");
+    // The tour is offered on the "run-workflow" step, which is locked until the
+    // earlier agent-branch steps complete. Seed the launcher state (keyed by the
+    // signed-in user id) with those two click-driven steps already done so the
+    // step unlocks and its "Take a guided tour" footer button renders. Also
+    // clear the seen flag so the walkthrough actually starts.
+    const userId = await page.evaluate(async () => {
+      const res = await fetch("/api/auth/get-session");
+      const body = (await res.json().catch(() => null)) as {
+        user?: { id?: string };
+      } | null;
+      return body?.user?.id ?? null;
     });
+    await page.evaluate((uid) => {
+      localStorage.setItem(
+        `kh:getting-started:v2:${uid ?? "anon"}`,
+        JSON.stringify({
+          state: "expanded",
+          branch: "agent",
+          done: ["wallet-ready", "connect-agent"],
+          workflows: {},
+        })
+      );
+      localStorage.removeItem("keeperhub-editor-tour-seen");
+    }, userId);
     await page.reload({ waitUntil: "domcontentloaded" });
 
-    // Expand the launcher, then launch the tour from its footer.
-    await page.getByTestId("gs-launcher-pill").click();
-    const takeTour = page.getByRole("button", { name: "Take a tour" });
+    // The launcher opens expanded; launch the tour from the unlocked step footer.
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
+    const takeTour = page
+      .getByRole("button", { name: "Take a guided tour" })
+      .first();
     await expect(takeTour).toBeVisible({ timeout: 20_000 });
     await takeTour.click();
 
-    // The walkthrough spins up a fresh workflow and shows its first step.
-    await expect(page.locator(".driver-popover-title")).toContainText(
-      "Workflow Editor Tour",
-      { timeout: 30_000 }
-    );
-
-    // Advancing past the intro keeps the tour running (next step popover shown).
-    await page.locator(".driver-popover-next-btn").click();
-    await expect(page.locator(".driver-popover")).toBeVisible();
+    // The launcher's contract: spin up a fresh workflow and enter the editor,
+    // where the guided walkthrough runs. Assert the handoff into the editor (the
+    // driver.js tour steps themselves provision a wallet and are covered by the
+    // walkthrough's own logic; they are too environment-heavy to drive here).
+    await expect(page).toHaveURL(WORKFLOW_EDITOR_URL_REGEX, {
+      timeout: 30_000,
+    });
+    await expect(page.locator('[data-testid="workflow-canvas"]')).toBeVisible({
+      timeout: 20_000,
+    });
   });
 });

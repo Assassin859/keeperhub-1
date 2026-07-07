@@ -1,11 +1,12 @@
 import { expect, test } from "./fixtures";
 
-// KEEP-878: the first-run "Get started" launcher. Signed in as the persistent
-// test user (default storageState). The launcher is a bottom-right pill that
-// expands to a three-branch checklist and persists its state per user.
+// The first-run "Get started" launcher. Signed in as the persistent test user
+// (default storageState). The launcher is a bottom-left pill; for a first-time
+// user (no persisted state) it auto-expands into a single-branch (agent)
+// checklist and persists its state per user.
 
 // Clear any persisted launcher state so each test starts from the default
-// (collapsed pill), regardless of what a prior run left behind.
+// (a fresh, never-seen user), regardless of what a prior run left behind.
 async function resetLauncher(
   page: import("@playwright/test").Page
 ): Promise<void> {
@@ -25,39 +26,38 @@ test.describe("getting-started launcher", () => {
     await resetLauncher(page);
   });
 
-  test("pill expands to the three-branch checklist", async ({ page }) => {
-    const pill = page.getByTestId("gs-launcher-pill");
-    await expect(pill).toBeVisible({ timeout: 20_000 });
+  test("auto-expands into the agent checklist for a first-time user", async ({
+    page,
+  }) => {
+    // No persisted state means the launcher opens expanded by default.
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
 
-    await pill.click();
-    const card = page.getByTestId("gs-launcher-card");
-    await expect(card).toBeVisible();
-
-    // All three goal branches are present as tabs.
-    await expect(
-      card.getByRole("tab", { name: "Connect an agent" })
-    ).toBeVisible();
-    await expect(card.getByRole("tab", { name: "Monitor" })).toBeVisible();
-    await expect(card.getByRole("tab", { name: "Yield" })).toBeVisible();
-
-    // Default branch shows the agent path's first step.
+    // The single agent branch's steps are shown (no branch tabs).
     await expect(page.getByTestId("gs-step-wallet-ready")).toBeVisible();
+    await expect(page.getByTestId("gs-step-connect-agent")).toBeVisible();
+    await expect(page.getByTestId("gs-step-run-workflow")).toBeVisible();
   });
 
-  test("switching branches swaps the visible steps", async ({ page }) => {
-    await page.getByTestId("gs-launcher-pill").click();
-    const card = page.getByTestId("gs-launcher-card");
+  test("the pill collapses and re-expands the card", async ({ page }) => {
+    const pill = page.getByTestId("gs-launcher-pill");
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
 
-    await card.getByRole("tab", { name: "Monitor" }).click();
-    await expect(page.getByTestId("gs-step-connect-alerts")).toBeVisible();
+    await pill.click();
+    await expect(page.getByTestId("gs-launcher-card")).toBeHidden();
 
-    await card.getByRole("tab", { name: "Yield" }).click();
-    await expect(page.getByTestId("gs-step-fund-wallet")).toBeVisible();
+    await pill.click();
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible();
   });
 
   test("a step completes when its action is taken", async ({ page }) => {
     // Completion is click-driven: taking the step's action marks it done.
-    await page.getByTestId("gs-launcher-pill").click();
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
     const walletStep = page.getByTestId("gs-step-wallet-ready");
     await expect(walletStep).toHaveAttribute("data-complete", "false");
 
@@ -71,7 +71,9 @@ test.describe("getting-started launcher", () => {
   test("dismiss hides the launcher and persists across reload", async ({
     page,
   }) => {
-    await page.getByTestId("gs-launcher-pill").click();
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
     await page
       .getByTestId("gs-launcher-card")
       .getByRole("button", { name: "Dismiss", exact: true })
@@ -87,7 +89,9 @@ test.describe("getting-started launcher", () => {
   });
 
   test("reopens from the user menu after dismissal", async ({ page }) => {
-    await page.getByTestId("gs-launcher-pill").click();
+    await expect(page.getByTestId("gs-launcher-card")).toBeVisible({
+      timeout: 20_000,
+    });
     await page
       .getByTestId("gs-launcher-card")
       .getByRole("button", { name: "Dismiss", exact: true })

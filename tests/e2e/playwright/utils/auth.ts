@@ -5,6 +5,44 @@ import { symmetricDecrypt } from "better-auth/crypto";
 import postgres from "postgres";
 import { getAdminFetchHeaders } from "./admin-fetch";
 
+const WELCOME_URL_REGEX = /\/welcome/;
+
+/**
+ * Switch the inline /welcome panel from the sign-in view to the sign-up view.
+ * Right after navigation the "Create an account" toggle can be clicked before
+ * the client handler is wired, dropping the click and leaving the sign-in view
+ * in place; retry until the signup heading resolves.
+ */
+export async function openSignupView(page: Page): Promise<void> {
+  const toggle = page.getByRole("button", { name: "Create an account" });
+  const heading = page.getByRole("heading", { name: "Create your account" });
+  await expect(async () => {
+    if (await toggle.isVisible()) {
+      await toggle.click();
+    }
+    await expect(heading).toBeVisible({ timeout: 4000 });
+  }).toPass({ timeout: 30_000 });
+}
+
+/**
+ * Enter the app as an anonymous guest from /welcome. The "Explore without
+ * signing in" button mints an anonymous session then navigates to "/"; the
+ * first click can race hydration, so retry until we leave /welcome.
+ */
+export async function enterAsGuest(page: Page): Promise<void> {
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
+  const guest = page.getByRole("button", {
+    name: "Explore without signing in",
+  });
+  await expect(guest).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    if (await guest.isVisible()) {
+      await guest.click();
+    }
+    await expect(page).not.toHaveURL(WELCOME_URL_REGEX, { timeout: 4000 });
+  }).toPass({ timeout: 30_000 });
+}
+
 /**
  * Sign up a new user and navigate to verification view.
  * Returns the test email for later use.
@@ -28,7 +66,7 @@ export async function signUp(
   await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
   // The sign-in form renders inline; switch it to the sign-up view.
-  await page.getByRole("button", { name: "Create an account" }).click();
+  await openSignupView(page);
 
   await page.locator("#auth-email").fill(testEmail);
   await page.locator("#auth-password").fill(testPassword);
@@ -317,28 +355,35 @@ export async function completeMfaSignInDialog(
   page: Page,
   credentials: { email: string; password: string; totpKey: string }
 ): Promise<void> {
+  // The shared auth dialog renders SignInChoices / ConnectAuthPanel, whose
+  // strict sign-in walks password -> email OTP -> TOTP as animated views.
   const dialog = page.locator('[role="dialog"]');
-  await expect(dialog.locator("#password")).toBeVisible({ timeout: 15_000 });
+  await expect(dialog.locator("#auth-password")).toBeVisible({
+    timeout: 15_000,
+  });
+  await dialog.locator("#auth-email").fill(credentials.email);
+  await dialog.locator("#auth-password").fill(credentials.password);
+  await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
 
-  await dialog.locator("#email").fill(credentials.email);
-  await dialog.locator("#password").fill(credentials.password);
-  await dialog.locator('button[type="submit"]:has-text("Sign in")').click();
+  // Email-OTP factor (view "mfa-email"): strict-signin/start seeded a
+  // `sign-in-otp` row; read and submit it once the email-code step renders.
+  await expect(
+    dialog.getByRole("heading", { name: "Check your email" })
+  ).toBeVisible({ timeout: 15_000 });
+  await dialog
+    .getByPlaceholder("123456")
+    .fill(await getSignInOtpFromDb(credentials.email));
+  await dialog.getByRole("button", { name: "Continue" }).click();
 
-  // Email-OTP factor: strict-signin/start seeded a `sign-in-otp` row; read and
-  // submit it once the email-code step renders.
-  const emailOtpInput = dialog.locator("#signin-email-otp-input");
-  await expect(emailOtpInput).toBeVisible({ timeout: 15_000 });
-  await fillContentEditableOtp(
-    emailOtpInput,
-    await getSignInOtpFromDb(credentials.email)
-  );
-  await dialog.locator('button[type="submit"]:has-text("Continue")').click();
-
-  // TOTP factor: generate the current code from the enrollment secret.
-  const totpInput = dialog.locator("#signin-totp");
-  await expect(totpInput).toBeVisible({ timeout: 15_000 });
-  await fillOtpInput(totpInput, generateTotpCode(credentials.totpKey));
-  await dialog.locator('button[type="submit"]:has-text("Verify")').click();
+  // TOTP factor (view "mfa-totp"): generate the current code from the secret.
+  // The final step's submit is labeled "Sign in" (it completes the sign-in).
+  await expect(
+    dialog.getByRole("heading", { name: "Authenticator code" })
+  ).toBeVisible({ timeout: 15_000 });
+  await dialog
+    .getByPlaceholder("123456")
+    .fill(generateTotpCode(credentials.totpKey));
+  await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 
 /**

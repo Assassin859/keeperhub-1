@@ -38,7 +38,12 @@ const NO_ENFORCEMENT: OrgMfaEnforcement = { enforce: false, factors: [] };
 // enforcement settings are changed via the API, invalidateOrgMfaEnforcement
 // should be called so the update is visible on the next request in that pod
 // rather than waiting out the TTL.
-const ENFORCEMENT_CACHE_TTL_MS = 30_000;
+//
+// Disabled (TTL 0) under CI / NODE_ENV=test so E2E specs that flip enforcement
+// directly in the DB observe the change on the next request without waiting out
+// the TTL. Mirrors the rate-limit `enabled: !(CI || test)` gate in lib/auth.ts.
+const ENFORCEMENT_CACHE_TTL_MS =
+  process.env.CI || process.env.NODE_ENV === "test" ? 0 : 30_000;
 type CacheEntry = { value: OrgMfaEnforcement; expiry: number };
 const enforcementCache = new Map<string, CacheEntry>();
 
@@ -85,11 +90,11 @@ export async function getOrgMfaEnforcement(
     .where(eq(organization.id, organizationId))
     .limit(1);
   let result: OrgMfaEnforcement;
-  if (!row?.enforceMfa) {
-    result = NO_ENFORCEMENT;
-  } else {
+  if (row?.enforceMfa) {
     const factors = parseEnforcedFactors(row.enforcedMfaFactors);
     result = factors.length === 0 ? NO_ENFORCEMENT : { enforce: true, factors };
+  } else {
+    result = NO_ENFORCEMENT;
   }
   enforcementCache.set(organizationId, {
     value: result,

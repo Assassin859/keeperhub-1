@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
-import { installWalletStub } from "./utils/wallet-stub";
+import { getDbConnection } from "./utils/connection";
+import { installWalletStub, TEST_WALLET_ADDRESS } from "./utils/wallet-stub";
 
 // SIWE wallet login via the welcome page, exercised with the injected-wallet
 // stub (EIP-6963 + personal_sign signed by a throwaway key). Runs logged-out.
@@ -7,6 +8,20 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe("wallet login (SIWE)", () => {
   test.beforeEach(async ({ page }) => {
+    // The test wallet is shared across specs; another spec (wallet org-MFA) may
+    // have marked it onboarded. Reset so this always exercises the new-wallet
+    // path -- a fresh SIWE user has onboarding_completed=false and is routed
+    // into the wizard.
+    const sql = getDbConnection();
+    try {
+      await sql`
+        update users set onboarding_completed = false
+        from wallet_address w
+        where users.id = w.user_id
+          and lower(w.address) = ${TEST_WALLET_ADDRESS.toLowerCase()}`;
+    } finally {
+      await sql.end();
+    }
     await installWalletStub(page);
   });
 
@@ -15,7 +30,7 @@ test.describe("wallet login (SIWE)", () => {
 
     // Reveal the wallet picker and pick the injected wallet.
     await page
-      .getByRole("button", { name: "Sign in with your wallet" })
+      .getByRole("button", { name: "Wallet" })
       .click();
     const walletButton = page.getByTestId("connect-wallet-io.metamask");
     await expect(walletButton).toBeVisible({ timeout: 15_000 });
