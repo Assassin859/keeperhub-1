@@ -20,6 +20,7 @@ import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
 import {
   getProtocol,
   type ProtocolAction,
+  type ProtocolContract,
   type ProtocolDefinition,
   resolveContractAddress,
 } from "@/lib/protocol-registry";
@@ -52,27 +53,29 @@ export type EncodedAction = {
 };
 
 /** Interfaces are immutable and ABI parsing is the hot cost of a sweep
- *  (every action of a contract re-parsed its full ABI); cache per
- *  registry contract. */
-const ifaceCache = new Map<string, Interface>();
+ *  (every action of a contract re-parsed its full ABI); cache keyed on
+ *  the contract object itself, not a slug/contract-name string, so a
+ *  synthetic definition reusing the same slug and contract key with a
+ *  different ABI can never be served a stale Interface. Registry
+ *  contract objects are stable, so memoization still holds. */
+const ifaceCache = new WeakMap<ProtocolContract, Interface>();
 
 export function ifaceFor(
   protocol: ProtocolDefinition,
   action: ProtocolAction
 ): Interface {
-  const key = `${protocol.slug}/${action.contract}`;
-  const cached = ifaceCache.get(key);
-  if (cached) {
-    return cached;
-  }
   const contract = protocol.contracts[action.contract];
   if (!contract?.abi) {
     throw new Error(
       `${protocol.slug}: action ${action.slug} references missing contract or ABI "${action.contract}"`
     );
   }
+  const cached = ifaceCache.get(contract);
+  if (cached) {
+    return cached;
+  }
   const iface = new Interface(JSON.parse(contract.abi));
-  ifaceCache.set(key, iface);
+  ifaceCache.set(contract, iface);
   return iface;
 }
 
