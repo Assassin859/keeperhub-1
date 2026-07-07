@@ -139,10 +139,11 @@ jobs:
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           NEXT_PUBLIC_BILLING_ENABLED: "true"
           NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "true"
-          # Baked into the bundle; gates /api/ai/generate UI surface. The e2e
-          # vitest job's api-key-auth suite needs it, the protocol job just
-          # runs the same artifact (its app-start step leaves the runtime AI
-          # env unset, so the route stays gated off there).
+          # Inlined into the shared artifact at build time, so the
+          # /api/ai/generate route is ungated in every consumer of the
+          # artifact. The e2e vitest job's api-key-auth suite needs it;
+          # in the protocol job the route is inert only because
+          # ANTHROPIC_API_KEY is unset there.
           NEXT_PUBLIC_AI_PROMPT_ENABLED: "true"
           # Production builds assert SANDBOX_BACKEND=remote and SANDBOX_URL is
           # set (the /.well-known/workflow/v1/step route guard). Consumers
@@ -230,7 +231,9 @@ jobs:
         env:
           PROTOCOL_SIM_RPC_1: http://localhost:8548
 
-  # DISABLED: ephemeral E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
+  # Enablement is decided by the should-run job: the environment-level
+  # ENABLE_E2E_EPHEMERAL_TESTS variable is the kill switch, plus the
+  # per-event/label conditions there.
   e2e-vitest-ephemeral:
     needs: [should-run, build-app]
     # build-app is skipped (not failed) on the Docker path, so admit
@@ -391,8 +394,9 @@ jobs:
           # It serves state only for recent blocks, which bounds a fork's
           # useful lifetime to ~15 minutes (anvil panics in do_mine_block
           # once its pinned block leaves the upstream window - EIP-2935
-          # pre-execution reads get HTTP 403). The protocol-coverage step
-          # therefore restarts this fork for a fresh window before running.
+          # pre-execution reads get HTTP 403). This job never restarts the
+          # fork, so the orchestrator suites must complete within that
+          # initial ~15-minute window.
           # Do not point the fork at the platform dRPC URL: fork state
           # fetches burn through its request quota.
           #
@@ -419,7 +423,8 @@ jobs:
             sleep 2
           done
           echo "anvil Sepolia fork ready on localhost:8547"
-          # Point chain 11155111 at the local fork for protocol-coverage.
+          # Point chain 11155111 at the local fork for the orchestrator
+          # fork suites.
           # Null the fallback too: the RPC manager retries failures on the
           # fallback endpoint, which would leak fork transactions to live
           # Sepolia (unfunded wallet, real gas) and mask fork problems.
