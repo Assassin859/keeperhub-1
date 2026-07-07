@@ -92,6 +92,7 @@
   /* --- Accent (green brand) --- */
   --color-text-accent: #09fd67;
   --color-bg-accent: #09fd671a;
+  --color-border-accent: #09fd67;
 }
 
 .dark {
