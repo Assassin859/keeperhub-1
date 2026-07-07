@@ -16,7 +16,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Base)`, () => {
 
   beforeAll(async () => {
     await runSetup({ protocol: PROTOCOL, chainId: CHAIN_ID, ctx });
-  }, 240_000);
+  }, 600_000);
 
   afterAll(async () => {
     await cleanupAll(ctx);

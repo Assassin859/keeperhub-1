@@ -4,11 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
-import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
@@ -27,36 +24,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // User-scoped API keys (wfb_ prefix) aren't tied to an org so the
-    // owner-role gate doesn't apply; require MFA enrolled + step-up
-    // cleared. Symmetric with creation (same gate in POST).
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireMfaEnrolled(
-      session.user.id,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
-      );
-    }
-
-    // Dual-factor at revoke time. Symmetric with create.
     const body = (await request.json().catch(() => ({}))) as {
       code?: string;
       emailOtp?: string;
+      signature?: string;
     };
-    const dual = await requireDualFactor({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "user_api_key_revoke",
-      code: body.code,
-      emailOtp: body.emailOtp,
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.apiKeyManage,
+      roleFloor: "none",
+      body,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!authorized.ok) {
+      return authorized.response;
     }
 
     // Delete the key (only if it belongs to the user)
@@ -76,7 +57,8 @@ export async function DELETE(
     // Out-of-band alert symmetric with creation: the owner learns a bypass
     // credential was revoked even if their own session did it. Non-blocking.
     notifyApiKeyChange({
-      email: session.user.email,
+      userId: session.user.id,
+      loginEmail: session.user.email,
       action: "revoked",
       tokenName: deleted.name,
       keyPrefix: deleted.keyPrefix,

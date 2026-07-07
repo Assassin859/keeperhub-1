@@ -4,7 +4,6 @@ import type { NodeProps } from "@xyflow/react";
 import { Globe, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { GettingStartedChecklist } from "@/components/onboarding/getting-started-checklist";
 import { getAppName, getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 
 type AddNodeData = {
@@ -42,7 +41,6 @@ export function AddNode({ data }: NodeProps & { data?: AddNodeData }) {
           Browse the Hub
         </Button>
       </div>
-      <GettingStartedChecklist onCreateWorkflow={data.onClick} />
     </div>
   );
 }

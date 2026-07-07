@@ -58,10 +58,32 @@ export const test = base.extend<{
   _turnstileStub: undefined;
   _autoFailureDiagnostics: undefined;
   apiRequest: AuthenticatedApiRequest;
+  disableTours: boolean;
+  _disableToursCookie: undefined;
 }>({
   _turnstileStub: [
     async ({ page }, use) => {
       await stubTurnstile(page);
+      await use(undefined);
+    },
+    { auto: true },
+  ],
+  // Onboarding tours (sign-in card, editor walkthrough) render a driver.js
+  // overlay that blocks the page. Disabled by default for every test via a
+  // cookie the app checks (lib/onboarding/tours-disabled.ts). The onboarding
+  // tests opt back in with `test.use({ disableTours: false })`.
+  disableTours: [true, { option: true }],
+  _disableToursCookie: [
+    async ({ context, baseURL, disableTours }, use) => {
+      if (disableTours) {
+        await context.addCookies([
+          {
+            name: "kh_disable_tours",
+            value: "1",
+            url: baseURL ?? "http://localhost:3000",
+          },
+        ]);
+      }
       await use(undefined);
     },
     { auto: true },

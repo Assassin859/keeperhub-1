@@ -66,6 +66,34 @@ export function isSponsoredTxRevertError(
 }
 
 /**
+ * Thrown when a sponsored transaction was accepted by Turnkey (we hold a
+ * `sendTransactionStatusId`) but we could not confirm its terminal outcome
+ * within the wait window, or Turnkey's status API kept failing. The send may
+ * still broadcast and mine, so callers MUST NOT fall back to direct signing --
+ * re-sending would put a second transaction from the same wallet on-chain and
+ * race the sponsored one.
+ */
+export class SponsoredTxPendingError extends Error {
+  readonly kind = "sponsored-tx-pending" as const;
+  readonly sendTransactionStatusId: string;
+
+  constructor(opts: { message: string; sendTransactionStatusId: string }) {
+    super(opts.message);
+    this.name = "SponsoredTxPendingError";
+    this.sendTransactionStatusId = opts.sendTransactionStatusId;
+  }
+}
+
+export function isSponsoredTxPendingError(
+  err: unknown
+): err is SponsoredTxPendingError {
+  return (
+    err instanceof Error &&
+    (err as { kind?: string }).kind === "sponsored-tx-pending"
+  );
+}
+
+/**
  * Render a Turnkey revert chain into a single human-readable string.
  *
  * Walks the chain outermost-to-innermost (the order Turnkey returns).

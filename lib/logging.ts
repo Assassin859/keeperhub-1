@@ -25,6 +25,7 @@ import { captureException, captureMessage } from "@sentry/nextjs";
 import { emitLogLine, type LogLevel, type LogPayload } from "@/lib/log/core";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { scrubRpcUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { getWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 
 /**
@@ -115,15 +116,15 @@ function buildErrPayload(
 ): { message: string; name?: string; stack?: string } | undefined {
   if (error instanceof Error) {
     return {
-      message: error.message,
+      message: scrubRpcUrls(error.message),
       name: error.name,
-      stack: error.stack,
+      stack: error.stack === undefined ? undefined : scrubRpcUrls(error.stack),
     };
   }
   if (error === undefined || error === null || error === "") {
     return;
   }
-  return { message: String(error) };
+  return { message: scrubRpcUrls(String(error)) };
 }
 
 /**

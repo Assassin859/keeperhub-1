@@ -12,6 +12,8 @@ import { GlobalModals } from "@/components/global-modals";
 import { PendingTemplateRunner } from "@/components/hub/pending-template-runner";
 import { LayoutContent } from "@/components/layout-content";
 import { MobileWarningDialog } from "@/components/mobile-warning-dialog";
+import { EditorWalkthrough } from "@/components/onboarding/editor-walkthrough";
+import { SignInTourDriver } from "@/components/onboarding/signin-tour-driver";
 import { OverlayProvider } from "@/components/overlays/overlay-provider";
 import { PendingScanRunner } from "@/components/scan/pending-scan-runner";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -133,6 +135,8 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
                 <Toaster />
                 <GlobalModals />
                 <MobileWarningDialog />
+                <SignInTourDriver />
+                <EditorWalkthrough />
               </OverlayProvider>
             </AuthProvider>
           </Provider>

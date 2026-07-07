@@ -16,31 +16,29 @@ export async function signUp(
   const testEmail = options?.email ?? `test+${Date.now()}@techops.services`;
   const testPassword = options?.password ?? "TestPassword123!";
 
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Suppress the driver.js tour so its backdrop doesn't intercept modal clicks.
+  await page
+    .context()
+    .addCookies([
+      { name: "kh_disable_tours", value: "1", url: "http://localhost:3000" },
+    ]);
+  // Logged-out visitors land on /welcome, which renders the shared
+  // SignInChoices panel inline. Open the email panel, switch to the sign-up
+  // view, and submit; the verify view then shows the OTP input.
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-  const signInButton = page.locator('button:has-text("Sign In")').first();
-  await expect(signInButton).toBeVisible({ timeout: 15_000 });
-  await signInButton.click();
+  // The sign-in form renders inline; switch it to the sign-up view.
+  await page.getByRole("button", { name: "Create an account" }).click();
 
-  const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible({ timeout: 5000 });
-
-  // Switch to signup view
-  const createAccountLink = dialog.locator('button:has-text("Create account")');
-  await createAccountLink.click();
-
-  // Fill in signup form
-  await dialog.locator("#signup-email").fill(testEmail);
-  await dialog.locator("#signup-password").fill(testPassword);
-
-  // Submit the form
-  await dialog
-    .locator('button[type="submit"]:has-text("Create account")')
+  await page.locator("#auth-email").fill(testEmail);
+  await page.locator("#auth-password").fill(testPassword);
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
     .click();
 
-  // Wait for verify view
-  const dialogTitle = dialog.locator("h2");
-  await expect(dialogTitle).toHaveText("Verify your email", {
+  // Verify view: the OTP input (a plain field, keyed by its placeholder) is the
+  // unambiguous signal it rendered.
+  await expect(page.getByPlaceholder("123456")).toBeVisible({
     timeout: 15_000,
   });
 
@@ -180,6 +178,7 @@ export async function fillContentEditableOtp(
 }
 
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const BASE32_PAD_REGEX = /=+$/;
 const TOTP_PERIOD_SECONDS = 30;
 
 /**
@@ -192,7 +191,7 @@ function base32Decode(input: string): Buffer {
   let bits = 0;
   let value = 0;
   const out: number[] = [];
-  for (const char of input.replace(/=+$/, "").toUpperCase()) {
+  for (const char of input.replace(BASE32_PAD_REGEX, "").toUpperCase()) {
     const index = BASE32_ALPHABET.indexOf(char);
     if (index === -1) {
       continue;
@@ -219,7 +218,7 @@ function generateTotpCode(manualEntryKey: string): string {
   const hmac = createHmac("sha1", base32Decode(manualEntryKey))
     .update(counter)
     .digest();
-  const offset = hmac[hmac.length - 1] & 0xf;
+  const offset = (hmac.at(-1) ?? 0) & 0xf;
   const truncated =
     ((hmac[offset] & 0x7f) << 24) |
     ((hmac[offset + 1] & 0xff) << 16) |
@@ -246,10 +245,12 @@ export async function completeTotpEnrollment(page: Page): Promise<string> {
   if (!manualEntryKey) {
     throw new Error("Could not read the TOTP setup key from the dialog");
   }
-  await page.locator("#totp-verify-code").fill(generateTotpCode(manualEntryKey));
+  await page
+    .locator("#totp-verify-code")
+    .fill(generateTotpCode(manualEntryKey));
   await dialog.locator('button:has-text("Continue")').click();
-  // Backup-codes step: dismiss it to finish enrollment and close the dialog.
-  const finishButton = dialog.locator('button:has-text("Skip")');
+  // Backup-codes step: confirm it to finish enrollment and close the dialog.
+  const finishButton = dialog.locator('button:has-text("Done")');
   await expect(finishButton).toBeVisible({ timeout: 15_000 });
   await finishButton.click();
   return manualEntryKey;
@@ -270,20 +271,16 @@ export async function signUpAndVerify(
   // Get OTP from database
   const otp = await getOtpFromDb(email);
 
-  // Enter OTP
-  const dialog = page.locator('[role="dialog"]');
-  const otpInput = dialog.locator("#otp");
+  // Enter OTP. On /welcome the verify view is inline in the panel (no dialog),
+  // and the field is keyed by its placeholder rather than an id.
+  const otpInput = page.getByPlaceholder("123456");
   await fillOtpInput(otpInput, otp);
 
-  // Click verify
-  const verifyButton = dialog.locator(
-    'button[type="submit"]:has-text("Verify")'
-  );
-  await verifyButton.click();
+  await page.locator('button[type="submit"]:has-text("Verify")').click();
 
   // Fresh signups are forced through TOTP enrollment after email verification
   // (components/settings/totp-setup-dialog.tsx). Complete it when it appears so
-  // the auth dialog can close; gated so any flow without it is unaffected.
+  // the enrollment dialog can close; gated so any flow without it is unaffected.
   const totpRequired = await page
     .locator("#totp-verify-code")
     .waitFor({ state: "visible", timeout: 8000 })
@@ -294,8 +291,13 @@ export async function signUpAndVerify(
     totpKey = await completeTotpEnrollment(page);
   }
 
-  // Wait for dialog to close (successful verification)
-  await expect(dialog).not.toBeVisible({ timeout: 15_000 });
+  // A fresh signup is routed into the onboarding wizard by the welcome gating.
+  // Mark onboarding complete so this helper lands the user on the canvas,
+  // preserving its contract for the tests that build on a signed-in session.
+  await page.request.post("/api/user/onboarding/complete", {
+    headers: { Origin: new URL(page.url()).origin },
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
 
   // Wait for org switcher to appear (org auto-created after first sign-in)
   await expect(page.locator('button[role="combobox"]')).toBeVisible({
@@ -347,28 +349,41 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<void> {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Suppress the driver.js onboarding tour so its backdrop doesn't intercept
+  // clicks inside the Connect modal (auth.setup doesn't load the fixture that
+  // sets this cookie).
+  await page.context().addCookies([
+    {
+      name: "kh_disable_tours",
+      value: "1",
+      url: "http://localhost:3000",
+    },
+  ]);
+  // Logged-out visitors are routed to the /welcome landing, which renders the
+  // shared SignInChoices panel inline (no modal). Open the email panel and sign
+  // in with credentials; on success the panel navigates to "/".
+  await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-  const signInButton = page.locator('button:has-text("Sign In")').first();
-  await expect(signInButton).toBeVisible({ timeout: 15_000 });
-  await signInButton.click();
+  // The email/password form renders inline (no chooser step on the landing).
+  const emailField = page.locator("#auth-email");
+  await expect(emailField).toBeVisible({ timeout: 15_000 });
+  await emailField.fill(email);
+  await page.locator("#auth-password").fill(password);
 
-  const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible({ timeout: 5000 });
-
-  await dialog.locator("#email").fill(email);
-  await dialog.locator("#password").fill(password);
-  await dialog.locator('button[type="submit"]:has-text("Sign in")').click();
-
-  // Wait for dialog to close (successful sign in)
-  await expect(dialog).not.toBeVisible({ timeout: 15_000 });
-
-  // Wait for org switcher to appear (indicates session and org are resolved)
-  // Use role selector -- data-testid only exists on the "ready" render branch,
-  // but role="combobox" achieves the same: only the resolved org switcher has it.
-  await expect(page.locator('button[role="combobox"]')).toBeVisible({
-    timeout: 15_000,
+  // Retry the submit: right after navigation the first click can land before
+  // the client handler is wired and be dropped, leaving the form in place.
+  // toPass re-clicks until the org switcher (canvas) resolves.
+  const signInButton = page.getByRole("button", {
+    name: "Sign in",
+    exact: true,
   });
+  const orgSwitcher = page.locator('button[role="combobox"]');
+  await expect(async () => {
+    if (await signInButton.isVisible()) {
+      await signInButton.click();
+    }
+    await expect(orgSwitcher).toBeVisible({ timeout: 4000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 /**
@@ -388,12 +403,15 @@ export async function signOut(page: Page): Promise<void> {
  * Check if user is currently authenticated.
  */
 export async function isAuthenticated(page: Page): Promise<boolean> {
-  // Check for authenticated UI elements
-  const signInButton = page.locator('button:has-text("Sign In")').first();
+  // Check for authenticated UI elements. Logged-out users see the Connect
+  // button (which replaced the bare "Sign In" button).
+  const connectButton = page
+    .getByRole("button", { name: "Connect", exact: true })
+    .first();
   const userMenu = page.locator('[data-testid="user-menu"]');
 
-  // If sign in button is visible, user is not authenticated
-  if (await signInButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+  // If the Connect button is visible, user is not authenticated
+  if (await connectButton.isVisible({ timeout: 2000 }).catch(() => false)) {
     return false;
   }
 

@@ -27,10 +27,16 @@ vi.mock("@/lib/web3/turnkey-sponsorship-config", () => ({
   toCaip2: (chainId: number) => `eip155:${chainId}`,
 }));
 
-// turnkey-revert is intentionally NOT mocked so `instanceof SponsoredTxRevertError`
-// works against the real class.
-import { SponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
+// turnkey-revert is intentionally NOT mocked so `instanceof` works against the
+// real error classes.
+import {
+  SponsoredTxPendingError,
+  SponsoredTxRevertError,
+} from "@/lib/web3/turnkey-revert";
 import { submitTurnkeySponsoredTransaction } from "@/lib/web3/turnkey-sponsored-tx";
+
+// Tight poll options so the timeout / retry paths resolve in milliseconds.
+const FAST_POLL = { timeoutMs: 40, intervalMs: 5 };
 
 const SEPOLIA = 11_155_111;
 // Generic, lowercased test address (not a real wallet); getAddress() yields its
@@ -113,5 +119,44 @@ describe("submitTurnkeySponsoredTransaction", () => {
     const result = await submitTurnkeySponsoredTransaction(baseParams());
 
     expect(result).toBeNull();
+  });
+
+  it("returns the hash as soon as Turnkey assigns one, before a terminal-success status", async () => {
+    mockEthSend.mockResolvedValue({ sendTransactionStatusId: "sid-5" });
+    // Non-terminal status, but Turnkey already has a tx hash -> the send is
+    // broadcast and we own it, so we must return it (not keep polling / re-send).
+    mockGetStatus.mockResolvedValue({
+      txStatus: "BROADCASTING",
+      eth: { txHash: "0xbroadcasting" },
+    });
+
+    const result = await submitTurnkeySponsoredTransaction(
+      baseParams(),
+      FAST_POLL
+    );
+
+    expect(result).toEqual({
+      txHash: "0xbroadcasting",
+      sendTransactionStatusId: "sid-5",
+    });
+  });
+
+  it("throws SponsoredTxPendingError when the wait elapses without a terminal status", async () => {
+    mockEthSend.mockResolvedValue({ sendTransactionStatusId: "sid-6" });
+    // Stuck before broadcast: accepted, but never a hash or terminal status.
+    mockGetStatus.mockResolvedValue({ txStatus: "INITIALIZED", eth: {} });
+
+    await expect(
+      submitTurnkeySponsoredTransaction(baseParams(), FAST_POLL)
+    ).rejects.toBeInstanceOf(SponsoredTxPendingError);
+  });
+
+  it("throws SponsoredTxPendingError after repeated status-API failures instead of returning null", async () => {
+    mockEthSend.mockResolvedValue({ sendTransactionStatusId: "sid-7" });
+    mockGetStatus.mockRejectedValue(new Error("Turnkey status API 503"));
+
+    await expect(
+      submitTurnkeySponsoredTransaction(baseParams(), FAST_POLL)
+    ).rejects.toBeInstanceOf(SponsoredTxPendingError);
   });
 });

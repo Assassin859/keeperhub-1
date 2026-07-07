@@ -867,7 +867,35 @@
       "idx": 123,
       "version": "7",
       "when": 1782765380003,
-      "tag": "0123_scan_results_cache",
+      "tag": "0123_keep_171_wallet_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1782765380004,
+      "tag": "0124_keep_171_step_up_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1782765380005,
+      "tag": "0125_keep_171_org_enforce_mfa",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1782765380006,
+      "tag": "0126_keep_171_onboarding_completed",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1782765380007,
+      "tag": "0127_scan_results_cache",
       "breakpoints": true
     }
   ]

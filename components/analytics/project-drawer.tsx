@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Layers } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { analyticsProjectIdAtom } from "@/lib/atoms/analytics";
+import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "keeperhub-analytics-drawer";
@@ -40,9 +41,13 @@ function useDrawerState(): [DrawerState, (s: DrawerState) => void] {
 function useProjects(): { projects: Project[]; loading: boolean } {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  const activeOrgId = activeOrg?.id ?? null;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeOrgId is the refetch trigger on org switch; the endpoint scopes by the active org server-side, so it is not read in the body
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
 
     async function load(): Promise<void> {
       try {
@@ -70,7 +75,7 @@ function useProjects(): { projects: Project[]; loading: boolean } {
     return (): void => {
       cancelled = true;
     };
-  }, []);
+  }, [activeOrgId]);
 
   return { projects, loading };
 }

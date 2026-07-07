@@ -20,7 +20,7 @@ type ChangePasswordSectionProps = {
 
 export function ChangePasswordSection({
   providerId,
-}: ChangePasswordSectionProps): React.ReactElement {
+}: ChangePasswordSectionProps): React.ReactElement | null {
   const router = useRouter();
   const { closeAll: closeOverlays } = useOverlay();
   const session = useSession();
@@ -34,6 +34,12 @@ export function ChangePasswordSection({
   const [phase, setPhase] = useState<"passwords" | "codes">("passwords");
   const dual = useDualFactorState();
   const [loading, setLoading] = useState(false);
+
+  // Wallet (SIWE) accounts have no password -- auth is the wallet itself, so
+  // there is nothing to show or manage here.
+  if (providerId === "siwe") {
+    return null;
+  }
 
   const isOAuthUser = providerId !== null && providerId !== "credential";
 

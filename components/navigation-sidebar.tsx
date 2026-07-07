@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   DollarSign,
-  Github,
   Globe,
   Info,
   Loader2,
@@ -22,8 +21,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { DiscordIcon } from "@/components/icons/discord-icon";
+import { GettingStartedLauncher } from "@/components/onboarding/getting-started-launcher";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
-import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   Tooltip,
@@ -982,6 +981,8 @@ export function NavigationSidebar(): React.ReactNode {
           ))}
         </nav>
 
+        <GettingStartedLauncher compact={!showLabels} />
+
         <div className="flex flex-col gap-1 border-t px-2.5 py-3">
           {(
             [
@@ -1026,42 +1027,6 @@ export function NavigationSidebar(): React.ReactNode {
               </Tooltip>
             );
           })}
-          {(() => {
-            // Feedback widget is disabled by default. Re-enable by setting
-            // NEXT_PUBLIC_FEEDBACK_ENABLED=true (the POST /api/feedback route
-            // gates on the same flag).
-            if (process.env.NEXT_PUBLIC_FEEDBACK_ENABLED !== "true") {
-              return null;
-            }
-            const reportButton = (
-              <button
-                aria-label="Report an issue"
-                className={cn(
-                  "flex h-9 w-full items-center rounded-md transition-colors hover:bg-muted",
-                  showLabels ? "gap-3 px-2" : "justify-center"
-                )}
-                data-testid="nav-report-issue"
-                onClick={() => openOverlay(FeedbackOverlay)}
-                type="button"
-              >
-                <Github className="size-4 shrink-0" />
-                {showLabels && (
-                  <span className="truncate text-sm">Report an issue</span>
-                )}
-              </button>
-            );
-
-            if (showLabels) {
-              return reportButton;
-            }
-
-            return (
-              <Tooltip>
-                <TooltipTrigger asChild>{reportButton}</TooltipTrigger>
-                <TooltipContent side="right">Report an issue</TooltipContent>
-              </Tooltip>
-            );
-          })()}
         </div>
 
         {/* Resize handle */}

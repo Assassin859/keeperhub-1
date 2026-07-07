@@ -1,4 +1,17 @@
-import type { Edge, Node } from "@xyflow/react";
+// Local structural types instead of importing @xyflow/react, so this pure
+// layout helper can also run server-side (e.g. seeding onboarding workflow
+// fixtures). Real @xyflow/react Node/Edge are structural supersets, so editor
+// callers pass them without a cast.
+type Node = {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+};
+type Edge = {
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+};
 
 const NODE_WIDTH = 192;
 const NODE_HEIGHT = 192;

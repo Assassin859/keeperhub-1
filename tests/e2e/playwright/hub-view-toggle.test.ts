@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // Force a fresh anonymous context so cookie state starts empty for every
 // test in this file. The view toggle must work for anonymous users too.

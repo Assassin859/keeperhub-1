@@ -1,6 +1,6 @@
 import "server-only";
 import type { Hex } from "viem";
-import { createPublicClient, encodeFunctionData, http } from "viem";
+import { BaseError, createPublicClient, encodeFunctionData, http } from "viem";
 import {
   checkGasCredits,
   getGasTokenPriceUsd,
@@ -12,6 +12,7 @@ import { MetricNames } from "@/lib/metrics/types";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+import { SponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import { submitTurnkeySponsoredTransaction } from "@/lib/web3/turnkey-sponsored-tx";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 
@@ -97,6 +98,7 @@ export async function executeSponsoredTransaction(
 
   return await finalizeSponsoredTx(
     submitResult.txHash,
+    submitResult.sendTransactionStatusId,
     params.rpcUrl,
     params.organizationId,
     params.chainId,
@@ -156,11 +158,56 @@ export async function executeSponsoredContractTransaction(
 
   return await finalizeSponsoredTx(
     submitResult.txHash,
+    submitResult.sendTransactionStatusId,
     params.rpcUrl,
     params.organizationId,
     params.chainId,
     params.executionId
   );
+}
+
+// viem renders an Error(string) revert as
+// "Execution reverted with reason: <reason>." -- pull <reason> back out.
+const VIEM_REVERT_REASON_RE = /reverted with reason:\s*(.+?)\.?\s*$/i;
+
+/**
+ * Recover the revert reason of an already-mined, reverted sponsored tx.
+ *
+ * This is a read-only `eth_call` replay against the block the tx landed in --
+ * it never broadcasts a second transaction, so it does NOT double-send. Returns
+ * undefined when the reason cannot be decoded (custom error without an ABI, or
+ * state drift so the replay no longer reverts); callers fall back to a generic
+ * message.
+ */
+async function decodeSponsoredRevertReason(
+  publicClient: ReturnType<typeof createPublicClient>,
+  txHash: Hex,
+  blockNumber: bigint
+): Promise<string | undefined> {
+  let tx: Awaited<ReturnType<typeof publicClient.getTransaction>>;
+  try {
+    tx = await publicClient.getTransaction({ hash: txHash });
+  } catch {
+    return;
+  }
+  if (!tx.to) {
+    return;
+  }
+  try {
+    await publicClient.call({
+      account: tx.from,
+      to: tx.to,
+      data: tx.input,
+      value: tx.value,
+      blockNumber,
+    });
+    return;
+  } catch (replayError) {
+    if (replayError instanceof BaseError) {
+      return VIEM_REVERT_REASON_RE.exec(replayError.shortMessage)?.[1]?.trim();
+    }
+    return;
+  }
 }
 
 /**
@@ -173,6 +220,7 @@ export async function executeSponsoredContractTransaction(
  */
 async function finalizeSponsoredTx(
   txHash: Hex,
+  sendTransactionStatusId: string,
   rpcUrl: string,
   organizationId: string,
   chainId: number,
@@ -187,7 +235,21 @@ async function finalizeSponsoredTx(
   });
 
   if (receipt.status !== "success") {
-    throw new Error(`Sponsored transaction reverted: ${txHash}`);
+    // The sponsored tx is on-chain and reverted. Read-only replay to recover
+    // the reason (Turnkey's early hash meant we never saw its FAILED status),
+    // then raise the typed revert error -- not a generic Error -- so the caller
+    // reports it as the node result instead of falling back and duplicating.
+    const reason = await decodeSponsoredRevertReason(
+      publicClient,
+      txHash,
+      receipt.blockNumber
+    );
+    throw new SponsoredTxRevertError({
+      message: reason ?? "reason unavailable",
+      txHash,
+      sendTransactionStatusId,
+      revertChain: [],
+    });
   }
 
   const gasUsed = receipt.gasUsed;

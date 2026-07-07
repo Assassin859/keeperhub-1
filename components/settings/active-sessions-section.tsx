@@ -18,7 +18,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
+import { useSession } from "@/lib/auth-client";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
+import { runWalletStepUp } from "@/lib/wallet/step-up-client";
 
 type SessionRow = {
   id: string;
@@ -43,6 +46,8 @@ export function ActiveSessionsSection(): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const dual = useDualFactorState();
+  const session = useSession();
+  const isWallet = isWalletEmail(session.data?.user?.email);
 
   useEffect(() => {
     if (!copiedRowId) {
@@ -141,6 +146,37 @@ export function ActiveSessionsSection(): React.ReactElement {
       body: JSON.stringify({}),
     });
 
+  // Wallet users confirm the revoke by signing the step-up challenge.
+  const handleWalletRevoke = async (): Promise<void> => {
+    if (!revokeTarget || busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await runWalletStepUp((extra) =>
+        fetch(`/api/user/sessions/${revokeTarget.id}/revoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(extra),
+        })
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(data.error ?? "Failed to revoke session");
+        return;
+      }
+      toast.success("Session revoked");
+      closeDialog();
+      await load();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to revoke session"
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Card className="border-0 py-0 shadow-none">
       <CardContent className="space-y-3 p-0">
@@ -148,8 +184,10 @@ export function ActiveSessionsSection(): React.ReactElement {
           <h3 className="font-medium text-sm">Active sessions</h3>
           <p className="text-muted-foreground text-xs">
             Every device signed in to this account. Revoke any session you
-            don't recognise. Revoking requires a code from your email and
-            your authenticator.
+            don't recognise.{" "}
+            {isWallet
+              ? "Revoking requires a signature from your wallet."
+              : "Revoking requires a code from your email and your authenticator."}
           </p>
         </div>
 
@@ -241,11 +279,26 @@ export function ActiveSessionsSection(): React.ReactElement {
             <DialogTitle>Revoke this session</DialogTitle>
             <DialogDescription>
               {revokeTarget
-                ? `Sign out ${describeUserAgent(revokeTarget.userAgent).label} (${revokeTarget.ipAddress ?? "unknown IP"}). Confirm with both factors to continue.`
+                ? `Sign out ${describeUserAgent(revokeTarget.userAgent).label} (${revokeTarget.ipAddress ?? "unknown IP"}). ${isWallet ? "Sign with your wallet to continue." : "Confirm with both factors to continue."}`
                 : null}
             </DialogDescription>
           </DialogHeader>
-          {revokeTarget && (
+          {revokeTarget && isWallet && (
+            <div className="flex justify-end gap-2">
+              <Button onClick={closeDialog} type="button" variant="outline">
+                Cancel
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={handleWalletRevoke}
+                type="button"
+                variant="destructive"
+              >
+                {busy ? <Spinner className="size-4" /> : "Sign to revoke"}
+              </Button>
+            </div>
+          )}
+          {revokeTarget && !isWallet && (
             <DualFactorSteps
               busy={busy}
               dual={dual}

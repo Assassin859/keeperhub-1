@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { signUpAndVerify } from "./utils/auth";
 
 // Force a fresh anonymous context — this test exercises the

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // Force a fresh anonymous context — tag pages must render for everyone,
 // regardless of session state.

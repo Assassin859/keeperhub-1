@@ -96,8 +96,7 @@ const {
   mockGetApprovalRequest,
   mockResolveApprovalRequest,
   mockCheckApprovalForResolve,
-  mockRequireMfaEnrolled,
-  mockRequireDualFactor,
+  mockAuthorizeAction,
 } = vi.hoisted(() => {
   const store = new Map<string, unknown>();
   return {
@@ -113,8 +112,7 @@ const {
     mockGetApprovalRequest: vi.fn(),
     mockResolveApprovalRequest: vi.fn(),
     mockCheckApprovalForResolve: vi.fn(),
-    mockRequireMfaEnrolled: vi.fn(),
-    mockRequireDualFactor: vi.fn(),
+    mockAuthorizeAction: vi.fn(),
   };
 });
 
@@ -151,12 +149,10 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
-  requireMfaEnrolled: mockRequireMfaEnrolled,
-}));
-
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: mockRequireDualFactor,
+// The unified guard's internals are covered by tests/unit/authorize-action.test.ts;
+// mock it here so the lifecycle tests focus on approval/rejection behavior.
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: mockAuthorizeAction,
 }));
 
 // The `.where()` return value must support BOTH shapes: `.limit(1)` (used by
@@ -406,10 +402,12 @@ describe("agentic-wallet approval-request lifecycle", () => {
     mockLookupHmacSecret.mockReset();
     mockDbSelectLimit.mockReset();
     mockDbSelectWhereAwait.mockReset();
-    mockRequireMfaEnrolled.mockReset();
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockReset();
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockReset();
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: {},
+      accountKind: "wallet",
+    });
     // Default secret resolver: SUB_ORG -> HMAC_SECRET, OTHER_SUB_ORG -> OTHER_HMAC_SECRET.
     mockLookupHmacSecret.mockImplementation(async (subOrgId: string) => {
       if (subOrgId === SUB_ORG) {
@@ -486,8 +484,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
 
     // Approve via session.
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const approveRes = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -531,8 +529,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     });
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const first = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -542,8 +540,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
 
     // Second call -- mock session for a fresh request.
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const second = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -566,8 +564,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     mockDbSelectLimit.mockResolvedValue([{ linkedUserId: OWNER_USER_ID }]);
 
     mockGetSession.mockResolvedValue({
-      user: { id: ATTACKER_USER_ID, email: "attacker@test" },
-      session: { requiresMfa: false },
+      user: { id: ATTACKER_USER_ID, email: "attacker@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -643,8 +641,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
       binding: bindingFixture(),
     });
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postReject(
       makeSessionRequest(`/api/agentic-wallet/${id}/reject`),
@@ -670,8 +668,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
 
   it("approve against an unknown id returns 404", async () => {
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postApprove(
       makeSessionRequest("/api/agentic-wallet/ar_nonexistent/approve"),
@@ -909,8 +907,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     approvalStore.set(id, seeded);
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -945,8 +943,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     approvalStore.set(id, seeded);
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -973,8 +971,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     approvalStore.set(id, seeded);
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postReject(
       makeSessionRequest(`/api/agentic-wallet/${id}/reject`),
@@ -1002,8 +1000,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     approvalStore.set(id, seeded);
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postReject(
       makeSessionRequest(`/api/agentic-wallet/${id}/reject`),
@@ -1031,8 +1029,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     approvalStore.set(id, seeded);
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),
@@ -1090,8 +1088,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     approvalStore.set(id, seeded);
 
     mockGetSession.mockResolvedValue({
-      user: { id: OWNER_USER_ID, email: "owner@test" },
-      session: { requiresMfa: false },
+      user: { id: OWNER_USER_ID, email: "owner@test.com" },
+      session: { requiresMfa: false, activeOrganizationId: null },
     });
     const res = await postApprove(
       makeSessionRequest(`/api/agentic-wallet/${id}/approve`),

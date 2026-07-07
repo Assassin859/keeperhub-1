@@ -98,8 +98,9 @@ beforeEach(() => {
 });
 
 describe("assessLoginRisk", () => {
-  it("returns NULL_RISK when CF-Connecting-IP is absent (local dev / direct origin)", async () => {
+  it("stays inconclusive when CF-Connecting-IP is absent and there is no country history (local dev / direct origin)", async () => {
     setHeaders({ "cf-ipcountry": "AU" });
+    setRecentSessionCountries([]);
     const result = await assessLoginRisk("user_1");
     expect(result).toEqual({
       anomaly: false,
@@ -111,23 +112,48 @@ describe("assessLoginRisk", () => {
       longitude: null,
       recentCountries: [],
     });
-    expect(mockSelect).not.toHaveBeenCalled();
   });
 
-  it("returns NULL_RISK when CF-IPCountry is missing despite CF-Connecting-IP", async () => {
+  it("stays inconclusive when CF-IPCountry is missing and there is no country history", async () => {
     setHeaders({ "cf-connecting-ip": "203.0.113.1" });
+    setRecentSessionCountries([null, null]);
     const result = await assessLoginRisk("user_1");
     expect(result.country).toBeNull();
     expect(result.anomaly).toBe(false);
   });
 
-  it("returns NULL_RISK when CF-IPCountry is the unknown sentinel XX", async () => {
+  it("stays inconclusive when CF-IPCountry is the unknown sentinel XX and there is no country history", async () => {
     setHeaders({
       "cf-connecting-ip": "203.0.113.1",
       "cf-ipcountry": "XX",
     });
+    setRecentSessionCountries([]);
     const result = await assessLoginRisk("user_1");
     expect(result.country).toBeNull();
+    expect(result.anomaly).toBe(false);
+  });
+
+  it("flags unknown_country when a login with no attested country follows a known-country history", async () => {
+    setHeaders({
+      "cf-connecting-ip": "203.0.113.1",
+      "cf-ipcountry": "XX",
+    });
+    setRecentSessionCountries(["AU", "AU"]);
+    const result = await assessLoginRisk("user_1");
+    expect(result.country).toBeNull();
+    expect(result.anomaly).toBe(true);
+    expect(result.reasons).toEqual(["unknown_country"]);
+    expect(result.recentCountries).toEqual(["AU"]);
+  });
+
+  it("flags unknown_country when CF is bypassed entirely for a user with country history", async () => {
+    setHeaders({ "cf-ipcountry": "AU" });
+    setRecentSessionCountries(["KR"]);
+    const result = await assessLoginRisk("user_1");
+    expect(result.country).toBeNull();
+    expect(result.anomaly).toBe(true);
+    expect(result.reasons).toEqual(["unknown_country"]);
+    expect(result.recentCountries).toEqual(["KR"]);
   });
 
   it("flags first_geo_attestation (not anomaly) for a user's first geo-attested session", async () => {

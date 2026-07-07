@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { workflowExecutionLogs } from "@/lib/db/schema";
+import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { redactSensitiveData } from "@/lib/utils/redact";
 import { resolveAuthorizedExecution } from "@/lib/workflow/execution-access";
 
@@ -64,6 +65,15 @@ export async function GET(
       );
     }
     const { execution } = resolved;
+    // Redact on read so rows persisted before URL redaction existed do not
+    // re-display provider RPC URLs. web3 step errors only ever contain
+    // provider URLs, so drop every URL there; other steps may legitimately
+    // reference user-owned URLs.
+    const scrubbedExecution = {
+      ...execution,
+      error:
+        execution.error === null ? null : redactSecretUrls(execution.error),
+    };
 
     const logs = await db.query.workflowExecutionLogs.findMany({
       where: eq(workflowExecutionLogs.executionId, executionId),
@@ -74,11 +84,17 @@ export async function GET(
       ...log,
       input: redactSensitiveData(log.input),
       output: redactSensitiveData(log.output),
+      error:
+        log.error === null
+          ? null
+          : log.nodeType.startsWith("web3/")
+            ? redactAllUrls(log.error)
+            : redactSecretUrls(log.error),
     }));
 
     if (!hasAnyPartialParam) {
       return NextResponse.json({
-        execution,
+        execution: scrubbedExecution,
         logs: redactedLogs,
       });
     }
@@ -105,7 +121,7 @@ export async function GET(
     });
 
     return NextResponse.json({
-      execution,
+      execution: scrubbedExecution,
       logs: transformedLogs,
     });
   } catch (error) {

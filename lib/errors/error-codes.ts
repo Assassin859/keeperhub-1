@@ -171,7 +171,11 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeEntry> = {
     prefix: "P",
     component: "Pod",
     retryable: true,
-    category: "workflow_engine",
+    // "could not be started" (pod never ran) is an infrastructure failure, like
+    // its P-000x siblings and like every writer of this code (reaper, executions
+    // route). Was previously miscategorized workflow_engine, which conflicted
+    // with the errorCategory column the reaper/executions writers persist.
+    category: "infrastructure",
     customerMessage: "The run could not be started (P-0001). Please try again.",
   },
   "P-0002": {

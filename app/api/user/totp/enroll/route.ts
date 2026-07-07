@@ -182,6 +182,15 @@ export async function POST(request: Request): Promise<NextResponse> {
         .update(twoFactorTable)
         .set({ backupCodes: encryptedBackupCodes })
         .where(eq(twoFactorTable.userId, userId));
+      // /setup writes the two_factor row out-of-band, so Better Auth's
+      // verifyTOTP verifies the code but never flips this flag (it only does so
+      // for enrollments it initiated). getEnrolledFactors reads exactly this
+      // column, so set it explicitly here -- at verify time -- or TOTP would
+      // forever read as "not enrolled". Mirrors the pending-signup path below.
+      await db
+        .update(users)
+        .set({ twoFactorEnabled: true })
+        .where(eq(users.id, userId));
       const newRawToken = extractNewSessionToken(
         readAllSetCookies(verifyHeaders)
       );

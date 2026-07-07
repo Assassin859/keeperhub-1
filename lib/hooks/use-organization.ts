@@ -1,10 +1,11 @@
 "use client";
 
-import { getDefaultStore } from "jotai";
+import { getDefaultStore, useSetAtom } from "jotai";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { invalidateFeatureSnapshot } from "@/hooks/use-features";
 import { api } from "@/lib/api-client";
+import { analyticsProjectIdAtom } from "@/lib/atoms/analytics";
 import { authClient } from "@/lib/auth-client";
 import { registerOrganizationRefetch } from "@/lib/refetch-organizations";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
@@ -19,6 +20,7 @@ export function useOrganization() {
   } = authClient.useActiveOrganization();
   const router = useRouter();
   const pathname = usePathname();
+  const setAnalyticsProjectId = useSetAtom(analyticsProjectIdAtom);
 
   // Register this hook's refetch callback so it can be triggered externally
   useEffect(
@@ -34,6 +36,7 @@ export function useOrganization() {
     await authClient.organization.setActive({ organizationId: orgId });
     // Reset workflow state only after org switch succeeds (safe in hook context)
     getDefaultStore().set(resetWorkflowStateForOrgSwitchAtom);
+    setAnalyticsProjectId(null);
     invalidateFeatureSnapshot();
     refetchSidebar();
 

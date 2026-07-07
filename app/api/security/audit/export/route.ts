@@ -3,12 +3,9 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
-import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { redactAuditDiff } from "@/lib/security/audit-redaction";
 import { toCsvCell } from "@/lib/security/csv";
 
@@ -48,6 +45,7 @@ type ExportBody = {
   resourceTypes?: unknown;
   code?: string;
   emailOtp?: string;
+  signature?: string;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -67,31 +65,16 @@ export async function POST(request: Request): Promise<Response> {
 
     const body = (await request.json().catch(() => ({}))) as ExportBody;
 
-    // Passive gate: owner role + MFA enrolled + session step-up cleared.
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireOwnerWithMfa(
-      session.user.id,
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.auditExport,
+      roleFloor: "owner",
       organizationId,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return Response.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
-      );
-    }
-
-    // Active gate: authenticator + emailed code at the moment of export.
-    const dual = await requireDualFactor({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "audit_export",
-      code: body.code,
-      emailOtp: body.emailOtp,
+      body,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!authorized.ok) {
+      return authorized.response;
     }
 
     const rawDays = Number.parseInt(String(body.days ?? ""), 10);

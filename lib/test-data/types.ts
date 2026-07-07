@@ -23,41 +23,6 @@
 
 import type { TokenSymbol } from "./chain-test-data";
 
-/**
- * JSONB-shaped workflow node/edge types for the test-data builder + seeder.
- * Intentionally narrower than `WorkflowNode` from `lib/workflow/store.ts`,
- * which is `Node<WorkflowNodeData>` from `@xyflow/react` and pulls a heavy
- * client-side dependency graph. The builder, seeder, and `tests/utils/db.ts`
- * fixture path all just write opaque JSONB; declaring the shape here keeps
- * the test-data plumbing untyped against React Flow while still letting us
- * drop `noExplicitAny` suppressions across the surface.
- *
- * `data.config` is left as `Record<string, unknown>` because each plugin
- * action carries a different config shape; per-field assertions in tests
- * narrow at the call site.
- */
-export type WorkflowNodeJson = {
-  id: string;
-  type?: string;
-  position: { x: number; y: number };
-  data: {
-    label?: string;
-    description?: string;
-    type?: string;
-    config?: Record<string, unknown>;
-    status?: string;
-  };
-};
-
-export type WorkflowEdgeJson = {
-  id: string;
-  source: string;
-  target: string;
-  sourceHandle?: string | null;
-  targetHandle?: string | null;
-  label?: string;
-};
-
 export type WalletBinding = { _wallet: true };
 export type AmountBinding = { _amount: { symbol: TokenSymbol; human: string } };
 export type ContractBinding = { _contract: { key: string } };
@@ -171,6 +136,22 @@ export type ProtocolChainTestData = {
    * the coverage runner after execution success. See OutputExpectation.
    */
   expectations?: Record<string, OutputExpectation[]>;
+  /**
+   * Post-write oracles for the fork simulation tier, keyed by write
+   * action slug. After the write mines, the harness runs the referenced
+   * read action of the same protocol/chain (with its normal testData
+   * bindings) and asserts on the structured result, so a write that
+   * mines but does the wrong thing cannot pass on receipt status alone.
+   * Simulation tier only: the coverage suites' shared wallet makes
+   * post-write state nondeterministic, but the simulation tier's
+   * dedicated impersonated wallet does not. Keep assertions
+   * history-safe on a long-lived fork (nonZero on a balance that only
+   * grows; never equals on accumulated state).
+   */
+  writeExpectations?: Record<
+    string,
+    Array<{ read: string; expect: OutputExpectation }>
+  >;
   /**
    * Action slugs the test runner should mark as `test.skip` with a reason.
    * Builders still produce these workflows (so the seeder surfaces them in

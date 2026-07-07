@@ -590,6 +590,9 @@ export function ActionGrid({
                     >
                       <button
                         className="flex flex-1 items-center gap-2 text-left hover:text-foreground"
+                        data-testid={`action-group-${group.category
+                          .toLowerCase()
+                          .replace(/\s+/g, "-")}`}
                         onClick={() => toggleGroup(group.category)}
                         type="button"
                       >

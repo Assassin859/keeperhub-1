@@ -11,8 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import {
+  runWalletStepUp,
+  signStepUpChallenge,
+} from "@/lib/wallet/step-up-client";
 import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { Page, PageMeta } from "@/lib/pagination";
@@ -22,6 +27,7 @@ import { ConfirmOverlay } from "./confirm-overlay";
 import { KeyActivityOverlay } from "./key-activity-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
+import type { OverlayComponentProps } from "./types";
 
 type ApiKey = {
   id: string;
@@ -36,13 +42,15 @@ type ApiKey = {
   key?: string;
 };
 
-type ApiKeysOverlayProps = {
-  overlayId: string;
+type ApiKeysOverlayProps = OverlayComponentProps<{
   // Highlight + scroll to this key (e.g. opened from the activity feed). The
   // resource type selects which tab opens: org keys vs personal/user keys.
   highlightId?: string;
   highlightType?: "api_key" | "org_api_key";
-};
+  // Fires once, with the full secret, right after a key is created. Lets a
+  // caller (e.g. the onboarding connect-agent step) reflect the new key.
+  onKeyCreated?: (key: string, type: "webhook" | "organisation") => void;
+}>;
 
 const SCOPE_LABELS: Record<string, string> = {
   "mcp:read": "Read your workflows, executions, and plugin schemas",
@@ -66,6 +74,8 @@ function CreateApiKeyOverlay({
   keyType: "webhook" | "organisation";
 }): React.ReactElement {
   const { pop } = useOverlay();
+  const session = useSession();
+  const isWallet = isWalletEmail(session.data?.user?.email);
   const [keyName, setKeyName] = useState("");
   const [phase, setPhase] = useState<"label" | "codes">("label");
   const dual = useDualFactorState();
@@ -95,6 +105,36 @@ function CreateApiKeyOverlay({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: keyName.trim() || null, scopes: activeScopes }),
     });
+
+  // Wallet users confirm by signing instead of entering TOTP + email codes.
+  const handleWalletCreate = async (): Promise<void> => {
+    setCreating(true);
+    try {
+      const response = await runWalletStepUp((extra) =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: keyName.trim() || null, ...extra }),
+        })
+      );
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        toast.error(data.error || "Failed to create API key");
+        return;
+      }
+      onCreated(await response.json());
+      toast.success("API key created successfully");
+      pop();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create API key"
+      );
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const handleCreate = async (): Promise<void> => {
     setCreating(true);
@@ -174,11 +214,17 @@ function CreateApiKeyOverlay({
   return (
     <Overlay
       actions={[
-        {
-          label: "Continue",
-          onClick: () => setPhase("codes"),
-          disabled: !keyName.trim() || !hasScopeSelected,
-        },
+        isWallet
+          ? {
+              label: "Create API key",
+              onClick: handleWalletCreate,
+              disabled: !keyName.trim() || creating || !hasScopeSelected,
+            }
+          : {
+              label: "Continue",
+              onClick: () => setPhase("codes"),
+              disabled: !keyName.trim() || !hasScopeSelected,
+            },
       ]}
       overlayId={overlayId}
       title="Create API Key"
@@ -248,13 +294,41 @@ function DeleteApiKeyOverlay({
   onDelete: (
     keyId: string,
     code: string,
-    emailOtp: string
-  ) => Promise<{ ok: true } | { ok: false; code: string }>;
+    emailOtp: string,
+    signature?: string
+  ) => Promise<{ ok: true } | { ok: false; code: string; challenge?: string }>;
   deleteEndpoint: (id: string) => string;
 }): React.ReactElement {
   const { pop } = useOverlay();
+  const session = useSession();
+  const isWallet = isWalletEmail(session.data?.user?.email);
   const dual = useDualFactorState();
   const [submitting, setSubmitting] = useState(false);
+
+  // Wallet users revoke by signing the step-up challenge.
+  const handleWalletRevoke = async (): Promise<void> => {
+    setSubmitting(true);
+    try {
+      const first = await onDelete(keyId, "", "");
+      if (first.ok) {
+        pop();
+        return;
+      }
+      if (first.code === "signature_required" && first.challenge) {
+        const signature = await signStepUpChallenge(first.challenge);
+        const second = await onDelete(keyId, "", "", signature);
+        if (second.ok || second.code === "guarded" || second.code === "unknown") {
+          pop();
+        }
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to revoke key"
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const emptyCodesFetch = (): Promise<Response> =>
     fetch(deleteEndpoint(keyId), {
@@ -287,11 +361,34 @@ function DeleteApiKeyOverlay({
     }
   };
 
+  if (isWallet) {
+    return (
+      <Overlay
+        actions={[
+          { label: "Cancel", onClick: pop, variant: "outline" },
+          {
+            label: "Sign to revoke",
+            onClick: handleWalletRevoke,
+            variant: "destructive",
+            disabled: submitting,
+          },
+        ]}
+        overlayId={overlayId}
+        title="Revoke API Key"
+      >
+        <p className="text-muted-foreground text-sm">
+          Any integrations using this key will stop working immediately. Sign
+          with your wallet to confirm.
+        </p>
+      </Overlay>
+    );
+  }
+
   return (
     <Overlay overlayId={overlayId} title="Revoke API Key">
       <p className="mb-4 text-muted-foreground text-sm">
-        Any integrations using this key will stop working immediately.
-        Confirm with both factors below.
+        Any integrations using this key will stop working immediately. Confirm
+        with both factors below.
       </p>
       <DualFactorSteps
         busy={submitting}
@@ -517,14 +614,21 @@ function useApiKeys(
   const handleDelete = async (
     keyId: string,
     code: string,
-    emailOtp: string
-  ): Promise<{ ok: true } | { ok: false; code: string }> => {
+    emailOtp: string,
+    signature?: string
+  ): Promise<
+    { ok: true } | { ok: false; code: string; challenge?: string }
+  > => {
     setDeleting(keyId);
     try {
       const response = await fetch(deleteEndpoint(keyId), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, emailOtp: emailOtp || undefined }),
+        body: JSON.stringify({
+          code,
+          emailOtp: emailOtp || undefined,
+          signature,
+        }),
       });
 
       if (!response.ok) {
@@ -538,13 +642,15 @@ function useApiKeys(
         const data = (await response.json().catch(() => ({}))) as {
           error?: string;
           code?: string;
+          challenge?: string;
         };
         if (
           data.code === "factors_required" ||
           data.code === "mfa_code_invalid" ||
-          data.code === "email_code_invalid"
+          data.code === "email_code_invalid" ||
+          data.code === "signature_required"
         ) {
-          return { ok: false, code: data.code };
+          return { ok: false, code: data.code, challenge: data.challenge };
         }
         toast.error(data.error || "Failed to delete API key");
         return { ok: false, code: "unknown" };
@@ -678,6 +784,7 @@ export function ApiKeysOverlay({
   overlayId,
   highlightId,
   highlightType,
+  onKeyCreated,
 }: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
   const { isAdmin, role } = useActiveMember();
@@ -723,7 +830,15 @@ export function ApiKeysOverlay({
           disabled: activeTab === "organisation" && !canManageOrgKeys,
           onClick: () =>
             push(CreateApiKeyOverlay, {
-              onCreated: currentKeys.handleKeyCreated,
+              onCreated: (key: ApiKey) => {
+                currentKeys.handleKeyCreated(key);
+                if (key.key) {
+                  onKeyCreated?.(
+                    key.key,
+                    activeTab as "webhook" | "organisation"
+                  );
+                }
+              },
               endpoint: createEndpoint,
               keyType: activeTab as "webhook" | "organisation",
             }),
