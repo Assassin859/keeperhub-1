@@ -167,7 +167,7 @@ describe("GET /api/scan/[address]", () => {
     expect(mockScanAddress).toHaveBeenCalledWith(VALID_ADDRESS);
     expect(mockIncrementAndCheck).toHaveBeenCalledWith(
       `scan:${MOCK_IP}`,
-      6,
+      30,
       30
     );
   });
