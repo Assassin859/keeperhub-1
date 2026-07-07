@@ -23,6 +23,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
+
 // ---------------------------------------------------------------------------
 // In-memory cookie store — same helper as scan-intent-cookie.test.ts
 // ---------------------------------------------------------------------------

@@ -1006,6 +1006,81 @@ export function recordWorkflowExecutionHealed(labels: {
   workflowExecutionsHealed.inc({ org_slug: labels.orgSlug });
 }
 
+// ─── Scan-to-automate funnel (v1.13) ─────────────────────────────────────────
+// Usage and conversion signals for the anonymous /scan landing page. Volume
+// (requests by outcome), effectiveness (cache hit ratio, empty vs populated
+// results), and the funnel itself (anon sign-in intents, workflows created
+// from suggestions). All label sets are small fixed enums — no per-address
+// or per-user labels, so cardinality is bounded.
+
+const scanRequestsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_scan_requests_total",
+  "Scan API requests by outcome (success = suggestions returned, empty = scan ran but produced none)",
+  ["status"]
+);
+
+export type ScanRequestStatus =
+  | "success"
+  | "empty"
+  | "failure"
+  | "rate_limited"
+  | "invalid_query"
+  | "ens_unresolved";
+
+export function recordScanRequest(status: ScanRequestStatus): void {
+  scanRequestsTotal.inc({ status });
+}
+
+const scanCacheLookupsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_scan_cache_lookups_total",
+  "Scan result cache lookups by result; miss count approximates unique addresses scanned per 5-min TTL window",
+  ["result"]
+);
+
+export function recordScanCacheLookup(result: "hit" | "miss"): void {
+  scanCacheLookupsTotal.inc({ result });
+}
+
+// Anonymous funnel round-trip: "created" when an anonymous visitor clicks
+// "Use this workflow" (pending_scan cookie set), "consumed" when the runner
+// picks the intent up after sign-in. consumed/created is the anon-to-signup
+// conversion rate of the funnel.
+const scanIntentsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_scan_intents_total",
+  "Anonymous scan funnel intents by stage (created = pre-auth CTA click, consumed = post-auth resume)",
+  ["stage"]
+);
+
+export function recordScanIntent(stage: "created" | "consumed"): void {
+  scanIntentsTotal.inc({ stage });
+}
+
+// Conversion event: a workflow was created through POST /api/workflows/create,
+// labelled by the originating surface. The scan drawer / pending-scan runner
+// send an x-keeperhub-source header; anything absent or unrecognised counts
+// as "other" so the label set stays a fixed allowlist.
+const WORKFLOW_CREATED_SOURCES = new Set(["scan-run", "scan-schedule"]);
+
+const workflowsCreatedBySource = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflows_created_total",
+  "Workflows created via the create API, by originating surface (scan-run, scan-schedule, other)",
+  ["source"]
+);
+
+export function recordWorkflowCreatedFromSource(
+  sourceHeader: string | null
+): void {
+  const source =
+    sourceHeader && WORKFLOW_CREATED_SOURCES.has(sourceHeader)
+      ? sourceHeader
+      : "other";
+  workflowsCreatedBySource.inc({ source });
+}
+
 // Per-workflow error counter used exclusively for managed-client alert dedup.
 // Labels are kept to (workflow_id, org_slug, error_type) — no error_category —
 // so cardinality stays bounded: only workflows that actually fail contribute

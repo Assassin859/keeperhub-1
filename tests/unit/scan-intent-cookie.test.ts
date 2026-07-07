@@ -14,6 +14,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
+
 // ---------------------------------------------------------------------------
 // In-memory cookie store that mimics Next.js cookies() helper.
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
+import { recordScanRequest } from "@/lib/metrics/collectors/prometheus";
 import { MetricNames } from "@/lib/metrics/types";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import {
@@ -74,6 +75,7 @@ export async function GET(
   // to `never`.
   const isRawAddress: boolean = ethers.isAddress(rawQuery);
   if (!(isRawAddress || ENS_NAME_REGEX.test(rawQuery))) {
+    recordScanRequest("invalid_query");
     return Response.json(
       { error: "Invalid address" },
       { status: HttpStatus.BAD_REQUEST }
@@ -101,6 +103,7 @@ export async function GET(
       rateLimitCount: String(rate.count),
       address: rawQuery,
     });
+    recordScanRequest("rate_limited");
     return applyRateLimitHeaders(
       Response.json(
         { error: "Rate limit exceeded", retryAfter: rate.retryAfter },
@@ -119,6 +122,7 @@ export async function GET(
   if (!isRawAddress) {
     const resolved = await resolveEnsName(rawQuery);
     if (!resolved) {
+      recordScanRequest("ens_unresolved");
       return applyRateLimitHeaders(
         Response.json(
           { error: "Could not resolve ENS name" },
@@ -161,11 +165,13 @@ export async function GET(
     } catch {
       // Engine error — return empty suggestions, do not fail the scan response.
     }
+    recordScanRequest(suggestions.length > 0 ? "success" : "empty");
     return applyRateLimitHeaders(
       Response.json({ ...result, ensName, suggestions }),
       rate
     );
   } catch (error) {
+    recordScanRequest("failure");
     metricsCollector.recordLatency(
       MetricNames.SCAN_ADDRESS_DURATION,
       scanTimer(),

@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { recordScanIntent } from "@/lib/metrics/collectors/prometheus";
 
 const COOKIE_NAME = "pending_scan";
 const MAX_SCAN_INTENT_LENGTH = 2048;
@@ -53,6 +54,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     maxAge: 600, // 10 minutes — matches template-intent (FUNNEL-02)
   });
 
+  recordScanIntent("created");
   return NextResponse.json({ ok: true });
 }
 
@@ -85,6 +87,7 @@ export async function GET(): Promise<NextResponse> {
 
   try {
     const intent = JSON.parse(raw) as unknown;
+    recordScanIntent("consumed");
     return NextResponse.json({ intent });
   } catch {
     return NextResponse.json({ intent: null });

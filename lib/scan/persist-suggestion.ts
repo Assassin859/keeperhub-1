@@ -73,7 +73,12 @@ export async function persistSuggestion(
   const createRes = await fetch("/api/workflows/create", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      // Prometheus conversion label (keeperhub_workflows_created_total):
+      // marks this create as originating from the scan funnel.
+      "x-keeperhub-source": `scan-${mode}`,
+    },
     body: JSON.stringify({
       name,
       description,

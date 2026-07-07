@@ -10,6 +10,7 @@ import { db } from "@/lib/db";
 import { supportedTokens } from "@/lib/db/schema";
 import { scanResults } from "@/lib/db/schema-scan";
 import { getMetricsCollector } from "@/lib/metrics";
+import { recordScanCacheLookup } from "@/lib/metrics/collectors/prometheus";
 import { MetricNames } from "@/lib/metrics/types";
 import { getEnabledChains } from "@/lib/rpc/chain-service";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
@@ -412,10 +413,12 @@ export async function scanAddress(rawAddress: string): Promise<ScanResponse> {
 
   if (cached[0] !== undefined) {
     getMetricsCollector().incrementCounter(MetricNames.SCAN_CACHE_HIT_TOTAL);
+    recordScanCacheLookup("hit");
     return cached[0].resultJson;
   }
 
   getMetricsCollector().incrementCounter(MetricNames.SCAN_CACHE_MISS_TOTAL);
+  recordScanCacheLookup("miss");
 
   // 2. Determine which chains to scan (intersection of enabled chains and
   //    chains that have at least one registered Aave V3 or Lido address).
