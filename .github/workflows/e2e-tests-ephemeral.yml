@@ -783,6 +783,15 @@ jobs:
           # chronicle Sepolia suites, which fund via anvil cheatcodes - no
           # live-testnet funder involved.
           PROTOCOL_E2E_SEPOLIA_FORK: "1"
+          # PR-gate/nightly split: PR-triggered runs shrink each phase to
+          # its first runnable action (run-fixture.ts) and the floor
+          # derivation above drops to 4 with it; schedule (protocol-nightly
+          # passes caller_event: schedule), push, and workflow_dispatch runs
+          # keep the full sweep. Same caller_event-with-fallback the
+          # should-run job uses for its EFFECTIVE_EVENT gate. The PR label
+          # gate itself already lives in should-run, so event type is the
+          # only condition needed here.
+          PROTOCOL_E2E_REPRESENTATIVES: ${{ (inputs.caller_event || github.event_name) == 'pull_request' && '1' || '' }}
 
       - name: Dump protocol-coverage execution state
         if: failure()
