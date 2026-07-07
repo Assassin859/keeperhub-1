@@ -438,5 +438,9 @@ case "${1:-}" in
   sim) shift; cmd_sim "$@" ;;
   snapshot) shift; cmd_snapshot "$@" ;;
   down) shift; cmd_down "$@" ;;
-  *) grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -25; exit 1 ;;
+  # Usage: print the whole leading comment block (skip the shebang,
+  # stop at the first non-comment line) instead of grepping every
+  # comment in the file behind a hardcoded line bound that truncated
+  # the header whenever it grew.
+  *) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 1 ;;
 esac
