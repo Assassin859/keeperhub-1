@@ -547,6 +547,13 @@ const NAV_ITEMS: NavItemDef[] = [
     href: "/hub",
     requireAuth: false,
   },
+  {
+    id: "workflows",
+    icon: WorkflowIcon,
+    label: "Workflows",
+    href: null,
+    requireAuth: false,
+  },
   // Scan is a public funnel entry point, gated by the same build-time flag as
   // the /scan page and API. Hidden entirely when scanning is disabled so the
   // nav never links to the "not available yet" placeholder.
@@ -561,13 +568,6 @@ const NAV_ITEMS: NavItemDef[] = [
         },
       ] satisfies NavItemDef[])
     : []),
-  {
-    id: "workflows",
-    icon: WorkflowIcon,
-    label: "Workflows",
-    href: null,
-    requireAuth: false,
-  },
   {
     id: "analytics",
     icon: BarChart3,
