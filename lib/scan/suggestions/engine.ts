@@ -300,8 +300,12 @@ function buildDepegWatchSuggestion(
     category: "alert",
     chainId: stable.chainId,
     readOrWrite: "read",
-    // Market-level read: no wallet or token parameter to confirm.
-    confirmInputs: {},
+    // Market-level read via the Chainlink feed; tokenAddress is display-only
+    // context so the preview shows WHICH stablecoin contract is being watched
+    // (the factory shape reads the feed, not the token).
+    confirmInputs: {
+      tokenAddress: stable.tokenAddress,
+    },
     riskNote: RISK_NOTE_READ_ONLY,
     usdValue: stable.usdValue,
     symbol: stable.symbol,
