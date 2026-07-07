@@ -13,7 +13,7 @@ import type {
   ProtocolAction,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
-import { planPhaseFixtures } from "@/tests/e2e/vitest/protocol-coverage/_shared/run-fixture";
+import { planPhaseFixtures } from "@/lib/test-data/plan";
 
 function makeAction(
   slug: string,

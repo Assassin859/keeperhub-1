@@ -149,6 +149,10 @@ packages/*/dist/
 .claude/floor-test-*.json
 .claude/tier*.json
 
+# Fork RPC fetch caches (scripts/protocol-local.sh snapshot);
+# machine-local, regenerated nightly in CI
+.claude/fork-snapshots/
+
 # Local dev session cookie minted by scripts/dev-mint-session.ts
 .claude/.dev-session-cookie-LOCAL
 
