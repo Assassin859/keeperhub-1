@@ -259,7 +259,6 @@ jobs:
             ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GOOGLE_CLIENT_ID={0}', vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID) || '' }}
             ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_BILLING_ENABLED={0}', vars.NEXT_PUBLIC_BILLING_ENABLED) || '' }}
             ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={0}', vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED) || '' }}
-            ${{ matrix.image.build_args == true && 'NEXT_PUBLIC_SCAN_ENABLED=true' || '' }}
             ${{ matrix.image.build_args == true && 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA' || '' }}
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:${{ matrix.image.tag_prefix }}-${{ steps.vars.outputs.sha_short }}

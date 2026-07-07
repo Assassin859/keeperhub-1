@@ -110,9 +110,6 @@ function makeParams(address: string): { params: Promise<{ address: string }> } {
 
 describe("TEST-02: GET /api/scan returns suggestions from suggestion engine", () => {
   beforeEach(() => {
-    // The HARDEN-04 feature flag gates the route — enable it so the suggestion
-    // path runs (the disabled-flag → 404 case is covered in scan-route.test.ts).
-    process.env.NEXT_PUBLIC_SCAN_ENABLED = "true";
     mockIncrementAndCheck.mockReset();
     mockGetRequestSourceIp.mockReset();
     mockScanAddress.mockReset();
