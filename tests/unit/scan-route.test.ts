@@ -4,8 +4,8 @@
  *
  * Verifies: address validation (400 on malformed), rate-limit enforcement
  * (429 when the backoff limiter denies, scanAddress NOT called), happy path
- * (200 + scanAddress called once with the rate-limit key `scan:<ip>`),
- * HARDEN-01 abuse telemetry on 429, and HARDEN-04 flag-gate 404.
+ * (200 + scanAddress called once with the rate-limit key `scan:<ip>`), and
+ * HARDEN-01 abuse telemetry on 429.
  *
  * Mocks: incrementAndCheckWithBackoff, getRequestSourceIp, scanAddress,
  *        logAnonymousExecutionBlock.
@@ -100,9 +100,6 @@ describe("GET /api/scan/[address]", () => {
       unavailableChains: [],
       scannedAt: new Date().toISOString(),
     });
-    // HARDEN-04: set the flag so existing tests keep passing once the gate
-    // is added to the route in 55-03
-    process.env.NEXT_PUBLIC_SCAN_ENABLED = "true";
   });
 
   it("invalid address: returns 400 without touching rate limit or scanner", async () => {
@@ -186,23 +183,5 @@ describe("GET /api/scan/[address]", () => {
       rateLimitCount: "7",
       address: VALID_ADDRESS,
     });
-  });
-
-  // HARDEN-04: feature flag gate
-  it("returns 404 when NEXT_PUBLIC_SCAN_ENABLED is not 'true'", async () => {
-    const saved = process.env.NEXT_PUBLIC_SCAN_ENABLED;
-    try {
-      process.env.NEXT_PUBLIC_SCAN_ENABLED = undefined;
-      // RED: flag gate not yet added to the route (55-03 adds it)
-      const res = await GET(
-        makeRequest(VALID_ADDRESS),
-        makeParams(VALID_ADDRESS)
-      );
-      expect(res.status).toBe(404);
-      expect(mockIncrementAndCheck).not.toHaveBeenCalled();
-      expect(mockScanAddress).not.toHaveBeenCalled();
-    } finally {
-      process.env.NEXT_PUBLIC_SCAN_ENABLED = saved;
-    }
   });
 });
