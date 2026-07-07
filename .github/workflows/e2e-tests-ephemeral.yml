@@ -612,6 +612,10 @@ jobs:
     # Same gate as e2e-vitest-ephemeral: build-app skipped (Docker path)
     # or succeeded admits this job; failed or cancelled blocks it.
     if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') }}
+    # Suites run concurrently with 10-minute setup hooks (cold archive
+    # fan-outs on a fresh fork); 45 min bounds a hung run without a
+    # 6-hour default runaway.
+    timeout-minutes: 45
     runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && inputs.caller_event != 'pull_request' && 'arc-keeperhub-build' || 'ubuntu-latest' }}
     # Always staging: e2e validates against test credentials, never prod.
     environment: staging
