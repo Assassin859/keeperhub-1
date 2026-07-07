@@ -316,6 +316,7 @@ function ScanPageContent(): React.ReactElement {
 
       <SuggestionPreviewDrawer
         address={address}
+        addressKind={scanData?.addressKind}
         ensName={scanData?.ensName}
         isAuthenticated={isAuthenticated}
         onOpenChange={handlePreviewOpenChange}

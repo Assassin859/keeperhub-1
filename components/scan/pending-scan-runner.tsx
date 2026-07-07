@@ -176,7 +176,7 @@ export function PendingScanRunner(): null {
             defaultEmail: session?.user?.email,
           });
           writeSessionFlag(idempotencyKey);
-          toast.success("Workflow saved and running");
+          toast.success("Workflow saved");
           router.push(`/workflows/${id}`);
         } catch (err) {
           const message =

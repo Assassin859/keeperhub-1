@@ -23,7 +23,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { WorkflowCanvas } from "@/components/workflow/workflow-canvas";
-import { truncateAddress } from "@/lib/address-utils";
 import { getChainName } from "@/lib/chain-utils";
 import { buildWorkflow } from "@/lib/scan/factory";
 import {
@@ -43,9 +42,6 @@ import {
   rightPanelWidthAtom,
 } from "@/lib/workflow/store";
 
-/** A confirmInputs value that is a raw EVM address (shown truncated). */
-const ADDRESS_DISPLAY_RE = /^0x[0-9a-fA-F]{40}$/;
-
 type SuggestionPreviewDrawerProps = {
   suggestion: SuggestionDescriptor | null;
   /**
@@ -63,8 +59,10 @@ type SuggestionPreviewDrawerProps = {
   /** Signed-in user's email, used to prefill the alert node's recipient so
    *  Run / Save pass config validation. Undefined when anonymous. */
   userEmail?: string;
-  /** ENS name the scan resolved, shown instead of the 0x wallet address. */
+  /** ENS name the scan resolved, shown alongside the wallet address. */
   ensName?: string;
+  /** Detected kind of the scanned address; adapts the wallet field label. */
+  addressKind?: "eoa" | "contract";
 };
 
 export function SuggestionPreviewDrawer({
@@ -76,6 +74,7 @@ export function SuggestionPreviewDrawer({
   address,
   userEmail,
   ensName,
+  addressKind,
 }: SuggestionPreviewDrawerProps): React.ReactElement | null {
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
@@ -388,20 +387,20 @@ export function SuggestionPreviewDrawer({
         </div>
       );
     }
-    // Show the ENS name for the wallet field when the scan resolved one.
-    let displayValue = value;
-    if (key === "walletAddress" && ensName) {
-      displayValue = ensName;
-    } else if (ADDRESS_DISPLAY_RE.test(value)) {
-      displayValue = truncateAddress(value);
-    }
+    // Wallet field: show the ENS name when the scan resolved one; otherwise
+    // the FULL address (never truncated - the user must be able to verify it).
+    const displayValue = key === "walletAddress" && ensName ? ensName : value;
+    const label =
+      key === "walletAddress" && addressKind === "contract"
+        ? "Contract address"
+        : addressFieldLabel(key);
     return (
       <div className="mb-3" key={key}>
         <label
           className="mb-1 block text-muted-foreground text-xs"
           htmlFor={`param-${key}`}
         >
-          {addressFieldLabel(key)}
+          {label}
         </label>
         <Input
           className="cursor-default bg-muted font-mono text-sm"

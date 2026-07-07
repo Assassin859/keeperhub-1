@@ -92,6 +92,7 @@
   /* --- Accent (green brand) --- */
   --color-text-accent: #09fd67;
   --color-bg-accent: #09fd671a;
+  --color-border-accent: #09fd67;
 }
 
 .dark {
@@ -144,7 +145,9 @@
      truncated addresses and hashes (e.g. 0x1479...E38E renders as one dot).
      Disable ligatures on monospace text so the literal characters render. */
   .font-mono {
-    font-feature-settings: "liga" 0, "calt" 0;
+    font-feature-settings:
+      "liga" 0,
+      "calt" 0;
     font-variant-ligatures: none;
   }
 }

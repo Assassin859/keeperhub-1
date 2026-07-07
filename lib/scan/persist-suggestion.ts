@@ -49,7 +49,10 @@ function applyDefaultEmail(
  *   2. POST /api/workflows/create  (enabled:true for schedule, false for run)
  *   3. PATCH /api/workflows/{id} with {nodes} — triggers syncWorkflowSchedule
  *      (schedule mode only)
- *   4. api.workflow.execute(id, {}) — immediate one-off run (both modes)
+ *   4. api.workflow.execute(id, {}) — immediate one-off run, "run" mode only.
+ *      Schedule mode does NOT auto-run (UAT feedback): "Use this workflow"
+ *      saves the monitor and lets its schedule fire it; the first run happens
+ *      on the next scheduled tick or when the user runs it from the canvas.
  *
  * Returns { id } so the caller can navigate to /workflows/{id}.
  *
@@ -113,10 +116,12 @@ export async function persistSuggestion(
     }
   }
 
-  // Execute immediately for both run and schedule modes. The immediate first
-  // run for schedule mode is intentional per FUNNEL-04: "save... and it runs
-  // immediately." Do NOT remove this call for schedule mode.
-  await api.workflow.execute(id, {});
+  // Immediate one-off execution only for explicit "run" mode. Schedule mode
+  // deliberately does NOT auto-run (UAT feedback superseding FUNNEL-04):
+  // "Use this workflow" saves the enabled monitor and its schedule fires it.
+  if (mode === "run") {
+    await api.workflow.execute(id, {});
+  }
 
   return { id };
 }

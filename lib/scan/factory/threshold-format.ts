@@ -59,7 +59,7 @@ export function thresholdFieldMeta(
       return { label: "Alert when health factor drops below", unit: "" };
     case "gasThreshold":
       return {
-        label: "Alert when gas balance drops below",
+        label: "Alert when balance drops below",
         unit: nativeSymbol(descriptor.chainId),
       };
     case "alertThreshold":

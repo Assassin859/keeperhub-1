@@ -86,7 +86,7 @@ export function buildGasBalance(
     buildConditionNode(
       conditionId,
       {
-        label: "Gas Balance Below Threshold",
+        label: "Balance Below Threshold",
         slug,
         leftOperand: balanceRef,
         operator: "<",
@@ -100,10 +100,10 @@ export function buildGasBalance(
     buildEmailAlertNode(
       alertId,
       {
-        label: "Send Gas Alert",
-        subject: "KeeperHub alert: low gas balance",
+        label: "Send Balance Alert",
+        subject: "KeeperHub alert: low native token balance",
         bodyTemplate:
-          "Native gas balance is running low. " +
+          "Native token balance is running low. " +
           `Current balance: ${balanceRef} wei. Top up to keep transactions working.`,
       },
       3

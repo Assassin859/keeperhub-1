@@ -235,8 +235,8 @@ describe("PendingScanRunner", () => {
         expect.objectContaining({ method: "PATCH" })
       );
 
-      // Execute immediately
-      expect(mockExecute).toHaveBeenCalledWith("wf_abc123", {});
+      // Schedule mode does NOT auto-run: the enabled schedule fires it.
+      expect(mockExecute).not.toHaveBeenCalled();
 
       // Navigate to workflow canvas
       expect(mockPush).toHaveBeenCalledWith("/workflows/wf_abc123");

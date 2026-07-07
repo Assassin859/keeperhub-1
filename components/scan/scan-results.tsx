@@ -94,7 +94,7 @@ function depegGroupDescription(members: SuggestionDescriptor[]): string {
 function gasGroupDescription(members: SuggestionDescriptor[]): string {
   const { networksLabel } = membersSummary(members);
   return (
-    "Alerts when your native gas balance runs low (below 0.01) on any of " +
+    "Alerts when your native token balance runs low (below 0.01) on any of " +
     `your ${networksLabel}. Pick a network in the preview.`
   );
 }
@@ -238,7 +238,6 @@ export function ScanResults({
       {scanState === "populated" && data && (
         <>
           <ResultsHeader
-            address={data.address}
             addressKind={data.addressKind}
             contractChains={data.contractChains}
             ensName={data.ensName}
@@ -264,7 +263,6 @@ export function ScanResults({
         <div data-testid="scan-results-empty">
           {data?.addressKind !== undefined && (
             <ResultsHeader
-              address={data.address}
               addressKind={data.addressKind}
               contractChains={data.contractChains}
               ensName={data.ensName}

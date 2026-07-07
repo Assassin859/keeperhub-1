@@ -32,9 +32,9 @@ export function buildBaselineSuggestions(
   const shortAddr = truncateAddress(address);
   return BASELINE_GAS_CHAINS.map((chainId) => ({
     id: `gas-balance-${chainId}`,
-    name: "Native Gas Balance Alert",
+    name: "Native Token Balance Alert",
     description:
-      `Get alerted if ${shortAddr} runs low on gas on ${getChainName(String(chainId))}, ` +
+      `Get alerted if ${shortAddr} runs low on native tokens on ${getChainName(String(chainId))}, ` +
       "so scheduled and manual transactions keep working.",
     category: "alert",
     chainId,

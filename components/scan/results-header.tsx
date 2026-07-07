@@ -1,13 +1,11 @@
 import { FileCode2, Wallet } from "lucide-react";
 import { DepegBanner } from "@/components/scan/depeg-banner";
 import { UnavailableChainBadges } from "@/components/scan/unavailable-chain-badges";
-import { truncateAddress } from "@/lib/address-utils";
 import { getChainName } from "@/lib/chain-utils";
 import { SCAN_NETWORK_IDS } from "@/lib/scan/networks";
 import type { StablecoinBalance, UnavailableChain } from "@/lib/scan/types";
 
 type ResultsHeaderProps = {
-  address: string;
   ensName?: string;
   addressKind?: "eoa" | "contract";
   contractChains?: number[];
@@ -32,7 +30,6 @@ function addressKindLabel(
 }
 
 export function ResultsHeader({
-  address,
   ensName,
   addressKind,
   contractChains,
@@ -55,19 +52,13 @@ export function ResultsHeader({
         className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2"
         data-testid="scan-address-summary"
       >
-        {/* Identity: the ENS name (when the query resolved one) plus the
-            checksummed address it maps to, so the user sees exactly what was
-            scanned. */}
-        <div className="flex items-baseline gap-2">
-          {ensName ? (
-            <span className="font-semibold text-foreground text-sm">
-              {ensName}
-            </span>
-          ) : null}
-          <span className="font-mono text-muted-foreground text-xs">
-            {truncateAddress(address)}
+        {/* Identity: only the ENS name when the query resolved one — the raw
+            address is what the user just typed, so repeating it is noise. */}
+        {ensName ? (
+          <span className="font-semibold text-foreground text-sm">
+            {ensName}
           </span>
-        </div>
+        ) : null}
 
         {addressKind !== undefined && (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 font-medium text-foreground text-xs">
