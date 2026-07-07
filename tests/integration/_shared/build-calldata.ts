@@ -1,41 +1,42 @@
 /**
  * Shared calldata builder for protocol on-chain integration tests.
  *
- * Every protocol's on-chain integration test does the same six steps to
- * turn a (protocol, action slug, sample inputs, chain) tuple into the
- * `{ to, data }` pair eth_call needs:
+ * Validating wrapper around the shared encode kernel in
+ * lib/test-data/encode-action.ts (encodeFromConfig), which owns the
+ * production pipeline: encode transforms, fragment resolution (overload
+ * and flattened-tuple arity handling), reshapeArgsForAbi,
+ * coerceArgsForAbi, and Interface encoding. On top of the kernel this
+ * wrapper keeps the test-facing contract:
  *
- *   1. Find the action by slug.
- *   2. Resolve the contract and its address for the target chain.
- *   3. Map sampleInputs to rawArgs via input.name.
- *   4. reshapeArgsForAbi against the function's ABI (re-wraps flattened
- *      tuple components into the object ethers.js expects).
- *   5. Encode calldata via ethers.Interface.
- *   6. Return { to, data, action, contract } for the caller to assert on.
+ *   - rejects sampleInputs keys the action does not declare, so a typo
+ *     in a test fixture fails loudly instead of encoding a default;
+ *   - honors `toOverride` unconditionally and throws when no address
+ *     resolves (the kernel resolves "" instead of throwing);
+ *   - keeps its own error messages for unknown action / missing ABI /
+ *     missing function, which tests/unit/build-calldata.test.ts pins;
+ *   - offers the `coerceArgs: false` escape hatch reproducing the
+ *     pre-coerce encoding (reshape only) so regression tests can pin
+ *     the trap the default pipeline disarms.
  *
  * `chainId` is required so the helper cannot silently pick a wrong
- * chain when a protocol is deployed on multiple. `toOverride` is
- * opt-in for contracts marked `userSpecifiedAddress` (e.g. a Uniswap
- * V3 pool whose address is computed per pair at runtime).
- *
- * Per-protocol assertion patterns stay in their own test files; this
- * module deliberately handles only the calldata-encoding half of the
- * test setup.
+ * chain when a protocol is deployed on multiple. Per-protocol assertion
+ * patterns stay in their own test files; this module deliberately
+ * handles only the calldata-encoding half of the test setup.
  */
 
-import { ethers } from "ethers";
-import {
-  coerceArgsForAbi,
-  type FunctionAbiEntry,
-  reshapeArgsForAbi,
-} from "@/lib/abi/struct-args";
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
+import {
+  encodeFromConfig,
+  fragmentFor,
+  ifaceFor,
+} from "@/lib/test-data/encode-action";
 
-type AbiEntry = FunctionAbiEntry & {
+type AbiEntry = {
   type: string;
   name?: string;
 };
@@ -54,7 +55,8 @@ export type BuildCalldataParams = {
   actionSlug: string;
   /** Map of input name to stringly-typed value. Must not contain keys
    *  that the action does not declare; unknown keys throw. Missing
-   *  declared keys fall back to `inp.default ?? ""`. */
+   *  declared keys (and explicitly empty values) fall back to
+   *  `inp.default ?? ""`. */
   sampleInputs: Record<string, string>;
   /** Chain ID string as it appears in `protocol.contracts[key].addresses`.
    *  Required; mistakes here are silent bugs (wrong contract on wrong
@@ -119,24 +121,30 @@ export function buildCalldata(params: BuildCalldataParams): Calldata {
     );
   }
 
-  const rawArgs = action.inputs.map(
-    (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
-  );
-
   const parsedAbi = JSON.parse(contract.abi) as AbiEntry[];
-  const functionAbi = parsedAbi.find(
+  const hasFunction = parsedAbi.some(
     (f) => f.type === "function" && f.name === action.function
   );
-  if (!functionAbi) {
+  if (!hasFunction) {
     throw new Error(
       `Function ${action.function} not found in ABI for contract ${action.contract}`
     );
   }
-  const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
-  const args =
-    coerceArgs === false ? reshaped : coerceArgsForAbi(reshaped, functionAbi);
-  const iface = new ethers.Interface(parsedAbi);
-  const data = iface.encodeFunctionData(action.function, args);
 
+  if (coerceArgs === false) {
+    // Escape hatch: same fragment resolution as the kernel, but skip
+    // coerceArgsForAbi (and encode transforms) to reproduce the raw
+    // pre-coerce encoding the regression tests assert on.
+    const iface = ifaceFor(protocol, action);
+    const { ethersFragment, abi } = fragmentFor(iface, action);
+    const rawArgs: unknown[] = action.inputs.map(
+      (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
+    );
+    const args = reshapeArgsForAbi(rawArgs, abi);
+    const data = iface.encodeFunctionData(ethersFragment as never, args);
+    return { to, data, action, contract };
+  }
+
+  const { data } = encodeFromConfig(protocol, action, chainId, sampleInputs);
   return { to, data, action, contract };
 }
