@@ -10,9 +10,9 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-const mockRequireDualFactor = vi.fn();
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: (...args: unknown[]) => mockRequireDualFactor(...args),
+const mockAuthorizeAction = vi.fn();
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: (...args: unknown[]) => mockAuthorizeAction(...args),
 }));
 
 // Identifiable schema table references so the tx mock can branch on which
@@ -28,6 +28,7 @@ vi.mock("@/lib/db/schema", () => ({
   sessions: sessionsTable,
   organizationApiKeys: orgApiKeysTable,
   securityAuditLog: { __table: "security_audit_log" },
+  walletAddress: { userId: "user_id" },
 }));
 
 const mockFindFirst = vi.fn();
@@ -76,6 +77,11 @@ function makeTx() {
     .fn()
     .mockResolvedValue([{ id: "k1", organizationId: "o1" }]);
   return {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([{ count: 1 }]),
+      }),
+    }),
     update: vi.fn((table: unknown) => ({
       set: vi.fn(() => ({
         where:
@@ -100,7 +106,7 @@ beforeEach(() => {
     isAnonymous: false,
     deactivatedAt: null,
   });
-  mockRequireDualFactor.mockResolvedValue({ ok: true });
+  mockAuthorizeAction.mockResolvedValue({ ok: true });
 });
 
 describe("POST /api/user/delete cascade audit", () => {

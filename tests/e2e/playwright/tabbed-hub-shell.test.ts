@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // Phase 44 tabbed Hub shell uses anonymous storage state — these tests must
 // pass for logged-out visitors too (the Hub is publicly browseable).

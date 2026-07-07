@@ -6,11 +6,8 @@ import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { parseScopeInput } from "@/lib/mcp/oauth-scopes";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
-import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -86,52 +83,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check if user is anonymous
-    const isAnonymous =
-      session.user.name === "Anonymous" ||
-      session.user.email?.startsWith("temp-");
-
-    if (isAnonymous) {
-      return NextResponse.json(
-        { error: "Anonymous users cannot create API keys" },
-        { status: 403 }
-      );
-    }
-
-    // User-scoped key creation is the highest-leverage forever-bypass
-    // a session can mint. Even though the apiKeys table has no org
-    // column to gate on, we require MFA enrolled + step-up cleared so
-    // a stolen session alone can't issue a key that survives any
-    // future MFA enforcement.
-    const sessionRow = session.session as { requiresMfa?: boolean | null };
-    const guard = await requireMfaEnrolled(
-      session.user.id,
-      sessionRow.requiresMfa === true
-    );
-    if (!guard.ok) {
-      return NextResponse.json(
-        { error: guard.error, code: guard.code },
-        { status: guard.status }
-      );
-    }
-
     const body = await request.json().catch(() => ({}));
-    const name = body.name || null;
-    const scope = parseScopeInput(body.scopes);
 
-    // Dual-factor at mint time. Long-lived bypass credentials warrant
-    // a fresh challenge on BOTH factors at the exact moment of issue.
-    const dual = await requireDualFactor({
-      userId: session.user.id,
-      email: session.user.email,
-      action: "user_api_key_create",
-      code: typeof body.code === "string" ? body.code : undefined,
-      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.apiKeyManage,
+      roleFloor: "none",
+      body,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return dualFactorErrorResponse(dual);
+    if (!authorized.ok) {
+      return authorized.response;
     }
+
+    const name = body.name || null;
+    const scope = parseScopeInput(body.scopes);
 
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();
@@ -156,7 +122,8 @@ export async function POST(request: Request) {
     // Out-of-band alert so the owner learns a long-lived bypass credential
     // was minted, even if their own session did it. Non-blocking.
     notifyApiKeyChange({
-      email: session.user.email,
+      userId: session.user.id,
+      loginEmail: session.user.email,
       action: "created",
       tokenName: newKey.name,
       keyPrefix: newKey.keyPrefix,

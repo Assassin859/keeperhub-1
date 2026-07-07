@@ -2,6 +2,7 @@
 
 import { atom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useState } from "react";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { authClient, useSession } from "@/lib/auth-client";
 
 export type WalletInfoState = {
@@ -49,11 +50,14 @@ export function useWalletInfo(): WalletInfoState {
 
   const sessionUserId = session?.user?.id;
   const email = session?.user?.email;
+  // Wallet (SIWE) accounts have a synthetic email that is never verified; they
+  // authenticate by signature, so they are authed without the verified-email
+  // requirement (which stays in place for email / OAuth accounts).
   const isAuthed =
     !!sessionUserId &&
     !!email &&
     !email.startsWith("temp-") &&
-    session?.user?.emailVerified === true;
+    (session?.user?.emailVerified === true || isWalletEmail(email));
 
   const activeOrgId = activeOrg?.id ?? null;
 

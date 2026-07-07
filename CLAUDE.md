@@ -29,7 +29,8 @@
 - Use optional chaining (`?.`) and nullish coalescing (`??`)
 - Use `const` by default, `let` only when reassignment is needed
 - Always `await` promises in async functions
-- Remove `console.log`, `debugger`, and `alert` from production code
+- Remove `debugger` and `alert` from all code without exception
+- **Logging is context-dependent** — see the Logging section below for the full rule
 - Use Next.js `<Image>` component instead of `<img>` tags
 - Add `rel="noopener"` when using `target="_blank"`
 
@@ -101,6 +102,63 @@ When you must use an ignore comment:
    // biome-ignore lint/suspicious/noExplicitAny: third-party SDK types are incomplete
    const result = externalLib.call() as any;
    ```
+
+## Logging
+
+Logging rules differ between server and client code. The Biome `noConsole` rule enforces this boundary: it bans `console.warn/error` on server paths while disabling the rule entirely for `components/**`, `lib/hooks/**`, `app/page.tsx`, `app/workflows/**`, `lib/api-client.ts`, and `tests/**`.
+
+### Server-side (app/api/**, lib/**, app/*/route.ts, scripts/**)
+
+Use the functions from `lib/logging.ts`. Never use `console.warn` or `console.error` on server paths — Biome treats these as errors.
+
+| Function | When to use | Sentry | Prometheus |
+|---|---|---|---|
+| `logSystemError(category, message, error, labels?)` | Infrastructure/DB/auth failures the system should not encounter | yes (error) | yes |
+| `logUserError(category, message, error?, labels?)` | Validation, bad input, external-service rejections caused by the caller | no | yes |
+| `logSystemWarn(category, message, error, labels?)` | Recovery events, pre-reconciliation notes, expected fallbacks worth tracking | yes (warning) | no |
+| `logInfo(message, labels?)` | State transitions and lifecycle events | no | no |
+| `logWarn(message, labels?)` | Benign anomalies that are not operational failures | no | no |
+| `logDebug(message, labels?)` | Verbose tracing, gated by `LOG_LEVEL=debug` | no | no |
+| `logSecurityEvent(name, fields?, sentry?)` | Security detection signals (KEEP-612) | yes | no |
+
+`ErrorCategory` values: `VALIDATION`, `CONFIGURATION`, `EXTERNAL_SERVICE`, `NETWORK_RPC`, `TRANSACTION`, `BILLING`, `DATABASE`, `AUTH`, `INFRASTRUCTURE`, `WORKFLOW_ENGINE`, `UNKNOWN`.
+
+**Message format**: Use a `[Context] message` prefix. The context string is extracted by regex and becomes the `error_context` label in Loki and Prometheus.
+
+```typescript
+// Good
+logSystemError(ErrorCategory.DATABASE, "Failed to create workflow", error, {
+  endpoint: "/api/workflows/create",
+  operation: "create",
+});
+
+logUserError(ErrorCategory.VALIDATION, "[Withdraw] Invalid amount", undefined, {
+  userId: session.user.id,
+});
+
+// Wrong — banned by Biome on server paths
+console.error("something broke", error);
+console.warn("unexpected state");
+```
+
+`console.log/info/debug` are technically allowed by Biome on server paths (the lib/logger facade normalises them to structured JSON) but prefer `logInfo`/`logDebug` so the structured labels and workflow context are included automatically.
+
+### Client-side (components/**, lib/hooks/**, lib/api-client.ts, app/page.tsx, app/workflows/**)
+
+`console.*` is unrestricted — the `noConsole` rule is off for these paths. Logs go to the browser devtools and client-side Sentry; the server observability pipeline (Prometheus, Loki) does not apply.
+
+Use a `[Component]` prefix to match server-side convention and make devtools filtering easy:
+
+```typescript
+// Good
+console.log("[AI Prompt] Generating workflow", { hasNodes, existingWorkflow: !!existingWorkflow });
+console.error("Failed to generate workflow:", error);
+
+// Fine but noisy — keep to meaningful state transitions, not every render
+console.log("[AIPrompt] re-render");
+```
+
+---
 
 ## Design System
 

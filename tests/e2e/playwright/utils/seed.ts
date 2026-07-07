@@ -152,14 +152,21 @@ async function ensureUser(
     SELECT id FROM users WHERE email = ${email} LIMIT 1
   `;
   if (existing.length > 0) {
-    return existing[0].id as string;
+    const existingId = existing[0].id as string;
+    // Persistent users represent returning, already-onboarded accounts. Keep
+    // the flag set so the welcome gating lands them on the canvas, not the
+    // onboarding wizard.
+    await sql`
+      UPDATE users SET onboarding_completed = true WHERE id = ${existingId}
+    `;
+    return existingId;
   }
 
   const id = generateId();
   const now = new Date();
   await sql`
-    INSERT INTO users (id, name, email, email_verified, created_at, updated_at)
-    VALUES (${id}, ${name}, ${email}, true, ${now}, ${now})
+    INSERT INTO users (id, name, email, email_verified, onboarding_completed, created_at, updated_at)
+    VALUES (${id}, ${name}, ${email}, true, true, ${now}, ${now})
   `;
   return id;
 }

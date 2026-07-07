@@ -2,6 +2,7 @@
 
 import { atom, useAtomValue, useSetAtom } from "jotai";
 import { useEffect } from "react";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { authClient, useSession } from "@/lib/auth-client";
 import {
   useInvalidateWalletInfo,
@@ -104,11 +105,16 @@ export function useWalletProvisioning(): { isProvisioning: boolean } {
   const setProvisioning = useSetAtom(provisioningAtom);
 
   const email = session?.user?.email;
+  // Wallet (SIWE) accounts never verify their synthetic email; they authenticate
+  // by signature. Without the wallet-aware clause this hook never ran for them,
+  // so after signup the client never refetched wallet info once the backstop
+  // provisioned the Turnkey wallet -- the toolbar stayed on "Create wallet"
+  // until a manual page reload.
   const isAuthed =
     !!session?.user?.id &&
     !!email &&
     !email.startsWith("temp-") &&
-    session?.user?.emailVerified === true;
+    (session?.user?.emailVerified === true || isWalletEmail(email));
   const activeOrgId = activeOrg?.id ?? null;
 
   useEffect(() => {

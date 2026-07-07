@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockSession = {
@@ -15,16 +16,14 @@ const {
   mockCountWhere,
   mockInsertReturning,
   mockDeleteReturning,
-  mockRequireMfaEnrolled,
-  mockRequireDualFactor,
+  mockAuthorizeAction,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockFindMany: vi.fn(),
   mockCountWhere: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockDeleteReturning: vi.fn(),
-  mockRequireMfaEnrolled: vi.fn(),
-  mockRequireDualFactor: vi.fn(),
+  mockAuthorizeAction: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -35,12 +34,10 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
-  requireMfaEnrolled: mockRequireMfaEnrolled,
-}));
-
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: mockRequireDualFactor,
+// The unified guard's internals are covered by tests/unit/authorize-action.test.ts;
+// here we mock it so these tests focus on the route's CRUD + propagation.
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: mockAuthorizeAction,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -183,28 +180,33 @@ describe("POST /api/api-keys", () => {
     expect(response.status).toBe(401);
   });
 
-  it("should return 403 for anonymous user by name", async () => {
+  it("propagates the guard's anonymous denial", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "anon-1", name: "Anonymous", email: "real@test.com" },
+    });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Anonymous users cannot perform this action",
+          code: "anonymous_forbidden",
+        },
+        { status: 403 }
+      ),
     });
     const response = await POST(createRequest("POST", { name: "Test" }));
     expect(response.status).toBe(403);
     const data = await response.json();
-    expect(data.error).toBe("Anonymous users cannot create API keys");
-  });
-
-  it("should return 403 for anonymous user by temp email", async () => {
-    mockGetSession.mockResolvedValue({
-      user: { id: "anon-2", name: "Some User", email: "temp-abc@test.com" },
-    });
-    const response = await POST(createRequest("POST", { name: "Test" }));
-    expect(response.status).toBe(403);
+    expect(data.code).toBe("anonymous_forbidden");
   });
 
   it("should create API key with name", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -227,8 +229,11 @@ describe("POST /api/api-keys", () => {
 
   it("should create API key without name", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -247,8 +252,11 @@ describe("POST /api/api-keys", () => {
 
   it("should return 500 on database error", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockInsertReturning.mockRejectedValue(new Error("Insert failed"));
 
     const response = await POST(
@@ -276,8 +284,11 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should delete own key", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockDeleteReturning.mockResolvedValue([{ id: "key-1" }]);
 
     const response = await DELETE(
@@ -291,8 +302,11 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should return 404 when key not found", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockDeleteReturning.mockResolvedValue([]);
 
     const response = await DELETE(
@@ -306,8 +320,11 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should return 404 when key belongs to another user", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockDeleteReturning.mockResolvedValue([]);
 
     const response = await DELETE(
@@ -319,8 +336,11 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should return 500 on database error", async () => {
     mockGetSession.mockResolvedValue(mockSession);
-    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
-    mockRequireDualFactor.mockResolvedValue({ ok: true });
+    mockAuthorizeAction.mockResolvedValue({
+      ok: true,
+      session: mockSession,
+      accountKind: "email",
+    });
     mockDeleteReturning.mockRejectedValue(new Error("Delete failed"));
 
     const response = await DELETE(

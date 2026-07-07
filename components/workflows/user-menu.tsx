@@ -1,23 +1,29 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import {
+  Bot,
+  Copy,
   CreditCard,
   FolderTree,
   Key,
   LogOut,
   Plug,
+  Rocket,
   Settings,
   Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
+import { ConnectButton } from "@/components/auth/connect-button";
 import {
-  AuthDialog,
   isAuthFlowInProgress,
   isSingleProviderSignInInitiated,
 } from "@/components/auth/dialog";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
+import { ConnectAgentOverlay } from "@/components/overlays/connect-agent-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
@@ -33,6 +39,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
@@ -40,21 +48,22 @@ import {
   useNotificationStatus,
 } from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
+import { isAnonymousUser } from "@/lib/is-anonymous";
+import { gettingStartedOpenAtom } from "@/lib/workflow/store";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
   const signInInProgress = isSingleProviderSignInInitiated();
   const authFlowInProgress = isAuthFlowInProgress();
 
-  // Check if user is anonymous
-  // Better Auth anonymous plugin creates users with name "Anonymous" and temp- email
-  const isAnonymousUser =
-    !session?.user ||
-    session.user.name === "Anonymous" ||
-    session.user.email?.startsWith("temp-");
+  // Better Auth anonymous plugin creates users with name "Anonymous" and a
+  // temp- email; anyone anonymous or not yet email-verified still needs the
+  // Sign In surface. Shared with the onboarding tour via lib/is-new-user.
+  const isAnonymous = isAnonymousUser(session?.user);
 
-  // Check if user's email is verified
-  const isEmailVerified = session?.user?.emailVerified === true;
+  // Wallet (SIWE) users authenticate by signature and never verify an email,
+  // so they count as authenticated despite emailVerified being false.
+  const isWalletUser = isWalletEmail(session?.user?.email);
 
   // While the session loader is pending the visitor's identity is not yet
   // known. On a hard refresh `session` is undefined, so a signed-in user
@@ -70,8 +79,7 @@ export const UserMenu = (): React.ReactElement => {
   // or an *existing* anonymous session (session.user present) is being
   // refetched.
   if (isPending && !signInInProgress && !authFlowInProgress) {
-    const anonymousSessionRefetching =
-      Boolean(session?.user) && isAnonymousUser;
+    const anonymousSessionRefetching = Boolean(session?.user) && isAnonymous;
     if (!anonymousSessionRefetching) {
       return <Skeleton className="h-9 w-9 rounded-full" />;
     }
@@ -82,18 +90,10 @@ export const UserMenu = (): React.ReactElement => {
   // `useActiveMember`, which auto-fire protected fetches as soon as they are
   // called. Routing anonymous users through a separate sign-in surface keeps
   // the network log clean on initial load.
-  if (isAnonymousUser || !isEmailVerified) {
+  if (isAnonymous || !(session?.user?.emailVerified || isWalletUser)) {
     return (
       <div className="flex items-center gap-2">
-        <AuthDialog>
-          <Button
-            className="h-9 disabled:opacity-100 disabled:*:text-muted-foreground"
-            size="sm"
-            variant="default"
-          >
-            Sign In
-          </Button>
-        </AuthDialog>
+        <ConnectButton />
       </div>
     );
   }
@@ -103,11 +103,35 @@ export const UserMenu = (): React.ReactElement => {
 
 const AuthenticatedUserMenu = (): React.ReactElement => {
   const { data: session } = useSession();
+  // Wallet accounts carry a synthetic `<address>@wallet...` email; show the
+  // truncated address instead so it doesn't overflow the menu.
+  const email = session?.user?.email ?? "";
+  // The full sign-in wallet address, checksummed, copyable from the menu
+  // (wallet users only). Checksum before truncating so the shown short form
+  // carries the correct EIP-55 casing too.
+  const signinAddress = isWalletEmail(email)
+    ? toChecksumAddress(email.split("@")[0])
+    : null;
+  const accountIdentifier = signinAddress
+    ? truncateAddress(signinAddress)
+    : email;
+  const copySigninAddress = async (): Promise<void> => {
+    if (!signinAddress) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(signinAddress);
+      toast.success("Address copied");
+    } catch {
+      toast.error("Could not copy address");
+    }
+  };
   const { open: openOverlay } = useOverlay();
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const { organization } = useOrganization();
   const { isOwner } = useActiveMember();
   const router = useRouter();
+  const openGettingStarted = useSetAtom(gettingStartedOpenAtom);
   const showBilling = isOwner && isBillingEnabled();
   const { status: notificationStatus, refresh: refreshNotifications } =
     useNotificationStatus(isOwner ? organization?.id : null);
@@ -174,13 +198,28 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel>
-            <div className="flex flex-col space-y-1">
-              <p className="font-medium text-sm leading-none">
+            <div className="flex min-w-0 flex-col space-y-1">
+              <p className="truncate font-medium text-sm leading-none">
                 {session?.user?.name || "User"}
               </p>
-              <p className="text-muted-foreground text-xs leading-none">
-                {session?.user?.email}
-              </p>
+              {signinAddress ? (
+                <button
+                  aria-label="Copy address"
+                  className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs leading-none transition-colors hover:text-foreground"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void copySigninAddress();
+                  }}
+                  type="button"
+                >
+                  <span className="truncate">{accountIdentifier}</span>
+                  <Copy aria-hidden="true" className="size-3 shrink-0" />
+                </button>
+              ) : (
+                <p className="truncate text-muted-foreground text-xs leading-none">
+                  {accountIdentifier}
+                </p>
+              )}
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
@@ -196,6 +235,14 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           <DropdownMenuItem onClick={() => openOverlay(SettingsOverlay)}>
             <Settings className="size-4" />
             <span>Settings</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() =>
+              openOverlay(ConnectAgentOverlay, undefined, { size: "2xl" })
+            }
+          >
+            <Bot className="size-4" />
+            <span>Connect an agent</span>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openOverlay(IntegrationsOverlay)}>
             <Plug className="size-4" />
@@ -221,6 +268,11 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           <DropdownMenuItem onClick={() => openOverlay(ProjectsAndTagsOverlay)}>
             <FolderTree className="size-4" />
             <span>Projects and Tags</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => openGettingStarted(true)}>
+            <Rocket className="size-4" />
+            <span>Getting started</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout}>

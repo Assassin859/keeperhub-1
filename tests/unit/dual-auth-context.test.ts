@@ -91,6 +91,10 @@ describe("getDualAuthContext", () => {
     // Default path: session default org exists and is active (deactivatedAt
     // null). Tests covering a deactivated/missing default org override this.
     mockDefaultOrgLookup.mockResolvedValue([{ deactivatedAt: null }]);
+    // Membership fallback (no header, no default org): no membership by
+    // default, so the session resolves to a null org. Header-path tests that
+    // need a resolved org override this.
+    mockOrgLookup.mockResolvedValue([]);
   });
 
   describe("OAuth authentication", () => {

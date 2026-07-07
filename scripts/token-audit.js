@@ -48,6 +48,8 @@ const SKIP_PATTERNS = [
   "keeperhub/lib/palette.ts",
   // Logo uses brand color directly in SVG paths
   "keeperhub/components/icons/keeperhub-logo.tsx",
+  // Third-party agent marks use each vendor's official brand color in SVG paths
+  "keeperhub/components/icons/agent-icons.tsx",
   // MCP schemas route has hex examples in documentation strings
   "keeperhub/api/mcp/schemas/route.ts",
 ];

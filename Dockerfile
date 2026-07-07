@@ -83,6 +83,7 @@ ENV NEXT_PUBLIC_BILLING_ENABLED=$NEXT_PUBLIC_BILLING_ENABLED
 ENV NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED=$NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
 ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 
+
 # Sentry DSN baked into client bundle for error reporting.
 # SENTRY_ORG/PROJECT/AUTH_TOKEN/RELEASE are intentionally NOT set here
 # so this stage is cache-deterministic across commits (see sentry-upload stage).

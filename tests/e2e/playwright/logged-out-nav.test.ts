@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // Force a fresh anonymous context for every test in this file. The default
 // Playwright project may carry over the persisted "authenticated" storageState

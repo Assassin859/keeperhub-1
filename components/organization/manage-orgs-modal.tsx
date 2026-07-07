@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   Check,
+  Copy,
   LogOut,
   Mail,
   Pencil,
@@ -17,8 +18,10 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { isAddress } from "viem";
 import { ExecutionDigestSection } from "@/components/organization/execution-digest-section";
 import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
+import { MfaEnforcementSection } from "@/components/organization/mfa-enforcement-section";
 import { SpendCapSection } from "@/components/organization/spend-cap-section";
 import {
   AlertDialog,
@@ -57,6 +60,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ApiError, api } from "@/lib/api-client";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { authClient } from "@/lib/auth-client";
 import {
   useActiveMember,
@@ -65,6 +69,7 @@ import {
 } from "@/lib/hooks/use-organization";
 import { refetchOrganizations } from "@/lib/refetch-organizations";
 import type { MemberRole } from "@/lib/types/organization";
+import { acceptWalletInvite } from "@/lib/wallet/invite-accept-client";
 
 // Helper function to get status badge classes
 function getStatusBadgeClasses(status: string): string {
@@ -368,22 +373,40 @@ function MembersListContent({
               </>
             )}
             {entry.kind === "invite" && canInvite && !entry.expired && (
-              <Button
-                disabled={cancellingInvite === entry.id}
-                onClick={() =>
-                  setPendingAction({
-                    type: "revoke",
-                    id: entry.id,
-                    email: entry.email,
-                    role: entry.role,
-                  })
-                }
-                size="sm"
-                variant="ghost"
-              >
-                <X className="mr-1 h-4 w-4" />
-                Revoke Invitation
-              </Button>
+              <>
+                <Button
+                  onClick={async () => {
+                    const link = `${window.location.origin}/accept-invite/${entry.id}`;
+                    try {
+                      await navigator.clipboard.writeText(link);
+                      toast.success("Invite link copied");
+                    } catch {
+                      toast.error("Could not copy the invite link");
+                    }
+                  }}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Copy className="mr-1 h-4 w-4" />
+                  Copy link
+                </Button>
+                <Button
+                  disabled={cancellingInvite === entry.id}
+                  onClick={() =>
+                    setPendingAction({
+                      type: "revoke",
+                      id: entry.id,
+                      email: entry.email,
+                      role: entry.role,
+                    })
+                  }
+                  size="sm"
+                  variant="ghost"
+                >
+                  <X className="mr-1 h-4 w-4" />
+                  Revoke Invitation
+                </Button>
+              </>
             )}
             {entry.kind === "member" &&
               canInvite &&
@@ -613,7 +636,9 @@ export function ManageOrgsModal({
   const [updatingOrgName, setUpdatingOrgName] = useState(false);
 
   // Invite state
+  const [inviteMode, setInviteMode] = useState<"email" | "wallet">("email");
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteAddress, setInviteAddress] = useState("");
   const [inviteRole, setInviteRole] = useState<MemberRole>("member");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteId, setInviteId] = useState<string | null>(null);
@@ -621,6 +646,7 @@ export function ManageOrgsModal({
   // Invitations state (received by current user)
   type Invitation = {
     id: string;
+    email?: string;
     organizationId?: string;
     organizationName?: string;
     organization?: { name?: string };
@@ -919,15 +945,61 @@ export function ManageOrgsModal({
     }
   };
 
+  // Wallet invitees have no inbox; resolve the sign-in address to that account's
+  // synthetic email so the existing email-keyed invite flow is reused.
+  const resolveInviteWalletEmail = async (): Promise<string | null> => {
+    if (!managedOrgId) {
+      return null;
+    }
+    if (!isAddress(inviteAddress.trim())) {
+      toast.error("Enter a valid wallet address.");
+      return null;
+    }
+    const res = await fetch(
+      `/api/organizations/${managedOrgId}/wallet-lookup?address=${inviteAddress.trim()}`,
+      { cache: "no-store" }
+    );
+    const data = (await res.json().catch(() => ({}))) as {
+      found?: boolean;
+      email?: string;
+      alreadyMember?: boolean;
+      error?: string;
+    };
+    if (!res.ok) {
+      toast.error(data.error ?? "Lookup failed.");
+      return null;
+    }
+    if (!(data.found && data.email)) {
+      toast.error("No KeeperHub account signs in with that wallet yet.");
+      return null;
+    }
+    if (data.alreadyMember) {
+      toast.error("That wallet is already a member of this organization.");
+      return null;
+    }
+    return data.email;
+  };
+
   const handleInviteMember = async () => {
-    if (!(inviteEmail && managedOrgId)) {
+    if (!managedOrgId) {
+      return;
+    }
+    if (inviteMode === "email" && !inviteEmail) {
       return;
     }
 
     setInviteLoading(true);
     try {
+      const targetEmail =
+        inviteMode === "wallet"
+          ? await resolveInviteWalletEmail()
+          : inviteEmail;
+      if (!targetEmail) {
+        return;
+      }
+
       const { data, error } = await authClient.organization.inviteMember({
-        email: inviteEmail,
+        email: targetEmail,
         role: inviteRole,
         organizationId: managedOrgId,
       });
@@ -944,8 +1016,13 @@ export function ManageOrgsModal({
       const invitationId = invitationData?.id || invitationData?.invitation?.id;
       if (invitationId) {
         setInviteId(invitationId);
-        toast.success(`Invitation sent to ${inviteEmail}`);
+        toast.success(
+          inviteMode === "wallet"
+            ? "Invitation created. Share the link so they can sign to join."
+            : `Invitation sent to ${targetEmail}`
+        );
         setInviteEmail("");
+        setInviteAddress("");
         // Refresh sent invitations list
         fetchSentInvitations();
       }
@@ -1078,17 +1155,23 @@ export function ManageOrgsModal({
   const handleAcceptInvitation = async (invitationId: string) => {
     setProcessingInvite(invitationId);
     try {
-      const result = await authClient.organization.acceptInvitation({
-        invitationId,
-      });
-
-      if (result.error) {
-        toast.error(
-          result.error.message ||
-            result.error.code ||
-            "Failed to accept invitation"
-        );
-        return;
+      // Route by the invitation's target email: wallet invites (sent to a
+      // synthetic wallet email) require a signed challenge, not email-match.
+      const invitation = userInvitations.find((inv) => inv.id === invitationId);
+      if (isWalletEmail(invitation?.email)) {
+        await acceptWalletInvite(invitationId);
+      } else {
+        const result = await authClient.organization.acceptInvitation({
+          invitationId,
+        });
+        if (result.error) {
+          toast.error(
+            result.error.message ||
+              result.error.code ||
+              "Failed to accept invitation"
+          );
+          return;
+        }
       }
 
       toast.success("Invitation accepted! You are now a member.");
@@ -1321,7 +1404,7 @@ export function ManageOrgsModal({
             onValueChange={setActiveTab}
             value={activeTab}
           >
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="organizations">Organizations</TabsTrigger>
               <TabsTrigger value="invitations">
                 Invitations
@@ -1332,6 +1415,7 @@ export function ManageOrgsModal({
                 )}
               </TabsTrigger>
               <TabsTrigger value="notifications">Notifications</TabsTrigger>
+              <TabsTrigger value="security">Security</TabsTrigger>
               <TabsTrigger value="limits">Limits</TabsTrigger>
             </TabsList>
 
@@ -1546,19 +1630,56 @@ export function ManageOrgsModal({
                     {canInvite && (
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <Input
-                            className="flex-1"
-                            disabled={inviteLoading}
-                            onChange={(e) => {
-                              setInviteEmail(e.target.value);
-                              if (inviteId) {
-                                setInviteId(null);
-                              }
-                            }}
-                            placeholder="colleague@example.com"
-                            type="email"
-                            value={inviteEmail}
-                          />
+                          <Button
+                            onClick={() => setInviteMode("email")}
+                            size="sm"
+                            type="button"
+                            variant={
+                              inviteMode === "email" ? "default" : "outline"
+                            }
+                          >
+                            Email
+                          </Button>
+                          <Button
+                            onClick={() => setInviteMode("wallet")}
+                            size="sm"
+                            type="button"
+                            variant={
+                              inviteMode === "wallet" ? "default" : "outline"
+                            }
+                          >
+                            Wallet
+                          </Button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {inviteMode === "email" ? (
+                            <Input
+                              className="flex-1"
+                              disabled={inviteLoading}
+                              onChange={(e) => {
+                                setInviteEmail(e.target.value);
+                                if (inviteId) {
+                                  setInviteId(null);
+                                }
+                              }}
+                              placeholder="colleague@example.com"
+                              type="email"
+                              value={inviteEmail}
+                            />
+                          ) : (
+                            <Input
+                              className="flex-1"
+                              disabled={inviteLoading}
+                              onChange={(e) => {
+                                setInviteAddress(e.target.value);
+                                if (inviteId) {
+                                  setInviteId(null);
+                                }
+                              }}
+                              placeholder="0x... (their sign-in wallet)"
+                              value={inviteAddress}
+                            />
+                          )}
                           <Select
                             onValueChange={(v) =>
                               setInviteRole(v as MemberRole)
@@ -1577,7 +1698,12 @@ export function ManageOrgsModal({
                             </SelectContent>
                           </Select>
                           <Button
-                            disabled={inviteLoading || !inviteEmail}
+                            disabled={
+                              inviteLoading ||
+                              (inviteMode === "email"
+                                ? !inviteEmail
+                                : !inviteAddress)
+                            }
                             onClick={handleInviteMember}
                             size="default"
                           >
@@ -1709,6 +1835,29 @@ export function ManageOrgsModal({
               ) : (
                 <div className="py-8 text-center text-muted-foreground">
                   Only organization owners and admins can manage notifications.
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent className="space-y-4" value="security">
+              {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    Security for{" "}
+                    <span className="font-medium text-foreground">
+                      {organization.name}
+                    </span>
+                  </p>
+                  <MfaEnforcementSection
+                    canEdit={isActiveOrgOwner}
+                    key={organization.id}
+                    organizationId={organization.id}
+                  />
+                </>
+              ) : (
+                <div className="py-8 text-center text-muted-foreground">
+                  Only organization admins and owners can view security
+                  settings.
                 </div>
               )}
             </TabsContent>

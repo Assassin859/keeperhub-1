@@ -36,7 +36,7 @@ function CreateWalletForm({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-tour="create-wallet-form">
       <p className="text-muted-foreground text-xs">
         This wallet will be shared by all members of your organization. Only
         admins and owners can manage it.
