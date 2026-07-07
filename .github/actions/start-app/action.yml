@@ -92,13 +92,25 @@ inputs:
     required: false
     default: ''
   prebuilt:
-    description: 'Set "true" when the job already downloaded a production .next (build-app artifact). Skips the bare-metal build and its cache steps; the start step runs pnpm start against the unpacked output. Ignored on the Docker path.'
+    description: 'Set "true" when the job already downloaded a production .next (build-app artifact). Skips the bare-metal build and its cache step; the start step runs pnpm start against the unpacked output. Build-time inputs (ai_prompt_enabled, include_test_endpoints) are baked by the job that produced the artifact and are IGNORED when prebuilt is true - set them in build-app instead; a guard step fails fast if they are passed here. Ignored on the Docker path.'
     required: false
     default: ''
 
 runs:
   using: composite
   steps:
+    # ai_prompt_enabled and include_test_endpoints only exist as build-time
+    # env (NEXT_PUBLIC_ inlining / next.config.ts env baking), so on the
+    # prebuilt path they are silently ignored - the artifact carries
+    # whatever the build job baked. Fail fast instead of letting a caller
+    # believe it configured them.
+    - name: Guard against ignored build-time inputs
+      if: inputs.prebuilt == 'true' && (inputs.ai_prompt_enabled != '' || inputs.include_test_endpoints != '')
+      shell: bash
+      run: |
+        echo "start-app: ai_prompt_enabled / include_test_endpoints are build-time flags baked into the .next artifact by the job that built it; with prebuilt=true they are ignored here. Set them in the build-app job instead." >&2
+        exit 1
+
     # --- Docker path ---
     - name: Configure AWS credentials
       if: inputs.image_tag != ''
