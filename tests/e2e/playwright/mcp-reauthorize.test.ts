@@ -12,7 +12,7 @@
  * Runs anonymously — the page is intentionally not auth-gated; the
  * recovery affordance must work whether the user has a session or not.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 // Top-level regex literals per Biome's useTopLevelRegex rule — these
 // are reused across every assertion in this file.

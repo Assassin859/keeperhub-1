@@ -31,6 +31,7 @@ export const withdrawSchema = z
     safeId: z.string().min(1).optional(),
     code: z.string().optional(),
     emailOtp: z.string().optional(),
+    signature: z.string().optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -76,6 +77,7 @@ export const exportKeyVerifySchema = z
   .object({
     code: z.string().optional(),
     emailOtp: z.string().optional(),
+    signature: z.string().optional(),
   })
   .strict();
 

@@ -54,6 +54,23 @@ export const users = pgTable("users", {
   isAnonymous: boolean("is_anonymous").default(false),
   deactivatedAt: timestamp("deactivated_at"),
   twoFactorEnabled: boolean("two_factor_enabled").default(false),
+  // Wallet (SIWE) accounts start with a generated handle and must confirm or
+  // edit it in the rename modal on first login. Flipped true once chosen so
+  // returning wallet users are not re-prompted.
+  displayNameConfirmed: boolean("display_name_confirmed")
+    .notNull()
+    .default(false),
+  // True once the user finishes (or skips through) the /welcome onboarding
+  // wizard. Server-side so the flow is not re-shown on another device/browser.
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  // Wallet-only per-action step-up policy: maps a sensitive action to the
+  // extra factors the wallet user opted into (e.g. {"wallet_withdraw":["totp"]}).
+  // Email/TOTP users always use dual-factor regardless and ignore this column.
+  stepUpPolicy: jsonb("step_up_policy"),
+  // Verified, deliverable email a wallet user added for email-OTP step-up.
+  // Only written after the user confirms it with a code; presence = verified.
+  // Distinct from `email` (the synthetic SIWE login identity).
+  stepUpEmail: text("step_up_email"),
 });
 
 export const sessions = pgTable(
@@ -75,6 +92,32 @@ export const sessions = pgTable(
     riskFlagsJson: text("risk_flags_json"),
   },
   (table) => [index("idx_sessions_user_id").on(table.userId)]
+);
+
+/**
+ * Wallet addresses linked to a user, populated by Better Auth's SIWE plugin
+ * (Sign-In With Ethereum). One user may link multiple addresses; the first
+ * one is flagged `isPrimary`. Field shape mirrors the plugin's expected
+ * `walletAddress` model so the Drizzle adapter can satisfy its reads/writes.
+ */
+export const walletAddress = pgTable(
+  "wallet_address",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    address: text("address").notNull(),
+    chainId: integer("chain_id").notNull(),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_wallet_address_user_id").on(table.userId),
+    uniqueIndex("idx_wallet_address_address_unique").on(table.address),
+  ]
 );
 
 /**
@@ -248,6 +291,13 @@ export const organization = pgTable("organization", {
   // remains) and honored as a hard access/execution gate. Reactivation clears
   // it manually, mirroring users.deactivatedAt.
   deactivatedAt: timestamp("deactivated_at"),
+  // Owner-set switch requiring every member to carry a second factor while this
+  // org is their active context. Email/TOTP members already enforce dual-factor
+  // globally; this is what makes the gate bite for wallet (SIWE) members, who
+  // are otherwise MFA-exempt. enforcedMfaFactors lists which factors satisfy it
+  // (e.g. ["totp"], ["email"], or both); null/empty means no extra requirement.
+  enforceMfa: boolean("enforce_mfa").notNull().default(false),
+  enforcedMfaFactors: jsonb("enforced_mfa_factors"),
 });
 
 export const member = pgTable(
@@ -1268,4 +1318,5 @@ export type ExplorerConfig = typeof explorerConfigs.$inferSelect;
 export type NewExplorerConfig = typeof explorerConfigs.$inferInsert;
 export type UserRpcPreference = typeof userRpcPreferences.$inferSelect;
 export type NewUserRpcPreference = typeof userRpcPreferences.$inferInsert;
+
 export type AgentRegistration = typeof agentRegistrations.$inferSelect;

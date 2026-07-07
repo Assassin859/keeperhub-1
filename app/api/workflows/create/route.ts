@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { recordWorkflowCreatedFromSource } from "@/lib/metrics/collectors/prometheus";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -266,6 +267,14 @@ export async function POST(request: Request) {
       actor: { userId, organizationId, authMethod: authContext.authMethod },
       source: "create",
     });
+
+    // Scan-funnel conversion signal: the scan drawer / pending-scan runner
+    // tag their create calls with x-keeperhub-source; everything else counts
+    // as "other". Header values outside the allowlist are coerced, so the
+    // label cannot be polluted by arbitrary client input.
+    recordWorkflowCreatedFromSource(
+      request.headers.get("x-keeperhub-source")
+    );
 
     return recordIdempotentResponse(
       idem,

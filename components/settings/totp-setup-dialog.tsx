@@ -2,6 +2,7 @@
 
 import { Copy } from "lucide-react";
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { TotpBackupCodesPanel } from "@/components/settings/totp-backup-codes-panel";
 import { TotpQr } from "@/components/settings/totp-qr";
@@ -104,6 +105,7 @@ export function TotpSetupDialog({
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [keyJustCopied, setKeyJustCopied] = useState(false);
+  const [didEnroll, setDidEnroll] = useState(false);
 
   useEffect(() => {
     if (!open || setupData) {
@@ -151,6 +153,7 @@ export function TotpSetupDialog({
     setCode("");
     setBackupCodes(null);
     setBusy(false);
+    setDidEnroll(false);
   };
 
   const closeAndReset = (): void => {
@@ -176,7 +179,7 @@ export function TotpSetupDialog({
       const data = (await response.json()) as EnrollResponse;
       setBackupCodes(data.backupCodes);
       setPhase("codes");
-      onEnrolled();
+      setDidEnroll(true);
     } finally {
       setBusy(false);
     }
@@ -205,6 +208,13 @@ export function TotpSetupDialog({
 
   const handleDone = (): void => {
     toast.success("Two-factor authentication is enabled");
+    // flushSync ensures the parent's setEnrolled(true) is applied before
+    // closeAndReset calls onOpenChange(false). Without it, React batches the
+    // update and the parent's handleOpenChange sees enrolled=false (stale
+    // closure) and refuses to close the dialog.
+    flushSync(() => {
+      onEnrolled();
+    });
     closeAndReset();
   };
 
@@ -212,6 +222,13 @@ export function TotpSetupDialog({
     <Dialog
       onOpenChange={(next) => {
         if (!next) {
+          // If the user enrolled but closed via X instead of the Done button,
+          // still fire onEnrolled so the parent updates its state.
+          if (didEnroll) {
+            flushSync(() => {
+              onEnrolled();
+            });
+          }
           closeAndReset();
           return;
         }
@@ -316,7 +333,7 @@ export function TotpSetupDialog({
                 className="bg-keeperhub-green text-foreground hover:bg-keeperhub-green-dark dark:text-background"
                 onClick={handleDone}
               >
-                Skip
+                Done
               </Button>
             </DialogFooter>
           </div>

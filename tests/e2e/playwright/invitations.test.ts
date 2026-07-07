@@ -241,8 +241,13 @@ test.describe("Organization Invitations", () => {
       });
       // The accept-invite page defaults to the create-account view; this
       // invitee already has an account, so switch to the sign-in view and open
-      // the shared auth dialog, which runs the full three-factor sign-in.
-      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      // the shared auth dialog, which runs the full three-factor sign-in. Scope
+      // the toggle to the invite card's "Already have an account?" row so it
+      // doesn't collide with the app-shell "Sign in" button.
+      await page
+        .locator("p", { hasText: "Already have an account?" })
+        .getByRole("button", { name: "Sign in", exact: true })
+        .click();
       await page.locator('button:has-text("Sign In & Join")').click();
 
       await completeMfaSignInDialog(page, {

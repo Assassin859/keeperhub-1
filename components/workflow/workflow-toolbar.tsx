@@ -1703,6 +1703,7 @@ function RunButtonGroup({
   const button = (
     <Button
       className="min-w-20 bg-keeperhub-green hover:bg-keeperhub-green-dark disabled:opacity-70 disabled:[&>svg]:text-muted-foreground"
+      data-tour="workflow-run"
       disabled={disabled}
       onClick={() => actions.handleExecute()}
       title="Run Workflow"

@@ -8,9 +8,9 @@ import { chains } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
-import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
@@ -105,99 +105,47 @@ async function executeNativeTransfer(
   return receipt?.hash || tx.hash;
 }
 
-// Withdraw is the highest-leverage action a session cookie can trigger:
-// it moves funds off the org's wallet. Gated on:
-//   1. owner-only role via requireOwnerWithMfa (admin not accepted)
-//   2. MFA enrolled + session step-up cleared (passive gate)
-//   3. Dual-factor at request time via requireDualFactor: the client
-//      must submit BOTH a fresh TOTP from the authenticator and the
-//      6-digit code emailed at this moment. The first call (no codes)
-//      mints + sends the email OTP; the second call (both codes)
-//      verifies and consumes them.
-async function validateUserAndOrganization(
-  request: Request,
-  code: string | undefined,
-  emailOtp: string | undefined
-) {
-  const session = await auth.api.getSession({
-    headers: request.headers,
-  });
-
-  if (!session?.user) {
-    return { error: "Unauthorized", status: 401 };
-  }
-
-  const activeOrgId = getActiveOrgId(session);
-
-  if (!activeOrgId) {
-    return {
-      error: "No active organization. Please select or create an organization.",
-      status: 400,
-    };
-  }
-
-  const sessionRow = session.session as { requiresMfa?: boolean | null };
-  const guard = await requireOwnerWithMfa(
-    session.user.id,
-    activeOrgId,
-    sessionRow.requiresMfa === true
-  );
-  if (!guard.ok) {
-    return { error: guard.error, status: guard.status, code: guard.code };
-  }
-
-  const dual = await requireDualFactor({
-    userId: session.user.id,
-    email: session.user.email,
-    action: "wallet_withdraw",
-    code,
-    emailOtp,
-    headers: request.headers,
-  });
-  if (!dual.ok) {
-    return {
-      error: dual.error,
-      status: dual.status,
-      code: dual.code,
-      retryAfter: dual.retryAfter,
-    };
-  }
-
-  return { user: session.user, organizationId: activeOrgId };
-}
-
 export async function POST(request: Request) {
   try {
-    // Validate the untrusted payload at the boundary (KEEP-828) before any
-    // fund-moving logic. The schema enforces a valid recipient address,
-    // numeric chainId, the fromMax/amount/tokenAddress invariants, and
-    // rejects unknown fields.
+    // Validate the untrusted payload at the boundary before any fund-moving
+    // logic. The schema enforces a valid recipient address, numeric chainId,
+    // the fromMax/amount/tokenAddress invariants, and rejects unknown fields.
     const bodyValidation = await validateBody(request, withdrawSchema);
     if (!bodyValidation.success) {
       return bodyValidation.response;
     }
     const body = bodyValidation.data;
 
-    // 1. Validate user and permissions (includes dual-factor challenge).
-    const validation = await validateUserAndOrganization(
-      request,
-      body.code,
-      body.emailOtp
-    );
-    if ("error" in validation) {
-      const retryAfter =
-        "retryAfter" in validation ? validation.retryAfter : undefined;
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const activeOrgId = getActiveOrgId(session);
+    if (!activeOrgId) {
       return NextResponse.json(
-        { error: validation.error, code: validation.code },
-        validation.status === 429 && retryAfter !== undefined
-          ? {
-              status: validation.status,
-              headers: { "Retry-After": String(retryAfter) },
-            }
-          : { status: validation.status }
+        {
+          error:
+            "No active organization. Please select or create an organization.",
+        },
+        { status: 400 }
       );
     }
-    const { organizationId, user } = validation;
+
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.walletWithdraw,
+      roleFloor: "owner",
+      organizationId: activeOrgId,
+      body,
+      headers: request.headers,
+    });
+    if (!authorized.ok) {
+      return authorized.response;
+    }
+
+    const { user } = session;
+    const organizationId = activeOrgId;
 
     const { chainId: rawChainId, tokenAddress, amount, fromMax, safeId } = body;
     const recipientAddr: string = body.recipient;

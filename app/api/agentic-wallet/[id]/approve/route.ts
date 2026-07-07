@@ -32,11 +32,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
-import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
+import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -75,42 +72,20 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Approving an agentic-wallet request authorizes a fund-moving
-  // operation. The wallet-linker check below already enforces "you
-  // own this wallet"; this gate adds "and you have a second factor
-  // on your account + you've cleared step-up on this session".
-  // Together these prevent a stolen session for the wallet's linked
-  // user from rubber-stamping approvals during a high-risk window.
-  const sessionRow = session.session as { requiresMfa?: boolean | null };
-  const mfa = await requireMfaEnrolled(
-    session.user.id,
-    sessionRow.requiresMfa === true
-  );
-  if (!mfa.ok) {
-    return NextResponse.json(
-      { error: mfa.error, code: mfa.code },
-      { status: mfa.status }
-    );
-  }
-
-  // Dual-factor: the human approver must prove both the authenticator
-  // and the inbox at the exact moment of approval. The HMAC create
-  // path that brought the row in is bot-signed; this is where the
-  // human says yes to the fund-moving operation.
   const body = (await request.json().catch(() => ({}))) as {
     code?: string;
     emailOtp?: string;
+    signature?: string;
   };
-  const dual = await requireDualFactor({
-    userId: session.user.id,
-    email: session.user.email,
-    action: "agentic_wallet_approve",
-    code: body.code,
-    emailOtp: body.emailOtp,
+  const authorized = await authorizeAction({
+    session,
+    action: STEP_UP_ACTIONS.agenticWalletApprove,
+    roleFloor: "none",
+    body,
     headers: request.headers,
   });
-  if (!dual.ok) {
-    return dualFactorErrorResponse(dual);
+  if (!authorized.ok) {
+    return authorized.response;
   }
 
   const { id } = await params;

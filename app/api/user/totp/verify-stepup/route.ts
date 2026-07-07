@@ -5,14 +5,12 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  dualFactorErrorResponse,
-  requireDualFactor,
-} from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 
 type RequestBody = {
   code?: string;
   emailOtp?: string;
+  signature?: string;
 };
 
 /**
@@ -44,16 +42,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   const emailOtp =
     typeof body.emailOtp === "string" ? body.emailOtp.trim() : "";
 
-  const dual = await requireDualFactor({
+  const signature =
+    typeof body.signature === "string" ? body.signature.trim() : undefined;
+  const stepUp = await requireStepUp({
     userId: session.user.id,
     email: session.user.email,
     action: "session_stepup",
     code,
     emailOtp,
+    signature,
     headers: request.headers,
   });
-  if (!dual.ok) {
-    return dualFactorErrorResponse(dual);
+  if (!stepUp.ok) {
+    return stepUpErrorResponse(stepUp);
   }
 
   try {

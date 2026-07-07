@@ -1,153 +1,97 @@
 "use client";
 
-import { useAtomValue, useSetAtom } from "jotai";
-import { nanoid } from "nanoid";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
-import { toast } from "sonner";
-import { api } from "@/lib/api-client";
-import { authClient, useSession } from "@/lib/auth-client";
+import { Suspense, useEffect, useRef } from "react";
+import { ScanLanding } from "@/components/scan/scan-landing";
+import { Spinner } from "@/components/ui/spinner";
+import { useSession } from "@/lib/auth-client";
+import { useStartBuilding } from "@/lib/hooks/use-start-building";
 import { isAnonymousUser } from "@/lib/is-anonymous";
-import { refetchSidebar } from "@/lib/refetch-sidebar";
+import { rootGateAtom } from "@/lib/onboarding/root-gate";
+import { isContinueAsGuest } from "@/lib/welcome-status";
 import {
   currentWorkflowIdAtom,
   currentWorkflowNameAtom,
   edgesAtom,
+  editorTourRequestedAtom,
   hasSidebarBeenShownAtom,
-  isTransitioningFromHomepageAtom,
   nodesAtom,
   type WorkflowNode,
 } from "@/lib/workflow/store";
 
-function createDefaultNodes() {
-  const triggerId = nanoid();
-  const actionId = nanoid();
-  const edgeId = nanoid();
-
-  const triggerNode: WorkflowNode = {
-    id: triggerId,
-    type: "trigger" as const,
-    position: { x: 0, y: 0 },
-    data: {
-      label: "",
-      description: "",
-      type: "trigger" as const,
-      config: { triggerType: "Manual" },
-      status: "idle" as const,
-    },
-  };
-
-  const actionNode: WorkflowNode = {
-    id: actionId,
-    type: "action" as const,
-    position: { x: 272, y: 0 },
-    selected: true,
-    data: {
-      label: "",
-      description: "",
-      type: "action" as const,
-      config: {},
-      status: "idle" as const,
-    },
-  };
-
-  const edge = {
-    id: edgeId,
-    source: triggerId,
-    target: actionId,
-    type: "animated",
-  };
-
-  return { nodes: [triggerNode, actionNode], edges: [edge] };
-}
-
 const Home = () => {
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session, isPending: sessionPending } = useSession();
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
   const setCurrentWorkflowName = useSetAtom(currentWorkflowNameAtom);
   const setHasSidebarBeenShown = useSetAtom(hasSidebarBeenShownAtom);
-  const setIsTransitioningFromHomepage = useSetAtom(
-    isTransitioningFromHomepageAtom
-  );
-  const hasCreatedWorkflowRef = useRef(false);
-  const currentWorkflowName = useAtomValue(currentWorkflowNameAtom);
+  const tourRequested = useAtomValue(editorTourRequestedAtom);
+  const { startBuilding } = useStartBuilding();
 
   // Reset sidebar animation state when on homepage
   useEffect(() => {
     setHasSidebarBeenShown(false);
   }, [setHasSidebarBeenShown]);
 
-  // Update page title when workflow name changes
+  // Welcome gating: a visitor without a real session (none, or anonymous) lands
+  // on the welcome page instead of the bare canvas, unless they explicitly chose
+  // to continue without an account. A signed-in user who has not gone through
+  // the onboarding wizard is sent into it. Until the session resolves and this
+  // decision is made we render a loader over the canvas, so a redirected user
+  // never sees the canvas flash before being sent to /welcome.
+  const welcomeRedirectedRef = useRef(false);
+  const [gate, setGate] = useAtom(rootGateAtom);
   useEffect(() => {
-    document.title = `${currentWorkflowName} - KeeperHub`;
-  }, [currentWorkflowName]);
-
-  // Helper to create anonymous session if needed
-  const ensureSession = useCallback(async () => {
-    if (!session) {
-      await authClient.signIn.anonymous();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }, [session]);
-
-  // Handler to add initial nodes and create the workflow.
-  // If the user already has workflows, navigate to the most recent one instead
-  // of creating a new one. Anonymous users are limited to a single workflow.
-  const handleAddNode = useCallback(async () => {
-    if (hasCreatedWorkflowRef.current) {
+    if (sessionPending || welcomeRedirectedRef.current) {
       return;
     }
-    hasCreatedWorkflowRef.current = true;
-
-    try {
-      await ensureSession();
-
-      if (isAnonymousUser(session?.user)) {
-        const existing = await api.workflow.getAll();
-        if (existing.length > 0) {
-          const latest = existing.sort(
-            (a, b) =>
-              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          )[0];
-          setIsTransitioningFromHomepage(true);
-          router.replace(`/workflows/${latest.id}`);
-          return;
-        }
+    const isSignedIn =
+      Boolean(session?.user) && !isAnonymousUser(session?.user);
+    if (!isSignedIn) {
+      if (isContinueAsGuest()) {
+        setGate("canvas");
+      } else {
+        welcomeRedirectedRef.current = true;
+        setGate("redirecting");
+        router.replace("/welcome");
       }
-
-      const { nodes: defaultNodes, edges: defaultEdges } = createDefaultNodes();
-      setNodes(defaultNodes);
-      setEdges(defaultEdges);
-
-      const newWorkflow = await api.workflow.create({
-        name: "Untitled Workflow",
-        description: "",
-        nodes: defaultNodes,
-        edges: defaultEdges,
-      });
-
-      refetchSidebar();
-      sessionStorage.setItem("animate-sidebar", "true");
-      setIsTransitioningFromHomepage(true);
-      router.replace(`/workflows/${newWorkflow.id}`);
-    } catch (error) {
-      console.error("Failed to create workflow:", error);
-      toast.error("Failed to create workflow");
-      hasCreatedWorkflowRef.current = false;
+      return;
     }
-  }, [
-    session,
-    setNodes,
-    setEdges,
-    ensureSession,
-    router,
-    setIsTransitioningFromHomepage,
-  ]);
+    // A real user who has not completed onboarding (new signup, or an anonymous
+    // guest who just signed in) is sent into the wizard. The server flag is
+    // authoritative so this is not skipped by a stale device flag.
+    const onboardingDone =
+      (session?.user as { onboardingCompleted?: boolean } | undefined)
+        ?.onboardingCompleted === true;
+    if (onboardingDone) {
+      setGate("canvas");
+    } else {
+      welcomeRedirectedRef.current = true;
+      setGate("redirecting");
+      router.replace("/welcome/create-org");
+    }
+  }, [sessionPending, session, router, setGate]);
 
-  // Initialize with a temporary "add" node on mount
+  // Launch the editor walkthrough when "Take a tour" was requested (from the
+  // account menu or the Setup Guide): build the fresh default workflow the
+  // walkthrough controller drives. startBuilding then navigates into the editor.
+  const startBuildingRef = useRef(startBuilding);
+  startBuildingRef.current = startBuilding;
+
+  useEffect(() => {
+    if (tourRequested && session && !isAnonymousUser(session.user)) {
+      startBuildingRef.current().catch(() => {
+        // Errors are surfaced via toast inside startBuilding.
+      });
+    }
+  }, [tourRequested, session]);
+
+  // Canvas-atom reset on mount. The canvas never mounts on "/" (the scan
+  // landing owns it), but the reset still matters: it clears any workflow
+  // state left behind by a previous /workflows/{id} visit (toolbar, autosave).
   useEffect(() => {
     const addNodePlaceholder: WorkflowNode = {
       id: "add-node-placeholder",
@@ -156,7 +100,11 @@ const Home = () => {
       data: {
         label: "",
         type: "add",
-        onClick: handleAddNode,
+        onClick: () => {
+          startBuildingRef.current().catch(() => {
+            // Errors are surfaced via toast inside startBuilding.
+          });
+        },
       },
       draggable: false,
       selectable: false,
@@ -165,17 +113,24 @@ const Home = () => {
     setEdges([]);
     setCurrentWorkflowId(null);
     setCurrentWorkflowName("New Workflow");
-    hasCreatedWorkflowRef.current = false;
-  }, [
-    setNodes,
-    setEdges,
-    setCurrentWorkflowId,
-    setCurrentWorkflowName,
-    handleAddNode,
-  ]);
+  }, [setNodes, setEdges, setCurrentWorkflowId, setCurrentWorkflowName]);
 
-  // Canvas and toolbar are rendered by PersistentCanvas in the layout
-  return null;
+  // Until the session/onboarding gate resolves, cover the layout's
+  // PersistentCanvas with a loader so a redirected user never sees a canvas
+  // (or scan landing) flash before /welcome.
+  if (gate !== "canvas") {
+    return (
+      <div className="fixed inset-0 z-20 flex items-center justify-center bg-background">
+        <Spinner className="size-6 text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <Suspense fallback={null}>
+      <ScanLanding />
+    </Suspense>
+  );
 };
 
 export default Home;

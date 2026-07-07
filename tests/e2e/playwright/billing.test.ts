@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { signIn } from "./utils/auth";
 import {
   PERSISTENT_TEST_PASSWORD,

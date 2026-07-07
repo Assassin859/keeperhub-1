@@ -2,6 +2,7 @@ import {
   anonymousClient,
   emailOTPClient,
   organizationClient,
+  siweClient,
   twoFactorClient,
 } from "better-auth/client/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
@@ -53,6 +54,7 @@ export const authClient = createAuthClient({
   plugins: [
     anonymousClient(),
     emailOTPClient(),
+    siweClient(),
     twoFactorClient(),
     organizationClient({
       ac,

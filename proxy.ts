@@ -1,7 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { readDeviceCookie } from "@/lib/device-cookie";
 import { hasValidLoadTestBypass } from "@/lib/load-test-bypass";
+import { checkWalletOrgMfaCompliance } from "@/lib/mfa/org-mfa-enforcement";
 import {
   buildPendingIpSetCookie,
   encodePendingIpCookie,
@@ -138,6 +140,9 @@ function csrfBlock(request: NextRequest): NextResponse | null {
 const MFA_EXEMPT_API_PREFIXES: readonly string[] = [
   "/api/auth/",
   "/api/user/totp/",
+  // The wallet enforce-mfa enrollment flow adds a verified email here; without
+  // this the gate would block the very call needed to satisfy it (a lockout).
+  "/api/user/step-up/email",
   "/api/user/verify-ip",
   "/api/user/forgot-password",
   "/api/og/",
@@ -158,7 +163,9 @@ const MFA_EXEMPT_PAGES = new Set<string>([
   "/about",
   "/terms",
   "/privacy",
+  "/welcome",
   "/enroll-mfa",
+  "/enforce-mfa",
   "/verify-mfa",
   "/verify-ip",
 ]);
@@ -251,7 +258,44 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
     return { kind: "pass", user: null };
   }
 
+  // Wallet (SIWE) users authenticate by signing a nonce, which is itself a
+  // possession factor. There is no email channel to send an OTP to and no
+  // TOTP enrollment forced on them, so the global mandatory-MFA gate is
+  // incoherent here. They are MFA-exempt by default - EXCEPT when their active
+  // org's owner has switched on MFA enforcement. In that case the wallet user
+  // must carry one of the org's required factors (TOTP and/or a verified
+  // email); if not, hard-gate them to /enforce-mfa until they enroll. Outside
+  // an enforcing org they pass through like anonymous sessions (user: null
+  // also skips the country gate).
   const apiPath = pathname.startsWith("/api/");
+
+  if (isWalletEmail((session.user as { email?: string | null }).email)) {
+    const activeOrgId = (
+      session.session as { activeOrganizationId?: string | null }
+    ).activeOrganizationId;
+    const compliance = await checkWalletOrgMfaCompliance({
+      userId: session.user.id,
+      activeOrganizationId: activeOrgId,
+    });
+    if (compliance.compliant) {
+      return { kind: "pass", user: null };
+    }
+    if (apiPath) {
+      return {
+        kind: "block",
+        response: mfaApiError(
+          403,
+          "org_mfa_enrollment_required",
+          "Your organization requires two-factor authentication. Add a second factor to continue."
+        ),
+      };
+    }
+    return {
+      kind: "block",
+      response: mfaRedirect(request, "/enforce-mfa", "enroll"),
+    };
+  }
+
   const user = session.user as {
     twoFactorEnabled?: boolean | null;
     email?: string | null;
@@ -393,7 +437,29 @@ async function countryGateBlock(
 // Composed proxy entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * A signed-out visitor (no session cookie) hitting the app entry is sent
+ * straight to the welcome landing, so we never render "/" only to redirect
+ * client-side. Cookie-bearing users (anonymous or real) fall through to the
+ * client gate, which knows about the guest and onboarding flags.
+ */
+function welcomeRedirect(request: NextRequest): NextResponse | null {
+  if (request.method !== "GET" || request.nextUrl.pathname !== "/") {
+    return null;
+  }
+  if (hasSessionCookie(request.headers)) {
+    return null;
+  }
+  const url = request.nextUrl.clone();
+  url.pathname = "/welcome";
+  return NextResponse.redirect(url);
+}
+
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  const welcome = welcomeRedirect(request);
+  if (welcome) {
+    return welcome;
+  }
   const csrfResponse = csrfBlock(request);
   if (csrfResponse) {
     return csrfResponse;

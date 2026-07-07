@@ -177,6 +177,54 @@ jobs:
             --filter "name=${SERVICE_NAME}-common-test-irsa-auth" \
             --logs
 
+      - name: Seed onboarding workflows
+        if: steps.skip.outputs.skip_deploy != 'true'
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
+          REGION: ${{ env.REGION }}
+          NAMESPACE: ${{ env.NAMESPACE }}
+          SEED_EMAIL: ${{ vars.ONBOARDING_SEED_EMAIL }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_name }}" == "prod" ]]; then
+            SSM_PATH="/eks/techops-prod/keeperhub/db-url"
+            MIGRATOR_IMAGE="${ECR_REGISTRY}/keeperhub-prod:migrator-${IMAGE_TAG}"
+          else
+            SSM_PATH="/eks/techops-staging/keeperhub/db-url"
+            MIGRATOR_IMAGE="${ECR_REGISTRY}/keeperhub-staging:migrator-${IMAGE_TAG}"
+          fi
+          DATABASE_URL=$(aws ssm get-parameter --name "${SSM_PATH}" --with-decryption --query "Parameter.Value" --output text --region "${REGION}")
+          kubectl delete job keeperhub-onboarding-seed -n "${NAMESPACE}" --ignore-not-found
+          kubectl apply -n "${NAMESPACE}" -f - <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: keeperhub-onboarding-seed
+          spec:
+            backoffLimit: 2
+            ttlSecondsAfterFinished: 600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: onboarding-seed
+                    image: ${MIGRATOR_IMAGE}
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - 'pnpm tsx scripts/seed/seed-onboarding-workflows.ts'
+                    env:
+                      - name: DATABASE_URL
+                        value: "${DATABASE_URL}"
+                      - name: ALLOW_REMOTE
+                        value: "1"
+                      - name: SEED_EMAIL
+                        value: "${SEED_EMAIL}"
+          EOF
+          kubectl wait --for=condition=complete job/keeperhub-onboarding-seed -n "${NAMESPACE}" --timeout=120s || true
+          echo "--- onboarding-seed job logs ---"
+          kubectl logs -n "${NAMESPACE}" job/keeperhub-onboarding-seed --tail=30 || true
+
   # DISABLED: remote E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-playwright-remote:
     needs: deploy

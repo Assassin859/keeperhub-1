@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
+import { enterAsGuest } from "./utils/auth";
 
 // Force a fresh anonymous context for every test in this file. The default
 // Playwright project may carry over the persisted "authenticated" storageState
@@ -11,6 +12,14 @@ const SIGN_IN_TEXT_REGEX = /sign in|welcome|log in|create account/i;
 const ANALYTICS_PATH_REGEX = /\/analytics/;
 
 test.describe("Logged-out navigation sidebar (NAV-01..05, NAV-08)", () => {
+  // A visitor with no session is now walled at /welcome; the logged-out canvas
+  // (with its sidebar) is reached through the "Explore without signing in"
+  // guest path, which mints an anonymous session and sets the continue-as-guest
+  // flag. Establish that once per test so the sidebar renders.
+  test.beforeEach(async ({ page }) => {
+    await enterAsGuest(page);
+  });
+
   test("Anonymous load: every nav item is visible (NAV-01)", async ({
     page,
   }) => {

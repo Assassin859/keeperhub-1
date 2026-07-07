@@ -30,9 +30,16 @@ describe("isTrustedOrigin", () => {
     expect(isTrustedOrigin("https://keeperhub.com.evil.example")).toBe(false);
   });
 
-  it("rejects scheme mismatches", () => {
+  it("rejects scheme mismatches for keeperhub.com (must be https)", () => {
     expect(isTrustedOrigin("http://app.keeperhub.com")).toBe(false);
+  });
+
+  it("rejects https://localhost in non-dev environments", () => {
+    // DEV_HTTPS_ORIGINS is only populated when NODE_ENV === "development".
+    // Tests run under NODE_ENV=test, so https://localhost must not be trusted
+    // here even though pnpm dev:https requires it locally for SIWE wallets.
     expect(isTrustedOrigin("https://localhost:3000")).toBe(false);
+    expect(isTrustedOrigin("https://127.0.0.1:3000")).toBe(false);
   });
 
   it("rejects inputs that include a path (must be a bare origin)", () => {
