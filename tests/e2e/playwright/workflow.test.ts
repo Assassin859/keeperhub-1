@@ -99,15 +99,10 @@ test.describe("Workflow Editor", () => {
         const actionGrid = page.locator('[data-testid="action-grid"]');
         await expect(actionGrid).toBeVisible({ timeout: 5000 });
 
-        // Click on canvas to deselect
-        const canvas = page.locator('[data-testid="workflow-canvas"]');
-        const canvasBox = await canvas.boundingBox();
-        if (canvasBox) {
-          // Click on empty area of canvas
-          await page.mouse.click(canvasBox.x + 50, canvasBox.y + 50);
-          // Wait for deselection by checking action grid is hidden
-          await expect(actionGrid).not.toBeVisible({ timeout: 5000 });
-        }
+        // Deselect with Escape; a canvas click is intercepted by the left
+        // flyout and the top promo banner overlays.
+        await page.keyboard.press("Escape");
+        await expect(actionGrid).not.toBeVisible({ timeout: 5000 });
 
         // Find the action node and click on it
         const actionNode = page.locator(".react-flow__node-action").first();
@@ -138,13 +133,9 @@ test.describe("Workflow Editor", () => {
       // Verify node is selected (has border-primary class or selected attribute)
       await expect(triggerNode).toHaveClass(SELECTED_CLASS_REGEX);
 
-      // Click an empty part of the React Flow pane to deselect. Use a real
-      // click (not force, which bypasses React Flow's onPaneClick) at a lower
-      // offset that clears the promo banner overlapping the canvas top and the
-      // centered trigger node.
-      await page
-        .locator(".react-flow__pane")
-        .click({ position: { x: 100, y: 320 } });
+      // Deselect with Escape; a pane click is intercepted by the left flyout
+      // and the top promo banner overlays.
+      await page.keyboard.press("Escape");
 
       // Verify node is deselected
       await expect(triggerNode).not.toHaveClass(SELECTED_CLASS_REGEX);
