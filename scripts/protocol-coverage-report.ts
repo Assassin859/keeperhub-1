@@ -153,7 +153,12 @@ function buildRows(results?: Map<string, SuiteResult>): {
   for (const def of getRegisteredProtocols()) {
     const chainIds = Object.keys(def.testData ?? {});
     const protoSuites = suites.filter((s) => s.protocol === def.slug);
-    if (chainIds.length === 0 && protoSuites.length === 0) {
+    // An unparseable suite (no scrapeable CHAIN_ID) joins no chain row,
+    // so it cannot stand in for a harness: only parseable suites keep a
+    // no-testData protocol out of the no-harness list. The unparseable
+    // suite itself still surfaces in orphanSuites.
+    const parseable = protoSuites.filter((s) => s.chainId !== "unparsed");
+    if (chainIds.length === 0 && parseable.length === 0) {
       noHarness.push({ protocol: def.slug, actions: def.actions.length });
       continue;
     }
@@ -165,7 +170,17 @@ function buildRows(results?: Map<string, SuiteResult>): {
       const runnable = plan.filter((c) => c.kind === "run").length;
       const skippedCases = plan.filter((c) => c.kind === "skip");
       const expectations = def.testData?.[chainId]?.expectations ?? {};
-      const suite = protoSuites.find((s) => s.chainId === chainId);
+      // Join by directory name first, then fall back to the scraped
+      // const PROTOCOL: a suite whose directory was renamed while the
+      // const kept the registered slug still runs under vitest as this
+      // protocol, so it must keep its row (and its executed counts)
+      // instead of splitting into none + orphan. The mismatch itself is
+      // still reported loudly via protocolMismatches.
+      const suite =
+        protoSuites.find((s) => s.chainId === chainId) ??
+        suites.find(
+          (s) => s.scrapedProtocol === def.slug && s.chainId === chainId
+        );
       if (suite) {
         consumed.add(suite.path);
       }
