@@ -12,7 +12,6 @@ import {
   Info,
   Loader2,
   Plus,
-  ScanLine,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
@@ -553,20 +552,6 @@ const NAV_ITEMS: NavItemDef[] = [
     href: null,
     requireAuth: false,
   },
-  // Scan is a public funnel entry point, gated by the same build-time flag as
-  // the /scan page and API. Hidden entirely when scanning is disabled so the
-  // nav never links to the "not available yet" placeholder.
-  ...(process.env.NEXT_PUBLIC_SCAN_ENABLED === "true"
-    ? ([
-        {
-          id: "scan",
-          icon: ScanLine,
-          label: "Scan",
-          href: "/scan",
-          requireAuth: false,
-        },
-      ] satisfies NavItemDef[])
-    : []),
   {
     id: "analytics",
     icon: BarChart3,
@@ -684,7 +669,6 @@ export function NavigationSidebar(): React.ReactNode {
   const workflowId =
     typeof params.workflowId === "string" ? params.workflowId : undefined;
   const isHubPage = pathname === "/hub";
-  const isScanPage = pathname === "/scan";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
   const isActivityPage = pathname === "/activity";
@@ -817,9 +801,6 @@ export function NavigationSidebar(): React.ReactNode {
     }
     if (id === "hub") {
       return isHubPage;
-    }
-    if (id === "scan") {
-      return isScanPage;
     }
     if (id === "analytics") {
       return isAnalyticsPage;

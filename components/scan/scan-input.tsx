@@ -39,15 +39,21 @@ export function ScanInput({
           aria-invalid={!!error || undefined}
           aria-label="Wallet address, contract address, or ENS name"
           autoComplete="off"
+          className="bg-muted focus-visible:border-input focus-visible:ring-0"
           id="scan-address"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="0x address, ENS name (vitalik.eth), or contract"
+          placeholder="0x address, ENS name, or contract"
           spellCheck={false}
           type="text"
           value={value}
         />
-        <Button disabled={disabled} onClick={onSubmit} type="button">
+        <Button
+          className="bg-keeperhub-green font-medium text-background hover:bg-keeperhub-green-dark"
+          disabled={disabled}
+          onClick={onSubmit}
+          type="button"
+        >
           {disabled ? (
             <>
               <Spinner className="mr-2 size-4" />
