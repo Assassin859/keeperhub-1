@@ -38,6 +38,10 @@ type SuiteInfo = {
   protocol: string;
   chainId: string;
   hardSkipped: boolean;
+  /** Scraped `const PROTOCOL` value when it disagrees with the suite's
+   *  directory name; surfaced as a loud mismatch instead of dropping or
+   *  silently trusting either side. */
+  scrapedProtocol?: string;
 };
 
 type SuiteResult = VitestAssertionCounts & {
@@ -72,18 +76,26 @@ function discoverSuites(): SuiteInfo[] {
         continue;
       }
       const src = readFileSync(file, "utf8");
-      const protocol = src.match(/const PROTOCOL = "([^"]+)"/)?.[1];
+      // The directory name is the protocol: the layout is
+      // protocol-coverage/<protocol>/<chain-name>/coverage.test.ts. The
+      // source is still scraped for CHAIN_ID (chain directories are
+      // names, not ids) and for the PROTOCOL const so a suite whose
+      // const drifted from its directory is reported, not dropped.
+      const scraped = src.match(/const PROTOCOL = "([^"]+)"/)?.[1];
       const chainId = src.match(/const CHAIN_ID = "([^"]+)"/)?.[1];
-      if (!(protocol && chainId)) {
-        continue;
-      }
       suites.push({
         path: file,
-        protocol,
-        chainId,
+        protocol: proto.name,
+        // A suite with no scrapeable CHAIN_ID joins no registry chain
+        // row, so it surfaces in orphanSuites instead of silently
+        // vanishing from the report.
+        chainId: chainId ?? "unparsed",
         // describe.skip( is an unconditional disable; describe.skipIf( is
         // the normal infra gate and does not count as hard-skipped.
         hardSkipped: /describe\.skip\(/.test(src),
+        ...(scraped && scraped !== proto.name
+          ? { scrapedProtocol: scraped }
+          : {}),
       });
     }
   }
@@ -107,12 +119,29 @@ function parseResults(file: string): Map<string, SuiteResult> {
   return bySuite;
 }
 
+type ProtocolMismatch = {
+  path: string;
+  protocol: string;
+  scrapedProtocol: string;
+};
+
 function buildRows(results?: Map<string, SuiteResult>): {
   rows: ChainRow[];
   noHarness: Array<{ protocol: string; actions: number }>;
   orphanSuites: Array<{ path: string; protocol: string; chainId: string }>;
+  protocolMismatches: ProtocolMismatch[];
 } {
   const suites = discoverSuites();
+  const protocolMismatches: ProtocolMismatch[] = [];
+  for (const s of suites) {
+    if (s.scrapedProtocol) {
+      protocolMismatches.push({
+        path: s.path,
+        protocol: s.protocol,
+        scrapedProtocol: s.scrapedProtocol,
+      });
+    }
+  }
   const rows: ChainRow[] = [];
   const noHarness: Array<{ protocol: string; actions: number }> = [];
   // Suites consumed by a (registered protocol, testData chain) row. Any
@@ -165,7 +194,7 @@ function buildRows(results?: Map<string, SuiteResult>): {
   const orphanSuites = suites
     .filter((s) => !consumed.has(s.path))
     .map((s) => ({ path: s.path, protocol: s.protocol, chainId: s.chainId }));
-  return { rows, noHarness, orphanSuites };
+  return { rows, noHarness, orphanSuites, protocolMismatches };
 }
 
 function pad(value: string | number, width: number): string {
@@ -181,7 +210,8 @@ function main(): void {
       ? parseResults(args[resultsIdx + 1])
       : undefined;
 
-  const { rows, noHarness, orphanSuites } = buildRows(results);
+  const { rows, noHarness, orphanSuites, protocolMismatches } =
+    buildRows(results);
   const registryTotal = getRegisteredProtocols().reduce(
     (n, d) => n + d.actions.length,
     0
@@ -197,6 +227,7 @@ function main(): void {
     suitesMissing: rows.filter((r) => r.suite === "none").length,
     protocolsWithoutHarness: noHarness,
     orphanSuites,
+    protocolMismatches,
     executed: results
       ? rows.reduce((n, r) => n + (r.result?.executed ?? 0), 0)
       : undefined,
@@ -238,6 +269,11 @@ function main(): void {
   if (orphanSuites.length > 0) {
     lines.push(
       `ORPHANED suites (on disk but no registry testData chain matches them): ${orphanSuites.map((s) => `${s.protocol}/${s.chainId}`).join(", ")}`
+    );
+  }
+  if (protocolMismatches.length > 0) {
+    lines.push(
+      `PROTOCOL MISMATCH (const PROTOCOL disagrees with the suite's directory): ${protocolMismatches.map((m) => `${m.path} (dir "${m.protocol}" vs const "${m.scrapedProtocol}")`).join(", ")}`
     );
   }
   if (results) {
