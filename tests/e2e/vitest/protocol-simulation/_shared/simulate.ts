@@ -35,6 +35,7 @@ import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
   ERC20_ABI,
   ensureErc20Acquired,
+  runForkImpersonatedCalls,
   withImpersonation,
 } from "../../protocol-coverage/_shared/funding";
 import { checkOutputExpectation } from "../../protocol-coverage/_shared/oracle";
@@ -97,6 +98,11 @@ async function provisionSetup(
 
   // 10 ETH native gas via cheatcode.
   await provider.send("anvil_setBalance", [SIM_WALLET, "0x8ac7230489e80000"]);
+
+  // Privileged third-party provisioning (impersonated wards etc.) runs
+  // before token acquisition and setup steps, same as the coverage
+  // preflight; the rpcUrl override skips the chains-table lookup.
+  await runForkImpersonatedCalls(protocolSlug, chainId, SIM_WALLET, rpcUrl);
 
   for (const required of setup.requiredTokens) {
     // Shared with the coverage suites' preflight; the rpcUrl override

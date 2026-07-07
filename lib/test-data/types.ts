@@ -158,6 +158,29 @@ export type SetupSpec = {
     action: string;
     inputs: ActionInputBindings;
   }>;
+  /**
+   * Fork-only provisioning calls that require impersonating a privileged
+   * third party (anvil cheatcodes), e.g. an authed ward whitelisting the
+   * test wallet on a toll-gated oracle. Each entry funds and impersonates
+   * `impersonate`, then calls `functionName` on the resolved target with
+   * the resolved args (wallet() supported on address params). Runs before
+   * the setup workflow (coverage preflight) / setup steps (simulation
+   * tier). Declaring these on a chain outside FORK_CHAIN_IDS is an
+   * authoring error and fails loudly: impersonation does not exist on a
+   * live chain, and silently skipping would let gated fixtures pass
+   * vacuously or fail far downstream.
+   */
+  forkImpersonatedCalls?: Array<{
+    /** Address to impersonate; must hold the required on-chain privilege
+     *  (verify empirically against a fork and record the evidence). */
+    impersonate: string;
+    /** Target contract: contract("key") binding or a literal 0x address. */
+    contract: InputBinding;
+    /** Single-function ABI JSON for the call. */
+    abi: string;
+    functionName: string;
+    args: InputBinding[];
+  }>;
 };
 
 export type ProtocolChainTestData = {

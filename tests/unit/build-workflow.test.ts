@@ -120,7 +120,19 @@ describe("KEEP-458 build-workflow", () => {
               it("network is a registered deployment of the action's contract", () => {
                 const contractDef = protocol.contracts[action.contract];
                 expect(contractDef).toBeDefined();
-                if (contractDef && !contractDef.userSpecifiedAddress) {
+                // Skipped actions may reference a contract with no
+                // deployment on this chain (e.g. chronicle's DAI/USD feed
+                // and SelfKisser on mainnet) - the skip reason documents
+                // the gap and the Tier 0 goldens record them as
+                // unencodable-while-skipped. Runnable actions must
+                // resolve a real deployment.
+                const skippedHere =
+                  protocol.testData?.[chainId]?.skipped?.[action.slug] !==
+                  undefined;
+                if (
+                  contractDef &&
+                  !(contractDef.userSpecifiedAddress || skippedHere)
+                ) {
                   expect(contractDef.addresses[chainId]).toBeTruthy();
                 }
               });
