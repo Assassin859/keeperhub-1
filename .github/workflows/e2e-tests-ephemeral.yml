@@ -205,6 +205,15 @@ jobs:
         env:
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
 
+      # Fail in seconds on a dead fork or upstream instead of as vitest
+      # timeouts. eth_getBalance of the beacon deposit contract forces a
+      # pinned-block upstream fetch (untouched by local test state).
+      - name: Fork health probe
+        uses: ./.github/actions/probe-forks
+        with:
+          forks: |
+            mainnet|http://localhost:8548|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa
+
       - name: Run Tier 1 simulations (chain 1)
         run: |
           pnpm vitest run tests/e2e/vitest/protocol-simulation \
@@ -709,6 +718,19 @@ jobs:
           # directly on localhost:5432, same as "Wait for services" above.
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
+
+      # Fail in seconds on a dead fork or upstream, before the multi-minute
+      # sandbox build and instead of as 300s vitest timeouts. Probe
+      # addresses: the Superfluid CFA forwarder on Sepolia (same address
+      # the failure dump probes) and the beacon deposit contract on
+      # mainnet - both exist upstream and are untouched by local state, so
+      # eth_getBalance forces a pinned-block upstream fetch.
+      - name: Fork health probe
+        uses: ./.github/actions/probe-forks
+        with:
+          forks: |
+            sepolia|http://localhost:8547|0xaa36a7|0xcfA132E353cB4E398080B9700609bb008eceB125
+            mainnet|http://localhost:8548|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa
 
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
