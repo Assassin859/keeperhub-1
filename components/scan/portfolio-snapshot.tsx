@@ -147,7 +147,7 @@ export function PortfolioSnapshot({
 
   return (
     <p
-      className="mb-5 text-muted-foreground text-sm"
+      className="text-muted-foreground text-sm"
       data-testid="scan-portfolio-snapshot"
     >
       Holding:{" "}

@@ -1,6 +1,6 @@
 import { FileCode2, Wallet } from "lucide-react";
 import { DepegBanner } from "@/components/scan/depeg-banner";
-import { UnavailableChainBadges } from "@/components/scan/unavailable-chain-badges";
+import { PortfolioSnapshot } from "@/components/scan/portfolio-snapshot";
 import {
   Tooltip,
   TooltipContent,
@@ -8,7 +8,11 @@ import {
 } from "@/components/ui/tooltip";
 import { getChainName } from "@/lib/chain-utils";
 import { SCAN_NETWORK_IDS } from "@/lib/scan/networks";
-import type { StablecoinBalance, UnavailableChain } from "@/lib/scan/types";
+import type {
+  ProtocolPosition,
+  StablecoinBalance,
+  UnavailableChain,
+} from "@/lib/scan/types";
 
 /** "Ethereum, Arbitrum, Base, Optimism, Polygon and Tempo" */
 const SCAN_NETWORK_NAMES = SCAN_NETWORK_IDS.map((chainId) =>
@@ -18,6 +22,7 @@ const SCAN_NETWORK_NAMES = SCAN_NETWORK_IDS.map((chainId) =>
 type ResultsHeaderProps = {
   addressKind?: "eoa" | "contract";
   contractChains?: number[];
+  positions: ProtocolPosition[];
   unavailableChains: UnavailableChain[];
   stablecoins: StablecoinBalance[];
 };
@@ -41,6 +46,7 @@ function addressKindLabel(
 export function ResultsHeader({
   addressKind,
   contractChains,
+  positions,
   unavailableChains,
   stablecoins,
 }: ResultsHeaderProps): React.ReactElement {
@@ -57,15 +63,19 @@ export function ResultsHeader({
   return (
     <>
       <div
-        className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2"
+        className="mb-4 flex flex-col items-start gap-2"
         data-testid="scan-address-summary"
       >
-        {addressKind !== undefined && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 font-medium text-foreground text-xs">
-            <KindIcon aria-hidden="true" className="size-3.5" />
-            {addressKindLabel(addressKind, contractChains ?? [])}
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {addressKind !== undefined && (
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 font-medium text-foreground text-xs">
+              <KindIcon aria-hidden="true" className="size-3.5" />
+              {addressKindLabel(addressKind, contractChains ?? [])}
+            </span>
+          )}
+
+          <PortfolioSnapshot positions={positions} stablecoins={stablecoins} />
+        </div>
 
         <Tooltip>
           <TooltipTrigger asChild>
@@ -80,11 +90,6 @@ export function ResultsHeader({
           </TooltipContent>
         </Tooltip>
       </div>
-      {unavailableChains.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          <UnavailableChainBadges chains={unavailableChains} />
-        </div>
-      )}
       <DepegBanner symbols={depegSymbols} />
     </>
   );

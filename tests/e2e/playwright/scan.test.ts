@@ -8,6 +8,7 @@ test.use({ storageState: { cookies: [], origins: [] } });
 const SCAN_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 const INVALID_ADDRESS = "not-a-valid-address";
 const SCAN_URL_REGEX = /\/scan/;
+const SCANNED_COUNT_REGEX = /Scanned 5 of 6 supported networks/;
 const AUTH_COPY_REGEX = /sign in|create account/i;
 
 test.describe("scan", () => {
@@ -158,11 +159,12 @@ test.describe("scan", () => {
   });
 
   /**
-   * SCANUI-05: Results header shows the per-chain unavailable badge and the
-   * depeg warning banner when the fixture has unavailableChains + depegged
-   * stablecoin.
+   * SCANUI-05: Results header reflects unavailable chains in the scanned
+   * count (per-chain badges were dropped in favor of the count line) and
+   * shows the depeg warning banner when the fixture has unavailableChains +
+   * depegged stablecoin.
    */
-  test("SCANUI-05: results header shows unavailable chain badge and depeg banner", async ({
+  test("SCANUI-05: results header reflects unavailable chains and shows depeg banner", async ({
     page,
   }) => {
     await page.route("**/api/scan/**", async (route) => {
@@ -182,9 +184,9 @@ test.describe("scan", () => {
       timeout: 15_000,
     });
 
-    // Fixture: unavailableChains = [{ chainId: 1, reason: "timeout" }]
-    // UnavailableChainBadges renders: "{chainName}: unavailable"
-    await expect(page.getByText("Ethereum: unavailable")).toBeVisible();
+    // Fixture: unavailableChains = [{ chainId: 1, reason: "timeout" }] —
+    // one of the six supported networks is excluded from the scanned count.
+    await expect(page.getByText(SCANNED_COUNT_REGEX)).toBeVisible();
 
     // Fixture: stablecoins = [{ symbol: "USDC", depegged: true }]
     // DepegBanner renders with role="alert" and contains the symbol name
