@@ -284,6 +284,15 @@ cmd_up() {
     fi
     sleep 3
   done
+  # A curl 200 alone is not proof of OUR app: a foreign listener already
+  # holding the port answers while our container dies on EADDRINUSE, and
+  # every request then lands in the wrong app and database. Require the
+  # rig's own container to still be running.
+  if [ "$(docker inspect -f '{{.State.Running}}' "$APP_CONTAINER" 2>/dev/null)" != "true" ]; then
+    log "port :${APP_PORT} answered but ${APP_CONTAINER} is not running - a foreign process holds the port (try APP_PORT=<other> or stop the squatter)"
+    docker logs "$APP_CONTAINER" 2>&1 | tail -5
+    exit 1
+  fi
   log "app ready on :${APP_PORT} - rig is up"
 }
 
