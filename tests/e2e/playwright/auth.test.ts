@@ -203,17 +203,23 @@ test.describe("Authentication", () => {
     }) => {
       await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
-      // Main (sign-in) has no heading on the welcome page; the submit is present.
-      await expect(
-        page.getByRole("button", { name: "Sign in", exact: true })
-      ).toBeVisible({ timeout: 15_000 });
+      // Both forms stay mounted, so "Sign in" matches the submit button and the
+      // signup view's "Already have an account? Sign in" toggle. Target the
+      // submit by type and the toggle by its paragraph to stay unambiguous.
+      const signInSubmit = page.locator('button[type="submit"]', {
+        hasText: "Sign in",
+      });
+      const backToSignIn = page
+        .getByRole("paragraph")
+        .filter({ hasText: "Already have an account?" })
+        .getByRole("button", { name: "Sign in" });
+
+      await expect(signInSubmit).toBeVisible({ timeout: 15_000 });
 
       await openSignupView(page);
 
-      await page.getByRole("button", { name: "Sign in", exact: true }).click();
-      await expect(
-        page.getByRole("button", { name: "Sign in", exact: true })
-      ).toBeVisible();
+      await backToSignIn.click();
+      await expect(signInSubmit).toBeVisible();
     });
   });
 });

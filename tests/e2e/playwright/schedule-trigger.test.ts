@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { gotoCanvas } from "./utils/workflow";
 
 // Top-level regex patterns
 const SELECTED_CLASS_REGEX = /selected/;
@@ -6,14 +7,9 @@ const DATA_SELECTED_REGEX = /true/;
 
 test.describe("Schedule Trigger", () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the homepage with the workflow canvas
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    // Wait for the canvas to be fully ready (data-ready="true" set after fitView)
-    await expect(page.getByTestId("workflow-canvas")).toHaveAttribute(
-      "data-ready",
-      "true",
-      { timeout: 60_000 }
-    );
+    // "/" is the wallet-scanner landing now; enter the builder to reach the
+    // workflow canvas.
+    await gotoCanvas(page);
   });
 
   test("can access trigger node configuration", async ({ page }) => {
