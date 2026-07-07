@@ -376,13 +376,14 @@ export async function completeMfaSignInDialog(
   await dialog.getByRole("button", { name: "Continue" }).click();
 
   // TOTP factor (view "mfa-totp"): generate the current code from the secret.
+  // The final step's submit is labeled "Sign in" (it completes the sign-in).
   await expect(
     dialog.getByRole("heading", { name: "Authenticator code" })
   ).toBeVisible({ timeout: 15_000 });
   await dialog
     .getByPlaceholder("123456")
     .fill(generateTotpCode(credentials.totpKey));
-  await dialog.getByRole("button", { name: "Verify" }).click();
+  await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 
 /**
