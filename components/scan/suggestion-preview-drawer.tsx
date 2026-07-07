@@ -415,7 +415,14 @@ export function SuggestionPreviewDrawer({
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
-      <SheetContent className="sm:max-w-xl w-full overflow-y-auto" side="right">
+      <SheetContent
+        className="sm:max-w-xl w-full overflow-y-auto"
+        // Radix focuses the first tabbable element on open, which lands on the
+        // threshold input and selects its text — reads as "highlighted by
+        // default". Keep focus on the sheet itself instead.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        side="right"
+      >
         <SheetHeader className="border-b border-border/20">
           <SheetTitle className="text-base font-semibold text-foreground">
             {activeSuggestion.name}
