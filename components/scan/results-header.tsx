@@ -1,9 +1,19 @@
 import { FileCode2, Wallet } from "lucide-react";
 import { DepegBanner } from "@/components/scan/depeg-banner";
 import { UnavailableChainBadges } from "@/components/scan/unavailable-chain-badges";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getChainName } from "@/lib/chain-utils";
 import { SCAN_NETWORK_IDS } from "@/lib/scan/networks";
 import type { StablecoinBalance, UnavailableChain } from "@/lib/scan/types";
+
+/** "Ethereum, Arbitrum, Base, Optimism, Polygon and Tempo" */
+const SCAN_NETWORK_NAMES = SCAN_NETWORK_IDS.map((chainId) =>
+  getChainName(String(chainId))
+).join(", ");
 
 type ResultsHeaderProps = {
   addressKind?: "eoa" | "contract";
@@ -57,9 +67,18 @@ export function ResultsHeader({
           </span>
         )}
 
-        <span className="text-muted-foreground/70 text-xs">
-          Scanned {scannedCount} of {SCAN_NETWORK_IDS.length} networks
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-help text-muted-foreground/70 text-xs underline decoration-dotted underline-offset-2">
+              Scanned {scannedCount} of {SCAN_NETWORK_IDS.length} supported
+              networks
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            KeeperHub scans the networks it supports: {SCAN_NETWORK_NAMES}.
+            Networks the address is active on elsewhere are not covered.
+          </TooltipContent>
+        </Tooltip>
       </div>
       {unavailableChains.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
