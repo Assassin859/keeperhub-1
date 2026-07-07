@@ -506,7 +506,9 @@ export function SuggestionPreviewDrawer({
           {/* Workflow parameters — thresholds are human-readable and editable;
               addresses are read-only. Values rendered via the React value prop
               only (T-53-07: no dangerouslySetInnerHTML). */}
-          {confirmEntries.length > 0 && (
+          {/* Render even with no confirmInputs (e.g. depeg watch) so the
+              signed-in email field always gives the preview a config surface. */}
+          {(confirmEntries.length > 0 || isAuthenticated) && (
             <div className="mt-4">
               <h3 className="mb-2 font-semibold text-muted-foreground text-xs uppercase tracking-wide">
                 Alert settings
