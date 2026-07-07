@@ -2,6 +2,7 @@
 
 import { AlertCircle, Clock } from "lucide-react";
 import { useMemo } from "react";
+import { PortfolioSnapshot } from "@/components/scan/portfolio-snapshot";
 import { ResultsHeader } from "@/components/scan/results-header";
 import { SuggestionCard } from "@/components/scan/suggestion-card";
 import { SuggestionCardSkeleton } from "@/components/scan/suggestion-card-skeleton";
@@ -242,6 +243,10 @@ export function ScanResults({
             contractChains={data.contractChains}
             stablecoins={data.stablecoins}
             unavailableChains={data.unavailableChains}
+          />
+          <PortfolioSnapshot
+            positions={data.positions}
+            stablecoins={data.stablecoins}
           />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {groups.map((group) => (
