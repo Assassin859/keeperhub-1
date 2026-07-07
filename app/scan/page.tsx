@@ -45,6 +45,10 @@ const EXAMPLE_WALLETS = [
     label: "ENS name",
     query: "vitalik.eth",
   },
+  {
+    label: "Contract (Safe)",
+    query: "0xFe89cc7aBB2C4183683ab71653C4cdc9B02D44b7",
+  },
 ] as const;
 
 /** Example chips show the ENS name verbatim but truncate raw addresses. */
@@ -312,6 +316,7 @@ function ScanPageContent(): React.ReactElement {
 
       <SuggestionPreviewDrawer
         address={address}
+        ensName={scanData?.ensName}
         isAuthenticated={isAuthenticated}
         onOpenChange={handlePreviewOpenChange}
         open={previewOpen}

@@ -63,6 +63,8 @@ type SuggestionPreviewDrawerProps = {
   /** Signed-in user's email, used to prefill the alert node's recipient so
    *  Run / Save pass config validation. Undefined when anonymous. */
   userEmail?: string;
+  /** ENS name the scan resolved, shown instead of the 0x wallet address. */
+  ensName?: string;
 };
 
 export function SuggestionPreviewDrawer({
@@ -73,6 +75,7 @@ export function SuggestionPreviewDrawer({
   isAuthenticated,
   address,
   userEmail,
+  ensName,
 }: SuggestionPreviewDrawerProps): React.ReactElement | null {
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
@@ -94,6 +97,11 @@ export function SuggestionPreviewDrawer({
     {}
   );
   const [editsForId, setEditsForId] = useState<string | null>(null);
+
+  // Editable alert recipient. null = fall back to the signed-in user's email;
+  // once the user types, this holds their value.
+  const [emailEdit, setEmailEdit] = useState<string | null>(null);
+  const alertEmail = emailEdit ?? userEmail ?? "";
 
   // A new card selection resets the token/network choice
   // (adjust-state-during-render pattern; avoids an effect round-trip).
@@ -285,7 +293,7 @@ export function SuggestionPreviewDrawer({
     setIsPersisting(true);
     try {
       const { id } = await persistSuggestion(activeSuggestion, mode, {
-        defaultEmail: userEmail,
+        defaultEmail: alertEmail,
       });
       toast.success("Workflow saved!");
       router.push(`/workflows/${id}`);
@@ -298,13 +306,9 @@ export function SuggestionPreviewDrawer({
     }
   };
 
-  const handleRunClick = (): void => {
-    handleCta("run").catch(() => {
-      // Errors are handled inside handleCta.
-    });
-  };
-
-  const handleScheduleClick = (): void => {
+  const handleUseClick = (): void => {
+    // These suggestions are recurring monitors, so "use" saves them on their
+    // schedule (create enabled + sync schedule + run once).
     handleCta("schedule").catch(() => {
       // Errors are handled inside handleCta.
     });
@@ -384,6 +388,13 @@ export function SuggestionPreviewDrawer({
         </div>
       );
     }
+    // Show the ENS name for the wallet field when the scan resolved one.
+    let displayValue = value;
+    if (key === "walletAddress" && ensName) {
+      displayValue = ensName;
+    } else if (ADDRESS_DISPLAY_RE.test(value)) {
+      displayValue = truncateAddress(value);
+    }
     return (
       <div className="mb-3" key={key}>
         <label
@@ -397,9 +408,7 @@ export function SuggestionPreviewDrawer({
           id={`param-${key}`}
           readOnly
           tabIndex={-1}
-          value={
-            ADDRESS_DISPLAY_RE.test(value) ? truncateAddress(value) : value
-          }
+          value={displayValue}
         />
       </div>
     );
@@ -499,6 +508,23 @@ export function SuggestionPreviewDrawer({
               {confirmEntries.map(([key, value]) =>
                 renderParamField(key, value)
               )}
+              {isAuthenticated && (
+                <div className="mb-3">
+                  <label
+                    className="mb-1 block text-muted-foreground text-xs"
+                    htmlFor="param-alert-email"
+                  >
+                    Alert email
+                  </label>
+                  <Input
+                    id="param-alert-email"
+                    onChange={(e) => setEmailEdit(e.target.value)}
+                    placeholder="you@example.com"
+                    type="email"
+                    value={alertEmail}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -521,22 +547,14 @@ export function SuggestionPreviewDrawer({
               </Button>
             </div>
           ) : (
-            <div className="mt-6 flex gap-3">
+            <div className="mt-6">
               <Button
-                className="flex-1"
-                disabled={isPersisting}
-                onClick={handleRunClick}
+                className="w-full"
+                disabled={isPersisting || (isAuthenticated && !alertEmail)}
+                onClick={handleUseClick}
                 variant="default"
               >
-                Run
-              </Button>
-              <Button
-                className="flex-1"
-                disabled={isPersisting}
-                onClick={handleScheduleClick}
-                variant="outline"
-              >
-                Save on schedule
+                Use this workflow
               </Button>
             </div>
           )}
