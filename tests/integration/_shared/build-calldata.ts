@@ -56,7 +56,7 @@ export type BuildCalldataParams = {
   /** Map of input name to stringly-typed value. Must not contain keys
    *  that the action does not declare; unknown keys throw. Missing
    *  declared keys (and explicitly empty values) fall back to
-   *  `inp.default ?? ""`. */
+   *  `inp.default ?? ""` on both encoding paths. */
   sampleInputs: Record<string, string>;
   /** Chain ID string as it appears in `protocol.contracts[key].addresses`.
    *  Required; mistakes here are silent bugs (wrong contract on wrong
@@ -75,8 +75,10 @@ export type BuildCalldataParams = {
    * silently encodes `"false"` as `true` without coercion.
    *
    * Defaults to `true` so tests match the production encoding pipeline
-   * by default. Pass `false` only to deliberately exercise the
-   * pre-coerce shape (e.g. a regression test asserting the trap exists).
+   * by default. Pass `false` to skip `coerceArgsForAbi` and the
+   * registered encode transforms (reshape only), reproducing the raw
+   * pre-coerce encoding (e.g. for a regression test asserting the trap
+   * exists).
    */
   coerceArgs?: boolean;
 };
@@ -137,9 +139,10 @@ export function buildCalldata(params: BuildCalldataParams): Calldata {
     // pre-coerce encoding the regression tests assert on.
     const iface = ifaceFor(protocol, action);
     const { ethersFragment, abi } = fragmentFor(iface, action);
-    const rawArgs: unknown[] = action.inputs.map(
-      (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
-    );
+    const rawArgs: unknown[] = action.inputs.map((inp) => {
+      const raw = sampleInputs[inp.name];
+      return raw === undefined || raw === "" ? (inp.default ?? "") : raw;
+    });
     const args = reshapeArgsForAbi(rawArgs, abi);
     const data = iface.encodeFunctionData(ethersFragment as never, args);
     return { to, data, action, contract };
