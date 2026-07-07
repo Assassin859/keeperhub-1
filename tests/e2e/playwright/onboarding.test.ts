@@ -1,51 +1,11 @@
 import { expect, test } from "./fixtures";
-import { enterAsGuest } from "./utils/auth";
 
 // Re-enable the onboarding tours for this file. The rest of the suite disables
 // them by default (see fixtures.ts) so the driver.js overlay never blocks
 // unrelated tests.
 test.use({ disableTours: false });
 
-const SIGNIN_SEEN_KEY = "keeperhub-signin-tour-driver-seen";
-
-test.describe("onboarding: sign-in card", () => {
-  // Fresh anonymous visitor: the app provisions an anonymous session and the
-  // one-card sign-in tour should appear anchored on the Sign In button.
-  test.use({ storageState: { cookies: [], origins: [] } });
-
-  test("shows the sign-in card and does not return once dismissed", async ({
-    page,
-  }) => {
-    // A no-session visitor is walled at /welcome; reach the logged-out canvas
-    // (where the one-card sign-in tour is anchored on the Sign in button) via
-    // the guest path.
-    await enterAsGuest(page);
-
-    const popover = page.locator(".driver-popover");
-    await expect(popover).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator(".driver-popover-title")).toContainText(
-      "Sign in"
-    );
-
-    // "Got it" dismisses it and records the seen flag. The flag is written in
-    // driver.js's onDestroyed callback, which fires just after the popover
-    // hides, so poll for it rather than reading once.
-    await page.locator(".driver-popover-next-btn").click();
-    await expect(popover).toBeHidden();
-
-    await expect
-      .poll(
-        () =>
-          page.evaluate((key) => localStorage.getItem(key), SIGNIN_SEEN_KEY),
-        { timeout: 5000 }
-      )
-      .toBe("true");
-
-    // It does not reappear on reload.
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(popover).toBeHidden({ timeout: 5000 });
-  });
-});
+const WORKFLOW_EDITOR_URL_REGEX = /\/workflows\/[^/]+/;
 
 test.describe("onboarding: editor walkthrough", () => {
   // Signed in via the persistent test user (default project storageState).
@@ -94,9 +54,11 @@ test.describe("onboarding: editor walkthrough", () => {
     // where the guided walkthrough runs. Assert the handoff into the editor (the
     // driver.js tour steps themselves provision a wallet and are covered by the
     // walkthrough's own logic; they are too environment-heavy to drive here).
-    await expect(page).toHaveURL(/\/workflows\/[^/]+/, { timeout: 30_000 });
-    await expect(
-      page.locator('[data-testid="workflow-canvas"]')
-    ).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(WORKFLOW_EDITOR_URL_REGEX, {
+      timeout: 30_000,
+    });
+    await expect(page.locator('[data-testid="workflow-canvas"]')).toBeVisible({
+      timeout: 20_000,
+    });
   });
 });

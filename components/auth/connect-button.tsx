@@ -22,12 +22,7 @@ export function ConnectButton(): React.ReactElement {
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <DialogTrigger asChild>
-        <Button
-          className="h-9"
-          data-tour="signin-button"
-          size="sm"
-          variant="default"
-        >
+        <Button className="h-9" size="sm" variant="default">
           Sign in
         </Button>
       </DialogTrigger>

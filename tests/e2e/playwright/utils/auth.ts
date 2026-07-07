@@ -5,6 +5,8 @@ import { symmetricDecrypt } from "better-auth/crypto";
 import postgres from "postgres";
 import { getAdminFetchHeaders } from "./admin-fetch";
 
+const WELCOME_URL_REGEX = /\/welcome/;
+
 /**
  * Switch the inline /welcome panel from the sign-in view to the sign-up view.
  * Right after navigation the "Create an account" toggle can be clicked before
@@ -37,7 +39,7 @@ export async function enterAsGuest(page: Page): Promise<void> {
     if (await guest.isVisible()) {
       await guest.click();
     }
-    await expect(page).not.toHaveURL(/\/welcome/, { timeout: 4000 });
+    await expect(page).not.toHaveURL(WELCOME_URL_REGEX, { timeout: 4000 });
   }).toPass({ timeout: 30_000 });
 }
 
@@ -353,28 +355,34 @@ export async function completeMfaSignInDialog(
   page: Page,
   credentials: { email: string; password: string; totpKey: string }
 ): Promise<void> {
+  // The shared auth dialog renders SignInChoices / ConnectAuthPanel, whose
+  // strict sign-in walks password -> email OTP -> TOTP as animated views.
   const dialog = page.locator('[role="dialog"]');
-  await expect(dialog.locator("#password")).toBeVisible({ timeout: 15_000 });
+  await expect(dialog.locator("#auth-password")).toBeVisible({
+    timeout: 15_000,
+  });
+  await dialog.locator("#auth-email").fill(credentials.email);
+  await dialog.locator("#auth-password").fill(credentials.password);
+  await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
 
-  await dialog.locator("#email").fill(credentials.email);
-  await dialog.locator("#password").fill(credentials.password);
-  await dialog.locator('button[type="submit"]:has-text("Sign in")').click();
+  // Email-OTP factor (view "mfa-email"): strict-signin/start seeded a
+  // `sign-in-otp` row; read and submit it once the email-code step renders.
+  await expect(
+    dialog.getByRole("heading", { name: "Check your email" })
+  ).toBeVisible({ timeout: 15_000 });
+  await dialog
+    .getByPlaceholder("123456")
+    .fill(await getSignInOtpFromDb(credentials.email));
+  await dialog.getByRole("button", { name: "Continue" }).click();
 
-  // Email-OTP factor: strict-signin/start seeded a `sign-in-otp` row; read and
-  // submit it once the email-code step renders.
-  const emailOtpInput = dialog.locator("#signin-email-otp-input");
-  await expect(emailOtpInput).toBeVisible({ timeout: 15_000 });
-  await fillContentEditableOtp(
-    emailOtpInput,
-    await getSignInOtpFromDb(credentials.email)
-  );
-  await dialog.locator('button[type="submit"]:has-text("Continue")').click();
-
-  // TOTP factor: generate the current code from the enrollment secret.
-  const totpInput = dialog.locator("#signin-totp");
-  await expect(totpInput).toBeVisible({ timeout: 15_000 });
-  await fillOtpInput(totpInput, generateTotpCode(credentials.totpKey));
-  await dialog.locator('button[type="submit"]:has-text("Verify")').click();
+  // TOTP factor (view "mfa-totp"): generate the current code from the secret.
+  await expect(
+    dialog.getByRole("heading", { name: "Authenticator code" })
+  ).toBeVisible({ timeout: 15_000 });
+  await dialog
+    .getByPlaceholder("123456")
+    .fill(generateTotpCode(credentials.totpKey));
+  await dialog.getByRole("button", { name: "Verify" }).click();
 }
 
 /**
