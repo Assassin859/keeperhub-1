@@ -172,7 +172,9 @@ export function PendingScanRunner(): null {
           intent.mode === "schedule" ? "schedule" : "run";
 
         try {
-          const { id } = await persistSuggestion(intent, mode);
+          const { id } = await persistSuggestion(intent, mode, {
+            defaultEmail: session?.user?.email,
+          });
           writeSessionFlag(idempotencyKey);
           toast.success("Workflow saved and running");
           router.push(`/workflows/${id}`);
@@ -197,7 +199,7 @@ export function PendingScanRunner(): null {
       cancelled = true;
       window.removeEventListener(AUTH_SUCCESS_EVENT, handler);
     };
-  }, [router, isPending, isAuthenticated]);
+  }, [router, isPending, isAuthenticated, session?.user?.email]);
 
   return null;
 }

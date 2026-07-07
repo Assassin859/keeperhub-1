@@ -280,7 +280,7 @@ function ScanPageContent(): React.ReactElement {
                   </span>
                   {EXAMPLE_WALLETS.map((example) => (
                     <Button
-                      className="rounded-full font-normal text-muted-foreground text-xs hover:text-foreground"
+                      className="rounded-full border-[var(--color-border-accent)]/30 font-normal text-foreground/80 text-xs transition-colors hover:border-[var(--color-border-accent)]/70 hover:bg-[var(--color-bg-accent)] hover:text-[var(--color-text-accent)]"
                       key={example.query}
                       onClick={() => handleExampleSelect(example.query)}
                       size="sm"
@@ -316,6 +316,7 @@ function ScanPageContent(): React.ReactElement {
         onOpenChange={handlePreviewOpenChange}
         open={previewOpen}
         suggestion={selectedSuggestion}
+        userEmail={session?.user?.email ?? undefined}
         variants={selectedVariants}
       />
     </>

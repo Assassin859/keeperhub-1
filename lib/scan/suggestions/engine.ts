@@ -273,6 +273,8 @@ function buildBalanceDropSuggestion(
     riskNote: RISK_NOTE_READ_ONLY,
     usdValue: stable.usdValue,
     symbol: stable.symbol,
+    // Token decimals so the drawer can render alertThreshold human-readably.
+    decimals: stable.decimals,
   };
 }
 

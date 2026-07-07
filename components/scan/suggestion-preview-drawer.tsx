@@ -23,8 +23,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { WorkflowCanvas } from "@/components/workflow/workflow-canvas";
+import { truncateAddress } from "@/lib/address-utils";
 import { getChainName } from "@/lib/chain-utils";
 import { buildWorkflow } from "@/lib/scan/factory";
+import {
+  addressFieldLabel,
+  formatThresholdForDisplay,
+  isEditableThreshold,
+  parseThresholdToBaseUnits,
+  thresholdDecimals,
+  thresholdFieldMeta,
+} from "@/lib/scan/factory/threshold-format";
 import { persistSuggestion } from "@/lib/scan/persist-suggestion";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
 import {
@@ -33,6 +42,9 @@ import {
   nodesAtom,
   rightPanelWidthAtom,
 } from "@/lib/workflow/store";
+
+/** A confirmInputs value that is a raw EVM address (shown truncated). */
+const ADDRESS_DISPLAY_RE = /^0x[0-9a-fA-F]{40}$/;
 
 type SuggestionPreviewDrawerProps = {
   suggestion: SuggestionDescriptor | null;
@@ -48,6 +60,9 @@ type SuggestionPreviewDrawerProps = {
   /** Scanned EVM address from the page — used to build the redirectTo URL for
    *  the anon sign-in round-trip (FUNNEL-02). */
   address: string;
+  /** Signed-in user's email, used to prefill the alert node's recipient so
+   *  Run / Save pass config validation. Undefined when anonymous. */
+  userEmail?: string;
 };
 
 export function SuggestionPreviewDrawer({
@@ -57,6 +72,7 @@ export function SuggestionPreviewDrawer({
   onOpenChange,
   isAuthenticated,
   address,
+  userEmail,
 }: SuggestionPreviewDrawerProps): React.ReactElement | null {
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
@@ -70,6 +86,14 @@ export function SuggestionPreviewDrawer({
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [lastSuggestionId, setLastSuggestionId] = useState<string | null>(null);
+
+  // In-progress human-readable threshold edits, keyed by confirmInputs key.
+  // Held per active descriptor id (editsForId) so switching token/network or
+  // card starts fresh.
+  const [thresholdEdits, setThresholdEdits] = useState<Record<string, string>>(
+    {}
+  );
+  const [editsForId, setEditsForId] = useState<string | null>(null);
 
   // A new card selection resets the token/network choice
   // (adjust-state-during-render pattern; avoids an effect round-trip).
@@ -89,19 +113,53 @@ export function SuggestionPreviewDrawer({
   // the card's primary suggestion.
   const active = variantList.find((v) => v.id === activeId) ?? suggestion;
 
+  // Reset threshold edits whenever the active descriptor changes (card,
+  // token, or network). Discard-during-render: edits only apply while
+  // editsForId matches, so this render already sees an empty edit set.
+  const activeIdKey = active?.id ?? null;
+  if (activeIdKey !== editsForId) {
+    setEditsForId(activeIdKey);
+    setThresholdEdits({});
+  }
+  const activeEdits = activeIdKey === editsForId ? thresholdEdits : {};
+
+  // Apply valid human-readable edits back onto confirmInputs as base units.
+  // An invalid/in-progress edit (e.g. "1.") is skipped so the preview never
+  // breaks; the original value stays until the edit parses.
+  const effectiveActive = useMemo(() => {
+    if (!active) {
+      return null;
+    }
+    const keys = Object.keys(activeEdits);
+    if (keys.length === 0) {
+      return active;
+    }
+    const overridden: Record<string, string> = { ...active.confirmInputs };
+    for (const key of keys) {
+      const parsed = parseThresholdToBaseUnits(
+        activeEdits[key],
+        thresholdDecimals(key, active)
+      );
+      if (parsed !== null) {
+        overridden[key] = parsed;
+      }
+    }
+    return { ...active, confirmInputs: overridden };
+  }, [active, activeEdits]);
+
   // Build the prefilled workflow client-side. Factory has no server-only
   // import (confirmed in RESEARCH). Guard with try/catch: buildWorkflow throws
   // on invalid template refs or MaxUint256 approvals.
   const workflow = useMemo(() => {
-    if (!active) {
+    if (!effectiveActive) {
       return null;
     }
     try {
-      return buildWorkflow(active);
+      return buildWorkflow(effectiveActive);
     } catch {
       return null;
     }
-  }, [active]);
+  }, [effectiveActive]);
 
   // Hydrate global Jotai workflow atoms when the drawer opens.
   // CRITICAL: cleanup MUST reset atoms on close so the homepage canvas
@@ -138,7 +196,7 @@ export function SuggestionPreviewDrawer({
     return null;
   }
 
-  const activeSuggestion = active ?? suggestion;
+  const activeSuggestion = effectiveActive ?? suggestion;
   const tokenOptions = [
     ...new Set(variantList.map((v) => v.symbol ?? "").filter(Boolean)),
   ];
@@ -148,6 +206,10 @@ export function SuggestionPreviewDrawer({
   const showTokenPicker = tokenOptions.length > 1;
   const showNetworkPicker = networkOptions.length > 1;
   const showVariantPickers = showTokenPicker || showNetworkPicker;
+
+  const handleThresholdChange = (key: string, human: string): void => {
+    setThresholdEdits((prev) => ({ ...prev, [key]: human }));
+  };
 
   const handleTokenChange = (symbol: string): void => {
     // Prefer keeping the current network when the new token exists there.
@@ -222,7 +284,9 @@ export function SuggestionPreviewDrawer({
     // Authenticated + read suggestion (or write + wallet present): persist inline.
     setIsPersisting(true);
     try {
-      const { id } = await persistSuggestion(activeSuggestion, mode);
+      const { id } = await persistSuggestion(activeSuggestion, mode, {
+        defaultEmail: userEmail,
+      });
       toast.success("Workflow saved!");
       router.push(`/workflows/${id}`);
     } catch (err) {
@@ -272,7 +336,74 @@ export function SuggestionPreviewDrawer({
     });
   };
 
+  // A committed valid edit only changes threshold keys (whose display uses the
+  // in-progress activeEdits value anyway), so iterating the effective
+  // confirmInputs here is equivalent to the originals for display purposes and
+  // keeps the descriptor non-null for the helpers below.
   const confirmEntries = Object.entries(activeSuggestion.confirmInputs);
+
+  const renderParamField = (key: string, value: string): React.ReactElement => {
+    if (isEditableThreshold(key, value)) {
+      const decimals = thresholdDecimals(key, activeSuggestion);
+      const meta = thresholdFieldMeta(key, activeSuggestion);
+      const shown =
+        key in activeEdits
+          ? activeEdits[key]
+          : formatThresholdForDisplay(value, decimals);
+      const invalid =
+        key in activeEdits &&
+        parseThresholdToBaseUnits(activeEdits[key], decimals) === null;
+      return (
+        <div className="mb-3" key={key}>
+          <label
+            className="mb-1 block text-muted-foreground text-xs"
+            htmlFor={`param-${key}`}
+          >
+            {meta.label}
+          </label>
+          <div className="relative">
+            <Input
+              aria-invalid={invalid || undefined}
+              className="pr-16 font-mono text-sm"
+              id={`param-${key}`}
+              inputMode="decimal"
+              onChange={(e) => handleThresholdChange(key, e.target.value)}
+              value={shown}
+            />
+            {meta.unit ? (
+              <span className="-translate-y-1/2 pointer-events-none absolute top-1/2 right-3 text-muted-foreground text-xs">
+                {meta.unit}
+              </span>
+            ) : null}
+          </div>
+          {invalid ? (
+            <p className="mt-1 text-[var(--color-text-error)] text-xs">
+              Enter a valid number.
+            </p>
+          ) : null}
+        </div>
+      );
+    }
+    return (
+      <div className="mb-3" key={key}>
+        <label
+          className="mb-1 block text-muted-foreground text-xs"
+          htmlFor={`param-${key}`}
+        >
+          {addressFieldLabel(key)}
+        </label>
+        <Input
+          className="cursor-default bg-muted font-mono text-sm"
+          id={`param-${key}`}
+          readOnly
+          tabIndex={-1}
+          value={
+            ADDRESS_DISPLAY_RE.test(value) ? truncateAddress(value) : value
+          }
+        />
+      </div>
+    );
+  };
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
@@ -357,30 +488,17 @@ export function SuggestionPreviewDrawer({
             </div>
           )}
 
-          {/* Workflow parameters — read-only prefilled values. Values rendered
-              via React value prop only (T-53-07: no dangerouslySetInnerHTML). */}
+          {/* Workflow parameters — thresholds are human-readable and editable;
+              addresses are read-only. Values rendered via the React value prop
+              only (T-53-07: no dangerouslySetInnerHTML). */}
           {confirmEntries.length > 0 && (
             <div className="mt-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Workflow parameters
+              <h3 className="mb-2 font-semibold text-muted-foreground text-xs uppercase tracking-wide">
+                Alert settings
               </h3>
-              {confirmEntries.map(([key, value]) => (
-                <div className="mb-3" key={key}>
-                  <label
-                    className="mb-1 block text-xs text-muted-foreground"
-                    htmlFor={`param-${key}`}
-                  >
-                    {key}
-                  </label>
-                  <Input
-                    className="cursor-default bg-muted font-mono text-sm"
-                    id={`param-${key}`}
-                    readOnly
-                    tabIndex={-1}
-                    value={value}
-                  />
-                </div>
-              ))}
+              {confirmEntries.map(([key, value]) =>
+                renderParamField(key, value)
+              )}
             </div>
           )}
 

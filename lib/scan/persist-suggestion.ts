@@ -1,8 +1,41 @@
 import { api } from "@/lib/api-client";
 import { buildWorkflow } from "@/lib/scan/factory";
 import type { SuggestionDescriptor } from "@/lib/scan/suggestions/types";
+import type { WorkflowNode } from "@/lib/workflow/store";
 
 type CreateWorkflowResponse = { id: string };
+
+/**
+ * Prefill the recipient on email-alert nodes that have none.
+ *
+ * Every scan shape ends in a `sendgrid/send-email` node whose `emailTo` is
+ * required by the plugin schema but left blank by the factory (no email is
+ * known at anonymous scan time). Once the user is signed in we know their
+ * address, so defaulting it here lets Run / Save-on-schedule pass config
+ * validation instead of failing with "invalid config". Only blank recipients
+ * are filled — a user-edited value is preserved.
+ */
+function applyDefaultEmail(
+  nodes: WorkflowNode[],
+  email: string | undefined
+): WorkflowNode[] {
+  if (!email) {
+    return nodes;
+  }
+  return nodes.map((node) => {
+    const config = node.data.config as Record<string, unknown> | undefined;
+    if (
+      config?.actionType === "sendgrid/send-email" &&
+      (config.emailTo === "" || config.emailTo === undefined)
+    ) {
+      return {
+        ...node,
+        data: { ...node.data, config: { ...config, emailTo: email } },
+      };
+    }
+    return node;
+  });
+}
 
 /**
  * Shared persist sequence for scan suggestions.
@@ -25,9 +58,12 @@ type CreateWorkflowResponse = { id: string };
  */
 export async function persistSuggestion(
   descriptor: SuggestionDescriptor,
-  mode: "run" | "schedule"
+  mode: "run" | "schedule",
+  options: { defaultEmail?: string } = {}
 ): Promise<{ id: string }> {
-  const { name, description, nodes, edges } = buildWorkflow(descriptor);
+  const built = buildWorkflow(descriptor);
+  const { name, description, edges } = built;
+  const nodes = applyDefaultEmail(built.nodes, options.defaultEmail);
 
   // POST /api/workflows/create
   // enabled:true only for schedule mode; DB default is false (T-54-23 defensive)

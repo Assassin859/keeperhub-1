@@ -50,6 +50,12 @@ export interface SuggestionDescriptor {
    * card. Absent on position-derived suggestions (health, claim).
    */
   symbol?: string;
+  /**
+   * Token decimals for stablecoin-derived suggestions. Lets the preview drawer
+   * render a base-unit `alertThreshold` as a human-readable amount. Absent when
+   * no token-decimal-scaled threshold is present.
+   */
+  decimals?: number;
   /** Live APY (percent) when the suggestion carries an APY-aware venue. */
   apy?: number;
   /** Human-readable venue label (e.g. "Morpho Blue") for APY-aware yield suggestions. */
