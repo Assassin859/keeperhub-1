@@ -152,6 +152,15 @@ const TEST_DATA: ProtocolTestData = {
         flowRateAllowance: "1",
       },
     },
+    // Cold first-touch fan-out through the fork upstream: the GDA pool
+    // factory and the CFA ACL surfaces exceed the default two-minute
+    // execution wait on a fresh fork (measured: still running at 120s,
+    // full CFA lifecycle green in seconds once warm). Warmed fork caches
+    // make these overrides irrelevant; until then give them headroom.
+    executionWaitMs: {
+      "grant-flow-operator": 420_000,
+      "create-pool": 420_000,
+    },
     expectations: {
       // Setup wraps 100 DAIx for the wallet; on a long-lived fork the
       // balance only accumulates across runs, so nonZero is history-safe.

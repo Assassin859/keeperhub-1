@@ -195,6 +195,16 @@ export type ProtocolChainTestData = {
    */
   expectations?: Record<string, OutputExpectation[]>;
   /**
+   * Per-action execution-wait overrides (ms) for the coverage runner,
+   * keyed by action.slug. For writes whose first-touch contract fan-out
+   * through the fork upstream exceeds the default two-minute wait (a
+   * cold GDA pool creation can take several minutes on a fresh fork).
+   * Use sparingly and note the constraint; the default stays tight so
+   * genuinely broken actions fail fast. Warmed fork caches make these
+   * overrides progressively irrelevant.
+   */
+  executionWaitMs?: Record<string, number>;
+  /**
    * Post-write oracles for the fork simulation tier, keyed by write
    * action slug. After the write mines, the harness runs the referenced
    * read action of the same protocol/chain (with its normal testData
