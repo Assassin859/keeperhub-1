@@ -309,7 +309,7 @@ export function ScanLanding(): React.ReactElement {
                 </p>
                 <p className="mb-8 text-foreground/80 text-sm">
                   Scan any wallet or contract to see live DeFi positions and
-                  turn them into ready-to-run monitors
+                  turn them into ready-to-run Keeper Workflows
                 </p>
                 <ScanInput
                   disabled={isLoading}
