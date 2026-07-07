@@ -29,9 +29,11 @@ export const TESTNET_FUNDER_PK_ENV = "TESTNET_FUNDER_PK";
  * economically unviable on ephemeral CI: each run seeds a fresh Turnkey
  * wallet (stranding every top-up), and 2026-07-02 base-fee spikes of
  * 40-105 gwei priced a single worst-case Superfluid tx above any top-up
- * the shared funder could sustain. CI stands up the Sepolia fork on
- * localhost:8547 (docker-compose `test-anvil-fork`) and patches the
- * chains row before the suites run.
+ * the shared funder could sustain. Since the chronicle/superfluid
+ * re-homing to the mainnet fork, no Tier 2 suite targets Sepolia and CI
+ * runs no Sepolia fork; the entry stays for the remaining Sepolia
+ * testData (aave-v3) exercised by local Tier 1 sims
+ * (scripts/protocol-local.sh sim sepolia).
  */
 export const FORK_CHAIN_IDS: Set<string> = new Set(["1", "11155111"]);
 

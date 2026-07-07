@@ -51,7 +51,7 @@ function main(): void {
     process.stderr.write(
       `FAIL: executed ${executed} tests, below the floor of ${floor}. ` +
         "The suites are self-skipping - check the infra gates " +
-        "(ANVIL_FORK_MAINNET_URL, TESTNET_FUNDER_PK, PROTOCOL_E2E_SEPOLIA_FORK, DATABASE_URL) " +
+        "(ANVIL_FORK_MAINNET_URL, TESTNET_FUNDER_PK, DATABASE_URL) " +
         "before trusting this green.\n"
     );
     process.exit(1);
