@@ -16,7 +16,8 @@
  *
  * The runnable/skipped numbers come from the same planPhaseFixtures the
  * suite runner uses, so this report cannot drift from what the runner
- * registers. A future simulation tier will contribute a `simulated`
+ * registers. The simulation tier (tests/e2e/vitest/protocol-simulation)
+ * does not yet feed this report; it will contribute a `simulated`
  * column via its own results file.
  */
 

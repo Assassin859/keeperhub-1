@@ -1,5 +1,5 @@
 /**
- * Per-action test runner for protocol-coverage (KEEP-458).
+ * Per-action test runner for protocol-coverage.
  *
  * Iterates registered actions for the (protocol, chain), builds a Manual-
  * trigger workflow on the fly via `buildActionWorkflow`, inserts it, fires
@@ -25,11 +25,6 @@ import {
 } from "@/tests/utils/db";
 import { checkOutputExpectation, fetchNodeOutput } from "./oracle";
 import type { SharedCtx } from "./setup";
-
-// Planning logic lives in lib/test-data/plan (vitest-free) so the coverage
-// report CLI can share it; re-exported here to keep existing import sites
-// working.
-export { type FixtureCase, planPhaseFixtures } from "@/lib/test-data/plan";
 
 const TIMEOUT_MS = 120_000;
 

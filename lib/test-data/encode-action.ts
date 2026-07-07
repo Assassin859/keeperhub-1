@@ -6,8 +6,10 @@
  * transforms, then runs the identical reshapeArgsForAbi and
  * coerceArgsForAbi pipeline the runtime protocol steps use, producing
  * the exact transaction the platform would send. Consumed by the Tier 0
- * golden-calldata tests and the Tier 1 fork simulation harness so both
- * layers share one encoding source of truth.
+ * golden-calldata tests, the Tier 1 fork simulation harness, and the
+ * integration-test calldata builder
+ * (tests/integration/_shared/build-calldata.ts) so all layers share one
+ * encoding source of truth.
  */
 
 import { Interface, parseEther } from "ethers";
