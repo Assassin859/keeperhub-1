@@ -777,9 +777,14 @@ jobs:
           # The floor is coupled to PROTOCOL_E2E_REPRESENTATIVES: full
           # mode expects ~35 executed today (ajna 25 + superfluid 10;
           # raise when ANVIL_FORK_MAINNET_URL activates the mainnet
-          # suites), representatives mode expects ~2 per active suite.
-          # Deriving it here keeps the two from drifting apart.
-          if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=4; else FLOOR=30; fi
+          # suites). Representatives mode currently executes exactly 3:
+          # ajna contributes one read representative and no write (all
+          # its writes are skipped), superfluid contributes one read
+          # and one write; the mainnet suites self-skip until
+          # ANVIL_FORK_MAINNET_URL is provisioned, at which point this
+          # floor should be raised. Deriving both floors here keeps
+          # them from drifting apart.
+          if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=3; else FLOOR=30; fi
           pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json "$FLOOR"
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
