@@ -6,7 +6,6 @@ import { SCAN_NETWORK_IDS } from "@/lib/scan/networks";
 import type { StablecoinBalance, UnavailableChain } from "@/lib/scan/types";
 
 type ResultsHeaderProps = {
-  ensName?: string;
   addressKind?: "eoa" | "contract";
   contractChains?: number[];
   unavailableChains: UnavailableChain[];
@@ -30,7 +29,6 @@ function addressKindLabel(
 }
 
 export function ResultsHeader({
-  ensName,
   addressKind,
   contractChains,
   unavailableChains,
@@ -52,14 +50,6 @@ export function ResultsHeader({
         className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2"
         data-testid="scan-address-summary"
       >
-        {/* Identity: only the ENS name when the query resolved one — the raw
-            address is what the user just typed, so repeating it is noise. */}
-        {ensName ? (
-          <span className="font-semibold text-foreground text-sm">
-            {ensName}
-          </span>
-        ) : null}
-
         {addressKind !== undefined && (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 font-medium text-foreground text-xs">
             <KindIcon aria-hidden="true" className="size-3.5" />

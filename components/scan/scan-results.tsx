@@ -240,7 +240,6 @@ export function ScanResults({
           <ResultsHeader
             addressKind={data.addressKind}
             contractChains={data.contractChains}
-            ensName={data.ensName}
             stablecoins={data.stablecoins}
             unavailableChains={data.unavailableChains}
           />
@@ -265,7 +264,6 @@ export function ScanResults({
             <ResultsHeader
               addressKind={data.addressKind}
               contractChains={data.contractChains}
-              ensName={data.ensName}
               stablecoins={data.stablecoins}
               unavailableChains={data.unavailableChains}
             />
