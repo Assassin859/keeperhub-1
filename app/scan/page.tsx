@@ -56,6 +56,37 @@ function exampleDisplay(query: string): string {
   return ENS_QUERY_REGEX.test(query) ? query : truncateAddress(query);
 }
 
+/**
+ * "Try an example" chips, shown under the search bar in both the hero and
+ * the post-scan compact states so examples stay one click away.
+ */
+function ExampleChips({
+  disabled,
+  onSelect,
+}: {
+  disabled: boolean;
+  onSelect: (query: string) => void;
+}): React.ReactElement {
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+      <span className="text-muted-foreground text-xs">Try an example:</span>
+      {EXAMPLE_WALLETS.map((example) => (
+        <Button
+          className="rounded-full border-[var(--color-border-accent)]/30 font-normal text-foreground/80 text-xs transition-colors hover:border-[var(--color-border-accent)]/70 hover:bg-[var(--color-bg-accent)] hover:text-[var(--color-text-accent)]"
+          disabled={disabled}
+          key={example.query}
+          onClick={() => onSelect(example.query)}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {example.label} · {exampleDisplay(example.query)}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 export default function ScanPage(): React.ReactElement {
   // useSearchParams in ScanPageContent requires a Suspense boundary so the
   // static prerender of this route can bail out to client rendering.
@@ -260,6 +291,10 @@ function ScanPageContent(): React.ReactElement {
                   onSubmit={handleScanSubmit}
                   value={address}
                 />
+                <ExampleChips
+                  disabled={isLoading}
+                  onSelect={handleExampleSelect}
+                />
               </div>
             ) : (
               <div className="mx-auto max-w-2xl py-12 text-center sm:py-16">
@@ -277,23 +312,10 @@ function ScanPageContent(): React.ReactElement {
                   onSubmit={handleScanSubmit}
                   value={address}
                 />
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                  <span className="text-muted-foreground text-xs">
-                    Try an example:
-                  </span>
-                  {EXAMPLE_WALLETS.map((example) => (
-                    <Button
-                      className="rounded-full border-[var(--color-border-accent)]/30 font-normal text-foreground/80 text-xs transition-colors hover:border-[var(--color-border-accent)]/70 hover:bg-[var(--color-bg-accent)] hover:text-[var(--color-text-accent)]"
-                      key={example.query}
-                      onClick={() => handleExampleSelect(example.query)}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      {example.label} · {exampleDisplay(example.query)}
-                    </Button>
-                  ))}
-                </div>
+                <ExampleChips
+                  disabled={isLoading}
+                  onSelect={handleExampleSelect}
+                />
                 <ScanNetworkStrip />
               </div>
             )}
