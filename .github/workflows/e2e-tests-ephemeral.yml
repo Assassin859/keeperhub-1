@@ -185,7 +185,11 @@ jobs:
     if: needs.should-run.outputs.run-e2e == 'true'
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 20
+    # Sized for the sweep's worst case, not its happy path: the 90s
+    # per-read hang guard (simulate.ts READ_TIMEOUT_MS) across
+    # sequential cold reads through an archive upstream can pass 20
+    # minutes, which would kill the job before the floor report writes.
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
