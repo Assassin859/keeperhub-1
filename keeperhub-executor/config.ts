@@ -48,7 +48,25 @@ export const CONFIG = {
   // same name; this prefix is the executor Helm release fullname.
   runnerSecretPrefix:
     process.env.RUNNER_SECRET_PREFIX || "keeperhub-executor-common",
-  jobTtlSeconds: Number(process.env.JOB_TTL_SECONDS) || 3600,
+  // Ephemeral-storage guardrail for runner pods, matched by the /tmp emptyDir
+  // sizeLimit (the runner's only writable path under readOnlyRootFilesystem).
+  // The limit makes kubelet evict a single pod that writes pathologically much
+  // to /tmp before it can threaten the node root volume; the request is a small
+  // honest floor for scheduler/kubelet accounting. Sized from measurement:
+  // sampling live staging runners showed ~2 MiB of ephemeral use each, so the
+  // node disk pressure is driven by accumulated container images, not these
+  // pods - the 1Gi limit is a ~500x runaway guard that never touches a normal
+  // run. Env-overridable, read once at start (retune = env update + restart).
+  runnerEphemeralStorageRequest:
+    process.env.RUNNER_EPHEMERAL_STORAGE_REQUEST || "64Mi",
+  runnerEphemeralStorageLimit:
+    process.env.RUNNER_EPHEMERAL_STORAGE_LIMIT || "1Gi",
+  // Finished runner pods hold their /tmp emptyDir + logs on the node until the
+  // TTL controller deletes them. Kept short so a busy node reclaims that disk in
+  // minutes rather than accumulating an hour of churn (the DiskPressure flap on
+  // 2026-07-07). activeDeadlineSeconds caps a live run at 300s, so 300s here means
+  // a pod is gone ~5 min after it finishes.
+  jobTtlSeconds: Number(process.env.JOB_TTL_SECONDS) || 300,
   jobActiveDeadline: Number(process.env.JOB_ACTIVE_DEADLINE) || 300,
   maxConcurrentJobs: Number(process.env.MAX_CONCURRENT_JOBS) || 1,
 

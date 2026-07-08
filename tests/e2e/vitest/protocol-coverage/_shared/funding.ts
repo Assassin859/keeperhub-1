@@ -22,6 +22,8 @@ import { ethers } from "ethers";
 import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { chains } from "@/lib/db/schema";
+import { getProtocol } from "@/lib/protocol-registry";
+import { resolveBinding } from "@/lib/test-data/build-workflow";
 import {
   FAUCETS,
   FORK_CHAIN_IDS,
@@ -142,6 +144,74 @@ export async function ensureNativeGas(
   }
   const tx = await funder.sendTransaction({ to: address, value: topUpWei });
   await tx.wait();
+}
+
+/**
+ * Run a protocol's fork-only impersonated provisioning calls
+ * (`setup.forkImpersonatedCalls`), e.g. an authed ward kissing the test
+ * wallet on a toll-gated Chronicle feed. Shared by the coverage
+ * preflight (runSetup) and the Tier 1 simulation harness so the
+ * impersonation semantics cannot drift between tiers.
+ *
+ * Throws when the spec is declared on a non-fork chain: impersonation
+ * is an anvil cheatcode, and silently skipping would let gated fixtures
+ * fail far downstream (or pass vacuously).
+ */
+export async function runForkImpersonatedCalls(
+  protocolSlug: string,
+  chainId: string,
+  walletAddress: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
+): Promise<void> {
+  const protocol = getProtocol(protocolSlug);
+  const calls = protocol?.testData?.[chainId]?.setup?.forkImpersonatedCalls;
+  if (!(protocol && calls) || calls.length === 0) {
+    return;
+  }
+  if (!(FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride)) {
+    throw new Error(
+      `${protocolSlug} declares forkImpersonatedCalls on chain ${chainId}, which is not in FORK_CHAIN_IDS; impersonation only exists on anvil forks.`
+    );
+  }
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  for (const call of calls) {
+    const to = resolveBinding(
+      call.contract,
+      "address",
+      protocol,
+      chainId,
+      walletAddress
+    );
+    const abi = JSON.parse(call.abi) as AbiFunction[];
+    const fn = abi.find((entry) => entry.name === call.functionName);
+    if (!fn) {
+      throw new Error(
+        `${protocolSlug}: forkImpersonatedCalls ABI missing function "${call.functionName}"`
+      );
+    }
+    const args = call.args.map((arg, i) =>
+      resolveBinding(arg, fn.inputs[i]?.type, protocol, chainId, walletAddress)
+    );
+    // Impersonated senders are privileged accounts (often contracts)
+    // chosen for authority, not ETH balance; fund their gas.
+    await provider.send("anvil_setBalance", [
+      call.impersonate,
+      "0x8ac7230489e80000",
+    ]);
+    await withImpersonation(provider, call.impersonate, async (signer) => {
+      const target = new ethers.Contract(to, [fn], signer);
+      const tx = await target[call.functionName](...args);
+      const receipt = await tx.wait();
+      if (!receipt || receipt.status !== 1) {
+        throw new Error(
+          `${protocolSlug}: impersonated ${call.functionName} on ${to} reverted`
+        );
+      }
+    });
+  }
 }
 
 export type AbiInput = { name: string; type: string };

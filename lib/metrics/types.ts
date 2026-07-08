@@ -228,7 +228,6 @@ export const LabelKeys = {
   PLUGIN_NAME: "plugin_name",
   ACTION_NAME: "action_name",
   TRIGGER_TYPE: "trigger_type",
-  CHAIN: "chain",
   STATUS: "status",
   STATUS_CODE: "status_code",
   ERROR_TYPE: "error_type",

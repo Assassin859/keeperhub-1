@@ -6,7 +6,15 @@ import {
   workflowSchedules,
   type workflows,
 } from "../../lib/db/schema";
+import {
+  classifyExecutionError,
+  isDefaultClassification,
+} from "../../lib/errors/classify";
 import type { ErrorCode } from "../../lib/errors/error-codes";
+import {
+  isErrorStatus,
+  statusForErrorType,
+} from "../../lib/errors/execution-status";
 import { calculateTotalSteps } from "../../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../../lib/workflow/store";
 import type { executeWorkflow } from "../../lib/workflow/executor/executor.workflow";
@@ -64,12 +72,39 @@ export async function updateExecutionStatus(
   status: "running" | "success" | "error" | "cancelled",
   result?: { output?: unknown; error?: string }
 ): Promise<void> {
+  // Classify the failure so the backstop row carries error_category /
+  // error_type / error_code, exactly like the engine's own finalize
+  // (logWorkflowCompleteDb). Without this, executions the executor closes on
+  // its own (consumer-crash backstop, SIGTERM shutdown, engine-write-lost)
+  // land with a NULL classification and drop out of error_type-filtered
+  // dashboards even though recordTerminalSample already counts them.
+  const classification =
+    status === "error" ? classifyExecutionError(result?.error) : null;
+
+  // Mirror logWorkflowCompleteDb: a confidently system-classified failure
+  // persists as system_error so it stays filterable apart from user/workflow
+  // errors; an unmatched failure that only defaulted to "system" keeps the
+  // plain "error" status (its error_type is still written as "system"). The
+  // engine and this backstop must produce the same row shape for the same
+  // failure so a lost engine write is closed identically.
+  const persistedStatus =
+    status === "error"
+      ? statusForErrorType(
+          classification && !isDefaultClassification(classification)
+            ? classification.errorType
+            : null
+        )
+      : status;
+
+  const isTerminal =
+    persistedStatus === "success" || isErrorStatus(persistedStatus);
+
   const updateData: Record<string, unknown> = {
-    status,
+    status: persistedStatus,
     updatedAt: new Date(),
   };
 
-  if (status === "success" || status === "error") {
+  if (isTerminal) {
     updateData.completedAt = new Date();
   }
   if (result?.output !== undefined) {
@@ -77,6 +112,11 @@ export async function updateExecutionStatus(
   }
   if (result?.error) {
     updateData.error = result.error;
+  }
+  if (classification) {
+    updateData.errorCategory = classification.errorCategory;
+    updateData.errorType = classification.errorType;
+    updateData.errorCode = classification.code;
   }
 
   // Only transition a row that has not already reached a terminal state. The
@@ -107,15 +147,19 @@ export async function updateExecutionStatus(
   // above excludes every terminal state), so this backstop is the execution's
   // first and only terminal transition and must emit the terminal counters
   // the engine would have emitted. Cancellation is intentionally not counted
-  // (the finished counter tracks success/error outcomes only).
+  // (the finished counter tracks success/error outcomes only). Pass the
+  // classification we persisted so the counter labels are guaranteed to match
+  // the row's error_type / error_category.
   if (
     updated.length > 0 &&
-    (status === "success" || status === "error")
+    (persistedStatus === "success" || isErrorStatus(persistedStatus))
   ) {
     await recordTerminalSample(db, {
       workflowId: updated[0].workflowId,
-      status,
+      status: persistedStatus,
       errorMessage: result?.error,
+      errorType: classification?.errorType,
+      errorCategory: classification?.errorCategory,
     });
   }
 }

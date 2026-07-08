@@ -305,7 +305,7 @@ metadata:
     workflow-id: ${workflowId}
     execution-id: ${executionId}
 spec:
-  ttlSecondsAfterFinished: 3600  # Cleanup after 1 hour
+  ttlSecondsAfterFinished: 300    # Delete finished pods fast to release node disk (env JOB_TTL_SECONDS)
   backoffLimit: 0                 # No retries (handle in app)
   activeDeadlineSeconds: 300      # 5 minute timeout
   template:
@@ -335,13 +335,22 @@ spec:
                 secretKeyRef:
                   name: keeperhub-secrets
                   key: integration-encryption-key
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp        # sole writable path (readOnlyRootFilesystem)
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: "160Mi"
+              cpu: "200m"
+              ephemeral-storage: "64Mi"  # honest floor for accounting (env RUNNER_EPHEMERAL_STORAGE_REQUEST)
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "320Mi"
+              cpu: "750m"
+              ephemeral-storage: "1Gi"   # runaway-/tmp guard (~2 MiB normal); evicts a pathological pod before it threatens the node (env RUNNER_EPHEMERAL_STORAGE_LIMIT)
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: "1Gi"       # caps the runner's write medium at the pod's ephemeral-storage limit
 ```
 
 ---
@@ -370,8 +379,9 @@ Workflows need access to:
 ### Resource Limits
 
 - Set `resources.limits` to prevent runaway workflows
+- Set an `ephemeral-storage` limit and a matching `/tmp` emptyDir `sizeLimit` so a pod that writes pathologically much to `/tmp` (normal runners use ~2 MiB) is evicted on its own disk before it can fill the shared node root volume. Node-level disk pressure from accumulated container images is handled separately (kubelet image GC + node disk sizing), not here
 - Set `activeDeadlineSeconds` for timeout
-- Set `ttlSecondsAfterFinished` for cleanup
+- Set `ttlSecondsAfterFinished` low so finished pods release their `/tmp` disk within minutes
 
 ---
 

@@ -29,9 +29,11 @@ export const TESTNET_FUNDER_PK_ENV = "TESTNET_FUNDER_PK";
  * economically unviable on ephemeral CI: each run seeds a fresh Turnkey
  * wallet (stranding every top-up), and 2026-07-02 base-fee spikes of
  * 40-105 gwei priced a single worst-case Superfluid tx above any top-up
- * the shared funder could sustain. CI stands up the Sepolia fork on
- * localhost:8547 (docker-compose `test-anvil-fork`) and patches the
- * chains row before the suites run.
+ * the shared funder could sustain. Since the chronicle/superfluid
+ * re-homing to the mainnet fork, no Tier 2 suite targets Sepolia and CI
+ * runs no Sepolia fork; the entry stays for the remaining Sepolia
+ * testData (aave-v3) exercised by local Tier 1 sims
+ * (scripts/protocol-local.sh sim sepolia).
  */
 export const FORK_CHAIN_IDS: Set<string> = new Set(["1", "11155111"]);
 
@@ -43,8 +45,7 @@ export type TokenSymbol =
   | "USDS"
   | "LINK"
   | "WSTETH"
-  | "FUSDC"
-  | "FUSDCX";
+  | "DAIX";
 
 export type TokenEntry = {
   address: string;
@@ -86,6 +87,18 @@ export const TOKEN_REGISTRY: Record<
       decimals: 18,
       symbol: "DAI",
     },
+    // Superfluid canonical Super DAI wrapper (resolved from the on-chain
+    // Superfluid resolver key "supertokens.v1.DAIx", verified 2026-07-07).
+    // Chosen over USDCx for the coverage fixtures: USDCx's upgrade() routes
+    // the underlying into Sky savings, and its gas cost jumps between the
+    // estimation block and the execution block (sUSDS drip), so
+    // exact-estimate sends reliably run out of gas on an anvil fork. DAIx
+    // is a plain escrow wrapper.
+    DAIX: {
+      address: "0x4F228bf911ed67730e4B51B1F82AC291B49053ee",
+      decimals: 18,
+      symbol: "DAIX",
+    },
   },
   // Base Mainnet (used by ajna coverage tests; not fork-mode — no testnet faucets)
   "8453": {
@@ -122,18 +135,6 @@ export const TOKEN_REGISTRY: Record<
       address: "0xf8Fb3713D459D7C1018BD0A49D19b4C44290EBE5",
       decimals: 18,
       symbol: "LINK",
-    },
-    // Superfluid fUSDC underlying ERC-20 (from protocol-superfluid-onchain.test.ts:52).
-    FUSDC: {
-      address: "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db",
-      decimals: 18,
-      symbol: "FUSDC",
-    },
-    // Superfluid fUSDCx SuperToken wrapper (from protocol-superfluid-onchain.test.ts:49).
-    FUSDCX: {
-      address: "0xb598E6C621618a9f63788816ffb50Ee2862D443B",
-      decimals: 18,
-      symbol: "FUSDCX",
     },
   },
 };
@@ -179,24 +180,6 @@ export const FAUCETS: Record<
             { name: "amount", type: "uint256" },
           ],
           outputs: [{ name: "", type: "uint256" }],
-        },
-      ]),
-    },
-    // FUSDC exposes a permissionless `mint(to, amount)` on its own ERC20.
-    // Verified by inspecting bytecode (selector 0x40c10f19 present).
-    FUSDC: {
-      contract: "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db",
-      functionName: "mint",
-      abi: JSON.stringify([
-        {
-          type: "function",
-          name: "mint",
-          stateMutability: "nonpayable",
-          inputs: [
-            { name: "to", type: "address" },
-            { name: "amount", type: "uint256" },
-          ],
-          outputs: [],
         },
       ]),
     },

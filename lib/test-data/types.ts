@@ -123,6 +123,29 @@ export type SetupSpec = {
     action: string;
     inputs: ActionInputBindings;
   }>;
+  /**
+   * Fork-only provisioning calls that require impersonating a privileged
+   * third party (anvil cheatcodes), e.g. an authed ward whitelisting the
+   * test wallet on a toll-gated oracle. Each entry funds and impersonates
+   * `impersonate`, then calls `functionName` on the resolved target with
+   * the resolved args (wallet() supported on address params). Runs before
+   * the setup workflow (coverage preflight) / setup steps (simulation
+   * tier). Declaring these on a chain outside FORK_CHAIN_IDS is an
+   * authoring error and fails loudly: impersonation does not exist on a
+   * live chain, and silently skipping would let gated fixtures pass
+   * vacuously or fail far downstream.
+   */
+  forkImpersonatedCalls?: Array<{
+    /** Address to impersonate; must hold the required on-chain privilege
+     *  (verify empirically against a fork and record the evidence). */
+    impersonate: string;
+    /** Target contract: contract("key") binding or a literal 0x address. */
+    contract: InputBinding;
+    /** Single-function ABI JSON for the call. */
+    abi: string;
+    functionName: string;
+    args: InputBinding[];
+  }>;
 };
 
 export type ProtocolChainTestData = {
@@ -136,6 +159,16 @@ export type ProtocolChainTestData = {
    * the coverage runner after execution success. See OutputExpectation.
    */
   expectations?: Record<string, OutputExpectation[]>;
+  /**
+   * Per-action execution-wait overrides (ms) for the coverage runner,
+   * keyed by action.slug. For writes whose first-touch contract fan-out
+   * through the fork upstream exceeds the default two-minute wait (a
+   * cold GDA pool creation can take several minutes on a fresh fork).
+   * Use sparingly and note the constraint; the default stays tight so
+   * genuinely broken actions fail fast. Warmed fork caches make these
+   * overrides progressively irrelevant.
+   */
+  executionWaitMs?: Record<string, number>;
   /**
    * Post-write oracles for the fork simulation tier, keyed by write
    * action slug. After the write mines, the harness runs the referenced
