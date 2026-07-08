@@ -22,6 +22,28 @@ export type BatchQueryResult = {
 export const MAX_BATCH_RETRIES = 3;
 export const RETRY_BASE_DELAY_MS = 2000;
 
+// A batch is also at risk of the cross-replica race described below even if
+// it isn't the literal final batch of a "latest"-resolved range: when the
+// range length leaves a small remainder over the batch size, the batch
+// immediately before the tip can end within a handful of blocks of the
+// resolved-latest estimate -- close enough for a lagging replica to reject
+// it with the same "block range extends beyond current head" error. This
+// margin widens tip-batch treatment to any batch ending this close to the
+// estimate, not just the one landing exactly on it.
+export const TIP_SAFETY_MARGIN_BLOCKS = 5;
+
+// Whether a batch ending at `batchEnd` should be queried as a tip batch
+// (against the literal "latest" tag) rather than a fixed numeric end. Only
+// relevant for ranges whose end we resolved ourselves (`toBlockIsLatest`) --
+// an explicit user-provided toBlock is always a fixed query.
+export function isNearHeadBatch(
+  batchEnd: number,
+  toBlock: number,
+  toBlockIsLatest: boolean
+): boolean {
+  return toBlockIsLatest && toBlock - batchEnd < TIP_SAFETY_MARGIN_BLOCKS;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);

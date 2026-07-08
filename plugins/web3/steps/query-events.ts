@@ -13,6 +13,7 @@ import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-ha
 import { getErrorMessage } from "@/lib/utils";
 import {
   type AbiEntry,
+  isNearHeadBatch,
   queryBatchWithRetry,
 } from "./query-events-core";
 
@@ -235,7 +236,7 @@ async function queryEventBatches(
     start += batchSize
   ) {
     const end = Math.min(start + batchSize - 1, range.toBlock);
-    const isTipBatch = range.toBlockIsLatest && end === range.toBlock;
+    const isTipBatch = isNearHeadBatch(end, range.toBlock, range.toBlockIsLatest);
     console.log(`[Query Events] Querying batch: blocks ${start} to ${end}`);
 
     const { events: batchEvents, actualEnd } = await queryBatchWithRetry(
@@ -260,6 +261,12 @@ async function queryEventBatches(
     }
 
     actualToBlock = actualEnd;
+
+    // A tip batch already queried through to the real head via "latest" --
+    // there is no fixed-range batch left to run after it.
+    if (isTipBatch) {
+      break;
+    }
     // The batch could not vouch for scanning all the way to its planned end
     // -- later batches would target blocks even further out, so there is
     // nothing left to gain by continuing.
