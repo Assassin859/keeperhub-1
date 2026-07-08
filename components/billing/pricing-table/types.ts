@@ -7,6 +7,13 @@ import type {
 
 export type GasCreditCapsMap = Record<PlanName, number>;
 
+// First-time-subscriber trial hint from the subscription API. Display only;
+// the checkout route re-checks eligibility server-side.
+export type TrialInfo = {
+  eligible: boolean;
+  days: number;
+};
+
 export type PricingTableProps = {
   currentPlan?: PlanName;
   currentTier?: TierKey | null;

@@ -1,8 +1,9 @@
 "use client";
 
-import { Info } from "lucide-react";
+import { Info, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,7 @@ import {
 } from "@/lib/web3/sponsorship-chains-meta";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import { GasSponsorshipHistory } from "./gas-sponsorship-history";
+import { TrialUpsellModal } from "./trial-upsell-modal";
 
 type OverageCharge = {
   periodStart: string;
@@ -54,6 +56,7 @@ type SubscriptionData = {
   };
   gasCredits?: GasCreditsData;
   overageCharges: OverageCharge[];
+  trial?: { eligible: boolean; days: number };
 };
 
 type SuggestionNoUpgrade = {
@@ -80,11 +83,21 @@ const STATUS_VARIANT: Record<
   "default" | "secondary" | "destructive" | "outline"
 > = {
   active: "default",
-  trialing: "secondary",
+  trialing: "outline",
   past_due: "destructive",
   canceled: "destructive",
   unpaid: "destructive",
   paused: "outline",
+};
+
+// Human-friendly labels for the raw subscription status.
+const STATUS_LABEL: Record<string, string> = {
+  active: "Active",
+  trialing: "Free trial",
+  past_due: "Past due",
+  canceled: "Canceled",
+  unpaid: "Unpaid",
+  paused: "Paused",
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -120,7 +133,7 @@ function getRenewalMessage(
 
   if (cancelAtPeriodEnd) {
     return {
-      text: `Your plan ends on ${formattedDate}. You will not be charged again.`,
+      text: `Access stays active until ${formattedDate}.`,
       className: "text-muted-foreground",
     };
   }
@@ -259,6 +272,22 @@ function UpgradeSuggestionBanner({
         </Button>
       </div>
     </div>
+  );
+}
+
+// Compact "Start free trial" trigger shown beside the plan title for eligible
+// free orgs. Opens the trial offer modal (plan options + benefits).
+function StartTrialButton({ days }: { days: number }): React.ReactElement {
+  const { open } = useOverlay();
+  return (
+    <button
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-keeperhub-green-dark/30 bg-keeperhub-green-dark/10 px-3 py-1.5 font-medium text-keeperhub-green-dark text-xs transition-colors hover:bg-keeperhub-green-dark/20"
+      onClick={() => open(TrialUpsellModal, { days }, { size: "2xl" })}
+      type="button"
+    >
+      <Sparkles className="size-3.5" />
+      Start free trial
+    </button>
   );
 }
 
@@ -630,6 +659,7 @@ function BillingStatusContent({
   gasCredits,
   overageCharges,
   suggestion,
+  trial,
   portalLoading,
   onManageBilling,
 }: {
@@ -638,12 +668,39 @@ function BillingStatusContent({
   gasCredits: GasCreditsData | undefined;
   overageCharges: OverageCharge[];
   suggestion: SuggestionData | null;
+  trial: SubscriptionData["trial"] | undefined;
   portalLoading: boolean;
   onManageBilling: () => void;
 }): React.ReactElement {
   const plan = (sub?.plan ?? "free") as PlanName;
   const planDef = PLANS[plan];
-  const statusVariant = STATUS_VARIANT[sub?.status ?? "active"] ?? "outline";
+  const status = sub?.status ?? "active";
+  const statusVariant = STATUS_VARIANT[status] ?? "outline";
+  const isTrialing = status === "trialing";
+  const isCanceling =
+    (sub?.cancelAtPeriodEnd ?? false) && status !== "canceled";
+
+  // A cancel-at-period-end sub collapses to a single "cancelled" chip (the
+  // decision is already made; access just rides out the period).
+  let statusLabel = STATUS_LABEL[status] ?? status;
+  let badgeClass: string | undefined;
+  if (isCanceling) {
+    statusLabel = isTrialing ? "Trial cancelled" : "Cancelled";
+    badgeClass =
+      "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400";
+  } else if (isTrialing) {
+    badgeClass =
+      "border-keeperhub-green-dark/40 bg-keeperhub-green-dark/10 text-keeperhub-green-dark";
+  }
+  const badgeVariant = isCanceling ? "outline" : statusVariant;
+  // Only offer the trial to engaged free orgs (>= 50% of the free cap used),
+  // matching the global upsell modal's threshold.
+  const usedRatio =
+    usage && usage.executionLimit > 0
+      ? usage.executionsUsed / usage.executionLimit
+      : 0;
+  const canStartTrial =
+    plan === "free" && trial?.eligible === true && usedRatio >= 0.5;
 
   const renewalMessage = getRenewalMessage(
     sub?.status ?? "active",
@@ -666,14 +723,19 @@ function BillingStatusContent({
         <UpgradeSuggestionBanner suggestion={suggestion} />
       )}
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-2xl font-bold">{planDef.name}</span>
-        <Badge variant={statusVariant}>{sub?.status ?? "active"}</Badge>
-        {renewalMessage && (
-          <p className={`text-sm ${renewalMessage.className}`}>
-            {renewalMessage.text}
-          </p>
-        )}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-2xl font-bold">{planDef.name}</span>
+          <Badge className={badgeClass} variant={badgeVariant}>
+            {statusLabel}
+          </Badge>
+          {renewalMessage && (
+            <p className={`text-sm ${renewalMessage.className}`}>
+              {renewalMessage.text}
+            </p>
+          )}
+        </div>
+        {canStartTrial && trial && <StartTrialButton days={trial.days} />}
       </div>
 
       {usage && (
@@ -743,6 +805,7 @@ export function BillingStatus(): React.ReactElement {
         portalLoading={portalLoading}
         sub={sub}
         suggestion={suggestion}
+        trial={data?.trial}
         usage={data?.usage}
       />
     </Card>
