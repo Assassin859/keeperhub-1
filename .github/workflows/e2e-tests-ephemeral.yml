@@ -306,17 +306,62 @@ jobs:
         env:
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
 
+      # Pinned-block fork for protocols whose fixtures bind state
+      # recorded at a specific block (testData.pinnedBlock; pendle - its
+      # markets expire, so live-head bindings rot). The pin is resolved
+      # from the registry via scripts/protocol-pinned-block.ts so a
+      # fixture refresh touches only the protocol's testData. A fixed pin
+      # needs an upstream serving historical state (public endpoints
+      # refuse state reads even a few hundred blocks behind head), so
+      # without the archive secret this step no-ops and the pinned
+      # protocols self-skip (chains.test.ts gates each pinned suite on
+      # PROTOCOL_SIM_RPC_1_PINNED, which stays empty).
+      - name: Start pinned-block anvil fork
+        id: pinned-fork
+        env:
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+        run: |
+          if [ -z "$ANVIL_FORK_MAINNET_URL" ]; then
+            echo "ANVIL_FORK_MAINNET_URL not set; pinned-block fixtures need an archive upstream - pinned protocols (pendle) will self-skip"
+            exit 0
+          fi
+          pin=$(pnpm tsx scripts/protocol-pinned-block.ts 1)
+          docker run -d --name keeperhub-test-anvil-fork-mainnet-pinned -p 8549:8545 \
+            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --host 0.0.0.0 \
+            --fork-url "$ANVIL_FORK_MAINNET_URL" \
+            --fork-block-number "$pin" \
+            --chain-id 1 --block-time 1
+          retries=0
+          until curl -sf -X POST http://localhost:8549 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0x1"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "pinned anvil mainnet fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-mainnet-pinned || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "pinned mainnet fork at block ${pin} on :8549"
+          echo "rpc=http://localhost:8549" >> "$GITHUB_OUTPUT"
+
       # Fail in seconds on a dead fork or upstream instead of as vitest
       # timeouts. eth_getBalance of the beacon deposit contract forces a
       # pinned-block upstream fetch: the address is untouched by local
       # test state and never referenced by the sweep, so it cannot be
       # served from the mounted cache - the probe validates the archive
-      # upstream at the pin even on a cache-loaded fork.
+      # upstream at the pin even on a cache-loaded fork. The pinned fork
+      # line is present only when that fork started; the same probe
+      # there validates the archive upstream serves state at the fixture
+      # pin.
       - name: Fork health probe
         uses: ./.github/actions/probe-forks
         with:
           forks: |
             mainnet|http://localhost:8548|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa
+            ${{ steps.pinned-fork.outputs.rpc != '' && 'mainnet-pinned|http://localhost:8549|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa' || '' }}
 
       - name: Run Tier 1 simulations (chain 1)
         run: |
@@ -329,6 +374,7 @@ jobs:
           pnpm tsx scripts/protocol-coverage-floor.ts sim-results.json 150
         env:
           PROTOCOL_SIM_RPC_1: http://localhost:8548
+          PROTOCOL_SIM_RPC_1_PINNED: ${{ steps.pinned-fork.outputs.rpc }}
 
   # Enablement is decided by the should-run job: the environment-level
   # ENABLE_E2E_EPHEMERAL_TESTS variable is the kill switch, plus the

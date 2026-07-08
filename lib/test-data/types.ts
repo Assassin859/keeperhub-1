@@ -151,6 +151,17 @@ export type SetupSpec = {
 export type ProtocolChainTestData = {
   /** When false, builder emits workflows marked _executable:false. */
   enabled?: boolean;
+  /**
+   * Fork block the chain's bindings were recorded at, for protocols whose
+   * fixtures rot on live state (Pendle markets expire). The Tier 1 harness
+   * runs these protocols against a dedicated fork pinned here (gated on
+   * PROTOCOL_SIM_RPC_<chainId>_PINNED) instead of the shared near-head
+   * fork, so the recorded bindings stay verifiable regardless of wall
+   * clock. The rig and CI resolve the pin from the registry via
+   * scripts/protocol-pinned-block.ts; refresh procedure in
+   * specs/protocol-coverage-methodology.md.
+   */
+  pinnedBlock?: number;
   setup: SetupSpec;
   /** Per-action input bindings keyed by action.slug. */
   actions: Record<string, ActionInputBindings>;
