@@ -124,6 +124,19 @@ export type SetupSpec = {
     inputs: ActionInputBindings;
   }>;
   /**
+   * Override the coverage runner's setup-execution wait (default 300s,
+   * sized for a single cold first-touch transaction). For setups whose
+   * transaction count makes that structurally too small: each real
+   * signed tx through the app has been observed to take >100s under
+   * CI's shared-wallet contention on a cold fork, so a three-approval
+   * setup (pendle: SY, PT, and YT all need router allowances) cannot
+   * fit the single-tx default. Use sparingly and note the constraint;
+   * the default stays tight so genuinely hung setups fail fast with
+   * their post-mortem intact. Keep the suite file's beforeAll timeout
+   * above this value.
+   */
+  executionWaitMs?: number;
+  /**
    * Fork-only provisioning calls that require impersonating a privileged
    * third party (anvil cheatcodes), e.g. an authed ward whitelisting the
    * test wallet on a toll-gated oracle. Each entry funds and impersonates

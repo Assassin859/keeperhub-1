@@ -41,6 +41,10 @@ const TEST_DATA: ProtocolTestData = {
         { token: "PT_WSTETH", spender: contract("router"), human: "5" },
         { token: "YT_WSTETH", spender: contract("router"), human: "5" },
       ],
+      // Three real signed txs through the app; each has been observed
+      // to take 100-220s under CI's shared-wallet contention on a cold
+      // fork, so the single-tx 300s default cannot fit this setup.
+      executionWaitMs: 600_000,
     },
     actions: {
       "get-ve-pendle-balance": { user: wallet() },
@@ -85,6 +89,13 @@ const TEST_DATA: ProtocolTestData = {
         netPyIn: amount("PT_WSTETH", "2"),
         minSyOut: "1",
       },
+    },
+    // Same constraint as the setup wait: a signed write through the app
+    // has been observed to take 100-220s on a cold fork under CI's
+    // shared-wallet contention, above the 120s per-action default.
+    executionWaitMs: {
+      "mint-py-from-sy": 300_000,
+      "redeem-py-to-sy": 300_000,
     },
     expectations: {
       // Chain invariants of the recorded market: its expiry is immutable
