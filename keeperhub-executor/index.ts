@@ -570,7 +570,6 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL,
     {
       [LabelKeys.TRIGGER_TYPE]: triggerType,
-      [LabelKeys.CHAIN]: workflow.chain ?? "_unknown",
     }
   );
 

@@ -801,18 +801,17 @@ const pluginInvocations = getOrCreateCounter(
 );
 
 // Runtime counter incremented exactly once per workflow_executions row creation,
-// labelled by trigger_type (block | schedule | event | manual | webhook | scheduled)
-// and chain (the workflows.chain column; "_unknown" when null). Used by the
-// Grafana "zero executions in N min" alert family - increase()[window] == 0 with
-// no_data_state="Alerting" fires when a (trigger_type, chain) pair stalls.
+// labelled by trigger_type (block | schedule | event | manual | webhook | scheduled).
+// Used by the Grafana "zero executions in N min" alert family - increase()[window]
+// == 0 with no_data_state="Alerting" fires when a trigger_type stalls.
 //
 // Distinct from "workflow.executions.total" (a DB-sourced gauge of all-time counts
 // by status+org_slug) - that metric is computed via SQL in updateDbMetrics().
 const workflowExecutionsStartedTotal = getOrCreateCounter(
   apiRegistry,
   "keeperhub_workflow_executions_started_total",
-  "Workflow executions started (counter), labelled by trigger_type and chain",
-  ["trigger_type", "chain"]
+  "Workflow executions started (counter), labelled by trigger_type",
+  ["trigger_type"]
 );
 
 // KEEP-612 detection signal. lib/safe-fetch.ts increments this every time
