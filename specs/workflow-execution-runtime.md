@@ -342,15 +342,15 @@ spec:
             requests:
               memory: "160Mi"
               cpu: "200m"
-              ephemeral-storage: "1Gi"   # lets the scheduler spread runners off a hot node (env RUNNER_EPHEMERAL_STORAGE_REQUEST)
+              ephemeral-storage: "64Mi"  # honest floor for accounting (env RUNNER_EPHEMERAL_STORAGE_REQUEST)
             limits:
               memory: "320Mi"
               cpu: "750m"
-              ephemeral-storage: "2Gi"   # evicts a single over-limit runner before node DiskPressure (env RUNNER_EPHEMERAL_STORAGE_LIMIT)
+              ephemeral-storage: "1Gi"   # runaway-/tmp guard (~2 MiB normal); evicts a pathological pod before it threatens the node (env RUNNER_EPHEMERAL_STORAGE_LIMIT)
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: "2Gi"       # caps the runner's write medium at the pod's ephemeral-storage limit
+            sizeLimit: "1Gi"       # caps the runner's write medium at the pod's ephemeral-storage limit
 ```
 
 ---
@@ -379,7 +379,7 @@ Workflows need access to:
 ### Resource Limits
 
 - Set `resources.limits` to prevent runaway workflows
-- Set an `ephemeral-storage` request + limit and a matching `/tmp` emptyDir `sizeLimit` so runner disk is bounded: the request spreads pods across nodes, the limit evicts a single over-limit runner instead of letting it fill the shared node root volume and trip node-wide DiskPressure
+- Set an `ephemeral-storage` limit and a matching `/tmp` emptyDir `sizeLimit` so a pod that writes pathologically much to `/tmp` (normal runners use ~2 MiB) is evicted on its own disk before it can fill the shared node root volume. Node-level disk pressure from accumulated container images is handled separately (kubelet image GC + node disk sizing), not here
 - Set `activeDeadlineSeconds` for timeout
 - Set `ttlSecondsAfterFinished` low so finished pods release their `/tmp` disk within minutes
 

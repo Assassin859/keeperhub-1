@@ -710,17 +710,17 @@ executor:
     JOB_ACTIVE_DEADLINE:
       type: kv
       value: "300"
-    # Ephemeral-storage bounds for runner Job pods. The request lets the
-    # scheduler spread runners across nodes instead of packing one node's root
-    # volume; the limit (mirrored by the runner's /tmp emptyDir sizeLimit) evicts
-    # a single over-limit runner before the node trips DiskPressure. Starting
-    # values - retune from observed /tmp usage.
+    # Ephemeral-storage guardrail for runner Job pods (mirrored by the runner's
+    # /tmp emptyDir sizeLimit). Live staging runners use ~2 MiB each, so the 1Gi
+    # limit is a runaway-/tmp guard, not the disk-pressure fix (that is node image
+    # GC + disk headroom in the eks-cluster workspace). Retune if a legitimate
+    # data-heavy workflow needs a larger /tmp.
     RUNNER_EPHEMERAL_STORAGE_REQUEST:
       type: kv
-      value: "1Gi"
+      value: "64Mi"
     RUNNER_EPHEMERAL_STORAGE_LIMIT:
       type: kv
-      value: "2Gi"
+      value: "1Gi"
     EXECUTION_MODE:
       type: kv
       value: "isolated"

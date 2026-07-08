@@ -34,8 +34,8 @@ vi.mock("./config", () => ({
     runnerSecretPrefix: "keeperhub-executor-common",
     runnerImage: "runner:latest",
     imagePullPolicy: "Never",
-    runnerEphemeralStorageRequest: "1Gi",
-    runnerEphemeralStorageLimit: "2Gi",
+    runnerEphemeralStorageRequest: "64Mi",
+    runnerEphemeralStorageLimit: "1Gi",
     jobTtlSeconds: 300,
     jobActiveDeadline: 300,
     maxConcurrentJobs: 5,
@@ -393,17 +393,18 @@ describe("createWorkflowJob", () => {
 
     const job = getSubmittedJob();
     const resources = job.spec?.template?.spec?.containers?.[0]?.resources;
-    // Request drives scheduler spread; limit drives per-pod eviction before
-    // the node trips DiskPressure.
-    expect(resources?.requests?.["ephemeral-storage"]).toBe("1Gi");
-    expect(resources?.limits?.["ephemeral-storage"]).toBe("2Gi");
+    // Small honest floor for the request; the limit is a runaway-/tmp guard
+    // (normal runners use ~2 MiB) that evicts a single pathological pod before
+    // it can threaten the node root volume.
+    expect(resources?.requests?.["ephemeral-storage"]).toBe("64Mi");
+    expect(resources?.limits?.["ephemeral-storage"]).toBe("1Gi");
 
     // The only writable medium (/tmp emptyDir) is capped at the pod limit so a
     // runaway runner is evicted on its own disk, not the shared node volume.
     const tmpVolume = job.spec?.template?.spec?.volumes?.find(
       (v) => v.name === "tmp"
     );
-    expect(tmpVolume?.emptyDir?.sizeLimit).toBe("2Gi");
+    expect(tmpVolume?.emptyDir?.sizeLimit).toBe("1Gi");
   });
 
   it("keeps finished runner pods only briefly so node disk is reclaimed fast", async () => {
