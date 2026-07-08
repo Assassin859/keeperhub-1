@@ -116,6 +116,8 @@ vi.mock("drizzle-orm", () => ({
 // and tracks pending txs in wallet_locks / pending_transactions). For these
 // tests we feed a stub that gives back monotonically-increasing nonces from
 // the chain so the orchestrator's signed-tx path lands real txs on the fork.
+const MAINNET_CHAIN_ID = 1;
+
 const sessionMock = {
   walletAddress: "",
   chainId: MAINNET_CHAIN_ID,
