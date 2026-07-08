@@ -710,6 +710,17 @@ executor:
     JOB_ACTIVE_DEADLINE:
       type: kv
       value: "300"
+    # Ephemeral-storage bounds for runner Job pods. The request lets the
+    # scheduler spread runners across nodes instead of packing one node's root
+    # volume; the limit (mirrored by the runner's /tmp emptyDir sizeLimit) evicts
+    # a single over-limit runner before the node trips DiskPressure. Starting
+    # values - retune from observed /tmp usage.
+    RUNNER_EPHEMERAL_STORAGE_REQUEST:
+      type: kv
+      value: "1Gi"
+    RUNNER_EPHEMERAL_STORAGE_LIMIT:
+      type: kv
+      value: "2Gi"
     EXECUTION_MODE:
       type: kv
       value: "isolated"
