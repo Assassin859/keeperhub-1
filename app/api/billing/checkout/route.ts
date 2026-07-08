@@ -12,6 +12,7 @@ import {
 import type { BillingProvider } from "@/lib/billing/provider";
 import { getBillingProvider } from "@/lib/billing/providers";
 import { requireOrgOwner } from "@/lib/billing/require-org-owner";
+import { getTrialPeriodDays, isTrialEligible } from "@/lib/billing/trial";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -67,6 +68,7 @@ type ValidatedCheckout = {
   email: string;
   userId: string;
   priceId: string;
+  plan: PlanName;
 };
 
 async function validateCheckoutRequest(
@@ -113,6 +115,7 @@ async function validateCheckoutRequest(
     email,
     userId,
     priceId,
+    plan: plan as PlanName,
   };
 }
 
@@ -182,7 +185,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       return result;
     }
 
-    const { activeOrgId, email, userId, priceId } = result;
+    const { activeOrgId, email, userId, priceId, plan } = result;
     const provider = getBillingProvider();
     const sub = await getOrgSubscription(activeOrgId);
     const existingSubId = sub?.providerSubscriptionId ?? null;
@@ -223,12 +226,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       process.env.BETTER_AUTH_URL ??
       "http://localhost:3000";
 
+    // First-time subscribers to a trial-eligible plan start with a free trial.
+    // Eligibility is enforced here, server-side; the client label is a hint.
+    const trialPeriodDays = isTrialEligible(sub, plan)
+      ? getTrialPeriodDays()
+      : undefined;
+
     const { url } = await provider.createCheckoutSession({
       customerId: providerCustomerId,
       priceId,
       organizationId: activeOrgId,
       successUrl: `${appUrl}/billing?checkout=success`,
       cancelUrl: `${appUrl}/billing?checkout=canceled`,
+      trialPeriodDays,
     });
 
     // The plan change itself is finalized by the provider webhook; this
@@ -240,7 +250,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       action: "subscription.checkout_started",
       resourceType: "subscription",
       resourceId: activeOrgId,
-      after: { plan: target?.plan ?? null, tier: target?.tier ?? null },
+      after: {
+        plan: target?.plan ?? null,
+        tier: target?.tier ?? null,
+        trial: trialPeriodDays !== undefined,
+      },
       metadata: buildAuditMetadata(request),
     });
 

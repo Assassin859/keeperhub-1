@@ -4,6 +4,8 @@ export type CreateCheckoutParams = {
   organizationId: string;
   successUrl: string;
   cancelUrl: string;
+  // When set, the subscription starts with a free trial of this many days.
+  trialPeriodDays?: number;
 };
 
 export type CreateCustomerParams = {

@@ -1226,7 +1226,23 @@ export type BillingStats = {
 
   // Total MRR in USD cents across all plans and tiers.
   mrrCentsTotal: number;
+
+  // Trial funnel snapshot: orgs that have ever started a trial, by current
+  // outcome. "active" = still trialing, "converted" = now paying (came from a
+  // trial), "churned" = trialed but no longer active.
+  trialsByOutcome: Array<{
+    outcome: TrialOutcome;
+    count: number;
+  }>;
 };
+
+export type TrialOutcome = "active" | "converted" | "churned";
+
+const VALID_TRIAL_OUTCOMES: ReadonlySet<string> = new Set<TrialOutcome>([
+  "active",
+  "converted",
+  "churned",
+]);
 
 function emptyBillingStats(): BillingStats {
   return {
@@ -1234,6 +1250,7 @@ function emptyBillingStats(): BillingStats {
     orgsExecutions: [],
     mrrCentsByPlan: [],
     mrrCentsTotal: 0,
+    trialsByOutcome: [],
   };
 }
 
@@ -1316,6 +1333,22 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
         sql`${organizationSubscriptions.status} IN ('active', 'trialing', 'past_due')`
       );
 
+    // Trial funnel snapshot: any org that ever started a trial
+    // (trial_started_at IS NOT NULL), grouped by current outcome. Bounded to
+    // trial-touched rows so it stays a small aggregate.
+    const trialOutcomeResult = await db
+      .select({
+        outcome: sql<string>`CASE
+          WHEN ${organizationSubscriptions.status} = 'trialing' THEN 'active'
+          WHEN ${organizationSubscriptions.status} = 'active' THEN 'converted'
+          ELSE 'churned'
+        END`,
+        count: count(),
+      })
+      .from(organizationSubscriptions)
+      .where(sql`${organizationSubscriptions.trialStartedAt} IS NOT NULL`)
+      .groupBy(sql`1`);
+
     const stats = emptyBillingStats();
 
     // Tally orgs by plan + tier + billing_status
@@ -1375,6 +1408,16 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
         stats.mrrCentsByPlan.push({ plan, tier, cents });
       }
       stats.mrrCentsTotal += cents;
+    }
+
+    // Tally trial outcomes (active / converted / churned)
+    for (const row of trialOutcomeResult) {
+      if (VALID_TRIAL_OUTCOMES.has(row.outcome)) {
+        stats.trialsByOutcome.push({
+          outcome: row.outcome as TrialOutcome,
+          count: Number(row.count) || 0,
+        });
+      }
     }
 
     return stats;

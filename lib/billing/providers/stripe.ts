@@ -256,9 +256,16 @@ export class StripeBillingProvider implements BillingProvider {
       line_items: [{ price: params.priceId, quantity: 1 }],
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
+      // Let customers redeem promotion codes created in the Stripe dashboard.
+      allow_promotion_codes: true,
       metadata: {
         organizationId: params.organizationId,
       },
+      // A trial always collects a card up front (subscription-mode default), so
+      // Stripe auto-charges when the trial ends.
+      ...(params.trialPeriodDays !== undefined && {
+        subscription_data: { trial_period_days: params.trialPeriodDays },
+      }),
     });
 
     if (!session.url) {
