@@ -208,7 +208,6 @@ import {
   FORK_URL,
   getFork,
   isForkReachable,
-  MAINNET_CHAIN_ID,
 } from "./safe-fork-helpers";
 
 // ---------------------------------------------------------------------------
