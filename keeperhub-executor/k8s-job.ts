@@ -217,13 +217,29 @@ export async function createWorkflowJob(params: {
               },
               volumeMounts: [{ name: "tmp", mountPath: "/tmp" }],
               resources: {
-                requests: { memory: "160Mi", cpu: "200m" },
-                limits: { memory: "320Mi", cpu: "750m" },
+                requests: {
+                  memory: "160Mi",
+                  cpu: "200m",
+                  "ephemeral-storage": CONFIG.runnerEphemeralStorageRequest,
+                },
+                limits: {
+                  memory: "320Mi",
+                  cpu: "750m",
+                  "ephemeral-storage": CONFIG.runnerEphemeralStorageLimit,
+                },
               },
             },
           ],
-          // Sole writable path under readOnlyRootFilesystem; backs TMPDIR.
-          volumes: [{ name: "tmp", emptyDir: {} }],
+          // Sole writable path under readOnlyRootFilesystem; backs TMPDIR. The
+          // sizeLimit caps this medium at the pod's ephemeral-storage limit so a
+          // runaway runner is evicted on its own disk instead of filling the
+          // node root volume and tripping node-wide DiskPressure.
+          volumes: [
+            {
+              name: "tmp",
+              emptyDir: { sizeLimit: CONFIG.runnerEphemeralStorageLimit },
+            },
+          ],
         },
       },
     },
