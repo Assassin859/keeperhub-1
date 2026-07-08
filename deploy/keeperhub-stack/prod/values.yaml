@@ -378,6 +378,20 @@ app:
     NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
       type: kv
       value: "true"
+    # Free trials (server-side runtime flags). TRIALS_ENABLED gates the trial
+    # offer + in-app nudge; the rest tune length and repeat behavior.
+    TRIALS_ENABLED:
+      type: kv
+      value: "false"
+    STRIPE_TRIAL_PERIOD_DAYS:
+      type: kv
+      value: "14"
+    TRIAL_ALLOW_REPEAT:
+      type: kv
+      value: "false"
+    TRIAL_REPEAT_COOLDOWN_DAYS:
+      type: kv
+      value: "90"
     # AI Prompt feature flag - disabled
     # (gates UI render in components/workflow/workflow-canvas.tsx
     #  and /api/ai/generate route)
