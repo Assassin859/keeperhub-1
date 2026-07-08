@@ -26,6 +26,10 @@ const BALANCE_VIEW_ABI = [
   "function balanceOf(address) view returns (uint256)",
 ];
 
+const ALLOWANCE_VIEW_ABI = [
+  "function allowance(address owner, address spender) view returns (uint256)",
+];
+
 /** StakedUSDeV2-style cooldown surface: a packed one-word struct
  *  (uint104 cooldownEnd | uint152 underlyingAmount) in a
  *  mapping(address => UserCooldown). */
@@ -130,6 +134,64 @@ export async function fabricateErc20Balance(
   throw new Error(
     `fabricateErc20Balance: no balances-mapping slot for ${tokenAddress} verified in the first ${MAX_PROBE_SLOTS} indices (Solidity and Vyper layouts). ` +
       "The token's balanceOf is likely derived (rebasing/shares) rather than a stored mapping; add a FORK_WHALES or FAUCETS entry in lib/test-data/chain-test-data.ts instead."
+  );
+}
+
+/**
+ * Fabricate an ERC20 allowance on an anvil fork by writing the
+ * allowance nested-mapping slot directly, so a spender (a vault, a
+ * converter, a lending pool) can pull the holder's tokens without the
+ * holder submitting a real approve transaction. Probes ascending root
+ * slot indices in the standard Solidity nested layout
+ * (allowance[owner][spender] at keccak(spender . keccak(owner . index)))
+ * and keeps the first candidate confirmed by the allowance view;
+ * failed candidates are restored.
+ *
+ * Used instead of the setup workflow's approve-token nodes on the
+ * mainnet fork, where that node's gas-sponsorship-fallback path takes
+ * minutes per approval and blows the setup timeout. Verified layouts:
+ * USDS/DAI slot 3, MKR slot 2, WETH/USDe standard (mainnet, 2026-07-08).
+ * Returns silently when the allowance already covers `amountWei`; throws
+ * when no probed slot verifies (non-standard allowance storage).
+ */
+export async function fabricateErc20Allowance(
+  provider: ethers.JsonRpcProvider,
+  tokenAddress: string,
+  owner: string,
+  spender: string,
+  amountWei: bigint
+): Promise<void> {
+  const token = new ethers.Contract(
+    tokenAddress,
+    ALLOWANCE_VIEW_ABI,
+    provider
+  );
+  const current: bigint = await token.allowance(owner, spender);
+  if (current >= amountWei) {
+    return;
+  }
+
+  for (let index = 0; index < MAX_PROBE_SLOTS; index += 1) {
+    const inner = ethers.keccak256(
+      abiCoder.encode(["address", "uint256"], [owner, index])
+    );
+    const slot = ethers.keccak256(
+      ethers.concat([abiCoder.encode(["address"], [spender]), inner])
+    );
+    const kept = await setSlotIfVerifies(
+      provider,
+      tokenAddress,
+      slot,
+      amountWei,
+      async () => (await token.allowance(owner, spender)) === amountWei
+    );
+    if (kept) {
+      return;
+    }
+  }
+  throw new Error(
+    `fabricateErc20Allowance: no allowance nested-mapping slot for ${tokenAddress} verified in the first ${MAX_PROBE_SLOTS} indices (Solidity layout). ` +
+      "The token's allowance storage is non-standard; declare a real approval instead of a fabricatedApproval."
   );
 }
 

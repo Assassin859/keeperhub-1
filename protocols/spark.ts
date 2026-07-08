@@ -22,7 +22,11 @@ const TEST_DATA: ProtocolTestData = {
         { symbol: "WETH", human: "1" },
         { symbol: "DAI", human: "200" },
       ],
-      approvals: [
+      approvals: [],
+      // Fabricated (anvil_setStorageAt) rather than real approve-token
+      // nodes: the app's approve-token path takes minutes per approval on
+      // the CI fork, and three of them would blow the 300s setup timeout.
+      fabricatedApprovals: [
         { token: "WETH", spender: contract("pool"), human: "1" },
         { token: "DAI", spender: contract("pool"), human: "150" },
         { token: "DAI", spender: contract("sdai"), human: "150" },

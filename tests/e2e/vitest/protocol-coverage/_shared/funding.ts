@@ -38,6 +38,7 @@ import {
 } from "@/lib/test-data/chain-test-data";
 import {
   fabricateElapsedCooldown,
+  fabricateErc20Allowance,
   fabricateErc20Balance,
 } from "./fabricate-state";
 
@@ -260,6 +261,60 @@ export async function runActionFabrications(
       walletAddress
     );
     await fabricateElapsedCooldown(provider, target, walletAddress);
+  }
+}
+
+/**
+ * Fabricate a protocol's fork-only setup allowances
+ * (`setup.fabricatedApprovals`) with anvil_setStorageAt, so the setup
+ * phase never submits a slow approve-token transaction. Shared by the
+ * Tier 1 simulation harness and the Tier 2 coverage preflight so the
+ * allowance provisioning cannot drift between tiers. No-op when the
+ * protocol declares none; throws on a non-fork chain, same as
+ * runForkImpersonatedCalls.
+ */
+export async function runFabricatedApprovals(
+  protocolSlug: string,
+  chainId: string,
+  walletAddress: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
+): Promise<void> {
+  const protocol = getProtocol(protocolSlug);
+  const approvals =
+    protocol?.testData?.[chainId]?.setup?.fabricatedApprovals;
+  if (!(protocol && approvals) || approvals.length === 0) {
+    return;
+  }
+  if (!(FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride)) {
+    throw new Error(
+      `${protocolSlug} declares fabricatedApprovals on chain ${chainId}, which is not in FORK_CHAIN_IDS; storage fabrication only exists on anvil forks.`
+    );
+  }
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  for (const approval of approvals) {
+    const tokenEntry = TOKEN_REGISTRY[chainId]?.[approval.token];
+    if (!tokenEntry) {
+      throw new Error(
+        `TOKEN_REGISTRY missing ${approval.token} on chain ${chainId}; cannot fabricate approval.`
+      );
+    }
+    const spender = resolveBinding(
+      approval.spender,
+      "address",
+      protocol,
+      chainId,
+      walletAddress
+    );
+    await fabricateErc20Allowance(
+      provider,
+      tokenEntry.address,
+      walletAddress,
+      spender,
+      ethers.parseUnits(approval.human, tokenEntry.decimals)
+    );
   }
 }
 

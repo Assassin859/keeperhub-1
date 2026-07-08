@@ -117,6 +117,22 @@ export type SetupSpec = {
     spender: InputBinding;
     human: string;
   }>;
+  /**
+   * Fork-only allowances fabricated with anvil_setStorageAt (the
+   * TS preflight in both tiers, via runFabricatedApprovals), instead of
+   * emitted as approve-token setup nodes. Same shape as `approvals`. Use
+   * on the mainnet fork where the approve-token node's
+   * gas-sponsorship-fallback path takes minutes per approval and blows
+   * the setup timeout; declaring these on a chain outside FORK_CHAIN_IDS
+   * fails loudly, same as forkImpersonatedCalls. See
+   * fabricateErc20Allowance in
+   * tests/e2e/vitest/protocol-coverage/_shared/fabricate-state.ts.
+   */
+  fabricatedApprovals?: Array<{
+    token: TokenSymbol;
+    spender: InputBinding;
+    human: string;
+  }>;
   /** Optional protocol-action prep (e.g. wrap fUSDC -> fUSDCx for Superfluid). */
   protocolSteps?: Array<{
     protocol: string;

@@ -237,7 +237,12 @@ export default defineAbiProtocol({
           { symbol: "DAI", human: "25" },
           { symbol: "MKR", human: "1" },
         ],
-        approvals: [
+        approvals: [],
+        // Fabricated (anvil_setStorageAt) rather than real approve-token
+        // nodes: five approvals through the app's approve-token path,
+        // whose gas-sponsorship fallback takes minutes each on the CI
+        // fork, would blow the 300s setup timeout.
+        fabricatedApprovals: [
           { token: "USDS", spender: contract("sUsds"), human: "200" },
           { token: "USDS", spender: contract("stUsds"), human: "200" },
           { token: "USDS", spender: contract("daiUsdsConverter"), human: "50" },

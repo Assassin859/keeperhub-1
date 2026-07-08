@@ -58,7 +58,11 @@ export default defineAbiProtocol({
         // registered). Budget: deposit 100 + mint 10 shares
         // (~12.4 USDe at the 2026-07-08 rate) against the 200 approval.
         requiredTokens: [{ symbol: "USDE", human: "300" }],
-        approvals: [
+        approvals: [],
+        // Fabricated (anvil_setStorageAt) rather than a real approve-token
+        // node: the app's approve-token path takes minutes on the CI fork
+        // and pushes the setup toward its 300s timeout.
+        fabricatedApprovals: [
           { token: "USDE", spender: contract("sUsde"), human: "200" },
         ],
       },

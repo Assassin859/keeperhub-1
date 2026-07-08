@@ -36,6 +36,7 @@ import {
   ERC20_ABI,
   ensureErc20Acquired,
   runActionFabrications,
+  runFabricatedApprovals,
   runForkImpersonatedCalls,
   withImpersonation,
 } from "../../protocol-coverage/_shared/funding";
@@ -129,6 +130,10 @@ async function provisionSetup(
       rpcUrl
     );
   }
+
+  // Fork-only setup allowances written straight to storage (parity with
+  // the coverage preflight); no-op when the protocol declares none.
+  await runFabricatedApprovals(protocolSlug, chainId, SIM_WALLET, rpcUrl);
 
   for (const approval of setup.approvals) {
     const entry = TOKEN_REGISTRY[chainId]?.[approval.token];
