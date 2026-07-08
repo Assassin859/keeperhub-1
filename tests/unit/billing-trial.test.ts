@@ -1,0 +1,173 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+import {
+  getTrialPeriodDays,
+  getTrialRepeatCooldownDays,
+  isTrialEligible,
+} from "@/lib/billing/trial";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type TrialSub = NonNullable<Parameters<typeof isTrialEligible>[0]>;
+
+function makeSub(overrides: Partial<TrialSub> = {}): TrialSub {
+  return {
+    plan: "free",
+    status: "active",
+    providerSubscriptionId: null,
+    trialStartedAt: null,
+    ...overrides,
+  } as TrialSub;
+}
+
+describe("getTrialPeriodDays", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 14 when unset", () => {
+    vi.stubEnv("STRIPE_TRIAL_PERIOD_DAYS", undefined);
+    expect(getTrialPeriodDays()).toBe(14);
+  });
+
+  it("reads the env override", () => {
+    vi.stubEnv("STRIPE_TRIAL_PERIOD_DAYS", "7");
+    expect(getTrialPeriodDays()).toBe(7);
+  });
+
+  it("clamps below the minimum", () => {
+    vi.stubEnv("STRIPE_TRIAL_PERIOD_DAYS", "0");
+    expect(getTrialPeriodDays()).toBe(14); // 0 is falsy -> default
+    vi.stubEnv("STRIPE_TRIAL_PERIOD_DAYS", "-5");
+    expect(getTrialPeriodDays()).toBe(1);
+  });
+
+  it("clamps above the maximum", () => {
+    vi.stubEnv("STRIPE_TRIAL_PERIOD_DAYS", "365");
+    expect(getTrialPeriodDays()).toBe(90);
+  });
+
+  it("floors fractional values", () => {
+    vi.stubEnv("STRIPE_TRIAL_PERIOD_DAYS", "14.9");
+    expect(getTrialPeriodDays()).toBe(14);
+  });
+});
+
+describe("isTrialEligible", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is eligible for a brand-new org with no subscription row", () => {
+    expect(isTrialEligible(undefined, "pro")).toBe(true);
+  });
+
+  it("is eligible for a fresh free org", () => {
+    expect(isTrialEligible(makeSub(), "pro")).toBe(true);
+  });
+
+  it("is not eligible for non-Pro plans", () => {
+    expect(isTrialEligible(undefined, "business")).toBe(false);
+    expect(isTrialEligible(undefined, "enterprise")).toBe(false);
+    expect(isTrialEligible(undefined, "free")).toBe(false);
+  });
+
+  it("is not eligible once a trial was consumed", () => {
+    expect(
+      isTrialEligible(makeSub({ trialStartedAt: new Date() }), "pro")
+    ).toBe(false);
+  });
+
+  it("is not eligible while currently subscribed", () => {
+    expect(
+      isTrialEligible(
+        makeSub({ providerSubscriptionId: "sub_123", plan: "pro" }),
+        "pro"
+      )
+    ).toBe(false);
+  });
+
+  it("is not eligible after a prior subscription was reset to free", () => {
+    expect(isTrialEligible(makeSub({ status: "canceled" }), "pro")).toBe(false);
+  });
+
+  it("is not eligible when the trials feature flag is off", () => {
+    vi.stubEnv("TRIALS_ENABLED", "false");
+    expect(isTrialEligible(undefined, "pro")).toBe(false);
+    expect(isTrialEligible(makeSub(), "pro")).toBe(false);
+  });
+});
+
+describe("repeat trials (cooldown)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function trialedSub(daysAgo: number): TrialSub {
+    // Trialed once, converted, then reset back to free (canceled).
+    return makeSub({
+      status: "canceled",
+      trialStartedAt: new Date(Date.now() - daysAgo * DAY_MS),
+    });
+  }
+
+  it("stays ineligible after cooldown when repeat trials are off", () => {
+    expect(isTrialEligible(trialedSub(200), "pro")).toBe(false);
+  });
+
+  it("re-enables a cold org once the cooldown has elapsed", () => {
+    vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
+    // Default cooldown is 90 days; 100 days ago is past it.
+    expect(isTrialEligible(trialedSub(100), "pro")).toBe(true);
+  });
+
+  it("stays ineligible before the cooldown elapses", () => {
+    vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
+    expect(isTrialEligible(trialedSub(10), "pro")).toBe(false);
+  });
+
+  it("respects a custom cooldown length", () => {
+    vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
+    vi.stubEnv("TRIAL_REPEAT_COOLDOWN_DAYS", "30");
+    expect(isTrialEligible(trialedSub(45), "pro")).toBe(true);
+    expect(isTrialEligible(trialedSub(20), "pro")).toBe(false);
+  });
+
+  it("never re-enables while the org is actively subscribed", () => {
+    vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
+    expect(
+      isTrialEligible(
+        makeSub({
+          plan: "pro",
+          status: "active",
+          providerSubscriptionId: "sub_live",
+          trialStartedAt: new Date(Date.now() - 200 * DAY_MS),
+        }),
+        "pro"
+      )
+    ).toBe(false);
+  });
+});
+
+describe("getTrialRepeatCooldownDays", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 90 when unset", () => {
+    vi.stubEnv("TRIAL_REPEAT_COOLDOWN_DAYS", undefined);
+    expect(getTrialRepeatCooldownDays()).toBe(90);
+  });
+
+  it("reads the env override", () => {
+    vi.stubEnv("TRIAL_REPEAT_COOLDOWN_DAYS", "30");
+    expect(getTrialRepeatCooldownDays()).toBe(30);
+  });
+
+  it("clamps below the minimum", () => {
+    vi.stubEnv("TRIAL_REPEAT_COOLDOWN_DAYS", "-5");
+    expect(getTrialRepeatCooldownDays()).toBe(1);
+  });
+});

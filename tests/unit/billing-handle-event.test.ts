@@ -18,12 +18,24 @@ vi.mock("@/lib/billing/overage", () => ({
   billOverageForOrg: (...args: unknown[]) => mockBillOverageForOrg(...args),
 }));
 
+const mockIncrementCounter = vi.fn();
+
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: mockIncrementCounter,
+    setGauge: vi.fn(),
+    recordError: vi.fn(),
+    recordWarning: vi.fn(),
+  }),
+}));
+
 import { handleBillingEvent } from "@/lib/billing/handle-billing-event";
 import type {
   BillingProvider,
   BillingWebhookEvent,
 } from "@/lib/billing/provider";
 import { db } from "@/lib/db";
+import { MetricNames } from "@/lib/metrics/types";
 
 const mockSet = vi.fn().mockReturnValue({ where: vi.fn() });
 const mockWhere = vi.fn();
@@ -151,6 +163,41 @@ describe("handleBillingEvent", () => {
       );
     });
 
+    it("persists trialing status and stamps trialStartedAt for a trial", async () => {
+      const provider = createMockProvider({
+        getSubscriptionDetails: vi.fn().mockResolvedValue({
+          priceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,
+          status: "trialing",
+          cancelAtPeriodEnd: false,
+          periodStart: new Date("2025-01-01"),
+          periodEnd: new Date("2025-01-15"),
+        }),
+      });
+      const event = makeEvent("checkout.completed", {
+        organizationId: "org_1",
+        providerSubscriptionId: "sub_trial",
+      });
+
+      await handleBillingEvent(event, provider);
+
+      expect(mockInsertValues).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: "org_1",
+          plan: "pro",
+          status: "trialing",
+          trialStartedAt: expect.any(Date),
+        })
+      );
+      expect(mockOnConflictDoUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          set: expect.objectContaining({
+            status: "trialing",
+            trialStartedAt: expect.any(Date),
+          }),
+        })
+      );
+    });
+
     it("skips when organizationId is missing", async () => {
       const provider = createMockProvider();
       const event = makeEvent("checkout.completed", {
@@ -231,6 +278,72 @@ describe("handleBillingEvent", () => {
           tier: "50k",
           providerPriceId: process.env.STRIPE_PRICE_PRO_50K_MONTHLY,
         })
+      );
+    });
+
+    it("emits a conversion metric on trialing -> active", async () => {
+      mockSelectReturning([
+        {
+          organizationId: "org_1",
+          providerSubscriptionId: "sub_1",
+          providerPriceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,
+          plan: "pro",
+          tier: "25k",
+          status: "trialing",
+          cancelAtPeriodEnd: false,
+          currentPeriodStart: new Date("2025-01-01"),
+          currentPeriodEnd: new Date("2025-01-15"),
+        },
+      ]);
+
+      const provider = createMockProvider();
+      const event = makeEvent("subscription.updated", {
+        providerSubscriptionId: "sub_1",
+        priceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,
+        status: "active",
+        cancelAtPeriodEnd: false,
+        periodStart: new Date("2025-01-15"),
+        periodEnd: new Date("2025-02-15"),
+      });
+
+      await handleBillingEvent(event, provider);
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        MetricNames.BILLING_TRIAL_CONVERTED,
+        expect.objectContaining({ plan: "pro", tier: "25k" })
+      );
+    });
+
+    it("does not emit a conversion metric when already active", async () => {
+      mockSelectReturning([
+        {
+          organizationId: "org_1",
+          providerSubscriptionId: "sub_1",
+          providerPriceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,
+          plan: "pro",
+          tier: "25k",
+          status: "active",
+          cancelAtPeriodEnd: false,
+          currentPeriodStart: new Date("2025-01-01"),
+          currentPeriodEnd: new Date("2025-02-01"),
+        },
+      ]);
+
+      const provider = createMockProvider();
+      const event = makeEvent("subscription.updated", {
+        providerSubscriptionId: "sub_1",
+        priceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,
+        status: "active",
+        cancelAtPeriodEnd: false,
+        periodStart: new Date("2025-01-01"),
+        periodEnd: new Date("2025-02-01"),
+      });
+
+      await handleBillingEvent(event, provider);
+
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        MetricNames.BILLING_TRIAL_CONVERTED,
+        expect.anything()
       );
     });
 

@@ -106,6 +106,32 @@ describe("POST /api/billing/checkout", () => {
     expect(json.url).toBe("https://checkout.stripe.com/session_1");
   });
 
+  // These two assert the arg passed to createCheckoutSession, not the response,
+  // so the returned URL is an unused stub.
+  it("starts a trial for a first-time Pro subscriber", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    await POST(makeRequest({ plan: "pro", tier: "25k", interval: "monthly" }));
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBe(14);
+  });
+
+  it("does not start a trial for a Business subscription", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    await POST(
+      makeRequest({ plan: "business", tier: "250k", interval: "monthly" })
+    );
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBeUndefined();
+  });
+
   it("returns 401 without auth", async () => {
     mockGetSession.mockResolvedValue(null);
 

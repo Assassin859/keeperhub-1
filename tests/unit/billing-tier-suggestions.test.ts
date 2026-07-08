@@ -160,4 +160,54 @@ describe("getUpgradeSuggestion", () => {
       expect(result).toHaveProperty("monthlySavings");
     }
   });
+
+  it("nudges an engaged, trial-eligible free org to start a Pro trial", async () => {
+    vi.mocked(getOrgSubscription).mockResolvedValue(undefined);
+    // 5k free limit, 3k used = 60% -- above the 50% trial-nudge threshold
+    mockExecutionCount(3000);
+
+    const result = await getUpgradeSuggestion("org_1");
+
+    expect(result.shouldUpgrade).toBe(false);
+    if (result.shouldUpgrade === false) {
+      expect(result.startTrial).toEqual({
+        plan: "pro",
+        trialDays: 14,
+        currentUsage: 3000,
+        currentLimit: 5000,
+        usagePercent: 60,
+      });
+    }
+  });
+
+  it("does not nudge a trial below the usage threshold", async () => {
+    vi.mocked(getOrgSubscription).mockResolvedValue(undefined);
+    // 5k free limit, 2k used = 40% -- below threshold
+    mockExecutionCount(2000);
+
+    const result = await getUpgradeSuggestion("org_1");
+
+    expect(result.shouldUpgrade).toBe(false);
+    if (result.shouldUpgrade === false) {
+      expect(result.startTrial).toBeUndefined();
+    }
+  });
+
+  it("does not nudge a trial once the free org has consumed one", async () => {
+    vi.mocked(getOrgSubscription).mockResolvedValue({
+      plan: "free",
+      tier: null,
+      status: "active",
+      providerSubscriptionId: null,
+      trialStartedAt: new Date("2025-01-01"),
+    } as Awaited<ReturnType<typeof getOrgSubscription>>);
+    mockExecutionCount(3000);
+
+    const result = await getUpgradeSuggestion("org_1");
+
+    expect(result.shouldUpgrade).toBe(false);
+    if (result.shouldUpgrade === false) {
+      expect(result.startTrial).toBeUndefined();
+    }
+  });
 });

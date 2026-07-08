@@ -151,6 +151,30 @@ describe("GET /api/billing/subscription", () => {
     expect(json.subscription.plan).toBe("free");
     expect(json.subscription.status).toBe("active");
     expect(json.limits.maxExecutionsPerMonth).toBe(5000);
+    expect(json.trial.eligible).toBe(true);
+    expect(json.trial.days).toBeGreaterThan(0);
+  });
+
+  it("marks a paid org as not trial-eligible", async () => {
+    mockSession();
+    mockSelectLimit.mockResolvedValue([
+      {
+        plan: "pro",
+        tier: "25k",
+        status: "active",
+        providerPriceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,
+        currentPeriodStart: new Date("2025-01-01"),
+        currentPeriodEnd: new Date("2025-02-01"),
+        cancelAtPeriodEnd: false,
+        billingAlert: null,
+        billingAlertUrl: null,
+      },
+    ]);
+
+    const response = await GET(buildRequest());
+    const json = await response.json();
+
+    expect(json.trial.eligible).toBe(false);
   });
 
   it("returns 401 without auth", async () => {
