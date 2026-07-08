@@ -11,9 +11,11 @@
  *     faucet contracts to mint ERC20s. Used on Base (ajna, reads only).
  *   - Fork mode (FORK_CHAIN_IDS): anvil cheatcodes provision balances without
  *     a funded EOA. ensureNativeGas calls anvil_setBalance; ERC20s come from
- *     whale impersonation (FORK_WHALES) or a permissionless faucet mint
- *     impersonating the wallet (FAUCETS). Used on the mainnet fork (chain 1)
- *     and the Sepolia fork (chain 11155111) in CI.
+ *     whale impersonation (FORK_WHALES), a permissionless faucet mint
+ *     impersonating the wallet (FAUCETS), or - when neither exists - direct
+ *     balances-slot fabrication via anvil_setStorageAt (fabricate-state.ts).
+ *     Used on the mainnet fork (chain 1) and the Sepolia fork
+ *     (chain 11155111) in CI.
  */
 
 import { eq } from "drizzle-orm";
@@ -34,6 +36,10 @@ import {
   TOKEN_REGISTRY,
   type TokenSymbol,
 } from "@/lib/test-data/chain-test-data";
+import {
+  fabricateElapsedCooldown,
+  fabricateErc20Balance,
+} from "./fabricate-state";
 
 export const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
@@ -211,6 +217,49 @@ export async function runForkImpersonatedCalls(
         );
       }
     });
+  }
+}
+
+/**
+ * Run a protocol action's declared pre-execution state fabrications
+ * (`testData.fabrications[actionSlug]`) - cheatcode rewrites of
+ * on-chain preconditions the setup phase cannot buy or sequence, e.g.
+ * marking the wallet's real sUSDe cooldown as elapsed so unstake can run
+ * without waiting out the cooldown period. Shared by the Tier 1
+ * simulation harness and the Tier 2 coverage runner so the fabrication
+ * semantics cannot drift between tiers. No-op when the action declares
+ * none; throws on a non-fork chain, same as runForkImpersonatedCalls.
+ */
+export async function runActionFabrications(
+  protocolSlug: string,
+  chainId: string,
+  walletAddress: string,
+  actionSlug: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
+): Promise<void> {
+  const protocol = getProtocol(protocolSlug);
+  const specs = protocol?.testData?.[chainId]?.fabrications?.[actionSlug];
+  if (!(protocol && specs) || specs.length === 0) {
+    return;
+  }
+  if (!(FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride)) {
+    throw new Error(
+      `${protocolSlug}/${actionSlug} declares fabrications on chain ${chainId}, which is not in FORK_CHAIN_IDS; state fabrication only exists on anvil forks.`
+    );
+  }
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  for (const spec of specs) {
+    const target = resolveBinding(
+      spec.contract,
+      "address",
+      protocol,
+      chainId,
+      walletAddress
+    );
+    await fabricateElapsedCooldown(provider, target, walletAddress);
   }
 }
 
@@ -413,9 +462,28 @@ export async function ensureErc20Acquired(
       );
       return;
     }
-    throw new Error(
-      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire. Add entries to lib/test-data/chain-test-data.ts.`
+    // No whale and no faucet: write the balance into the token's
+    // balances-mapping slot directly (probed and verified against
+    // balanceOf; see fabricate-state.ts). Whales stay preferred where
+    // registered - a real transfer exercises the token's own accounting -
+    // but slot fabrication does not rot when a whale's balance drains
+    // (the previously registered USDS PSM whale emptied by 2026-07-08).
+    const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
+    if (!tokenEntry) {
+      throw new Error(
+        `TOKEN_REGISTRY missing ${symbol} on chain ${chainId}; cannot fabricate on fork.`
+      );
+    }
+    const provider = new ethers.JsonRpcProvider(
+      rpcUrlOverride ?? (await getChainRpcUrl(chainId))
     );
+    await fabricateErc20Balance(
+      provider,
+      tokenEntry.address,
+      walletAddress,
+      ethers.parseUnits(human, tokenEntry.decimals)
+    );
+    return;
   }
 
   const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];

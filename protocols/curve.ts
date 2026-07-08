@@ -36,7 +36,6 @@ const TEST_DATA: ProtocolTestData = {
     skipped: {
       exchange: "requires token balance and approval",
       "remove-liquidity-one-coin": "requires LP token balance",
-      "crv-approve": "write action",
       "crv-transfer": "requires CRV balance",
     },
   },

@@ -35,6 +35,7 @@ import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
   ERC20_ABI,
   ensureErc20Acquired,
+  runActionFabrications,
   runForkImpersonatedCalls,
   withImpersonation,
 } from "../../protocol-coverage/_shared/funding";
@@ -244,6 +245,16 @@ export function runSimulation(opts: {
               expect(failure, failure ?? "").toBeNull();
             }
           } else {
+            // Cheatcode preconditions declared for this action (e.g.
+            // marking the wallet's real sUSDe cooldown elapsed before
+            // unstake); no-op for actions that declare none.
+            await runActionFabrications(
+              opts.protocol,
+              opts.chainId,
+              SIM_WALLET,
+              action.slug,
+              opts.rpcUrl
+            );
             await impersonatedSend(provider, SIM_WALLET, {
               to: encoded.to,
               data: encoded.data,
