@@ -1,44 +1,55 @@
-import { defineAbiProtocol } from "@/lib/protocol-registry";
 import type { AbiFunctionOverride } from "@/lib/protocol-registry";
-import { contract, type ProtocolTestData } from "@/lib/test-data/types";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import {
+  contract,
+  type ProtocolTestData,
+  type SetupSpec,
+  wallet,
+} from "@/lib/test-data/types";
+
+// Mainnet Scribe feeds are toll-gated with no SelfKisser (mainnet does not
+// allow self-kissing), so the fork provisioning impersonates an authed ward
+// and kisses the test wallet. Verified 2026-07-07 on a mainnet fork: all
+// four feeds share the same authed() wards, kiss(wallet) from this ward
+// mines with status 1, tolled(wallet) flips true, and read()/readWithAge()
+// then return live values. Chronicle also tolls address(0) on mainnet
+// (bare eth_call reads with no `from` succeed), but the simulation tier
+// reads with an explicit non-tolled `from`, so the kiss is load-bearing.
+const MAINNET_WARD = "0x40C33e796be78148CeC983C2202335A0962d172A";
+
+const KISS_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "kiss",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "who", type: "address" }],
+    outputs: [],
+  },
+]);
+
+type ForkCall = NonNullable<SetupSpec["forkImpersonatedCalls"]>[number];
+
+function wardKiss(feedKey: string): ForkCall {
+  return {
+    impersonate: MAINNET_WARD,
+    contract: contract(feedKey),
+    abi: KISS_ABI,
+    functionName: "kiss",
+    args: [wallet()],
+  };
+}
 
 const TEST_DATA: ProtocolTestData = {
-  "11155111": {
+  "1": {
     setup: {
       minNativeHuman: "0.01",
       requiredTokens: [],
       approvals: [],
-      protocolSteps: [
-        {
-          protocol: "chronicle",
-          action: "self-kiss",
-          inputs: { oracle: contract("ethUsd") },
-        },
-        {
-          protocol: "chronicle",
-          action: "self-kiss",
-          inputs: { oracle: contract("btcUsd") },
-        },
-        {
-          protocol: "chronicle",
-          action: "self-kiss",
-          inputs: { oracle: contract("daiUsd") },
-        },
-        {
-          protocol: "chronicle",
-          action: "self-kiss",
-          inputs: { oracle: contract("usdcUsd") },
-        },
-        {
-          protocol: "chronicle",
-          action: "self-kiss",
-          inputs: { oracle: contract("usdtUsd") },
-        },
-        {
-          protocol: "chronicle",
-          action: "self-kiss",
-          inputs: { oracle: contract("linkUsd") },
-        },
+      forkImpersonatedCalls: [
+        wardKiss("ethUsd"),
+        wardKiss("btcUsd"),
+        wardKiss("usdcUsd"),
+        wardKiss("usdtUsd"),
       ],
     },
     actions: {
@@ -46,26 +57,37 @@ const TEST_DATA: ProtocolTestData = {
       "eth-usd-read-with-age": {},
       "btc-usd-read": {},
       "btc-usd-read-with-age": {},
-      "dai-usd-read": {},
-      "dai-usd-read-with-age": {},
       "usdc-usd-read": {},
       "usdc-usd-read-with-age": {},
       "usdt-usd-read": {},
       "usdt-usd-read-with-age": {},
-      "link-usd-read": {},
-      "link-usd-read-with-age": {},
-      // customOracle is userSpecifiedAddress; point the generic read actions
-      // at the ETH/USD oracle the setup workflow already self-kissed above,
-      // so read/readWithAge (which require whitelisting) succeed too, not
-      // just tryRead/tryReadWithAge.
+      // customOracle is userSpecifiedAddress; point the generic reads at
+      // the ETH/USD feed the fork provisioning kissed above.
       read: { contractAddress: contract("ethUsd") },
       "try-read": { contractAddress: contract("ethUsd") },
       "read-with-age": { contractAddress: contract("ethUsd") },
       "try-read-with-age": { contractAddress: contract("ethUsd") },
-      "self-kiss": { oracle: contract("ethUsd") },
+    },
+    // Chain invariant: a live price feed never reports zero. Single
+    // unnamed ABI output, so the expectation targets the bare result.
+    expectations: {
+      "eth-usd-read": [{ nonZero: true }],
+      "btc-usd-read": [{ nonZero: true }],
+      "usdc-usd-read": [{ nonZero: true }],
+      "usdt-usd-read": [{ nonZero: true }],
+      read: [{ nonZero: true }],
     },
     skipped: {
-      "self-kiss": "used in setup; re-running would error if already kissed",
+      "dai-usd-read":
+        "no mainnet deployment: Chronicle publishes no DAI/USD feed on Ethereum",
+      "dai-usd-read-with-age":
+        "no mainnet deployment: Chronicle publishes no DAI/USD feed on Ethereum",
+      "link-usd-read":
+        "no mainnet deployment: Chronicle publishes no LINK/USD feed on Ethereum",
+      "link-usd-read-with-age":
+        "no mainnet deployment: Chronicle publishes no LINK/USD feed on Ethereum",
+      "self-kiss":
+        "SelfKisser is testnet-only; mainnet whitelisting is ward-gated (fork provisioning impersonates a ward)",
     },
   },
 };

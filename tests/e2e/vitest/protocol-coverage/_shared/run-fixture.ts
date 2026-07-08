@@ -63,6 +63,12 @@ export function runPhaseFixtures(opts: {
       continue;
     }
     const action = c.action;
+    // Per-action wait override for cold heavy writes (see
+    // ProtocolChainTestData.executionWaitMs); the default stays tight so
+    // genuinely broken actions fail in two minutes, not seven.
+    const waitMs =
+      protocol?.testData?.[opts.chainId]?.executionWaitMs?.[action.slug] ??
+      TIMEOUT_MS;
     test(
       action.slug,
       async () => {
@@ -107,7 +113,7 @@ export function runPhaseFixtures(opts: {
         });
         expect(response.ok, `webhook returned ${response.status}`).toBe(true);
 
-        const result = await waitForWorkflowExecution(workflow.id, TIMEOUT_MS);
+        const result = await waitForWorkflowExecution(workflow.id, waitMs);
         expect(
           result,
           "execution did not reach a terminal status within timeout (either never created or still running)"
@@ -137,7 +143,7 @@ export function runPhaseFixtures(opts: {
           }
         }
       },
-      TIMEOUT_MS + 30_000
+      waitMs + 30_000
     );
   }
 }

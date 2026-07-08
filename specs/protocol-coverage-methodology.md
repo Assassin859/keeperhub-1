@@ -55,12 +55,24 @@ Rules for writing expectations:
 - Ethereum mainnet suites run against a local anvil fork (chain 1 is in
   `FORK_CHAIN_IDS`); funding is `anvil_setBalance` plus whale
   impersonation (`FORK_WHALES`). No live mainnet is ever touched.
-- Sepolia suites (superfluid, chronicle) run against the live testnet and
-  need `TESTNET_FUNDER_PK`.
+- No suite targets Sepolia anymore: chronicle and superfluid were
+  re-homed to the mainnet fork (their live feeds/forwarders are
+  canonical there), and the Safe roles orchestrator fork tests moved
+  with them, so CI runs a single anvil fork. The orphaned aave-v3
+  Sepolia testData remains and is reachable only through the local
+  Tier 1 sim path (`scripts/protocol-local.sh sim sepolia`).
 - Base (ajna) is live Base mainnet, reads only; every write is skipped and
   the gas preflight short-circuits, so no real ETH is spent.
 - Payable actions bind the virtual `ethValue` key (plain ETH string), and
   userSpecifiedAddress contracts bind the virtual `contractAddress` key.
+- Fork-only privileged provisioning: a protocol whose fixtures need a
+  third party's on-chain authority (chronicle's toll-gated mainnet
+  feeds; no SelfKisser exists there) declares
+  `setup.forkImpersonatedCalls` - the preflights fund and impersonate
+  the privileged account (an authed ward) and run the declared call
+  (kiss the test wallet) before provisioning. Shared by the Tier 1
+  harness and the Tier 2 setup preflight; declaring it on a non-fork
+  chain fails loudly.
 
 Fork RPC fetch cache: a pinned anvil fork persists every upstream fetch
 (accounts, storage slots, block hashes - eth_call reads included) to its
@@ -73,9 +85,15 @@ this cache; the tier1 CI job consumes it, and
 `MAINNET_FORK_CACHE_DIR` / `SEPOLIA_FORK_CACHE_DIR`) produces and
 consumes it locally. The upstream is still required at fork startup
 (chain id, block env) and by the mining loop (block hashes), so the
-cache removes hot-path state reads without replacing the archive
-upstream - CI consumption is gated on `ANVIL_FORK_MAINNET_URL` for
-exactly that reason. Naming is aligned on one token, `mainnet`: the
+cache removes hot-path state reads without replacing the upstream -
+CI consumption is gated on `ANVIL_FORK_MAINNET_URL` for exactly that
+reason. A note on the "archive" shorthand these docs use: the actual
+requirement is an upstream that serves state at the fork's pinned
+block. Public providers prune to a short recency window (which is what
+bounds an unpinned public-upstream fork to ~15 minutes of health), so
+in practice the pinned/day-old-cache flows need an archive-grade
+endpoint, but any node that retains state for the pin works; full
+history is not the requirement. Naming is aligned on one token, `mainnet`: the
 artifact (`fork-cache-mainnet`), the tar
 (`fork-cache-mainnet-<block>.tgz`), the cache dir (`mainnet-<block>/`),
 and the env var (`MAINNET_FORK_CACHE_DIR`). That coupling is
@@ -115,7 +133,7 @@ code.
 2. For mainnet-fork tokens, add `TOKEN_REGISTRY` and `FORK_WHALES` entries
    in `lib/test-data/chain-test-data.ts`; for testnets add `FAUCETS`.
 3. Copy an existing `coverage.test.ts` (lido for fork-gated mainnet,
-   superfluid for funder-gated live chains) and change the constants.
+   ajna for funder-gated live chains) and change the constants.
 4. Verify third-party state assumptions empirically (eth_call) and record
    the date in a comment, as done in `protocols/safe.ts` and
    `protocols/aave-v3.ts`.
@@ -163,3 +181,4 @@ timed local runs unless marked CI.
 | 2026-07-03 | MetaMorpho unlocks + Tier 1 in CI + nightly | chain-1 sweep 203 pass / 72 skips / 0 fail (stable across consecutive runs): morpho's 18 vault actions bind the live Steakhouse USDC vault (the yearn pattern; no piping needed), core sequence margin-hardened (borrow 10, repay 8, withdraw-collateral 0.02) after one borderline interest-timing failure. Pendle deliberately deferred: its markets expire, so hardcoded bindings rot - needs the state-snapshot fixture approach. Piping now applies only to superfluid GDA (4, blocked on the Sepolia archive upstream). | runnable 246 | 103 | 8 | tier1-simulations job added to the ephemeral workflow (parallel, no app build, floor 150) - per-action breadth reaches CI for the first time; protocol-nightly.yml runs the full e2e via workflow_call plus the Tier 0 mutation check | tier1 CI job ~8 min estimated; workflows actionlinted and act-validated (nightly dry-run traverses both jobs; schedule gate branch exercised) |
 | 2026-07-07 | Parallel protocol gate split | unchanged | unchanged | unchanged | protocol-coverage runs as its own job, fed by a shared build-app artifact, in parallel with the e2e stack instead of serially at its tail. PR runs use representatives mode with an executed-test floor of 3 (ajna contributes one read representative and no write - all its writes are skipped; superfluid one read and one write; the mainnet suites self-skip until ANVIL_FORK_MAINNET_URL is provisioned, at which point the floor rises); nightly/push runs keep the full sweep, floor 30. Fork health probes (probe-forks action plus a post-restart upstream probe) guard both anvil forks. First CI round measured: representatives executed 3, passed 3 | protocol results no longer wait on the vitest e2e tail; dead forks or upstreams fail in seconds instead of as 300s vitest timeouts |
 | 2026-07-07 | Hermetic fork state for tier1 (RPC fetch cache pivot) | unchanged | unchanged | unchanged | protocol-nightly's fork-cache-mainnet job warms a live pinned fork with the Tier 1 sweep (floor 150; a red sweep or floor breach publishes nothing) and publishes foundry's flushed RPC cache as fork-cache-mainnet-\<block\>.tgz, 3-day retention; the tier1-simulations job consumes the freshest staging-produced artifact under 36 hours old when ANVIL_FORK_MAINNET_URL is set, and falls back to a live fork on every failure mode. The nightly warm sweep runs on a live fork, so it is itself the live-fork canary | the first design (anvil_dumpState + --load-state) was structurally wrong twice over: the dump captured the warm sweep's own mutations (and the sweep is not idempotent on its residue - morpho set-authorization reverts "already set" on re-run, empirically confirmed) and missed eth_call-only fetches. The pivot packages foundry's on-disk RPC fetch cache instead. Measured (foundry:latest, 2026-07-07): anvil persists upstream fetches to $HOME/.foundry/cache/rpc/\<chain\>/\<block\>/storage.json, flushing only on graceful shutdown (SIGTERM; SIGKILL loses it); a fresh fork with the cache mounted at the same pin serves every warmed read with zero upstream requests (counted through a logging proxy) and starts pristine - a warmed impersonated WETH deposit is invisible, totalSupply returns its exact pre-write value; cold reads against a dead upstream fail loudly (-32603); anvil still needs the upstream at startup (chain id, block env) and for the mining loop's block hashes; an unpinned fork also persists a cache keyed by its resolved head block, so pinning stays explicit everywhere |
+| 2026-07-07 | Sepolia fork retirement: chronicle, superfluid, and the Safe roles orchestrator re-homed to the mainnet fork | 244 (was 246): 27 Sepolia-runnable actions retired, 24 return as chain-1 fixtures. Chronicle's toll-gated mainnet feeds are whitelisted by the new fork-only `setup.forkImpersonatedCalls` (an authed ward kisses the test wallet - shared by the Tier 1 harness and Tier 2 preflight); superfluid runs on DAI/DAIx (USDCx upgrade OOGs under exact-estimate gas - its underlying routes into Sky savings; ETHx is ABI-incompatible with wrap/unwrap), sized for mainnet's 69-DAI CFA minimum deposit, with create-pool and grant-flow-operator now executing (their Sepolia skips were public-upstream cold-fetch constraints) | 105 | 15 (chronicle feed reads nonZero; superfluid balance/underlying reads plus create-flow/delete-flow post-write oracles on get-flow) | chain-1 Tier 1 sweep 229 passed / 139 skipped / 0 failed (was 203/165/0). Chronicle Tier 2 verified through the app on the local rig: 12/12 with oracle assertions (all reads, no signing needed). Superfluid Tier 2 verified to the signing boundary (whale funding preflight green; setup approve fails at Turnkey wallet init without real keys). Orchestrator fork tests 2/2 on the mainnet fork. CI now runs a single anvil fork: the Sepolia fork service, restart step, post-restart probe, probe-forks line, chains-row patches, and PROTOCOL_E2E_SEPOLIA_FORK are gone; protocol-gate floors re-derived from planPhaseFixtures (representatives 22 / full 200 with ANVIL_FORK_MAINNET_URL, 1 / 20 without - ajna only) | one fork to start/restart instead of two; the ~15-minute Sepolia public-upstream window no longer bounds any CI job |

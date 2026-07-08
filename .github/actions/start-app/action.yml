@@ -183,7 +183,7 @@ runs:
         # verified in proxy.ts) are required for the Playwright auth setup -
         # the bare-metal path already sets them. SAFE_FETCH_SHADOW puts the
         # app's safeFetch into shadow mode so the protocol-coverage setup
-        # workflows can reach the localhost anvil fork (chain 11155111 -> :8547);
+        # workflows can reach the localhost anvil mainnet fork (chain 1 -> :8548);
         # it takes effect under NODE_ENV=production because the container is
         # CI-exempt (CI=true). Empty in other jobs keeps SSRF fully enforced.
         docker run -d --name keeperhub-app --network host \

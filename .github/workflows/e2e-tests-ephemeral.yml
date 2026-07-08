@@ -322,9 +322,10 @@ jobs:
         run: |
           pnpm vitest run tests/e2e/vitest/protocol-simulation \
             --reporter=default --reporter=json --outputFile=sim-results.json
-          # Floor 150: the chain-1 sweep currently executes ~200 tests;
-          # below 150 means suites are self-skipping or a protocol lost
-          # its bindings.
+          # Floor 150: the chain-1 sweep currently executes 229 tests
+          # (2026-07-07, post chronicle/superfluid re-homing); below 150
+          # means suites are self-skipping or a protocol lost its
+          # bindings.
           pnpm tsx scripts/protocol-coverage-floor.ts sim-results.json 150
         env:
           PROTOCOL_SIM_RPC_1: http://localhost:8548
@@ -486,48 +487,43 @@ jobs:
           # instead of rebuilding.
           prebuilt: "true"
 
-      - name: Start anvil Sepolia fork for orchestrator integration tests
+      - name: Start anvil mainnet fork for orchestrator integration tests
+        # ANVIL_FORK_MAINNET_URL feeds the compose fork-url (falls back to
+        # publicnode when the secret is unset). The orchestrator fork suite
+        # (safe-roles-orchestrator-fork) mocks its RPC lookup straight to
+        # localhost:8548, so no chains-row patch is needed; the general
+        # suites keep the CHAIN_RPC_CONFIG-seeded live rows they always
+        # effectively used (full-pipeline rewrites the Sepolia row to live
+        # publicnode mid-job regardless).
+        env:
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
         run: |
-          # Upstream note: the compose default (publicnode) is deliberate.
-          # It serves state only for recent blocks, which bounds a fork's
-          # useful lifetime to ~15 minutes (anvil panics in do_mine_block
-          # once its pinned block leaves the upstream window - EIP-2935
-          # pre-execution reads get HTTP 403). This job never restarts the
-          # fork, so the orchestrator suites must complete within that
-          # initial ~15-minute window.
           # Do not point the fork at the platform dRPC URL: fork state
           # fetches burn through its request quota.
           #
           # docker-compose.yml attaches every service to the external
           # `keeperhub-network`; the ephemeral start-app step uses
           # `docker run --network host` and never creates it, so compose
-          # bails before bringing test-anvil-fork up. Create it idempotently.
+          # bails before bringing the fork up. Create it idempotently.
           docker network create keeperhub-network 2>/dev/null || true
-          docker compose --profile test up -d --wait test-anvil-fork || \
-            docker compose --profile test up -d test-anvil-fork
+          docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
+            docker compose --profile test up -d test-anvil-fork-mainnet
           # Health-poll the fork up to ~60s -- the wait flag above is best-effort
           # because the foundry image's healthcheck depends on cast resolving
-          # the public Sepolia RPC over IPv4.
+          # the upstream RPC over IPv4.
           retries=0
-          until curl -sf -X POST http://localhost:8547 \
+          until curl -sf -X POST http://localhost:8548 \
                 -H "Content-Type: application/json" \
-                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0xaa36a7"'; do
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0x1"'; do
             retries=$((retries + 1))
             if [ "$retries" -ge 30 ]; then
-              echo "anvil Sepolia fork did not become ready in 60s"
-              docker logs keeperhub-test-anvil-fork || true
+              echo "anvil mainnet fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-mainnet || true
               exit 1
             fi
             sleep 2
           done
-          echo "anvil Sepolia fork ready on localhost:8547"
-          # Point chain 11155111 at the local fork for the orchestrator
-          # fork suites.
-          # Null the fallback too: the RPC manager retries failures on the
-          # fallback endpoint, which would leak fork transactions to live
-          # Sepolia (unfunded wallet, real gas) and mask fork problems.
-          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
-            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111"
+          echo "anvil mainnet fork ready on localhost:8548"
 
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
@@ -558,26 +554,23 @@ jobs:
         run: |
           # Post-mortem for workflow-execution timeouts: execution statuses
           # distinguish "never picked up" (no step logs) from "hung
-          # mid-step" (a running node row), and the chains row shows
-          # whether the Sepolia fork patch was still in effect.
+          # mid-step" (a running node row).
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
             "SELECT id, status, left(error, 120) AS error, started_at, completed_at FROM workflow_executions ORDER BY started_at DESC NULLS LAST LIMIT 12"
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
             "SELECT execution_id, node_name, node_type, status, left(error, 160) AS error, started_at, completed_at FROM workflow_execution_logs ORDER BY started_at DESC NULLS LAST LIMIT 24"
-          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
-            "SELECT chain_id, default_primary_rpc, default_fallback_rpc FROM chains WHERE chain_id = 11155111"
           # Fork responsiveness probes: a cheap local call, then a state
           # read that forces an upstream fetch. Slow/failed probes plus
           # upstream errors in the anvil logs indicate upstream throttling.
-          echo "--- sepolia fork eth_blockNumber:"
-          time curl -sf -m 20 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
+          echo "--- mainnet fork eth_blockNumber:"
+          time curl -sf -m 20 -X POST http://localhost:8548 -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' || echo "PROBE FAILED"
-          echo "--- sepolia fork eth_getCode (Superfluid CFA forwarder, forces upstream fetch):"
-          time curl -sf -m 60 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
-            -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
+          echo "--- mainnet fork eth_getCode (beacon deposit contract, forces upstream fetch):"
+          time curl -sf -m 60 -X POST http://localhost:8548 -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x00000000219ab540356cBB839Cbe05303d7705Fa","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
           echo ""
-          echo "--- anvil sepolia fork logs:"
-          docker logs keeperhub-test-anvil-fork 2>&1 | tail -40 || true
+          echo "--- anvil mainnet fork logs:"
+          docker logs keeperhub-test-anvil-fork-mainnet 2>&1 | tail -40 || true
           echo "--- bare-metal app log tail:"
           tail -n 150 /tmp/keeperhub-app-baremetal.log 2>/dev/null || echo "(no bare-metal app log)"
 
@@ -605,8 +598,9 @@ jobs:
   # split out of e2e-vitest-ephemeral so they run in parallel with the rest
   # of the e2e stack instead of serially at its tail. The job carries its
   # own postgres/localstack services, app (from the shared build artifact or
-  # ECR image), sandbox, and both anvil forks; the chains-row patches and
-  # the pre-run Sepolia fork restart are unchanged from the old in-job step.
+  # ECR image), sandbox, and the anvil mainnet fork (every fork suite is on
+  # chain 1 since the chronicle/superfluid re-homing; ajna runs against
+  # live Base, reads only).
   protocol-coverage-ephemeral:
     needs: [should-run, build-app]
     # Same gate as e2e-vitest-ephemeral: build-app skipped (Docker path)
@@ -746,7 +740,7 @@ jobs:
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
           # Shadow-mode SSRF so the app's setup workflows can reach the
-          # localhost anvil forks (chain 11155111 -> :8547, chain 1 -> :8548).
+          # localhost anvil mainnet fork (chain 1 -> :8548).
           safe_fetch_shadow: "true"
           # Forward sandbox config to the app container so the production build
           # does not throw at run-code module load. The protocol-coverage setup
@@ -758,47 +752,6 @@ jobs:
           # instead of rebuilding.
           prebuilt: "true"
 
-      - name: Start anvil Sepolia fork
-        run: |
-          # Upstream note: the compose default (publicnode) is deliberate.
-          # It serves state only for recent blocks, which bounds a fork's
-          # useful lifetime to ~15 minutes (anvil panics in do_mine_block
-          # once its pinned block leaves the upstream window - EIP-2935
-          # pre-execution reads get HTTP 403). The protocol-coverage step
-          # below restarts this fork for a fresh window before running.
-          # Do not point the fork at the platform dRPC URL: fork state
-          # fetches burn through its request quota.
-          #
-          # docker-compose.yml attaches every service to the external
-          # `keeperhub-network`; the ephemeral start-app step uses
-          # `docker run --network host` and never creates it, so compose
-          # bails before bringing test-anvil-fork up. Create it idempotently.
-          docker network create keeperhub-network 2>/dev/null || true
-          docker compose --profile test up -d --wait test-anvil-fork || \
-            docker compose --profile test up -d test-anvil-fork
-          # Health-poll the fork up to ~60s -- the wait flag above is best-effort
-          # because the foundry image's healthcheck depends on cast resolving
-          # the public Sepolia RPC over IPv4.
-          retries=0
-          until curl -sf -X POST http://localhost:8547 \
-                -H "Content-Type: application/json" \
-                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0xaa36a7"'; do
-            retries=$((retries + 1))
-            if [ "$retries" -ge 30 ]; then
-              echo "anvil Sepolia fork did not become ready in 60s"
-              docker logs keeperhub-test-anvil-fork || true
-              exit 1
-            fi
-            sleep 2
-          done
-          echo "anvil Sepolia fork ready on localhost:8547"
-          # Point chain 11155111 at the local fork for protocol-coverage.
-          # Null the fallback too: the RPC manager retries failures on the
-          # fallback endpoint, which would leak fork transactions to live
-          # Sepolia (unfunded wallet, real gas) and mask fork problems.
-          PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
-            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111"
-
       - name: Start anvil Ethereum mainnet fork
         # ANVIL_FORK_MAINNET_URL feeds the compose fork-url (falls back to
         # publicnode when the secret is unset), matching tier1-simulations.
@@ -808,8 +761,8 @@ jobs:
           docker network create keeperhub-network 2>/dev/null || true
           docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
             docker compose --profile test up -d test-anvil-fork-mainnet
-          # Health-poll up to ~60s. Chain ID 0x1 confirms we are on the mainnet fork
-          # (not a misconfigured Sepolia fork on the same port).
+          # Health-poll up to ~60s. Chain ID 0x1 confirms we are on the
+          # mainnet fork (not another anvil on the same port).
           retries=0
           until curl -sf -X POST http://localhost:8548 \
                 -H "Content-Type: application/json" \
@@ -835,15 +788,13 @@ jobs:
 
       # Fail in seconds on a dead fork or upstream, before the multi-minute
       # sandbox build and instead of as 300s vitest timeouts. Probe
-      # addresses: the Superfluid CFA forwarder on Sepolia (same address
-      # the failure dump probes) and the beacon deposit contract on
-      # mainnet - both exist upstream and are untouched by local state, so
-      # eth_getBalance forces a pinned-block upstream fetch.
+      # address: the beacon deposit contract - it exists upstream and is
+      # untouched by local state, so eth_getBalance forces a pinned-block
+      # upstream fetch.
       - name: Fork health probe
         uses: ./.github/actions/probe-forks
         with:
           forks: |
-            sepolia|http://localhost:8547|0xaa36a7|0xcfA132E353cB4E398080B9700609bb008eceB125
             mainnet|http://localhost:8548|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa
 
       - name: Start code-execution sandbox
@@ -851,43 +802,11 @@ jobs:
 
       - name: Run protocol-coverage tests
         run: |
-          # Restart the Sepolia fork for a fresh upstream window: the
-          # publicnode upstream serves state only for recent blocks, so a
-          # fork whose pinned block ages out panics in do_mine_block. The
-          # restart re-pins to the current head regardless of how long the
-          # preceding app/sandbox setup took; the protocol suites finish
-          # well inside the window.
-          docker restart keeperhub-test-anvil-fork
-          retries=0
-          until curl -sf -X POST http://localhost:8547 \
-                -H "Content-Type: application/json" \
-                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0xaa36a7"'; do
-            retries=$((retries + 1))
-            if [ "$retries" -ge 30 ]; then
-              echo "anvil Sepolia fork did not come back in 60s"
-              docker logs keeperhub-test-anvil-fork 2>&1 | tail -20 || true
-              exit 1
-            fi
-            sleep 2
-          done
-          echo "anvil Sepolia fork restarted with a fresh window"
-          # The restart re-pinned the fork to a new block; verify the
-          # upstream serves state through the fresh pin before spending
-          # minutes in the suites (mirrors the probe-forks action, which
-          # ran before the restart and no longer vouches for this pin).
-          if ! curl -sf -m 15 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
-              -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' \
-              | grep -q '"result"'; then
-            echo "FORK UPSTREAM DEAD: sepolia (http://localhost:8547) failed the post-restart eth_getBalance probe - the upstream is throttled or not serving the fresh pinned block"
-            exit 1
-          fi
-          # Re-point both forked chains at their local anvil forks right
-          # before the suites read the rows. Defensive in this job (nothing
-          # here rewrites the rows after the fork-start patches, unlike the
-          # old in-job step that ran after full-pipeline.test.ts), but kept
-          # so the suites never depend on step ordering for correct RPCs.
+          # Re-point chain 1 at the local anvil fork right before the
+          # suites read the row. Defensive in this job (nothing here
+          # rewrites the row after the fork-start patch), but kept so the
+          # suites never depend on step ordering for correct RPCs.
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
-            -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8547', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
           pnpm vitest run tests/e2e/vitest/protocol-coverage \
             --reporter=default --reporter=json --outputFile=protocol-results.json
@@ -897,17 +816,23 @@ jobs:
           # executed tests). Fails when executed tests drop below the
           # floor; publishes run/skip counts to the step summary.
           #
-          # The floor is coupled to PROTOCOL_E2E_REPRESENTATIVES: full
-          # mode expects ~35 executed today (ajna 25 + superfluid 10;
-          # raise when ANVIL_FORK_MAINNET_URL activates the mainnet
-          # suites). Representatives mode currently executes exactly 3:
-          # ajna contributes one read representative and no write (all
-          # its writes are skipped), superfluid contributes one read
-          # and one write; the mainnet suites self-skip until
-          # ANVIL_FORK_MAINNET_URL is provisioned, at which point this
-          # floor should be raised. Deriving both floors here keeps
-          # them from drifting apart.
-          if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=3; else FLOOR=30; fi
+          # Derivation (2026-07-07, from planPhaseFixtures - see
+          # specs/protocol-coverage-methodology.md). Representatives mode
+          # executes exactly one action per runnable (suite, phase) pair:
+          # 21 pairs across the 16 active mainnet-fork suites (morpho is
+          # hard-skipped; safe/chronicle/sky and others have no runnable
+          # write) plus ajna's single read pair = 22. Full mode executes
+          # every runnable action: 207 on the mainnet suites + 25 ajna
+          # reads = 232; floor 200 leaves margin for individual fixtures
+          # moving to documented skips without a same-PR floor bump.
+          # Without ANVIL_FORK_MAINNET_URL every mainnet suite self-skips
+          # and only ajna runs (25 reads, 1 representative), so the floor
+          # drops with the gate instead of failing the job spuriously.
+          if [ -n "${ANVIL_FORK_MAINNET_URL:-}" ]; then
+            if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=22; else FLOOR=200; fi
+          else
+            if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=1; else FLOOR=20; fi
+          fi
           pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json "$FLOOR"
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
@@ -926,17 +851,14 @@ jobs:
           # Archive-node URL for the Ethereum mainnet anvil fork started
           # above. When set, protocol-coverage suites for chain 1 (morpho,
           # wrapped, lido, ethena, curve, chainlink, spark, yearn, uniswap,
-          # pendle, sky, aave-v3, frax-ether-v2, rocket-pool, safe) run for
-          # real. When unset those suites skip cleanly.
+          # pendle, sky, aave-v3, frax-ether-v2, rocket-pool, safe,
+          # chronicle, superfluid) run for real. When unset those suites
+          # skip cleanly and the floor above drops accordingly.
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
-          # Signals the anvil Sepolia fork (localhost:8547, started above)
-          # is up and the chains row points at it. Gates the superfluid and
-          # chronicle Sepolia suites, which fund via anvil cheatcodes - no
-          # live-testnet funder involved.
-          PROTOCOL_E2E_SEPOLIA_FORK: "1"
           # PR-gate/nightly split: PR-triggered runs shrink each phase to
           # its first runnable action (run-fixture.ts) and the floor
-          # derivation above drops to 4 with it; schedule (protocol-nightly
+          # derivation above switches to the representatives floor with
+          # it; schedule (protocol-nightly
           # passes caller_event: schedule), push, and workflow_dispatch runs
           # keep the full sweep. Same caller_event-with-fallback the
           # should-run job uses for its EFFECTIVE_EVENT gate. The PR label
@@ -956,17 +878,10 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
             "SELECT execution_id, node_name, node_type, status, left(error, 160) AS error, started_at, completed_at FROM workflow_execution_logs ORDER BY started_at DESC NULLS LAST LIMIT 24"
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test -c \
-            "SELECT chain_id, default_primary_rpc, default_fallback_rpc FROM chains WHERE chain_id IN (1, 11155111)"
+            "SELECT chain_id, default_primary_rpc, default_fallback_rpc FROM chains WHERE chain_id = 1"
           # Fork responsiveness probes: a cheap local call, then a state
           # read that forces an upstream fetch. Slow/failed probes plus
           # upstream errors in the anvil logs indicate upstream throttling.
-          echo "--- sepolia fork eth_blockNumber:"
-          time curl -sf -m 20 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
-            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' || echo "PROBE FAILED"
-          echo "--- sepolia fork eth_getCode (Superfluid CFA forwarder, forces upstream fetch):"
-          time curl -sf -m 60 -X POST http://localhost:8547 -H 'Content-Type: application/json' \
-            -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xcfA132E353cB4E398080B9700609bb008eceB125","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
-          echo ""
           echo "--- mainnet fork eth_blockNumber:"
           time curl -sf -m 20 -X POST http://localhost:8548 -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"eth_blockNumber","id":1}' || echo "PROBE FAILED"
@@ -974,8 +889,6 @@ jobs:
           time curl -sf -m 60 -X POST http://localhost:8548 -H 'Content-Type: application/json' \
             -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x00000000219ab540356cBB839Cbe05303d7705Fa","latest"],"id":1}' | head -c 80 || echo "PROBE FAILED"
           echo ""
-          echo "--- anvil sepolia fork logs:"
-          docker logs keeperhub-test-anvil-fork 2>&1 | tail -40 || true
           echo "--- anvil mainnet fork logs:"
           docker logs keeperhub-test-anvil-fork-mainnet 2>&1 | tail -20 || true
           echo "--- bare-metal app log tail:"

@@ -29,7 +29,11 @@ import {
   PERSISTENT_TEST_USER_EMAIL,
   waitForWorkflowExecution,
 } from "@/tests/utils/db";
-import { ensureErc20Acquired, ensureNativeGas } from "./funding";
+import {
+  ensureErc20Acquired,
+  ensureNativeGas,
+  runForkImpersonatedCalls,
+} from "./funding";
 
 export type SharedCtx = {
   apiKey?: string;
@@ -116,6 +120,10 @@ export async function runSetup(opts: {
       required.human
     );
   }
+
+  // Fork-only privileged provisioning (impersonated wards etc.); no-op
+  // when the protocol declares none, throws on a non-fork chain.
+  await runForkImpersonatedCalls(protocol, chainId, walletAddress);
 
   const setupWf = toWebhookTriggered(
     buildSetupWorkflow({ protocolSlug: protocol, chainId, walletAddress })

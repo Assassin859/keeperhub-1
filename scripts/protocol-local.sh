@@ -3,10 +3,12 @@
 #
 # Reproduces the e2e-vitest-ephemeral CI environment on a developer
 # machine so suite changes are validated in minutes instead of a
-# 30-minute CI round: shared postgres database, anvil mainnet and
-# Sepolia forks, a production app build, and the same chains-row
-# patching CI applies. All node/pnpm invocations run inside a node:22
-# container - no host node required.
+# 30-minute CI round: shared postgres database, an anvil mainnet fork,
+# a production app build, and the same chains-row patching CI applies.
+# All node/pnpm invocations run inside a node:22 container - no host
+# node required. A Sepolia fork exists only for the Tier 1 `sim`
+# path (aave-v3 still carries Sepolia testData); no Tier 2 coverage
+# suite targets Sepolia since the chronicle/superfluid re-homing.
 #
 #   scripts/protocol-local.sh up            # build + start everything
 #   scripts/protocol-local.sh test [suite]  # run all suites or one (e.g. superfluid)
@@ -33,10 +35,11 @@
 # paths work, write steps fail loudly at signing. Keys are only ever
 # passed as process environment - never written to disk.
 #
-# Fork upstreams are the public defaults from docker-compose.yml. Known
-# constraint (see specs/protocol-coverage-methodology.md): a Sepolia
-# fork on a non-archive public upstream is only healthy for ~15 minutes,
-# so `test` restarts it for a fresh window first, same as CI.
+# Fork upstreams default to public endpoints. Known constraint (see
+# specs/protocol-coverage-methodology.md): a fork on a public upstream
+# that serves state only for recent blocks is healthy for ~15 minutes;
+# export ANVIL_FORK_MAINNET_URL (mainnet) / ANVIL_FORK_URL (sepolia)
+# for an upstream that serves historical state at the pin.
 
 set -euo pipefail
 
@@ -189,29 +192,33 @@ start_fork() {
   wait_for_fork "$port" "$chain_hex" "$name"
 }
 
-start_forks() {
-  # Rig-owned containers (not the compose service names): the compose
-  # services declare fixed container_names that collide across checkouts
-  # and with manually started forks. Ports must match the chains-row
-  # patch below; override holders must be stopped or ports overridden.
-  # Cache dirs are per-chain envs (not one shared var) so a mainnet
-  # cache can never be loaded into the Sepolia fork; start_fork's
-  # dir-name prefix guard enforces the same invariant.
-  start_fork kh-protocol-local-fork-sepolia "${SEPOLIA_FORK_PORT:-8547}" 11155111 "0xaa36a7" \
-    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_FORK_CACHE_DIR:-}"
+# Rig-owned containers (not the compose service names): the compose
+# services declare fixed container_names that collide across checkouts
+# and with manually started forks. Ports must match the chains-row
+# patch below; override holders must be stopped or ports overridden.
+# Cache dirs are per-chain envs (not one shared var) so a mainnet
+# cache can never be loaded into the Sepolia fork; start_fork's
+# dir-name prefix guard enforces the same invariant.
+start_mainnet_fork() {
   start_fork kh-protocol-local-fork-mainnet "${MAINNET_FORK_PORT:-8548}" 1 "0x1" "$(mainnet_upstream)" \
     "${MAINNET_FORK_CACHE_DIR:-}"
 }
 
+# Tier 1 `sim` only: aave-v3 still carries Sepolia testData. No Tier 2
+# coverage suite targets Sepolia, so `up`/`test` never start this fork.
+start_sepolia_fork() {
+  start_fork kh-protocol-local-fork-sepolia "${SEPOLIA_FORK_PORT:-8547}" 11155111 "0xaa36a7" \
+    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_FORK_CACHE_DIR:-}"
+}
+
 patch_chains() {
-  # Same patch CI applies: point forked chains at the local forks and
-  # null the fallback so nothing leaks to live networks on failure.
-  # Ports must track the same overrides start_forks honors, or a port
-  # override would leave the chains rows pointing at dead sockets.
+  # Same patch CI applies: point chain 1 at the local fork and null the
+  # fallback so nothing leaks to live mainnet on failure. The port must
+  # track the same override start_mainnet_fork honors, or a port
+  # override would leave the chains row pointing at a dead socket.
   psql_local -d "$DB_NAME" \
-    -c "UPDATE chains SET default_primary_rpc = 'http://localhost:${SEPOLIA_FORK_PORT:-8547}', default_fallback_rpc = NULL WHERE chain_id = 11155111" \
     -c "UPDATE chains SET default_primary_rpc = 'http://localhost:${MAINNET_FORK_PORT:-8548}', default_fallback_rpc = NULL WHERE chain_id = 1" >/dev/null
-  log "chains rows patched to local forks (:${SEPOLIA_FORK_PORT:-8547}, :${MAINNET_FORK_PORT:-8548})"
+  log "chain 1 row patched to the local fork (:${MAINNET_FORK_PORT:-8548})"
 }
 
 cmd_up() {
@@ -238,7 +245,7 @@ cmd_up() {
       ON CONFLICT (id) DO NOTHING" | tail -1
   fi
 
-  start_forks
+  start_mainnet_fork
   patch_chains
 
   if [ ! -f "$REPO_DIR/.next/BUILD_ID" ] || [ "${1:-}" = "--rebuild" ]; then
@@ -277,6 +284,15 @@ cmd_up() {
     fi
     sleep 3
   done
+  # A curl 200 alone is not proof of OUR app: a foreign listener already
+  # holding the port answers while our container dies on EADDRINUSE, and
+  # every request then lands in the wrong app and database. Require the
+  # rig's own container to still be running.
+  if [ "$(docker inspect -f '{{.State.Running}}' "$APP_CONTAINER" 2>/dev/null)" != "true" ]; then
+    log "port :${APP_PORT} answered but ${APP_CONTAINER} is not running - a foreign process holds the port (try APP_PORT=<other> or stop the squatter)"
+    docker logs "$APP_CONTAINER" 2>&1 | tail -5
+    exit 1
+  fi
   log "app ready on :${APP_PORT} - rig is up"
 }
 
@@ -287,11 +303,7 @@ cmd_test() {
     target="tests/e2e/vitest/protocol-coverage/${suite}"
   fi
 
-  # Fresh upstream window for the Sepolia fork (recreate re-pins to the
-  # current head), then re-assert the chains patch (some general e2e
-  # tests rewrite the Sepolia row).
-  start_fork kh-protocol-local-fork-sepolia "${SEPOLIA_FORK_PORT:-8547}" 11155111 "0xaa36a7" \
-    "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_FORK_CACHE_DIR:-}"
+  # Re-assert the chains patch (some general e2e tests rewrite rows).
   patch_chains
 
   log "running ${target}"
@@ -305,7 +317,7 @@ cmd_test() {
   # let set -e abort before it); re-exit with it so callers and automation
   # see red runs as red.
   local rc=0
-  run_node "PROTOCOL_E2E_BASE_URL=http://localhost:${APP_PORT} PROTOCOL_E2E_SEPOLIA_FORK=1 ANVIL_FORK_MAINNET_URL=http://localhost:${MAINNET_FORK_PORT:-8548} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=${RESULTS_FILE}" || rc=$?
+  run_node "PROTOCOL_E2E_BASE_URL=http://localhost:${APP_PORT} ANVIL_FORK_MAINNET_URL=http://localhost:${MAINNET_FORK_PORT:-8548} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=${RESULTS_FILE}" || rc=$?
   ended=$(date +%s)
   log "suite wall-clock: $((ended - started))s"
   log "coverage report with executed results:"
@@ -341,8 +353,14 @@ cmd_sim() {
       exit 1
       ;;
   esac
-  # Tier 1 needs only the forks - no app, no database beyond none at all.
-  start_forks
+  # Tier 1 needs only the forks for the requested chain(s) - no app, no
+  # database beyond none at all.
+  case "$chain" in
+    "") start_mainnet_fork; start_sepolia_fork ;;
+    ethereum) start_mainnet_fork ;;
+    sepolia) start_sepolia_fork ;;
+    base) ;;
+  esac
   log "running Tier 1 simulations: ${target}${chain:+ (${chain})}"
   local started ended
   started=$(date +%s)
