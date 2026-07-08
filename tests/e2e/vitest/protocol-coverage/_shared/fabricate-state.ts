@@ -34,7 +34,7 @@ const COOLDOWNS_VIEW_ABI = [
 ];
 
 /** Bits occupied by cooldownEnd (uint104) in the packed struct word. */
-const COOLDOWN_END_BITS = 104n;
+const COOLDOWN_END_BITS = BigInt(104);
 
 /** Mapping-slot probe ceiling. Verified layouts sit far below it (USDe
  *  balances at 2, MKR at 1, WETH at 3, sUSDe cooldowns at 15 - all
@@ -158,7 +158,7 @@ export async function fabricateElapsedCooldown(
   const [cooldownEnd, underlyingAmount] = (await vault.cooldowns(
     holder
   )) as [bigint, bigint];
-  if (underlyingAmount === 0n && cooldownEnd === 0n) {
+  if (underlyingAmount === BigInt(0) && cooldownEnd === BigInt(0)) {
     throw new Error(
       `fabricateElapsedCooldown: ${holder} has no pending cooldown on ${contractAddress}; a real cooldown call must run first (it funds the silo the unstake draws from).`
     );
@@ -172,7 +172,7 @@ export async function fabricateElapsedCooldown(
   }
 
   const packed = (underlyingAmount << COOLDOWN_END_BITS) | cooldownEnd;
-  const elapsed = (underlyingAmount << COOLDOWN_END_BITS) | 1n;
+  const elapsed = (underlyingAmount << COOLDOWN_END_BITS) | BigInt(1);
   for (let index = 0; index < MAX_PROBE_SLOTS; index += 1) {
     for (const slot of candidateSlots(holder, index)) {
       const current = BigInt(
@@ -195,7 +195,7 @@ export async function fabricateElapsedCooldown(
             bigint,
             bigint,
           ];
-          return end === 1n && amount === underlyingAmount;
+          return end === BigInt(1) && amount === underlyingAmount;
         }
       );
       if (kept) {
