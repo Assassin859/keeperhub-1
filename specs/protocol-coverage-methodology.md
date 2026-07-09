@@ -63,6 +63,19 @@ Rules for writing expectations:
   Tier 1 sim path (`scripts/protocol-local.sh sim sepolia`).
 - Base (ajna) is live Base mainnet, reads only; every write is skipped and
   the gas preflight short-circuits, so no real ETH is spent.
+- Tier 1 also sweeps L2 forks: Base (8453) and Arbitrum One (42161) run as
+  anvil forks of a public upstream, gated on `PROTOCOL_SIM_RPC_8453` /
+  `PROTOCOL_SIM_RPC_42161`. Simulations read forked state and never mine
+  against the upstream, so a public endpoint suffices (no archive node),
+  unlike the mainnet pinned fork. `chains.test.ts` iterates these chains
+  and self-skips any whose RPC env is absent. Covered protocols: chainlink
+  price-feed reads on both chains (ajna's Base reads run here too). The CI
+  `tier1-simulations-l2` job runs one matrix leg per chain, in parallel
+  with the chain-1 `tier1-simulations` job, each with its own executed-test
+  floor (`scripts/protocol-coverage-floor.ts`). Locally:
+  `scripts/protocol-local.sh sim base` / `sim arbitrum` (or bare `sim` for
+  all chains) starts the fork and runs the sweep. `coverage:report` emits a
+  per-chain row for 8453 and 42161 from each protocol's testData.
 - Payable actions bind the virtual `ethValue` key (plain ETH string), and
   userSpecifiedAddress contracts bind the virtual `contractAddress` key.
 - Fork-only privileged provisioning: a protocol whose fixtures need a
@@ -210,9 +223,13 @@ code.
   ignores trigger config; Schedule/Event trigger behavior needs its own
   harness. Seeded trigger-variant workflows are dashboard fixtures, not
   test signal.
-- One chain per protocol. Multi-chain protocols are exercised on a single
-  chain (mainnet fork where possible); L2 deployments are unvalidated
-  until a second fork is added.
+- Partial multi-chain coverage. Tier 1 now sweeps Base and Arbitrum One
+  forks, but only for protocols with L2 testData (chainlink price feeds on
+  both; ajna reads on Base). Most protocols with declared L2 contract
+  addresses (aave-v3, uniswap-v3, pendle, sky, etc.) still lack L2 testData
+  and are exercised on the mainnet fork only. Extending them needs per-chain
+  `FORK_WHALES`/`FAUCETS` before write fixtures with `requiredTokens` can
+  run on those chains (read-only additions need neither).
 - Actions with unmet on-chain prerequisites (vault/pool addresses, open
   auctions, cooldowns) are skipped with reasons. Skip reasons must name
   the real constraint - "payable" was wrong for frax/rocket-pool (the
@@ -322,3 +339,4 @@ timed local runs unless marked CI.
 | 2026-07-07 | Hermetic fork state for tier1 (RPC fetch cache pivot) | unchanged | unchanged | unchanged | protocol-nightly's fork-cache-mainnet job warms a live pinned fork with the Tier 1 sweep (floor 150; a red sweep or floor breach publishes nothing) and publishes foundry's flushed RPC cache as fork-cache-mainnet-\<block\>.tgz, 3-day retention; the tier1-simulations job consumes the freshest staging-produced artifact under 36 hours old when ANVIL_FORK_MAINNET_URL is set, and falls back to a live fork on every failure mode. The nightly warm sweep runs on a live fork, so it is itself the live-fork canary | the first design (anvil_dumpState + --load-state) was structurally wrong twice over: the dump captured the warm sweep's own mutations (and the sweep is not idempotent on its residue - morpho set-authorization reverts "already set" on re-run, empirically confirmed) and missed eth_call-only fetches. The pivot packages foundry's on-disk RPC fetch cache instead. Measured (foundry:latest, 2026-07-07): anvil persists upstream fetches to $HOME/.foundry/cache/rpc/\<chain\>/\<block\>/storage.json, flushing only on graceful shutdown (SIGTERM; SIGKILL loses it); a fresh fork with the cache mounted at the same pin serves every warmed read with zero upstream requests (counted through a logging proxy) and starts pristine - a warmed impersonated WETH deposit is invisible, totalSupply returns its exact pre-write value; cold reads against a dead upstream fail loudly (-32603); anvil still needs the upstream at startup (chain id, block env) and for the mining loop's block hashes; an unpinned fork also persists a cache keyed by its resolved head block, so pinning stays explicit everywhere |
 | 2026-07-07 | Sepolia fork retirement: chronicle, superfluid, and the Safe roles orchestrator re-homed to the mainnet fork | 244 (was 246): 27 Sepolia-runnable actions retired, 24 return as chain-1 fixtures. Chronicle's toll-gated mainnet feeds are whitelisted by the new fork-only `setup.forkImpersonatedCalls` (an authed ward kisses the test wallet - shared by the Tier 1 harness and Tier 2 preflight); superfluid runs on DAI/DAIx (USDCx upgrade OOGs under exact-estimate gas - its underlying routes into Sky savings; ETHx is ABI-incompatible with wrap/unwrap), sized for mainnet's 69-DAI CFA minimum deposit, with create-pool and grant-flow-operator now executing (their Sepolia skips were public-upstream cold-fetch constraints) | 105 | 15 (chronicle feed reads nonZero; superfluid balance/underlying reads plus create-flow/delete-flow post-write oracles on get-flow) | chain-1 Tier 1 sweep 229 passed / 139 skipped / 0 failed (was 203/165/0). Chronicle Tier 2 verified through the app on the local rig: 12/12 with oracle assertions (all reads, no signing needed). Superfluid Tier 2 verified to the signing boundary (whale funding preflight green; setup approve fails at Turnkey wallet init without real keys). Orchestrator fork tests 2/2 on the mainnet fork. CI now runs a single anvil fork: the Sepolia fork service, restart step, post-restart probe, probe-forks line, chains-row patches, and PROTOCOL_E2E_SEPOLIA_FORK are gone; protocol-gate floors re-derived from planPhaseFixtures (representatives 22 / full 200 with ANVIL_FORK_MAINNET_URL, 1 / 20 without - ajna only) | one fork to start/restart instead of two; the ~15-minute Sepolia public-upstream window no longer bounds any CI job |
 | 2026-07-08 | Pendle pinned-block fixtures | 255 (was 244): pendle's 11 deferred actions unlocked - market/PT/YT/SY reads plus the mint/redeem write pair bind the recorded wstETH market (expiry 2027-12-30) at pinned block 25487331, per the "Pendle pinned-block fixtures" section above | 94 | 22 (pendle adds market-expiry equals, expiry-flag equals, SY exchange-rate/balance nonZero read oracles, plus post-write oracles: mint asserts PT/YT balances nonZero, redeem asserts SY balance) | the tier1 CI job starts a second, pinned mainnet fork (block registry-resolved via scripts/protocol-pinned-block.ts, archive-secret-gated, health-probed at the pin) and chains.test.ts routes pinned protocols to it; the Tier 2 suite exercises the same bindings on the shared near-head fork in nightly/full runs | pinned fork is cold each run (no nightly cache covers its block) but pendle touches only a handful of contracts; without the archive secret the pinned suite self-skips instead of failing |
+| 2026-07-09 | Multi-chain Tier 1: Base + Arbitrum forks | chainlink price-feed reads bound on Base (19: all named USD/ETH feeds except BTC/ETH, plus the custom-feed read set) and Arbitrum One (21: adds the BTC/ETH feed); ajna's existing Base reads now also execute on a Base fork instead of only live Base. CCIP and historical-round actions self-skip on both chains | unchanged on chain 1 | reads assert liveness through the same oracle; no new value-asserted expectations added for the L2 feeds | new `tier1-simulations-l2` job runs one matrix leg per chain (Base floor 15, Arbitrum floor 12) in parallel with the chain-1 tier1 job; each forks a public upstream (no archive node - sims never mine against upstream) and self-skips a chain whose `PROTOCOL_SIM_RPC_<id>` is unset. `coverage:report` now shows 8453 and 42161 rows | two L2 legs on separate runners add no time to the chain-1 budget; read-only L2 coverage needs no whales/faucets. Follow-up: write-bearing L2 protocols (aave-v3, uniswap-v3, sky) need per-chain FORK_WHALES/FAUCETS before their testData can run |

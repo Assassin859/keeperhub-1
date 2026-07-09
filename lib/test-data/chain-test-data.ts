@@ -155,6 +155,22 @@ export const TOKEN_REGISTRY: Record<
       symbol: "USDC",
     },
   },
+  // Arbitrum One (chainlink Tier 1 read sweep; not fork-mode — no faucets).
+  // Present so the Event-trigger builder can resolve a contractAddress for
+  // chain 42161 (pickEventContractAddress); chainlink's reads bind contracts
+  // directly and reference no token symbol here.
+  "42161": {
+    WETH: {
+      address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      decimals: 18,
+      symbol: "WETH",
+    },
+    USDC: {
+      address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  },
   // Ethereum Sepolia
   "11155111": {
     // Aave V3 Sepolia DAI test token (matches existing

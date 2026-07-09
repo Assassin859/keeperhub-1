@@ -13,6 +13,7 @@
 #   scripts/protocol-local.sh up            # build + start everything
 #   scripts/protocol-local.sh test [suite]  # run all suites or one (e.g. superfluid)
 #   scripts/protocol-local.sh sim [chain]   # Tier 1 fork simulations (no app needed)
+#                                           # chain: ethereum|sepolia|base|arbitrum
 #   scripts/protocol-local.sh snapshot [chain]  # warm + package a fork RPC cache
 #   scripts/protocol-local.sh down [--purge]
 #
@@ -245,6 +246,21 @@ start_sepolia_fork() {
     "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_FORK_CACHE_DIR:-}"
 }
 
+# Tier 1 `sim` only: Base + Arbitrum One forks for the multi-chain read
+# sweep (chainlink price feeds on both, plus ajna's Base reads). Public
+# upstreams are acceptable here - simulations read forked state and never
+# mine against the upstream - so no archive endpoint is required; override
+# with ANVIL_FORK_BASE_URL / ANVIL_FORK_ARBITRUM_URL for a private one.
+start_base_fork() {
+  start_fork kh-protocol-local-fork-base "${BASE_FORK_PORT:-8550}" 8453 "0x2105" \
+    "${ANVIL_FORK_BASE_URL:-https://base-rpc.publicnode.com}"
+}
+
+start_arbitrum_fork() {
+  start_fork kh-protocol-local-fork-arbitrum "${ARBITRUM_FORK_PORT:-8551}" 42161 "0xa4b1" \
+    "${ANVIL_FORK_ARBITRUM_URL:-https://arbitrum-one-rpc.publicnode.com}"
+}
+
 patch_chains() {
   # Same patch CI applies: point chain 1 at the local fork and null the
   # fallback so nothing leaks to live mainnet on failure. The port must
@@ -367,7 +383,7 @@ cmd_sim() {
   local env_rpc
   case "$chain" in
     "")
-      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} ${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453}"
+      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} PROTOCOL_SIM_RPC_8453=http://localhost:${BASE_FORK_PORT:-8550} PROTOCOL_SIM_RPC_42161=http://localhost:${ARBITRUM_FORK_PORT:-8551}"
       ;;
     ethereum)
       env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548}"
@@ -376,14 +392,13 @@ cmd_sim() {
       env_rpc="PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547}"
       ;;
     base)
-      # The rig runs no Base fork; the caller must provide the endpoint.
-      if [ -z "${PROTOCOL_SIM_RPC_8453:-}" ]; then
-        log "PROTOCOL_SIM_RPC_8453 is not set - every base test will self-skip"
-      fi
-      env_rpc="${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453}"
+      env_rpc="PROTOCOL_SIM_RPC_8453=http://localhost:${BASE_FORK_PORT:-8550}"
+      ;;
+    arbitrum)
+      env_rpc="PROTOCOL_SIM_RPC_42161=http://localhost:${ARBITRUM_FORK_PORT:-8551}"
       ;;
     *)
-      log "unknown chain '${chain}' (expected: ethereum, sepolia, base)"
+      log "unknown chain '${chain}' (expected: ethereum, sepolia, base, arbitrum)"
       exit 1
       ;;
   esac
@@ -393,10 +408,11 @@ cmd_sim() {
   # protocols execute instead of self-skipping.
   local PINNED_SIM_RPC=""
   case "$chain" in
-    "") start_mainnet_fork; start_pinned_mainnet_fork; start_sepolia_fork ;;
+    "") start_mainnet_fork; start_pinned_mainnet_fork; start_sepolia_fork; start_base_fork; start_arbitrum_fork ;;
     ethereum) start_mainnet_fork; start_pinned_mainnet_fork ;;
     sepolia) start_sepolia_fork ;;
-    base) ;;
+    base) start_base_fork ;;
+    arbitrum) start_arbitrum_fork ;;
   esac
   log "running Tier 1 simulations: ${target}${chain:+ (${chain})}"
   local started ended
@@ -479,7 +495,7 @@ cmd_snapshot() {
 }
 
 cmd_down() {
-  docker rm -f "$APP_CONTAINER" kh-protocol-local-fork-sepolia kh-protocol-local-fork-mainnet kh-protocol-local-fork-mainnet-pinned 2>/dev/null || true
+  docker rm -f "$APP_CONTAINER" kh-protocol-local-fork-sepolia kh-protocol-local-fork-mainnet kh-protocol-local-fork-mainnet-pinned kh-protocol-local-fork-base kh-protocol-local-fork-arbitrum 2>/dev/null || true
   if [ "${1:-}" = "--purge" ]; then
     psql_local -c "DROP DATABASE IF EXISTS \"${DB_NAME}\""
     log "database ${DB_NAME} dropped"
