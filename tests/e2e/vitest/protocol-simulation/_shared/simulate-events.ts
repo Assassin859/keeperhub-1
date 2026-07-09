@@ -50,7 +50,12 @@ import { SIM_WALLET } from "./simulate";
 // emit phase's budget generous while the per-event decode assertions stay
 // cheap (pure decode of already-collected logs).
 const EMIT_TIMEOUT_MS = 240_000;
-const GAS_LIMIT_MULTIPLIER = BigInt(2);
+// BigInt literals (0n) are unavailable under the repo's sub-ES2020 tsconfig
+// target, so bigint args go through BigInt(); mirrors simulate.ts.
+const ZERO = BigInt(0);
+const ONE = BigInt(1);
+const TWO = BigInt(2);
+const GAS_LIMIT_MULTIPLIER = TWO;
 
 type TxRequest = { to: string; data?: string; value?: bigint };
 
@@ -207,12 +212,12 @@ async function emitSafe(
 ): Promise<Log[]> {
   const setupData = SAFE_IFACE.encodeFunctionData("setup", [
     [SIM_WALLET],
-    1n,
+    ONE,
     ZeroAddress,
     "0x",
     ZeroAddress,
     ZeroAddress,
-    0n,
+    ZERO,
     ZeroAddress,
   ]);
   const saltNonce = BigInt(Date.now());
@@ -241,12 +246,12 @@ async function emitSafe(
   const execTransaction = async (innerData: string): Promise<void> => {
     const data = SAFE_IFACE.encodeFunctionData("execTransaction", [
       safeAddr,
-      0n,
+      ZERO,
       innerData,
       0,
-      0n,
-      0n,
-      0n,
+      ZERO,
+      ZERO,
+      ZERO,
       ZeroAddress,
       ZeroAddress,
       signature,
@@ -261,7 +266,7 @@ async function emitSafe(
   await execTransaction(
     SAFE_IFACE.encodeFunctionData("addOwnerWithThreshold", [
       SAFE_DUMMY_OWNER,
-      1n,
+      ONE,
     ])
   );
   await execTransaction(
@@ -283,13 +288,13 @@ async function emitSafe(
     SAFE_IFACE.encodeFunctionData("removeOwner", [
       SAFE_SENTINEL,
       SAFE_DUMMY_OWNER,
-      1n,
+      ONE,
     ])
   );
   await execTransaction(
     SAFE_IFACE.encodeFunctionData("addOwnerWithThreshold", [
       SAFE_DUMMY_OWNER_2,
-      2n,
+      TWO,
     ])
   );
 

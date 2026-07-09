@@ -226,7 +226,7 @@ type EventProtocolCoverage = {
   total: number;
   covered: number;
   skipped: number;
-  optInChain?: string;
+  optInChain: string | undefined;
   noOptIn: boolean;
   skipReasons: Record<string, string>;
 };
