@@ -1,75 +1,146 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  contract,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
+
+// Pinned-block fixture: Pendle markets expire, so live-head bindings rot
+// on the market's schedule. The chain-1 fixtures instead bind state
+// recorded at a pinned mainnet block, and the Tier 1 harness runs pendle
+// against a dedicated fork at that block (PROTOCOL_SIM_RPC_1_PINNED), so
+// the bindings stay verifiable regardless of wall clock. Market chosen
+// from Pendle's active-markets API (mature high-liquidity wstETH market,
+// expiry 2027-12-30, the most distant on mainnet at recording time) and
+// verified 2026-07-08 via eth_call at the pin: readTokens() returned the
+// SY/PT/YT below, expiry() = 1830124800, isExpired() = false, code
+// present at every address, decimals 18 across SY/PT/YT, and the market
+// held ~1306 SY (the SY_WSTETH whale in chain-test-data.ts). Refresh
+// procedure: specs/protocol-coverage-methodology.md ("Pendle pinned-block
+// fixtures").
+const MAINNET_PINNED_BLOCK = 25_487_331;
+const MAINNET_MARKET_WSTETH = "0x34280882267ffa6383B363E278B027Be083bBe3b";
+const MAINNET_SY_WSTETH = "0xcbC72d92b2dc8187414F6734718563898740C0BC";
+const MAINNET_PT_WSTETH = "0xb253Eff1104802b97aC7E3aC9FdD73AecE295a2c";
+const MAINNET_YT_WSTETH = "0x04B7Fa1e727d7290D6E24fA9b426d0c940283a95";
+const MAINNET_MARKET_EXPIRY = "1830124800";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
+    pinnedBlock: MAINNET_PINNED_BLOCK,
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [],
-      approvals: [],
+      requiredTokens: [{ symbol: "SY_WSTETH", human: "10" }],
+      // The router pulls SY on mintPyFromSy and PT+YT on redeemPyToSy
+      // (both via transferFrom), so all three need allowances. PT/YT are
+      // held only after the mint write runs; approving them up front is
+      // fine (approve needs no balance).
+      approvals: [
+        { token: "SY_WSTETH", spender: contract("router"), human: "10" },
+        { token: "PT_WSTETH", spender: contract("router"), human: "5" },
+        { token: "YT_WSTETH", spender: contract("router"), human: "5" },
+      ],
+      // Three real signed txs through the app; each has been observed
+      // to take 100-220s under CI's shared-wallet contention on a cold
+      // fork, so the single-tx 300s default cannot fit this setup.
+      executionWaitMs: 600_000,
     },
     actions: {
       "get-ve-pendle-balance": { user: wallet() },
       "get-ve-pendle-total-supply": {},
       "get-ve-pendle-position": { user: wallet() },
-      "get-market-expiry": {},
-      "is-market-expired": {},
-      "get-lp-balance": { account: wallet() },
-      "get-active-lp-balance": { user: wallet() },
-      "get-pt-balance": { account: wallet() },
-      "is-pt-expired": {},
-      "get-yt-balance": { account: wallet() },
-      "get-sy-balance": { account: wallet() },
-      "get-sy-exchange-rate": {},
-      "mint-py-from-sy": { receiver: wallet(), YT: wallet() },
-      "redeem-py-to-sy": { receiver: wallet(), YT: wallet() },
+      "get-market-expiry": { contractAddress: MAINNET_MARKET_WSTETH },
+      "is-market-expired": { contractAddress: MAINNET_MARKET_WSTETH },
+      "get-lp-balance": {
+        contractAddress: MAINNET_MARKET_WSTETH,
+        account: wallet(),
+      },
+      "get-active-lp-balance": {
+        contractAddress: MAINNET_MARKET_WSTETH,
+        user: wallet(),
+      },
+      "get-pt-balance": {
+        contractAddress: MAINNET_PT_WSTETH,
+        account: wallet(),
+      },
+      "is-pt-expired": { contractAddress: MAINNET_PT_WSTETH },
+      "get-yt-balance": {
+        contractAddress: MAINNET_YT_WSTETH,
+        account: wallet(),
+      },
+      "get-sy-balance": {
+        contractAddress: MAINNET_SY_WSTETH,
+        account: wallet(),
+      },
+      "get-sy-exchange-rate": { contractAddress: MAINNET_SY_WSTETH },
+      // Write sequence: mint splits 5 of the 10 funded SY into PT+YT
+      // (netPyOut ~ netSyIn * pyIndex, index was ~1.24 at the pin), then
+      // redeem merges 2 PT+YT back - well inside what the mint produced.
+      "mint-py-from-sy": {
+        receiver: wallet(),
+        YT: MAINNET_YT_WSTETH,
+        netSyIn: amount("SY_WSTETH", "5"),
+        minPyOut: "1",
+      },
+      "redeem-py-to-sy": {
+        receiver: wallet(),
+        YT: MAINNET_YT_WSTETH,
+        netPyIn: amount("PT_WSTETH", "2"),
+        minSyOut: "1",
+      },
     },
-    skipped: {
-      "get-market-expiry":
-        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
-      "is-market-expired":
-        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
-      "get-lp-balance":
-        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
-      "get-active-lp-balance":
-        "market contract requires a specific Pendle market address (userSpecifiedAddress)",
-      "get-pt-balance":
-        "pt contract requires a specific PT token address (userSpecifiedAddress)",
-      "is-pt-expired":
-        "pt contract requires a specific PT token address (userSpecifiedAddress)",
-      "get-yt-balance":
-        "yt contract requires a specific YT token address (userSpecifiedAddress)",
-      "get-sy-balance":
-        "sy contract requires a specific SY token address (userSpecifiedAddress)",
-      "get-sy-exchange-rate":
-        "sy contract requires a specific SY token address (userSpecifiedAddress)",
-      "mint-py-from-sy":
-        "write - requires SY balance and a specific YT address (userSpecifiedAddress)",
-      "redeem-py-to-sy":
-        "write - requires PT/YT balance and a specific YT address (userSpecifiedAddress)",
+    // Same constraint as the setup wait: a signed write through the app
+    // has been observed to take 100-220s on a cold fork under CI's
+    // shared-wallet contention, above the 120s per-action default.
+    executionWaitMs: {
+      "mint-py-from-sy": 300_000,
+      "redeem-py-to-sy": 300_000,
     },
-    // Every Pendle event fires on a market / YT / SY contract that is
-    // userSpecifiedAddress and time-bounded (markets expire). No live market
-    // is bound in chain-1 testData, so none of these can be emitted on the
-    // pinned fork - the same constraint that skips every Pendle write action.
+    expectations: {
+      // Chain invariants of the recorded market: its expiry is immutable
+      // on-chain, and the pinned fork's clock never reaches it.
+      "get-market-expiry": [{ equals: MAINNET_MARKET_EXPIRY }],
+      "is-market-expired": [{ equals: "false" }],
+      "is-pt-expired": [{ equals: "false" }],
+      "get-sy-exchange-rate": [{ nonZero: true }],
+      // Setup funds 10 SY; only this protocol's fixtures move it.
+      "get-sy-balance": [{ nonZero: true }],
+    },
+    writeExpectations: {
+      "mint-py-from-sy": [
+        { read: "get-pt-balance", expect: { nonZero: true } },
+        { read: "get-yt-balance", expect: { nonZero: true } },
+      ],
+      "redeem-py-to-sy": [
+        { read: "get-sy-balance", expect: { nonZero: true } },
+      ],
+    },
+    // Market and reward events fire on operations this testData binds no
+    // write action for (AMM swap/liquidity; reward/interest claim), so no
+    // fixture emits them. yt-mint / yt-burn ARE emittable via the pinned-fork
+    // mint-py-from-sy / redeem-py-to-sy fixtures, but the event harness runs
+    // lightweight self-contained emitters and does not yet perform pendle's
+    // pinned-fork setup provisioning (whale-funded SY plus router approvals);
+    // deferred follow-up.
     events: {
       skipped: {
         "market-swap":
-          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so a swap cannot be emitted on the fork",
+          "fires on a Pendle market AMM swap; testData binds no swap write action, so no fixture emits it",
         "market-mint":
-          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so LP mint cannot be emitted on the fork",
+          "fires on Pendle market add-liquidity; testData binds no add-liquidity write action, so no fixture emits it",
         "market-burn":
-          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so LP burn cannot be emitted on the fork",
+          "fires on Pendle market remove-liquidity; testData binds no remove-liquidity write action, so no fixture emits it",
         "update-implied-rate":
-          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so an implied-rate update cannot be emitted on the fork",
+          "fires on a Pendle market state change (swap/liquidity); testData binds no such write action, so no fixture emits it",
         "yt-mint":
-          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so a PT/YT mint cannot be emitted on the fork",
+          "emittable via the pinned-fork mint-py-from-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
         "yt-burn":
-          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so a PT/YT redeem cannot be emitted on the fork",
+          "emittable via the pinned-fork redeem-py-to-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
         "redeem-rewards":
-          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so a rewards redeem cannot be emitted on the fork",
+          "fires on YT redeemDueInterestAndRewards; testData binds no reward-claim write action, so no fixture emits it",
         "redeem-interest":
-          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so an interest redeem cannot be emitted on the fork",
+          "fires on YT redeemDueInterestAndRewards; testData binds no interest-claim write action, so no fixture emits it",
       },
     },
   },

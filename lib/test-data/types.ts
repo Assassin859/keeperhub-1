@@ -140,6 +140,19 @@ export type SetupSpec = {
     inputs: ActionInputBindings;
   }>;
   /**
+   * Override the coverage runner's setup-execution wait (default 300s,
+   * sized for a single cold first-touch transaction). For setups whose
+   * transaction count makes that structurally too small: each real
+   * signed tx through the app has been observed to take >100s under
+   * CI's shared-wallet contention on a cold fork, so a three-approval
+   * setup (pendle: SY, PT, and YT all need router allowances) cannot
+   * fit the single-tx default. Use sparingly and note the constraint;
+   * the default stays tight so genuinely hung setups fail fast with
+   * their post-mortem intact. Keep the suite file's beforeAll timeout
+   * above this value.
+   */
+  executionWaitMs?: number;
+  /**
    * Fork-only provisioning calls that require impersonating a privileged
    * third party (anvil cheatcodes), e.g. an authed ward whitelisting the
    * test wallet on a toll-gated oracle. Each entry funds and impersonates
@@ -191,6 +204,17 @@ export type StateFabrication = {
 export type ProtocolChainTestData = {
   /** When false, builder emits workflows marked _executable:false. */
   enabled?: boolean;
+  /**
+   * Fork block the chain's bindings were recorded at, for protocols whose
+   * fixtures rot on live state (Pendle markets expire). The Tier 1 harness
+   * runs these protocols against a dedicated fork pinned here (gated on
+   * PROTOCOL_SIM_RPC_<chainId>_PINNED) instead of the shared near-head
+   * fork, so the recorded bindings stay verifiable regardless of wall
+   * clock. The rig and CI resolve the pin from the registry via
+   * scripts/protocol-pinned-block.ts; refresh procedure in
+   * specs/protocol-coverage-methodology.md.
+   */
+  pinnedBlock?: number;
   setup: SetupSpec;
   /** Per-action input bindings keyed by action.slug. */
   actions: Record<string, ActionInputBindings>;

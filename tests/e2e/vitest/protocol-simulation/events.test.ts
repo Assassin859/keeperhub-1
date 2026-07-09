@@ -7,12 +7,19 @@
  * simulation on a chain by declaring an `events` block in its
  * testData[chain]; see _shared/simulate-events.ts.
  *
+ * Pinned protocols (testData.pinnedBlock - pendle) route to a dedicated fork
+ * pinned at that block (PROTOCOL_SIM_RPC_<chainId>_PINNED) and are excluded
+ * from the shared near-head fork, exactly as the action harness does.
+ *
  * Run via: scripts/protocol-local.sh sim [chain]
  */
 
 import { describe } from "vitest";
 import "@/protocols";
-import { getRegisteredProtocols } from "@/lib/protocol-registry";
+import {
+  getRegisteredProtocols,
+  type ProtocolDefinition,
+} from "@/lib/protocol-registry";
 import { runEventSimulation } from "./_shared/simulate-events";
 
 const CHAINS = [
@@ -21,21 +28,56 @@ const CHAINS = [
   { name: "base", chainId: "8453" },
 ] as const;
 
+function hasEvents(protocol: ProtocolDefinition, chainId: string): boolean {
+  const chainData = protocol.testData?.[chainId];
+  return Boolean(chainData?.events && protocol.events?.length);
+}
+
 for (const chain of CHAINS) {
   const rpcUrl = process.env[`PROTOCOL_SIM_RPC_${chain.chainId}`];
-  describe.skipIf(!rpcUrl)(`protocol event simulation (${chain.name})`, () => {
-    for (const protocol of getRegisteredProtocols()) {
-      const chainData = protocol.testData?.[chain.chainId];
-      if (!(chainData?.events && protocol.events?.length)) {
-        continue;
-      }
-      describe(protocol.slug, () => {
-        runEventSimulation({
-          protocol: protocol.slug,
-          chainId: chain.chainId,
-          rpcUrl: rpcUrl as string,
+  const pinnedRpcUrl = process.env[`PROTOCOL_SIM_RPC_${chain.chainId}_PINNED`];
+
+  describe.skipIf(!rpcUrl)(
+    `protocol event simulation (${chain.name})`,
+    () => {
+      for (const protocol of getRegisteredProtocols()) {
+        const chainData = protocol.testData?.[chain.chainId];
+        if (
+          !hasEvents(protocol, chain.chainId) ||
+          chainData?.pinnedBlock !== undefined
+        ) {
+          continue;
+        }
+        describe(protocol.slug, () => {
+          runEventSimulation({
+            protocol: protocol.slug,
+            chainId: chain.chainId,
+            rpcUrl: rpcUrl as string,
+          });
         });
-      });
+      }
     }
-  });
+  );
+
+  describe.skipIf(!pinnedRpcUrl)(
+    `protocol event simulation (${chain.name}, pinned block)`,
+    () => {
+      for (const protocol of getRegisteredProtocols()) {
+        const chainData = protocol.testData?.[chain.chainId];
+        if (
+          !hasEvents(protocol, chain.chainId) ||
+          chainData?.pinnedBlock === undefined
+        ) {
+          continue;
+        }
+        describe(protocol.slug, () => {
+          runEventSimulation({
+            protocol: protocol.slug,
+            chainId: chain.chainId,
+            rpcUrl: pinnedRpcUrl as string,
+          });
+        });
+      }
+    }
+  );
 }
