@@ -326,6 +326,14 @@ export default defineAbiProtocol({
           owner: wallet(),
         },
       },
+      // approve-dai and approve-usds run the app's real approve-token path,
+      // which fans out cold token state on a fresh fork and runs past the
+      // default two-minute wait; give them the same headroom as ethena
+      // approve-usde / lido approve-steth / curve crv-approve.
+      executionWaitMs: {
+        "approve-dai": 240_000,
+        "approve-usds": 240_000,
+      },
     },
   },
 
