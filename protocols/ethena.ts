@@ -98,6 +98,15 @@ export default defineAbiProtocol({
         "vault-withdraw": { receiver: wallet(), owner: wallet() },
         "vault-redeem": { receiver: wallet(), owner: wallet() },
       },
+      // approve-usde exercises the app's real approve-token path (the same
+      // one the setup above fabricates around) and unstake claims through
+      // the silo; both fan out cold contract state on a fresh fork and run
+      // past the default two-minute wait, so give them the same headroom as
+      // lido approve-steth / curve crv-approve.
+      executionWaitMs: {
+        "approve-usde": 240_000,
+        unstake: 240_000,
+      },
       fabrications: {
         // cooldown-shares runs immediately before unstake in registry
         // order and re-arms the cooldown timer (86400s on mainnet,
