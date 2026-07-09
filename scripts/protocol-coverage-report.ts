@@ -25,7 +25,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import "../protocols";
 import { getRegisteredProtocols } from "../lib/protocol-registry";
-import { planPhaseFixtures } from "../lib/test-data/plan";
+import { type FixtureCase, planPhaseFixtures } from "../lib/test-data/plan";
 import {
   countAssertions,
   type VitestAssertionCounts,
@@ -164,10 +164,23 @@ function buildRows(results?: Map<string, SuiteResult>): {
       continue;
     }
     for (const chainId of chainIds) {
-      const plan = [
+      // Tier-2 view: skippedCoverage actions run in the fork tier but are
+      // skipped by the app coverage suite, so the report counts them as
+      // skipped to match what this suite executes.
+      const coverageSkips = def.testData?.[chainId]?.skippedCoverage ?? {};
+      const rawPlan = [
         ...planPhaseFixtures(def, def.slug, chainId, "read"),
         ...planPhaseFixtures(def, def.slug, chainId, "write"),
       ];
+      const plan: FixtureCase[] = rawPlan.map((c) =>
+        c.kind === "run" && coverageSkips[c.action.slug] !== undefined
+          ? {
+              kind: "skip",
+              action: c.action,
+              reason: coverageSkips[c.action.slug],
+            }
+          : c
+      );
       const runnable = plan.filter((c) => c.kind === "run").length;
       const skippedCases = plan.filter((c) => c.kind === "skip");
       const expectations = def.testData?.[chainId]?.expectations ?? {};

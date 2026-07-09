@@ -23,6 +23,7 @@ const CHAINS = [
   { name: "ethereum", chainId: "1" },
   { name: "sepolia", chainId: "11155111" },
   { name: "base", chainId: "8453" },
+  { name: "arbitrum", chainId: "42161" },
 ] as const;
 
 for (const chain of CHAINS) {

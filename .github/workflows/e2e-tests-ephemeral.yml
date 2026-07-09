@@ -376,6 +376,102 @@ jobs:
           PROTOCOL_SIM_RPC_1: http://localhost:8548
           PROTOCOL_SIM_RPC_1_PINNED: ${{ steps.pinned-fork.outputs.rpc }}
 
+  # Tier 1 fork simulations on the L2s (Base 8453, Arbitrum One 42161), one
+  # matrix leg per chain so the two sweeps run in parallel on separate
+  # runners and neither extends the chain-1 tier1 budget. Each leg forks its
+  # chain from a public upstream - simulations read forked state and never
+  # mine against the upstream, so a public endpoint is sufficient (override
+  # with the per-chain ANVIL_FORK_*_URL secret for a private one) - then runs
+  # the sweep with only that chain's PROTOCOL_SIM_RPC_<id> set, so
+  # chains.test.ts executes exactly that chain and the executed-test floor is
+  # per-chain. See specs/protocol-coverage-methodology.md.
+  tier1-simulations-l2:
+    needs: should-run
+    if: needs.should-run.outputs.run-e2e == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    strategy:
+      # One chain's flaky public upstream must not cancel the other leg.
+      fail-fast: false
+      matrix:
+        include:
+          - name: base
+            chain_id: "8453"
+            chain_hex: "0x2105"
+            default_upstream: https://base-rpc.publicnode.com
+            # Floor 15: the Base sweep executes chainlink's price-feed reads
+            # (19) plus ajna's Base reads; below 15 means chainlink is
+            # self-skipping or lost its bindings.
+            floor: "15"
+          - name: arbitrum
+            chain_id: "42161"
+            chain_hex: "0xa4b1"
+            default_upstream: https://arbitrum-one-rpc.publicnode.com
+            # Floor 12: the Arbitrum sweep executes chainlink's price-feed
+            # reads (21, including BTC/ETH); below 12 means self-skipping.
+            floor: "12"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Start anvil ${{ matrix.name }} fork
+        env:
+          ANVIL_FORK_BASE_URL: ${{ secrets.ANVIL_FORK_BASE_URL }}
+          ANVIL_FORK_ARBITRUM_URL: ${{ secrets.ANVIL_FORK_ARBITRUM_URL }}
+        run: |
+          case "${{ matrix.chain_id }}" in
+            8453) UPSTREAM="${ANVIL_FORK_BASE_URL:-${{ matrix.default_upstream }}}" ;;
+            42161) UPSTREAM="${ANVIL_FORK_ARBITRUM_URL:-${{ matrix.default_upstream }}}" ;;
+            *) echo "unknown chain ${{ matrix.chain_id }}"; exit 1 ;;
+          esac
+          # Pin a few blocks behind head so a node behind a load-balanced
+          # public upstream already has the block (bash arithmetic parses the
+          # 0x head). See scripts/protocol-local.sh start_fork.
+          HEAD=$(curl -sf -X POST -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+            "$UPSTREAM" | grep -oE '"result":"0x[0-9a-f]+"' | cut -d'"' -f4) || true
+          PIN_ARGS=""
+          if [ -n "$HEAD" ]; then
+            PIN=$((HEAD - 12))
+            PIN_ARGS="--fork-block-number $PIN"
+          fi
+          docker run -d --name keeperhub-test-anvil-fork-${{ matrix.name }} -p 8545:8545 \
+            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --host 0.0.0.0 --fork-url "$UPSTREAM" $PIN_ARGS \
+            --chain-id ${{ matrix.chain_id }} --block-time 1
+          retries=0
+          until curl -sf -X POST http://localhost:8545 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"${{ matrix.chain_hex }}"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil ${{ matrix.name }} fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-${{ matrix.name }} || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "anvil ${{ matrix.name }} fork ready on localhost:8545"
+
+      - name: Run Tier 1 simulations (${{ matrix.name }})
+        run: |
+          pnpm vitest run tests/e2e/vitest/protocol-simulation \
+            --reporter=default --reporter=json --outputFile=sim-results-${{ matrix.name }}.json
+          pnpm tsx scripts/protocol-coverage-floor.ts \
+            sim-results-${{ matrix.name }}.json ${{ matrix.floor }}
+        env:
+          # Only the matrix leg's chain gets an RPC; chains.test.ts skips
+          # every chain whose PROTOCOL_SIM_RPC_<id> is empty, so each leg
+          # runs exactly its one chain and the floor stays per-chain.
+          PROTOCOL_SIM_RPC_8453: ${{ matrix.chain_id == '8453' && 'http://localhost:8545' || '' }}
+          PROTOCOL_SIM_RPC_42161: ${{ matrix.chain_id == '42161' && 'http://localhost:8545' || '' }}
+
   # Enablement is decided by the should-run job: the environment-level
   # ENABLE_E2E_EPHEMERAL_TESTS variable is the kill switch, plus the
   # per-event/label conditions there.

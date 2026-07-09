@@ -63,6 +63,19 @@ Rules for writing expectations:
   Tier 1 sim path (`scripts/protocol-local.sh sim sepolia`).
 - Base (ajna) is live Base mainnet, reads only; every write is skipped and
   the gas preflight short-circuits, so no real ETH is spent.
+- Tier 1 also sweeps L2 forks: Base (8453) and Arbitrum One (42161) run as
+  anvil forks of a public upstream, gated on `PROTOCOL_SIM_RPC_8453` /
+  `PROTOCOL_SIM_RPC_42161`. Simulations read forked state and never mine
+  against the upstream, so a public endpoint suffices (no archive node),
+  unlike the mainnet pinned fork. `chains.test.ts` iterates these chains
+  and self-skips any whose RPC env is absent. Covered protocols: chainlink
+  price-feed reads on both chains (ajna's Base reads run here too). The CI
+  `tier1-simulations-l2` job runs one matrix leg per chain, in parallel
+  with the chain-1 `tier1-simulations` job, each with its own executed-test
+  floor (`scripts/protocol-coverage-floor.ts`). Locally:
+  `scripts/protocol-local.sh sim base` / `sim arbitrum` (or bare `sim` for
+  all chains) starts the fork and runs the sweep. `coverage:report` emits a
+  per-chain row for 8453 and 42161 from each protocol's testData.
 - Payable actions bind the virtual `ethValue` key (plain ETH string), and
   userSpecifiedAddress contracts bind the virtual `contractAddress` key.
 - Fork-only privileged provisioning: a protocol whose fixtures need a
@@ -263,9 +276,13 @@ code.
   registered event is emitted on the fork and the registry event ABI is
   asserted to decode the real log into the trigger-layer shape. What remains
   uncovered is the poll-and-fire loop that consumes that decoded shape.
-- One chain per protocol. Multi-chain protocols are exercised on a single
-  chain (mainnet fork where possible); L2 deployments are unvalidated
-  until a second fork is added.
+- Partial multi-chain coverage. Tier 1 now sweeps Base and Arbitrum One
+  forks, but only for protocols with L2 testData (chainlink price feeds on
+  both; ajna reads on Base). Most protocols with declared L2 contract
+  addresses (aave-v3, uniswap-v3, pendle, sky, etc.) still lack L2 testData
+  and are exercised on the mainnet fork only. Extending them needs per-chain
+  `FORK_WHALES`/`FAUCETS` before write fixtures with `requiredTokens` can
+  run on those chains (read-only additions need neither).
 - Actions with unmet on-chain prerequisites (vault/pool addresses, open
   auctions, cooldowns) are skipped with reasons. Skip reasons must name
   the real constraint - "payable" was wrong for frax/rocket-pool (the
@@ -284,6 +301,51 @@ code.
 4. Verify third-party state assumptions empirically (eth_call) and record
    the date in a comment, as done in `protocols/safe.ts` and
    `protocols/aave-v3.ts`.
+
+## Output-to-binding piping (fromSetupOutput)
+
+Some actions can only run against an address the setup phase itself creates:
+the four Superfluid GDA pool actions (update-member-units, distribute,
+distribute-flow, connect-pool) need the pool address that create-pool
+deploys. A static literal cannot supply it, so those actions were documented
+skips.
+
+The fixture layer resolves this with a capture binding. Instead of a literal,
+an input binds `fromSetupOutput("create-pool", "pool")` - naming a producing
+step and a field of its output. The producing action declares a matching
+`captures` entry in its chain testData, and the harness records that field
+into a per-run `SetupOutputs` context (`step -> field -> value`) that the
+workflow builder consumes at call time (`lib/test-data/types.ts`,
+`resolveBinding` in `lib/test-data/build-workflow.ts`).
+
+The two tiers populate the context differently:
+
+- **Fork simulation (Tier 1)** has no database. `captures` runs after setup
+  provisioning and before the action sweep. The only kind today is
+  `"gda-pool"`: eth_call create-pool's own calldata and decode its
+  `(bool success, address pool)` return to predict the pool the create-pool
+  action will deploy. The prediction holds because the pool address is a
+  function of the GDA deployer nonce only and no other pool is created
+  between the capture and the create-pool action (registry order runs the
+  CFA writes first). The captured pool then resolves the GDA actions'
+  fromSetupOutput bindings, so they execute against the real pool.
+- **App coverage (Tier 2)** would record setup-step outputs the same way the
+  output oracle reads them (`workflow_execution_logs.output_raw`, via
+  `fetchNodeOutput`). That works for a read whose structured `result` carries
+  the value, but not for create-pool: the executor's write step returns
+  `result: undefined` with no logs, so the deployed pool address is not
+  queryable from a write's recorded output today. Surfacing it (decoding the
+  PoolCreated log, or a query-events step chained in setup) is an executor
+  change tracked separately. Until then the four GDA actions stay in
+  `skippedCoverage` - skipped by the app suite, run by the fork sweep - while
+  create-pool and grant-flow-operator themselves run in both tiers.
+
+`skippedCoverage` is the tier split: unlike `skipped` (both tiers), it skips
+only the app coverage runner and the report, leaving the fork sweep to run
+the action. A skipped/skippedCoverage action still builds (for the seeder and
+the golden-calldata tests); when its capture is absent the builder substitutes
+the same unused address placeholder an unbound address input gets, so those
+build paths do not need a live capture.
 
 ## Validating workflow changes locally (act + rig)
 
@@ -331,3 +393,4 @@ timed local runs unless marked CI.
 | 2026-07-09 | Event-trigger decode coverage at Tier 1 | actions unchanged | actions unchanged | actions unchanged; event dimension added to coverage:report (13 covered / 31 total, 18 documented skips) | the tier1-simulations job's `pnpm vitest run tests/e2e/vitest/protocol-simulation` now also runs events.test.ts on chain 1 (rocket-pool, safe, lido emit + decode; pendle documented-skipped), adding event-decode assertions inside the existing floor/time budget | new events.test.ts + _shared/simulate-events.ts; emitters reuse the rETH deposit fixture, a targeted stETH.submit, and a deploy-and-drive Safe (approved-hash signature, no key/EIP-712). Aerodrome (Base-only) and Pendle (expiring userSpecifiedAddress markets) are reasoned skips |
 | 2026-07-07 | Sepolia fork retirement: chronicle, superfluid, and the Safe roles orchestrator re-homed to the mainnet fork | 244 (was 246): 27 Sepolia-runnable actions retired, 24 return as chain-1 fixtures. Chronicle's toll-gated mainnet feeds are whitelisted by the new fork-only `setup.forkImpersonatedCalls` (an authed ward kisses the test wallet - shared by the Tier 1 harness and Tier 2 preflight); superfluid runs on DAI/DAIx (USDCx upgrade OOGs under exact-estimate gas - its underlying routes into Sky savings; ETHx is ABI-incompatible with wrap/unwrap), sized for mainnet's 69-DAI CFA minimum deposit, with create-pool and grant-flow-operator now executing (their Sepolia skips were public-upstream cold-fetch constraints) | 105 | 15 (chronicle feed reads nonZero; superfluid balance/underlying reads plus create-flow/delete-flow post-write oracles on get-flow) | chain-1 Tier 1 sweep 229 passed / 139 skipped / 0 failed (was 203/165/0). Chronicle Tier 2 verified through the app on the local rig: 12/12 with oracle assertions (all reads, no signing needed). Superfluid Tier 2 verified to the signing boundary (whale funding preflight green; setup approve fails at Turnkey wallet init without real keys). Orchestrator fork tests 2/2 on the mainnet fork. CI now runs a single anvil fork: the Sepolia fork service, restart step, post-restart probe, probe-forks line, chains-row patches, and PROTOCOL_E2E_SEPOLIA_FORK are gone; protocol-gate floors re-derived from planPhaseFixtures (representatives 22 / full 200 with ANVIL_FORK_MAINNET_URL, 1 / 20 without - ajna only) | one fork to start/restart instead of two; the ~15-minute Sepolia public-upstream window no longer bounds any CI job |
 | 2026-07-08 | Pendle pinned-block fixtures | 255 (was 244): pendle's 11 deferred actions unlocked - market/PT/YT/SY reads plus the mint/redeem write pair bind the recorded wstETH market (expiry 2027-12-30) at pinned block 25487331, per the "Pendle pinned-block fixtures" section above | 94 | 22 (pendle adds market-expiry equals, expiry-flag equals, SY exchange-rate/balance nonZero read oracles, plus post-write oracles: mint asserts PT/YT balances nonZero, redeem asserts SY balance) | the tier1 CI job starts a second, pinned mainnet fork (block registry-resolved via scripts/protocol-pinned-block.ts, archive-secret-gated, health-probed at the pin) and chains.test.ts routes pinned protocols to it; the Tier 2 suite exercises the same bindings on the shared near-head fork in nightly/full runs | pinned fork is cold each run (no nightly cache covers its block) but pendle touches only a handful of contracts; without the archive secret the pinned suite self-skips instead of failing |
+| 2026-07-09 | Multi-chain Tier 1: Base + Arbitrum forks | chainlink price-feed reads bound on Base (19: all named USD/ETH feeds except BTC/ETH, plus the custom-feed read set) and Arbitrum One (21: adds the BTC/ETH feed); ajna's existing Base reads now also execute on a Base fork instead of only live Base. CCIP and historical-round actions self-skip on both chains | unchanged on chain 1 | reads assert liveness through the same oracle; no new value-asserted expectations added for the L2 feeds | new `tier1-simulations-l2` job runs one matrix leg per chain (Base floor 15, Arbitrum floor 12) in parallel with the chain-1 tier1 job; each forks a public upstream (no archive node - sims never mine against upstream) and self-skips a chain whose `PROTOCOL_SIM_RPC_<id>` is unset. `coverage:report` now shows 8453 and 42161 rows | two L2 legs on separate runners add no time to the chain-1 budget; read-only L2 coverage needs no whales/faucets. Follow-up: write-bearing L2 protocols (aave-v3, uniswap-v3, sky) need per-chain FORK_WHALES/FAUCETS before their testData can run |
