@@ -239,6 +239,19 @@ export type ProtocolChainTestData = {
    * binding is a zero placeholder).
    */
   skipped?: Record<string, string>;
+  /**
+   * Event-trigger simulation opt-in for this (protocol, chain). When present,
+   * the Tier 1 event harness (tests/e2e/vitest/protocol-simulation) emits an
+   * impersonated transaction on the fork for each registered protocol event
+   * and asserts the event-trigger decoder parses the resulting log into the
+   * shape the trigger layer consumes. Declare it on exactly one chain per
+   * protocol (the chain the harness emits on). `skipped` documents events
+   * that cannot be emitted on the fork, keyed by event slug, with a reason
+   * naming the real constraint — mirrors `skipped` for actions.
+   */
+  events?: {
+    skipped?: Record<string, string>;
+  };
 };
 
 /** A protocol's test data, keyed by chainId. */

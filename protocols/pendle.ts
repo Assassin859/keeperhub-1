@@ -48,6 +48,30 @@ const TEST_DATA: ProtocolTestData = {
       "redeem-py-to-sy":
         "write - requires PT/YT balance and a specific YT address (userSpecifiedAddress)",
     },
+    // Every Pendle event fires on a market / YT / SY contract that is
+    // userSpecifiedAddress and time-bounded (markets expire). No live market
+    // is bound in chain-1 testData, so none of these can be emitted on the
+    // pinned fork - the same constraint that skips every Pendle write action.
+    events: {
+      skipped: {
+        "market-swap":
+          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so a swap cannot be emitted on the fork",
+        "market-mint":
+          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so LP mint cannot be emitted on the fork",
+        "market-burn":
+          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so LP burn cannot be emitted on the fork",
+        "update-implied-rate":
+          "market contract is userSpecifiedAddress; no live Pendle market is bound (markets expire), so an implied-rate update cannot be emitted on the fork",
+        "yt-mint":
+          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so a PT/YT mint cannot be emitted on the fork",
+        "yt-burn":
+          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so a PT/YT redeem cannot be emitted on the fork",
+        "redeem-rewards":
+          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so a rewards redeem cannot be emitted on the fork",
+        "redeem-interest":
+          "yt contract is userSpecifiedAddress; no live YT is bound (markets expire), so an interest redeem cannot be emitted on the fork",
+      },
+    },
   },
 };
 

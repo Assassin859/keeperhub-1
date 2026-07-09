@@ -122,6 +122,46 @@ load-bearing - the tier1 download step locates the tar by the exact
 `fork-cache-mainnet-*.tgz` pattern the nightly packaging step writes,
 so the two must change together.
 
+## Event-trigger decode coverage
+
+The registry declares protocol events consumed by the Event trigger. The
+Tier 2 runner fires workflows over the webhook endpoint, which bypasses
+trigger config, so event decoding otherwise has zero execution coverage.
+The Tier 1 event harness
+(`tests/e2e/vitest/protocol-simulation/events.test.ts` +
+`_shared/simulate-events.ts`) closes that gap: for each registered event it
+emits a real, impersonated transaction on the fork, then asserts the
+registry's own event ABI fragment (`buildEventAbiFragment`, the exact
+artifact the Event trigger stores as `contractABI`) decodes the emitted log
+into the shape the trigger layer consumes - `eventName` plus every declared
+input surfacing as a named, bigint-serializable arg (mirrors
+`plugins/web3/steps/query-events.ts` `decodeEventArgs` and
+`lib/workflow/editor/trigger-output-fields.ts`). A pass proves the registry
+event definition (name, param types, indexed flags) matches the real
+on-chain event.
+
+Enumeration is registry-driven, like actions: a protocol opts into event
+simulation on one chain by declaring an `events` block in its
+`testData[chain]`; `events.skipped` (keyed by event slug) documents events
+that cannot be emitted on the fork, each with a reason naming the real
+constraint. Emitters reuse existing write fixtures where one already emits
+the event (a rETH deposit emits `DepositReceived` and `TokensMinted`) and
+fall back to targeted calls otherwise (a `stETH.submit` for `Submitted`; a
+throwaway 1-of-1 Safe driven through its state-changing calls with an
+approved-hash signature - no ECDSA key or EIP-712 hash needed - for the Safe
+events). Coverage is counted by `pnpm coverage:report` from the same opt-in
+maps, so it cannot drift from what the harness runs.
+
+Documented skips at first landing (18 of 31): Pendle's 8 events fire on
+`userSpecifiedAddress` market/YT/SY contracts that expire and have no live
+address bound in chain-1 testData (same constraint that skips every Pendle
+write); Aerodrome's 7 are Base-only and the tier1 CI job forks Ethereum
+mainnet (chain 1) only, so they have no simulated chain; rocket-pool's
+`TokensBurned` needs redeemable rETH collateral the deposit pool can lack;
+and Safe's `SignMsg` (SignMessageLib delegatecall) and `ExecutionFailure`
+(needs a nonzero `safeTxGas`/gas-refund path) are unreachable from the
+harness's happy-path self-calls.
+
 ## Gating and the vacuous-pass hazard
 
 Every suite self-skips when `DATABASE_URL`, `ANVIL_FORK_MAINNET_URL`
@@ -133,10 +173,14 @@ code.
 
 ## Known limits (intentional, revisit when scope changes)
 
-- Triggers are not tested. The runner fires workflows via webhook, which
-  ignores trigger config; Schedule/Event trigger behavior needs its own
-  harness. Seeded trigger-variant workflows are dashboard fixtures, not
-  test signal.
+- Trigger *dispatch* is not tested. The runner fires workflows via webhook,
+  which ignores trigger config; Schedule/Event trigger polling and
+  dispatch behavior needs its own harness. Seeded trigger-variant workflows
+  are dashboard fixtures, not test signal. The Event trigger's log-*decode*
+  path is now covered at Tier 1 (see "Event-trigger decode coverage"): each
+  registered event is emitted on the fork and the registry event ABI is
+  asserted to decode the real log into the trigger-layer shape. What remains
+  uncovered is the poll-and-fire loop that consumes that decoded shape.
 - One chain per protocol. Multi-chain protocols are exercised on a single
   chain (mainnet fork where possible); L2 deployments are unvalidated
   until a second fork is added.
@@ -202,4 +246,5 @@ timed local runs unless marked CI.
 | 2026-07-03 | MetaMorpho unlocks + Tier 1 in CI + nightly | chain-1 sweep 203 pass / 72 skips / 0 fail (stable across consecutive runs): morpho's 18 vault actions bind the live Steakhouse USDC vault (the yearn pattern; no piping needed), core sequence margin-hardened (borrow 10, repay 8, withdraw-collateral 0.02) after one borderline interest-timing failure. Pendle deliberately deferred: its markets expire, so hardcoded bindings rot - needs the state-snapshot fixture approach. Piping now applies only to superfluid GDA (4, blocked on the Sepolia archive upstream). | runnable 246 | 103 | 8 | tier1-simulations job added to the ephemeral workflow (parallel, no app build, floor 150) - per-action breadth reaches CI for the first time; protocol-nightly.yml runs the full e2e via workflow_call plus the Tier 0 mutation check | tier1 CI job ~8 min estimated; workflows actionlinted and act-validated (nightly dry-run traverses both jobs; schedule gate branch exercised) |
 | 2026-07-07 | Parallel protocol gate split | unchanged | unchanged | unchanged | protocol-coverage runs as its own job, fed by a shared build-app artifact, in parallel with the e2e stack instead of serially at its tail. PR runs use representatives mode with an executed-test floor of 3 (ajna contributes one read representative and no write - all its writes are skipped; superfluid one read and one write; the mainnet suites self-skip until ANVIL_FORK_MAINNET_URL is provisioned, at which point the floor rises); nightly/push runs keep the full sweep, floor 30. Fork health probes (probe-forks action plus a post-restart upstream probe) guard both anvil forks. First CI round measured: representatives executed 3, passed 3 | protocol results no longer wait on the vitest e2e tail; dead forks or upstreams fail in seconds instead of as 300s vitest timeouts |
 | 2026-07-07 | Hermetic fork state for tier1 (RPC fetch cache pivot) | unchanged | unchanged | unchanged | protocol-nightly's fork-cache-mainnet job warms a live pinned fork with the Tier 1 sweep (floor 150; a red sweep or floor breach publishes nothing) and publishes foundry's flushed RPC cache as fork-cache-mainnet-\<block\>.tgz, 3-day retention; the tier1-simulations job consumes the freshest staging-produced artifact under 36 hours old when ANVIL_FORK_MAINNET_URL is set, and falls back to a live fork on every failure mode. The nightly warm sweep runs on a live fork, so it is itself the live-fork canary | the first design (anvil_dumpState + --load-state) was structurally wrong twice over: the dump captured the warm sweep's own mutations (and the sweep is not idempotent on its residue - morpho set-authorization reverts "already set" on re-run, empirically confirmed) and missed eth_call-only fetches. The pivot packages foundry's on-disk RPC fetch cache instead. Measured (foundry:latest, 2026-07-07): anvil persists upstream fetches to $HOME/.foundry/cache/rpc/\<chain\>/\<block\>/storage.json, flushing only on graceful shutdown (SIGTERM; SIGKILL loses it); a fresh fork with the cache mounted at the same pin serves every warmed read with zero upstream requests (counted through a logging proxy) and starts pristine - a warmed impersonated WETH deposit is invisible, totalSupply returns its exact pre-write value; cold reads against a dead upstream fail loudly (-32603); anvil still needs the upstream at startup (chain id, block env) and for the mining loop's block hashes; an unpinned fork also persists a cache keyed by its resolved head block, so pinning stays explicit everywhere |
+| 2026-07-09 | Event-trigger decode coverage at Tier 1 | actions unchanged | actions unchanged | actions unchanged; event dimension added to coverage:report (13 covered / 31 total, 18 documented skips) | the tier1-simulations job's `pnpm vitest run tests/e2e/vitest/protocol-simulation` now also runs events.test.ts on chain 1 (rocket-pool, safe, lido emit + decode; pendle documented-skipped), adding event-decode assertions inside the existing floor/time budget | new events.test.ts + _shared/simulate-events.ts; emitters reuse the rETH deposit fixture, a targeted stETH.submit, and a deploy-and-drive Safe (approved-hash signature, no key/EIP-712). Aerodrome (Base-only) and Pendle (expiring userSpecifiedAddress markets) are reasoned skips |
 | 2026-07-07 | Sepolia fork retirement: chronicle, superfluid, and the Safe roles orchestrator re-homed to the mainnet fork | 244 (was 246): 27 Sepolia-runnable actions retired, 24 return as chain-1 fixtures. Chronicle's toll-gated mainnet feeds are whitelisted by the new fork-only `setup.forkImpersonatedCalls` (an authed ward kisses the test wallet - shared by the Tier 1 harness and Tier 2 preflight); superfluid runs on DAI/DAIx (USDCx upgrade OOGs under exact-estimate gas - its underlying routes into Sky savings; ETHx is ABI-incompatible with wrap/unwrap), sized for mainnet's 69-DAI CFA minimum deposit, with create-pool and grant-flow-operator now executing (their Sepolia skips were public-upstream cold-fetch constraints) | 105 | 15 (chronicle feed reads nonZero; superfluid balance/underlying reads plus create-flow/delete-flow post-write oracles on get-flow) | chain-1 Tier 1 sweep 229 passed / 139 skipped / 0 failed (was 203/165/0). Chronicle Tier 2 verified through the app on the local rig: 12/12 with oracle assertions (all reads, no signing needed). Superfluid Tier 2 verified to the signing boundary (whale funding preflight green; setup approve fails at Turnkey wallet init without real keys). Orchestrator fork tests 2/2 on the mainnet fork. CI now runs a single anvil fork: the Sepolia fork service, restart step, post-restart probe, probe-forks line, chains-row patches, and PROTOCOL_E2E_SEPOLIA_FORK are gone; protocol-gate floors re-derived from planPhaseFixtures (representatives 22 / full 200 with ANVIL_FORK_MAINNET_URL, 1 / 20 without - ajna only) | one fork to start/restart instead of two; the ~15-minute Sepolia public-upstream window no longer bounds any CI job |
