@@ -197,6 +197,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Replaces the older DELETE-then-INSERT pattern which could
     // produce duplicate rows under concurrent calls (React StrictMode
     // fires open-effects twice in dev). One enrollment per user.
+    // Write the row pending (verified=false). The column defaults to true so
+    // sign-in verify never issues a redundant update, but a freshly generated
+    // secret has not been confirmed yet: leaving it true makes Better Auth's
+    // verify-totp skip its own enable path (it only enables when
+    // verified !== true), which strands re-enrollment. Starting false lets that
+    // path run on the first correct code, flipping verified + two_factor_enabled
+    // together. It returns to true the moment enrollment completes.
     const enrolledAt = new Date();
     await db
       .insert(twoFactorTable)
@@ -207,6 +214,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         backupCodes: null,
         name,
         enrolledAt,
+        verified: false,
       })
       .onConflictDoUpdate({
         target: twoFactorTable.userId,
@@ -215,6 +223,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           backupCodes: null,
           name,
           enrolledAt,
+          verified: false,
         },
       });
 
