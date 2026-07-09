@@ -116,6 +116,33 @@ const TEST_DATA: ProtocolTestData = {
         { read: "get-sy-balance", expect: { nonZero: true } },
       ],
     },
+    // Market and reward events fire on operations this testData binds no
+    // write action for (AMM swap/liquidity; reward/interest claim), so no
+    // fixture emits them. yt-mint / yt-burn ARE emittable via the pinned-fork
+    // mint-py-from-sy / redeem-py-to-sy fixtures, but the event harness runs
+    // lightweight self-contained emitters and does not yet perform pendle's
+    // pinned-fork setup provisioning (whale-funded SY plus router approvals);
+    // deferred follow-up.
+    events: {
+      skipped: {
+        "market-swap":
+          "fires on a Pendle market AMM swap; testData binds no swap write action, so no fixture emits it",
+        "market-mint":
+          "fires on Pendle market add-liquidity; testData binds no add-liquidity write action, so no fixture emits it",
+        "market-burn":
+          "fires on Pendle market remove-liquidity; testData binds no remove-liquidity write action, so no fixture emits it",
+        "update-implied-rate":
+          "fires on a Pendle market state change (swap/liquidity); testData binds no such write action, so no fixture emits it",
+        "yt-mint":
+          "emittable via the pinned-fork mint-py-from-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
+        "yt-burn":
+          "emittable via the pinned-fork redeem-py-to-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
+        "redeem-rewards":
+          "fires on YT redeemDueInterestAndRewards; testData binds no reward-claim write action, so no fixture emits it",
+        "redeem-interest":
+          "fires on YT redeemDueInterestAndRewards; testData binds no interest-claim write action, so no fixture emits it",
+      },
+    },
   },
 };
 

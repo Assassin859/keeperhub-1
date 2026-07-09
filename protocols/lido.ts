@@ -124,6 +124,10 @@ export default defineAbiProtocol({
       executionWaitMs: {
         "approve-steth": 240_000,
       },
+      // stETH.submit stakes ETH for stETH and emits Submitted; the event
+      // harness covers it with a targeted submit (needs only native gas,
+      // unlike wrap/unwrap which stay skipped pending a stETH whale).
+      events: {},
     },
   },
 

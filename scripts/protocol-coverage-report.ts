@@ -226,6 +226,74 @@ function buildRows(results?: Map<string, SuiteResult>): {
   return { rows, noHarness, orphanSuites, protocolMismatches };
 }
 
+/**
+ * Event-trigger coverage, counted from the registry + each protocol's
+ * testData[chain].events opt-in (the same source the Tier 1 event harness
+ * reads, so this cannot drift from what executes). A protocol opts into event
+ * simulation on one chain by declaring an `events` block; events listed under
+ * its `skipped` map are documented, reasoned skips. A protocol with events but
+ * no opt-in on any chain has none of its events simulated.
+ */
+type EventProtocolCoverage = {
+  protocol: string;
+  total: number;
+  covered: number;
+  skipped: number;
+  optInChain: string | undefined;
+  noOptIn: boolean;
+  skipReasons: Record<string, string>;
+};
+
+type EventCoverage = {
+  totalEvents: number;
+  coveredEvents: number;
+  skippedEvents: number;
+  perProtocol: EventProtocolCoverage[];
+};
+
+const NO_OPT_IN_REASON =
+  "no Tier 1 event simulation opt-in (protocol has no testData.events on a simulated chain)";
+
+function computeEventCoverage(): EventCoverage {
+  const perProtocol: EventProtocolCoverage[] = [];
+  let totalEvents = 0;
+  let coveredEvents = 0;
+  let skippedEvents = 0;
+
+  for (const def of getRegisteredProtocols()) {
+    const events = def.events ?? [];
+    if (events.length === 0) {
+      continue;
+    }
+    const optIn = Object.entries(def.testData ?? {}).find(([, td]) => td.events);
+    const skipMap = optIn?.[1].events?.skipped ?? {};
+    const skipReasons: Record<string, string> = {};
+    let skipped = 0;
+    for (const event of events) {
+      const reason = optIn ? skipMap[event.slug] : NO_OPT_IN_REASON;
+      if (reason) {
+        skipReasons[event.slug] = reason;
+        skipped += 1;
+      }
+    }
+    const covered = events.length - skipped;
+    totalEvents += events.length;
+    coveredEvents += covered;
+    skippedEvents += skipped;
+    perProtocol.push({
+      protocol: def.slug,
+      total: events.length,
+      covered,
+      skipped,
+      optInChain: optIn?.[0],
+      noOptIn: !optIn,
+      skipReasons,
+    });
+  }
+
+  return { totalEvents, coveredEvents, skippedEvents, perProtocol };
+}
+
 function pad(value: string | number, width: number): string {
   return String(value).padEnd(width);
 }
@@ -241,6 +309,7 @@ function main(): void {
 
   const { rows, noHarness, orphanSuites, protocolMismatches } =
     buildRows(results);
+  const eventCoverage = computeEventCoverage();
   const registryTotal = getRegisteredProtocols().reduce(
     (n, d) => n + d.actions.length,
     0
@@ -269,7 +338,9 @@ function main(): void {
   };
 
   if (asJson) {
-    process.stdout.write(`${JSON.stringify({ rows, totals }, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ rows, totals, events: eventCoverage }, null, 2)}\n`
+    );
     return;
   }
 
@@ -308,6 +379,16 @@ function main(): void {
   if (results) {
     lines.push(
       `executed: ${totals.executed} | passed: ${totals.passed} | failed: ${totals.failed}`
+    );
+  }
+  lines.push("");
+  lines.push(
+    `events: ${eventCoverage.coveredEvents} covered / ${eventCoverage.totalEvents} total | skipped: ${eventCoverage.skippedEvents}`
+  );
+  for (const p of eventCoverage.perProtocol) {
+    const optIn = p.noOptIn ? "no opt-in" : `chain ${p.optInChain}`;
+    lines.push(
+      `  ${pad(p.protocol, 13)} ${p.covered}/${p.total} covered, ${p.skipped} skipped (${optIn})`
     );
   }
   process.stdout.write(`${lines.join("\n")}\n`);
