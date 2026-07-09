@@ -138,6 +138,7 @@ export function TrialUpsellController(): null {
           TrialUpsellModal,
           {
             days,
+            usage: data.usage,
             onNeverShowAgain: () =>
               writeState({ ...readState(), dismissedForever: true }),
           },

@@ -27,10 +27,12 @@ const PRO_BENEFITS: readonly string[] = [
 export function TrialUpsellModal({
   overlayId,
   days,
+  usage,
   onNeverShowAgain,
 }: {
   overlayId: string;
   days: number;
+  usage?: { executionsUsed: number; executionLimit: number };
   onNeverShowAgain?: () => void;
 }): React.ReactElement {
   const { close } = useOverlay();
@@ -40,6 +42,12 @@ export function TrialUpsellModal({
 
   const activeTier = PRO.tiers.find((t) => t.key === tier) ?? PRO.tiers[0];
   const price = getTierPrice(activeTier, interval);
+
+  // Lead with the reason the offer is showing: the org is nearing its free cap.
+  const quotaLine =
+    usage && usage.executionLimit > 0
+      ? `You're reaching your free plan quota: ${usage.executionsUsed.toLocaleString()} of ${usage.executionLimit.toLocaleString()} executions used this month (${Math.round((usage.executionsUsed / usage.executionLimit) * 100)}%).`
+      : "You're reaching your free plan quota.";
 
   async function handleStartTrial(): Promise<void> {
     setLoading(true);
@@ -71,6 +79,7 @@ export function TrialUpsellModal({
           <h2 className="font-bold text-2xl tracking-tight">
             Try Pro free for {days} days
           </h2>
+          <p className="font-medium text-foreground text-sm">{quotaLine}</p>
           <p className="text-muted-foreground text-sm">
             $0 today. Full access to Pro. Cancel anytime before the trial ends.
           </p>
