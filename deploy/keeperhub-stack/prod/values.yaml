@@ -54,6 +54,10 @@ app:
 
   replicaCount: 2
 
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
   service:
     enabled: true
     name: keeperhub-prod
@@ -828,6 +832,10 @@ schedule:
 
   replicaCount: 1
 
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
   service:
     enabled: true
     name: keeperhub-scheduler-prod
@@ -940,6 +948,10 @@ block:
   # 3. Filters blocks by workflow interval and enqueues matches to SQS
 
   replicaCount: 1
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
   service:
     enabled: true
