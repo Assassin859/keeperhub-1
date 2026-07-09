@@ -1,5 +1,15 @@
+import type { Connection } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
+import { eq } from "drizzle-orm";
 import type { ethers } from "ethers";
+import { db } from "@/lib/db";
+import { explorerConfigs } from "@/lib/db/schema";
+import {
+  getAddressUrl as buildAddressUrl,
+  getTransactionUrl as buildTransactionUrl,
+} from "@/lib/explorer";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
 import type { NonceSession } from "../nonce-manager";
 import type {
   ChainAdapter,
@@ -10,12 +20,27 @@ import type {
   TransactionReceipt,
 } from "./types";
 
+type SolanaProviderFactory = () => Promise<SolanaProviderManager>;
+
 export class SolanaChainAdapter implements ChainAdapter {
   readonly chainFamily = "solana";
   private readonly chainId: number;
+  private readonly providerFactory: SolanaProviderFactory;
+  private resolvedManager: SolanaProviderManager | null = null;
+  private explorerConfigCache: typeof explorerConfigs.$inferSelect | null =
+    null;
+  private explorerConfigLoaded = false;
 
-  constructor(chainId: number) {
+  constructor(chainId: number, providerFactory: SolanaProviderFactory) {
     this.chainId = chainId;
+    this.providerFactory = providerFactory;
+  }
+
+  private async getManager(): Promise<SolanaProviderManager> {
+    if (!this.resolvedManager) {
+      this.resolvedManager = await this.providerFactory();
+    }
+    return this.resolvedManager;
   }
 
   sendTransaction(
@@ -26,7 +51,7 @@ export class SolanaChainAdapter implements ChainAdapter {
   ): Promise<TransactionReceipt> {
     return Promise.reject(
       new Error(
-        `Solana sendTransaction not implemented (chainId: ${this.chainId})`
+        "[SolanaChainAdapter] sendTransaction is not supported on Solana chains. Deferred to PR 2."
       )
     );
   }
@@ -39,7 +64,7 @@ export class SolanaChainAdapter implements ChainAdapter {
   ): Promise<TransactionReceipt> {
     return Promise.reject(
       new Error(
-        `Solana executeContractCall not implemented (chainId: ${this.chainId})`
+        "[SolanaChainAdapter] executeContractCall is not supported on Solana. Solana programs use instruction data, not ABI-encoded calls."
       )
     );
   }
@@ -50,44 +75,69 @@ export class SolanaChainAdapter implements ChainAdapter {
   ): Promise<unknown> {
     return Promise.reject(
       new Error(
-        `Solana readContract not implemented (chainId: ${this.chainId})`
+        "[SolanaChainAdapter] readContract is not supported on Solana. Solana does not use ABI-encoded view functions."
       )
     );
   }
 
-  getBalance(
+  async getBalance(
     _rpcManager: RpcProviderManager,
-    _address: string
+    address: string
   ): Promise<bigint> {
-    return Promise.reject(
-      new Error(`Solana getBalance not implemented (chainId: ${this.chainId})`)
-    );
+    const manager = await this.getManager();
+    return manager.executeWithFailover(async (connection) => {
+      const lamports = await connection.getBalance(new PublicKey(address));
+      return BigInt(lamports);
+    });
   }
 
   executeWithFailover<T>(
     _rpcManager: RpcProviderManager,
-    _operation: (provider: ethers.JsonRpcProvider) => Promise<T>
+    _operation: (provider: ethers.JsonRpcProvider) => Promise<T>,
+    _operationType?: "read" | "write"
   ): Promise<T> {
     return Promise.reject(
       new Error(
-        `Solana executeWithFailover not implemented (chainId: ${this.chainId})`
+        "[SolanaChainAdapter] executeWithFailover via RpcProviderManager is not supported on Solana. " +
+          "Cast to SolanaChainAdapter and call executeWithSolanaFailover instead."
       )
     );
   }
 
-  getTransactionUrl(_txHash: string): Promise<string> {
-    return Promise.reject(
-      new Error(
-        `Solana getTransactionUrl not implemented (chainId: ${this.chainId})`
-      )
-    );
+  async executeWithSolanaFailover<T>(
+    operation: (connection: Connection) => Promise<T>
+  ): Promise<T> {
+    const manager = await this.getManager();
+    return manager.executeWithFailover(operation);
   }
 
-  getAddressUrl(_address: string): Promise<string> {
-    return Promise.reject(
-      new Error(
-        `Solana getAddressUrl not implemented (chainId: ${this.chainId})`
-      )
-    );
+  async getTransactionUrl(txHash: string): Promise<string> {
+    const config = await this.getExplorerConfig();
+    if (!config) {
+      return "";
+    }
+    return buildTransactionUrl(config, txHash);
+  }
+
+  async getAddressUrl(address: string): Promise<string> {
+    const config = await this.getExplorerConfig();
+    if (!config) {
+      return "";
+    }
+    return buildAddressUrl(config, address);
+  }
+
+  private async getExplorerConfig(): Promise<
+    typeof explorerConfigs.$inferSelect | undefined
+  > {
+    if (this.explorerConfigLoaded) {
+      return this.explorerConfigCache ?? undefined;
+    }
+    const config = await db.query.explorerConfigs.findFirst({
+      where: eq(explorerConfigs.chainId, this.chainId),
+    });
+    this.explorerConfigCache = config ?? null;
+    this.explorerConfigLoaded = true;
+    return config ?? undefined;
   }
 }

@@ -1,0 +1,268 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
+vi.mock("@/lib/db", () => ({
+  db: { query: { explorerConfigs: { findFirst: vi.fn() } } },
+}));
+vi.mock("@/lib/db/schema", () => ({ explorerConfigs: {} }));
+vi.mock("drizzle-orm", () => ({ eq: () => ({}) }));
+vi.mock("@/lib/explorer", () => ({
+  getAddressUrl: vi.fn(),
+  getTransactionUrl: vi.fn(),
+}));
+vi.mock("@solana/web3.js", () => {
+  class MockConnection {
+    getBalance = vi.fn();
+  }
+  class MockPublicKey {
+    readonly address: string;
+    constructor(address: string) {
+      this.address = address;
+    }
+  }
+  return { Connection: MockConnection, PublicKey: MockPublicKey };
+});
+
+import { db } from "@/lib/db";
+import { getAddressUrl, getTransactionUrl } from "@/lib/explorer";
+import { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
+
+const DEVNET_CHAIN_ID = 103;
+const SYSTEM_PROGRAM_ADDRESS = "11111111111111111111111111111111";
+const TEST_TX_HASH = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+
+function createMockFactory(getBalanceResult: number | Error = 5_000_000) {
+  const mockGetBalance =
+    getBalanceResult instanceof Error
+      ? vi.fn().mockRejectedValue(getBalanceResult)
+      : vi.fn().mockResolvedValue(getBalanceResult);
+
+  const mockManager = {
+    executeWithFailover: vi
+      .fn()
+      .mockImplementation(async (operation: (c: unknown) => Promise<unknown>) =>
+        operation({ getBalance: mockGetBalance })
+      ),
+  };
+
+  const factory = vi.fn().mockResolvedValue(mockManager);
+  return { factory, mockManager, mockGetBalance };
+}
+
+describe("SolanaChainAdapter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe("chainFamily", () => {
+    it("is 'solana'", () => {
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      expect(adapter.chainFamily).toBe("solana");
+    });
+  });
+
+  describe("getBalance", () => {
+    it("returns lamports as bigint", async () => {
+      const { factory, mockGetBalance } = createMockFactory(5_000_000);
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      const balance = await adapter.getBalance(
+        null as never,
+        SYSTEM_PROGRAM_ADDRESS
+      );
+
+      expect(balance).toBe(BigInt(5_000_000));
+      expect(mockGetBalance).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns 0n when account has no lamports", async () => {
+      const { factory } = createMockFactory(0);
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      const balance = await adapter.getBalance(
+        null as never,
+        SYSTEM_PROGRAM_ADDRESS
+      );
+      expect(balance).toBe(BigInt(0));
+    });
+
+    it("propagates RPC errors", async () => {
+      const { factory } = createMockFactory(new Error("RPC error"));
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      await expect(
+        adapter.getBalance(null as never, SYSTEM_PROGRAM_ADDRESS)
+      ).rejects.toThrow("RPC error");
+    });
+  });
+
+  describe("getTransactionUrl", () => {
+    it("returns URL from DB explorer config", async () => {
+      const mockConfig = {
+        explorerUrl: "https://solscan.io",
+        explorerTxPath: "/tx/{hash}",
+      };
+      vi.mocked(db.query.explorerConfigs.findFirst).mockResolvedValue(
+        mockConfig as never
+      );
+      vi.mocked(getTransactionUrl).mockReturnValue(
+        "https://solscan.io/tx/abc123"
+      );
+
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      const url = await adapter.getTransactionUrl("abc123");
+      expect(url).toBe("https://solscan.io/tx/abc123");
+      expect(getTransactionUrl).toHaveBeenCalledWith(mockConfig, "abc123");
+    });
+
+    it("returns empty string when no explorer config in DB", async () => {
+      vi.mocked(db.query.explorerConfigs.findFirst).mockResolvedValue(
+        undefined
+      );
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      const url = await adapter.getTransactionUrl(TEST_TX_HASH);
+      expect(url).toBe("");
+    });
+
+    it("caches the explorer config on subsequent calls", async () => {
+      const mockConfig = {
+        explorerUrl: "https://solscan.io",
+        explorerTxPath: "/tx/{hash}",
+      };
+      vi.mocked(db.query.explorerConfigs.findFirst).mockResolvedValue(
+        mockConfig as never
+      );
+      vi.mocked(getTransactionUrl).mockReturnValue("https://solscan.io/tx/abc");
+
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      await adapter.getTransactionUrl("abc");
+      await adapter.getTransactionUrl("abc");
+
+      expect(db.query.explorerConfigs.findFirst).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("getAddressUrl", () => {
+    it("returns URL from DB explorer config", async () => {
+      const mockConfig = {
+        explorerUrl: "https://solscan.io",
+        explorerAddressPath: "/account/{address}",
+      };
+      vi.mocked(db.query.explorerConfigs.findFirst).mockResolvedValue(
+        mockConfig as never
+      );
+      vi.mocked(getAddressUrl).mockReturnValue(
+        "https://solscan.io/account/So111..."
+      );
+
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      const url = await adapter.getAddressUrl(SYSTEM_PROGRAM_ADDRESS);
+      expect(url).toBe("https://solscan.io/account/So111...");
+      expect(getAddressUrl).toHaveBeenCalledWith(
+        mockConfig,
+        SYSTEM_PROGRAM_ADDRESS
+      );
+    });
+
+    it("returns empty string when no explorer config in DB", async () => {
+      vi.mocked(db.query.explorerConfigs.findFirst).mockResolvedValue(
+        undefined
+      );
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      const url = await adapter.getAddressUrl(SYSTEM_PROGRAM_ADDRESS);
+      expect(url).toBe("");
+    });
+  });
+
+  describe("unsupported EVM operations", () => {
+    it("readContract throws standard Error", async () => {
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      await expect(
+        adapter.readContract(null as never, null as never)
+      ).rejects.toThrow("[SolanaChainAdapter] readContract is not supported");
+    });
+
+    it("sendTransaction throws standard Error", async () => {
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      await expect(
+        adapter.sendTransaction(
+          null as never,
+          null as never,
+          null as never,
+          null as never
+        )
+      ).rejects.toThrow(
+        "[SolanaChainAdapter] sendTransaction is not supported"
+      );
+    });
+
+    it("executeContractCall throws standard Error", async () => {
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      await expect(
+        adapter.executeContractCall(
+          null as never,
+          null as never,
+          null as never,
+          null as never
+        )
+      ).rejects.toThrow(
+        "[SolanaChainAdapter] executeContractCall is not supported"
+      );
+    });
+
+    it("executeWithFailover throws standard Error", async () => {
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+      await expect(
+        adapter.executeWithFailover(null as never, null as never, "read")
+      ).rejects.toThrow(
+        "[SolanaChainAdapter] executeWithFailover via RpcProviderManager is not supported"
+      );
+    });
+  });
+
+  describe("executeWithSolanaFailover", () => {
+    it("delegates to manager.executeWithFailover with the operation", async () => {
+      const { factory, mockManager } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      const mockOp = vi.fn().mockResolvedValue(42);
+      mockManager.executeWithFailover.mockResolvedValue(42);
+
+      const result = await adapter.executeWithSolanaFailover(mockOp);
+
+      expect(result).toBe(42);
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(mockManager.executeWithFailover).toHaveBeenCalledWith(mockOp);
+    });
+  });
+
+  describe("provider factory caching", () => {
+    it("calls the factory only once across multiple operations", async () => {
+      const factoryFn = vi.fn().mockResolvedValue({
+        executeWithFailover: vi.fn().mockResolvedValue(BigInt(0)),
+      });
+      vi.mocked(db.query.explorerConfigs.findFirst).mockResolvedValue(
+        undefined
+      );
+
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factoryFn);
+      await adapter.getBalance(null as never, SYSTEM_PROGRAM_ADDRESS);
+      await adapter.getBalance(null as never, SYSTEM_PROGRAM_ADDRESS);
+
+      expect(factoryFn).toHaveBeenCalledTimes(1);
+    });
+  });
+});
