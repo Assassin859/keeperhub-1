@@ -15,7 +15,7 @@ import {
   buildActionWorkflow,
   toWebhookTriggered,
 } from "@/lib/test-data/build-workflow";
-import { planPhaseFixtures } from "@/lib/test-data/plan";
+import { type FixtureCase, planPhaseFixtures } from "@/lib/test-data/plan";
 import {
   createApiKey,
   createTestWorkflow,
@@ -44,7 +44,18 @@ export function runPhaseFixtures(opts: {
     { representatives: process.env.PROTOCOL_E2E_REPRESENTATIVES === "1" }
   );
 
-  for (const c of plan) {
+  // Tier-2-only skips: actions the fork tier provisions via a capture but the
+  // app path cannot (the executor does not surface the producing write's
+  // output). The fork harness runs them; this suite skips them.
+  const coverageSkips =
+    protocol?.testData?.[opts.chainId]?.skippedCoverage ?? {};
+  const effectivePlan: FixtureCase[] = plan.map((c) =>
+    c.kind === "run" && coverageSkips[c.action.slug] !== undefined
+      ? { kind: "skip", action: c.action, reason: coverageSkips[c.action.slug] }
+      : c
+  );
+
+  for (const c of effectivePlan) {
     if (c.kind === "no-protocol") {
       test.skip(`protocol ${c.protocolSlug} not registered`, () => {
         /* no-op */

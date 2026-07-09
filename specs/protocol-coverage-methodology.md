@@ -232,6 +232,51 @@ code.
    the date in a comment, as done in `protocols/safe.ts` and
    `protocols/aave-v3.ts`.
 
+## Output-to-binding piping (fromSetupOutput)
+
+Some actions can only run against an address the setup phase itself creates:
+the four Superfluid GDA pool actions (update-member-units, distribute,
+distribute-flow, connect-pool) need the pool address that create-pool
+deploys. A static literal cannot supply it, so those actions were documented
+skips.
+
+The fixture layer resolves this with a capture binding. Instead of a literal,
+an input binds `fromSetupOutput("create-pool", "pool")` - naming a producing
+step and a field of its output. The producing action declares a matching
+`captures` entry in its chain testData, and the harness records that field
+into a per-run `SetupOutputs` context (`step -> field -> value`) that the
+workflow builder consumes at call time (`lib/test-data/types.ts`,
+`resolveBinding` in `lib/test-data/build-workflow.ts`).
+
+The two tiers populate the context differently:
+
+- **Fork simulation (Tier 1)** has no database. `captures` runs after setup
+  provisioning and before the action sweep. The only kind today is
+  `"gda-pool"`: eth_call create-pool's own calldata and decode its
+  `(bool success, address pool)` return to predict the pool the create-pool
+  action will deploy. The prediction holds because the pool address is a
+  function of the GDA deployer nonce only and no other pool is created
+  between the capture and the create-pool action (registry order runs the
+  CFA writes first). The captured pool then resolves the GDA actions'
+  fromSetupOutput bindings, so they execute against the real pool.
+- **App coverage (Tier 2)** would record setup-step outputs the same way the
+  output oracle reads them (`workflow_execution_logs.output_raw`, via
+  `fetchNodeOutput`). That works for a read whose structured `result` carries
+  the value, but not for create-pool: the executor's write step returns
+  `result: undefined` with no logs, so the deployed pool address is not
+  queryable from a write's recorded output today. Surfacing it (decoding the
+  PoolCreated log, or a query-events step chained in setup) is an executor
+  change tracked separately. Until then the four GDA actions stay in
+  `skippedCoverage` - skipped by the app suite, run by the fork sweep - while
+  create-pool and grant-flow-operator themselves run in both tiers.
+
+`skippedCoverage` is the tier split: unlike `skipped` (both tiers), it skips
+only the app coverage runner and the report, leaving the fork sweep to run
+the action. A skipped/skippedCoverage action still builds (for the seeder and
+the golden-calldata tests); when its capture is absent the builder substitutes
+the same unused address placeholder an unbound address input gets, so those
+build paths do not need a live capture.
+
 ## Validating workflow changes locally (act + rig)
 
 Division of labor when touching the CI workflows:

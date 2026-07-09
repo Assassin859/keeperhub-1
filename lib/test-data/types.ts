@@ -16,6 +16,13 @@
  *   amount("DAI", "10")         -> wei using DAI's decimals
  *   contract("pool")            -> protocol.contracts.pool.addresses[chain]
  *   native("0.001")             -> wei at 18 decimals
+ *   fromSetupOutput("create-pool", "pool")
+ *                               -> a field captured from a prior step's
+ *                                  output (see OutputCapture / SetupOutputs);
+ *                                  used for actions that can only run against
+ *                                  an address the setup phase itself creates
+ *                                  (Superfluid GDA pool actions need the pool
+ *                                  address create-pool deploys).
  *
  * The builder uses the action's input type information (from
  * `lib/protocol-registry.ts`) to disambiguate.
@@ -27,13 +34,17 @@ export type WalletBinding = { _wallet: true };
 export type AmountBinding = { _amount: { symbol: TokenSymbol; human: string } };
 export type ContractBinding = { _contract: { key: string } };
 export type NativeBinding = { _native: { human: string } };
+export type FromSetupOutputBinding = {
+  _fromSetupOutput: { step: string; field: string };
+};
 
 export type InputBinding =
   | string
   | WalletBinding
   | AmountBinding
   | ContractBinding
-  | NativeBinding;
+  | NativeBinding
+  | FromSetupOutputBinding;
 
 export function wallet(): WalletBinding {
   return { _wallet: true };
@@ -51,6 +62,23 @@ export function native(human: string): NativeBinding {
   return { _native: { human } };
 }
 
+/**
+ * Bind an action input to a value captured from a prior step's output (a
+ * "setup output"). `step` names the producing step (an action slug like
+ * "create-pool"); `field` names the field to read from that step's captured
+ * output. The captured values are supplied to the builder as `SetupOutputs`;
+ * see OutputCapture for how each tier populates them. Resolving a
+ * fromSetupOutput binding whose capture is absent throws, unless the action
+ * is a documented skip (then the builder substitutes an unused placeholder,
+ * same as any other unbound address input on a skipped action).
+ */
+export function fromSetupOutput(
+  step: string,
+  field: string
+): FromSetupOutputBinding {
+  return { _fromSetupOutput: { step, field } };
+}
+
 export function isWalletBinding(v: InputBinding): v is WalletBinding {
   return typeof v === "object" && v !== null && "_wallet" in v;
 }
@@ -65,6 +93,29 @@ export function isContractBinding(v: InputBinding): v is ContractBinding {
 
 export function isNativeBinding(v: InputBinding): v is NativeBinding {
   return typeof v === "object" && v !== null && "_native" in v;
+}
+
+export function isFromSetupOutputBinding(
+  v: InputBinding
+): v is FromSetupOutputBinding {
+  return typeof v === "object" && v !== null && "_fromSetupOutput" in v;
+}
+
+/**
+ * Values captured from prior steps, keyed `step -> field -> value`, consumed
+ * by fromSetupOutput bindings. Each tier populates this differently: the fork
+ * simulation tier records it from the producing step's receipt/return (there
+ * is no database), and it is passed to the workflow builders at call time.
+ */
+export type SetupOutputs = Record<string, Record<string, string>>;
+
+/** Read a captured value, or undefined when the step/field is absent. */
+export function readSetupOutput(
+  outputs: SetupOutputs | undefined,
+  step: string,
+  field: string
+): string | undefined {
+  return outputs?.[step]?.[field];
 }
 
 /** Map of action-input-name -> binding, plus optional virtual `contractAddress`
@@ -201,6 +252,32 @@ export type StateFabrication = {
   contract: InputBinding;
 };
 
+/**
+ * Fork-tier (Tier 1) capture of a value a prior action produces on-chain, so
+ * a later action can bind it via fromSetupOutput(). Runs in the simulation
+ * harness after setup provisioning and before the action sweep, populating
+ * SetupOutputs under `as -> field -> value`.
+ *
+ * The only kind today is "gda-pool": eth_call the producer action's calldata
+ * (Superfluid GDAv1Forwarder.createPool) and decode its (bool success,
+ * address pool) return to predict the pool the create-pool action deploys.
+ * The prediction is address = f(GDA deployer nonce) only, and no other pool
+ * is created between the capture and the create-pool action (registry order
+ * runs the CFA writes first), so the predicted address matches the deployed
+ * one. Like the other fork-only setup constructs (forkImpersonatedCalls,
+ * fabricatedApprovals), this is a simulation-tier concept: the app coverage
+ * tier cannot capture a write's output today (the executor's write step
+ * returns `result: undefined` and no logs), so a producer whose output the
+ * app path needs must be listed in `skippedCoverage`.
+ */
+export type OutputCapture = {
+  kind: "gda-pool";
+  /** Step name referenced by fromSetupOutput's first arg. */
+  as: string;
+  /** Field name referenced by fromSetupOutput's second arg. */
+  field: string;
+};
+
 export type ProtocolChainTestData = {
   /** When false, builder emits workflows marked _executable:false. */
   enabled?: boolean;
@@ -255,12 +332,28 @@ export type ProtocolChainTestData = {
    */
   fabrications?: Record<string, StateFabrication[]>;
   /**
+   * Fork-tier output captures, keyed by the producing action's slug. The
+   * simulation harness runs these after setup and exposes the results to
+   * fromSetupOutput bindings on later actions. See OutputCapture.
+   */
+  captures?: Record<string, OutputCapture>;
+  /**
+   * Action slugs skipped in the app coverage tier (Tier 2) only, keyed to a
+   * reason, while still runnable in the fork simulation tier (Tier 1). Use
+   * for actions the fork tier can provision via a capture (fromSetupOutput)
+   * but the app path cannot, because the executor does not surface the
+   * producing write's output today. Distinct from `skipped`, which skips in
+   * both tiers. The coverage runner and the coverage report treat these as
+   * skips; the simulation harness ignores them.
+   */
+  skippedCoverage?: Record<string, string>;
+  /**
    * Action slugs the test runner should mark as `test.skip` with a reason.
    * Builders still produce these workflows (so the seeder surfaces them in
-   * the dashboard), but the integration suite skips execution. Use for
-   * actions whose on-chain prerequisites Phase 1 setup doesn't provision
-   * (e.g. Superfluid GDA actions that need a real pool address — the SSOT
-   * binding is a zero placeholder).
+   * the dashboard), but the integration suite skips execution in both tiers.
+   * Use for actions whose on-chain prerequisites neither tier provisions. For
+   * actions the fork tier can provision (via a capture) but the app tier
+   * cannot, use `skippedCoverage` instead so the fork sweep still runs them.
    */
   skipped?: Record<string, string>;
 };
