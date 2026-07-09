@@ -133,13 +133,13 @@ const SAFE_ABI = JSON.stringify([
   {
     type: "event",
     name: "ChangedGuard",
-    inputs: [{ name: "guard", type: "address", indexed: false }],
+    inputs: [{ name: "guard", type: "address", indexed: true }],
   },
   {
     type: "event",
     name: "ExecutionSuccess",
     inputs: [
-      { name: "txHash", type: "bytes32", indexed: false },
+      { name: "txHash", type: "bytes32", indexed: true },
       { name: "payment", type: "uint256", indexed: false },
     ],
   },
@@ -147,7 +147,7 @@ const SAFE_ABI = JSON.stringify([
     type: "event",
     name: "ExecutionFailure",
     inputs: [
-      { name: "txHash", type: "bytes32", indexed: false },
+      { name: "txHash", type: "bytes32", indexed: true },
       { name: "payment", type: "uint256", indexed: false },
     ],
   },
@@ -167,7 +167,7 @@ const SAFE_ABI = JSON.stringify([
   {
     type: "event",
     name: "ChangedFallbackHandler",
-    inputs: [{ name: "handler", type: "address", indexed: false }],
+    inputs: [{ name: "handler", type: "address", indexed: true }],
   },
   {
     type: "event",
