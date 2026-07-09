@@ -117,6 +117,22 @@ export type SetupSpec = {
     spender: InputBinding;
     human: string;
   }>;
+  /**
+   * Fork-only allowances fabricated with anvil_setStorageAt (the
+   * TS preflight in both tiers, via runFabricatedApprovals), instead of
+   * emitted as approve-token setup nodes. Same shape as `approvals`. Use
+   * on the mainnet fork where the approve-token node's
+   * gas-sponsorship-fallback path takes minutes per approval and blows
+   * the setup timeout; declaring these on a chain outside FORK_CHAIN_IDS
+   * fails loudly, same as forkImpersonatedCalls. See
+   * fabricateErc20Allowance in
+   * tests/e2e/vitest/protocol-coverage/_shared/fabricate-state.ts.
+   */
+  fabricatedApprovals?: Array<{
+    token: TokenSymbol;
+    spender: InputBinding;
+    human: string;
+  }>;
   /** Optional protocol-action prep (e.g. wrap fUSDC -> fUSDCx for Superfluid). */
   protocolSteps?: Array<{
     protocol: string;
@@ -146,6 +162,30 @@ export type SetupSpec = {
     functionName: string;
     args: InputBinding[];
   }>;
+};
+
+/**
+ * Fork-only cheatcode fabrication of an on-chain precondition a single
+ * action needs, run by the harnesses immediately before that action
+ * executes (Tier 1 simulation and the Tier 2 coverage runner both call
+ * runActionFabrications in
+ * tests/e2e/vitest/protocol-coverage/_shared/funding.ts). Like
+ * forkImpersonatedCalls, declaring these on a chain outside
+ * FORK_CHAIN_IDS is an authoring error and fails loudly.
+ *
+ * The only kind today is "elapsed-cooldown": rewrite a
+ * StakedUSDeV2-style cooldowns(address) packed struct
+ * (uint104 cooldownEnd | uint152 underlyingAmount) so the wallet's
+ * pending cooldown reads as elapsed. The preceding cooldown write must
+ * be real (it escrows the funds the unstake then draws); only the
+ * timestamp is fabricated. Slot located by probing; see
+ * fabricateElapsedCooldown in
+ * tests/e2e/vitest/protocol-coverage/_shared/fabricate-state.ts.
+ */
+export type StateFabrication = {
+  kind: "elapsed-cooldown";
+  /** Target contract: contract("key") binding or a literal 0x address. */
+  contract: InputBinding;
 };
 
 export type ProtocolChainTestData = {
@@ -185,6 +225,11 @@ export type ProtocolChainTestData = {
     string,
     Array<{ read: string; expect: OutputExpectation }>
   >;
+  /**
+   * Per-action pre-execution state fabrications, keyed by action slug.
+   * See StateFabrication above.
+   */
+  fabrications?: Record<string, StateFabrication[]>;
   /**
    * Action slugs the test runner should mark as `test.skip` with a reason.
    * Builders still produce these workflows (so the seeder surfaces them in

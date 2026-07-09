@@ -115,9 +115,14 @@ export default defineAbiProtocol({
         "approve-steth": { spender: wallet() },
       },
       skipped: {
-        wrap: "requires stETH balance - not provisioned in fork setup",
-        unwrap: "requires wstETH balance - not provisioned in fork setup",
-        "approve-steth": "write action requiring prior stETH balance",
+        wrap: "requires stETH balance - not provisioned in fork setup (stETH's share-derived balanceOf defeats slot fabrication; needs a whale entry)",
+        unwrap: "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
+      },
+      // The Tier 2 app approve path attempts gas sponsorship, which is
+      // unconfigured on the CI fork, then falls back to direct signing;
+      // that confirmation can take minutes, past the default 120s wait.
+      executionWaitMs: {
+        "approve-steth": 240_000,
       },
     },
   },

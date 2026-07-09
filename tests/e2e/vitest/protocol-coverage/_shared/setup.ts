@@ -32,6 +32,7 @@ import {
 import {
   ensureErc20Acquired,
   ensureNativeGas,
+  runFabricatedApprovals,
   runForkImpersonatedCalls,
 } from "./funding";
 
@@ -124,6 +125,11 @@ export async function runSetup(opts: {
   // Fork-only privileged provisioning (impersonated wards etc.); no-op
   // when the protocol declares none, throws on a non-fork chain.
   await runForkImpersonatedCalls(protocol, chainId, walletAddress);
+
+  // Fork-only setup allowances written straight to storage, so the setup
+  // workflow never submits a slow approve-token transaction; no-op when
+  // the protocol declares none.
+  await runFabricatedApprovals(protocol, chainId, walletAddress);
 
   const setupWf = toWebhookTriggered(
     buildSetupWorkflow({ protocolSlug: protocol, chainId, walletAddress })
