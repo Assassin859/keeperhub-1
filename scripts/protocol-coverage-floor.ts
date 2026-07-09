@@ -18,10 +18,15 @@ import {
 } from "./vitest-assertion-counts";
 
 function main(): void {
-  const [file, floorArg] = process.argv.slice(2);
-  if (!(file && floorArg)) {
+  // All args except the last are vitest JSON files; the last is the floor.
+  // One file keeps the single-suite behaviour; several are merged so a
+  // sharded run checks the floor against the whole sweep, not one shard.
+  const args = process.argv.slice(2);
+  const floorArg = args.pop();
+  const files = args;
+  if (!(files.length && floorArg)) {
     process.stderr.write(
-      "usage: tsx scripts/protocol-coverage-floor.ts <vitest.json> <floor>\n"
+      "usage: tsx scripts/protocol-coverage-floor.ts <vitest.json...> <floor>\n"
     );
     process.exit(2);
   }
@@ -34,8 +39,12 @@ function main(): void {
     );
     process.exit(2);
   }
-  const raw = JSON.parse(readFileSync(file, "utf8")) as VitestJsonResults;
-  const { executed, passed, failed, skipped } = countTotals(raw);
+  const testResults: NonNullable<VitestJsonResults["testResults"]> = [];
+  for (const file of files) {
+    const raw = JSON.parse(readFileSync(file, "utf8")) as VitestJsonResults;
+    testResults.push(...(raw.testResults ?? []));
+  }
+  const { executed, passed, failed, skipped } = countTotals({ testResults });
 
   const summary = `Protocol coverage: executed ${executed} (passed ${passed}, failed ${failed}), skipped ${skipped}, floor ${floor}`;
   process.stdout.write(`${summary}\n`);
