@@ -35,6 +35,8 @@ import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
   ERC20_ABI,
   ensureErc20Acquired,
+  runActionFabrications,
+  runFabricatedApprovals,
   runForkImpersonatedCalls,
   withImpersonation,
 } from "../../protocol-coverage/_shared/funding";
@@ -52,13 +54,26 @@ const WRITE_TIMEOUT_MS = 120_000;
 // reads near-instant, so the headroom costs nothing on the happy path.
 const READ_TIMEOUT_MS = 90_000;
 
+/** Mirror of the platform gas strategy's default 2.0x estimate multiplier
+ *  (lib/web3/gas-defaults.ts GLOBAL_DEFAULT). Sending with the node-filled
+ *  exact estimate OOGs on time-dependent gas: savings-rate vaults (sUSDS,
+ *  stUSDS, sDAI) run a drip whose cost moves between the estimation block
+ *  and the execution block, and the exact-estimate send dies with
+ *  status-0 receipts at gasUsed == gasLimit (observed on the 2026-07-08
+ *  sweep; same mechanism as the USDCx OOG note in the methodology doc). */
+const GAS_LIMIT_MULTIPLIER = BigInt(2);
+
 async function sendImpersonatedOnce(
   provider: JsonRpcProvider,
   from: string,
   tx: { to: string; data?: string; value?: bigint }
 ): Promise<void> {
   await withImpersonation(provider, from, async (signer) => {
-    const sent = await signer.sendTransaction(tx);
+    const estimated = await signer.estimateGas(tx);
+    const sent = await signer.sendTransaction({
+      ...tx,
+      gasLimit: estimated * GAS_LIMIT_MULTIPLIER,
+    });
     const receipt = await sent.wait();
     if (!receipt || receipt.status !== 1) {
       throw new Error(`impersonated tx to ${tx.to} reverted`);
@@ -115,6 +130,10 @@ async function provisionSetup(
       rpcUrl
     );
   }
+
+  // Fork-only setup allowances written straight to storage (parity with
+  // the coverage preflight); no-op when the protocol declares none.
+  await runFabricatedApprovals(protocolSlug, chainId, SIM_WALLET, rpcUrl);
 
   for (const approval of setup.approvals) {
     const entry = TOKEN_REGISTRY[chainId]?.[approval.token];
@@ -244,6 +263,16 @@ export function runSimulation(opts: {
               expect(failure, failure ?? "").toBeNull();
             }
           } else {
+            // Cheatcode preconditions declared for this action (e.g.
+            // marking the wallet's real sUSDe cooldown elapsed before
+            // unstake); no-op for actions that declare none.
+            await runActionFabrications(
+              opts.protocol,
+              opts.chainId,
+              SIM_WALLET,
+              action.slug,
+              opts.rpcUrl
+            );
             await impersonatedSend(provider, SIM_WALLET, {
               to: encoded.to,
               data: encoded.data,

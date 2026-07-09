@@ -6,7 +6,15 @@ import {
   workflowSchedules,
   type workflows,
 } from "../../lib/db/schema";
+import {
+  classifyExecutionError,
+  isDefaultClassification,
+} from "../../lib/errors/classify";
 import type { ErrorCode } from "../../lib/errors/error-codes";
+import {
+  isErrorStatus,
+  statusForErrorType,
+} from "../../lib/errors/execution-status";
 import { calculateTotalSteps } from "../../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../../lib/workflow/store";
 import type { executeWorkflow } from "../../lib/workflow/executor/executor.workflow";
@@ -42,6 +50,101 @@ export type ClaimOutcome = "claimed" | "already_advanced" | "not_found";
  */
 const REAPED_NEVER_RAN_CODES: ErrorCode[] = ["P-0001", "P-0005"];
 
+// The execution-start CAS UPDATE runs on the hot dispatch path. A
+// transient DB error there (dropped connection, statement timeout under the
+// top-of-minute load spike) would otherwise propagate to the processMessage
+// backstop, which promotes it to a terminal system_error and deletes the SQS
+// message - a sub-second blip becomes an alerting failure with no redelivery.
+// Retrying the idempotent CAS a couple of times with short backoff lets that
+// blip resolve and the execution proceed normally.
+const CLAIM_MAX_ATTEMPTS = 3; // initial attempt + 2 retries
+const CLAIM_BACKOFF_BASE_MS = 50;
+const CLAIM_BACKOFF_MAX_MS = 400;
+const CLAIM_BACKOFF_JITTER_MS = 50;
+
+// Driver/socket error codes and SQLSTATEs that signal a transient connection or
+// contention failure worth retrying. Anything else (a real bug, a constraint
+// violation) re-throws immediately so it surfaces fast rather than being masked
+// by a retry loop.
+const TRANSIENT_DB_ERROR_CODES: ReadonlySet<string> = new Set([
+  // postgres.js connection-lifecycle errors
+  "CONNECTION_CLOSED",
+  "CONNECTION_ENDED",
+  "CONNECTION_DESTROYED",
+  "CONNECTION_CONNECT_TIMEOUT",
+  "CONNECT_TIMEOUT",
+  // node socket errors
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  // SQLSTATE class 08 - connection exception
+  "08000",
+  "08001",
+  "08003",
+  "08004",
+  "08006",
+  // SQLSTATE - admin shutdown / crash / too many connections
+  "57P01",
+  "57P02",
+  "57P03",
+  "53300",
+  // SQLSTATE - serialization failure / deadlock
+  "40001",
+  "40P01",
+]);
+
+function isTransientDbError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && TRANSIENT_DB_ERROR_CODES.has(code);
+}
+
+function claimBackoffMs(attempt: number): number {
+  const exponential = CLAIM_BACKOFF_BASE_MS * 2 ** attempt;
+  const capped = Math.min(exponential, CLAIM_BACKOFF_MAX_MS);
+  return capped + Math.floor(Math.random() * CLAIM_BACKOFF_JITTER_MS);
+}
+
+/**
+ * Run a claim CAS UPDATE, retrying a transient connection/contention error a
+ * bounded number of times with short backoff. A non-transient error re-throws
+ * immediately; a transient error that outlives every attempt re-throws so the
+ * processMessage backstop still fails the execution (a genuinely-down DB is a
+ * real system error). The CAS is idempotent under its gated WHERE, so a retry is
+ * safe: if a prior attempt committed before the connection dropped, the row has
+ * already advanced and the retry simply matches zero rows (the caller then reads
+ * it as already_advanced and drops the duplicate).
+ */
+async function runClaimWithRetry<T>(
+  op: () => PromiseLike<T[]>,
+  executionId: string
+): Promise<T[]> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < CLAIM_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await op();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientDbError(error) || attempt === CLAIM_MAX_ATTEMPTS - 1) {
+        throw error;
+      }
+      const backoff = claimBackoffMs(attempt);
+      console.warn(
+        `[Claim] Transient DB error claiming execution ${executionId} (attempt ${attempt + 1}/${CLAIM_MAX_ATTEMPTS}), retrying in ${backoff}ms:`,
+        error
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
+  }
+  // Unreachable: the loop returns on success or throws on the final attempt.
+  throw lastError;
+}
+
 /**
  * After a gated CAS matched zero rows, disambiguate "row exists but not in the
  * expected status" from "no such row" with a single point lookup on the id PK.
@@ -64,12 +167,39 @@ export async function updateExecutionStatus(
   status: "running" | "success" | "error" | "cancelled",
   result?: { output?: unknown; error?: string }
 ): Promise<void> {
+  // Classify the failure so the backstop row carries error_category /
+  // error_type / error_code, exactly like the engine's own finalize
+  // (logWorkflowCompleteDb). Without this, executions the executor closes on
+  // its own (consumer-crash backstop, SIGTERM shutdown, engine-write-lost)
+  // land with a NULL classification and drop out of error_type-filtered
+  // dashboards even though recordTerminalSample already counts them.
+  const classification =
+    status === "error" ? classifyExecutionError(result?.error) : null;
+
+  // Mirror logWorkflowCompleteDb: a confidently system-classified failure
+  // persists as system_error so it stays filterable apart from user/workflow
+  // errors; an unmatched failure that only defaulted to "system" keeps the
+  // plain "error" status (its error_type is still written as "system"). The
+  // engine and this backstop must produce the same row shape for the same
+  // failure so a lost engine write is closed identically.
+  const persistedStatus =
+    status === "error"
+      ? statusForErrorType(
+          classification && !isDefaultClassification(classification)
+            ? classification.errorType
+            : null
+        )
+      : status;
+
+  const isTerminal =
+    persistedStatus === "success" || isErrorStatus(persistedStatus);
+
   const updateData: Record<string, unknown> = {
-    status,
+    status: persistedStatus,
     updatedAt: new Date(),
   };
 
-  if (status === "success" || status === "error") {
+  if (isTerminal) {
     updateData.completedAt = new Date();
   }
   if (result?.output !== undefined) {
@@ -77,6 +207,11 @@ export async function updateExecutionStatus(
   }
   if (result?.error) {
     updateData.error = result.error;
+  }
+  if (classification) {
+    updateData.errorCategory = classification.errorCategory;
+    updateData.errorType = classification.errorType;
+    updateData.errorCode = classification.code;
   }
 
   // Only transition a row that has not already reached a terminal state. The
@@ -107,15 +242,19 @@ export async function updateExecutionStatus(
   // above excludes every terminal state), so this backstop is the execution's
   // first and only terminal transition and must emit the terminal counters
   // the engine would have emitted. Cancellation is intentionally not counted
-  // (the finished counter tracks success/error outcomes only).
+  // (the finished counter tracks success/error outcomes only). Pass the
+  // classification we persisted so the counter labels are guaranteed to match
+  // the row's error_type / error_category.
   if (
     updated.length > 0 &&
-    (status === "success" || status === "error")
+    (persistedStatus === "success" || isErrorStatus(persistedStatus))
   ) {
     await recordTerminalSample(db, {
       workflowId: updated[0].workflowId,
-      status,
+      status: persistedStatus,
       errorMessage: result?.error,
+      errorType: classification?.errorType,
+      errorCategory: classification?.errorCategory,
     });
   }
 }
@@ -207,35 +346,39 @@ export async function claimPhantomForExecution(
   input: Record<string, unknown>,
   executedWorkflowHash: string
 ): Promise<ClaimOutcome> {
-  const result = await db
-    .update(workflowExecutions)
-    // The phantom was created billable=false (it had not run yet); claiming it
-    // means it is now a real execution, so it becomes billable like any
-    // owner-initiated run. Stamp the hash of the definition the executor just
-    // loaded so the run links to its workflow_history version. Clear any reaper
-    // stamp when re-claiming a reaped-never-ran row.
-    .set({
-      status: "pending",
-      input,
-      billable: true,
-      executedWorkflowHash,
-      error: null,
-      errorCode: null,
-      completedAt: null,
-    })
-    .where(
-      and(
-        eq(workflowExecutions.id, executionId),
-        or(
-          eq(workflowExecutions.status, "phantom"),
+  const result = await runClaimWithRetry(
+    () =>
+      db
+        .update(workflowExecutions)
+        // The phantom was created billable=false (it had not run yet); claiming
+        // it means it is now a real execution, so it becomes billable like any
+        // owner-initiated run. Stamp the hash of the definition the executor
+        // just loaded so the run links to its workflow_history version. Clear
+        // any reaper stamp when re-claiming a reaped-never-ran row.
+        .set({
+          status: "pending",
+          input,
+          billable: true,
+          executedWorkflowHash,
+          error: null,
+          errorCode: null,
+          completedAt: null,
+        })
+        .where(
           and(
-            eq(workflowExecutions.status, "system_error"),
-            inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+            eq(workflowExecutions.id, executionId),
+            or(
+              eq(workflowExecutions.status, "phantom"),
+              and(
+                eq(workflowExecutions.status, "system_error"),
+                inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+              )
+            )
           )
         )
-      )
-    )
-    .returning({ id: workflowExecutions.id });
+        .returning({ id: workflowExecutions.id }),
+    executionId
+  );
   if (result.length > 0) {
     return "claimed";
   }
@@ -257,23 +400,32 @@ export async function claimPendingForExecution(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string
 ): Promise<ClaimOutcome> {
-  const result = await db
-    .update(workflowExecutions)
-    // Clear any reaper stamp when re-claiming a reaped-never-ran row.
-    .set({ status: "running", error: null, errorCode: null, completedAt: null })
-    .where(
-      and(
-        eq(workflowExecutions.id, executionId),
-        or(
-          eq(workflowExecutions.status, "pending"),
+  const result = await runClaimWithRetry(
+    () =>
+      db
+        .update(workflowExecutions)
+        // Clear any reaper stamp when re-claiming a reaped-never-ran row.
+        .set({
+          status: "running",
+          error: null,
+          errorCode: null,
+          completedAt: null,
+        })
+        .where(
           and(
-            eq(workflowExecutions.status, "system_error"),
-            inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+            eq(workflowExecutions.id, executionId),
+            or(
+              eq(workflowExecutions.status, "pending"),
+              and(
+                eq(workflowExecutions.status, "system_error"),
+                inArray(workflowExecutions.errorCode, REAPED_NEVER_RAN_CODES)
+              )
+            )
           )
         )
-      )
-    )
-    .returning({ id: workflowExecutions.id });
+        .returning({ id: workflowExecutions.id }),
+    executionId
+  );
   if (result.length > 0) {
     return "claimed";
   }

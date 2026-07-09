@@ -23,6 +23,7 @@ import {
   PERSISTENT_TEST_USER_EMAIL,
   waitForWorkflowExecution,
 } from "@/tests/utils/db";
+import { runActionFabrications } from "./funding";
 import { checkOutputExpectation, fetchNodeOutput } from "./oracle";
 import type { SharedCtx } from "./setup";
 
@@ -86,6 +87,16 @@ export function runPhaseFixtures(opts: {
             trigger: "Manual",
             walletAddress,
           })
+        );
+
+        // Cheatcode preconditions declared for this action (e.g. marking
+        // the wallet's real sUSDe cooldown elapsed before unstake); no-op
+        // for actions that declare none.
+        await runActionFabrications(
+          opts.protocol,
+          opts.chainId,
+          walletAddress,
+          action.slug
         );
 
         if (!opts.ctx.apiKey) {

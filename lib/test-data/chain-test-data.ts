@@ -43,6 +43,8 @@ export type TokenSymbol =
   | "USDT"
   | "DAI"
   | "USDS"
+  | "USDE"
+  | "MKR"
   | "LINK"
   | "WSTETH"
   | "DAIX"
@@ -89,6 +91,22 @@ export const TOKEN_REGISTRY: Record<
       address: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
       decimals: 18,
       symbol: "DAI",
+    },
+    // Ethena USDe stablecoin. No whale registered on purpose: acquired
+    // via balances-slot fabrication (Solidity mapping slot 2, verified
+    // against balanceOf on mainnet 2026-07-08).
+    USDE: {
+      address: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+      decimals: 18,
+      symbol: "USDE",
+    },
+    // Maker MKR (DSToken). No whale registered on purpose: acquired via
+    // balances-slot fabrication (Solidity mapping slot 1, verified
+    // against balanceOf on mainnet 2026-07-08).
+    MKR: {
+      address: "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
+      decimals: 18,
+      symbol: "MKR",
     },
     // Superfluid canonical Super DAI wrapper (resolved from the on-chain
     // Superfluid resolver key "supertokens.v1.DAIx", verified 2026-07-07).
@@ -229,8 +247,11 @@ export const FORK_WHALES: Record<
     WSTETH: { address: "0x0B925eD163218f6662a35e0f0371Ac234f9E9371" },
     // Circle's USDC reserve / bridge account holds large USDC balance.
     USDC: { address: "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341" },
-    // Sky/MakerDAO: PSM USDS holding (verified via Etherscan token-holder).
-    USDS: { address: "0x3Ba23D309F6e88f0a9Ac0bEe797AfaCa93B78b78" },
+    // No USDS entry: the PSM whale previously registered here
+    // (0x3Ba23D309F6e88f0a9Ac0bEe797AfaCa93B78b78) held 0 USDS by
+    // 2026-07-08, so USDS moved to balances-slot fabrication
+    // (Solidity mapping slot 2 behind the proxy, verified against
+    // balanceOf on mainnet 2026-07-08). See fabricate-state.ts.
     // MakerDAO MCD_JOIN_DAI: large DAI holder.
     DAI: { address: "0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643" },
     // The Pendle wstETH market itself: its LP reserve held ~1306 SY at

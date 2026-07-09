@@ -73,6 +73,27 @@ Rules for writing expectations:
   (kiss the test wallet) before provisioning. Shared by the Tier 1
   harness and the Tier 2 setup preflight; declaring it on a non-fork
   chain fails loudly.
+- Fork-only state fabrication (KEEP-940,
+  `_shared/fabricate-state.ts`): preconditions the setup phase can
+  neither buy nor sequence are written into contract storage with
+  anvil_setStorageAt. Two mechanisms, both slot-probing (candidate
+  mapping slots are computed from the holder address and ascending
+  indices in Solidity and Vyper layouts, each write is verified against
+  the contract's own view function, and failed candidates are restored):
+  ERC20 balances with no whale or faucet (`ensureErc20Acquired` falls
+  back to `fabricateErc20Balance` - used for USDS, whose registered PSM
+  whale drained; USDe; MKR; WETH); setup allowances
+  (`setup.fabricatedApprovals` -> `fabricateErc20Allowance`, run by both
+  tiers' preflight instead of emitting approve-token setup nodes, because
+  that node's gas-sponsorship-fallback path takes minutes per approval on
+  the CI fork and blows the 300s setup timeout); and per-action
+  `fabrications` in testData (ethena's unstake declares
+  `elapsed-cooldown`, which rewrites the timestamp of the wallet's real
+  sUSDe cooldown while preserving the escrowed amount, so the claim moves
+  genuinely silo-funded USDe).
+  Derived accounting defeats balance fabrication by design - stETH's
+  share-computed balanceOf fails the probe loudly, which is why lido's
+  wrap/unwrap stay skipped pending a whale entry.
 - Pinned-block fixtures: a protocol whose live bindings rot on a
   schedule (pendle - markets expire) declares `testData.pinnedBlock`;
   the Tier 1 harness runs it on a dedicated fork at that block instead
