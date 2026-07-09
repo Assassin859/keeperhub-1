@@ -504,7 +504,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/10 * * * *" # every 10 minutes
+        schedule: "3-59/10 * * * *" # every 10 minutes, offset by 3 minutes
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
@@ -558,7 +558,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/5 * * * *" # every 5 minutes
+        schedule: "1-59/5 * * * *" # every 5 minutes, offset by 1 minute
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
@@ -585,7 +585,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/30 * * * *" # every 30 minutes
+        schedule: "8,38 * * * *" # every 30 minutes, offset by 8 minutes
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
