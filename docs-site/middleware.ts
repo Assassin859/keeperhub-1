@@ -8,6 +8,7 @@ const VALID_ROUTES = new Set([
   "api",
   "cli",
   "getting-started",
+  "quickstart",
   "intro",
   "keeper-runs",
   "keepers",
