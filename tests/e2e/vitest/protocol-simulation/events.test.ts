@@ -33,11 +33,31 @@ function hasEvents(protocol: ProtocolDefinition, chainId: string): boolean {
   return Boolean(chainData?.events && protocol.events?.length);
 }
 
+function anyUnpinnedEvents(chainId: string): boolean {
+  for (const protocol of getRegisteredProtocols()) {
+    const chainData = protocol.testData?.[chainId];
+    if (hasEvents(protocol, chainId) && chainData?.pinnedBlock === undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function anyPinnedEvents(chainId: string): boolean {
+  for (const protocol of getRegisteredProtocols()) {
+    const chainData = protocol.testData?.[chainId];
+    if (hasEvents(protocol, chainId) && chainData?.pinnedBlock !== undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
 for (const chain of CHAINS) {
   const rpcUrl = process.env[`PROTOCOL_SIM_RPC_${chain.chainId}`];
   const pinnedRpcUrl = process.env[`PROTOCOL_SIM_RPC_${chain.chainId}_PINNED`];
 
-  describe.skipIf(!rpcUrl)(
+  describe.skipIf(!rpcUrl || !anyUnpinnedEvents(chain.chainId))(
     `protocol event simulation (${chain.name})`,
     () => {
       for (const protocol of getRegisteredProtocols()) {
@@ -59,7 +79,7 @@ for (const chain of CHAINS) {
     }
   );
 
-  describe.skipIf(!pinnedRpcUrl)(
+  describe.skipIf(!pinnedRpcUrl || !anyPinnedEvents(chain.chainId))(
     `protocol event simulation (${chain.name}, pinned block)`,
     () => {
       for (const protocol of getRegisteredProtocols()) {
