@@ -167,8 +167,12 @@ export async function runSetup(opts: {
   // 300s: forked chains lazy-load contract state from their upstream on
   // first touch, so the first transaction through a protocol's contracts
   // can be far slower than steady-state (observed >180s on the Sepolia
-  // fork with the default public upstream).
-  const result = await waitForWorkflowExecution(workflow.id, 300_000);
+  // fork with the default public upstream). Setups with several
+  // transactions can override via setup.executionWaitMs (see SetupSpec).
+  const result = await waitForWorkflowExecution(
+    workflow.id,
+    setupSpec.executionWaitMs ?? 300_000
+  );
   if (!result || result.status !== "success") {
     const diagnosis = await describeExecutionState(workflow.id);
     throw new Error(

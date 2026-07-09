@@ -94,6 +94,11 @@ Rules for writing expectations:
   Derived accounting defeats balance fabrication by design - stETH's
   share-computed balanceOf fails the probe loudly, which is why lido's
   wrap/unwrap stay skipped pending a whale entry.
+- Pinned-block fixtures: a protocol whose live bindings rot on a
+  schedule (pendle - markets expire) declares `testData.pinnedBlock`;
+  the Tier 1 harness runs it on a dedicated fork at that block instead
+  of the shared near-head fork. See "Pendle pinned-block fixtures"
+  below.
 
 Fork RPC fetch cache: a pinned anvil fork persists every upstream fetch
 (accounts, storage slots, block hashes - eth_call reads included) to its
@@ -121,6 +126,74 @@ and the env var (`MAINNET_FORK_CACHE_DIR`). That coupling is
 load-bearing - the tier1 download step locates the tar by the exact
 `fork-cache-mainnet-*.tgz` pattern the nightly packaging step writes,
 so the two must change together.
+
+## Pendle pinned-block fixtures (and the refresh procedure)
+
+Pendle was deferred during the tiered-coverage work because its markets
+expire: any hardcoded market/PT/YT binding rots on the market's
+schedule, unlike yearn/morpho vaults, which are long-lived. The fix is
+to bind against state recorded at a pinned mainnet block and run the
+Tier 1 sweep for pendle on a dedicated fork at that block, so the
+bindings stay verifiable regardless of wall clock (the fork's clock
+starts at the pin's timestamp and never reaches the market's expiry).
+The fixture is refreshed deliberately instead of rotting silently.
+
+Mechanism: `testData.pinnedBlock` (lib/test-data/types.ts) marks a
+(protocol, chain) as pinned. `chains.test.ts` routes pinned protocols to
+`PROTOCOL_SIM_RPC_<chainId>_PINNED` (a fork at the pin) and excludes
+them from the shared near-head fork; the rig
+(`scripts/protocol-local.sh sim`) and the tier1 CI job start that fork
+with the block printed by `scripts/protocol-pinned-block.ts`, which
+resolves it from the registry - so the pin has exactly one source of
+truth and a refresh touches only the protocol's testData (plus the
+token entries and Tier 0 goldens below). A fixed pin needs an upstream
+that serves historical state, so the pinned fork starts only when
+`ANVIL_FORK_MAINNET_URL` is set; without it the pinned protocols
+self-skip.
+
+Recorded fixture (2026-07-08, block 25487331):
+
+| Field | Value | How obtained |
+|---|---|---|
+| Pinned block | 25487331 | mainnet head minus a small margin at recording time |
+| Market | `0x34280882267ffa6383B363E278B027Be083bBe3b` | Pendle active-markets API (`api-v2.pendle.finance/core/v1/1/markets/active`): the mature wstETH market - highest-liquidity market with the most distant expiry (2027-12-30) |
+| SY / PT / YT | `0xcbC7...C0BC` / `0xb253...5a2c` / `0x04B7...3a95` | `readTokens()` (`0x2c8ce6bc`) via eth_call on the market at the pin |
+| Expiry | 1830124800 (2027-12-30T00:00:00Z) | `expiry()` on the market at the pin; `isExpired()` = false |
+| Underlying | wstETH `0x7f39...2Ca0` | market API `underlyingAsset`; matches TOKEN_REGISTRY WSTETH |
+| SY whale | the market itself (held ~1306 SY at the pin) | `balanceOf(market)` on the SY at the pin |
+
+Every address had code at the pin (eth_getCode) and SY/PT/YT report 18
+decimals. The write path was verified routable on the router diamond:
+`mintPyFromSy`/`redeemPyToSy` eth_calls revert with an ERC20 allowance
+error (facet reached), where an unknown selector reverts
+`INVALID_SELECTOR`.
+
+The same bindings also serve the Tier 2 coverage suite, which runs on
+the shared near-head fork - correct there as long as the market has not
+expired in real time. The Tier 1 pinned fork stays deterministic past
+expiry, but refresh before the recorded expiry keeps both tiers honest.
+
+Refresh when any of: the recorded market's expiry is inside ~3 months;
+the archive upstream stops serving the pin; or a better (higher-TVL,
+more distant expiry) market should take over. Procedure:
+
+1. Pick the new market from the active-markets API: mature, high
+   liquidity, most distant expiry (maximizes fixture lifetime).
+2. Pick a fresh pin a few blocks behind mainnet head, then verify at
+   that pin via eth_call: `readTokens()` for SY/PT/YT, `expiry()` >
+   now + a comfortable margin, `isExpired()` = false, `decimals()` on
+   SY/PT/YT, eth_getCode on every address, and the SY balance of the
+   market (the whale) covers `requiredTokens` many times over.
+3. Update `protocols/pendle.ts`: the fixture constants
+   (`MAINNET_PINNED_BLOCK`, market/SY/PT/YT, expiry) and the recording
+   date in the comment.
+4. Update `lib/test-data/chain-test-data.ts`: the SY/PT/YT
+   `TOKEN_REGISTRY` entries and the SY `FORK_WHALES` entry.
+5. Regenerate Tier 0 goldens:
+   `UPDATE_GOLDENS=1 pnpm vitest run tests/unit/protocol-calldata.test.ts`.
+6. Verify on the rig:
+   `ANVIL_FORK_MAINNET_URL=<archive> scripts/protocol-local.sh sim ethereum`
+   (the pendle suite must execute, not self-skip).
 
 ## Gating and the vacuous-pass hazard
 
@@ -203,3 +276,4 @@ timed local runs unless marked CI.
 | 2026-07-07 | Parallel protocol gate split | unchanged | unchanged | unchanged | protocol-coverage runs as its own job, fed by a shared build-app artifact, in parallel with the e2e stack instead of serially at its tail. PR runs use representatives mode with an executed-test floor of 3 (ajna contributes one read representative and no write - all its writes are skipped; superfluid one read and one write; the mainnet suites self-skip until ANVIL_FORK_MAINNET_URL is provisioned, at which point the floor rises); nightly/push runs keep the full sweep, floor 30. Fork health probes (probe-forks action plus a post-restart upstream probe) guard both anvil forks. First CI round measured: representatives executed 3, passed 3 | protocol results no longer wait on the vitest e2e tail; dead forks or upstreams fail in seconds instead of as 300s vitest timeouts |
 | 2026-07-07 | Hermetic fork state for tier1 (RPC fetch cache pivot) | unchanged | unchanged | unchanged | protocol-nightly's fork-cache-mainnet job warms a live pinned fork with the Tier 1 sweep (floor 150; a red sweep or floor breach publishes nothing) and publishes foundry's flushed RPC cache as fork-cache-mainnet-\<block\>.tgz, 3-day retention; the tier1-simulations job consumes the freshest staging-produced artifact under 36 hours old when ANVIL_FORK_MAINNET_URL is set, and falls back to a live fork on every failure mode. The nightly warm sweep runs on a live fork, so it is itself the live-fork canary | the first design (anvil_dumpState + --load-state) was structurally wrong twice over: the dump captured the warm sweep's own mutations (and the sweep is not idempotent on its residue - morpho set-authorization reverts "already set" on re-run, empirically confirmed) and missed eth_call-only fetches. The pivot packages foundry's on-disk RPC fetch cache instead. Measured (foundry:latest, 2026-07-07): anvil persists upstream fetches to $HOME/.foundry/cache/rpc/\<chain\>/\<block\>/storage.json, flushing only on graceful shutdown (SIGTERM; SIGKILL loses it); a fresh fork with the cache mounted at the same pin serves every warmed read with zero upstream requests (counted through a logging proxy) and starts pristine - a warmed impersonated WETH deposit is invisible, totalSupply returns its exact pre-write value; cold reads against a dead upstream fail loudly (-32603); anvil still needs the upstream at startup (chain id, block env) and for the mining loop's block hashes; an unpinned fork also persists a cache keyed by its resolved head block, so pinning stays explicit everywhere |
 | 2026-07-07 | Sepolia fork retirement: chronicle, superfluid, and the Safe roles orchestrator re-homed to the mainnet fork | 244 (was 246): 27 Sepolia-runnable actions retired, 24 return as chain-1 fixtures. Chronicle's toll-gated mainnet feeds are whitelisted by the new fork-only `setup.forkImpersonatedCalls` (an authed ward kisses the test wallet - shared by the Tier 1 harness and Tier 2 preflight); superfluid runs on DAI/DAIx (USDCx upgrade OOGs under exact-estimate gas - its underlying routes into Sky savings; ETHx is ABI-incompatible with wrap/unwrap), sized for mainnet's 69-DAI CFA minimum deposit, with create-pool and grant-flow-operator now executing (their Sepolia skips were public-upstream cold-fetch constraints) | 105 | 15 (chronicle feed reads nonZero; superfluid balance/underlying reads plus create-flow/delete-flow post-write oracles on get-flow) | chain-1 Tier 1 sweep 229 passed / 139 skipped / 0 failed (was 203/165/0). Chronicle Tier 2 verified through the app on the local rig: 12/12 with oracle assertions (all reads, no signing needed). Superfluid Tier 2 verified to the signing boundary (whale funding preflight green; setup approve fails at Turnkey wallet init without real keys). Orchestrator fork tests 2/2 on the mainnet fork. CI now runs a single anvil fork: the Sepolia fork service, restart step, post-restart probe, probe-forks line, chains-row patches, and PROTOCOL_E2E_SEPOLIA_FORK are gone; protocol-gate floors re-derived from planPhaseFixtures (representatives 22 / full 200 with ANVIL_FORK_MAINNET_URL, 1 / 20 without - ajna only) | one fork to start/restart instead of two; the ~15-minute Sepolia public-upstream window no longer bounds any CI job |
+| 2026-07-08 | Pendle pinned-block fixtures | 255 (was 244): pendle's 11 deferred actions unlocked - market/PT/YT/SY reads plus the mint/redeem write pair bind the recorded wstETH market (expiry 2027-12-30) at pinned block 25487331, per the "Pendle pinned-block fixtures" section above | 94 | 22 (pendle adds market-expiry equals, expiry-flag equals, SY exchange-rate/balance nonZero read oracles, plus post-write oracles: mint asserts PT/YT balances nonZero, redeem asserts SY balance) | the tier1 CI job starts a second, pinned mainnet fork (block registry-resolved via scripts/protocol-pinned-block.ts, archive-secret-gated, health-probed at the pin) and chains.test.ts routes pinned protocols to it; the Tier 2 suite exercises the same bindings on the shared near-head fork in nightly/full runs | pinned fork is cold each run (no nightly cache covers its block) but pendle touches only a handful of contracts; without the archive secret the pinned suite self-skips instead of failing |

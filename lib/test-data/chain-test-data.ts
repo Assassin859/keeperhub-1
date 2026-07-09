@@ -47,7 +47,10 @@ export type TokenSymbol =
   | "MKR"
   | "LINK"
   | "WSTETH"
-  | "DAIX";
+  | "DAIX"
+  | "SY_WSTETH"
+  | "PT_WSTETH"
+  | "YT_WSTETH";
 
 export type TokenEntry = {
   address: string;
@@ -116,6 +119,27 @@ export const TOKEN_REGISTRY: Record<
       address: "0x4F228bf911ed67730e4B51B1F82AC291B49053ee",
       decimals: 18,
       symbol: "DAIX",
+    },
+    // Pendle wstETH market tokens (market 0x3428...be3b, expiry
+    // 2027-12-30). Resolved from the market's readTokens() and verified
+    // 2026-07-08 via eth_call at the pinned fixture block 25487331
+    // (code present, decimals 18 each). These bind pendle's pinned-block
+    // fixtures; refresh together with the fixture in protocols/pendle.ts
+    // (see specs/protocol-coverage-methodology.md).
+    SY_WSTETH: {
+      address: "0xcbC72d92b2dc8187414F6734718563898740C0BC",
+      decimals: 18,
+      symbol: "SY_WSTETH",
+    },
+    PT_WSTETH: {
+      address: "0xb253Eff1104802b97aC7E3aC9FdD73AecE295a2c",
+      decimals: 18,
+      symbol: "PT_WSTETH",
+    },
+    YT_WSTETH: {
+      address: "0x04B7Fa1e727d7290D6E24fA9b426d0c940283a95",
+      decimals: 18,
+      symbol: "YT_WSTETH",
     },
   },
   // Base Mainnet (used by ajna coverage tests; not fork-mode — no testnet faucets)
@@ -230,6 +254,9 @@ export const FORK_WHALES: Record<
     // balanceOf on mainnet 2026-07-08). See fabricate-state.ts.
     // MakerDAO MCD_JOIN_DAI: large DAI holder.
     DAI: { address: "0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643" },
+    // The Pendle wstETH market itself: its LP reserve held ~1306 SY at
+    // the pinned fixture block (balanceOf verified 2026-07-08).
+    SY_WSTETH: { address: "0x34280882267ffa6383B363E278B027Be083bBe3b" },
   },
 };
 
