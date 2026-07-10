@@ -1,6 +1,6 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
-import { wallet, native } from "@/lib/test-data/types";
+import { wallet, native, amount, contract } from "@/lib/test-data/types";
 import sUsdeAbi from "./abis/ethena-susde.json";
 
 const SUSDE_ALLOWED = new Set<string>([
@@ -54,8 +54,17 @@ export default defineAbiProtocol({
     "1": {
       setup: {
         minNativeHuman: "0.01",
-        requiredTokens: [],
+        // USDe arrives via balances-slot fabrication (no whale
+        // registered). Budget: deposit 100 + mint 10 shares
+        // (~12.4 USDe at the 2026-07-08 rate) against the 200 approval.
+        requiredTokens: [{ symbol: "USDE", human: "300" }],
         approvals: [],
+        // Fabricated (anvil_setStorageAt) rather than a real approve-token
+        // node: the app's approve-token path takes minutes on the CI fork
+        // and pushes the setup toward its 300s timeout.
+        fabricatedApprovals: [
+          { token: "USDE", spender: contract("sUsde"), human: "200" },
+        ],
       },
       actions: {
         "vault-asset": {},
@@ -77,23 +86,39 @@ export default defineAbiProtocol({
         "get-usde-balance": { account: wallet() },
         "get-ena-balance": { account: wallet() },
         "approve-usde": { spender: wallet() },
-        "cooldown-assets": {},
-        "cooldown-shares": {},
+        // Registry order sequences the writes: deposit/mint open the
+        // share position, the cooldown calls burn shares and escrow
+        // USDe into the silo, and unstake claims it (its fabrication
+        // below marks the real cooldown elapsed first).
+        "cooldown-assets": { assets: amount("USDE", "10") },
+        "cooldown-shares": { shares: amount("USDE", "10") },
         unstake: { receiver: wallet() },
-        "vault-deposit": { receiver: wallet() },
-        "vault-mint": { receiver: wallet() },
+        "vault-deposit": { assets: amount("USDE", "100"), receiver: wallet() },
+        "vault-mint": { shares: amount("USDE", "10"), receiver: wallet() },
         "vault-withdraw": { receiver: wallet(), owner: wallet() },
         "vault-redeem": { receiver: wallet(), owner: wallet() },
       },
+      // approve-usde exercises the app's real approve-token path (the same
+      // one the setup above fabricates around) and unstake claims through
+      // the silo; both fan out cold contract state on a fresh fork and run
+      // past the default two-minute wait, so give them the same headroom as
+      // lido approve-steth / curve crv-approve.
+      executionWaitMs: {
+        "approve-usde": 240_000,
+        unstake: 240_000,
+      },
+      fabrications: {
+        // cooldown-shares runs immediately before unstake in registry
+        // order and re-arms the cooldown timer (86400s on mainnet,
+        // verified 2026-07-08); rewrite the real cooldown's timestamp
+        // to elapsed so unstake claims the genuinely escrowed USDe.
+        unstake: [{ kind: "elapsed-cooldown", contract: contract("sUsde") }],
+      },
       skipped: {
-        "vault-deposit": "requires USDe balance + approval",
-        "vault-mint": "requires USDe balance + approval",
-        "vault-withdraw": "requires sUSDe balance",
-        "vault-redeem": "requires sUSDe balance",
-        "cooldown-assets": "requires sUSDe balance to initiate cooldown",
-        "cooldown-shares": "requires sUSDe balance to initiate cooldown",
-        unstake: "requires completed cooldown period (7 days)",
-        "approve-usde": "write action requiring prior USDe balance",
+        "vault-withdraw":
+          "cooldown mode disables ERC4626 withdraw (cooldownDuration is 86400s on mainnet, verified 2026-07-08; StakedUSDeV2 reverts while it is nonzero) - exits are covered by cooldown-shares + unstake",
+        "vault-redeem":
+          "cooldown mode disables ERC4626 redeem (cooldownDuration is 86400s on mainnet, verified 2026-07-08; StakedUSDeV2 reverts while it is nonzero) - exits are covered by cooldown-shares + unstake",
       },
     },
   },

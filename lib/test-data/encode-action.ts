@@ -30,6 +30,7 @@ import {
   buildActionWorkflow,
   buildSetupWorkflow,
 } from "@/lib/test-data/build-workflow";
+import type { SetupOutputs } from "@/lib/test-data/types";
 import type { AbiOutputParam } from "@/plugins/web3/steps/structure-abi-result";
 
 function requireProtocol(slug: string): ProtocolDefinition {
@@ -129,7 +130,8 @@ export function encodeBoundAction(
   protocol: ProtocolDefinition,
   action: ProtocolAction,
   chainId: string,
-  walletAddress: string
+  walletAddress: string,
+  setupOutputs?: SetupOutputs
 ): EncodedAction {
   const built = buildActionWorkflow({
     protocolSlug: protocol.slug,
@@ -137,6 +139,7 @@ export function encodeBoundAction(
     chainId,
     trigger: "Manual",
     walletAddress,
+    setupOutputs,
   });
   const actionNode = built.nodes.find((n) => n.id !== "trigger-1");
   const config = (actionNode?.data.config ?? {}) as Record<string, unknown>;

@@ -36,8 +36,13 @@ const TEST_DATA: ProtocolTestData = {
     skipped: {
       exchange: "requires token balance and approval",
       "remove-liquidity-one-coin": "requires LP token balance",
-      "crv-approve": "write action",
       "crv-transfer": "requires CRV balance",
+    },
+    // The Tier 2 app approve path attempts gas sponsorship, which is
+    // unconfigured on the CI fork, then falls back to direct signing;
+    // that confirmation can take minutes, past the default 120s wait.
+    executionWaitMs: {
+      "crv-approve": 240_000,
     },
   },
 };

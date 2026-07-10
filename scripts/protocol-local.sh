@@ -13,6 +13,7 @@
 #   scripts/protocol-local.sh up            # build + start everything
 #   scripts/protocol-local.sh test [suite]  # run all suites or one (e.g. superfluid)
 #   scripts/protocol-local.sh sim [chain]   # Tier 1 fork simulations (no app needed)
+#                                           # chain: ethereum|sepolia|base|arbitrum
 #   scripts/protocol-local.sh snapshot [chain]  # warm + package a fork RPC cache
 #   scripts/protocol-local.sh down [--purge]
 #
@@ -204,11 +205,60 @@ start_mainnet_fork() {
     "${MAINNET_FORK_CACHE_DIR:-}"
 }
 
+# Tier 1 `sim` only: pinned-block fork for protocols whose fixtures bind
+# state recorded at a specific block (testData.pinnedBlock; pendle - its
+# markets expire, so live-head bindings rot). The pin is resolved from
+# the registry via scripts/protocol-pinned-block.ts, so a fixture
+# refresh touches only the protocol's testData. A fixed pin needs an
+# upstream that serves historical state (public endpoints refuse state
+# reads even a few hundred blocks behind head), so this fork only
+# starts when ANVIL_FORK_MAINNET_URL is exported; without it the pinned
+# protocols self-skip (chains.test.ts gates each pinned suite on
+# PROTOCOL_SIM_RPC_<chainId>_PINNED). Sets PINNED_SIM_RPC for cmd_sim.
+start_pinned_mainnet_fork() {
+  PINNED_SIM_RPC=""
+  if [ -z "${ANVIL_FORK_MAINNET_URL:-}" ]; then
+    log "ANVIL_FORK_MAINNET_URL not set: skipping the pinned-block mainnet fork - pinned-fixture protocols (pendle) will self-skip"
+    return
+  fi
+  local pin
+  pin=$(run_node "pnpm tsx scripts/protocol-pinned-block.ts 1" | tail -1)
+  if ! [[ "$pin" =~ ^[0-9]+$ ]]; then
+    log "could not resolve the chain-1 pinned block from the registry (got '${pin}')"
+    exit 1
+  fi
+  local name=kh-protocol-local-fork-mainnet-pinned
+  local port="${PINNED_FORK_PORT:-8549}"
+  docker rm -f "$name" 2>/dev/null || true
+  docker run -d --name "$name" -p "${port}:8545" --entrypoint anvil \
+    ghcr.io/foundry-rs/foundry:latest \
+    --host 0.0.0.0 --fork-url "$ANVIL_FORK_MAINNET_URL" \
+    --fork-block-number "$pin" --chain-id 1 --block-time 1 >/dev/null
+  wait_for_fork "$port" "0x1" "$name"
+  log "pinned mainnet fork at block ${pin} on :${port}"
+  PINNED_SIM_RPC="PROTOCOL_SIM_RPC_1_PINNED=http://localhost:${port}"
+}
+
 # Tier 1 `sim` only: aave-v3 still carries Sepolia testData. No Tier 2
 # coverage suite targets Sepolia, so `up`/`test` never start this fork.
 start_sepolia_fork() {
   start_fork kh-protocol-local-fork-sepolia "${SEPOLIA_FORK_PORT:-8547}" 11155111 "0xaa36a7" \
     "${ANVIL_FORK_URL:-https://ethereum-sepolia-rpc.publicnode.com}" "${SEPOLIA_FORK_CACHE_DIR:-}"
+}
+
+# Tier 1 `sim` only: Base + Arbitrum One forks for the multi-chain read
+# sweep (chainlink price feeds on both, plus ajna's Base reads). Public
+# upstreams are acceptable here - simulations read forked state and never
+# mine against the upstream - so no archive endpoint is required; override
+# with ANVIL_FORK_BASE_URL / ANVIL_FORK_ARBITRUM_URL for a private one.
+start_base_fork() {
+  start_fork kh-protocol-local-fork-base "${BASE_FORK_PORT:-8550}" 8453 "0x2105" \
+    "${ANVIL_FORK_BASE_URL:-https://base-rpc.publicnode.com}"
+}
+
+start_arbitrum_fork() {
+  start_fork kh-protocol-local-fork-arbitrum "${ARBITRUM_FORK_PORT:-8551}" 42161 "0xa4b1" \
+    "${ANVIL_FORK_ARBITRUM_URL:-https://arbitrum-one-rpc.publicnode.com}"
 }
 
 patch_chains() {
@@ -333,7 +383,7 @@ cmd_sim() {
   local env_rpc
   case "$chain" in
     "")
-      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} ${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453}"
+      env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548} PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547} PROTOCOL_SIM_RPC_8453=http://localhost:${BASE_FORK_PORT:-8550} PROTOCOL_SIM_RPC_42161=http://localhost:${ARBITRUM_FORK_PORT:-8551}"
       ;;
     ethereum)
       env_rpc="PROTOCOL_SIM_RPC_1=http://localhost:${MAINNET_FORK_PORT:-8548}"
@@ -342,30 +392,33 @@ cmd_sim() {
       env_rpc="PROTOCOL_SIM_RPC_11155111=http://localhost:${SEPOLIA_FORK_PORT:-8547}"
       ;;
     base)
-      # The rig runs no Base fork; the caller must provide the endpoint.
-      if [ -z "${PROTOCOL_SIM_RPC_8453:-}" ]; then
-        log "PROTOCOL_SIM_RPC_8453 is not set - every base test will self-skip"
-      fi
-      env_rpc="${PROTOCOL_SIM_RPC_8453:+PROTOCOL_SIM_RPC_8453=$PROTOCOL_SIM_RPC_8453}"
+      env_rpc="PROTOCOL_SIM_RPC_8453=http://localhost:${BASE_FORK_PORT:-8550}"
+      ;;
+    arbitrum)
+      env_rpc="PROTOCOL_SIM_RPC_42161=http://localhost:${ARBITRUM_FORK_PORT:-8551}"
       ;;
     *)
-      log "unknown chain '${chain}' (expected: ethereum, sepolia, base)"
+      log "unknown chain '${chain}' (expected: ethereum, sepolia, base, arbitrum)"
       exit 1
       ;;
   esac
   # Tier 1 needs only the forks for the requested chain(s) - no app, no
-  # database beyond none at all.
+  # database beyond none at all. The ethereum runs additionally start the
+  # pinned-block fork (archive upstream permitting) so pinned-fixture
+  # protocols execute instead of self-skipping.
+  local PINNED_SIM_RPC=""
   case "$chain" in
-    "") start_mainnet_fork; start_sepolia_fork ;;
-    ethereum) start_mainnet_fork ;;
+    "") start_mainnet_fork; start_pinned_mainnet_fork; start_sepolia_fork; start_base_fork; start_arbitrum_fork ;;
+    ethereum) start_mainnet_fork; start_pinned_mainnet_fork ;;
     sepolia) start_sepolia_fork ;;
-    base) ;;
+    base) start_base_fork ;;
+    arbitrum) start_arbitrum_fork ;;
   esac
   log "running Tier 1 simulations: ${target}${chain:+ (${chain})}"
   local started ended
   started=$(date +%s)
   local rc=0
-  run_node "${env_rpc} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || rc=$?
+  run_node "${env_rpc} ${PINNED_SIM_RPC} pnpm vitest run ${target} --reporter=default --reporter=json --outputFile=.claude/protocol-sim-results.json" || rc=$?
   ended=$(date +%s)
   log "simulation wall-clock: $((ended - started))s"
   return "$rc"
@@ -442,7 +495,7 @@ cmd_snapshot() {
 }
 
 cmd_down() {
-  docker rm -f "$APP_CONTAINER" kh-protocol-local-fork-sepolia kh-protocol-local-fork-mainnet 2>/dev/null || true
+  docker rm -f "$APP_CONTAINER" kh-protocol-local-fork-sepolia kh-protocol-local-fork-mainnet kh-protocol-local-fork-mainnet-pinned kh-protocol-local-fork-base kh-protocol-local-fork-arbitrum 2>/dev/null || true
   if [ "${1:-}" = "--purge" ]; then
     psql_local -c "DROP DATABASE IF EXISTS \"${DB_NAME}\""
     log "database ${DB_NAME} dropped"

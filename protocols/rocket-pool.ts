@@ -25,6 +25,12 @@ const TEST_DATA: ProtocolTestData = {
     skipped: {
       burn: "requires rETH balance and deposit-pool excess liquidity, which can legitimately be zero",
     },
+    events: {
+      skipped: {
+        "tokens-burned":
+          "emitted only by rETH.burn, which needs the rETH contract to hold enough ETH collateral to redeem; deposit-pool excess collateral can legitimately be zero on the fork (same constraint that skips the burn action)",
+      },
+    },
     // Chain invariants: the exchange rate only ratchets up from 1e18 and
     // rETH supply is nine figures; both being zero means the read decoded
     // garbage. No expectation on balance-of: the deposit fixture mints the

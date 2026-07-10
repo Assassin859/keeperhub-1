@@ -39,6 +39,18 @@ const TEST_DATA: ProtocolTestData = {
       "get-threshold": [{ nonZero: true }],
       "is-owner": [{ equals: "false" }],
     },
+    // The event harness deploys a throwaway 1-of-1 Safe and drives its
+    // state-changing calls (the bound treasury Safe is a third party we
+    // cannot mutate). The two skips below need Safe surfaces a plain
+    // self-call cannot reach.
+    events: {
+      skipped: {
+        "sign-msg":
+          "emitted only by SignMessageLib.signMessage via delegatecall through the CompatibilityFallbackHandler; not reachable from a direct self-call in the deploy-and-drive harness",
+        "execution-failure":
+          "requires an inner Safe call that reverts while the outer execTransaction still succeeds, which needs a nonzero safeTxGas or a gas-refund (gasPrice) path the harness does not set - the happy-path self-calls all mine successfully",
+      },
+    },
   },
 };
 
@@ -121,13 +133,13 @@ const SAFE_ABI = JSON.stringify([
   {
     type: "event",
     name: "ChangedGuard",
-    inputs: [{ name: "guard", type: "address", indexed: false }],
+    inputs: [{ name: "guard", type: "address", indexed: true }],
   },
   {
     type: "event",
     name: "ExecutionSuccess",
     inputs: [
-      { name: "txHash", type: "bytes32", indexed: false },
+      { name: "txHash", type: "bytes32", indexed: true },
       { name: "payment", type: "uint256", indexed: false },
     ],
   },
@@ -135,7 +147,7 @@ const SAFE_ABI = JSON.stringify([
     type: "event",
     name: "ExecutionFailure",
     inputs: [
-      { name: "txHash", type: "bytes32", indexed: false },
+      { name: "txHash", type: "bytes32", indexed: true },
       { name: "payment", type: "uint256", indexed: false },
     ],
   },
@@ -155,7 +167,7 @@ const SAFE_ABI = JSON.stringify([
   {
     type: "event",
     name: "ChangedFallbackHandler",
-    inputs: [{ name: "handler", type: "address", indexed: false }],
+    inputs: [{ name: "handler", type: "address", indexed: true }],
   },
   {
     type: "event",

@@ -1,6 +1,6 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
-import { wallet, amount } from "@/lib/test-data/types";
+import { wallet, amount, contract } from "@/lib/test-data/types";
 
 // Standard ERC-4626 interface. Input param names must match the keys in
 // erc4626AbiOverrides so overrides bind correctly. All outputs are unnamed
@@ -226,8 +226,29 @@ export default defineAbiProtocol({
     "1": {
       setup: {
         minNativeHuman: "0.01",
-        requiredTokens: [],
+        // USDS and MKR arrive via balances-slot fabrication (no live
+        // whale: the PSM USDS whale drained by 2026-07-08; MKR never had
+        // one). DAI comes from the MCD_JOIN_DAI whale. Budgets: the
+        // sUSDS/stUSDS deposit+mint fixtures consume ~232 USDS combined
+        // (mint pulls previewMint assets at ~1.06-1.10 USDS/share,
+        // observed 2026-07-08), converters take 10 DAI and 0.5 MKR.
+        requiredTokens: [
+          { symbol: "USDS", human: "500" },
+          { symbol: "DAI", human: "25" },
+          { symbol: "MKR", human: "1" },
+        ],
         approvals: [],
+        // Fabricated (anvil_setStorageAt) rather than real approve-token
+        // nodes: five approvals through the app's approve-token path,
+        // whose gas-sponsorship fallback takes minutes each on the CI
+        // fork, would blow the 300s setup timeout.
+        fabricatedApprovals: [
+          { token: "USDS", spender: contract("sUsds"), human: "200" },
+          { token: "USDS", spender: contract("stUsds"), human: "200" },
+          { token: "USDS", spender: contract("daiUsdsConverter"), human: "50" },
+          { token: "DAI", spender: contract("daiUsdsConverter"), human: "25" },
+          { token: "MKR", spender: contract("mkrSkyConverter"), human: "1" },
+        ],
       },
       actions: {
         // sUSDS vault reads
@@ -266,32 +287,52 @@ export default defineAbiProtocol({
         "get-sky-balance": { account: wallet() },
         "approve-dai": { spender: wallet() },
         "approve-usds": { spender: wallet() },
-        "convert-dai-to-usds": { usr: wallet() },
-        "convert-usds-to-dai": { usr: wallet() },
-        "convert-mkr-to-sky": { usr: wallet() },
-        "vault-deposit": { receiver: wallet() },
-        "vault-mint": { receiver: wallet() },
-        "vault-withdraw": { receiver: wallet(), owner: wallet() },
-        "vault-redeem": { receiver: wallet(), owner: wallet() },
-        "st-usds-vault-deposit": { receiver: wallet() },
-        "st-usds-vault-mint": { receiver: wallet() },
-        "st-usds-vault-withdraw": { receiver: wallet(), owner: wallet() },
-        "st-usds-vault-redeem": { receiver: wallet(), owner: wallet() },
+        "convert-dai-to-usds": { usr: wallet(), amount: amount("DAI", "10") },
+        "convert-usds-to-dai": { usr: wallet(), amount: amount("USDS", "10") },
+        "convert-mkr-to-sky": { usr: wallet(), mkrAmt: amount("MKR", "0.5") },
+        // Writes run in registry order, so the deposits open the share
+        // positions the withdraw/redeem fixtures spend.
+        "vault-deposit": {
+          assets: amount("USDS", "100"),
+          receiver: wallet(),
+        },
+        "vault-mint": { shares: amount("USDS", "10"), receiver: wallet() },
+        "vault-withdraw": {
+          assets: amount("USDS", "20"),
+          receiver: wallet(),
+          owner: wallet(),
+        },
+        "vault-redeem": {
+          shares: amount("USDS", "10"),
+          receiver: wallet(),
+          owner: wallet(),
+        },
+        "st-usds-vault-deposit": {
+          assets: amount("USDS", "100"),
+          receiver: wallet(),
+        },
+        "st-usds-vault-mint": {
+          shares: amount("USDS", "10"),
+          receiver: wallet(),
+        },
+        "st-usds-vault-withdraw": {
+          assets: amount("USDS", "20"),
+          receiver: wallet(),
+          owner: wallet(),
+        },
+        "st-usds-vault-redeem": {
+          shares: amount("USDS", "10"),
+          receiver: wallet(),
+          owner: wallet(),
+        },
       },
-      skipped: {
-        "vault-deposit": "requires USDS balance + approval",
-        "vault-mint": "requires USDS balance + approval",
-        "vault-withdraw": "requires sUSDS balance",
-        "vault-redeem": "requires sUSDS balance",
-        "st-usds-vault-deposit": "requires USDS balance + approval",
-        "st-usds-vault-mint": "requires USDS balance + approval",
-        "st-usds-vault-withdraw": "requires stUSDS balance",
-        "st-usds-vault-redeem": "requires stUSDS balance",
-        "approve-usds": "write action requiring prior USDS balance",
-        "approve-dai": "write action requiring prior DAI balance",
-        "convert-dai-to-usds": "requires DAI balance",
-        "convert-usds-to-dai": "requires USDS balance",
-        "convert-mkr-to-sky": "requires MKR balance",
+      // approve-dai and approve-usds run the app's real approve-token path,
+      // which fans out cold token state on a fresh fork and runs past the
+      // default two-minute wait; give them the same headroom as ethena
+      // approve-usde / lido approve-steth / curve crv-approve.
+      executionWaitMs: {
+        "approve-dai": 240_000,
+        "approve-usds": 240_000,
       },
     },
   },

@@ -20,9 +20,12 @@
  * Skips follow testData.skipped with the same reasons as the e2e suites.
  */
 
-import { Contract, type Interface, JsonRpcProvider, parseUnits } from "ethers";
+import { Contract, Interface, JsonRpcProvider, parseUnits } from "ethers";
 import { expect, test } from "vitest";
-import { getProtocol } from "@/lib/protocol-registry";
+import {
+  getProtocol,
+  type ProtocolDefinition,
+} from "@/lib/protocol-registry";
 import { resolveBinding } from "@/lib/test-data/build-workflow";
 import { TOKEN_REGISTRY } from "@/lib/test-data/chain-test-data";
 import {
@@ -31,10 +34,13 @@ import {
   encodeSetupSteps,
 } from "@/lib/test-data/encode-action";
 import { planPhaseFixtures } from "@/lib/test-data/plan";
+import type { SetupOutputs } from "@/lib/test-data/types";
 import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
 import {
   ERC20_ABI,
   ensureErc20Acquired,
+  runActionFabrications,
+  runFabricatedApprovals,
   runForkImpersonatedCalls,
   withImpersonation,
 } from "../../protocol-coverage/_shared/funding";
@@ -52,13 +58,26 @@ const WRITE_TIMEOUT_MS = 120_000;
 // reads near-instant, so the headroom costs nothing on the happy path.
 const READ_TIMEOUT_MS = 90_000;
 
+/** Mirror of the platform gas strategy's default 2.0x estimate multiplier
+ *  (lib/web3/gas-defaults.ts GLOBAL_DEFAULT). Sending with the node-filled
+ *  exact estimate OOGs on time-dependent gas: savings-rate vaults (sUSDS,
+ *  stUSDS, sDAI) run a drip whose cost moves between the estimation block
+ *  and the execution block, and the exact-estimate send dies with
+ *  status-0 receipts at gasUsed == gasLimit (observed on the 2026-07-08
+ *  sweep; same mechanism as the USDCx OOG note in the methodology doc). */
+const GAS_LIMIT_MULTIPLIER = BigInt(2);
+
 async function sendImpersonatedOnce(
   provider: JsonRpcProvider,
   from: string,
   tx: { to: string; data?: string; value?: bigint }
 ): Promise<void> {
   await withImpersonation(provider, from, async (signer) => {
-    const sent = await signer.sendTransaction(tx);
+    const estimated = await signer.estimateGas(tx);
+    const sent = await signer.sendTransaction({
+      ...tx,
+      gasLimit: estimated * GAS_LIMIT_MULTIPLIER,
+    });
     const receipt = await sent.wait();
     if (!receipt || receipt.status !== 1) {
       throw new Error(`impersonated tx to ${tx.to} reverted`);
@@ -116,6 +135,10 @@ async function provisionSetup(
     );
   }
 
+  // Fork-only setup allowances written straight to storage (parity with
+  // the coverage preflight); no-op when the protocol declares none.
+  await runFabricatedApprovals(protocolSlug, chainId, SIM_WALLET, rpcUrl);
+
   for (const approval of setup.approvals) {
     const entry = TOKEN_REGISTRY[chainId]?.[approval.token];
     if (!entry) {
@@ -158,6 +181,60 @@ function serializeResult(value: unknown): unknown {
   );
 }
 
+// Output-bearing fragment for the GDAv1Forwarder.createPool capture. The
+// registry action strips the outputs (write actions show none), but the
+// on-chain function returns (bool success, address pool); an eth_call of the
+// producer's calldata returns those, so the harness reads the pool address
+// without decoding an event log.
+const GDA_CREATE_POOL_RETURN_ABI = [
+  "function createPool(address,address,(bool,bool)) returns (bool success, address pool)",
+];
+
+/**
+ * Run the (protocol, chain) fork-tier captures and return their values as
+ * SetupOutputs for fromSetupOutput bindings. Runs after setup provisioning
+ * and before the action sweep. For the "gda-pool" kind it eth_calls the
+ * producer's calldata to read the (bool, address) return, then sends the same
+ * tx at the same nonce so the pool deploys at exactly that address:
+ * provisioning it here (rather than relying on the create-pool action in the
+ * sweep) decouples the GDA consumers from sweep ordering and guarantees the
+ * pool exists when they run. See OutputCapture in lib/test-data/types.ts.
+ */
+async function captureOutputs(
+  provider: JsonRpcProvider,
+  protocol: ProtocolDefinition,
+  chainId: string
+): Promise<SetupOutputs> {
+  const captures = protocol.testData?.[chainId]?.captures;
+  const out: SetupOutputs = {};
+  if (!captures) {
+    return out;
+  }
+  const iface = new Interface(GDA_CREATE_POOL_RETURN_ABI);
+  for (const [producerSlug, capture] of Object.entries(captures)) {
+    const action = protocol.actions.find((a) => a.slug === producerSlug);
+    if (!action) {
+      throw new Error(`capture references unknown action "${producerSlug}"`);
+    }
+    // capture.kind is "gda-pool" (the only kind today).
+    const encoded = encodeBoundAction(protocol, action, chainId, SIM_WALLET);
+    const ret = await provider.call({
+      to: encoded.to,
+      data: encoded.data,
+      from: SIM_WALLET,
+    });
+    // Return is (bool success, address pool); take the pool at index 1.
+    const pool = String(iface.decodeFunctionResult("createPool", ret)[1]);
+    await impersonatedSend(provider, SIM_WALLET, {
+      to: encoded.to,
+      data: encoded.data,
+      value: encoded.value,
+    });
+    out[capture.as] = { ...(out[capture.as] ?? {}), [capture.field]: pool };
+  }
+  return out;
+}
+
 async function runRead(
   provider: JsonRpcProvider,
   encoded: EncodedAction
@@ -191,10 +268,20 @@ export function runSimulation(opts: {
     staticNetwork: true,
   });
 
+  // Populated by the provision step below and read by the action tests
+  // (fromSetupOutput bindings). Tests in a file run in order, so captures
+  // are recorded before any action that consumes them, mirroring how the
+  // write sweep relies on registry order for its own state dependencies.
+  const capturedOutputs: SetupOutputs = {};
+
   test(
     `setup: provision ${opts.protocol} state`,
     async () => {
       await provisionSetup(provider, opts.protocol, opts.chainId, opts.rpcUrl);
+      Object.assign(
+        capturedOutputs,
+        await captureOutputs(provider, protocol, opts.chainId)
+      );
     },
     WRITE_TIMEOUT_MS * 3
   );
@@ -231,7 +318,8 @@ export function runSimulation(opts: {
             protocol,
             action,
             opts.chainId,
-            SIM_WALLET
+            SIM_WALLET,
+            capturedOutputs
           );
           if (phase === "read") {
             const result = await runRead(provider, encoded);
@@ -244,6 +332,16 @@ export function runSimulation(opts: {
               expect(failure, failure ?? "").toBeNull();
             }
           } else {
+            // Cheatcode preconditions declared for this action (e.g.
+            // marking the wallet's real sUSDe cooldown elapsed before
+            // unstake); no-op for actions that declare none.
+            await runActionFabrications(
+              opts.protocol,
+              opts.chainId,
+              SIM_WALLET,
+              action.slug,
+              opts.rpcUrl
+            );
             await impersonatedSend(provider, SIM_WALLET, {
               to: encoded.to,
               data: encoded.data,
@@ -266,7 +364,8 @@ export function runSimulation(opts: {
                 protocol,
                 readAction,
                 opts.chainId,
-                SIM_WALLET
+                SIM_WALLET,
+                capturedOutputs
               );
               const result = await runRead(provider, probe);
               const failure = checkOutputExpectation(

@@ -20,7 +20,7 @@ import {
   TRIGGER_TYPES,
   toWebhookTriggered,
 } from "@/lib/test-data/build-workflow";
-import { amount, wallet } from "@/lib/test-data/types";
+import { amount, fromSetupOutput, wallet } from "@/lib/test-data/types";
 
 const HEX_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 // Builder takes the persistent test wallet address as a runtime parameter
@@ -316,5 +316,88 @@ describe("KEEP-458 resolveBinding wallet() gating", () => {
     expect(
       resolveBinding("0", "uint16", protocol, "11155111", TEST_WALLET)
     ).toBe("0");
+  });
+});
+
+/**
+ * fromSetupOutput piping: a binding that resolves to a value a prior step
+ * produced (Superfluid GDA pool actions bind the pool create-pool deploys).
+ * The resolver reads the value from the SetupOutputs the caller passes; the
+ * fork simulation harness populates it, and a skipped/skippedCoverage action
+ * built without it falls back to the placeholder rather than throwing.
+ */
+describe("KEEP-938 resolveBinding fromSetupOutput piping", () => {
+  const protocol = getProtocol("superfluid");
+  if (!protocol) {
+    throw new Error("superfluid must be registered for this test");
+  }
+  const POOL = "0x1234567890123456789012345678901234567890";
+  const captures = { "create-pool": { pool: POOL } };
+
+  it("resolves to the captured value when the capture is present", () => {
+    expect(
+      resolveBinding(
+        fromSetupOutput("create-pool", "pool"),
+        "address",
+        protocol,
+        "1",
+        TEST_WALLET,
+        captures
+      )
+    ).toBe(POOL);
+  });
+
+  it("throws when the capture is absent", () => {
+    expect(() =>
+      resolveBinding(
+        fromSetupOutput("create-pool", "pool"),
+        "address",
+        protocol,
+        "1",
+        TEST_WALLET
+      )
+    ).toThrowError(/has no captured value/);
+  });
+
+  it("throws when the step is present but the field is missing", () => {
+    expect(() =>
+      resolveBinding(
+        fromSetupOutput("create-pool", "missing"),
+        "address",
+        protocol,
+        "1",
+        TEST_WALLET,
+        captures
+      )
+    ).toThrowError(/has no captured value/);
+  });
+
+  it("buildActionWorkflow pipes a captured value into the action config", () => {
+    const built = buildActionWorkflow({
+      protocolSlug: "superfluid",
+      actionSlug: "connect-pool",
+      chainId: "1",
+      trigger: "Manual",
+      walletAddress: TEST_WALLET,
+      setupOutputs: captures,
+    });
+    const actionNode = built.nodes.find((n) => n.type === "action");
+    expect(actionNode?.data?.config?.pool).toBe(POOL);
+  });
+
+  it("substitutes a placeholder for a skippedCoverage action built without the capture", () => {
+    // connect-pool is in superfluid's skippedCoverage, so the builder must
+    // not throw when no capture is supplied (the unit-test / seeder build
+    // path) - it emits the same unused placeholder an unbound address input
+    // on a skipped action gets.
+    const built = buildActionWorkflow({
+      protocolSlug: "superfluid",
+      actionSlug: "connect-pool",
+      chainId: "1",
+      trigger: "Manual",
+      walletAddress: TEST_WALLET,
+    });
+    const actionNode = built.nodes.find((n) => n.type === "action");
+    expect(actionNode?.data?.config?.pool).toBe(`0x${"0".repeat(40)}`);
   });
 });
