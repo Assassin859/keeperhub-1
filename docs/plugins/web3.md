@@ -5,7 +5,7 @@ description: "Blockchain operations including balance checks, contract interacti
 
 # Web3 Plugin
 
-Interact with EVM-compatible blockchain networks. Read-only actions work without credentials. Write actions require a connected Para wallet.
+Interact with EVM-compatible blockchain networks. Read-only actions work without credentials. Write actions require a connected Turnkey wallet.
 
 ## Actions
 
@@ -23,6 +23,7 @@ Interact with EVM-compatible blockchain networks. Read-only actions work without
 | Check ERC20 Allowance | Web3 | No | Check the current token spending allowance granted to a spender |
 | Query Contract Events | Web3 | No | Query historical smart contract events across a block range |
 | Query Transaction History | Web3 | No | Query historical transactions by function call with optional argument filtering |
+| Sign Typed Data (EIP-712) | Web3 | Wallet | Produce an EIP-712 signature over a typed-data payload for off-chain signed intents |
 | Decode Calldata | Security | No | Decode raw calldata into human-readable function calls |
 | Assess Transaction Risk | Security | No | AI-powered risk scoring with built-in DeFi rules |
 
@@ -451,7 +452,7 @@ Schedule (every 15 min)
 
 ## Write Contract
 
-Execute state-changing functions on smart contracts using your Para wallet. Requires a connected wallet.
+Execute state-changing functions on smart contracts using your Turnkey wallet. Requires a connected wallet.
 
 **Inputs:** Network, Contract Address, ABI (auto-fetched), Function, Function Arguments, Gas Limit Multiplier (optional, in Advanced section)
 
@@ -467,7 +468,7 @@ Execute state-changing functions on smart contracts using your Para wallet. Requ
 
 ## Transfer Native Token
 
-Send ETH, MATIC, or other native tokens from your Para wallet to a recipient address.
+Send ETH, MATIC, or other native tokens from your Turnkey wallet to a recipient address.
 
 **Inputs:** Network, Amount (ETH), Recipient Address, Gas Limit Multiplier (optional, in Advanced section)
 
@@ -483,7 +484,7 @@ Send ETH, MATIC, or other native tokens from your Para wallet to a recipient add
 
 ## Transfer ERC20 Token
 
-Send ERC20 tokens from your Para wallet to a recipient address.
+Send ERC20 tokens from your Turnkey wallet to a recipient address.
 
 **Inputs:** Network, Token, Amount, Recipient Address, Gas Limit Multiplier (optional, in Advanced section)
 
@@ -499,7 +500,7 @@ Send ERC20 tokens from your Para wallet to a recipient address.
 
 ## Approve ERC20 Token
 
-Grant spending permission to a spender contract, allowing it to transfer ERC20 tokens on behalf of your Para wallet. This is required before using DEX aggregators, DeFi protocols, or any contract that needs to move tokens from your wallet.
+Grant spending permission to a spender contract, allowing it to transfer ERC20 tokens on behalf of your Turnkey wallet. This is required before using DEX aggregators, DeFi protocols, or any contract that needs to move tokens from your wallet.
 
 **Inputs:** Network, Token, Spender Address, Amount, Gas Limit Multiplier (optional, in Advanced section)
 
@@ -523,6 +524,18 @@ Schedule (daily)
   -> Approve ERC20 Token: spender={{routerAddress}}, amount="max"
   -> Discord: "Router approval refreshed"
 ```
+
+---
+
+## Sign Typed Data (EIP-712)
+
+Produce an EIP-712 signature over a typed-data payload using your organization's Turnkey wallet, for off-chain signed intents. Fund-moving authorizations (permits, transfer authorizations, delegations) are refused on this action.
+
+**Inputs:** EIP-712 Typed Data (JSON with `domain`, `types`, `primaryType`, and `message`)
+
+**Outputs:** `success`, `signature` (65-byte 0x-prefixed signature), `signer` (checksummed signer address), `error`, `code` (`VALIDATION`, `NO_WALLET`, `POLICY_BLOCKED`, `UPSTREAM`, or `UNKNOWN`)
+
+**When to use:** Sign off-chain intents such as order commitments or attestations that a downstream service verifies. Not for fund-moving permits or transfer authorizations, which are refused.
 
 ---
 
