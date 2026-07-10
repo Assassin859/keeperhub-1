@@ -70,22 +70,17 @@ Members can leave an organization at any time:
 
 If you are the sole owner, you must transfer ownership to another accepted member before leaving. Select a member to promote to owner during the leave process.
 
-## Current Limitations
+## Roles
 
-### No Role-Based Access
+Organizations have three roles: owner, admin, and member. See [Access Control](/users-teams-orgs/permissions) for the full breakdown.
 
-Currently, all organization members have equal access. There are no administrator, editor, or viewer roles. All members can:
-
-- Create new workflows
-- Edit existing workflows
-- Delete workflows
-- Invite new members
-
-Role-based access control is planned for a future release. See [Access Control](/docs/users-teams-orgs/permissions) for details.
+- **Members** collaborate on the organization's workflows: create, edit, delete, enable, disable, and view run history.
+- **Admins** can additionally create and revoke organization API keys and view the security audit trail.
+- **Owners** control the most sensitive actions: withdrawing funds from the organization wallet, exporting the wallet key, and exporting the audit trail.
 
 ### Organization Ownership
 
-The user who creates an organization is considered the owner, but ownership transfer is not currently supported.
+The user who creates an organization becomes its owner. Ownership can be transferred to another accepted member, which is required when the sole owner leaves the organization.
 
 ## Best Practices
 

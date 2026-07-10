@@ -45,15 +45,15 @@ Send messages to Discord channels via webhooks.
 
 ### Slack
 
-Connect to Slack workspaces for team notifications.
+Connect to Slack for team notifications using a bot token.
 
 **Setup:**
-1. Click **Add Connection** and select Slack
-2. Authorize KeeperHub to access your Slack workspace
+1. Create a Slack app with a bot token (starts with `xoxb-`) that has the `chat:write` scope
+2. Click **Add Connection**, select Slack, and paste the bot token
 3. Select default channel (can be changed per node)
 
 **Features:**
-- Workspace and channel targeting
+- Channel targeting
 - Thread support for organized conversations
 - Mention capabilities for urgent alerts
 
@@ -115,20 +115,17 @@ The configuration panel shows connection status:
 
 ## Dynamic Variables in Messages
 
-Include workflow data in your notifications using variables:
+Include workflow data in your notifications using template references to earlier nodes:
 
-| Variable | Description |
-|----------|-------------|
-| `${balance}` | Balance value from Check Balance node |
-| `${address}` | Wallet or contract address |
-| `${network}` | Blockchain network name |
-| `${timestamp}` | Execution timestamp |
-| `${workflow_name}` | Name of the workflow |
-| `${node_name}` | Name of the triggering node |
+```
+{{@nodeId:Label.field}}
+```
+
+Each node's outputs become available to downstream nodes. For example, a Check Balance node labeled "Check Balance" exposes `{{@checkBalance:Check Balance.balance}}` and `{{@checkBalance:Check Balance.address}}`. See [Templating](/workflows/templating) for the full syntax and available fields.
 
 **Example Discord Message:**
 ```
-Balance Alert: Wallet ${address} on ${network} now has ${balance} ETH
+Balance Alert: Wallet {{@checkBalance:Check Balance.address}} now has {{@checkBalance:Check Balance.balance}} ETH
 ```
 
 ## Best Practices

@@ -56,10 +56,10 @@ Track performance at the node level:
 
 ## Spending Caps
 
-Organizations can configure daily spending caps to control gas costs:
+Organizations can configure a daily cap on the native token value moved by direct executions (transfers), independent of gas:
 
-- Set maximum daily spending in wei
-- Monitor current usage against cap
+- Set the maximum daily value in wei
+- Monitor current usage against the cap
 - Automatic enforcement on direct executions
 - Real-time spending alerts
 

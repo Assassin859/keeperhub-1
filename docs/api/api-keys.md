@@ -28,25 +28,38 @@ Issued per-organization. Create them from Settings > API Keys > Organisation in 
 GET /api/keys
 ```
 
-Accepts session or API-key authentication. Returns non-revoked keys for the active organization.
+Accepts session or API-key authentication. Returns a paginated list of non-revoked keys for the active organization. Use the `page` (1-based) and `limit` query parameters to page through results.
 
 #### Response
 
 ```json
-[
-  {
-    "id": "key_123",
-    "name": "Production Key",
-    "keyPrefix": "kh_abc",
-    "createdAt": "2024-01-01T00:00:00Z",
-    "lastUsedAt": "2024-01-15T12:00:00Z",
-    "createdByName": "Jane Doe",
-    "expiresAt": null
+{
+  "items": [
+    {
+      "id": "key_123",
+      "name": "Production Key",
+      "keyPrefix": "kh_a1B2c",
+      "createdAt": "2024-01-01T00:00:00Z",
+      "lastUsedAt": "2024-01-15T12:00:00Z",
+      "expiresAt": null,
+      "scope": "mcp:read mcp:write",
+      "createdByName": "Jane Doe",
+      "createdByEmail": "jane@example.com",
+      "createdByRole": "admin"
+    }
+  ],
+  "meta": { "total": 1, "page": 1, "pageSize": 50, "totalPages": 1 },
+  "_links": {
+    "self": "/api/keys?page=1&limit=50",
+    "first": "/api/keys?page=1&limit=50",
+    "prev": null,
+    "next": null,
+    "last": "/api/keys?page=1&limit=50"
   }
-]
+}
 ```
 
-The full key is never returned after creation.
+`keyPrefix` is the first 8 characters of the key (`kh_` plus 5 more), kept for identification. The full key is never returned after creation.
 
 ### Create Organization Key
 

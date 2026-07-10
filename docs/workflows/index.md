@@ -11,7 +11,7 @@ Workflows are the core of KeeperHub - visual automations that connect triggers, 
 
 A workflow is a visual representation of an automation. Instead of writing code or managing infrastructure, you build workflows by connecting nodes on a canvas:
 
-- **Triggers** start your workflow (on a schedule, via webhook, on blockchain events, or manually)
+- **Triggers** start your workflow (on a schedule, via webhook, on blockchain events, every N blocks, or manually)
 - **Actions** perform operations (check balances, call smart contracts, send notifications)
 - **Conditions** add branching logic based on action results
 
@@ -35,6 +35,7 @@ Every workflow starts with a trigger that determines when it runs:
 | Scheduled | Run at intervals (every 5 minutes, hourly, daily, etc.) |
 | Webhook | Run when an external service calls your workflow URL |
 | Event | Run when a blockchain event is detected |
+| Block | Run every N blocks on a chosen network |
 | Manual | Run only when you click the Run button |
 
 ### Action Nodes
@@ -49,11 +50,7 @@ Actions perform the actual work in your workflow:
 
 ### Condition Nodes
 
-Conditions evaluate results from previous nodes and branch the workflow:
-
-- **Low Balance Condition**: Check if a balance is below a threshold
-- **Value Comparison**: Compare any value against a target
-- **Custom Logic**: Combine multiple conditions with AND/OR operators
+A condition node evaluates a value from an earlier node against a target using a comparison operator (equals, greater than, less than, and so on) and branches the workflow based on the result. See [Creating Workflows](/workflows/creating) for the available operators.
 
 ## Building Your First Workflow
 

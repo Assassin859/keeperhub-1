@@ -67,7 +67,7 @@ When a workflow does not behave as expected, the Runs panel provides the informa
 - Nonce conflicts from pending transactions
 
 **Resolution Steps**:
-1. Check Para wallet balance in KeeperHub
+1. Check Turnkey wallet balance in KeeperHub
 2. Review the error message for revert reason
 3. Verify contract function parameters
 4. Wait for pending transactions to clear

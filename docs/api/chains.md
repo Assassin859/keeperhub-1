@@ -128,6 +128,7 @@ Fetches the ABI for a verified contract from the block explorer. The `{chainId}`
 
 ```json
 {
+  "success": true,
   "abi": [
     {
       "type": "function",
@@ -135,7 +136,8 @@ Fetches the ABI for a verified contract from the block explorer. The `{chainId}`
       "inputs": [{"name": "account", "type": "address"}],
       "outputs": [{"name": "", "type": "uint256"}]
     }
-  ]
+  ],
+  "explorerUrl": "https://etherscan.io"
 }
 ```
 
