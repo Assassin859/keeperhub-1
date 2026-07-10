@@ -200,7 +200,8 @@ Before using certain node types, set up connections in your account:
    - Web3 wallets
    - Email providers
    - Discord webhooks
-   - Slack workspaces
+   - Slack (bot token)
+   - Telegram (bot token)
 
 ## Enabling and Running
 

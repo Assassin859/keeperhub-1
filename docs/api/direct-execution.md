@@ -23,7 +23,7 @@ Direct execution requests are limited to 60 requests per minute per API key. Eve
 
 ## Spending Caps
 
-Organizations can configure daily spending caps in wei. If the cap is exceeded, execution requests return a `422` status with error code `SPENDING_CAP_EXCEEDED`.
+Organizations can configure daily spending caps in wei. If the cap is exceeded, execution requests return a `403` status with the error message `Daily spending cap exceeded`.
 
 ## Idempotency
 
@@ -354,6 +354,6 @@ Direct execution endpoints return detailed error information:
 **Common Error Codes:**
 
 - `401`: Invalid or missing API key
-- `422`: Wallet not configured (see [Wallet Management](/wallet-management/para))
+- `422`: Wallet not configured, code `WALLET_NOT_CONFIGURED` (see [Wallet Management](/wallet-management/turnkey))
 - `429`: Rate limit exceeded
 - `400`: Invalid request parameters

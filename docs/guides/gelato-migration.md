@@ -28,7 +28,7 @@ This follows the earlier sunset of Gelato's Legacy Automate service in June 2024
 | **Off-chain logic** | Visual workflow builder, AI-assisted creation | Custom serverless functions (AWS Lambda, etc.) |
 | **Gas optimization** | Smart Gas Estimation (~30% savings) | Manual tuning per chain |
 | **Transaction retry** | Intelligent retry + nonce management (up to 10 attempts) | Build your own retry logic |
-| **Key management** | Non-custodial Para wallets (MPC) | Self-managed HSM / KMS / hot wallets |
+| **Key management** | Non-custodial Turnkey wallets (secure enclave) | Self-managed HSM / KMS / hot wallets |
 | **Multi-chain** | Unified multi-chain workflows | Separate deployments per chain |
 | **Monitoring** | Built-in execution analytics and alerts | Build or integrate third-party tools |
 | **Alerting** | Slack, Discord, Email, Telegram, Webhook | Custom integration per channel |
@@ -51,11 +51,11 @@ Time-based and event-based contract calls with predefined inputs. The simplest G
 
 ### Gelato Relay --> Poker Nodes + Smart Gas Engine
 
-Gasless transaction relaying and meta-transaction support. KeeperHub adds ~30% gas savings through intelligent estimation, non-custodial wallet management via Para, and transaction simulation before execution to catch failures before they cost gas.
+Gasless transaction relaying and meta-transaction support. KeeperHub adds ~30% gas savings through intelligent estimation, non-custodial wallet management via Turnkey, and transaction simulation before execution to catch failures before they cost gas.
 
-### Dedicated msg.sender --> Non-Custodial Para Wallets
+### Dedicated msg.sender to Non-Custodial Turnkey Wallets
 
-Gelato assigned dedicated executor addresses for task execution. KeeperHub uses non-custodial Para wallets that you control. Full key ownership without managing key infrastructure. No vendor lock-in on your execution addresses.
+Gelato assigned dedicated executor addresses for task execution. KeeperHub uses non-custodial Turnkey wallets that you control. Full key ownership without managing key infrastructure. No vendor lock-in on your execution addresses.
 
 ### Additional Capabilities
 
@@ -75,11 +75,11 @@ Export your task list from the Gelato dashboard. For each task, document the tri
 
 ### 2. Set Up KeeperHub
 
-Create your account, configure chain connections, and provision your non-custodial Para wallet for transaction signing.
+Create your account, configure chain connections, and provision your non-custodial Turnkey wallet for transaction signing.
 
 ### 3. Recreate Your Workflows
 
-Use the workflow builder or AI assistant to recreate your automations. Typescript Functions become no-code workflows. Solidity Functions map to Watcher + Poker node combinations. Check the [Workflow Hub](/hub) for templates covering common patterns like balance monitoring, contract execution, and multi-step alerting.
+Use the workflow builder or AI assistant to recreate your automations. Typescript Functions become no-code workflows. Solidity Functions map to Watcher + Poker node combinations. Check the [Workflow Hub](/workflows/hub) for templates covering common patterns like balance monitoring, contract execution, and multi-step alerting.
 
 ### 4. Parallel Run, Then Cut Over
 
