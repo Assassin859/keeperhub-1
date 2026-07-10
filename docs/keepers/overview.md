@@ -47,6 +47,15 @@ Run your workflow only when you click the Run button.
 
 **Use Cases:** Testing, one-time operations, on-demand executions
 
+### Block Trigger
+Run your workflow every N blocks on a chosen network.
+
+**Configuration:**
+- Network selection
+- Block interval (1 = every block, 10 = every 10th block)
+
+**Use Cases:** Block-cadence monitoring, per-block price or state checks
+
 ## Action Nodes
 
 Actions perform operations in your workflow. Connect multiple actions to create complex automations.
@@ -82,7 +91,7 @@ Execute state-changing functions on smart contracts.
 - Function parameters
 - Gas settings
 
-**Requirements:** Funded Para wallet for gas fees
+**Requirements:** Funded Turnkey wallet for gas fees
 
 #### Transfer Funds
 Send ETH or tokens to another address.
@@ -93,7 +102,7 @@ Send ETH or tokens to another address.
 - Amount
 - Token contract (optional)
 
-**Requirements:** Funded Para wallet
+**Requirements:** Funded Turnkey wallet
 
 ### Notification Actions
 
@@ -118,7 +127,7 @@ Post messages to Discord channels.
 Post messages to Slack channels.
 
 **Configuration:**
-- Connection (Slack workspace)
+- Connection (Slack bot token)
 - Channel selection
 - Message content
 

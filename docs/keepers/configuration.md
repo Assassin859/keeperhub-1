@@ -57,6 +57,13 @@ Copy the webhook URL and configure your external service to POST to it.
 
 No additional configuration needed. Click the Run button to execute.
 
+### Block Trigger
+
+| Field | Description |
+|-------|-------------|
+| Network * | Blockchain network to watch |
+| Block Interval * | Fire the workflow every N blocks (1 = every block, 10 = every 10th block) |
+
 ## Web3 Node Configuration
 
 ### Check Balance
@@ -93,7 +100,7 @@ KeeperHub automatically fetches the contract ABI from block explorers. For proxy
 | Parameters | Function input parameters |
 | Gas Limit | Optional gas limit override |
 
-**Important**: Write operations require ETH in your Para wallet for gas fees.
+**Important**: Write operations require ETH in your Turnkey wallet for gas fees.
 
 ### Transfer Funds
 
@@ -128,7 +135,7 @@ KeeperHub automatically fetches the contract ABI from block explorers. For proxy
 
 | Field | Description |
 |-------|-------------|
-| Connection * | Slack workspace connection |
+| Connection * | Slack bot token connection |
 | Channel | Target channel |
 | Message * | Message content to send |
 
@@ -184,10 +191,10 @@ Connections store credentials for external services. Set them up before configur
 
 | Type | Required Information |
 |------|---------------------|
-| Web3 Wallet | Wallet address (Para wallet auto-connected) |
+| Web3 Wallet | Wallet address (Turnkey wallet auto-connected) |
 | Email | Provider API key |
 | Discord | Webhook URL |
-| Slack | Workspace OAuth token |
+| Slack | Bot token (starts with `xoxb-`) |
 | Telegram | Bot token from BotFather |
 | Webhook | URL and authentication headers |
 
@@ -200,19 +207,17 @@ When configuring a node:
 
 ## Dynamic Variables
 
-Use dynamic variables in notification messages to include data from your workflow:
+Reference data from earlier nodes in notification messages, condition expressions, and action parameters using template references:
 
-| Variable | Description |
-|----------|-------------|
-| `${balance}` | Current balance from Check Balance node |
-| `${address}` | Wallet or contract address |
-| `${network}` | Network name |
-| `${timestamp}` | Execution timestamp |
-| `${workflow_name}` | Name of the workflow |
+```
+{{@nodeId:Label.field}}
+```
+
+For example, a Check Balance node labeled "Check Balance" exposes its result as `{{@checkBalance:Check Balance.balance}}`. See [Templating](/workflows/templating) for the full syntax and available fields.
 
 **Example Message:**
 ```
-Balance Alert: ${address} on ${network} has ${balance} ETH
+Balance Alert: {{@checkBalance:Check Balance.address}} has {{@checkBalance:Check Balance.balance}} ETH
 ```
 
 ## Enabling and Disabling Nodes
