@@ -182,15 +182,32 @@ export async function POST(request: Request): Promise<NextResponse> {
         .update(twoFactorTable)
         .set({ backupCodes: encryptedBackupCodes })
         .where(eq(twoFactorTable.userId, userId));
-      // /setup writes the two_factor row out-of-band, so Better Auth's
-      // verifyTOTP verifies the code but never flips this flag (it only does so
-      // for enrollments it initiated). getEnrolledFactors reads exactly this
-      // column, so set it explicitly here -- at verify time -- or TOTP would
-      // forever read as "not enrolled". Mirrors the pending-signup path below.
+      // /setup writes the row pending (verified=false), so verifyTOTP above
+      // runs Better Auth's own enable path (updateUser + session rotation) and
+      // flips two_factor_enabled. Repeat it here as an idempotent backstop, then
+      // assert it landed: getEnrolledFactors reads exactly this column, so a
+      // silently-lost write would loop the user through /enroll-mfa forever.
       await db
         .update(users)
         .set({ twoFactorEnabled: true })
         .where(eq(users.id, userId));
+      const [enrolledRow] = await db
+        .select({ twoFactorEnabled: users.twoFactorEnabled })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (enrolledRow?.twoFactorEnabled !== true) {
+        logSystemError(
+          ErrorCategory.AUTH,
+          "[TOTP Enroll] two_factor_enabled did not persist after verify",
+          new Error("two_factor_enabled still false post-enroll"),
+          { endpoint: "/api/user/totp/enroll", user_id: userId }
+        );
+        return NextResponse.json(
+          { error: "Enrollment could not be completed. Please try again." },
+          { status: HttpStatus.INTERNAL_SERVER_ERROR }
+        );
+      }
       const newRawToken = extractNewSessionToken(
         readAllSetCookies(verifyHeaders)
       );
@@ -313,9 +330,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     // authenticate, while the absence of the pending cookie (which
     // we are about to clear) means they could not retry enrollment.
     await db.transaction(async (tx) => {
+      // This path verifies with the custom verifyUserTotp above, not Better
+      // Auth, so it must mark the row verified itself. /setup writes it pending
+      // (verified=false); leaving it false would make Better Auth's sign-in
+      // verify reject the factor with TOTP_NOT_ENABLED on the user's next login.
       await tx
         .update(twoFactorTable)
-        .set({ backupCodes: encryptedBackupCodes })
+        .set({ backupCodes: encryptedBackupCodes, verified: true })
         .where(eq(twoFactorTable.userId, userId));
       await tx
         .update(users)
