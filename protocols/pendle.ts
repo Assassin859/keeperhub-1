@@ -44,7 +44,10 @@ const TEST_DATA: ProtocolTestData = {
       // Three real signed txs through the app; each has been observed
       // to take 100-220s under CI's shared-wallet contention on a cold
       // fork, so the single-tx 300s default cannot fit this setup.
-      executionWaitMs: 600_000,
+      // 600_000 was too tight: three worst-case approvals total ~660s and
+      // raced the wait, so a fully successful setup still timed out at the
+      // boundary. 900_000 clears the worst case with margin.
+      executionWaitMs: 900_000,
     },
     actions: {
       "get-ve-pendle-balance": { user: wallet() },
