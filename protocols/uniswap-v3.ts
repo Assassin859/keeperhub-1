@@ -1,5 +1,10 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  native,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 import factoryAbi from "./abis/uniswap-factory.json";
 import positionManagerAbi from "./abis/uniswap-position-manager.json";
 import quoterAbi from "./abis/uniswap-quoter.json";
@@ -9,8 +14,18 @@ const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [],
+      // USDC from the mainnet whale + a fabricated SwapRouter02 approval fund
+      // both swaps (exact-input and exact-output, USDC -> WETH). The NFT
+      // position reads/writes still need a minted tokenId and stay skipped.
+      requiredTokens: [{ symbol: "USDC", human: "2000" }],
       approvals: [],
+      fabricatedApprovals: [
+        {
+          token: "USDC",
+          spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+          human: "2000",
+        },
+      ],
     },
     actions: {
       "get-pool": { tokenA: "WETH", tokenB: "USDC", fee: "3000" },
@@ -34,8 +49,24 @@ const TEST_DATA: ProtocolTestData = {
       "approve-position": { to: wallet() },
       "transfer-position": { from: wallet(), to: wallet() },
       "burn-position": {},
-      "swap-exact-input": { tokenIn: "WETH", tokenOut: "USDC", recipient: wallet() },
-      "swap-exact-output": { tokenIn: "USDC", tokenOut: "WETH", recipient: wallet() },
+      "swap-exact-input": {
+        tokenIn: "USDC",
+        tokenOut: "WETH",
+        fee: "3000",
+        recipient: wallet(),
+        amountIn: amount("USDC", "100"),
+        amountOutMinimum: "0",
+        sqrtPriceLimitX96: "0",
+      },
+      "swap-exact-output": {
+        tokenIn: "USDC",
+        tokenOut: "WETH",
+        fee: "3000",
+        recipient: wallet(),
+        amountOut: native("0.01"),
+        amountInMaximum: amount("USDC", "1000"),
+        sqrtPriceLimitX96: "0",
+      },
     },
     skipped: {
       "get-position": "requires a valid NFT position token ID",
@@ -43,8 +74,6 @@ const TEST_DATA: ProtocolTestData = {
       "approve-position": "write action requiring an owned position NFT",
       "transfer-position": "write action requiring an owned position NFT",
       "burn-position": "write action requiring an empty position NFT",
-      "swap-exact-input": "requires token balance and approval",
-      "swap-exact-output": "requires token balance and approval",
     },
   },
 };
