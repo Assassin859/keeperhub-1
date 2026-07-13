@@ -183,22 +183,25 @@ jobs:
             echo "problems=$PROBLEMS"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Fail on verification problems
-        if: always() && steps.verify.outputs.ok != 'true'
+      # A confirmed problem (ok=false) fails the job red; the endpoint has
+      # already paged the affected clients via PagerDuty. Paging is server-side,
+      # so this step carries no slugs or routing keys -- just aggregate counts;
+      # per-org detail lives in PagerDuty and internal logs.
+      - name: Fail on confirmed problems
+        if: always() && steps.verify.outputs.ok == 'false'
         env:
           CHECKED: ${{ steps.verify.outputs.checked }}
           PROBLEMS: ${{ steps.verify.outputs.problems }}
         run: |
-          # Paging is done server-side by the endpoint (per-client PagerDuty
-          # routing), so the CI job carries no slugs or routing keys. This step
-          # just surfaces a red job + aggregate counts; the per-org detail lives
-          # in PagerDuty and internal logs (Loki: "post-deploy verification
-          # flagged ...").
-          if [ -n "${PROBLEMS:-}" ] && [ "${PROBLEMS}" != "?" ]; then
-            echo "Flagged ${PROBLEMS} of ${CHECKED} managed/enterprise org(s) on the new build. Paged via PagerDuty; details in internal logs."
-          else
-            echo "Post-deploy verification could not complete. See the Actions run and internal logs."
-          fi
-
+          echo "Flagged ${PROBLEMS} of ${CHECKED} managed/enterprise org(s) on the new build. Paged via PagerDuty; details in internal logs."
           echo "::error::Post-deploy verification flagged managed/enterprise org problems (count only; PagerDuty + internal logs have specifics)."
           exit 1
+
+      # No signal (ok=error): the check never got a parseable response -- a
+      # transient cluster/image-pull blip, or (pre-KEEP-834) OIDC not yet
+      # authorized to run in-cluster. That is not a confirmed regression and
+      # pages nobody, so warn instead of failing the deploy verification red.
+      - name: Warn when verification could not complete
+        if: always() && steps.verify.outputs.ok == 'error'
+        run: |
+          echo "::warning::Post-deploy verification could not reach the cluster or got no signal; nothing was confirmed and no client was paged. See the Actions run and internal logs."
