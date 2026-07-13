@@ -112,10 +112,10 @@ No. The gas limit only sets the maximum gas units. Gas pricing (base fee, priori
 
 ## Wallet Funding
 
-Ensure your Para wallet has sufficient ETH to cover:
+Ensure your Turnkey wallet has sufficient ETH to cover:
 
 - Transaction gas costs
 - Retry attempts
 - Potential gas price spikes during network congestion
 
-See [Para Integration](/docs/wallet-management/para) for wallet funding details.
+See [Turnkey Integration](/wallet-management/turnkey) for wallet funding details.

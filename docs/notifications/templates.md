@@ -18,9 +18,10 @@ Notification templates depend on **Keeper Type** and **Trigger Type**:
 
 ### Trigger Types
 - **Manual**: User-triggered execution
-- **Cron**: Time-based scheduling
-- **Block**: Block-based triggers
-- **Event**: Event-driven triggers
+- **Schedule**: Time-based scheduling
+- **Webhook**: HTTP-triggered execution
+- **Event**: Blockchain event-driven triggers
+- **Block**: Block-cadence triggers
 
 ### Contract Keeper Templates
 For Contract keepers, templates further depend on **Function Type**:

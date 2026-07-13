@@ -15,7 +15,7 @@ Team collaboration is currently available through Organizations. When you create
 - Collaborate on automation development
 - View shared workflow run history
 
-See [Organizations](/docs/users-teams-orgs/organizations) for details on current collaboration features.
+See [Organizations](/users-teams-orgs/organizations) for details on current collaboration features.
 
 ## Planned Team Features
 

@@ -140,6 +140,55 @@ load-bearing - the tier1 download step locates the tar by the exact
 `fork-cache-mainnet-*.tgz` pattern the nightly packaging step writes,
 so the two must change together.
 
+## Event-trigger decode coverage
+
+The registry declares protocol events consumed by the Event trigger. The
+Tier 2 runner fires workflows over the webhook endpoint, which bypasses
+trigger config, so event decoding otherwise has zero execution coverage.
+The Tier 1 event harness
+(`tests/e2e/vitest/protocol-simulation/events.test.ts` +
+`_shared/simulate-events.ts`) closes that gap: for each registered event it
+emits a real, impersonated transaction on the fork, then asserts the
+registry's own event ABI fragment (`buildEventAbiFragment`, the exact
+artifact the Event trigger stores as `contractABI`) decodes the emitted log
+into the shape the trigger layer consumes - `eventName` plus every declared
+input surfacing as a named, bigint-serializable arg (mirrors
+`plugins/web3/steps/query-events.ts` `decodeEventArgs` and
+`lib/workflow/editor/trigger-output-fields.ts`). A pass proves the registry
+event definition (name, param types, indexed flags) matches the real
+on-chain event.
+
+Enumeration is registry-driven, like actions: a protocol opts into event
+simulation on one chain by declaring an `events` block in its
+`testData[chain]`; `events.skipped` (keyed by event slug) documents events
+that cannot be emitted on the fork, each with a reason naming the real
+constraint. Emitters reuse existing write fixtures where one already emits
+the event (a rETH deposit emits `DepositReceived` and `TokensMinted`) and
+fall back to targeted calls otherwise (a `stETH.submit` for `Submitted`; a
+throwaway 1-of-1 Safe driven through its state-changing calls with an
+approved-hash signature - no ECDSA key or EIP-712 hash needed - for the Safe
+events). Coverage is counted by `pnpm coverage:report` from the same opt-in
+maps, so it cannot drift from what the harness runs.
+
+Pinned protocols route the same way as the action harness: a protocol whose
+testData declares a `pinnedBlock` (pendle) is emitted on the dedicated pinned
+fork (`PROTOCOL_SIM_RPC_<chainId>_PINNED`) and excluded from the near-head
+fork, mirroring `chains.test.ts`.
+
+Documented skips at first landing (18 of 31). Aerodrome's 7 are Base-only and
+the tier1 CI job forks Ethereum mainnet (chain 1) only, so they have no
+simulated chain. Rocket-pool's `TokensBurned` needs redeemable rETH
+collateral the deposit pool can lack. Safe's `SignMsg` (SignMessageLib
+delegatecall) and `ExecutionFailure` (needs a nonzero `safeTxGas`/gas-refund
+path) are unreachable from the harness's happy-path self-calls. Pendle's 8:
+its market (`market-swap/mint/burn`, `update-implied-rate`) and reward
+(`redeem-rewards/interest`) events fire on operations pendle's testData binds
+no write action for, so no fixture emits them; its `yt-mint`/`yt-burn` are
+emittable via the pinned-fork `mint-py-from-sy`/`redeem-py-to-sy` fixtures,
+but the event harness runs lightweight self-contained emitters and does not
+yet perform pendle's pinned-fork setup provisioning (whale-funded SY plus
+router approvals) - deferred follow-up.
+
 ## Pendle pinned-block fixtures (and the refresh procedure)
 
 Pendle was deferred during the tiered-coverage work because its markets
@@ -219,10 +268,14 @@ code.
 
 ## Known limits (intentional, revisit when scope changes)
 
-- Triggers are not tested. The runner fires workflows via webhook, which
-  ignores trigger config; Schedule/Event trigger behavior needs its own
-  harness. Seeded trigger-variant workflows are dashboard fixtures, not
-  test signal.
+- Trigger *dispatch* is not tested. The runner fires workflows via webhook,
+  which ignores trigger config; Schedule/Event trigger polling and
+  dispatch behavior needs its own harness. Seeded trigger-variant workflows
+  are dashboard fixtures, not test signal. The Event trigger's log-*decode*
+  path is now covered at Tier 1 (see "Event-trigger decode coverage"): each
+  registered event is emitted on the fork and the registry event ABI is
+  asserted to decode the real log into the trigger-layer shape. What remains
+  uncovered is the poll-and-fire loop that consumes that decoded shape.
 - Partial multi-chain coverage. Tier 1 now sweeps Base and Arbitrum One
   forks, but only for protocols with L2 testData (chainlink price feeds on
   both; ajna reads on Base). Most protocols with declared L2 contract
@@ -337,6 +390,8 @@ timed local runs unless marked CI.
 | 2026-07-03 | MetaMorpho unlocks + Tier 1 in CI + nightly | chain-1 sweep 203 pass / 72 skips / 0 fail (stable across consecutive runs): morpho's 18 vault actions bind the live Steakhouse USDC vault (the yearn pattern; no piping needed), core sequence margin-hardened (borrow 10, repay 8, withdraw-collateral 0.02) after one borderline interest-timing failure. Pendle deliberately deferred: its markets expire, so hardcoded bindings rot - needs the state-snapshot fixture approach. Piping now applies only to superfluid GDA (4, blocked on the Sepolia archive upstream). | runnable 246 | 103 | 8 | tier1-simulations job added to the ephemeral workflow (parallel, no app build, floor 150) - per-action breadth reaches CI for the first time; protocol-nightly.yml runs the full e2e via workflow_call plus the Tier 0 mutation check | tier1 CI job ~8 min estimated; workflows actionlinted and act-validated (nightly dry-run traverses both jobs; schedule gate branch exercised) |
 | 2026-07-07 | Parallel protocol gate split | unchanged | unchanged | unchanged | protocol-coverage runs as its own job, fed by a shared build-app artifact, in parallel with the e2e stack instead of serially at its tail. PR runs use representatives mode with an executed-test floor of 3 (ajna contributes one read representative and no write - all its writes are skipped; superfluid one read and one write; the mainnet suites self-skip until ANVIL_FORK_MAINNET_URL is provisioned, at which point the floor rises); nightly/push runs keep the full sweep, floor 30. Fork health probes (probe-forks action plus a post-restart upstream probe) guard both anvil forks. First CI round measured: representatives executed 3, passed 3 | protocol results no longer wait on the vitest e2e tail; dead forks or upstreams fail in seconds instead of as 300s vitest timeouts |
 | 2026-07-07 | Hermetic fork state for tier1 (RPC fetch cache pivot) | unchanged | unchanged | unchanged | protocol-nightly's fork-cache-mainnet job warms a live pinned fork with the Tier 1 sweep (floor 150; a red sweep or floor breach publishes nothing) and publishes foundry's flushed RPC cache as fork-cache-mainnet-\<block\>.tgz, 3-day retention; the tier1-simulations job consumes the freshest staging-produced artifact under 36 hours old when ANVIL_FORK_MAINNET_URL is set, and falls back to a live fork on every failure mode. The nightly warm sweep runs on a live fork, so it is itself the live-fork canary | the first design (anvil_dumpState + --load-state) was structurally wrong twice over: the dump captured the warm sweep's own mutations (and the sweep is not idempotent on its residue - morpho set-authorization reverts "already set" on re-run, empirically confirmed) and missed eth_call-only fetches. The pivot packages foundry's on-disk RPC fetch cache instead. Measured (foundry:latest, 2026-07-07): anvil persists upstream fetches to $HOME/.foundry/cache/rpc/\<chain\>/\<block\>/storage.json, flushing only on graceful shutdown (SIGTERM; SIGKILL loses it); a fresh fork with the cache mounted at the same pin serves every warmed read with zero upstream requests (counted through a logging proxy) and starts pristine - a warmed impersonated WETH deposit is invisible, totalSupply returns its exact pre-write value; cold reads against a dead upstream fail loudly (-32603); anvil still needs the upstream at startup (chain id, block env) and for the mining loop's block hashes; an unpinned fork also persists a cache keyed by its resolved head block, so pinning stays explicit everywhere |
+| 2026-07-09 | Event-trigger decode coverage at Tier 1 | actions unchanged | actions unchanged | actions unchanged; event dimension added to coverage:report (13 covered / 31 total, 18 documented skips) | the tier1-simulations job's `pnpm vitest run tests/e2e/vitest/protocol-simulation` now also runs events.test.ts on chain 1 (rocket-pool, safe, lido emit + decode; pendle documented-skipped), adding event-decode assertions inside the existing floor/time budget | new events.test.ts + _shared/simulate-events.ts; emitters reuse the rETH deposit fixture, a targeted stETH.submit, and a deploy-and-drive Safe (approved-hash signature, no key/EIP-712). Aerodrome (Base-only) and Pendle (expiring userSpecifiedAddress markets) are reasoned skips |
 | 2026-07-07 | Sepolia fork retirement: chronicle, superfluid, and the Safe roles orchestrator re-homed to the mainnet fork | 244 (was 246): 27 Sepolia-runnable actions retired, 24 return as chain-1 fixtures. Chronicle's toll-gated mainnet feeds are whitelisted by the new fork-only `setup.forkImpersonatedCalls` (an authed ward kisses the test wallet - shared by the Tier 1 harness and Tier 2 preflight); superfluid runs on DAI/DAIx (USDCx upgrade OOGs under exact-estimate gas - its underlying routes into Sky savings; ETHx is ABI-incompatible with wrap/unwrap), sized for mainnet's 69-DAI CFA minimum deposit, with create-pool and grant-flow-operator now executing (their Sepolia skips were public-upstream cold-fetch constraints) | 105 | 15 (chronicle feed reads nonZero; superfluid balance/underlying reads plus create-flow/delete-flow post-write oracles on get-flow) | chain-1 Tier 1 sweep 229 passed / 139 skipped / 0 failed (was 203/165/0). Chronicle Tier 2 verified through the app on the local rig: 12/12 with oracle assertions (all reads, no signing needed). Superfluid Tier 2 verified to the signing boundary (whale funding preflight green; setup approve fails at Turnkey wallet init without real keys). Orchestrator fork tests 2/2 on the mainnet fork. CI now runs a single anvil fork: the Sepolia fork service, restart step, post-restart probe, probe-forks line, chains-row patches, and PROTOCOL_E2E_SEPOLIA_FORK are gone; protocol-gate floors re-derived from planPhaseFixtures (representatives 22 / full 200 with ANVIL_FORK_MAINNET_URL, 1 / 20 without - ajna only) | one fork to start/restart instead of two; the ~15-minute Sepolia public-upstream window no longer bounds any CI job |
 | 2026-07-08 | Pendle pinned-block fixtures | 255 (was 244): pendle's 11 deferred actions unlocked - market/PT/YT/SY reads plus the mint/redeem write pair bind the recorded wstETH market (expiry 2027-12-30) at pinned block 25487331, per the "Pendle pinned-block fixtures" section above | 94 | 22 (pendle adds market-expiry equals, expiry-flag equals, SY exchange-rate/balance nonZero read oracles, plus post-write oracles: mint asserts PT/YT balances nonZero, redeem asserts SY balance) | the tier1 CI job starts a second, pinned mainnet fork (block registry-resolved via scripts/protocol-pinned-block.ts, archive-secret-gated, health-probed at the pin) and chains.test.ts routes pinned protocols to it; the Tier 2 suite exercises the same bindings on the shared near-head fork in nightly/full runs | pinned fork is cold each run (no nightly cache covers its block) but pendle touches only a handful of contracts; without the archive secret the pinned suite self-skips instead of failing |
 | 2026-07-09 | Multi-chain Tier 1: Base + Arbitrum forks | chainlink price-feed reads bound on Base (19: all named USD/ETH feeds except BTC/ETH, plus the custom-feed read set) and Arbitrum One (21: adds the BTC/ETH feed); ajna's existing Base reads now also execute on a Base fork instead of only live Base. CCIP and historical-round actions self-skip on both chains | unchanged on chain 1 | reads assert liveness through the same oracle; no new value-asserted expectations added for the L2 feeds | new `tier1-simulations-l2` job runs one matrix leg per chain (Base floor 15, Arbitrum floor 12) in parallel with the chain-1 tier1 job; each forks a public upstream (no archive node - sims never mine against upstream) and self-skips a chain whose `PROTOCOL_SIM_RPC_<id>` is unset. `coverage:report` now shows 8453 and 42161 rows | two L2 legs on separate runners add no time to the chain-1 budget; read-only L2 coverage needs no whales/faucets. Follow-up: write-bearing L2 protocols (aave-v3, uniswap-v3, sky) need per-chain FORK_WHALES/FAUCETS before their testData can run |
+| 2026-07-13 | Output-expectations rollout: broadened asserted reads + write oracles across the registry | unchanged (324 runnable) | unchanged (87) | 150 (was 20 measured via coverage:report): read oracles added on sky, spark, ethena, morpho, yearn, lido, curve, safe, ajna, chainlink (chains 1/8453/42161), pendle. Write oracles broadened to sky/ethena/morpho (supply->position, stake->share balance), spark (supply->collateral, borrow->debt), and superfluid (update-flow->flowRate, wrap->super-token balance). History-safe throughout: nonZero on monotonic rates/supplies/prices/exchange-rates, equals only on true constants (ethena cooldown 86400, morpho lltv 86%, is-paused/is-shutdown flags, yearn share decimals). Caller-position reads (vault-balance, get-position, max-withdraw/redeem, aave/spark account-data at the read phase) and shared-wallet token balances are deliberately left unasserted. Field resolution is per-ABI: unnamed single outputs assert the bare result (sky/spark/ethena/yearn/lido/curve/safe/chainlink decimals-family), named outputs use the field (morpho totalAssets/lltv, ajna index/lup/price/inflator, chainlink latestRoundData answer). chainlink decimals-equals was tried then dropped as fragile - Base BTC/USD and USDC/USD report 18, not 8 - keeping the high-signal nonzero answer instead. | no CI change: the new assertions ride the existing tier1 floors and coverage:report count | validated locally on host-native anvil forks (no Docker/rig): chain-1 near-head + pendle pinned fork 287 pass / 0 fail, Base + Arbitrum One L2 67 pass / 0 fail. Fresh fork per run so non-idempotent writes (morpho set-authorization, curve crv-approve) stay clean. Bugs caught pre-merge by the sim: spark set-collateral probed the DAI reserve while the write acted on WETH (dropped - no aligned probe); ajna per-pool bucket-info price is zero at an empty bound index; the Arbitrum public upstream blocks archive reads (switched to an archive endpoint). Deferred to a follow-up (liveness-only for now, no incorrect assertions shipped): uniswap-v3 quotes (imported multi-output ABI), chronicle read-with-age (ambiguous multi-output keying), aave-v3 Sepolia mirror (needs the Sepolia fork) |

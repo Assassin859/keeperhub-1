@@ -55,14 +55,15 @@ Connections store credentials for external services. Set up connections once and
 - **Web3**: Wallet connections for blockchain operations
 - **Email**: Email provider configuration
 - **Discord**: Webhook URLs for Discord channels
-- **Slack**: Workspace authorization
+- **Slack**: Bot token
+- **Telegram**: Bot token from BotFather
 - **Webhook**: Custom HTTP endpoint credentials
 
 ## Workflow Runs
 
 Each time a workflow executes, it creates a run with detailed logging:
 
-- **Status**: Pending, Running, Success, Error, Cancelled
+- **Status**: Pending, Running, Completed, Failed, Cancelled
 - **Node Outputs**: Results from each node in the workflow
 - **Timing**: Start time, duration, completion time
 - **Errors**: Detailed error messages if something fails
@@ -85,22 +86,25 @@ KeeperHub includes an AI assistant to help you build workflows:
 
 Access the AI via the "Ask AI..." input at the bottom of the canvas.
 
-## Para Wallet
+## Turnkey Wallet
 
-Every KeeperHub account includes a Para wallet:
+Every KeeperHub organization includes a Turnkey wallet:
 
-- **Automatic creation**: Created when you sign up
-- **Secure custody**: Multi-party computation (MPC) security
+- **Automatic provisioning**: Created once your email is verified
+- **Secure custody**: Private keys are generated and held inside secure hardware enclaves (TEEs)
+- **Key export**: Export your private key at any time to migrate elsewhere
 - **Funding**: Top up with ETH to enable gas-consuming operations
-- **Management**: View balance, withdraw funds via Settings > Wallet
+- **Management**: View balance, withdraw funds, and export your key via Settings > Wallet
 
 ## Networks
 
-KeeperHub supports multiple blockchain networks:
+KeeperHub supports a range of EVM chains, including:
 
 - **Ethereum Mainnet**: Production network for real transactions
-- **Sepolia Testnet**: Test network for development (free test ETH)
-- **Base**: Layer 2 network with lower gas fees
-- **Arbitrum**: Layer 2 network optimized for DeFi
+- **Base, Arbitrum, Optimism, Polygon**: Layer 2 and sidechain networks with lower gas fees
+- **BNB Chain, Avalanche, and others**: Additional supported mainnets
+- **Testnets** (Sepolia, Base Sepolia, and more): For development with free test tokens
+
+The authoritative, up-to-date list is available from `GET /api/chains`.
 
 Always test workflows on a testnet before deploying to Mainnet.

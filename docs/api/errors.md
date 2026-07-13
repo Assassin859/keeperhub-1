@@ -9,14 +9,23 @@ Reference for API error codes and how to resolve them.
 
 ## Error Response Format
 
+Errors return a flat JSON envelope:
+
 ```json
 {
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human readable description"
-  }
+  "error": "invalid_input",
+  "detail": "Human readable description of what went wrong",
+  "request_id": "b3c1e2f0-2a4d-4a1e-9c3f-0f2b7c1d5e6a"
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `error` | Stable, machine-readable code (see below) |
+| `detail` | Human-readable description of the failure |
+| `request_id` | Correlation id, also echoed on the `x-request-id` response header |
+| `hint` | Optional actionable next step (present on some errors) |
+| `docs` | Optional link to relevant documentation (present on some errors) |
 
 ## HTTP Status Codes
 
@@ -32,23 +41,19 @@ Reference for API error codes and how to resolve them.
 | 429 | Too Many Requests - Rate limit exceeded |
 | 500 | Internal Server Error |
 
-## Common Error Codes
+## Error Codes
 
-### Authentication Errors
+The API uses a short set of stable, lowercase codes in the `error` field. Some routes add a more specific code (for example `WALLET_NOT_CONFIGURED` on execution routes); those are documented alongside the endpoint that raises them.
 
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `UNAUTHORIZED` | Missing authentication | Include valid session or API key |
-| `INVALID_API_KEY` | API key is invalid or revoked | Generate a new API key |
-| `SESSION_EXPIRED` | Session has expired | Re-authenticate |
-
-### Validation Errors
-
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `INVALID_INPUT` | Request body validation failed | Check required fields |
-| `INVALID_ADDRESS` | Invalid Ethereum address | Verify address format |
-| `INVALID_CHAIN_ID` | Unsupported chain ID | Use supported chain |
+| Code | HTTP status | Meaning | Resolution |
+|------|-------------|---------|------------|
+| `unauthorized` | 401 | Missing or invalid authentication | Include a valid session cookie or API key |
+| `insufficient_scope` | 403 | The session or key lacks the required scope | Use a key with the needed scope |
+| `invalid_input` | 400 | Request validation failed | Check required fields and formats |
+| `not_found` | 404 | Resource does not exist or is not visible to you | Verify the resource id |
+| `conflict` | 409 | Request conflicts with the current state | Reconcile and retry |
+| `rate_limited` | 429 | Too many requests | Back off and retry (see rate-limit headers below) |
+| `internal_error` | 500 | Unexpected server error | Retry with backoff; contact support if it persists |
 
 ### Idempotency Errors
 
@@ -59,28 +64,13 @@ Reference for API error codes and how to resolve them.
 
 See [Direct Execution](/api/direct-execution#idempotency) for the full idempotency policy.
 
-### Resource Errors
+### Workflow run failures
 
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `NOT_FOUND` | Resource does not exist | Verify resource ID |
-| `ALREADY_EXISTS` | Resource already exists | Use update instead |
-| `PERMISSION_DENIED` | No access to resource | Verify ownership |
+Failures that occur while a workflow run executes, rather than while handling an API request, are surfaced in the run logs with a separate stable code of the form `PREFIX-NNNN` (for example `E-0001` for a run timeout). See [Run Error Codes](/keeper-runs/error-codes) for the full list.
 
-### Execution Errors
+## Rate Limiting
 
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `EXECUTION_FAILED` | Workflow execution failed | Check execution logs |
-| `INSUFFICIENT_FUNDS` | Wallet lacks funds for gas | Top up Para wallet |
-| `GAS_LIMIT_EXCEEDED` | Transaction exceeded gas limit | Increase gas limit |
-| `CONTRACT_ERROR` | Smart contract reverted | Check contract state |
-
-### Rate Limiting
-
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `RATE_LIMITED` | Too many requests | Wait and retry |
+A `rate_limited` error (HTTP `429`) means you have exceeded the request budget for the endpoint. Back off and retry using the rate-limit headers below.
 
 #### Rate-limit headers
 

@@ -1,112 +1,63 @@
 ---
 title: "Access Control"
-description: "Understanding permissions and access control in KeeperHub organizations."
+description: "Roles and permissions in KeeperHub organizations."
 ---
 
 # Access Control
 
-> **Roles Coming Soon**: Role-based access control is currently in development. This page describes the current state and planned functionality.
+KeeperHub organizations use three roles: **owner**, **admin**, and **member**. The role controls who can perform sensitive account, wallet, and security actions. Day-to-day workflow collaboration is shared across all members.
 
-## Current Access Model
+## Personal Workspace
 
-KeeperHub currently uses a simple access model where all organization members have equal permissions.
-
-### Personal Workspace
-
-In your personal workspace:
+In your personal workspace you have full control:
 
 - Full control over all workflows you create
 - Complete access to run history
 - Management of notification connections
 - API key generation and management
 
-### Organization Membership
+## Organization Roles
 
-Within an organization, all members can:
+### Member
+
+Every organization member can collaborate on the organization's workflows:
 
 - View all organization workflows
-- Create new workflows
-- Edit existing workflows
-- Delete workflows
+- Create, edit, and delete workflows
 - Enable and disable workflows
 - View run history for all workflows
-- Invite new members
 
-There is no differentiation between administrators, editors, and viewers.
+### Admin
 
-## Planned Role-Based Access
+Admins have every member permission plus organization key management:
 
-Future releases will introduce role-based access control:
+- Create and revoke organization (`kh_`) API keys
+- View the organization's security audit trail
 
-### Planned Roles
+### Owner
 
-**Owner**
-- Full administrative control
-- Billing management
-- Organization deletion
-- Cannot be removed by others
+The owner has full control, including the most sensitive wallet and security actions:
 
-**Admin**
-- Member management (invite, remove)
-- Organization settings
-- All workflow permissions
+- Withdraw funds from the organization wallet
+- Export the wallet private key
+- Export the security audit trail
+- Everything admins and members can do
 
-**Editor**
-- Create workflows
-- Edit workflows
-- Delete workflows
-- View run history
+The user who creates an organization becomes its owner. Ownership can be transferred to another accepted member, for example when the sole owner leaves the organization.
 
-**Viewer**
-- View workflows (read-only)
-- View run history
-- Cannot modify workflows
+## Audit Trail
 
-### Planned Features
+Owners and admins can view the organization's security audit trail. It records sensitive actions (member changes, API key creation and revocation, wallet approvals, and settings changes) with the acting user and a timestamp.
 
-**Granular Permissions**
-- Per-workflow access control
-- Folder-based organization
-- Permission inheritance
+## Step-Up Verification
 
-**Audit Logging**
-- Track who made changes
-- View permission modifications
-- Export audit reports
-
-**Approval Workflows**
-- Require approval for sensitive changes
-- Multi-party authorization
-- Change request management
-
-## Current Workarounds
-
-While roles are in development:
-
-- Create separate organizations for different access needs
-- Communicate guidelines within your team
-- Use workflow naming conventions to indicate ownership
-- Establish internal processes for change management
-
-## Best Practices
-
-### For Teams
-
-- Limit organization membership to trusted collaborators
-- Document internal policies for workflow management
-- Regular review of member list
-
-### For Sensitive Workflows
-
-- Consider separate organizations for high-security automations
-- Establish review processes before enabling workflows
-- Keep critical wallet operations in restricted organizations
+Sensitive owner actions such as withdrawing funds, exporting the wallet key, and exporting the audit trail require step-up verification (a second factor) in addition to the role check.
 
 ## Security Considerations
 
-- All organization members have equal access to shared workflows
-- Workflows can execute transactions from the organization wallet
-- Be cautious about who you invite to organizations with funded wallets
+- Organization members share access to workflows, which can execute transactions from the organization wallet. Be cautious about who you invite to organizations with funded wallets.
+- Fund withdrawal, key export, and audit export are restricted to the owner.
+- Keep critical wallet operations in organizations with a small, trusted membership.
 
 ## Providing Feedback
 

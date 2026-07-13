@@ -74,7 +74,7 @@ If you have a use case for session-only behavior over an API key, open an issue 
 
 ### Webhook keys
 
-Workflow webhook triggers (`POST /api/workflows/{workflowId}/webhook`) accept only user-scoped (`wfb_`) keys. The route reads the `Authorization` header directly; session cookies are not consulted, and `kh_` keys are rejected with `401`. The `wfb_` key must belong to the same user that owns the target workflow; a key created by another member of the same organization is rejected with `403`. Webhook executions are attributed to the individual triggering user rather than to the organization, which is why the user-binding is enforced.
+Workflow webhook triggers (`POST /api/workflows/{workflowId}/webhook`) accept only user-scoped (`wfb_`) keys. The route reads the `Authorization` header directly; session cookies are not consulted, and `kh_` keys are rejected with `401`. The `wfb_` key must belong to a member of the target workflow's organization: a key from outside that organization is rejected with `403`, and a key whose user cannot access the workflow returns `404`. Webhook executions are attributed to the individual triggering user rather than to the organization.
 
 ## Deactivated accounts
 

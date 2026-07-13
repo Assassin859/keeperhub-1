@@ -75,6 +75,52 @@ const TEST_DATA: ProtocolTestData = {
         owner: wallet(),
       },
     },
+    // sDAI vault invariants (unnamed ERC-4626 outputs, so no field): asset
+    // is a permanent address; totals/supply are large and monotonic;
+    // convert/preview are pure per-share quotes; max-deposit/mint are the
+    // uncapped limits. The aave-style get-user-* reads are NOT asserted here
+    // - no position exists at the read phase (supply is a write that runs
+    // after), so they read zero; they carry post-write oracles below
+    // instead. Caller-position vault reads (balance, max-withdraw/redeem)
+    // are likewise history-dependent and left unasserted.
+    expectations: {
+      "vault-asset": [{ notEmpty: true }],
+      "vault-total-assets": [{ nonZero: true }],
+      "vault-total-supply": [{ nonZero: true }],
+      "vault-convert-to-assets": [{ nonZero: true }],
+      "vault-convert-to-shares": [{ nonZero: true }],
+      "vault-preview-deposit": [{ nonZero: true }],
+      "vault-preview-mint": [{ nonZero: true }],
+      "vault-preview-withdraw": [{ nonZero: true }],
+      "vault-preview-redeem": [{ nonZero: true }],
+      "vault-max-deposit": [{ nonZero: true }],
+      "vault-max-mint": [{ nonZero: true }],
+    },
+    // Post-write oracles: supply must register collateral, borrow must
+    // register debt, and a vault deposit/mint must credit sDAI shares. All
+    // nonZero (history-safe: the values only grow within the run).
+    // set-collateral is liveness-only: the only reserve-data read is bound to
+    // DAI, but set-collateral acts on the WETH reserve, so there is no aligned
+    // probe (supply already asserts collateral registered via
+    // totalCollateralBase).
+    writeExpectations: {
+      supply: [
+        {
+          read: "get-user-account-data",
+          expect: { field: "totalCollateralBase", nonZero: true },
+        },
+      ],
+      borrow: [
+        {
+          read: "get-user-account-data",
+          expect: { field: "totalDebtBase", nonZero: true },
+        },
+      ],
+      "vault-deposit": [
+        { read: "vault-balance", expect: { nonZero: true } },
+      ],
+      "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
+    },
   },
 };
 

@@ -326,6 +326,62 @@ export default defineAbiProtocol({
           owner: wallet(),
         },
       },
+      // approve-dai and approve-usds run the app's real approve-token path,
+      // which fans out cold token state on a fresh fork and runs past the
+      // default two-minute wait; give them the same headroom as ethena
+      // approve-usde / lido approve-steth / curve crv-approve.
+      executionWaitMs: {
+        "approve-dai": 240_000,
+        "approve-usds": 240_000,
+      },
+      // Chain invariants on both ERC-4626 vaults (sUSDS, stUSDS). All
+      // outputs are unnamed, so assertions target the bare result (no
+      // field). asset is a permanent address; totals/supply are large and
+      // monotonic; convert/preview are pure per-share quotes independent of
+      // the caller; max-deposit/mint are the vaults' uncapped limits. The
+      // caller-position reads (balance, max-withdraw, max-redeem) and the
+      // shared-wallet token balances are history-dependent and left
+      // unasserted, matching the rules in
+      // specs/protocol-coverage-methodology.md.
+      expectations: {
+        "vault-asset": [{ notEmpty: true }],
+        "vault-total-assets": [{ nonZero: true }],
+        "vault-total-supply": [{ nonZero: true }],
+        "vault-convert-to-assets": [{ nonZero: true }],
+        "vault-convert-to-shares": [{ nonZero: true }],
+        "vault-preview-deposit": [{ nonZero: true }],
+        "vault-preview-mint": [{ nonZero: true }],
+        "vault-preview-withdraw": [{ nonZero: true }],
+        "vault-preview-redeem": [{ nonZero: true }],
+        "vault-max-deposit": [{ nonZero: true }],
+        "vault-max-mint": [{ nonZero: true }],
+        "st-usds-vault-asset": [{ notEmpty: true }],
+        "st-usds-vault-total-assets": [{ nonZero: true }],
+        "st-usds-vault-total-supply": [{ nonZero: true }],
+        "st-usds-vault-convert-to-assets": [{ nonZero: true }],
+        "st-usds-vault-convert-to-shares": [{ nonZero: true }],
+        "st-usds-vault-preview-deposit": [{ nonZero: true }],
+        "st-usds-vault-preview-mint": [{ nonZero: true }],
+        "st-usds-vault-preview-withdraw": [{ nonZero: true }],
+        "st-usds-vault-preview-redeem": [{ nonZero: true }],
+        "st-usds-vault-max-deposit": [{ nonZero: true }],
+        "st-usds-vault-max-mint": [{ nonZero: true }],
+      },
+      // Post-write oracles: a deposit/mint must actually credit vault shares
+      // (a mined receipt alone misses a no-op write). nonZero is
+      // history-safe on the simulation tier's dedicated wallet.
+      writeExpectations: {
+        "vault-deposit": [
+          { read: "vault-balance", expect: { nonZero: true } },
+        ],
+        "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
+        "st-usds-vault-deposit": [
+          { read: "st-usds-vault-balance", expect: { nonZero: true } },
+        ],
+        "st-usds-vault-mint": [
+          { read: "st-usds-vault-balance", expect: { nonZero: true } },
+        ],
+      },
     },
   },
 

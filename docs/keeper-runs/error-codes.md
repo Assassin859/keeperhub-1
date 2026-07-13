@@ -24,6 +24,7 @@ same: wait a few minutes and try the run again.
 | `E-0001` | The run timed out. | Try again. |
 | `E-0002` | A step failed after repeated attempts. | Try again; if it keeps failing, review that step. |
 | `E-0003` | The run hit an internal processing error. | Wait a few minutes and try again. |
+| `E-0004` | The run could not be processed. | Wait a few minutes and try again. |
 | `N-0001` | A blockchain network provider was temporarily unavailable. | Try again shortly. |
 | `N-0002` | A temporary network error interrupted the run. | Wait a few minutes and try again. |
 | `P-0001`, `P-0002`, `P-0004`, `P-0005` | The run could not be started. | Try again. |

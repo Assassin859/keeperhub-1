@@ -44,7 +44,10 @@ const TEST_DATA: ProtocolTestData = {
       // Three real signed txs through the app; each has been observed
       // to take 100-220s under CI's shared-wallet contention on a cold
       // fork, so the single-tx 300s default cannot fit this setup.
-      executionWaitMs: 600_000,
+      // 600_000 was too tight: three worst-case approvals total ~660s and
+      // raced the wait, so a fully successful setup still timed out at the
+      // boundary. 900_000 clears the worst case with margin.
+      executionWaitMs: 900_000,
     },
     actions: {
       "get-ve-pendle-balance": { user: wallet() },
@@ -106,6 +109,9 @@ const TEST_DATA: ProtocolTestData = {
       "get-sy-exchange-rate": [{ nonZero: true }],
       // Setup funds 10 SY; only this protocol's fixtures move it.
       "get-sy-balance": [{ nonZero: true }],
+      // vePENDLE total supply is a nine-figure chain aggregate, independent
+      // of the test wallet (which locks no PENDLE).
+      "get-ve-pendle-total-supply": [{ nonZero: true }],
     },
     writeExpectations: {
       "mint-py-from-sy": [
@@ -115,6 +121,33 @@ const TEST_DATA: ProtocolTestData = {
       "redeem-py-to-sy": [
         { read: "get-sy-balance", expect: { nonZero: true } },
       ],
+    },
+    // Market and reward events fire on operations this testData binds no
+    // write action for (AMM swap/liquidity; reward/interest claim), so no
+    // fixture emits them. yt-mint / yt-burn ARE emittable via the pinned-fork
+    // mint-py-from-sy / redeem-py-to-sy fixtures, but the event harness runs
+    // lightweight self-contained emitters and does not yet perform pendle's
+    // pinned-fork setup provisioning (whale-funded SY plus router approvals);
+    // deferred follow-up.
+    events: {
+      skipped: {
+        "market-swap":
+          "fires on a Pendle market AMM swap; testData binds no swap write action, so no fixture emits it",
+        "market-mint":
+          "fires on Pendle market add-liquidity; testData binds no add-liquidity write action, so no fixture emits it",
+        "market-burn":
+          "fires on Pendle market remove-liquidity; testData binds no remove-liquidity write action, so no fixture emits it",
+        "update-implied-rate":
+          "fires on a Pendle market state change (swap/liquidity); testData binds no such write action, so no fixture emits it",
+        "yt-mint":
+          "emittable via the pinned-fork mint-py-from-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
+        "yt-burn":
+          "emittable via the pinned-fork redeem-py-to-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
+        "redeem-rewards":
+          "fires on YT redeemDueInterestAndRewards; testData binds no reward-claim write action, so no fixture emits it",
+        "redeem-interest":
+          "fires on YT redeemDueInterestAndRewards; testData binds no interest-claim write action, so no fixture emits it",
+      },
     },
   },
 };

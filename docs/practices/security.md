@@ -7,7 +7,7 @@ description: "Security recommendations for KeeperHub users - wallet security, ke
 
 ## Wallet Security
 
-**Monitor Balances**: Regularly check your Para wallet balance to ensure adequate funding for keeper operations.
+**Monitor Balances**: Regularly check your Turnkey wallet balance to ensure adequate funding for keeper operations.
 
 **Withdraw Unused Funds**: Use the Withdraw function to remove excess ETH from your KeeperHub wallet when not needed.
 

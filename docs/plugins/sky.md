@@ -1,290 +1,89 @@
 ---
 title: "Sky Protocol"
-description: "USDS savings (sUSDS), token balances, approvals, and DAI/MKR migration converters on Ethereum, Base, and Arbitrum."
+description: "USDS savings (sUSDS), USDS staking (stUSDS), token balances, approvals, and DAI/MKR migration converters on Ethereum, Base, and Arbitrum."
 ---
 
 # Sky Protocol
 
-Sky (formerly MakerDAO) is a decentralized protocol for stablecoin savings, governance, and token migration. This plugin provides actions for depositing into the USDS savings rate vault (sUSDS), checking token balances, managing approvals, and converting legacy DAI/MKR tokens to their successors USDS/SKY.
+Sky (formerly MakerDAO) is a decentralized protocol for stablecoin savings, governance, and token migration. This plugin exposes two ERC-4626 vaults (the sUSDS savings vault and the stUSDS staked vault), token balance and approval actions for USDS, DAI, and SKY, and converters for migrating legacy DAI to USDS and legacy MKR to SKY.
 
-Supported chains: Ethereum (all contracts), Base (USDS, sUSDS), Arbitrum (USDS, sUSDS). Read-only actions work without credentials. Write actions require a connected wallet.
+Supported chains: Ethereum (all contracts), Base (sUSDS, USDS), Arbitrum (sUSDS, USDS). Read-only actions work without credentials. Write actions require a connected wallet.
 
 ## Actions
 
-| Action | Type | Credentials | Description |
-|--------|------|-------------|-------------|
-| Deposit USDS to Savings | Write | Wallet | Deposit USDS into the sUSDS savings vault |
-| Withdraw USDS from Savings | Write | Wallet | Withdraw USDS from the savings vault by asset amount |
-| Redeem sUSDS Shares | Write | Wallet | Redeem sUSDS shares for USDS |
-| Get sUSDS Balance | Read | No | Check sUSDS balance of an address |
-| Preview Savings Deposit | Read | No | Preview shares received for a given USDS deposit |
-| Get USDS Value of sUSDS | Read | No | Convert sUSDS shares to their USDS value |
-| Get USDS Balance | Read | No | Check USDS balance of an address |
-| Get DAI Balance | Read | No | Check DAI balance of an address |
-| Get SKY Balance | Read | No | Check SKY balance of an address |
-| Approve USDS Spending | Write | Wallet | Approve a spender for USDS transfers |
-| Approve DAI Spending | Write | Wallet | Approve a spender for DAI transfers |
-| Convert DAI to USDS | Write | Wallet | Convert DAI to USDS at 1:1 rate |
-| Convert USDS to DAI | Write | Wallet | Convert USDS back to DAI at 1:1 rate |
-| Convert MKR to SKY | Write | Wallet | Convert MKR governance tokens to SKY |
+Sky is a multi-contract protocol, so actions are grouped below by the contract that exposes them. Each vault (sUSDS and stUSDS) is a standard ERC-4626 vault and exposes the same 18 vault actions; stUSDS uses a `st-usds-` slug prefix and a "stUSDS" label prefix to distinguish it from the sUSDS vault.
 
----
+### sUSDS Savings Vault
 
-## Deposit USDS to Savings
+| Action | Slug | Type | Description |
+|--------|------|------|-------------|
+| Vault Deposit | `vault-deposit` | Write | Deposit assets into the vault and receive shares |
+| Vault Mint | `vault-mint` | Write | Mint exact vault shares by depositing the required amount of assets |
+| Vault Withdraw | `vault-withdraw` | Write | Withdraw assets from the vault by specifying asset amount |
+| Vault Redeem | `vault-redeem` | Write | Redeem shares from the vault for underlying assets |
+| Vault Underlying Asset | `vault-asset` | Read | Get the address of the underlying asset token for this vault |
+| Vault Total Assets | `vault-total-assets` | Read | Get the total amount of underlying assets held by the vault |
+| Vault Total Supply | `vault-total-supply` | Read | Get the total supply of vault shares |
+| Vault Share Balance | `vault-balance` | Read | Get the vault share balance of an address |
+| Convert Shares to Assets | `vault-convert-to-assets` | Read | Convert a vault share amount to its underlying asset value at the current rate |
+| Convert Assets to Shares | `vault-convert-to-shares` | Read | Convert an asset amount to the equivalent vault shares at the current rate |
+| Preview Vault Deposit | `vault-preview-deposit` | Read | Preview how many shares a given asset deposit would yield |
+| Preview Vault Mint | `vault-preview-mint` | Read | Preview how many assets are needed to mint a given number of shares |
+| Preview Vault Withdraw | `vault-preview-withdraw` | Read | Preview how many shares must be burned to withdraw a given asset amount |
+| Preview Vault Redeem | `vault-preview-redeem` | Read | Preview how many assets a given share redemption would yield |
+| Max Vault Deposit | `vault-max-deposit` | Read | Get the maximum amount of assets that can be deposited for a receiver |
+| Max Vault Mint | `vault-max-mint` | Read | Get the maximum number of shares that can be minted for a receiver |
+| Max Vault Withdraw | `vault-max-withdraw` | Read | Get the maximum amount of assets that can be withdrawn by an owner |
+| Max Vault Redeem | `vault-max-redeem` | Read | Get the maximum number of shares that can be redeemed by an owner |
 
-Deposit USDS into the sUSDS savings vault (ERC-4626). Shares are minted to the receiver proportional to the current exchange rate.
+Available on Ethereum, Base, and Arbitrum.
 
-**Inputs:**
+### stUSDS Staked Vault
 
-| Input | Type | Description |
-|-------|------|-------------|
-| assets | uint256 | USDS Amount (wei) |
-| receiver | address | Receiver Address |
+Same 18 actions as the sUSDS vault above, with a `st-usds-` slug prefix and a "stUSDS" label prefix, for example "stUSDS Vault Deposit" (`st-usds-vault-deposit`) and "stUSDS Vault Share Balance" (`st-usds-vault-balance`). Use the "stUSDS Vault Underlying Asset" (`st-usds-vault-asset`) action to read which token the staked vault wraps. Available on Ethereum only.
 
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
+### USDS Stablecoin
 
-**When to use:** Earn yield on idle USDS, automate savings deposits after receiving funds, compound rewards by depositing periodically.
+| Action | Slug | Type | Description |
+|--------|------|------|-------------|
+| Get USDS Balance | `get-usds-balance` | Read | Check the USDS balance of an address |
+| Approve USDS Spending | `approve-usds` | Write | Approve a spender to transfer USDS on your behalf |
 
----
+Available on Ethereum, Base, and Arbitrum.
 
-## Withdraw USDS from Savings
+### DAI Stablecoin (Legacy)
 
-Withdraw a specific amount of USDS from the sUSDS savings vault. Burns the corresponding shares from the owner.
+| Action | Slug | Type | Description |
+|--------|------|------|-------------|
+| Get DAI Balance | `get-dai-balance` | Read | Check the DAI balance of an address |
+| Approve DAI Spending | `approve-dai` | Write | Approve a spender to transfer DAI on your behalf |
 
-**Inputs:**
+Ethereum only.
 
-| Input | Type | Description |
-|-------|------|-------------|
-| assets | uint256 | USDS Amount (wei) |
-| receiver | address | Receiver Address |
-| owner | address | Share Owner Address |
+### SKY Governance Token
 
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
+| Action | Slug | Type | Description |
+|--------|------|------|-------------|
+| Get SKY Balance | `get-sky-balance` | Read | Check the SKY balance of an address |
 
-**When to use:** Withdraw savings when funds are needed, automate partial withdrawals based on conditions.
+Ethereum only.
 
----
+### DAI-USDS Converter
 
-## Redeem sUSDS Shares
+| Action | Slug | Type | Description |
+|--------|------|------|-------------|
+| Convert DAI to USDS | `convert-dai-to-usds` | Write | Convert DAI to USDS at a 1:1 rate via the official converter |
+| Convert USDS to DAI | `convert-usds-to-dai` | Write | Convert USDS back to DAI at a 1:1 rate via the official converter |
 
-Redeem a specific number of sUSDS shares for the underlying USDS. The amount of USDS received depends on the current exchange rate.
+Ethereum only. Requires prior DAI or USDS approval for the converter contract (use Approve DAI Spending / Approve USDS Spending).
 
-**Inputs:**
+### MKR-SKY Converter
 
-| Input | Type | Description |
-|-------|------|-------------|
-| shares | uint256 | sUSDS Shares (wei) |
-| receiver | address | Receiver Address |
-| owner | address | Share Owner Address |
+| Action | Slug | Type | Description |
+|--------|------|------|-------------|
+| Convert MKR to SKY | `convert-mkr-to-sky` | Write | Convert MKR governance tokens to SKY via the official converter (one-way) |
 
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
-
-**When to use:** Exit savings position entirely, redeem a specific share amount rather than a target USDS amount.
-
----
-
-## Get sUSDS Balance
-
-Check the sUSDS balance of any address on supported chains.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| account | address | Wallet Address |
-
-**Outputs:**
-
-| Output | Type | Description |
-|--------|------|-------------|
-| balance | uint256 | sUSDS Balance (wei), 18 decimals |
-
-**When to use:** Monitor savings positions, track sUSDS holdings across wallets, trigger actions based on balance thresholds.
-
----
-
-## Preview Savings Deposit
-
-Preview how many sUSDS shares a given USDS deposit would yield at the current exchange rate. Does not execute a transaction.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| assets | uint256 | USDS Amount (wei) |
-
-**Outputs:**
-
-| Output | Type | Description |
-|--------|------|-------------|
-| shares | uint256 | sUSDS Shares Received, 18 decimals |
-
-**When to use:** Calculate expected shares before depositing, display savings rate information, compare rates across vaults.
-
----
-
-## Get USDS Value of sUSDS
-
-Convert sUSDS shares to their underlying USDS value at the current exchange rate. Does not execute a transaction.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| shares | uint256 | sUSDS Shares (wei) |
-
-**Outputs:**
-
-| Output | Type | Description |
-|--------|------|-------------|
-| assets | uint256 | USDS Value (wei), 18 decimals |
-
-**When to use:** Calculate the current value of a savings position, monitor accrued yield, display portfolio values in USDS terms.
-
----
-
-## Get USDS Balance
-
-Check the USDS stablecoin balance of any address.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| account | address | Wallet Address |
-
-**Outputs:**
-
-| Output | Type | Description |
-|--------|------|-------------|
-| balance | uint256 | USDS Balance (wei), 18 decimals |
-
-**When to use:** Monitor USDS holdings, check wallet balances before initiating savings deposits or conversions.
-
----
-
-## Get DAI Balance
-
-Check the DAI stablecoin balance of any address (Ethereum only).
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| account | address | Wallet Address |
-
-**Outputs:**
-
-| Output | Type | Description |
-|--------|------|-------------|
-| balance | uint256 | DAI Balance (wei), 18 decimals |
-
-**When to use:** Monitor legacy DAI holdings, identify wallets that should migrate from DAI to USDS.
-
----
-
-## Get SKY Balance
-
-Check the SKY governance token balance of any address (Ethereum only).
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| account | address | Wallet Address |
-
-**Outputs:**
-
-| Output | Type | Description |
-|--------|------|-------------|
-| balance | uint256 | SKY Balance (wei), 18 decimals |
-
-**When to use:** Monitor SKY token holdings, track governance power, verify migration from MKR to SKY.
-
----
-
-## Approve USDS Spending
-
-Approve a spender address to transfer USDS on your behalf. Required before depositing USDS into the savings vault or other contracts.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| spender | address | Spender Address |
-| amount | uint256 | Approval Amount (wei) |
-
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
-
-**When to use:** Approve the sUSDS contract before depositing, set allowances for DeFi protocols, manage token permissions.
-
----
-
-## Approve DAI Spending
-
-Approve a spender address to transfer DAI on your behalf. Required before converting DAI to USDS.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| spender | address | Spender Address |
-| amount | uint256 | Approval Amount (wei) |
-
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
-
-**When to use:** Approve the DAI-USDS converter before migrating, set allowances for DeFi protocols.
-
----
-
-## Convert DAI to USDS
-
-Convert DAI to USDS at a 1:1 rate via the official Sky Protocol converter. Ethereum only. Requires prior DAI approval for the converter contract.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| usr | address | Recipient Address |
-| amount | uint256 | DAI Amount (wei) |
-
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
-
-**When to use:** Migrate DAI holdings to USDS, automate batch DAI-to-USDS conversions, prepare funds for sUSDS deposits.
-
----
-
-## Convert USDS to DAI
-
-Convert USDS back to DAI at a 1:1 rate via the official Sky Protocol converter. Ethereum only. Requires prior USDS approval for the converter contract.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| usr | address | Recipient Address |
-| amount | uint256 | USDS Amount (wei) |
-
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
-
-**When to use:** Convert USDS back to DAI for protocols that only accept DAI, manage liquidity across both stablecoins.
-
----
-
-## Convert MKR to SKY
-
-Convert MKR governance tokens to SKY via the official Sky Protocol converter. Ethereum only. This is a one-way conversion.
-
-**Inputs:**
-
-| Input | Type | Description |
-|-------|------|-------------|
-| usr | address | Recipient Address |
-| mkrAmt | uint256 | MKR Amount (wei) |
-
-**Outputs:** `success`, `transactionHash`, `transactionLink`, `error`
-
-**When to use:** Migrate MKR holdings to the new SKY governance token, automate MKR-to-SKY conversion for treasury management.
+Ethereum only. Requires prior MKR approval for the converter contract.
 
 ---
 
@@ -298,21 +97,21 @@ Check your USDS balance daily, convert from wei to decimal, and send a Discord a
 
 ### Auto-Deposit Idle USDS into Savings
 
-`Schedule (hourly) -> Sky: Get USDS Balance -> Math (Sum, divide by 1e18) -> Condition (> 500) -> Sky: Approve USDS Spending -> Sky: Deposit USDS to Savings`
+`Schedule (hourly) -> Sky: Get USDS Balance -> Math (Sum, divide by 1e18) -> Condition (> 500) -> Sky: Approve USDS Spending -> Sky: Vault Deposit`
 
 Periodically check for idle USDS and automatically deposit into the sUSDS savings vault when the balance exceeds a threshold. Requires wallet connection.
 
 ### Track Savings Yield
 
-`Schedule (daily) -> Sky: Get sUSDS Balance -> Sky: Get USDS Value of sUSDS -> Math (Sum, divide by 1e18) -> HTTP Request (POST to webhook)`
+`Schedule (daily) -> Sky: Vault Share Balance -> Sky: Convert Shares to Assets -> Math (Sum, divide by 1e18) -> Webhook: Send HTTP Request`
 
 Monitor your sUSDS position, convert shares to their current USDS value, and send the result to an external webhook for portfolio tracking.
 
 ### DAI Migration Pipeline
 
-`Manual -> Sky: Get DAI Balance -> Math (Sum, divide by 1e18) -> Condition (> 0) -> Sky: Approve DAI Spending -> Sky: Convert DAI to USDS -> Sky: Deposit USDS to Savings`
+`Manual -> Sky: Get DAI Balance -> Math (Sum, divide by 1e18) -> Condition (> 0) -> Sky: Approve DAI Spending -> Sky: Convert DAI to USDS -> Sky: Vault Deposit`
 
-One-click migration of DAI holdings: check balance, approve the converter, convert to USDS, and deposit into savings. Ethereum only.
+One-click migration of DAI holdings: check balance, approve the converter, convert to USDS, and deposit into the sUSDS savings vault. Ethereum only.
 
 ---
 
@@ -320,8 +119,8 @@ One-click migration of DAI holdings: check balance, approve the converter, conve
 
 | Chain | Contracts Available |
 |-------|-------------------|
-| Ethereum (1) | sUSDS, USDS, DAI, SKY, DAI-USDS Converter, MKR-SKY Converter |
-| Base (8453) | sUSDS, USDS |
-| Arbitrum (42161) | sUSDS, USDS |
+| Ethereum (1) | sUSDS Savings Vault, stUSDS Staked Vault, USDS, DAI, SKY, DAI-USDS Converter, MKR-SKY Converter |
+| Base (8453) | sUSDS Savings Vault, USDS |
+| Arbitrum (42161) | sUSDS Savings Vault, USDS |
 
-The savings vault (sUSDS) and USDS stablecoin are available on all three chains. DAI, SKY, and the converter contracts are Ethereum-only.
+The sUSDS savings vault and USDS stablecoin are available on all three chains. The stUSDS staked vault, DAI, SKY, and the converter contracts are Ethereum-only.
