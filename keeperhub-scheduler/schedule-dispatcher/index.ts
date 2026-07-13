@@ -24,6 +24,10 @@
 import "../log-facade.js";
 import express from "express";
 import { KEEPERHUB_URL, SQS_QUEUE_URL } from "../lib/config.js";
+import {
+  type LeaderElectionHandle,
+  runWithLeaderElection,
+} from "../lib/leader-election.js";
 import { dispatch } from "./dispatch.js";
 import { registry } from "./metrics.js";
 
@@ -67,6 +71,79 @@ function msUntilNextTick(): number {
   return 60_000 - msIntoMinute + TICK_OFFSET_MS;
 }
 
+/**
+ * Drives the aligned minute-boundary dispatch loop, but only while this
+ * instance is the leader. `start()` is called on acquiring leadership and
+ * `stop()` on losing it, so a standby holds an idle ticker and never dispatches.
+ */
+class ScheduleTicker {
+  // lastTickAt tracks the `now` of the previous pass so each tick's window
+  // covers exactly (lastTickAt, now] — no gaps, no double-fires. It resets to
+  // null when leadership (re)starts, so the first pass uses a synthetic
+  // (now - 60s, now] window and recovers any occurrence missed during handover.
+  private lastTickAt: Date | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = true;
+
+  constructor(private readonly isLeader: () => boolean) {}
+
+  start(): void {
+    if (!this.stopped) {
+      return;
+    }
+    this.stopped = false;
+    this.lastTickAt = null;
+    console.log("[Dispatcher] Became leader — running initial dispatch...");
+    void this.runOnce(null).then(() => this.scheduleNext());
+  }
+
+  stop(): void {
+    if (this.stopped) {
+      return;
+    }
+    this.stopped = true;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    console.log("[Dispatcher] Stopped dispatching (no longer leader)");
+  }
+
+  private scheduleNext(): void {
+    if (this.stopped) {
+      return;
+    }
+    const delay = msUntilNextTick();
+    this.timer = setTimeout(() => {
+      void this.tick();
+    }, delay);
+  }
+
+  private async tick(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
+    const prevTick = this.lastTickAt;
+    this.lastTickAt = new Date();
+    await this.runOnce(prevTick);
+    this.scheduleNext();
+  }
+
+  private async runOnce(prevTick: Date | null): Promise<void> {
+    // Defense in depth: a timer may fire in the narrow window between losing
+    // leadership and stop() landing. Never dispatch unless we still hold it.
+    if (!this.isLeader()) {
+      console.warn("[Dispatcher] Skipping dispatch: not leader");
+      return;
+    }
+    try {
+      await dispatch(prevTick);
+    } catch (error) {
+      console.error("[Dispatcher] Dispatch failed:", error);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   if (!process.env.INTERNAL_SERVICE_HMAC_SECRET) {
     throw new Error("INTERNAL_SERVICE_HMAC_SECRET is required");
@@ -78,6 +155,24 @@ async function main(): Promise<void> {
     `[Dispatcher] Tick offset: ${TICK_OFFSET_MS}ms past minute boundary`,
   );
 
+  // Gate dispatching on leadership: with 2 replicas only the elected leader may
+  // dispatch, otherwise every schedule fires once per replica. `leading` lets
+  // the ticker double-check leadership before a queued tick actually dispatches.
+  let leading = false;
+  const ticker = new ScheduleTicker(() => leading);
+
+  const election: LeaderElectionHandle = runWithLeaderElection({
+    leaseName: process.env.LEASE_NAME ?? "schedule-dispatcher-leader",
+    onStartedLeading: () => {
+      leading = true;
+      ticker.start();
+    },
+    onStoppedLeading: () => {
+      leading = false;
+      ticker.stop();
+    },
+  });
+
   const healthApp = express();
   const HEALTH_PORT = process.env.HEALTH_PORT || 3060;
 
@@ -85,6 +180,7 @@ async function main(): Promise<void> {
     res.status(200).json({
       status: "ok",
       service: "schedule-dispatcher",
+      leader: election.isLeader(),
       timestamp: new Date().toISOString(),
     });
   });
@@ -105,12 +201,26 @@ async function main(): Promise<void> {
     );
   });
 
+  let shuttingDown = false;
   const shutdownHandler = (): void => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     console.log("\n[Dispatcher] Shutting down...");
-    healthServer.close(() => {
-      console.log("[Dispatcher] Health server closed");
-      process.exit(0);
-    });
+    ticker.stop();
+    // Release the lease so a standby takes over promptly, then close.
+    void election
+      .stop()
+      .catch(() => {
+        // best-effort; the lease expires on its own if release fails
+      })
+      .finally(() => {
+        healthServer.close(() => {
+          console.log("[Dispatcher] Health server closed");
+          process.exit(0);
+        });
+      });
   };
 
   process.on("SIGINT", shutdownHandler);
@@ -121,55 +231,6 @@ async function main(): Promise<void> {
       "[Security] SIGUSR1 received; inspector activation suppressed",
     );
   });
-
-  // lastTickAt tracks the `now` of the previous pass so each tick's window
-  // covers exactly (lastTickAt, now] — no gaps, no double-fires. It resets
-  // to null on pod restart, which makes the first pass use a synthetic
-  // (now - 60s, now] window (safe: at most one occurrence can be missed).
-  let lastTickAt: Date | null = null;
-
-  // Run the initial tick immediately to catch any schedules due at boot,
-  // then align subsequent ticks to the wall-clock minute boundary.
-  console.log("[Dispatcher] Running initial dispatch...");
-  try {
-    await dispatch(lastTickAt);
-  } catch (error) {
-    console.error("[Dispatcher] Initial dispatch failed:", error);
-  }
-  // The initial dispatch does not update lastTickAt — on pod restart we want
-  // the first aligned tick to use the synthetic window so it can recover any
-  // occurrence that may have been missed since the last pod's final tick.
-
-  const alignDelay = msUntilNextTick();
-  console.log(
-    `[Dispatcher] Aligning to minute boundary — first aligned tick in ${alignDelay}ms`,
-  );
-
-  // Self-scheduling setTimeout: after each tick recompute the delay to the
-  // next minute boundary. This naturally absorbs drift from slow DB queries
-  // without accumulating phase error the way a fixed setInterval would.
-  const scheduleTick = async (): Promise<void> => {
-    const prevTick = lastTickAt;
-    lastTickAt = new Date();
-
-    try {
-      await dispatch(prevTick);
-    } catch (error) {
-      console.error("[Dispatcher] Dispatch failed:", error);
-    }
-
-    setTimeout(() => {
-      scheduleTick().catch((error: unknown) => {
-        console.error("[Dispatcher] Tick scheduling error:", error);
-      });
-    }, msUntilNextTick());
-  };
-
-  setTimeout(() => {
-    scheduleTick().catch((error: unknown) => {
-      console.error("[Dispatcher] First aligned tick error:", error);
-    });
-  }, alignDelay);
 }
 
 main().catch((error: unknown) => {

@@ -22,36 +22,59 @@ export type PhantomTriggerSource = "schedule" | "block";
 /** Failure codes the scheduler assigns when an enqueue fails. */
 export type SchedulerErrorCode = "CS-0001" | "BS-0001" | "N-0002";
 
+/** Result of a phantom pre-create attempt. */
+export interface PhantomCreateResult {
+  /** Id of the phantom row, or undefined when the call failed. */
+  executionId?: string;
+  /**
+   * True when a row already existed for this dispatch key, i.e. another
+   * dispatcher (an overlapping leader on failover/rollout, or a catch-up window
+   * re-running the occurrence) already created and enqueued it. The caller must
+   * then skip its own enqueue to avoid a duplicate SQS message.
+   */
+  alreadyExisted: boolean;
+}
+
 /**
- * Pre-create a phantom execution row. Returns its id, or undefined when the
- * call fails (the caller then enqueues without an id and the executor inserts
- * its own row).
+ * Pre-create a phantom execution row. Returns its id and whether a row already
+ * existed for the given dispatch key. On failure returns
+ * `{ alreadyExisted: false }` with no id, so the caller falls back to the
+ * legacy id-less enqueue (the executor inserts its own row).
+ *
+ * `dispatchKey` is a stable per-occurrence idempotency key. When
+ * two dispatchers compute the same key the unique index on the row makes the
+ * second insert a no-op and this returns `alreadyExisted: true`.
  */
 export async function createPhantomExecution(
   workflowId: string,
   triggerSource: PhantomTriggerSource,
   userId?: string,
-): Promise<string | undefined> {
+  dispatchKey?: string,
+): Promise<PhantomCreateResult> {
   try {
-    const result = await apiRequest<{ executionId: string }>(
-      "/api/internal/executions",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          workflowId,
-          userId,
-          status: "phantom",
-          triggerSource,
-        }),
-      },
-    );
-    return result.executionId;
+    const result = await apiRequest<{
+      executionId: string;
+      alreadyExisted?: boolean;
+    }>("/api/internal/executions", {
+      method: "POST",
+      body: JSON.stringify({
+        workflowId,
+        userId,
+        status: "phantom",
+        triggerSource,
+        dispatchKey,
+      }),
+    });
+    return {
+      executionId: result.executionId,
+      alreadyExisted: result.alreadyExisted ?? false,
+    };
   } catch (error) {
     console.warn(
       `[Phantom] Failed to pre-create execution for workflow ${workflowId}:`,
       error,
     );
-    return undefined;
+    return { alreadyExisted: false };
   }
 }
 

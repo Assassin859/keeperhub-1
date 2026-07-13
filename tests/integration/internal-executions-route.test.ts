@@ -60,6 +60,11 @@ let mockWorkflow: {
 let mockExistingExecution: { id: string; status: string } | null;
 let insertedValues: Record<string, unknown> | null;
 let updatedSet: Record<string, unknown> | null;
+// Rows the create INSERT's .onConflictDoNothing().returning() resolves to.
+// Empty simulates a dispatch-key conflict (another dispatcher won the race).
+let mockInsertReturning: Array<{ id: string }> = [{ id: "exec_created" }];
+// Rows the dedup fallback SELECT resolves to when the insert conflicted.
+let mockSelectResult: Array<{ id: string }> = [];
 // Rows the PATCH terminal UPDATE's .returning() resolves to; seed with
 // workflowId + previousStatus to exercise the counter-emission gate.
 let mockUpdateReturning: Array<{
@@ -81,9 +86,19 @@ vi.mock("@/lib/db", () => ({
       values: (values: Record<string, unknown>) => {
         insertedValues = values;
         return {
-          returning: () => [{ id: "exec_created" }],
+          onConflictDoNothing: () => ({
+            returning: () => mockInsertReturning,
+          }),
         };
       },
+    })),
+    // Dedup fallback lookup when the insert conflicts on dispatch_key.
+    select: vi.fn(() => ({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve(mockSelectResult),
+        }),
+      }),
     })),
     // PATCH chains .set().from(prevExecution).where().returning() for the
     // pre-update-status self-join.
@@ -103,7 +118,11 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/db/schema", () => ({
-  workflowExecutions: { id: "id", status: "status" },
+  workflowExecutions: {
+    id: "id",
+    status: "status",
+    dispatchKey: "dispatch_key",
+  },
   workflows: { id: "id" },
 }));
 
@@ -169,6 +188,8 @@ describe("POST /api/internal/executions", () => {
       userId: "wf_owner",
     };
     insertedValues = null;
+    mockInsertReturning = [{ id: "exec_created" }];
+    mockSelectResult = [];
     enforceExecutionLimit.mockResolvedValue({ blocked: false });
     enforceWorkflowFeatures.mockResolvedValue({ blocked: false });
   });
@@ -224,6 +245,65 @@ describe("POST /api/internal/executions", () => {
     );
 
     expect(buildAttribution).toHaveBeenCalledWith(sourceArg("internal"));
+  });
+
+  it("persists the dispatch key and returns alreadyExisted=false on create", async () => {
+    const response = await POST(
+      postRequest({
+        workflowId: "wf_1",
+        status: "phantom",
+        triggerSource: "schedule",
+        dispatchKey: "schedule:sched_1:2026-01-01T00:00:00.000Z",
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(data.alreadyExisted).toBe(false);
+    expect(insertedValues?.dispatchKey).toBe(
+      "schedule:sched_1:2026-01-01T00:00:00.000Z"
+    );
+  });
+
+  it("stores a null dispatch key when none is supplied", async () => {
+    await POST(postRequest({ workflowId: "wf_1", status: "phantom" }));
+    expect(insertedValues?.dispatchKey).toBeNull();
+  });
+
+  it("returns the existing row with alreadyExisted=true on a dispatch-key conflict", async () => {
+    // Insert no-ops (conflict) -> returning is empty; the fallback lookup finds
+    // the row the winning dispatcher already created.
+    mockInsertReturning = [];
+    mockSelectResult = [{ id: "exec_existing" }];
+
+    const response = await POST(
+      postRequest({
+        workflowId: "wf_1",
+        status: "phantom",
+        triggerSource: "schedule",
+        dispatchKey: "schedule:sched_1:2026-01-01T00:00:00.000Z",
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.alreadyExisted).toBe(true);
+    expect(data.executionId).toBe("exec_existing");
+  });
+
+  it("returns 500 if the insert conflicts but the row cannot be found", async () => {
+    mockInsertReturning = [];
+    mockSelectResult = [];
+
+    const response = await POST(
+      postRequest({
+        workflowId: "wf_1",
+        status: "phantom",
+        dispatchKey: "schedule:sched_1:2026-01-01T00:00:00.000Z",
+      })
+    );
+
+    expect(response.status).toBe(500);
   });
 
   it("returns 400 when workflowId is missing", async () => {
