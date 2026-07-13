@@ -85,11 +85,11 @@ function cometChain(chainId: string, funded = false): ProtocolTestData[string] {
       expectations: COMET_EXPECTATIONS,
     };
   }
-  // Fund USDC (the base asset) from the mainnet whale and fabricate the Comet
-  // approval, so supply then withdraw of the base asset execute in registry
-  // order. Supplying the base makes the wallet a lender, so get-balance reads
-  // a nonzero base position afterward. L2 chains keep supply/withdraw skipped
-  // until per-chain FORK_WHALES/faucets exist.
+  // Fund USDC (the base asset) - whale on mainnet, balance fabrication on the
+  // L2 forks - and fabricate the Comet approval, so supply then withdraw of the
+  // base asset execute in registry order on every chain. Supplying the base
+  // makes the wallet a lender, so get-balance reads a nonzero base position
+  // afterward.
   actions.supply = {
     contractAddress: comet,
     asset: "USDC",
@@ -118,8 +118,8 @@ function cometChain(chainId: string, funded = false): ProtocolTestData[string] {
 
 const TEST_DATA: ProtocolTestData = {
   "1": cometChain("1", true),
-  "8453": cometChain("8453"),
-  "42161": cometChain("42161"),
+  "8453": cometChain("8453", true),
+  "42161": cometChain("42161", true),
 };
 
 export default defineAbiProtocol({

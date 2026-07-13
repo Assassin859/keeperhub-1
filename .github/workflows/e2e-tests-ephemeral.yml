@@ -424,10 +424,30 @@ jobs:
         env:
           ANVIL_FORK_BASE_URL: ${{ secrets.ANVIL_FORK_BASE_URL }}
           ANVIL_FORK_ARBITRUM_URL: ${{ secrets.ANVIL_FORK_ARBITRUM_URL }}
+          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
         run: |
+          # Write-bearing L2 protocols provision balances by storage
+          # fabrication (eth_getStorageAt) and native gas (anvil_setBalance),
+          # which public upstreams reject as archive requests. Prefer the
+          # dedicated secret, then an Alchemy archive upstream derived from
+          # CHAIN_RPC_CONFIG, and only fall back to the public default
+          # (read-only-safe) last.
+          ARCHIVE_FROM_CONFIG=""
           case "${{ matrix.chain_id }}" in
-            8453) UPSTREAM="${ANVIL_FORK_BASE_URL:-${{ matrix.default_upstream }}}" ;;
-            42161) UPSTREAM="${ANVIL_FORK_ARBITRUM_URL:-${{ matrix.default_upstream }}}" ;;
+            8453) CFG_KEY="base-mainnet" ;;
+            42161) CFG_KEY="arbitrum-mainnet" ;;
+          esac
+          # fallbackRpcUrl is the archive-grade endpoint for both chains (Base
+          # -> Alchemy, Arbitrum -> arb1.arbitrum.io), verified to serve the
+          # storage/account reads fabrication needs; the primary is the
+          # techops load balancer used for reads.
+          if [ -n "$CHAIN_RPC_CONFIG" ] && [ -n "$CFG_KEY" ]; then
+            ARCHIVE_FROM_CONFIG=$(echo "$CHAIN_RPC_CONFIG" | jq -r --arg k "$CFG_KEY" \
+              '.[$k].fallbackRpcUrl // empty')
+          fi
+          case "${{ matrix.chain_id }}" in
+            8453) UPSTREAM="${ANVIL_FORK_BASE_URL:-${ARCHIVE_FROM_CONFIG:-${{ matrix.default_upstream }}}}" ;;
+            42161) UPSTREAM="${ANVIL_FORK_ARBITRUM_URL:-${ARCHIVE_FROM_CONFIG:-${{ matrix.default_upstream }}}}" ;;
             *) echo "unknown chain ${{ matrix.chain_id }}"; exit 1 ;;
           esac
           # Pin a few blocks behind head so a node behind a load-balanced
