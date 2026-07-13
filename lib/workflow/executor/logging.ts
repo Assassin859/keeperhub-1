@@ -18,9 +18,11 @@ import {
   workflowExecutions,
 } from "@/lib/db/schema";
 import {
+  applyErrorClassHint,
   classifyExecutionError,
   isDefaultClassification,
 } from "@/lib/errors/classify";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   ERROR_STATUSES,
   isErrorStatus,
@@ -567,6 +569,11 @@ export type LogWorkflowCompleteParams = {
   status: "success" | "error";
   output?: unknown;
   error?: string;
+  /**
+   * Authoritative error type declared by the failing step. When present it
+   * overrides the message-string classifier for the persisted error_type.
+   */
+  errorClass?: ExecutionErrorType;
   startTime: number;
 };
 
@@ -741,8 +748,17 @@ export async function logWorkflowCompleteDb(
 
   // KEEP-545: classify the error so the row carries error_category and
   // error_type at write time. Success rows get null for both columns.
+  // KEEP-880: a step that knows the true nature of its failure (e.g. a
+  // third-party dependency outage) declares an errorClass; it overrides the
+  // message-string classifier, which is fragile for the long tail of
+  // integration error shapes.
   const classification =
-    resolvedStatus === "error" ? classifyExecutionError(resolvedError) : null;
+    resolvedStatus === "error"
+      ? applyErrorClassHint(
+          classifyExecutionError(resolvedError),
+          params.errorClass
+        )
+      : null;
 
   // KEEP-853: a confidently system/infra-classified failure persists as
   // system_error so it is visible and filterable apart from user/workflow

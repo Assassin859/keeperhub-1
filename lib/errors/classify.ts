@@ -2,7 +2,10 @@ import {
   DEFAULT_SYSTEM_ERROR_CODE,
   type ErrorCode,
 } from "@/lib/errors/error-codes";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ErrorCategory } from "@/lib/logging";
+
+export { ExecutionErrorType };
 
 /**
  * Classification of a workflow execution failure into:
@@ -33,8 +36,6 @@ import { ErrorCategory } from "@/lib/logging";
  * and a new user-config family shows up in dashboards as engine-classified
  * until a pattern is added.
  */
-export type ExecutionErrorType = "user" | "system" | "external";
-
 export type ExecutionErrorClassification = {
   errorCategory: ErrorCategory;
   errorType: ExecutionErrorType;
@@ -61,31 +62,31 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Unresolved template reference/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /Missing template variable/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /safe-fetch:\s*invalid URL/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /safe-fetch:\s*scheme .* not allowed/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /blocked by SSRF policy/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // Unanchored so the `HTTP request failed: URL is required` step-wrapped form
@@ -93,7 +94,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /URL is required/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
 
@@ -101,7 +102,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Code execution failed/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
 
@@ -109,88 +110,88 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Contract call failed/i,
     errorCategory: ErrorCategory.TRANSACTION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern:
       /^(Token approval failed|Token transfer failed|Transaction failed):/i,
     errorCategory: ErrorCategory.TRANSACTION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^Invalid contract address/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^Invalid Ethereum address/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^Invalid (function arguments|ABI JSON|payable value)/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /Function '.+' not found in ABI/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^For Each:\s*arraySource is required/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^Condition references field/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^Failed to evaluate condition expression/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^No token selected/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^HTTP request failed:\s*Missing template variable/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   {
     pattern: /^HTTP request failed:\s*Request with GET\/HEAD method/i,
     errorCategory: ErrorCategory.VALIDATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // User-config: database integration not configured
   {
     pattern: /^DATABASE_URL is not configured/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // User-config: integration credential not configured
   {
     pattern: /API key is required/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // User-action: Para wallet session needs re-export
@@ -199,7 +200,7 @@ const RULES: readonly Rule[] = [
     pattern:
       /^Failed to initialize organization wallet:\s*Para session expired/i,
     errorCategory: ErrorCategory.CONFIGURATION,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
 
@@ -208,13 +209,13 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Failed to check balance:\s*RPC failed/i,
     errorCategory: ErrorCategory.NETWORK_RPC,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "N-0001",
   },
   {
     pattern: /RPC failed on both endpoints/i,
     errorCategory: ErrorCategory.NETWORK_RPC,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "N-0001",
   },
   // User-config: webhook hostname does not resolve -- the configured URL points
@@ -222,7 +223,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Failed to send webhook:.*getaddrinfo/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // External dependency: webhook send transport failure (ECONNRESET, timeout,
@@ -232,7 +233,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Failed to send webhook/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "external",
+    errorType: ExecutionErrorType.EXTERNAL,
     code: null,
   },
   // External dependency: endpoint answered with a 5xx (webhook/safe/discord/etc.)
@@ -241,7 +242,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^HTTP 5\d{2}:/,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "external",
+    errorType: ExecutionErrorType.EXTERNAL,
     code: null,
   },
   // User-config: endpoint answered with a non-5xx non-2xx (401/403/404/400,
@@ -249,7 +250,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^HTTP \d{3}:/,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // User-config: HTTP request step DNS resolution failed -- the configured URL's
@@ -257,7 +258,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^HTTP request failed:.*getaddrinfo/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // External dependency: HTTP request step got a 5xx from the endpoint -- the
@@ -265,7 +266,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^HTTP request failed\s+with status\s+5\d{2}/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "external",
+    errorType: ExecutionErrorType.EXTERNAL,
     code: null,
   },
   // User-config: HTTP request step got a non-5xx non-2xx status -- a bad
@@ -274,7 +275,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^HTTP request failed\s+with status\s+\d+/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "user",
+    errorType: ExecutionErrorType.USER,
     code: null,
   },
   // External dependency: HTTP request step reached DNS but the endpoint did not
@@ -283,7 +284,7 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^HTTP request failed:\s/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
-    errorType: "external",
+    errorType: ExecutionErrorType.EXTERNAL,
     code: null,
   },
 
@@ -291,19 +292,19 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Database query failed/i,
     errorCategory: ErrorCategory.DATABASE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "C-0002",
   },
   {
     pattern: /^Failed query:/i,
     errorCategory: ErrorCategory.DATABASE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "C-0002",
   },
   {
     pattern: /^getaddrinfo .*\.rds\.amazonaws\.com/i,
     errorCategory: ErrorCategory.DATABASE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "C-0002",
   },
 
@@ -311,31 +312,31 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Execution timed out/i,
     errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "E-0001",
   },
   {
     pattern: /^Workflow terminated by SIGTERM/i,
     errorCategory: ErrorCategory.INFRASTRUCTURE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "P-0003",
   },
   {
     pattern: /^Step ".*" exceeded max retries/i,
     errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "E-0002",
   },
   {
     pattern: /^Unknown action type:/i,
     errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "E-0003",
   },
   {
     pattern: /^Failed to acquire nonce lock/i,
     errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "E-0003",
   },
 
@@ -343,19 +344,19 @@ const RULES: readonly Rule[] = [
   {
     pattern: /^Cannot find module/i,
     errorCategory: ErrorCategory.INFRASTRUCTURE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "C-0003",
   },
   {
     pattern: /must be set\s*$/i,
     errorCategory: ErrorCategory.INFRASTRUCTURE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "C-0003",
   },
   {
     pattern: /^Failed to initialize organization wallet/i,
     errorCategory: ErrorCategory.INFRASTRUCTURE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: "C-0003",
   },
 ];
@@ -374,7 +375,7 @@ export function classifyExecutionError(
   if (!errorMessage) {
     return {
       errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-      errorType: "system",
+      errorType: ExecutionErrorType.SYSTEM,
       code: DEFAULT_SYSTEM_ERROR_CODE,
     };
   }
@@ -383,7 +384,7 @@ export function classifyExecutionError(
   if (trimmed.length === 0) {
     return {
       errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-      errorType: "system",
+      errorType: ExecutionErrorType.SYSTEM,
       code: DEFAULT_SYSTEM_ERROR_CODE,
     };
   }
@@ -400,7 +401,7 @@ export function classifyExecutionError(
 
   return {
     errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: "system",
+    errorType: ExecutionErrorType.SYSTEM,
     code: DEFAULT_SYSTEM_ERROR_CODE,
   };
 }
@@ -416,4 +417,47 @@ export function isDefaultClassification(
   classification: ExecutionErrorClassification
 ): boolean {
   return classification.code === DEFAULT_SYSTEM_ERROR_CODE;
+}
+
+/**
+ * Override a string-derived classification with an authoritative `errorType`
+ * declared at the failure site (a step that knows it failed against a
+ * third-party dependency, etc.). The message classifier reverse-engineers the
+ * type from prose, which is fragile for the long tail of integration error
+ * shapes; when a step tags its failure, that tag wins.
+ *
+ * `errorCategory` and `code` are kept coherent with the resulting type: an
+ * external or user failure carries no system code, and an external failure is
+ * categorized `EXTERNAL_SERVICE`. A "system" tag keeps the classifier's code
+ * (or the default system code) so it still pages with a stable identifier.
+ *
+ * A null/undefined hint, or a hint that already agrees with the classifier,
+ * returns the classification unchanged.
+ */
+export function applyErrorClassHint(
+  classification: ExecutionErrorClassification,
+  hint: ExecutionErrorType | null | undefined
+): ExecutionErrorClassification {
+  if (!hint || hint === classification.errorType) {
+    return classification;
+  }
+  if (hint === ExecutionErrorType.EXTERNAL) {
+    return {
+      errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+      errorType: ExecutionErrorType.EXTERNAL,
+      code: null,
+    };
+  }
+  if (hint === ExecutionErrorType.USER) {
+    return {
+      errorCategory: classification.errorCategory,
+      errorType: ExecutionErrorType.USER,
+      code: null,
+    };
+  }
+  return {
+    errorCategory: classification.errorCategory,
+    errorType: ExecutionErrorType.SYSTEM,
+    code: classification.code ?? DEFAULT_SYSTEM_ERROR_CODE,
+  };
 }

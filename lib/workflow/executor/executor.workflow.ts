@@ -2818,12 +2818,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           (stepResult as { success: boolean }).success === false;
 
         if (isErrorResult) {
-          const errorResult = stepResult as { success: false; error?: string };
+          const errorResult = stepResult as {
+            success: false;
+            error?: string;
+            errorClass?: ExecutionResult["errorClass"];
+          };
           result = {
             success: false,
             error:
               errorResult.error ||
               `Step "${actionType}" in node "${node.data.label || node.id}" failed without a specific error message.`,
+            errorClass: errorResult.errorClass,
           };
         } else {
           result = {
@@ -3233,13 +3238,15 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       );
     }
 
+    const firstFailure = Object.values(results).find((r) => !r.success);
+
     recordWorkflowComplete({
       workflowId,
       executionId,
       triggerType,
       durationMs: duration,
       success: finalSuccess,
-      error: Object.values(results).find((r) => !r.success)?.error,
+      error: firstFailure?.error,
     });
     decrementConcurrentExecutions();
 
@@ -3258,9 +3265,10 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             executionId,
             status: finalSuccess ? "success" : "error",
             output: Object.values(results).at(-1)?.data,
-            error: finalSuccess
-              ? undefined
-              : Object.values(results).find((r) => !r.success)?.error,
+            error: finalSuccess ? undefined : firstFailure?.error,
+            // Authoritative type declared by the failing step (if any) wins
+            // over the message-string classifier at finalization.
+            errorClass: finalSuccess ? undefined : firstFailure?.errorClass,
             startTime: workflowStartTime,
           },
         });

@@ -9,6 +9,7 @@
  */
 import "server-only";
 
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   logStepCompleteDb,
   logStepStartDb,
@@ -33,6 +34,8 @@ export type TriggerInput = StepInput & {
     status: "success" | "error";
     output?: unknown;
     error?: string;
+    /** Authoritative error type from the failing step; overrides the classifier. */
+    errorClass?: ExecutionErrorType;
     startTime: number;
   };
   /**

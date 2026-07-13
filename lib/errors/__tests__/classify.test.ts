@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyErrorClassHint,
   classifyExecutionError,
   isDefaultClassification,
 } from "@/lib/errors/classify";
+import { DEFAULT_SYSTEM_ERROR_CODE } from "@/lib/errors/error-codes";
 import { ErrorCategory } from "@/lib/logging";
 
 describe("isDefaultClassification", () => {
@@ -345,5 +347,50 @@ describe("classifyExecutionError", () => {
         ).toBe(true);
       }
     });
+  });
+});
+
+describe("applyErrorClassHint", () => {
+  it("returns the classification unchanged when the hint is null/undefined", () => {
+    const base = classifyExecutionError("Execution timed out");
+    expect(applyErrorClassHint(base, null)).toEqual(base);
+    expect(applyErrorClassHint(base, undefined)).toEqual(base);
+  });
+
+  it("returns unchanged when the hint already agrees with the classifier", () => {
+    const base = classifyExecutionError("Unresolved template reference {{x}}");
+    expect(applyErrorClassHint(base, "user")).toEqual(base);
+  });
+
+  it("overrides an unmatched (default-system) failure to external with no code", () => {
+    // A third-party integration message the string classifier does not know.
+    const base = classifyExecutionError("Failed to send Slack message: 503");
+    expect(base.errorType).toBe("system");
+    const hinted = applyErrorClassHint(base, "external");
+    expect(hinted).toEqual({
+      errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+      errorType: "external",
+      code: null,
+    });
+  });
+
+  it("overrides to user with no code, keeping the classifier category", () => {
+    const base = classifyExecutionError("some novel provider message");
+    const hinted = applyErrorClassHint(base, "user");
+    expect(hinted.errorType).toBe("user");
+    expect(hinted.code).toBeNull();
+    expect(hinted.errorCategory).toBe(base.errorCategory);
+  });
+
+  it("keeps a system hint coded (classifier code, or the default)", () => {
+    const coded = classifyExecutionError("Execution timed out");
+    expect(applyErrorClassHint(coded, "system")).toEqual(coded);
+
+    const uncoded = applyErrorClassHint(
+      classifyExecutionError("HTTP request failed: fetch failed: read ECONNRESET"),
+      "system"
+    );
+    expect(uncoded.errorType).toBe("system");
+    expect(uncoded.code).toBe(DEFAULT_SYSTEM_ERROR_CODE);
   });
 });
