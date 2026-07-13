@@ -439,6 +439,35 @@ describe("StripeBillingProvider", () => {
       expect(result.subscriptionId).toBe("sub_1");
     });
 
+    it("ends the trial now when endTrial is set", async () => {
+      vi.mocked(s.subscriptions.retrieve).mockResolvedValue({
+        id: "sub_1",
+        items: {
+          data: [
+            {
+              id: "si_1",
+              price: { id: "price_old", recurring: { interval: "month" } },
+            },
+          ],
+        },
+      } as unknown as Awaited<ReturnType<typeof s.subscriptions.retrieve>>);
+      vi.mocked(s.prices.retrieve).mockResolvedValue({
+        recurring: { interval: "month" },
+      } as Awaited<ReturnType<typeof s.prices.retrieve>>);
+      vi.mocked(s.subscriptions.update).mockResolvedValue({
+        id: "sub_1",
+      } as unknown as Awaited<ReturnType<typeof s.subscriptions.update>>);
+
+      await provider.updateSubscription("sub_1", "price_new", {
+        endTrial: true,
+      });
+
+      expect(s.subscriptions.update).toHaveBeenCalledWith(
+        "sub_1",
+        expect.objectContaining({ trial_end: "now" })
+      );
+    });
+
     it("resets billing_cycle_anchor when interval changes", async () => {
       vi.mocked(s.subscriptions.retrieve).mockResolvedValue({
         id: "sub_1",

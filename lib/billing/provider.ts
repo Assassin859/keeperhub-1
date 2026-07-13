@@ -133,7 +133,8 @@ export interface BillingProvider {
 
   updateSubscription(
     subscriptionId: string,
-    newPriceId: string
+    newPriceId: string,
+    options?: { endTrial?: boolean }
   ): Promise<{ subscriptionId: string }>;
 
   cancelSubscription(
@@ -142,7 +143,8 @@ export interface BillingProvider {
 
   previewProration(
     subscriptionId: string,
-    newPriceId: string
+    newPriceId: string,
+    options?: { endTrial?: boolean }
   ): Promise<ProrationPreview>;
 
   createInvoiceItem(

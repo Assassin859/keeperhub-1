@@ -3,8 +3,17 @@ import "server-only";
 import type { OrganizationSubscription } from "@/lib/db/schema";
 import type { PlanName } from "./plans";
 
-// Plans that offer a first-time trial. Pro only for now.
+// Plans that offer a trial. Pro only for now.
 const TRIAL_ELIGIBLE_PLANS = new Set<PlanName>(["pro"]);
+
+/**
+ * Whether `plan` is one that trials apply to at all. Used to end an in-flight
+ * trial when a trialing org switches to a non-trial plan (e.g. Pro trial ->
+ * Business), so that plan is charged immediately instead of inheriting the trial.
+ */
+export function isTrialPlan(plan: PlanName): boolean {
+  return TRIAL_ELIGIBLE_PLANS.has(plan);
+}
 
 const DEFAULT_TRIAL_DAYS = 14;
 const MIN_TRIAL_DAYS = 1;

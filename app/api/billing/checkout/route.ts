@@ -12,7 +12,11 @@ import {
 import type { BillingProvider } from "@/lib/billing/provider";
 import { getBillingProvider } from "@/lib/billing/providers";
 import { requireOrgOwner } from "@/lib/billing/require-org-owner";
-import { getTrialPeriodDays, isTrialEligible } from "@/lib/billing/trial";
+import {
+  getTrialPeriodDays,
+  isTrialEligible,
+  isTrialPlan,
+} from "@/lib/billing/trial";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -136,9 +140,10 @@ async function handleExistingSubscription(
   priceId: string,
   activeOrgId: string,
   currentSub: NonNullable<Awaited<ReturnType<typeof getOrgSubscription>>>,
-  actor: { userId: string; request: Request }
+  actor: { userId: string; request: Request },
+  endTrial: boolean
 ): Promise<NextResponse> {
-  await provider.updateSubscription(subscriptionId, priceId);
+  await provider.updateSubscription(subscriptionId, priceId, { endTrial });
 
   const details = await provider.getSubscriptionDetails(subscriptionId);
   const resolved = details.priceId
@@ -210,13 +215,20 @@ export async function POST(request: Request): Promise<NextResponse> {
         );
       }
 
+      // Plan cards always charge: a trialing org that changes plan/tier from a
+      // card (no `trial` intent) ends the trial and is billed now. Only the
+      // Manage-trial modal sends trial:true to keep the trial, and only for Pro.
+      const endTrial =
+        sub.status === "trialing" && !(trial && isTrialPlan(plan));
+
       return await handleExistingSubscription(
         provider,
         existingSubId,
         priceId,
         activeOrgId,
         sub,
-        { userId, request }
+        { userId, request },
+        endTrial
       );
     }
 
