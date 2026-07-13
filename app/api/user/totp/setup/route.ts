@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { requireStepUp, stepUpErrorResponse } from "@/lib/mfa/wallet-step-up";
 
 const ISSUER = "KeeperHub";
 const SECRET_LENGTH = 32;
@@ -18,6 +18,7 @@ type SetupRequest = {
   name?: string;
   code?: string;
   emailOtp?: string;
+  signature?: string;
 };
 
 type SetupResponse = {
@@ -170,19 +171,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   const alreadyEnrolled =
     userRow?.twoFactorEnabled === true && Boolean(existingFactor);
   if (alreadyEnrolled) {
-    const dual = await requireDualFactor({
+    const stepUp = await requireStepUp({
       userId,
       email: userEmail,
       action: "totp_setup",
       code: typeof body.code === "string" ? body.code.trim() : "",
       emailOtp: typeof body.emailOtp === "string" ? body.emailOtp.trim() : "",
+      signature:
+        typeof body.signature === "string" ? body.signature.trim() : undefined,
       headers: request.headers,
     });
-    if (!dual.ok) {
-      return NextResponse.json(
-        { error: dual.error, code: dual.code },
-        { status: dual.status }
-      );
+    if (!stepUp.ok) {
+      return stepUpErrorResponse(stepUp);
     }
   }
 
@@ -197,6 +197,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Replaces the older DELETE-then-INSERT pattern which could
     // produce duplicate rows under concurrent calls (React StrictMode
     // fires open-effects twice in dev). One enrollment per user.
+    // Write the row pending (verified=false). The column defaults to true so
+    // sign-in verify never issues a redundant update, but a freshly generated
+    // secret has not been confirmed yet: leaving it true makes Better Auth's
+    // verify-totp skip its own enable path (it only enables when
+    // verified !== true), which strands re-enrollment. Starting false lets that
+    // path run on the first correct code, flipping verified + two_factor_enabled
+    // together. It returns to true the moment enrollment completes.
     const enrolledAt = new Date();
     await db
       .insert(twoFactorTable)
@@ -207,6 +214,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         backupCodes: null,
         name,
         enrolledAt,
+        verified: false,
       })
       .onConflictDoUpdate({
         target: twoFactorTable.userId,
@@ -215,6 +223,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           backupCodes: null,
           name,
           enrolledAt,
+          verified: false,
         },
       });
 

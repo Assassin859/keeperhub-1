@@ -14,7 +14,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import postgres from "postgres";
-import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/test-data/types";
+import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/workflow/node-builders";
 import {
   createManualWorkflow,
   createScheduledWorkflow,
@@ -82,7 +82,13 @@ export type TestWorkflow = {
 };
 
 export type ExecutionResult = {
-  status: "success" | "error" | "pending" | "running" | "cancelled";
+  status:
+    | "success"
+    | "error"
+    | "pending"
+    | "running"
+    | "cancelled"
+    | "system_error";
   executionId: string;
   error?: string;
 };
@@ -343,9 +349,16 @@ export async function waitForWorkflowExecution(
         const execution = result[0];
         const status = execution.status as string;
 
-        if (status === "success" || status === "error") {
+        // cancelled and system_error are terminal too; treating them as
+        // non-terminal burns the full timeout before any diagnosis runs.
+        if (
+          status === "success" ||
+          status === "error" ||
+          status === "cancelled" ||
+          status === "system_error"
+        ) {
           return {
-            status: status as "success" | "error",
+            status: status as ExecutionResult["status"],
             executionId: execution.id as string,
             error: execution.error as string | undefined,
           };

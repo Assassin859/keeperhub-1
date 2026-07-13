@@ -1,7 +1,7 @@
 /**
  * E2E integration tests for `lib/safe/roles-orchestrator` against an anvil
- * fork of Sepolia, where the canonical Safe v1.4.1 + Zodiac Roles v2.1
- * contracts already live.
+ * fork of Ethereum mainnet, where the canonical Safe v1.4.1 + Zodiac Roles
+ * v2.1 contracts already live.
  *
  * What this proves vs. the unit tests:
  *
@@ -10,10 +10,10 @@
  *     work against REAL Safe / Zodiac bytecode. They catch ABI drift, decoder
  *     mismatches, and condition-tree encoding bugs that mocks cannot see.
  *
- * Setup: `docker compose --profile test up -d test-anvil-fork` brings up an
- * anvil instance forked from the public Sepolia RPC on port 8547. Skipped
- * when `SKIP_INFRA_TESTS=true` or when the fork is unreachable, matching
- * the existing pattern in this directory.
+ * Setup: `docker compose --profile test up -d test-anvil-fork-mainnet`
+ * brings up an anvil instance forked from Ethereum mainnet on port 8548.
+ * Skipped when `SKIP_INFRA_TESTS=true` or when the fork is unreachable,
+ * matching the existing pattern in this directory.
  *
  * DB is mocked at the function-call level (we are testing the orchestrator's
  * chain interactions, not its DB writes). Where the orchestrator queries
@@ -116,9 +116,11 @@ vi.mock("drizzle-orm", () => ({
 // and tracks pending txs in wallet_locks / pending_transactions). For these
 // tests we feed a stub that gives back monotonically-increasing nonces from
 // the chain so the orchestrator's signed-tx path lands real txs on the fork.
+const MAINNET_CHAIN_ID = 1;
+
 const sessionMock = {
   walletAddress: "",
-  chainId: SEPOLIA_CHAIN_ID,
+  chainId: MAINNET_CHAIN_ID,
   executionId: "test-exec",
   currentNonce: 0,
   startedAt: new Date(),
@@ -161,7 +163,7 @@ vi.mock("@/lib/web3/nonce-manager", () => ({
 }));
 
 // Override RPC URL lookup so the orchestrator's internal
-// getRpcProviderFromUrls calls hit our fork instead of public Sepolia.
+// getRpcProviderFromUrls calls hit our fork instead of live mainnet.
 vi.mock("@/lib/rpc/rpc-config", async () => {
   const actual = await vi.importActual<typeof import("@/lib/rpc/rpc-config")>(
     "@/lib/rpc/rpc-config"
@@ -169,7 +171,7 @@ vi.mock("@/lib/rpc/rpc-config", async () => {
   return {
     ...actual,
     getRpcUrlByChainId: (chainId: number, _kind: "primary" | "fallback") => {
-      if (chainId === SEPOLIA_CHAIN_ID) {
+      if (chainId === MAINNET_CHAIN_ID) {
         return FORK_URL;
       }
       return actual.getRpcUrlByChainId(chainId, _kind);
@@ -206,7 +208,6 @@ import {
   FORK_URL,
   getFork,
   isForkReachable,
-  SEPOLIA_CHAIN_ID,
 } from "./safe-fork-helpers";
 
 // ---------------------------------------------------------------------------
@@ -250,7 +251,7 @@ describe.skipIf(shouldSkip)(
       const result = await reconcileSafeRoleFromChain({
         id: "safe-1",
         organizationId: TEST_ORG_ID,
-        chainId: SEPOLIA_CHAIN_ID,
+        chainId: MAINNET_CHAIN_ID,
         safeAddress,
         // Remaining SafeWallet fields are unread on the no-modifier branch
         // but typed as required, so we stub them.
@@ -272,7 +273,7 @@ describe.skipIf(shouldSkip)(
       const safeRow = {
         id: "safe-b",
         organizationId: TEST_ORG_ID,
-        chainId: SEPOLIA_CHAIN_ID,
+        chainId: MAINNET_CHAIN_ID,
         safeAddress,
         status: "deployed",
         isSigningActive: true,
@@ -312,7 +313,7 @@ describe.skipIf(shouldSkip)(
 
       const result = await installRolesWithInitialConfig({
         organizationId: TEST_ORG_ID,
-        chainId: SEPOLIA_CHAIN_ID,
+        chainId: MAINNET_CHAIN_ID,
         protocols: [],
         directRules: [
           {

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { signIn } from "./utils/auth";
 
 const ANALYTICS_EMAIL = "test-analytics@techops.services";

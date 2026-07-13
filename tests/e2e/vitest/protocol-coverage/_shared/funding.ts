@@ -11,9 +11,11 @@
  *     faucet contracts to mint ERC20s. Used on Base (ajna, reads only).
  *   - Fork mode (FORK_CHAIN_IDS): anvil cheatcodes provision balances without
  *     a funded EOA. ensureNativeGas calls anvil_setBalance; ERC20s come from
- *     whale impersonation (FORK_WHALES) or a permissionless faucet mint
- *     impersonating the wallet (FAUCETS). Used on the mainnet fork (chain 1)
- *     and the Sepolia fork (chain 11155111) in CI.
+ *     whale impersonation (FORK_WHALES), a permissionless faucet mint
+ *     impersonating the wallet (FAUCETS), or - when neither exists - direct
+ *     balances-slot fabrication via anvil_setStorageAt (fabricate-state.ts).
+ *     Used on the mainnet fork (chain 1) and the Sepolia fork
+ *     (chain 11155111) in CI.
  */
 
 import { eq } from "drizzle-orm";
@@ -22,6 +24,8 @@ import { ethers } from "ethers";
 import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { chains } from "@/lib/db/schema";
+import { getProtocol } from "@/lib/protocol-registry";
+import { resolveBinding } from "@/lib/test-data/build-workflow";
 import {
   FAUCETS,
   FORK_CHAIN_IDS,
@@ -32,12 +36,36 @@ import {
   TOKEN_REGISTRY,
   type TokenSymbol,
 } from "@/lib/test-data/chain-test-data";
+import {
+  fabricateElapsedCooldown,
+  fabricateErc20Allowance,
+  fabricateErc20Balance,
+} from "./fabricate-state";
 
 export const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
   "function approve(address spender, uint256 amount) returns (bool)",
 ];
+
+/**
+ * Run `fn` with `address` impersonated on an anvil fork, guaranteeing
+ * anvil_stopImpersonatingAccount runs even when the callback throws.
+ * Shared by the fork provisioning paths below and the Tier 1 simulation
+ * harness so the impersonate/stop bracket cannot drift between copies.
+ */
+export async function withImpersonation<T>(
+  provider: ethers.JsonRpcProvider,
+  address: string,
+  fn: (signer: ethers.JsonRpcSigner) => Promise<T>
+): Promise<T> {
+  await provider.send("anvil_impersonateAccount", [address]);
+  try {
+    return await fn(await provider.getSigner(address));
+  } finally {
+    await provider.send("anvil_stopImpersonatingAccount", [address]);
+  }
+}
 
 // chains.defaultPrimaryRpc is bootstrap-time data; memoize per process so a
 // test session opening 3+ helpers (ensureNativeGas + one per requiredTokens)
@@ -102,7 +130,7 @@ export async function ensureNativeGas(
     // anvil_setBalance sets the balance to an absolute value in hex wei.
     await provider.send("anvil_setBalance", [
       address,
-      "0x" + topUpWei.toString(16),
+      `0x${topUpWei.toString(16)}`,
     ]);
     return;
   }
@@ -123,6 +151,171 @@ export async function ensureNativeGas(
   }
   const tx = await funder.sendTransaction({ to: address, value: topUpWei });
   await tx.wait();
+}
+
+/**
+ * Run a protocol's fork-only impersonated provisioning calls
+ * (`setup.forkImpersonatedCalls`), e.g. an authed ward kissing the test
+ * wallet on a toll-gated Chronicle feed. Shared by the coverage
+ * preflight (runSetup) and the Tier 1 simulation harness so the
+ * impersonation semantics cannot drift between tiers.
+ *
+ * Throws when the spec is declared on a non-fork chain: impersonation
+ * is an anvil cheatcode, and silently skipping would let gated fixtures
+ * fail far downstream (or pass vacuously).
+ */
+export async function runForkImpersonatedCalls(
+  protocolSlug: string,
+  chainId: string,
+  walletAddress: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
+): Promise<void> {
+  const protocol = getProtocol(protocolSlug);
+  const calls = protocol?.testData?.[chainId]?.setup?.forkImpersonatedCalls;
+  if (!(protocol && calls) || calls.length === 0) {
+    return;
+  }
+  if (!(FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride)) {
+    throw new Error(
+      `${protocolSlug} declares forkImpersonatedCalls on chain ${chainId}, which is not in FORK_CHAIN_IDS; impersonation only exists on anvil forks.`
+    );
+  }
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  for (const call of calls) {
+    const to = resolveBinding(
+      call.contract,
+      "address",
+      protocol,
+      chainId,
+      walletAddress
+    );
+    const abi = JSON.parse(call.abi) as AbiFunction[];
+    const fn = abi.find((entry) => entry.name === call.functionName);
+    if (!fn) {
+      throw new Error(
+        `${protocolSlug}: forkImpersonatedCalls ABI missing function "${call.functionName}"`
+      );
+    }
+    const args = call.args.map((arg, i) =>
+      resolveBinding(arg, fn.inputs[i]?.type, protocol, chainId, walletAddress)
+    );
+    // Impersonated senders are privileged accounts (often contracts)
+    // chosen for authority, not ETH balance; fund their gas.
+    await provider.send("anvil_setBalance", [
+      call.impersonate,
+      "0x8ac7230489e80000",
+    ]);
+    await withImpersonation(provider, call.impersonate, async (signer) => {
+      const target = new ethers.Contract(to, [fn], signer);
+      const tx = await target[call.functionName](...args);
+      const receipt = await tx.wait();
+      if (!receipt || receipt.status !== 1) {
+        throw new Error(
+          `${protocolSlug}: impersonated ${call.functionName} on ${to} reverted`
+        );
+      }
+    });
+  }
+}
+
+/**
+ * Run a protocol action's declared pre-execution state fabrications
+ * (`testData.fabrications[actionSlug]`) - cheatcode rewrites of
+ * on-chain preconditions the setup phase cannot buy or sequence, e.g.
+ * marking the wallet's real sUSDe cooldown as elapsed so unstake can run
+ * without waiting out the cooldown period. Shared by the Tier 1
+ * simulation harness and the Tier 2 coverage runner so the fabrication
+ * semantics cannot drift between tiers. No-op when the action declares
+ * none; throws on a non-fork chain, same as runForkImpersonatedCalls.
+ */
+export async function runActionFabrications(
+  protocolSlug: string,
+  chainId: string,
+  walletAddress: string,
+  actionSlug: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
+): Promise<void> {
+  const protocol = getProtocol(protocolSlug);
+  const specs = protocol?.testData?.[chainId]?.fabrications?.[actionSlug];
+  if (!(protocol && specs) || specs.length === 0) {
+    return;
+  }
+  if (!(FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride)) {
+    throw new Error(
+      `${protocolSlug}/${actionSlug} declares fabrications on chain ${chainId}, which is not in FORK_CHAIN_IDS; state fabrication only exists on anvil forks.`
+    );
+  }
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  for (const spec of specs) {
+    const target = resolveBinding(
+      spec.contract,
+      "address",
+      protocol,
+      chainId,
+      walletAddress
+    );
+    await fabricateElapsedCooldown(provider, target, walletAddress);
+  }
+}
+
+/**
+ * Fabricate a protocol's fork-only setup allowances
+ * (`setup.fabricatedApprovals`) with anvil_setStorageAt, so the setup
+ * phase never submits a slow approve-token transaction. Shared by the
+ * Tier 1 simulation harness and the Tier 2 coverage preflight so the
+ * allowance provisioning cannot drift between tiers. No-op when the
+ * protocol declares none; throws on a non-fork chain, same as
+ * runForkImpersonatedCalls.
+ */
+export async function runFabricatedApprovals(
+  protocolSlug: string,
+  chainId: string,
+  walletAddress: string,
+  /** Fork RPC endpoint for DB-less callers (the simulation tier);
+   *  defaults to the chains-table lookup the coverage suites use. */
+  rpcUrlOverride?: string
+): Promise<void> {
+  const protocol = getProtocol(protocolSlug);
+  const approvals =
+    protocol?.testData?.[chainId]?.setup?.fabricatedApprovals;
+  if (!(protocol && approvals) || approvals.length === 0) {
+    return;
+  }
+  if (!(FORK_CHAIN_IDS.has(chainId) || rpcUrlOverride)) {
+    throw new Error(
+      `${protocolSlug} declares fabricatedApprovals on chain ${chainId}, which is not in FORK_CHAIN_IDS; storage fabrication only exists on anvil forks.`
+    );
+  }
+  const rpcUrl = rpcUrlOverride ?? (await getChainRpcUrl(chainId));
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  for (const approval of approvals) {
+    const tokenEntry = TOKEN_REGISTRY[chainId]?.[approval.token];
+    if (!tokenEntry) {
+      throw new Error(
+        `TOKEN_REGISTRY missing ${approval.token} on chain ${chainId}; cannot fabricate approval.`
+      );
+    }
+    const spender = resolveBinding(
+      approval.spender,
+      "address",
+      protocol,
+      chainId,
+      walletAddress
+    );
+    await fabricateErc20Allowance(
+      provider,
+      tokenEntry.address,
+      walletAddress,
+      spender,
+      ethers.parseUnits(approval.human, tokenEntry.decimals)
+    );
+  }
 }
 
 export type AbiInput = { name: string; type: string };
@@ -215,9 +408,7 @@ async function ensureErc20OnFork(
     whale.address,
     "0x8ac7230489e80000",
   ]);
-  await provider.send("anvil_impersonateAccount", [whale.address]);
-  try {
-    const whaleSigner = await provider.getSigner(whale.address);
+  await withImpersonation(provider, whale.address, async (whaleSigner) => {
     const tokenAsWhale = new ethers.Contract(
       tokenEntry.address,
       ERC20_ABI,
@@ -225,9 +416,7 @@ async function ensureErc20OnFork(
     );
     const tx = await tokenAsWhale.transfer(walletAddress, gap);
     await tx.wait();
-  } finally {
-    await provider.send("anvil_stopImpersonatingAccount", [whale.address]);
-  }
+  });
 }
 
 /**
@@ -277,15 +466,11 @@ async function mintViaFaucetOnFork(
   }
   const args = bindFaucetArgs(fn, tokenEntry.address, walletAddress, gap);
 
-  await provider.send("anvil_impersonateAccount", [walletAddress]);
-  try {
-    const signer = await provider.getSigner(walletAddress);
+  await withImpersonation(provider, walletAddress, async (signer) => {
     const contract = new ethers.Contract(faucet.contract, abi, signer);
     const tx = await contract[faucet.functionName](...args);
     await tx.wait();
-  } finally {
-    await provider.send("anvil_stopImpersonatingAccount", [walletAddress]);
-  }
+  });
 }
 
 /**
@@ -332,9 +517,28 @@ export async function ensureErc20Acquired(
       );
       return;
     }
-    throw new Error(
-      `No FORK_WHALES or FAUCETS entry for ${symbol} on fork chain ${chainId}; cannot acquire. Add entries to lib/test-data/chain-test-data.ts.`
+    // No whale and no faucet: write the balance into the token's
+    // balances-mapping slot directly (probed and verified against
+    // balanceOf; see fabricate-state.ts). Whales stay preferred where
+    // registered - a real transfer exercises the token's own accounting -
+    // but slot fabrication does not rot when a whale's balance drains
+    // (the previously registered USDS PSM whale emptied by 2026-07-08).
+    const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
+    if (!tokenEntry) {
+      throw new Error(
+        `TOKEN_REGISTRY missing ${symbol} on chain ${chainId}; cannot fabricate on fork.`
+      );
+    }
+    const provider = new ethers.JsonRpcProvider(
+      rpcUrlOverride ?? (await getChainRpcUrl(chainId))
     );
+    await fabricateErc20Balance(
+      provider,
+      tokenEntry.address,
+      walletAddress,
+      ethers.parseUnits(human, tokenEntry.decimals)
+    );
+    return;
   }
 
   const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];

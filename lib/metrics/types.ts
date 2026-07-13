@@ -188,6 +188,12 @@ export const MetricNames = {
   // hard-fail the resolver vs keep the current silent-downgrade behavior.
   SIGNER_PROBE_FAILURE: "signer_probe.failure.total",
 
+  // Scan observability metrics (HARDEN-03)
+  SCAN_ADDRESS_DURATION: "scan.address.duration_ms",
+  SCAN_CACHE_HIT_TOTAL: "scan.cache.hit.total",
+  SCAN_CACHE_MISS_TOTAL: "scan.cache.miss.total",
+  SCAN_ZERION_CALLS_TOTAL: "scan.zerion.calls.total",
+
   // SQS trigger-message authentication. One counter labelled by
   // auth_result (valid | unsigned | unknown_caller | bad_signature |
   // invalid_schema | stale) and mode (warn | enforce). Drives the rollout gate:
@@ -222,7 +228,6 @@ export const LabelKeys = {
   PLUGIN_NAME: "plugin_name",
   ACTION_NAME: "action_name",
   TRIGGER_TYPE: "trigger_type",
-  CHAIN: "chain",
   STATUS: "status",
   STATUS_CODE: "status_code",
   ERROR_TYPE: "error_type",

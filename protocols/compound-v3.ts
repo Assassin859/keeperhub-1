@@ -1,6 +1,129 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import {
+  type ActionInputBindings,
+  amount,
+  type OutputExpectation,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
+
+// Comet (base USDC) market address per chain, and a WETH collateral address
+// for the collateral-balance read. The comet is a userSpecifiedAddress
+// contract, so every action binds the virtual `contractAddress` key.
+const COMET_USDC: Record<string, string> = {
+  "1": "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
+  "8453": "0xb125E6687d4313864e53df431d5425969c15Eb2F",
+  "42161": "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
+};
+const WETH: Record<string, string> = {
+  "1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "8453": "0x4200000000000000000000000000000000000006",
+  "42161": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+};
+// A mid-range utilization (0.5e18) for the rate reads: rates are a pure
+// function of utilization, so a fixed nonzero input yields a nonzero rate
+// without depending on the market's live utilization.
+const MID_UTILIZATION = "500000000000000000";
+
+function cometActions(
+  comet: string,
+  weth: string
+): Record<string, ActionInputBindings> {
+  return {
+    "get-balance": { contractAddress: comet, account: wallet() },
+    "get-collateral-balance": {
+      contractAddress: comet,
+      account: wallet(),
+      asset: weth,
+    },
+    "get-borrow-balance": { contractAddress: comet, account: wallet() },
+    "get-utilization": { contractAddress: comet },
+    "get-supply-rate": { contractAddress: comet, utilization: MID_UTILIZATION },
+    "get-borrow-rate": { contractAddress: comet, utilization: MID_UTILIZATION },
+    "get-total-supply": { contractAddress: comet },
+    "get-total-borrow": { contractAddress: comet },
+    "is-liquidatable": { contractAddress: comet, account: wallet() },
+    "get-num-assets": { contractAddress: comet },
+    supply: { contractAddress: comet, asset: weth, amount: "1000000000000000" },
+    withdraw: {
+      contractAddress: comet,
+      asset: weth,
+      amount: "1000000000000000",
+    },
+  };
+}
+
+const COMET_SKIPS: Record<string, string> = {
+  supply: "requires collateral token balance and a Comet approval",
+  withdraw: "requires an open supplied/collateral position",
+};
+
+// Market invariants (unnamed outputs, so no field): an active Comet market has
+// supply and borrows (nonzero utilization), positive per-second rates at a mid
+// utilization, and a fixed set of collateral assets. Caller-position reads
+// (base/collateral/borrow balance) read zero for the unprovisioned test wallet
+// and stay liveness-only; is-liquidatable is a constant false for a wallet
+// with no position.
+const COMET_EXPECTATIONS: Record<string, OutputExpectation[]> = {
+  "get-utilization": [{ nonZero: true }],
+  "get-supply-rate": [{ nonZero: true }],
+  "get-borrow-rate": [{ nonZero: true }],
+  "get-total-supply": [{ nonZero: true }],
+  "get-total-borrow": [{ nonZero: true }],
+  "get-num-assets": [{ nonZero: true }],
+  "is-liquidatable": [{ equals: "false" }],
+};
+
+function cometChain(chainId: string, funded = false): ProtocolTestData[string] {
+  const comet = COMET_USDC[chainId];
+  const actions = cometActions(comet, WETH[chainId]);
+  if (!funded) {
+    return {
+      setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
+      actions,
+      skipped: COMET_SKIPS,
+      expectations: COMET_EXPECTATIONS,
+    };
+  }
+  // Fund USDC (the base asset) from the mainnet whale and fabricate the Comet
+  // approval, so supply then withdraw of the base asset execute in registry
+  // order. Supplying the base makes the wallet a lender, so get-balance reads
+  // a nonzero base position afterward. L2 chains keep supply/withdraw skipped
+  // until per-chain FORK_WHALES/faucets exist.
+  actions.supply = {
+    contractAddress: comet,
+    asset: "USDC",
+    amount: amount("USDC", "100"),
+  };
+  actions.withdraw = {
+    contractAddress: comet,
+    asset: "USDC",
+    amount: amount("USDC", "50"),
+  };
+  return {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [{ symbol: "USDC", human: "1000" }],
+      approvals: [],
+      fabricatedApprovals: [{ token: "USDC", spender: comet, human: "1000" }],
+    },
+    actions,
+    skipped: {},
+    expectations: COMET_EXPECTATIONS,
+    writeExpectations: {
+      supply: [{ read: "get-balance", expect: { nonZero: true } }],
+    },
+  };
+}
+
+const TEST_DATA: ProtocolTestData = {
+  "1": cometChain("1", true),
+  "8453": cometChain("8453"),
+  "42161": cometChain("42161"),
+};
 
 export default defineAbiProtocol({
+  testData: TEST_DATA,
   name: "Compound V3",
   slug: "compound",
   description:
@@ -173,7 +296,11 @@ export default defineAbiProtocol({
           description:
             "Get the current utilization rate of a Comet market (ratio of borrows to supply, scaled to 1e18)",
           outputs: {
-            result: { name: "utilization", label: "Utilization Rate", decimals: 18 },
+            result: {
+              name: "utilization",
+              label: "Utilization Rate",
+              decimals: 18,
+            },
           },
         },
         getSupplyRate: {

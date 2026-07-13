@@ -135,64 +135,88 @@ Each server entry has its own tool namespace, so the AI agent can distinguish wh
 
 ## Tools Reference
 
+The server registers more than 30 tools. Call `tools_documentation` (or `list_action_schemas`) at runtime for the authoritative, always-current set.
+
 ### Workflow Management
 
 | Tool | Description |
 |------|-------------|
-| `list_workflows` | List all workflows in the organization. Accepts `limit` and `offset` for pagination. |
-| `get_workflow` | Get full workflow configuration by ID including nodes and edges. |
-| `create_workflow` | Create a workflow with explicit nodes and edges. Call `list_action_schemas` first to get valid action types. |
-| `update_workflow` | Update a workflow's name, description, nodes, edges, or enabled state. Pass `enabled: false` to halt schedule, event, block, or webhook triggers without deleting the workflow. |
-| `delete_workflow` | Permanently delete a workflow and stop all its executions. Use `force: true` to delete workflows with execution history (cascades to all runs and logs). |
+| `list_workflows` | List all workflows for the organization. Optionally filter by `projectId` or `tagId`. |
+| `get_workflow` | Get a single workflow by ID, including nodes, edges, and configuration. |
+| `create_workflow` | Create a workflow with nodes and edges. Created disabled by default; pass `enabled=true` to make schedule, event, block, or webhook triggers fire immediately. |
+| `update_workflow` | Update a workflow's name, description, nodes, edges, project/tag assignment, or enabled state. Set `enabled=false` to stop triggers without deleting the workflow. |
+| `delete_workflow` | Permanently delete a workflow. This action is irreversible. |
+| `validate_workflow` | Check a workflow's structural and Web3-specific correctness before creating or executing it. |
+| `prepare_test_pin_data` | Return the JSON Schema each node expects as pin data, so an agent can construct valid test inputs. |
 
 ### Execution
 
 | Tool | Description |
 |------|-------------|
-| `execute_workflow` | Manually trigger a workflow. Returns an execution ID for status polling. |
-| `get_execution_status` | Check whether an execution is pending, running, completed, or failed. |
-| `get_execution_logs` | Get detailed logs including transaction hashes, API responses, and errors. |
+| `execute_workflow` | Trigger a manual execution. Returns an execution ID for status polling. |
+| `get_execution` | Get combined status and step-by-step logs for an execution in one response. Replaces the earlier `get_execution_status` + `get_execution_logs` pair. |
+
+### Direct On-Chain Execution
+
+| Tool | Description |
+|------|-------------|
+| `execute_transfer` | Transfer native or ERC20 tokens to a recipient. Requires a wallet integration. |
+| `execute_contract_call` | Call a smart contract function. Returns the result for view/pure calls, or an execution ID for state-changing calls. |
+| `execute_check_and_execute` | Read a contract value, evaluate a condition, and execute an action if it is met. |
+| `get_direct_execution_status` | Get the status of a direct execution (transfer or contract call), including the transaction hash and result. |
+
+### Protocol Actions (DeFi)
+
+| Tool | Description |
+|------|-------------|
+| `search_protocol_actions` | Search available protocol actions across supported DeFi protocols. Call this first to discover actions and their parameters. |
+| `execute_protocol_action` | Execute a DeFi protocol action. The `actionType` follows `protocol/action-slug` (for example `aave-v3/supply`). |
 
 ### AI Generation
 
 | Tool | Description |
 |------|-------------|
-| `ai_generate_workflow` | Generate a workflow from a natural language prompt. Optionally modifies an existing workflow. |
+| `ai_generate_workflow` | Generate a complete workflow from a natural language description. |
 
-### Action Schemas
-
-| Tool | Description |
-|------|-------------|
-| `list_action_schemas` | List available action types and their configuration fields. Filter by category: `web3`, `discord`, `sendgrid`, `webhook`, `system`. |
-
-### Plugins
+### Action Schemas and Plugins
 
 | Tool | Description |
 |------|-------------|
-| `search_plugins` | Search plugins by name or category (`web3`, `messaging`, `integration`, `notification`). |
-| `get_plugin` | Get full plugin documentation with optional examples and config field details. |
-| `validate_plugin_config` | Validate an action configuration against its schema. Returns errors and suggestions. |
+| `list_action_schemas` | List available action schemas, triggers, and supported chains. Each chain includes a `status` field (stable, experimental, deprecated). |
+| `get_plugin` | Get schema details for a specific plugin or integration type. |
+| `search_plugins` | Deprecated. Use `list_action_schemas` instead. |
 
 ### Templates
 
 | Tool | Description |
 |------|-------------|
-| `search_templates` | Search pre-built workflow templates by query, category, or difficulty. |
-| `get_template` | Get template metadata and setup guide. |
-| `deploy_template` | Deploy a template to your account with optional node customizations. |
+| `search_templates` | Search pre-built workflow templates. |
+| `deploy_template` | Clone a public template into the organization as a new workflow. |
+| `get_template` | Deprecated. Use `get_workflow` instead. |
+
+### Marketplace Listings
+
+| Tool | Description |
+|------|-------------|
+| `search_workflows` | Search listed workflows callable by external agents. Returns slug, description, input schema, and price. |
+| `call_workflow` | Invoke a listed workflow. Read workflows execute and return a result; write workflows return unsigned calldata. Paid listings return an x402 challenge (this tool does not auto-pay). |
+| `list_workflow` | Publish a workflow to the marketplace catalog. Idempotent. |
+| `unlist_workflow` | Remove a workflow from the catalog. The slug is preserved for re-listing. |
+| `update_workflow_listing` | Edit listing metadata (description, tags, category, chain, schemas). |
+| `get_workflow_listing` | Read a workflow's public listing metadata by slug. No auth required. |
 
 ### Integrations
 
 | Tool | Description |
 |------|-------------|
-| `list_integrations` | List configured integrations. Filter by type (`web3`, `discord`, `sendgrid`, etc.). |
-| `get_wallet_integration` | Get the wallet integration ID needed for write operations (transfers, contract calls). |
+| `list_integrations` | List configured integrations (credentials) for the organization. |
+| `get_wallet_integration` | Get details for a wallet integration, required for web3 write actions. |
 
 ### Documentation
 
 | Tool | Description |
 |------|-------------|
-| `tools_documentation` | Get documentation for any MCP tool. Use without arguments for a full tool list. |
+| `tools_documentation` | Get documentation for the KeeperHub MCP tools, including examples and best practices. |
 
 ## Resources
 
@@ -211,7 +235,7 @@ A typical workflow creation flow:
 2. **Build nodes** -- construct trigger and action nodes with the correct `actionType` values
 3. **Connect nodes** -- define edges from trigger to actions in execution order
 4. **Create** -- call `create_workflow` with nodes and edges (auto-layouts positions)
-5. **Test** -- call `execute_workflow` and poll `get_execution_status`
+5. **Test** -- call `execute_workflow` and poll `get_execution`
 
 ### Node Structure
 
@@ -233,7 +257,7 @@ A typical workflow creation flow:
 }
 ```
 
-Trigger nodes use `type: "trigger"` with a `triggerType` in the config (`Manual`, `Schedule`, `Webhook`, `Event`).
+Trigger nodes use `type: "trigger"` with a `triggerType` in the config (`Manual`, `Schedule`, `Webhook`, `Event`, `Block`).
 
 ### Edge Structure
 
@@ -279,18 +303,18 @@ Conditions reference previous node outputs using template syntax: `{{@nodeId:Lab
 | Action | Required Fields |
 |--------|----------------|
 | `web3/check-balance` | `network`, `address` |
-| `web3/check-token-balance` | `network`, `address`, `tokenAddress` |
-| `web3/read-contract` | `network`, `contractAddress`, `abiFunction` |
+| `web3/check-token-balance` | `network`, `address`, `tokenConfig` |
+| `web3/read-contract` | `network`, `contractAddress`, `abi`, `abiFunction` |
 
-### Write Actions (require wallet integration)
+### Write Actions (require a wallet integration)
 
 | Action | Required Fields |
 |--------|----------------|
-| `web3/transfer-funds` | `network`, `toAddress`, `amount`, `walletId` |
-| `web3/transfer-token` | `network`, `toAddress`, `tokenAddress`, `amount`, `walletId` |
-| `web3/write-contract` | `network`, `contractAddress`, `abiFunction`, `walletId` |
+| `web3/transfer-funds` | `network`, `recipientAddress`, `amount` |
+| `web3/transfer-token` | `network`, `recipientAddress`, `tokenConfig`, `amount` |
+| `web3/write-contract` | `network`, `contractAddress`, `abi`, `abiFunction` |
 
-Get the `walletId` by calling `get_wallet_integration`.
+`tokenConfig` is a token-select value (which token on which network), not a bare address. Write actions require the organization's wallet integration to be configured; there is no per-action `walletId` field. Use `get_wallet_integration` to confirm the wallet is set up.
 
 The `network` field accepts chain IDs as strings: `"1"` (Ethereum mainnet), `"11155111"` (Sepolia), `"8453"` (Base), `"42161"` (Arbitrum), `"137"` (Polygon).
 

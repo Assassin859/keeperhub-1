@@ -19,6 +19,24 @@ export async function waitForCanvas(page: Page): Promise<void> {
 }
 
 /**
+ * Reach the workflow editor canvas for a signed-in user. "/" is the scan
+ * landing (the default home experience), not the canvas, so enter the builder
+ * via "Start building" and wait for the canvas to become ready.
+ */
+export async function gotoCanvas(page: Page): Promise<void> {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Auth-ready signal: the org switcher renders once the session resolves.
+  // (data-testid, not role=combobox -- the scan landing has other comboboxes.)
+  await expect(page.getByTestId("org-switcher")).toBeVisible({
+    timeout: 15_000,
+  });
+  const startButton = page.getByRole("button", { name: "Start building" });
+  await expect(startButton).toBeVisible({ timeout: 15_000 });
+  await startButton.click();
+  await waitForCanvas(page);
+}
+
+/**
  * Create a new workflow by navigating to the homepage canvas.
  * The app uses an embedded canvas at `/` for new workflows.
  * For authenticated users, may need to click "Start building" to initialize.
@@ -28,35 +46,13 @@ export async function createWorkflow(
   page: Page,
   _name?: string
 ): Promise<string> {
-  // Navigate to homepage which has the workflow canvas
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // "/" is the wallet-scanner landing now; gotoCanvas enters the builder via
+  // "Start building" (only shown once auth resolves) and waits for the canvas.
+  await gotoCanvas(page);
 
-  // Wait for auth to hydrate before building. If the canvas enters edit mode
-  // while the session is still resolving, the new workflow is created as
-  // anonymous and the Save button stays gated ("Sign in to save workflows")
-  // for the rest of the test. The org switcher only renders once auth has
-  // resolved, so it is the auth-ready signal.
-  await expect(page.locator('button[role="combobox"]')).toBeVisible({
-    timeout: 15_000,
-  });
-
-  // Wait for canvas to load
-  await waitForCanvas(page);
-
-  // Check for trigger node first (might already be in edit mode)
+  // Start building seeds a trigger node; wait for it.
   const triggerNode = page.locator(".react-flow__node-trigger").first();
-
-  // If trigger already visible, we're in edit mode
-  if (await triggerNode.isVisible({ timeout: 2000 }).catch(() => false)) {
-    // Already in edit mode, continue
-  } else {
-    // Need to click "Start building" to enter edit mode
-    const startButton = page.getByRole("button", { name: "Start building" });
-    await expect(startButton).toBeVisible({ timeout: 10_000 });
-    await startButton.click({ force: true });
-    // Wait for trigger node to appear after clicking
-    await expect(triggerNode).toBeVisible({ timeout: 20_000 });
-  }
+  await expect(triggerNode).toBeVisible({ timeout: 20_000 });
 
   // Click on trigger node to ensure we're in edit mode and toolbar appears
   await triggerNode.click();

@@ -7,13 +7,13 @@ const USER_ID = "user-1";
 const {
   mockGetSession,
   mockUsersFindFirst,
-  mockRequireDualFactor,
+  mockAuthorizeAction,
   txUpdateCalls,
   txDeleteCalls,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockUsersFindFirst: vi.fn(),
-  mockRequireDualFactor: vi.fn(),
+  mockAuthorizeAction: vi.fn(),
   txUpdateCalls: [] as Array<{ table: unknown; value: unknown }>,
   txDeleteCalls: [] as Array<{ table: unknown }>,
 }));
@@ -22,8 +22,8 @@ vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: mockGetSession } },
 }));
 
-vi.mock("@/lib/mfa/dual-factor", () => ({
-  requireDualFactor: mockRequireDualFactor,
+vi.mock("@/lib/middleware/authorize-action", () => ({
+  authorizeAction: mockAuthorizeAction,
 }));
 
 // A `.where()` result that is awaitable (for the users update, which awaits it
@@ -40,6 +40,11 @@ function whereWithReturning() {
 // for each schema table. This is sturdier than routing-by-table-string and
 // catches unexpected extra writes.
 const txStub = {
+  select: vi.fn().mockReturnValue({
+    from: vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue([{ count: 0 }]),
+    }),
+  }),
   update: vi.fn((table: unknown) => ({
     set: vi.fn((value: unknown) => {
       txUpdateCalls.push({ table, value });
@@ -69,6 +74,7 @@ vi.mock("@/lib/db/schema", () => ({
     createdBy: "created_by",
     revokedAt: "revoked_at",
   },
+  walletAddress: { userId: "user_id" },
 }));
 
 vi.mock("@/lib/logging", () => ({
@@ -99,7 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   txUpdateCalls.length = 0;
   txDeleteCalls.length = 0;
-  mockRequireDualFactor.mockResolvedValue({ ok: true });
+  mockAuthorizeAction.mockResolvedValue({ ok: true });
 });
 
 describe("POST /api/user/delete", () => {

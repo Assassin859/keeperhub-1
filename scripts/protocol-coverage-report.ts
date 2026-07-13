@@ -16,7 +16,8 @@
  *
  * The runnable/skipped numbers come from the same planPhaseFixtures the
  * suite runner uses, so this report cannot drift from what the runner
- * registers. A future simulation tier will contribute a `simulated`
+ * registers. The simulation tier (tests/e2e/vitest/protocol-simulation)
+ * does not yet feed this report; it will contribute a `simulated`
  * column via its own results file.
  */
 
@@ -24,7 +25,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import "../protocols";
 import { getRegisteredProtocols } from "../lib/protocol-registry";
-import { planPhaseFixtures } from "../tests/e2e/vitest/protocol-coverage/_shared/plan";
+import { type FixtureCase, planPhaseFixtures } from "../lib/test-data/plan";
 import {
   countAssertions,
   type VitestAssertionCounts,
@@ -38,6 +39,10 @@ type SuiteInfo = {
   protocol: string;
   chainId: string;
   hardSkipped: boolean;
+  /** Scraped `const PROTOCOL` value when it disagrees with the suite's
+   *  directory name; surfaced as a loud mismatch instead of dropping or
+   *  silently trusting either side. */
+  scrapedProtocol?: string;
 };
 
 type SuiteResult = VitestAssertionCounts & {
@@ -72,18 +77,26 @@ function discoverSuites(): SuiteInfo[] {
         continue;
       }
       const src = readFileSync(file, "utf8");
-      const protocol = src.match(/const PROTOCOL = "([^"]+)"/)?.[1];
+      // The directory name is the protocol: the layout is
+      // protocol-coverage/<protocol>/<chain-name>/coverage.test.ts. The
+      // source is still scraped for CHAIN_ID (chain directories are
+      // names, not ids) and for the PROTOCOL const so a suite whose
+      // const drifted from its directory is reported, not dropped.
+      const scraped = src.match(/const PROTOCOL = "([^"]+)"/)?.[1];
       const chainId = src.match(/const CHAIN_ID = "([^"]+)"/)?.[1];
-      if (!(protocol && chainId)) {
-        continue;
-      }
       suites.push({
         path: file,
-        protocol,
-        chainId,
+        protocol: proto.name,
+        // A suite with no scrapeable CHAIN_ID joins no registry chain
+        // row, so it surfaces in orphanSuites instead of silently
+        // vanishing from the report.
+        chainId: chainId ?? "unparsed",
         // describe.skip( is an unconditional disable; describe.skipIf( is
         // the normal infra gate and does not count as hard-skipped.
         hardSkipped: /describe\.skip\(/.test(src),
+        ...(scraped && scraped !== proto.name
+          ? { scrapedProtocol: scraped }
+          : {}),
       });
     }
   }
@@ -107,12 +120,29 @@ function parseResults(file: string): Map<string, SuiteResult> {
   return bySuite;
 }
 
+type ProtocolMismatch = {
+  path: string;
+  protocol: string;
+  scrapedProtocol: string;
+};
+
 function buildRows(results?: Map<string, SuiteResult>): {
   rows: ChainRow[];
   noHarness: Array<{ protocol: string; actions: number }>;
   orphanSuites: Array<{ path: string; protocol: string; chainId: string }>;
+  protocolMismatches: ProtocolMismatch[];
 } {
   const suites = discoverSuites();
+  const protocolMismatches: ProtocolMismatch[] = [];
+  for (const s of suites) {
+    if (s.scrapedProtocol) {
+      protocolMismatches.push({
+        path: s.path,
+        protocol: s.protocol,
+        scrapedProtocol: s.scrapedProtocol,
+      });
+    }
+  }
   const rows: ChainRow[] = [];
   const noHarness: Array<{ protocol: string; actions: number }> = [];
   // Suites consumed by a (registered protocol, testData chain) row. Any
@@ -124,19 +154,47 @@ function buildRows(results?: Map<string, SuiteResult>): {
   for (const def of getRegisteredProtocols()) {
     const chainIds = Object.keys(def.testData ?? {});
     const protoSuites = suites.filter((s) => s.protocol === def.slug);
-    if (chainIds.length === 0 && protoSuites.length === 0) {
+    // An unparseable suite (no scrapeable CHAIN_ID) joins no chain row,
+    // so it cannot stand in for a harness: only parseable suites keep a
+    // no-testData protocol out of the no-harness list. The unparseable
+    // suite itself still surfaces in orphanSuites.
+    const parseable = protoSuites.filter((s) => s.chainId !== "unparsed");
+    if (chainIds.length === 0 && parseable.length === 0) {
       noHarness.push({ protocol: def.slug, actions: def.actions.length });
       continue;
     }
     for (const chainId of chainIds) {
-      const plan = [
+      // Tier-2 view: skippedCoverage actions run in the fork tier but are
+      // skipped by the app coverage suite, so the report counts them as
+      // skipped to match what this suite executes.
+      const coverageSkips = def.testData?.[chainId]?.skippedCoverage ?? {};
+      const rawPlan = [
         ...planPhaseFixtures(def, def.slug, chainId, "read"),
         ...planPhaseFixtures(def, def.slug, chainId, "write"),
       ];
+      const plan: FixtureCase[] = rawPlan.map((c) =>
+        c.kind === "run" && coverageSkips[c.action.slug] !== undefined
+          ? {
+              kind: "skip",
+              action: c.action,
+              reason: coverageSkips[c.action.slug],
+            }
+          : c
+      );
       const runnable = plan.filter((c) => c.kind === "run").length;
       const skippedCases = plan.filter((c) => c.kind === "skip");
       const expectations = def.testData?.[chainId]?.expectations ?? {};
-      const suite = protoSuites.find((s) => s.chainId === chainId);
+      // Join by directory name first, then fall back to the scraped
+      // const PROTOCOL: a suite whose directory was renamed while the
+      // const kept the registered slug still runs under vitest as this
+      // protocol, so it must keep its row (and its executed counts)
+      // instead of splitting into none + orphan. The mismatch itself is
+      // still reported loudly via protocolMismatches.
+      const suite =
+        protoSuites.find((s) => s.chainId === chainId) ??
+        suites.find(
+          (s) => s.scrapedProtocol === def.slug && s.chainId === chainId
+        );
       if (suite) {
         consumed.add(suite.path);
       }
@@ -165,7 +223,75 @@ function buildRows(results?: Map<string, SuiteResult>): {
   const orphanSuites = suites
     .filter((s) => !consumed.has(s.path))
     .map((s) => ({ path: s.path, protocol: s.protocol, chainId: s.chainId }));
-  return { rows, noHarness, orphanSuites };
+  return { rows, noHarness, orphanSuites, protocolMismatches };
+}
+
+/**
+ * Event-trigger coverage, counted from the registry + each protocol's
+ * testData[chain].events opt-in (the same source the Tier 1 event harness
+ * reads, so this cannot drift from what executes). A protocol opts into event
+ * simulation on one chain by declaring an `events` block; events listed under
+ * its `skipped` map are documented, reasoned skips. A protocol with events but
+ * no opt-in on any chain has none of its events simulated.
+ */
+type EventProtocolCoverage = {
+  protocol: string;
+  total: number;
+  covered: number;
+  skipped: number;
+  optInChain: string | undefined;
+  noOptIn: boolean;
+  skipReasons: Record<string, string>;
+};
+
+type EventCoverage = {
+  totalEvents: number;
+  coveredEvents: number;
+  skippedEvents: number;
+  perProtocol: EventProtocolCoverage[];
+};
+
+const NO_OPT_IN_REASON =
+  "no Tier 1 event simulation opt-in (protocol has no testData.events on a simulated chain)";
+
+function computeEventCoverage(): EventCoverage {
+  const perProtocol: EventProtocolCoverage[] = [];
+  let totalEvents = 0;
+  let coveredEvents = 0;
+  let skippedEvents = 0;
+
+  for (const def of getRegisteredProtocols()) {
+    const events = def.events ?? [];
+    if (events.length === 0) {
+      continue;
+    }
+    const optIn = Object.entries(def.testData ?? {}).find(([, td]) => td.events);
+    const skipMap = optIn?.[1].events?.skipped ?? {};
+    const skipReasons: Record<string, string> = {};
+    let skipped = 0;
+    for (const event of events) {
+      const reason = optIn ? skipMap[event.slug] : NO_OPT_IN_REASON;
+      if (reason) {
+        skipReasons[event.slug] = reason;
+        skipped += 1;
+      }
+    }
+    const covered = events.length - skipped;
+    totalEvents += events.length;
+    coveredEvents += covered;
+    skippedEvents += skipped;
+    perProtocol.push({
+      protocol: def.slug,
+      total: events.length,
+      covered,
+      skipped,
+      optInChain: optIn?.[0],
+      noOptIn: !optIn,
+      skipReasons,
+    });
+  }
+
+  return { totalEvents, coveredEvents, skippedEvents, perProtocol };
 }
 
 function pad(value: string | number, width: number): string {
@@ -181,7 +307,9 @@ function main(): void {
       ? parseResults(args[resultsIdx + 1])
       : undefined;
 
-  const { rows, noHarness, orphanSuites } = buildRows(results);
+  const { rows, noHarness, orphanSuites, protocolMismatches } =
+    buildRows(results);
+  const eventCoverage = computeEventCoverage();
   const registryTotal = getRegisteredProtocols().reduce(
     (n, d) => n + d.actions.length,
     0
@@ -197,6 +325,7 @@ function main(): void {
     suitesMissing: rows.filter((r) => r.suite === "none").length,
     protocolsWithoutHarness: noHarness,
     orphanSuites,
+    protocolMismatches,
     executed: results
       ? rows.reduce((n, r) => n + (r.result?.executed ?? 0), 0)
       : undefined,
@@ -209,7 +338,9 @@ function main(): void {
   };
 
   if (asJson) {
-    process.stdout.write(`${JSON.stringify({ rows, totals }, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ rows, totals, events: eventCoverage }, null, 2)}\n`
+    );
     return;
   }
 
@@ -240,9 +371,24 @@ function main(): void {
       `ORPHANED suites (on disk but no registry testData chain matches them): ${orphanSuites.map((s) => `${s.protocol}/${s.chainId}`).join(", ")}`
     );
   }
+  if (protocolMismatches.length > 0) {
+    lines.push(
+      `PROTOCOL MISMATCH (const PROTOCOL disagrees with the suite's directory): ${protocolMismatches.map((m) => `${m.path} (dir "${m.protocol}" vs const "${m.scrapedProtocol}")`).join(", ")}`
+    );
+  }
   if (results) {
     lines.push(
       `executed: ${totals.executed} | passed: ${totals.passed} | failed: ${totals.failed}`
+    );
+  }
+  lines.push("");
+  lines.push(
+    `events: ${eventCoverage.coveredEvents} covered / ${eventCoverage.totalEvents} total | skipped: ${eventCoverage.skippedEvents}`
+  );
+  for (const p of eventCoverage.perProtocol) {
+    const optIn = p.noOptIn ? "no opt-in" : `chain ${p.optInChain}`;
+    lines.push(
+      `  ${pad(p.protocol, 13)} ${p.covered}/${p.total} covered, ${p.skipped} skipped (${optIn})`
     );
   }
   process.stdout.write(`${lines.join("\n")}\n`);

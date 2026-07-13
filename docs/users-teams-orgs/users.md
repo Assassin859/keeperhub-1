@@ -14,7 +14,7 @@ New users can create an account through:
 - **Email Registration**: Sign up with email and password
 - **Social Authentication**: Connect via supported OAuth providers
 
-Upon account creation, a Para wallet is automatically generated and associated with your account.
+Upon account creation, a Turnkey wallet is automatically provisioned for your organization once your email is verified.
 
 ## User Profile
 
@@ -22,7 +22,7 @@ Your profile contains:
 
 - **Display Name**: How you appear to other organization members
 - **Email Address**: Used for account access and notifications
-- **Para Wallet Address**: Your associated blockchain wallet
+- **Wallet Address**: Your organization's Turnkey wallet address
 
 ## Account Settings
 
@@ -66,7 +66,7 @@ Users can belong to one or more organizations:
 - Access shared workflows within organizations
 - Collaborate with organization members
 
-See [Organizations](/docs/users-teams-orgs/organizations) for details on organization features.
+See [Organizations](/users-teams-orgs/organizations) for details on organization features.
 
 ## API Access
 
@@ -76,12 +76,12 @@ Generate API keys for programmatic access:
 - Set appropriate scopes for each key
 - Rotate keys for security
 
-See [API Authentication](/docs/api/authentication) for details.
+See [API Authentication](/api/authentication) for details.
 
 ## Data and Privacy
 
 - Your workflows and run data are private to you and your organizations
-- Para wallet private keys are never exposed
+- Turnkey wallet private keys stay inside secure hardware enclaves and are never stored by KeeperHub
 
 ### Account Deactivation
 

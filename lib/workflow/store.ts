@@ -149,6 +149,23 @@ export const hasSidebarBeenShownAtom = atom<boolean>(false);
 export const isSidebarCollapsedAtom = atom<boolean>(false);
 export const isTransitioningFromHomepageAtom = atom<boolean>(false);
 
+// Set to true by the "Take a tour" button to launch the interactive editor
+// walkthrough; consumed and reset by the walkthrough controller once it starts.
+export const editorTourRequestedAtom = atom<boolean>(false);
+
+// Forces the getting-started launcher open/expanded. Set by the user-menu
+// "Getting started" entry so a dismissed launcher can be reopened.
+export const gettingStartedOpenAtom = atom<boolean>(false);
+
+// A getting-started chip seeds a preset prompt here, then navigates to a fresh
+// builder. The AI prompt box (components/ai-elements/prompt.tsx) consumes it on
+// mount, prefills + generates, and resets to null.
+export const pendingAiPromptAtom = atom<string | null>(null);
+
+// Set to a node id to focus/center that node in the React Flow canvas. A bridge
+// in WorkflowCanvas (which has useReactFlow) consumes it and resets to null.
+export const centerNodeAtom = atom<string | null>(null);
+
 // Tracks nodes that are pending integration auto-select check
 // Don't show "missing integration" warning for these nodes
 export const pendingIntegrationNodesAtom = atom<Set<string>>(new Set<string>());

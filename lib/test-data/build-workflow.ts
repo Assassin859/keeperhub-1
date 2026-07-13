@@ -21,17 +21,19 @@ import {
   type ProtocolDefinition,
 } from "@/lib/protocol-registry";
 import { TOKEN_REGISTRY, type TokenSymbol } from "./chain-test-data";
+import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/workflow/node-builders";
 import {
   type ActionInputBindings,
   type InputBinding,
   isAmountBinding,
   isContractBinding,
+  isFromSetupOutputBinding,
   isNativeBinding,
   isWalletBinding,
   type ProtocolChainTestData,
+  readSetupOutput,
+  type SetupOutputs,
   type SetupSpec,
-  type WorkflowEdgeJson,
-  type WorkflowNodeJson,
 } from "./types";
 
 export const TRIGGER_TYPES = [
@@ -108,8 +110,22 @@ export function resolveBinding(
   inputType: string | undefined,
   protocol: ProtocolDefinition,
   chainId: string,
-  walletAddress: string
+  walletAddress: string,
+  setupOutputs?: SetupOutputs
 ): string {
+  if (isFromSetupOutputBinding(binding)) {
+    const { step, field } = binding._fromSetupOutput;
+    const captured = readSetupOutput(setupOutputs, step, field);
+    if (captured === undefined) {
+      throw new Error(
+        `fromSetupOutput("${step}", "${field}") has no captured value. The ` +
+          "producing step must run and record its output (see OutputCapture / " +
+          "SetupOutputs) before an action that binds it resolves. Skipped " +
+          "actions substitute a placeholder instead of reaching here."
+      );
+    }
+    return captured;
+  }
   if (isWalletBinding(binding)) {
     // Symmetric with the string-token-symbol path below: wallet() only
     // makes sense on a scalar `address` input. Honouring it on any other
@@ -212,8 +228,7 @@ const EVENT_TRIGGER_TOKEN_PRIORITY: TokenSymbol[] = [
   "DAI",
   "USDS",
   "LINK",
-  "FUSDC",
-  "FUSDCX",
+  "DAIX",
 ];
 
 function pickEventContractAddress(chainId: string): string {
@@ -292,7 +307,8 @@ function buildProtocolActionNode(
   isSkipped: boolean,
   nodeId: string,
   xPos: number,
-  walletAddress: string
+  walletAddress: string,
+  setupOutputs?: SetupOutputs
 ): WorkflowNodeJson {
   const config: Record<string, unknown> = {
     actionType: `${protocol.slug}/${action.slug}`,
@@ -330,7 +346,8 @@ function buildProtocolActionNode(
       "address",
       protocol,
       chainId,
-      walletAddress
+      walletAddress,
+      setupOutputs
     );
   }
 
@@ -351,12 +368,30 @@ function buildProtocolActionNode(
   for (const input of action.inputs) {
     const bound = bindings[input.name];
     if (bound !== undefined) {
+      // A skipped action is built but never executed; when its
+      // fromSetupOutput producer has not run (e.g. the unit-test builder,
+      // which passes no captures), substitute the same unused placeholder
+      // an unbound address input on a skipped action gets, rather than
+      // throwing on the absent capture.
+      if (
+        isSkipped &&
+        isFromSetupOutputBinding(bound) &&
+        readSetupOutput(
+          setupOutputs,
+          bound._fromSetupOutput.step,
+          bound._fromSetupOutput.field
+        ) === undefined
+      ) {
+        config[input.name] = SKIPPED_ADDRESS_PLACEHOLDER;
+        continue;
+      }
       config[input.name] = resolveBinding(
         bound,
         input.type,
         protocol,
         chainId,
-        walletAddress
+        walletAddress,
+        setupOutputs
       );
       continue;
     }
@@ -534,6 +569,8 @@ export type BuildActionOptions = {
   chainId: string;
   trigger: TriggerType;
   walletAddress: string;
+  /** Prior-step outputs consumed by fromSetupOutput bindings (fork tier). */
+  setupOutputs?: SetupOutputs;
 };
 
 export function buildActionWorkflow({
@@ -542,6 +579,7 @@ export function buildActionWorkflow({
   chainId,
   trigger,
   walletAddress,
+  setupOutputs,
 }: BuildActionOptions): BuiltWorkflow {
   const protocol = getProtocolOrThrow(protocolSlug);
   const action = protocol.actions.find((a) => a.slug === actionSlug);
@@ -550,7 +588,13 @@ export function buildActionWorkflow({
   }
   const chainData = getChainData(protocol, chainId);
   const bindings = chainData?.actions[actionSlug] ?? {};
-  const isSkipped = chainData?.skipped?.[actionSlug] !== undefined;
+  // Both skip maps allow the address placeholder: a skippedCoverage action is
+  // built (for the seeder and the unit-test builder) but only executed in the
+  // fork tier, where the caller passes the capture; without it the builder
+  // must not throw.
+  const isSkipped =
+    chainData?.skipped?.[actionSlug] !== undefined ||
+    chainData?.skippedCoverage?.[actionSlug] !== undefined;
 
   const triggerNode = buildTriggerNode(trigger, chainId);
   const actionNode = buildProtocolActionNode(
@@ -561,7 +605,8 @@ export function buildActionWorkflow({
     isSkipped,
     "step-1",
     450,
-    walletAddress
+    walletAddress,
+    setupOutputs
   );
 
   return {

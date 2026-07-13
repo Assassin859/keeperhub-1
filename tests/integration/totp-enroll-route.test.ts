@@ -11,6 +11,7 @@ const {
   mockGetSession,
   mockHashSessionToken,
   updateCalls,
+  selectRows,
 } = vi.hoisted(() => ({
   mockResolveCaller: vi.fn(),
   mockVerifyTOTP: vi.fn(),
@@ -20,6 +21,10 @@ const {
     table: unknown;
     value: unknown;
     where: { column: unknown; value: unknown };
+  }>,
+  // Rows returned by the read-after-write assert on users.two_factor_enabled.
+  selectRows: [{ twoFactorEnabled: true }] as Array<{
+    twoFactorEnabled: boolean;
   }>,
 }));
 
@@ -48,6 +53,13 @@ vi.mock("@/lib/db", () => ({
           updateCalls.push({ table, value, where });
           return Promise.resolve(undefined);
         }),
+      })),
+    })),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(() => Promise.resolve(selectRows)),
+        })),
       })),
     })),
   },
@@ -118,6 +130,8 @@ function isSessionsUpdate(call: { where: { column: unknown } }): boolean {
 beforeEach(() => {
   vi.clearAllMocks();
   updateCalls.length = 0;
+  selectRows.length = 0;
+  selectRows.push({ twoFactorEnabled: true });
   process.env.BETTER_AUTH_SECRET = "test-better-auth-secret-1234567890";
   mockResolveCaller.mockResolvedValue({
     kind: "session",
@@ -169,5 +183,35 @@ describe("POST /api/user/totp/enroll (session path requires_mfa scope)", () => {
       (call) => call.where.column === "sessions.userId"
     );
     expect(broadClears).toHaveLength(0);
+  });
+
+  it("flips two_factor_enabled on the users row during a session enroll", async () => {
+    mockVerifyTOTP.mockResolvedValue({
+      headers: headersWithSessionCookie(
+        "better-auth.session_token=rawtok123.sigABC; Path=/; HttpOnly"
+      ),
+    });
+
+    const response = await POST(buildRequest());
+
+    expect(response.status).toBe(200);
+    const enableUpdate = updateCalls.find(
+      (call) => call.where.column === "users.id"
+    );
+    expect(enableUpdate?.value).toEqual({ twoFactorEnabled: true });
+  });
+
+  it("returns 500 when two_factor_enabled did not persist after verify", async () => {
+    mockVerifyTOTP.mockResolvedValue({
+      headers: headersWithSessionCookie(
+        "better-auth.session_token=rawtok123.sigABC; Path=/; HttpOnly"
+      ),
+    });
+    selectRows.length = 0;
+    selectRows.push({ twoFactorEnabled: false });
+
+    const response = await POST(buildRequest());
+
+    expect(response.status).toBe(500);
   });
 });

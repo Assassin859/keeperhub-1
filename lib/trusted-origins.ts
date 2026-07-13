@@ -14,8 +14,19 @@
  * `https://app.keeperhub.com` and `https://app.staging.keeperhub.com` alike.
  */
 
+// HTTPS localhost variants are dev-only: Brave / SIWE wallets require a secure
+// origin so local HTTPS dev (pnpm dev:https) needs https://localhost:*, but
+// these must not be trusted in production or CI (no real HTTPS localhost cert).
+const DEV_HTTPS_ORIGINS: readonly string[] =
+  process.env.NODE_ENV === "development"
+    ? ["https://localhost:*", "https://127.0.0.1:*"]
+    : [];
+
 export const TRUSTED_ORIGINS: readonly string[] = [
+  // HTTP localhost poses no CSRF risk (same machine only) and must work in
+  // all environments including CI (NODE_ENV=test) so worktrees on any port pass.
   "http://localhost:*",
+  ...DEV_HTTPS_ORIGINS,
   // start custom keeperhub code //
   "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
   // end keeperhub code //

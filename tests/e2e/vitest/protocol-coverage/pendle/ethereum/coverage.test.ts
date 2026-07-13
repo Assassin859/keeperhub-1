@@ -12,9 +12,13 @@ const SKIP_INFRA_TESTS =
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Ethereum)`, () => {
   const ctx = createSharedCtx();
 
+  // Above the 600s testData setup.executionWaitMs: the setup runs three
+  // real approvals through the app (SY, PT, YT -> router), and each has
+  // been observed to take 100-220s on a cold fork under shared-wallet
+  // contention.
   beforeAll(async () => {
     await runSetup({ protocol: PROTOCOL, chainId: CHAIN_ID, ctx });
-  }, 240_000);
+  }, 900_000);
 
   afterAll(async () => {
     await cleanupAll(ctx);

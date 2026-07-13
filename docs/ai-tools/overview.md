@@ -10,7 +10,7 @@ KeeperHub provides two integration surfaces for AI-assisted and programmatic wor
 | Tool | What it does | Best for |
 |------|-------------|----------|
 | [Claude Code Plugin](/ai-tools/claude-code-plugin) | Skills and commands for building workflows from your terminal | Developers using Claude Code as their IDE |
-| [MCP Server](/ai-tools/mcp-server) | Model Context Protocol server with 19 tools for full workflow CRUD | AI agents, custom integrations, remote automation |
+| [MCP Server](/ai-tools/mcp-server) | Model Context Protocol server with more than 30 tools for full workflow CRUD | AI agents, custom integrations, remote automation |
 
 Both connect to the same KeeperHub API and require an organization-scoped API key (prefix: `kh_`).
 
@@ -18,7 +18,7 @@ Both connect to the same KeeperHub API and require an organization-scoped API ke
 
 **Claude Code users:** Install the plugin and run `/keeperhub:login` to get started. The plugin auto-installs the MCP server and configures authentication.
 
-**AI agent builders:** Run the MCP server directly via Docker or Node.js and point your agent framework at it. See [MCP Server](/ai-tools/mcp-server) for setup.
+**AI agent builders:** Point your agent framework at KeeperHub's hosted MCP endpoint (`https://app.keeperhub.com/mcp`) with an organization API key. See [MCP Server](/ai-tools/mcp-server) for setup.
 
 ## Getting Your API Key
 

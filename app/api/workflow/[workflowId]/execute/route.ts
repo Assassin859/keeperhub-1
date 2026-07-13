@@ -298,16 +298,14 @@ export async function POST(
       createdHere = true;
     }
 
-    // Record per-(trigger_type, chain) start of a workflow execution. Drives the
+    // Record per-trigger_type start of a workflow execution. Drives the
     // Grafana "zero executions in N min" alert family (see KEEP-556). Skipped
     // when the executor pre-created the row - it already incremented on its
     // side in that case.
     if (createdHere) {
-      const chainLabel = workflow.chain ?? "_unknown";
       const metrics = getMetricsCollector();
       metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
         [LabelKeys.TRIGGER_TYPE]: triggerType,
-        [LabelKeys.CHAIN]: chainLabel,
       });
     }
 

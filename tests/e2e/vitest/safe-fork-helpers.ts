@@ -1,8 +1,8 @@
 /**
  * Helpers shared by the orchestrator-on-anvil-fork tests.
  *
- * Connects to the `test-anvil-fork` docker service (anvil --fork-url
- * Sepolia) and exposes:
+ * Connects to the `test-anvil-fork-mainnet` docker service (anvil
+ * --fork-url Ethereum mainnet, localhost:8548) and exposes:
  *
  *   - `getFork()` - JsonRpcProvider + funded test wallet
  *   - `isForkReachable()` - skip-detection for environments without infra
@@ -22,8 +22,12 @@ import {
   getSafeSingletonForDeploy,
 } from "@/lib/safe/contracts";
 
-export const SEPOLIA_CHAIN_ID = 11_155_111;
-export const FORK_URL = process.env.ANVIL_FORK_URL ?? "http://localhost:8547";
+export const MAINNET_CHAIN_ID = 1;
+// The local anvil mainnet fork. Deliberately not env-overridable with
+// ANVIL_FORK_MAINNET_URL: in CI that secret is the live archive upstream,
+// and pointing these write-heavy tests at it would probe (and attempt to
+// transact against) real mainnet instead of the fork.
+export const FORK_URL = "http://localhost:8548";
 
 // Anvil's first deterministic account (mnemonic-derived). Used as the Safe
 // owner across all fork tests so derivation is reproducible.
@@ -37,7 +41,7 @@ export type ForkContext = {
 };
 
 export function getFork(): ForkContext {
-  const provider = new ethers.JsonRpcProvider(FORK_URL, SEPOLIA_CHAIN_ID, {
+  const provider = new ethers.JsonRpcProvider(FORK_URL, MAINNET_CHAIN_ID, {
     staticNetwork: true,
   });
   const wallet = new ethers.Wallet(ANVIL_PRIV_0, provider);
@@ -64,7 +68,7 @@ export async function isForkReachable(): Promise<boolean> {
       return false;
     }
     const body = (await response.json()) as { result?: string };
-    return body.result === `0x${SEPOLIA_CHAIN_ID.toString(16)}`;
+    return body.result === `0x${MAINNET_CHAIN_ID.toString(16)}`;
   } catch {
     return false;
   }
@@ -73,17 +77,19 @@ export async function isForkReachable(): Promise<boolean> {
 /**
  * Deploy a fresh Safe owned by `wallet` (threshold = 1) on the fork.
  *
- * Uses the canonical Safe contracts on Sepolia (proxyFactory +
- * compatibilityFallbackHandler) and the same calldata builders the
- * production deployer uses, so a successful deploy here proves those
- * builders agree with on-chain Safe v1.4.1 bytes. `saltNonce` is randomised
- * per call so consecutive tests get distinct Safe addresses.
+ * Uses the canonical Safe contracts on Ethereum mainnet (proxyFactory +
+ * compatibilityFallbackHandler; code presence at the canonical CREATE2
+ * addresses verified on a mainnet fork 2026-07-07) and the same calldata
+ * builders the production deployer uses, so a successful deploy here
+ * proves those builders agree with on-chain Safe v1.4.1 bytes.
+ * `saltNonce` is randomised per call so consecutive tests get distinct
+ * Safe addresses.
  */
 export async function deployFreshSafe(
   wallet: ethers.Wallet
 ): Promise<{ safeAddress: string; saltNonce: bigint }> {
-  const contracts = getSafeContracts(SEPOLIA_CHAIN_ID);
-  const singleton = getSafeSingletonForDeploy(SEPOLIA_CHAIN_ID);
+  const contracts = getSafeContracts(MAINNET_CHAIN_ID);
+  const singleton = getSafeSingletonForDeploy(MAINNET_CHAIN_ID);
   const initializer = buildSetupCalldata({
     owners: [wallet.address],
     threshold: 1,
@@ -104,7 +110,7 @@ export async function deployFreshSafe(
   const tx = await wallet.sendTransaction({
     to: contracts.proxyFactory,
     data: calldata,
-    chainId: SEPOLIA_CHAIN_ID,
+    chainId: MAINNET_CHAIN_ID,
   });
   const receipt = await tx.wait();
   if (!receipt) {

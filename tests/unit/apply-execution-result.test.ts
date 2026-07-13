@@ -39,7 +39,11 @@ vi.mock("../../lib/workflow/executor/progress", () => ({
 
 vi.mock("../../lib/workflow/store", () => ({}));
 
-vi.mock("../../lib/errors/error-codes", () => ({}));
+// updateExecutionStatus now classifies the error, and classifyExecutionError's
+// default branch reads DEFAULT_SYSTEM_ERROR_CODE, so the mock must provide it.
+vi.mock("../../lib/errors/error-codes", () => ({
+  DEFAULT_SYSTEM_ERROR_CODE: "C-0001",
+}));
 
 vi.mock("../../keeperhub-executor/lib/serialize", () => ({
   toJsonSafe: (v: unknown) => v,

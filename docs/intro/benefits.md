@@ -19,7 +19,7 @@ Built-in transaction retry logic, gas optimization, and network resilience ensur
 
 ## Security
 
-Para integration provides secure wallet management without exposing private keys or requiring deep wallet security knowledge.
+Turnkey integration provides secure, non-custodial wallet management. Private keys are generated and held inside secure hardware enclaves, so you get strong wallet security without needing deep key-management expertise.
 
 ## Scalability
 

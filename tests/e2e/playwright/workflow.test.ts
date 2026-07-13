@@ -1,17 +1,13 @@
 import { expect, test } from "./fixtures";
+import { gotoCanvas } from "./utils/workflow";
 
 const SELECTED_CLASS_REGEX = /selected/;
 
 test.describe("Workflow Editor", () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to the homepage which has an embedded workflow canvas
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    // Wait for the canvas to be fully ready (data-ready="true" set after fitView)
-    await expect(page.getByTestId("workflow-canvas")).toHaveAttribute(
-      "data-ready",
-      "true",
-      { timeout: 60_000 }
-    );
+    // "/" is the wallet-scanner landing now; enter the builder to reach the
+    // workflow canvas and wait until it is ready.
+    await gotoCanvas(page);
   });
 
   test("workflow canvas loads", async ({ page }) => {
@@ -103,15 +99,10 @@ test.describe("Workflow Editor", () => {
         const actionGrid = page.locator('[data-testid="action-grid"]');
         await expect(actionGrid).toBeVisible({ timeout: 5000 });
 
-        // Click on canvas to deselect
-        const canvas = page.locator('[data-testid="workflow-canvas"]');
-        const canvasBox = await canvas.boundingBox();
-        if (canvasBox) {
-          // Click on empty area of canvas
-          await page.mouse.click(canvasBox.x + 50, canvasBox.y + 50);
-          // Wait for deselection by checking action grid is hidden
-          await expect(actionGrid).not.toBeVisible({ timeout: 5000 });
-        }
+        // Deselect with Escape; a canvas click is intercepted by the left
+        // flyout and the top promo banner overlays.
+        await page.keyboard.press("Escape");
+        await expect(actionGrid).not.toBeVisible({ timeout: 5000 });
 
         // Find the action node and click on it
         const actionNode = page.locator(".react-flow__node-action").first();
@@ -142,12 +133,9 @@ test.describe("Workflow Editor", () => {
       // Verify node is selected (has border-primary class or selected attribute)
       await expect(triggerNode).toHaveClass(SELECTED_CLASS_REGEX);
 
-      // Click on canvas to deselect
-      const canvas = page.locator('[data-testid="workflow-canvas"]');
-      const canvasBox = await canvas.boundingBox();
-      if (canvasBox) {
-        await page.mouse.click(canvasBox.x + 50, canvasBox.y + 50);
-      }
+      // Deselect with Escape; a pane click is intercepted by the left flyout
+      // and the top promo banner overlays.
+      await page.keyboard.press("Escape");
 
       // Verify node is deselected
       await expect(triggerNode).not.toHaveClass(SELECTED_CLASS_REGEX);

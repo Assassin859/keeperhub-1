@@ -6,8 +6,10 @@
  * transforms, then runs the identical reshapeArgsForAbi and
  * coerceArgsForAbi pipeline the runtime protocol steps use, producing
  * the exact transaction the platform would send. Consumed by the Tier 0
- * golden-calldata tests and the Tier 1 fork simulation harness so both
- * layers share one encoding source of truth.
+ * golden-calldata tests, the Tier 1 fork simulation harness, and the
+ * integration-test calldata builder
+ * (tests/integration/_shared/build-calldata.ts) so all layers share one
+ * encoding source of truth.
  */
 
 import { Interface, parseEther } from "ethers";
@@ -20,6 +22,7 @@ import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
 import {
   getProtocol,
   type ProtocolAction,
+  type ProtocolContract,
   type ProtocolDefinition,
   resolveContractAddress,
 } from "@/lib/protocol-registry";
@@ -27,6 +30,8 @@ import {
   buildActionWorkflow,
   buildSetupWorkflow,
 } from "@/lib/test-data/build-workflow";
+import type { SetupOutputs } from "@/lib/test-data/types";
+import type { AbiOutputParam } from "@/plugins/web3/steps/structure-abi-result";
 
 function requireProtocol(slug: string): ProtocolDefinition {
   const def = getProtocol(slug);
@@ -41,38 +46,46 @@ export type EncodedAction = {
   data: string;
   /** msg.value in wei when the testData binds the virtual ethValue key. */
   value: bigint;
-  skipped: boolean;
   iface: Interface;
-  fragment: FunctionAbiEntry;
+  /** ABI output params from the resolved fragment JSON, retained so read
+   *  simulations can structure decoded results without re-deriving them. */
+  abiOutputs: AbiOutputParam[];
   /** The live ethers fragment; use for decodeFunctionResult (string
    *  re-resolution mangles tuple signatures). */
   ethersFragment: unknown;
 };
 
 /** Interfaces are immutable and ABI parsing is the hot cost of a sweep
- *  (every action of a contract re-parsed its full ABI); cache per
- *  registry contract. */
-const ifaceCache = new Map<string, Interface>();
+ *  (every action of a contract re-parsed its full ABI); cache keyed on
+ *  the contract object itself, not a slug/contract-name string, so a
+ *  synthetic definition reusing the same slug and contract key with a
+ *  different ABI can never be served a stale Interface. Registry
+ *  contract objects are stable, so memoization still holds. */
+const ifaceCache = new WeakMap<ProtocolContract, Interface>();
 
 export function ifaceFor(
   protocol: ProtocolDefinition,
   action: ProtocolAction
 ): Interface {
-  const key = `${protocol.slug}/${action.contract}`;
-  const cached = ifaceCache.get(key);
-  if (cached) {
-    return cached;
-  }
   const contract = protocol.contracts[action.contract];
   if (!contract?.abi) {
     throw new Error(
       `${protocol.slug}: action ${action.slug} references missing contract or ABI "${action.contract}"`
     );
   }
+  const cached = ifaceCache.get(contract);
+  if (cached) {
+    return cached;
+  }
   const iface = new Interface(JSON.parse(contract.abi));
-  ifaceCache.set(key, iface);
+  ifaceCache.set(contract, iface);
   return iface;
 }
+
+/** The fragment JSON carries the outputs alongside the inputs
+ *  FunctionAbiEntry declares; retaining them here saves consumers from
+ *  re-parsing the fragment to structure decoded read results. */
+type ParsedFragment = FunctionAbiEntry & { outputs?: AbiOutputParam[] };
 
 /** Resolve the exact fragment for an action. Bare-name lookup throws on
  *  overload ambiguity, and registry actions flatten single-tuple params
@@ -82,13 +95,13 @@ export function ifaceFor(
 export function fragmentFor(
   iface: Interface,
   action: ProtocolAction
-): { ethersFragment: unknown; abi: FunctionAbiEntry } {
+): { ethersFragment: unknown; abi: ParsedFragment } {
   const byName = iface.fragments.filter(
     (f) =>
       f.type === "function" && (f as { name?: string }).name === action.function
   );
   const parsed = byName.map(
-    (f) => JSON.parse(f.format("json")) as FunctionAbiEntry
+    (f) => JSON.parse(f.format("json")) as ParsedFragment
   );
   const flatArity = (f: FunctionAbiEntry): number =>
     (f.inputs ?? []).reduce(
@@ -117,7 +130,8 @@ export function encodeBoundAction(
   protocol: ProtocolDefinition,
   action: ProtocolAction,
   chainId: string,
-  walletAddress: string
+  walletAddress: string,
+  setupOutputs?: SetupOutputs
 ): EncodedAction {
   const built = buildActionWorkflow({
     protocolSlug: protocol.slug,
@@ -125,6 +139,7 @@ export function encodeBoundAction(
     chainId,
     trigger: "Manual",
     walletAddress,
+    setupOutputs,
   });
   const actionNode = built.nodes.find((n) => n.id !== "trigger-1");
   const config = (actionNode?.data.config ?? {}) as Record<string, unknown>;
@@ -212,15 +227,12 @@ export function encodeFromConfig(
       (config.contractAddress as string | undefined) ?? undefined
     ) ?? "";
   const ethValue = config.ethValue as string | undefined;
-  const skipped =
-    protocol.testData?.[chainId]?.skipped?.[action.slug] !== undefined;
   return {
     to,
     data,
     value: ethValue ? parseEther(ethValue) : BigInt(0),
-    skipped,
     iface,
-    fragment: abi,
+    abiOutputs: abi.outputs ?? [],
     ethersFragment,
   };
 }

@@ -242,6 +242,74 @@ export const TEST_DATA: ProtocolTestData = {
       },
       "flash-loan": { token: "USDC", assets: amount("USDC", "1"), data: "0x" },
     },
+    // Named outputs throughout (Morpho Blue + MetaMorpho ABIs). MetaMorpho
+    // vault invariants: asset is a permanent address; totals/supply large and
+    // monotonic; convert/preview pure per-share quotes; max-deposit/mint the
+    // vault caps. Morpho Blue market invariants: the wstETH/USDC market has
+    // live supply/borrow; its lltv is a fixed 86% and loanToken is permanent;
+    // isAuthorized(wallet, wallet) is false on a fresh fork (the write
+    // authorizes dEaD, not the wallet, so this stays false). Caller-position
+    // reads (get-position, vault-balance, vault-max-withdraw/redeem) read zero
+    // at the read phase and carry post-write oracles below instead.
+    expectations: {
+      "vault-asset": [{ field: "asset", notEmpty: true }],
+      "vault-total-assets": [{ field: "totalAssets", nonZero: true }],
+      "vault-total-supply": [{ field: "totalSupply", nonZero: true }],
+      "vault-convert-to-assets": [{ field: "assets", nonZero: true }],
+      "vault-convert-to-shares": [{ field: "shares", nonZero: true }],
+      "vault-preview-deposit": [{ field: "shares", nonZero: true }],
+      "vault-preview-mint": [{ field: "assets", nonZero: true }],
+      "vault-preview-withdraw": [{ field: "shares", nonZero: true }],
+      "vault-preview-redeem": [{ field: "assets", nonZero: true }],
+      "vault-max-deposit": [{ field: "maxAssets", nonZero: true }],
+      "vault-max-mint": [{ field: "maxShares", nonZero: true }],
+      "get-market": [
+        { field: "totalSupplyAssets", nonZero: true },
+        { field: "totalBorrowAssets", nonZero: true },
+      ],
+      "get-market-params": [
+        { field: "lltv", equals: "860000000000000000" },
+        { field: "loanToken", notEmpty: true },
+      ],
+      "is-authorized": [{ field: "isAuthorized", equals: "false" }],
+    },
+    // Post-write oracles: collateral/supply/borrow must register on the
+    // caller position, accrue-interest keeps the market solvent, and a vault
+    // deposit/mint must credit shares. All nonZero (history-safe: grow within
+    // the run). set-authorization has no aligned probe (the read binds
+    // wallet/wallet, the write authorizes dEaD) and is left liveness-only.
+    writeExpectations: {
+      "supply-collateral": [
+        {
+          read: "get-position",
+          expect: { field: "collateral", nonZero: true },
+        },
+      ],
+      supply: [
+        {
+          read: "get-position",
+          expect: { field: "supplyShares", nonZero: true },
+        },
+      ],
+      borrow: [
+        {
+          read: "get-position",
+          expect: { field: "borrowShares", nonZero: true },
+        },
+      ],
+      "accrue-interest": [
+        {
+          read: "get-market",
+          expect: { field: "totalSupplyAssets", nonZero: true },
+        },
+      ],
+      "vault-deposit": [
+        { read: "vault-balance", expect: { field: "balance", nonZero: true } },
+      ],
+      "vault-mint": [
+        { read: "vault-balance", expect: { field: "balance", nonZero: true } },
+      ],
+    },
   },
 };
 

@@ -29,9 +29,11 @@ export const TESTNET_FUNDER_PK_ENV = "TESTNET_FUNDER_PK";
  * economically unviable on ephemeral CI: each run seeds a fresh Turnkey
  * wallet (stranding every top-up), and 2026-07-02 base-fee spikes of
  * 40-105 gwei priced a single worst-case Superfluid tx above any top-up
- * the shared funder could sustain. CI stands up the Sepolia fork on
- * localhost:8547 (docker-compose `test-anvil-fork`) and patches the
- * chains row before the suites run.
+ * the shared funder could sustain. Since the chronicle/superfluid
+ * re-homing to the mainnet fork, no Tier 2 suite targets Sepolia and CI
+ * runs no Sepolia fork; the entry stays for the remaining Sepolia
+ * testData (aave-v3) exercised by local Tier 1 sims
+ * (scripts/protocol-local.sh sim sepolia).
  */
 export const FORK_CHAIN_IDS: Set<string> = new Set(["1", "11155111"]);
 
@@ -41,10 +43,14 @@ export type TokenSymbol =
   | "USDT"
   | "DAI"
   | "USDS"
+  | "USDE"
+  | "MKR"
   | "LINK"
   | "WSTETH"
-  | "FUSDC"
-  | "FUSDCX";
+  | "DAIX"
+  | "SY_WSTETH"
+  | "PT_WSTETH"
+  | "YT_WSTETH";
 
 export type TokenEntry = {
   address: string;
@@ -86,6 +92,55 @@ export const TOKEN_REGISTRY: Record<
       decimals: 18,
       symbol: "DAI",
     },
+    // Ethena USDe stablecoin. No whale registered on purpose: acquired
+    // via balances-slot fabrication (Solidity mapping slot 2, verified
+    // against balanceOf on mainnet 2026-07-08).
+    USDE: {
+      address: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+      decimals: 18,
+      symbol: "USDE",
+    },
+    // Maker MKR (DSToken). No whale registered on purpose: acquired via
+    // balances-slot fabrication (Solidity mapping slot 1, verified
+    // against balanceOf on mainnet 2026-07-08).
+    MKR: {
+      address: "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",
+      decimals: 18,
+      symbol: "MKR",
+    },
+    // Superfluid canonical Super DAI wrapper (resolved from the on-chain
+    // Superfluid resolver key "supertokens.v1.DAIx", verified 2026-07-07).
+    // Chosen over USDCx for the coverage fixtures: USDCx's upgrade() routes
+    // the underlying into Sky savings, and its gas cost jumps between the
+    // estimation block and the execution block (sUSDS drip), so
+    // exact-estimate sends reliably run out of gas on an anvil fork. DAIx
+    // is a plain escrow wrapper.
+    DAIX: {
+      address: "0x4F228bf911ed67730e4B51B1F82AC291B49053ee",
+      decimals: 18,
+      symbol: "DAIX",
+    },
+    // Pendle wstETH market tokens (market 0x3428...be3b, expiry
+    // 2027-12-30). Resolved from the market's readTokens() and verified
+    // 2026-07-08 via eth_call at the pinned fixture block 25487331
+    // (code present, decimals 18 each). These bind pendle's pinned-block
+    // fixtures; refresh together with the fixture in protocols/pendle.ts
+    // (see specs/protocol-coverage-methodology.md).
+    SY_WSTETH: {
+      address: "0xcbC72d92b2dc8187414F6734718563898740C0BC",
+      decimals: 18,
+      symbol: "SY_WSTETH",
+    },
+    PT_WSTETH: {
+      address: "0xb253Eff1104802b97aC7E3aC9FdD73AecE295a2c",
+      decimals: 18,
+      symbol: "PT_WSTETH",
+    },
+    YT_WSTETH: {
+      address: "0x04B7Fa1e727d7290D6E24fA9b426d0c940283a95",
+      decimals: 18,
+      symbol: "YT_WSTETH",
+    },
   },
   // Base Mainnet (used by ajna coverage tests; not fork-mode — no testnet faucets)
   "8453": {
@@ -96,6 +151,22 @@ export const TOKEN_REGISTRY: Record<
     },
     USDC: {
       address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      decimals: 6,
+      symbol: "USDC",
+    },
+  },
+  // Arbitrum One (chainlink Tier 1 read sweep; not fork-mode — no faucets).
+  // Present so the Event-trigger builder can resolve a contractAddress for
+  // chain 42161 (pickEventContractAddress); chainlink's reads bind contracts
+  // directly and reference no token symbol here.
+  "42161": {
+    WETH: {
+      address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      decimals: 18,
+      symbol: "WETH",
+    },
+    USDC: {
+      address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
       decimals: 6,
       symbol: "USDC",
     },
@@ -122,18 +193,6 @@ export const TOKEN_REGISTRY: Record<
       address: "0xf8Fb3713D459D7C1018BD0A49D19b4C44290EBE5",
       decimals: 18,
       symbol: "LINK",
-    },
-    // Superfluid fUSDC underlying ERC-20 (from protocol-superfluid-onchain.test.ts:52).
-    FUSDC: {
-      address: "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db",
-      decimals: 18,
-      symbol: "FUSDC",
-    },
-    // Superfluid fUSDCx SuperToken wrapper (from protocol-superfluid-onchain.test.ts:49).
-    FUSDCX: {
-      address: "0xb598E6C621618a9f63788816ffb50Ee2862D443B",
-      decimals: 18,
-      symbol: "FUSDCX",
     },
   },
 };
@@ -182,24 +241,6 @@ export const FAUCETS: Record<
         },
       ]),
     },
-    // FUSDC exposes a permissionless `mint(to, amount)` on its own ERC20.
-    // Verified by inspecting bytecode (selector 0x40c10f19 present).
-    FUSDC: {
-      contract: "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db",
-      functionName: "mint",
-      abi: JSON.stringify([
-        {
-          type: "function",
-          name: "mint",
-          stateMutability: "nonpayable",
-          inputs: [
-            { name: "to", type: "address" },
-            { name: "amount", type: "uint256" },
-          ],
-          outputs: [],
-        },
-      ]),
-    },
   },
 };
 
@@ -222,10 +263,16 @@ export const FORK_WHALES: Record<
     WSTETH: { address: "0x0B925eD163218f6662a35e0f0371Ac234f9E9371" },
     // Circle's USDC reserve / bridge account holds large USDC balance.
     USDC: { address: "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341" },
-    // Sky/MakerDAO: PSM USDS holding (verified via Etherscan token-holder).
-    USDS: { address: "0x3Ba23D309F6e88f0a9Ac0bEe797AfaCa93B78b78" },
+    // No USDS entry: the PSM whale previously registered here
+    // (0x3Ba23D309F6e88f0a9Ac0bEe797AfaCa93B78b78) held 0 USDS by
+    // 2026-07-08, so USDS moved to balances-slot fabrication
+    // (Solidity mapping slot 2 behind the proxy, verified against
+    // balanceOf on mainnet 2026-07-08). See fabricate-state.ts.
     // MakerDAO MCD_JOIN_DAI: large DAI holder.
     DAI: { address: "0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643" },
+    // The Pendle wstETH market itself: its LP reserve held ~1306 SY at
+    // the pinned fixture block (balanceOf verified 2026-07-08).
+    SY_WSTETH: { address: "0x34280882267ffa6383B363E278B027Be083bBe3b" },
   },
 };
 

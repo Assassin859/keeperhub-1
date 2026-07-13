@@ -37,6 +37,7 @@ import {
   workflowSchedulesRelations,
   workflows,
 } from "./schema";
+import { scanResults } from "./schema-scan";
 
 // Construct schema object for drizzle
 const schema = {
@@ -73,6 +74,7 @@ const schema = {
   explorerConfigsRelations,
   userRpcPreferences,
   userRpcPreferencesRelations,
+  scanResults,
 };
 
 const connectionString = getDatabaseUrl();
