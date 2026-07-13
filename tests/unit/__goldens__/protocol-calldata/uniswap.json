@@ -8,7 +8,7 @@
     "get-position": {
       "to": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
       "data": "0x99fbab880000000000000000000000000000000000000000000000000000000000000001",
-      "skipped": true
+      "skipped": false
     },
     "balance-of": {
       "to": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
@@ -18,7 +18,7 @@
     "owner-of": {
       "to": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",
       "data": "0x6352211e0000000000000000000000000000000000000000000000000000000000000001",
-      "skipped": true
+      "skipped": false
     },
     "approve-position": {
       "to": "0xC36442b4a4522E871399CD717aBDD847Ab11FE88",

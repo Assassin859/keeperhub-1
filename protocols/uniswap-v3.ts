@@ -44,8 +44,8 @@ const TEST_DATA: ProtocolTestData = {
         fee: "3000",
         sqrtPriceLimitX96: "0",
       },
-      "get-position": {},
-      "owner-of": {},
+      "get-position": { tokenId: "1" },
+      "owner-of": { tokenId: "1" },
       "approve-position": { to: wallet() },
       "transfer-position": { from: wallet(), to: wallet() },
       "burn-position": {},
@@ -69,11 +69,19 @@ const TEST_DATA: ProtocolTestData = {
       },
     },
     skipped: {
-      "get-position": "requires a valid NFT position token ID",
-      "owner-of": "requires a valid NFT position token ID",
       "approve-position": "write action requiring an owned position NFT",
       "transfer-position": "write action requiring an owned position NFT",
       "burn-position": "write action requiring an empty position NFT",
+    },
+    // The read-only position reads bind Uniswap V3 position #1 - the genesis
+    // NonfungiblePositionManager mint (UNI/WETH 0.3%, live since 2021),
+    // verified on the mainnet fork 2026-07-13. get-position returns the
+    // position struct (named outputs) with nonzero liquidity; owner-of returns
+    // its owner. The approve/transfer/burn writes need the test wallet to own a
+    // position, which the harness cannot mint (no mint action) - left skipped.
+    expectations: {
+      "get-position": [{ field: "liquidity", nonZero: true }],
+      "owner-of": [{ notEmpty: true }],
     },
   },
 };
