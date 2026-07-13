@@ -106,17 +106,36 @@ describe("POST /api/billing/checkout", () => {
     expect(json.url).toBe("https://checkout.stripe.com/session_1");
   });
 
-  // These two assert the arg passed to createCheckoutSession, not the response,
+  // These assert the arg passed to createCheckoutSession, not the response,
   // so the returned URL is an unused stub.
-  it("starts a trial for a first-time Pro subscriber", async () => {
+  it("starts a trial when the trial intent is explicit (first-time Pro)", async () => {
     mockSession();
     mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
     mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
 
-    await POST(makeRequest({ plan: "pro", tier: "25k", interval: "monthly" }));
+    await POST(
+      makeRequest({
+        plan: "pro",
+        tier: "25k",
+        interval: "monthly",
+        trial: true,
+      })
+    );
 
     const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
     expect(arg.trialPeriodDays).toBe(14);
+  });
+
+  it("pays immediately (no trial) when the trial intent is absent", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    // Eligible first-time Pro org, but a plan-card checkout omits `trial`.
+    await POST(makeRequest({ plan: "pro", tier: "25k", interval: "monthly" }));
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBeUndefined();
   });
 
   it("does not start a trial for a Business subscription", async () => {

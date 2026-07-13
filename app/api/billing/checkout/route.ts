@@ -22,6 +22,10 @@ type CheckoutRequestBody = {
   plan?: string;
   tier?: string | null;
   interval?: string;
+  // Explicit opt-in to a free trial. Only the "Start free trial" flow sets this;
+  // plan cards leave it false so they pay immediately. The trial is still
+  // gated by server-side eligibility on top of this intent.
+  trial?: boolean;
 };
 
 async function ensureProviderCustomer(
@@ -69,6 +73,7 @@ type ValidatedCheckout = {
   userId: string;
   priceId: string;
   plan: PlanName;
+  trial: boolean;
 };
 
 async function validateCheckoutRequest(
@@ -82,6 +87,7 @@ async function validateCheckoutRequest(
 
   const body = (await request.json()) as CheckoutRequestBody;
   const { plan, tier, interval } = body;
+  const trial = body.trial === true;
 
   if (!(plan && PAID_PLANS.has(plan))) {
     return NextResponse.json(
@@ -116,6 +122,7 @@ async function validateCheckoutRequest(
     userId,
     priceId,
     plan: plan as PlanName,
+    trial,
   };
 }
 
@@ -185,7 +192,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       return result;
     }
 
-    const { activeOrgId, email, userId, priceId, plan } = result;
+    const { activeOrgId, email, userId, priceId, plan, trial } = result;
     const provider = getBillingProvider();
     const sub = await getOrgSubscription(activeOrgId);
     const existingSubId = sub?.providerSubscriptionId ?? null;
@@ -226,11 +233,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       process.env.BETTER_AUTH_URL ??
       "http://localhost:3000";
 
-    // First-time subscribers to a trial-eligible plan start with a free trial.
-    // Eligibility is enforced here, server-side; the client label is a hint.
-    const trialPeriodDays = isTrialEligible(sub, plan)
-      ? getTrialPeriodDays()
-      : undefined;
+    // A trial requires BOTH an explicit opt-in (from the "Start free trial"
+    // flow) AND server-side eligibility. Plan cards omit the intent, so they
+    // subscribe and pay immediately instead of being pushed into a trial.
+    const trialPeriodDays =
+      trial && isTrialEligible(sub, plan) ? getTrialPeriodDays() : undefined;
 
     const { url } = await provider.createCheckoutSession({
       customerId: providerCustomerId,

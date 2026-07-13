@@ -52,8 +52,8 @@ export function TrialUpsellModal({
   async function handleStartTrial(): Promise<void> {
     setLoading(true);
     try {
-      // Redirects to Stripe Checkout; the trial is applied server-side.
-      await startCheckout("pro", tier, interval);
+      // Explicit trial opt-in; the server still re-checks eligibility.
+      await startCheckout("pro", tier, interval, { trial: true });
     } finally {
       setLoading(false);
     }
