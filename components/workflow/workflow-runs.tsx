@@ -173,6 +173,10 @@ function createExecutionLogsMap(logs: ExecutionLog[]): Record<
 // Regex for Ethereum addresses (40 hex chars) and tx hashes (64 hex chars)
 const ETH_HEX_REGEX = /^0x[a-fA-F0-9]{40,}$/;
 
+// Solana base58 addresses (32-44 chars) and tx signatures (~87-88 chars).
+// Base58 excludes 0/O/I/l, so this never collides with 0x-prefixed hex.
+const SOLANA_BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,88}$/;
+
 // Helper to check if a string is a URL
 function isUrl(str: string): boolean {
   try {
@@ -315,6 +319,32 @@ function JsonWithLinks({ data }: { data: unknown }) {
               >
                 {`"${truncated}"`}
                 <InlineCopyButton text={displayValue} />
+                {explorerUrl && (
+                  <a
+                    className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground"
+                    href={explorerUrl}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                    title="View on explorer"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </span>
+            );
+          }
+
+          // Solana addresses / tx signatures (base58): copy + optional explorer link
+          if (SOLANA_BASE58_REGEX.test(innerValue)) {
+            const explorerUrl = linkMap.get(innerValue);
+            const truncated = `${innerValue.slice(0, 6)}...${innerValue.slice(-6)}`;
+            return (
+              <span
+                className="inline-flex items-center"
+                key={`s-${innerValue}-${partIndex}`}
+              >
+                {`"${truncated}"`}
+                <InlineCopyButton text={innerValue} />
                 {explorerUrl && (
                   <a
                     className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground"
