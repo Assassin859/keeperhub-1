@@ -258,11 +258,12 @@ export class StripeBillingProvider implements BillingProvider {
       cancel_url: params.cancelUrl,
       // Let customers redeem promotion codes created in the Stripe dashboard.
       allow_promotion_codes: true,
+      // Always collect a card up front (do not rely on the Stripe default), so a
+      // trial has a payment method on file and auto-charges when it ends.
+      payment_method_collection: "always",
       metadata: {
         organizationId: params.organizationId,
       },
-      // A trial always collects a card up front (subscription-mode default), so
-      // Stripe auto-charges when the trial ends.
       ...(params.trialPeriodDays !== undefined && {
         subscription_data: { trial_period_days: params.trialPeriodDays },
       }),

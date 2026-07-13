@@ -70,6 +70,7 @@ describe("StripeBillingProvider", () => {
         success_url: "http://localhost/billing?checkout=success",
         cancel_url: "http://localhost/billing?checkout=canceled",
         allow_promotion_codes: true,
+        payment_method_collection: "always",
         metadata: { organizationId: "org_1" },
       });
       expect(result).toEqual({
