@@ -8,11 +8,14 @@ metadata:
 data:
   init-sqs.sh: |
     #!/bin/bash
-    echo "Creating SQS queue..."
+    echo "Creating SQS queues..."
+    awslocal sqs create-queue \
+      --queue-name keeperhub-workflow-queue-dlq \
+      --attributes MessageRetentionPeriod=1209600
     awslocal sqs create-queue \
       --queue-name keeperhub-workflow-queue \
       --attributes VisibilityTimeout=300
-    echo "SQS queue created successfully"
+    echo "SQS queues created successfully"
 
 ---
 apiVersion: apps/v1

@@ -81,6 +81,9 @@ env:
   SQS_QUEUE_URL:
     type: kv
     value: "http://localstack.pr-${PR_NUMBER}.svc.cluster.local:4566/000000000000/keeperhub-workflow-queue"
+  SQS_DLQ_URL:
+    type: kv
+    value: "http://localstack.pr-${PR_NUMBER}.svc.cluster.local:4566/000000000000/keeperhub-workflow-queue-dlq"
   # PR deploys do not build a workflow-runner image per-sha (see commit
   # message of the matrix-trim: "satellite services use pre-built
   # staging images"). The runner therefore points at the rolling
