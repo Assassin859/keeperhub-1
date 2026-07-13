@@ -80,6 +80,7 @@ type ValidatedCheckout = {
   userId: string;
   priceId: string;
   plan: PlanName;
+  tier: TierKey | null;
   trial: boolean;
 };
 
@@ -129,6 +130,7 @@ async function validateCheckoutRequest(
     userId,
     priceId,
     plan: plan as PlanName,
+    tier: (tier ?? null) as TierKey | null,
     trial,
   };
 }
@@ -213,7 +215,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       return result;
     }
 
-    const { activeOrgId, email, userId, priceId, plan, trial } = result;
+    const { activeOrgId, email, userId, priceId, plan, tier, trial } = result;
 
     const rateLimit = checkBillingRateLimit(activeOrgId);
     if (!rateLimit.allowed) {
@@ -245,9 +247,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
       // Plan cards always charge: a trialing org that changes plan/tier from a
       // card (no `trial` intent) ends the trial and is billed now. Only the
-      // Manage-trial modal sends trial:true to keep the trial, and only for Pro.
+      // Manage-trial modal sends trial:true to keep the trial, and only when the
+      // target stays on the trial plan/tier (Pro 25k).
       const endTrial =
-        sub.status === "trialing" && !(trial && isTrialPlan(plan));
+        sub.status === "trialing" && !(trial && isTrialPlan(plan, tier));
 
       return await handleExistingSubscription(
         provider,
@@ -277,7 +280,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     // flow) AND server-side eligibility. Plan cards omit the intent, so they
     // subscribe and pay immediately instead of being pushed into a trial.
     const trialPeriodDays =
-      trial && isTrialEligible(sub, plan) ? getTrialPeriodDays() : undefined;
+      trial && isTrialEligible(sub, plan, tier)
+        ? getTrialPeriodDays()
+        : undefined;
 
     const { url } = await provider.createCheckoutSession({
       customerId: providerCustomerId,

@@ -92,7 +92,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Match the update: card changes (no trial intent) end a trial, so the
     // preview shows the real charge. Only the Manage-trial modal keeps it.
     const endTrial =
-      sub.status === "trialing" && !(trial && isTrialPlan(plan as PlanName));
+      sub.status === "trialing" &&
+      !(
+        trial && isTrialPlan(plan as PlanName, (tier ?? null) as TierKey | null)
+      );
 
     const provider = getBillingProvider();
     const preview = await provider.previewProration(existingSubId, priceId, {

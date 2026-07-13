@@ -1,18 +1,24 @@
 import "server-only";
 
 import type { OrganizationSubscription } from "@/lib/db/schema";
-import type { PlanName } from "./plans";
-
-// Plans that offer a trial. Pro only for now.
-const TRIAL_ELIGIBLE_PLANS = new Set<PlanName>(["pro"]);
+import {
+  type PlanName,
+  type TierKey,
+  TRIAL_PLAN_NAME,
+  TRIAL_TIER_KEY,
+} from "./plans";
 
 /**
- * Whether `plan` is one that trials apply to at all. Used to end an in-flight
- * trial when a trialing org switches to a non-trial plan (e.g. Pro trial ->
- * Business), so that plan is charged immediately instead of inheriting the trial.
+ * Whether `plan`/`tier` is the exact plan/tier a trial applies to (Pro 25k).
+ * Used both to gate starting a trial and to end an in-flight trial when a
+ * trialing org switches to anything else (a higher Pro tier, or Business), so
+ * that plan is charged immediately instead of inheriting the free trial.
  */
-export function isTrialPlan(plan: PlanName): boolean {
-  return TRIAL_ELIGIBLE_PLANS.has(plan);
+export function isTrialPlan(
+  plan: PlanName,
+  tier: TierKey | null | undefined
+): boolean {
+  return plan === TRIAL_PLAN_NAME && tier === TRIAL_TIER_KEY;
 }
 
 const DEFAULT_TRIAL_DAYS = 14;
@@ -80,7 +86,8 @@ type TrialEligibilityInput = Pick<
 >;
 
 /**
- * Whether an org may start a trial for `targetPlan`.
+ * Whether an org may start a trial for `targetPlan`/`targetTier`. Only the Pro
+ * 25k tier is trial-eligible; every other plan or Pro tier is pay-now.
  *
  * Never eligible while actively subscribed to a paid plan. A first-time org
  * (no prior trial, not a previously-subscribed-then-reset org) is eligible. An
@@ -90,9 +97,10 @@ type TrialEligibilityInput = Pick<
  */
 export function isTrialEligible(
   sub: TrialEligibilityInput | undefined,
-  targetPlan: PlanName
+  targetPlan: PlanName,
+  targetTier: TierKey | null | undefined
 ): boolean {
-  if (!(isTrialsEnabled() && TRIAL_ELIGIBLE_PLANS.has(targetPlan))) {
+  if (!(isTrialsEnabled() && isTrialPlan(targetPlan, targetTier))) {
     return false;
   }
   if (!sub) {
@@ -108,4 +116,14 @@ export function isTrialEligible(
   }
   // Already trialed: only again after the cooldown.
   return repeatTrialAllowed(sub.trialStartedAt);
+}
+
+/**
+ * Convenience for the fixed trial offer (Pro 25k), used by the read-side that
+ * only needs to know "can this org be nudged to start the one trial we offer".
+ */
+export function isTrialOfferEligible(
+  sub: TrialEligibilityInput | undefined
+): boolean {
+  return isTrialEligible(sub, TRIAL_PLAN_NAME, TRIAL_TIER_KEY);
 }

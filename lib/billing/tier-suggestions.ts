@@ -11,7 +11,7 @@ import {
   type TierKey,
 } from "./plans";
 import { getOrgSubscription } from "./plans-server";
-import { getTrialPeriodDays, isTrialEligible } from "./trial";
+import { getTrialPeriodDays, isTrialOfferEligible } from "./trial";
 
 // Free-plan usage (as a % of the free cap) at which we start nudging the org to
 // begin a Pro trial. Lower than the paid-tier upgrade threshold since the goal
@@ -91,7 +91,7 @@ export async function getUpgradeSuggestion(
   // so nudge engaged, trial-eligible free orgs to start a Pro trial instead.
   if (
     plan === "free" &&
-    isTrialEligible(sub, "pro") &&
+    isTrialOfferEligible(sub) &&
     usagePercent >= TRIAL_NUDGE_USAGE_PERCENT
   ) {
     return {

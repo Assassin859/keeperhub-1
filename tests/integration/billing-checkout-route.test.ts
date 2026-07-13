@@ -153,6 +153,25 @@ describe("POST /api/billing/checkout", () => {
     expect(arg.trialPeriodDays).toBeUndefined();
   });
 
+  it("does not start a trial for Pro tiers above 25k", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    // Trial intent is explicit, but only Pro 25k is trial-eligible.
+    await POST(
+      makeRequest({
+        plan: "pro",
+        tier: "50k",
+        interval: "monthly",
+        trial: true,
+      })
+    );
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBeUndefined();
+  });
+
   it("returns 401 without auth", async () => {
     mockGetSession.mockResolvedValue(null);
 

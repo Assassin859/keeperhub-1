@@ -56,6 +56,11 @@ const VALID_TIER_KEYS: ReadonlySet<string> = new Set<TierKey>([
   "1m",
 ]);
 
+// The single plan/tier a free trial applies to: Pro at the 25k-execution tier.
+// Higher Pro tiers and every other plan are pay-now only.
+export const TRIAL_PLAN_NAME: PlanName = "pro";
+export const TRIAL_TIER_KEY: TierKey = "25k";
+
 export function isValidPlanName(value: unknown): value is PlanName {
   return typeof value === "string" && VALID_PLAN_NAMES.has(value);
 }

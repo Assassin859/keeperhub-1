@@ -6,6 +6,8 @@ import {
   getTrialPeriodDays,
   getTrialRepeatCooldownDays,
   isTrialEligible,
+  isTrialOfferEligible,
+  isTrialPlan,
 } from "@/lib/billing/trial";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -55,28 +57,51 @@ describe("getTrialPeriodDays", () => {
   });
 });
 
+describe("isTrialPlan", () => {
+  it("is true only for the Pro 25k tier", () => {
+    expect(isTrialPlan("pro", "25k")).toBe(true);
+  });
+
+  it("is false for other Pro tiers", () => {
+    expect(isTrialPlan("pro", "50k")).toBe(false);
+    expect(isTrialPlan("pro", "100k")).toBe(false);
+    expect(isTrialPlan("pro", null)).toBe(false);
+  });
+
+  it("is false for other plans", () => {
+    expect(isTrialPlan("business", "250k")).toBe(false);
+    expect(isTrialPlan("free", "25k")).toBe(false);
+  });
+});
+
 describe("isTrialEligible", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
   it("is eligible for a brand-new org with no subscription row", () => {
-    expect(isTrialEligible(undefined, "pro")).toBe(true);
+    expect(isTrialEligible(undefined, "pro", "25k")).toBe(true);
   });
 
   it("is eligible for a fresh free org", () => {
-    expect(isTrialEligible(makeSub(), "pro")).toBe(true);
+    expect(isTrialEligible(makeSub(), "pro", "25k")).toBe(true);
   });
 
   it("is not eligible for non-Pro plans", () => {
-    expect(isTrialEligible(undefined, "business")).toBe(false);
-    expect(isTrialEligible(undefined, "enterprise")).toBe(false);
-    expect(isTrialEligible(undefined, "free")).toBe(false);
+    expect(isTrialEligible(undefined, "business", "250k")).toBe(false);
+    expect(isTrialEligible(undefined, "enterprise", null)).toBe(false);
+    expect(isTrialEligible(undefined, "free", "25k")).toBe(false);
+  });
+
+  it("is not eligible for Pro tiers other than 25k", () => {
+    expect(isTrialEligible(undefined, "pro", "50k")).toBe(false);
+    expect(isTrialEligible(undefined, "pro", "100k")).toBe(false);
+    expect(isTrialEligible(undefined, "pro", null)).toBe(false);
   });
 
   it("is not eligible once a trial was consumed", () => {
     expect(
-      isTrialEligible(makeSub({ trialStartedAt: new Date() }), "pro")
+      isTrialEligible(makeSub({ trialStartedAt: new Date() }), "pro", "25k")
     ).toBe(false);
   });
 
@@ -84,19 +109,41 @@ describe("isTrialEligible", () => {
     expect(
       isTrialEligible(
         makeSub({ providerSubscriptionId: "sub_123", plan: "pro" }),
-        "pro"
+        "pro",
+        "25k"
       )
     ).toBe(false);
   });
 
   it("is not eligible after a prior subscription was reset to free", () => {
-    expect(isTrialEligible(makeSub({ status: "canceled" }), "pro")).toBe(false);
+    expect(isTrialEligible(makeSub({ status: "canceled" }), "pro", "25k")).toBe(
+      false
+    );
   });
 
   it("is not eligible when the trials feature flag is off", () => {
     vi.stubEnv("TRIALS_ENABLED", "false");
-    expect(isTrialEligible(undefined, "pro")).toBe(false);
-    expect(isTrialEligible(makeSub(), "pro")).toBe(false);
+    expect(isTrialEligible(undefined, "pro", "25k")).toBe(false);
+    expect(isTrialEligible(makeSub(), "pro", "25k")).toBe(false);
+  });
+});
+
+describe("isTrialOfferEligible", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("mirrors isTrialEligible for the fixed Pro 25k offer", () => {
+    expect(isTrialOfferEligible(undefined)).toBe(true);
+    expect(isTrialOfferEligible(makeSub())).toBe(true);
+    expect(isTrialOfferEligible(makeSub({ trialStartedAt: new Date() }))).toBe(
+      false
+    );
+  });
+
+  it("is not eligible when the trials feature flag is off", () => {
+    vi.stubEnv("TRIALS_ENABLED", "false");
+    expect(isTrialOfferEligible(undefined)).toBe(false);
   });
 });
 
@@ -114,25 +161,25 @@ describe("repeat trials (cooldown)", () => {
   }
 
   it("stays ineligible after cooldown when repeat trials are off", () => {
-    expect(isTrialEligible(trialedSub(200), "pro")).toBe(false);
+    expect(isTrialEligible(trialedSub(200), "pro", "25k")).toBe(false);
   });
 
   it("re-enables a cold org once the cooldown has elapsed", () => {
     vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
     // Default cooldown is 90 days; 100 days ago is past it.
-    expect(isTrialEligible(trialedSub(100), "pro")).toBe(true);
+    expect(isTrialEligible(trialedSub(100), "pro", "25k")).toBe(true);
   });
 
   it("stays ineligible before the cooldown elapses", () => {
     vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
-    expect(isTrialEligible(trialedSub(10), "pro")).toBe(false);
+    expect(isTrialEligible(trialedSub(10), "pro", "25k")).toBe(false);
   });
 
   it("respects a custom cooldown length", () => {
     vi.stubEnv("TRIAL_ALLOW_REPEAT", "true");
     vi.stubEnv("TRIAL_REPEAT_COOLDOWN_DAYS", "30");
-    expect(isTrialEligible(trialedSub(45), "pro")).toBe(true);
-    expect(isTrialEligible(trialedSub(20), "pro")).toBe(false);
+    expect(isTrialEligible(trialedSub(45), "pro", "25k")).toBe(true);
+    expect(isTrialEligible(trialedSub(20), "pro", "25k")).toBe(false);
   });
 
   it("never re-enables while the org is actively subscribed", () => {
@@ -145,7 +192,8 @@ describe("repeat trials (cooldown)", () => {
           providerSubscriptionId: "sub_live",
           trialStartedAt: new Date(Date.now() - 200 * DAY_MS),
         }),
-        "pro"
+        "pro",
+        "25k"
       )
     ).toBe(false);
   });
