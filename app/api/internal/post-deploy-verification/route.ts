@@ -92,12 +92,20 @@ type OrgVerification = {
   sampleErrors: string[];
 };
 
-function parseNumberParam(value: string | null, fallback: number): number {
-  if (!value) {
-    return fallback;
+function parseNumberParam(
+  value: string | null,
+  fallback: number,
+  bounds?: { min?: number; max?: number }
+): number {
+  const parsed = value ? Number.parseFloat(value) : Number.NaN;
+  let result = Number.isFinite(parsed) ? parsed : fallback;
+  if (bounds?.min !== undefined) {
+    result = Math.max(bounds.min, result);
   }
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (bounds?.max !== undefined) {
+    result = Math.min(bounds.max, result);
+  }
+  return result;
 }
 
 async function resolveTargetOrgs(
@@ -254,15 +262,21 @@ export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const lookbackMinutes = parseNumberParam(
     url.searchParams.get("lookbackMinutes"),
-    DEFAULT_LOOKBACK_MINUTES
+    DEFAULT_LOOKBACK_MINUTES,
+    { min: 1 }
   );
+  // Clamp so an out-of-range value can't widen the check: minExecutions < 1
+  // would make the error-rate branch evaluate on every org, and a maxErrorRate
+  // outside [0,1] is meaningless for a ratio.
   const minExecutions = parseNumberParam(
     url.searchParams.get("minExecutions"),
-    DEFAULT_MIN_EXECUTIONS
+    DEFAULT_MIN_EXECUTIONS,
+    { min: 1 }
   );
   const maxErrorRate = parseNumberParam(
     url.searchParams.get("maxErrorRate"),
-    DEFAULT_MAX_ERROR_RATE
+    DEFAULT_MAX_ERROR_RATE,
+    { min: 0, max: 1 }
   );
 
   // `final=1` on the CI loop's last poll: only then can "no executions in the
