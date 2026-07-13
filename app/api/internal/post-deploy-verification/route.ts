@@ -11,17 +11,23 @@
  * On a flagged org this pages that client's own PagerDuty service (per-client
  * routing key, env sourced), deduped to one incident per org per deploy.
  *
- * The cohort is gated to orgs that actually have work due in the window: an
- * enabled, non-deleted, non-deactivated workflow with an enabled schedule whose
- * next run falls inside [`since`, `until`]. Idle orgs (no live workflow, or
- * schedules that won't fire in the window) are excluded so a deploy is not
- * judged against orgs that were never going to run. Execution counting covers
- * every trigger type (scheduled, block, webhook, event, manual).
+ * The cohort is the managed + enterprise set, selected directly. Judgement is
+ * on what actually executed in the window (every trigger type: scheduled,
+ * block, webhook, event, manual), NOT on a future schedule -- so a run that
+ * errors is caught even after its schedule's nextRunAt has advanced out of the
+ * window. The schedule is consulted only to decide whether a run was EXPECTED
+ * (for the no-executions case).
  *
  * An org is flagged as a problem when:
- *   - it produced any `system_error` executions in the window (platform/infra
- *     faults are the strongest signal of a deploy regression), OR
- *   - it ran at least `minExecutions` and its error rate exceeds `maxErrorRate`.
+ *   - it had a schedule due in the window (`nextRunAt` in [`since`, `until`])
+ *     and produced no executions -- a silent no-run (P2), OR
+ *   - it produced any `system_error` executions (P2), OR
+ *   - it ran at least `minExecutions` and its error rate exceeds `maxErrorRate`
+ *     (P3).
+ *
+ * An org whose next scheduled run is after the window (or that has no due
+ * schedule) and produced nothing is out of context: it passes green rather than
+ * failing the pipeline.
  *
  * This is a stateless single check (one query per request); the CI job owns the
  * timing and polls it. Window and thresholds are query-param overridable so the
@@ -74,6 +80,8 @@ type TargetOrg = {
   slug: string;
   name: string;
   plan: string;
+  /** True when the org had an enabled schedule due to fire in the window. */
+  dueInWindow: boolean;
 };
 
 type OrgVerification = {
@@ -86,6 +94,8 @@ type OrgVerification = {
   userErrors: number;
   systemErrors: number;
   errorRate: number;
+  /** Was a scheduled run expected in the window (drives the no-executions P2). */
+  dueInWindow: boolean;
   isProblem: boolean;
   severity: AlertSeverity | null;
   reasons: string[];
@@ -112,16 +122,14 @@ async function resolveTargetOrgs(
   windowStart: Date,
   windowEnd: Date
 ): Promise<TargetOrg[]> {
-  // Only verify orgs that actually have something due to run during the
-  // monitoring window: an enabled, non-deleted, non-deactivated workflow with
-  // an enabled schedule whose next run lands inside [windowStart, windowEnd].
-  // Without this an idle org (no live workflow, or schedules that won't fire in
-  // our window) is either dead weight or a false-positive source.
-  //
-  // Cohort = managed slugs (env-sourced) plus any enterprise-plan org. When no
-  // managed slugs are configured we fall back to enterprise-plan orgs only.
+  // Cohort = managed slugs (env-sourced) plus any enterprise-plan org, selected
+  // DIRECTLY -- not gated on a schedule. Errors are then judged on what actually
+  // executed (any trigger type), so a run that errors is caught even after its
+  // schedule's nextRunAt has advanced out of the window, and webhook/event/
+  // manual-only orgs are covered too. When no managed slugs are configured the
+  // cohort is enterprise-plan orgs only.
   const managedSlugs = getManagedOrgSlugs();
-  const rows = await db
+  const cohort = await db
     .selectDistinct({
       id: organization.id,
       slug: organization.slug,
@@ -133,11 +141,6 @@ async function resolveTargetOrgs(
       organizationSubscriptions,
       eq(organizationSubscriptions.organizationId, organization.id)
     )
-    .innerJoin(workflows, eq(workflows.organizationId, organization.id))
-    .innerJoin(
-      workflowSchedules,
-      eq(workflowSchedules.workflowId, workflows.id)
-    )
     .where(
       and(
         isNull(organization.deactivatedAt),
@@ -146,7 +149,29 @@ async function resolveTargetOrgs(
               inArray(organization.slug, managedSlugs),
               eq(organizationSubscriptions.plan, "enterprise")
             )
-          : eq(organizationSubscriptions.plan, "enterprise"),
+          : eq(organizationSubscriptions.plan, "enterprise")
+      )
+    );
+
+  if (cohort.length === 0) {
+    return [];
+  }
+
+  // Which cohort orgs had an enabled schedule due to fire in the window (an
+  // enabled, non-deleted, non-deactivated workflow whose nextRunAt is in
+  // [windowStart, windowEnd])? Only these are eligible for the "no executions"
+  // P2 -- an org whose next run is after the window is out of context and, if
+  // it produced nothing, passes green rather than failing the pipeline. A miss
+  // is caught precisely: if the run never happened nextRunAt has not advanced,
+  // so it stays in-window here.
+  const cohortIds = cohort.map((org) => org.id);
+  const dueRows = await db
+    .selectDistinct({ organizationId: workflows.organizationId })
+    .from(workflowSchedules)
+    .innerJoin(workflows, eq(workflows.id, workflowSchedules.workflowId))
+    .where(
+      and(
+        inArray(workflows.organizationId, cohortIds),
         eq(workflows.enabled, true),
         isNull(workflows.deletedAt),
         isNull(workflows.deactivatedAt),
@@ -155,12 +180,14 @@ async function resolveTargetOrgs(
         lte(workflowSchedules.nextRunAt, windowEnd)
       )
     );
+  const dueOrgIds = new Set(dueRows.map((row) => row.organizationId));
 
-  return rows.map((row) => ({
+  return cohort.map((row) => ({
     id: row.id,
     slug: row.slug,
     name: row.name,
     plan: row.plan ?? "free",
+    dueInWindow: dueOrgIds.has(row.id),
   }));
 }
 
@@ -290,10 +317,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   // Stateless single check: one query per request. The CI job owns the timing
   // (it polls this endpoint). `since`/`until` (unix seconds) bound the
-  // monitoring window the caller is watching: executions are counted from
-  // `since` (so a poll sees only runs on the new build), and the cohort is
-  // gated to orgs with a schedule firing within [`since`, `until`]. Both fall
-  // back to the backward lookback window when omitted.
+  // monitoring window: executions are counted from `since` (so a poll sees only
+  // runs on the new build), and a schedule due within [`since`, `until`] marks
+  // an org as expected-to-run (the no-executions P2). Both fall back to the
+  // backward lookback window when omitted.
   const sinceParam = url.searchParams.get("since");
   const sinceEpoch = sinceParam ? Number.parseInt(sinceParam, 10) : Number.NaN;
   const since = Number.isFinite(sinceEpoch)
@@ -371,14 +398,18 @@ export async function GET(request: Request): Promise<NextResponse> {
       const reasons: string[] = [];
       let severity: AlertSeverity | null = null;
 
-      // No executions: the org had a schedule due in the window but produced
-      // nothing -- its automation silently did not run. Only conclusive on the
-      // final poll. P2.
-      if (isFinalPoll && stats.total === 0) {
-        reasons.push("no executions in the monitoring window");
+      // No executions: only when a run was actually EXPECTED (a schedule was due
+      // in the window) and the org produced nothing -- its automation silently
+      // did not run. Only conclusive on the final poll. P2. An org whose next
+      // run is after the window is out of context: it stays green here.
+      if (isFinalPoll && org.dueInWindow && stats.total === 0) {
+        reasons.push(
+          "no executions in the monitoring window (a schedule was due)"
+        );
         severity = "P2";
       }
-      // Platform/infra faults are the strongest signal of a deploy regression. P2.
+      // Platform/infra faults are the strongest signal of a deploy regression,
+      // judged on what actually ran (any trigger type). P2.
       if (stats.systemErrors > 0) {
         reasons.push(`${stats.systemErrors} system_error execution(s)`);
         severity = "P2";
@@ -404,6 +435,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         userErrors: stats.userErrors,
         systemErrors: stats.systemErrors,
         errorRate,
+        dueInWindow: org.dueInWindow,
         isProblem: reasons.length > 0,
         severity,
         reasons,
