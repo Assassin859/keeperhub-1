@@ -95,6 +95,9 @@ vi.mock("@/lib/errors/classify", () => ({
   // The stub classifier always returns a confident system classification, so the
   // run persists as system_error (not the unknown/default fallback).
   isDefaultClassification: () => false,
+  // No errorClass hint is passed by these cases, so the hint is a no-op that
+  // returns the stubbed classification unchanged.
+  applyErrorClassHint: (classification: unknown) => classification,
 }));
 vi.mock("@/lib/metrics/collectors/prometheus", () => ({
   recordWorkflowExecutionError: vi.fn(),
