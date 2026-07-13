@@ -21,7 +21,9 @@ import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { checkBillingRateLimit } from "../_lib/rate-limit";
 
 type CheckoutRequestBody = {
   plan?: string;
@@ -212,6 +214,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const { activeOrgId, email, userId, priceId, plan, trial } = result;
+
+    const rateLimit = checkBillingRateLimit(activeOrgId);
+    if (!rateLimit.allowed) {
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many billing requests. Please try again shortly." },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateLimit
+      );
+    }
+
     const provider = getBillingProvider();
     const sub = await getOrgSubscription(activeOrgId);
     const existingSubId = sub?.providerSubscriptionId ?? null;

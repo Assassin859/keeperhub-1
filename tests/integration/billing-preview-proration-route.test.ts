@@ -38,6 +38,7 @@ vi.mock("@/lib/billing/providers", () => ({
   }),
 }));
 
+import { __resetBillingRateLimitForTests } from "@/app/api/billing/_lib/rate-limit";
 import { POST } from "@/app/api/billing/preview-proration/route";
 
 function makeRequest(body: Record<string, unknown>): Request {
@@ -59,6 +60,7 @@ function mockSession(overrides: Record<string, unknown> = {}): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetBillingRateLimitForTests();
   process.env.NEXT_PUBLIC_BILLING_ENABLED = "true";
 });
 
