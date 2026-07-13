@@ -1,5 +1,67 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import aaveV4Abi from "./abis/aave-v4.json";
+
+// V4's reserve-scoped reads and all writes need an opaque reserveId (resolved
+// from a Hub address + Hub assetId), which requires live V4 Spoke provisioning
+// not yet fixtured. This first harness exercises the one read that needs only a
+// user address - get-user-account-data - and documents the rest as skips. An
+// account with no positions reports the maximum health factor, a permanent
+// nonzero invariant that proves the struct decoded.
+const TEST_DATA: ProtocolTestData = {
+  "1": {
+    setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
+    actions: {
+      "get-user-account-data": { user: wallet() },
+      "get-reserve-id": {
+        hub: "0x0000000000000000000000000000000000000000",
+        assetId: "0",
+      },
+      "get-user-supplied-assets": { reserveId: "0", user: wallet() },
+      "get-user-debt": { reserveId: "0", user: wallet() },
+      supply: {
+        reserveId: "0",
+        amount: "1000000000000000",
+        onBehalfOf: wallet(),
+      },
+      withdraw: {
+        reserveId: "0",
+        amount: "1000000000000000",
+        onBehalfOf: wallet(),
+      },
+      borrow: {
+        reserveId: "0",
+        amount: "1000000000000000",
+        onBehalfOf: wallet(),
+      },
+      repay: {
+        reserveId: "0",
+        amount: "1000000000000000",
+        onBehalfOf: wallet(),
+      },
+      "set-collateral": {
+        reserveId: "0",
+        usingAsCollateral: "true",
+        onBehalfOf: wallet(),
+      },
+    },
+    skipped: {
+      "get-reserve-id":
+        "requires a real Hub address and Hub assetId; V4 reserve resolution is not fixtured yet",
+      "get-user-supplied-assets":
+        "requires a valid opaque reserveId for the Lido Spoke",
+      "get-user-debt": "requires a valid opaque reserveId for the Lido Spoke",
+      supply: "requires a reserveId, asset balance and Spoke approval",
+      withdraw: "requires an open supplied position",
+      borrow: "requires supplied collateral and a reserveId",
+      repay: "requires an open debt position",
+      "set-collateral": "requires a supplied reserve",
+    },
+    expectations: {
+      "get-user-account-data": [{ field: "healthFactor", nonZero: true }],
+    },
+  },
+};
 
 // Aave V4 launched on Ethereum mainnet 2026-03-30 with a Hub-and-Spoke
 // architecture. Users interact with Spokes (not Hubs) for supply/borrow.
@@ -18,6 +80,7 @@ import aaveV4Abi from "./abis/aave-v4.json";
 export default defineAbiProtocol({
   name: "Aave V4",
   slug: "aave-v4",
+  testData: TEST_DATA,
   description:
     "Aave V4 Hub-and-Spoke lending protocol - supply, borrow, repay and monitor positions via the Lido Spoke",
   website: "https://aave.com",
