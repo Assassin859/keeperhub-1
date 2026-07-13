@@ -1,13 +1,36 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
-import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  contract,
+  native,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [],
+      // WETH arrives via balances-slot fabrication (no whale registered);
+      // DAI from the MCD_JOIN_DAI whale. WETH is the collateral asset:
+      // SparkLend's mainnet DAI reserve has LTV 0 (verified via
+      // getReserveConfigurationData 2026-07-08), so DAI supplies earn but
+      // cannot back a borrow - the core sequence supplies WETH
+      // (LTV 85%) and borrows DAI against it.
+      requiredTokens: [
+        { symbol: "WETH", human: "1" },
+        { symbol: "DAI", human: "200" },
+      ],
       approvals: [],
+      // Fabricated (anvil_setStorageAt) rather than real approve-token
+      // nodes: the app's approve-token path takes minutes per approval on
+      // the CI fork, and three of them would blow the 300s setup timeout.
+      fabricatedApprovals: [
+        { token: "WETH", spender: contract("pool"), human: "1" },
+        { token: "DAI", spender: contract("pool"), human: "150" },
+        { token: "DAI", spender: contract("sdai"), human: "150" },
+      ],
     },
     actions: {
       "get-user-account-data": { user: wallet() },
@@ -26,26 +49,77 @@ const TEST_DATA: ProtocolTestData = {
       "vault-max-mint": { receiver: wallet() },
       "vault-max-withdraw": { owner: wallet() },
       "vault-max-redeem": { owner: wallet() },
-      supply: { asset: "DAI", onBehalfOf: wallet() },
-      withdraw: { asset: "DAI", to: wallet() },
-      borrow: { asset: "DAI", onBehalfOf: wallet() },
-      repay: { asset: "DAI", onBehalfOf: wallet() },
-      "set-collateral": { asset: "DAI" },
-      "vault-deposit": { receiver: wallet() },
-      "vault-mint": { receiver: wallet() },
-      "vault-withdraw": { receiver: wallet(), owner: wallet() },
-      "vault-redeem": { receiver: wallet(), owner: wallet() },
+      // Core sequence in registry order: supply opens the WETH position
+      // (auto-enabled as collateral on first supply), withdraw trims it,
+      // borrow/repay run against it with wide margin (0.45 WETH backing
+      // 100 DAI), set-collateral re-asserts the already-on flag.
+      supply: {
+        asset: "WETH",
+        amount: amount("WETH", "0.5"),
+        onBehalfOf: wallet(),
+      },
+      withdraw: { asset: "WETH", amount: amount("WETH", "0.05"), to: wallet() },
+      borrow: { asset: "DAI", amount: amount("DAI", "100"), onBehalfOf: wallet() },
+      repay: { asset: "DAI", amount: amount("DAI", "80"), onBehalfOf: wallet() },
+      "set-collateral": { asset: "WETH", useAsCollateral: "true" },
+      "vault-deposit": { assets: amount("DAI", "100"), receiver: wallet() },
+      "vault-mint": { shares: amount("DAI", "10"), receiver: wallet() },
+      "vault-withdraw": {
+        assets: amount("DAI", "20"),
+        receiver: wallet(),
+        owner: wallet(),
+      },
+      "vault-redeem": {
+        shares: amount("DAI", "10"),
+        receiver: wallet(),
+        owner: wallet(),
+      },
     },
-    skipped: {
-      supply: "requires DAI balance + approval",
-      withdraw: "requires prior supply position",
-      borrow: "requires prior collateral position",
-      repay: "requires prior borrow position",
-      "set-collateral": "requires prior supply position",
-      "vault-deposit": "requires DAI balance + approval",
-      "vault-mint": "requires DAI balance + approval",
-      "vault-withdraw": "requires sDAI balance",
-      "vault-redeem": "requires sDAI balance",
+    // sDAI vault invariants (unnamed ERC-4626 outputs, so no field): asset
+    // is a permanent address; totals/supply are large and monotonic;
+    // convert/preview are pure per-share quotes; max-deposit/mint are the
+    // uncapped limits. The aave-style get-user-* reads are NOT asserted here
+    // - no position exists at the read phase (supply is a write that runs
+    // after), so they read zero; they carry post-write oracles below
+    // instead. Caller-position vault reads (balance, max-withdraw/redeem)
+    // are likewise history-dependent and left unasserted.
+    expectations: {
+      "vault-asset": [{ notEmpty: true }],
+      "vault-total-assets": [{ nonZero: true }],
+      "vault-total-supply": [{ nonZero: true }],
+      "vault-convert-to-assets": [{ nonZero: true }],
+      "vault-convert-to-shares": [{ nonZero: true }],
+      "vault-preview-deposit": [{ nonZero: true }],
+      "vault-preview-mint": [{ nonZero: true }],
+      "vault-preview-withdraw": [{ nonZero: true }],
+      "vault-preview-redeem": [{ nonZero: true }],
+      "vault-max-deposit": [{ nonZero: true }],
+      "vault-max-mint": [{ nonZero: true }],
+    },
+    // Post-write oracles: supply must register collateral, borrow must
+    // register debt, and a vault deposit/mint must credit sDAI shares. All
+    // nonZero (history-safe: the values only grow within the run).
+    // set-collateral is liveness-only: the only reserve-data read is bound to
+    // DAI, but set-collateral acts on the WETH reserve, so there is no aligned
+    // probe (supply already asserts collateral registered via
+    // totalCollateralBase).
+    writeExpectations: {
+      supply: [
+        {
+          read: "get-user-account-data",
+          expect: { field: "totalCollateralBase", nonZero: true },
+        },
+      ],
+      borrow: [
+        {
+          read: "get-user-account-data",
+          expect: { field: "totalDebtBase", nonZero: true },
+        },
+      ],
+      "vault-deposit": [
+        { read: "vault-balance", expect: { nonZero: true } },
+      ],
+      "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
     },
   },
 };

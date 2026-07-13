@@ -9,11 +9,11 @@ Get up and running with KeeperHub in minutes by creating your first automation w
 
 ## Step 1: Create Account
 
-Visit app.keeperhub.com and sign up with your email address. A Para wallet is automatically created for your account, giving you a secure way to execute blockchain transactions.
+Visit app.keeperhub.com and sign up with your email address. A Turnkey wallet is automatically provisioned for your organization once your email is verified, giving you a secure, non-custodial way to execute blockchain transactions.
 
 ## Step 2: Access Your Wallet
 
-Click your profile icon in the top right and select **Wallet** to view your Para wallet address. Top up this wallet with ETH (on Mainnet or Sepolia testnet) to enable operations that require gas fees.
+Click your profile icon in the top right and select **Wallet** to view your Turnkey wallet address. Top up this wallet with ETH (on Mainnet or Sepolia testnet) to enable operations that require gas fees.
 
 ## Step 3: Create Your First Workflow
 
@@ -50,13 +50,13 @@ Click any node to open the configuration panel on the right side:
 ### For Web3 Actions (like Check Balance):
 - **Service**: Select the service type (Web3)
 - **Connection**: Choose your connected wallet
-- **Network**: Select Sepolia Testnet or Ethereum Mainnet
+- **Network**: Select the target network (for example Sepolia for testing, or any supported mainnet)
 - **Address**: Enter the wallet or contract address to monitor
 - **Label**: Give your node a descriptive name
 - **Description**: Optional notes about what this node does
 
 ### For Notification Actions:
-- **Connection**: Select or create a connection (Email, Discord, Slack)
+- **Connection**: Select or create a connection (Email, Discord, Slack, Telegram)
 - **Message**: Configure the notification content
 
 ## Step 5: Set Up Connections
@@ -67,7 +67,8 @@ Before using notification actions, configure your connections:
 2. Add connections for the services you want to use:
    - **Email**: Configure email delivery
    - **Discord**: Add your Discord webhook URL
-   - **Slack**: Connect your Slack workspace
+   - **Slack**: Add your Slack bot token
+   - **Telegram**: Add your Telegram bot token
 
 ## Step 6: Enable and Run
 
@@ -86,5 +87,5 @@ Example prompts:
 ## What's Next
 
 - Explore the **Hub** to discover and import workflow templates from the community
-- Learn about [Workflow Examples](/workflows/examples) for more complex automation patterns
+- Learn more about [building workflows](/workflows/creating) for more complex automation patterns
 - Review [Security Best Practices](/practices/security) before deploying to Mainnet

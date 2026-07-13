@@ -29,7 +29,7 @@ From the [Hub](/workflows/hub) or any workflow list view, click the **Upload** i
 Every export has the same six top-level keys:
 
 - `version`: schema version of the export format. Currently `1`.
-- `exportedAt`: ISO timestamp of when the export was generated. Informational only; KeeperHub doesn't read it on import.
+- `exportedAt`: ISO 8601 timestamp of when the export was generated. Required, and validated as a datetime on import.
 - `workflow`: the workflow's `name` and `description`.
 - `nodes`: array of nodes. Each has `id`, `type`, `position` (canvas coordinates), and `data` (the per-node config).
 - `edges`: array of edges connecting nodes by `id`. Conditional branches use `sourceHandle` set to `"true"` or `"false"`.
@@ -141,6 +141,7 @@ A simpler 2-node pattern: a daily scheduled trigger reads pending rewards from a
 ```json
 {
   "version": 1,
+  "exportedAt": "2026-01-01T12:00:00.000Z",
   "workflow": {
     "name": "Auto-harvest Uniswap V3 staker",
     "description": "Daily harvest of staking rewards once they exceed 10 tokens."
@@ -149,6 +150,7 @@ A simpler 2-node pattern: a daily scheduled trigger reads pending rewards from a
     {
       "id": "trigger",
       "type": "trigger",
+      "position": { "x": 0, "y": 0 },
       "data": {
         "type": "trigger",
         "label": "Daily 12:00 UTC",
@@ -161,6 +163,7 @@ A simpler 2-node pattern: a daily scheduled trigger reads pending rewards from a
     {
       "id": "harvest",
       "type": "action",
+      "position": { "x": 0, "y": 160 },
       "data": {
         "type": "action",
         "label": "Harvest rewards",
@@ -181,4 +184,4 @@ A simpler 2-node pattern: a daily scheduled trigger reads pending rewards from a
 }
 ```
 
-This is the minimum viable export: two nodes, one edge. Positions are omitted; on import, KeeperHub auto-lays out any node missing a `position` field.
+This is the minimum viable export: two nodes, one edge. `exportedAt` and each node's `position` are required, so include them for every node.

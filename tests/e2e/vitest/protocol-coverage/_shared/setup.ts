@@ -32,6 +32,7 @@ import {
 import {
   ensureErc20Acquired,
   ensureNativeGas,
+  runFabricatedApprovals,
   runForkImpersonatedCalls,
 } from "./funding";
 
@@ -125,6 +126,11 @@ export async function runSetup(opts: {
   // when the protocol declares none, throws on a non-fork chain.
   await runForkImpersonatedCalls(protocol, chainId, walletAddress);
 
+  // Fork-only setup allowances written straight to storage, so the setup
+  // workflow never submits a slow approve-token transaction; no-op when
+  // the protocol declares none.
+  await runFabricatedApprovals(protocol, chainId, walletAddress);
+
   const setupWf = toWebhookTriggered(
     buildSetupWorkflow({ protocolSlug: protocol, chainId, walletAddress })
   );
@@ -161,8 +167,12 @@ export async function runSetup(opts: {
   // 300s: forked chains lazy-load contract state from their upstream on
   // first touch, so the first transaction through a protocol's contracts
   // can be far slower than steady-state (observed >180s on the Sepolia
-  // fork with the default public upstream).
-  const result = await waitForWorkflowExecution(workflow.id, 300_000);
+  // fork with the default public upstream). Setups with several
+  // transactions can override via setup.executionWaitMs (see SetupSpec).
+  const result = await waitForWorkflowExecution(
+    workflow.id,
+    setupSpec.executionWaitMs ?? 300_000
+  );
   if (!result || result.status !== "success") {
     const diagnosis = await describeExecutionState(workflow.id);
     throw new Error(

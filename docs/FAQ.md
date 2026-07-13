@@ -16,7 +16,7 @@ People use it for things like treasury monitoring, DeFi position management, eve
 ### How do I get started?
 
 1. Create an account at [app.keeperhub.com](https://app.keeperhub.com)
-2. Set up your Para wallet in the Web3 integration settings
+2. Your organization's Turnkey wallet is provisioned automatically once your email is verified. Open the Wallet tab to see its address
 3. Fund your wallet with ETH on the network you want to use (start with Sepolia -- it's free)
 4. Build a workflow with the visual builder or the AI assistant
 5. Test with a manual trigger before turning on automated scheduling
@@ -32,11 +32,9 @@ If you do need custom logic, the [Code Plugin](/plugins/code) runs JavaScript in
 
 ### What blockchains does KeeperHub support?
 
-Ethereum Mainnet, Base, Arbitrum, Polygon, Optimism, and Sepolia (testnet). Gas defaults are applied automatically per chain -- L2s like Base and Arbitrum use lower gas multipliers since their estimates tend to be tighter.
+KeeperHub supports a range of EVM chains, including Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, Avalanche, and others, plus their testnets (Sepolia, Base Sepolia, and more). The live, authoritative list is always available from `GET /api/chains`. Gas defaults are applied automatically per chain; L2s like Base and Arbitrum use lower gas multipliers since their estimates tend to be tighter.
 
 Some protocol plugins only work on certain chains. Ajna is Base-only, Sky converters are Ethereum-only, and so on. Check each plugin's docs for specifics.
-
-Non-EVM chains (Solana, Cosmos, Bitcoin L2s) are not supported.
 
 ### What DeFi protocols does KeeperHub integrate with?
 
@@ -50,25 +48,25 @@ You can also interact with any smart contract through the [Web3 plugin](/plugins
 
 ### How does the wallet work? Do I need to bring my own?
 
-You set up a [Para wallet](/wallet-management/para) through the Web3 integration settings after creating your account. It uses multi-party computation (MPC) -- the private key is split between you and Para so neither party can sign alone, but signing during workflow execution happens automatically.
+Your organization gets a [Turnkey wallet](/wallet-management/turnkey) automatically once your email is verified, so there's nothing to set up. Turnkey generates and holds the private key inside a secure hardware enclave (TEE), and signing during workflow execution happens automatically.
 
-Read-only operations (checking balances, reading contracts, monitoring events) don't require any ETH. Write operations (transfers, contract calls) go through your Para wallet and need ETH for gas on the target network.
+Read-only operations (checking balances, reading contracts, monitoring events) don't require any ETH. Write operations (transfers, contract calls) go through your Turnkey wallet and need ETH for gas on the target network.
 
-### Who controls my funds? Can KeeperHub or Para access my wallet without permission?
+### Who controls my funds? Can KeeperHub or Turnkey access my wallet without permission?
 
-Your Para wallet uses MPC -- the private key is split into shares held by you and Para. Neither party can sign a transaction alone. KeeperHub employees can't move your funds, and Para can't either.
+Your Turnkey wallet's private key is generated and stored inside a secure hardware enclave and never leaves it during normal operation. Signing requests are authenticated and executed within the enclave, so KeeperHub can only trigger the transactions your workflows define, and KeeperHub employees can't move your funds.
 
-The tradeoff is that you're trusting Para's infrastructure to be available when your workflows need to sign transactions. If Para goes down, write operations won't execute until it recovers.
+The tradeoff is that you're trusting Turnkey's enclave infrastructure to be available when your workflows need to sign transactions. If it's unavailable, write operations won't execute until it recovers.
 
 ### How do I fund my wallet?
 
-Transfer ETH to your Para wallet address on the network you want to use. The address is the same across all EVM networks -- you can find it in the Wallet tab.
+Transfer ETH to your Turnkey wallet address on the network you want to use. The address is the same across all EVM networks -- you can find it in the Wallet tab.
 
 Start on Sepolia. You can get free test ETH from public faucets and experiment without risking real money.
 
 ### Can I export my private key?
 
-Not yet. Private key export is planned but not currently available. Your funds are accessible through your Para wallet in KeeperHub, and we'll announce when export ships.
+Yes. Turnkey supports private key export. Use the Export Key feature in the Wallet tab to retrieve your key if you need to migrate to another wallet solution.
 
 ---
 
@@ -76,7 +74,7 @@ Not yet. Private key export is planned but not currently available. Your funds a
 
 ### Is KeeperHub safe for production use with real funds?
 
-Yes, KeeperHub is built for production use -- automatic gas estimation with safety buffers, transaction retries, nonce management, MPC wallet security.
+Yes, KeeperHub is built for production use -- automatic gas estimation with safety buffers, transaction retries, nonce management, secure-enclave wallet security.
 
 That said, some things are worth doing:
 
@@ -87,7 +85,7 @@ That said, some things are worth doing:
 
 ### Can KeeperHub employees see my workflows or data?
 
-API keys are hashed (SHA256) before storage -- only the prefix is kept for identification. Wallet private keys are managed by Para, not stored by KeeperHub.
+API keys are hashed (SHA256) before storage -- only the prefix is kept for identification. Wallet private keys are held in Turnkey's secure enclaves, not stored by KeeperHub.
 
 Workflow configurations and execution logs are stored in KeeperHub's database because the platform needs them to run your workflows and show you debugging info. So yes, that data exists on KeeperHub's infrastructure.
 
@@ -97,7 +95,7 @@ Transactions already submitted to the blockchain keep processing -- they don't d
 
 ### What data does KeeperHub collect?
 
-Account info, workflow configurations (node types, contract addresses, parameters, conditions), and execution logs (inputs, outputs, transaction hashes, gas usage). The platform needs this data to run workflows and provide analytics. API keys are hashed before storage, and wallet private keys are managed by Para.
+Account info, workflow configurations (node types, contract addresses, parameters, conditions), and execution logs (inputs, outputs, transaction hashes, gas usage). The platform needs this data to run workflows and provide analytics. API keys are hashed before storage, and wallet private keys are held in Turnkey's secure enclaves.
 
 ---
 
@@ -145,7 +143,7 @@ No. You need to add an "Approve ERC20 Token" node before any write operation tha
 
 ### Can AI agents use KeeperHub autonomously?
 
-Yes. The [MCP server](/ai-tools/mcp-server) exposes 19 tools that let AI agents create, trigger, run, and monitor workflows programmatically. There's also a Claude Code plugin for building workflows from the terminal.
+Yes. The [MCP server](/ai-tools/mcp-server) exposes more than 30 tools that let AI agents create, trigger, run, and monitor workflows programmatically. There's also a Claude Code plugin for building workflows from the terminal.
 
 ---
 
@@ -153,7 +151,7 @@ Yes. The [MCP server](/ai-tools/mcp-server) exposes 19 tools that let AI agents 
 
 ### What is the MCP server?
 
-The KeeperHub [MCP server](/ai-tools/mcp-server) lets AI agents (Claude, custom agents, etc.) create, run, and monitor workflows over the [Model Context Protocol](https://modelcontextprotocol.io). It exposes 19 tools covering workflow CRUD, execution, plugin discovery, template deployment, and integration management.
+The KeeperHub [MCP server](/ai-tools/mcp-server) lets AI agents (Claude, custom agents, etc.) create, run, and monitor workflows over the [Model Context Protocol](https://modelcontextprotocol.io). It exposes more than 30 tools covering workflow CRUD, execution, plugin discovery, protocol actions, and integration management.
 
 ### How do I set up the MCP server?
 
@@ -203,7 +201,7 @@ Yes. The REST API at `app.keeperhub.com/api` covers workflow CRUD, execution, an
 
 ### What notification channels are supported?
 
-[Discord](/plugins/discord) (webhook URL), [Telegram](/plugins/telegram) (bot token), [SendGrid email](/plugins/sendgrid), and generic [webhooks](/plugins/webhook). Set up connections once in account settings and reuse them across workflows.
+[Discord](/plugins/discord) (webhook URL), [Slack](/plugins/slack) (bot token), [Telegram](/plugins/telegram) (bot token), [SendGrid email](/plugins/sendgrid), and generic [webhooks](/plugins/webhook). Set up connections once in account settings and reuse them across workflows.
 
 ### Can I export or version-control my workflows?
 
@@ -217,7 +215,7 @@ There's no built-in version history or CI/CD integration yet. If you need that, 
 
 ### How do teams and organizations work?
 
-You can create organizations, invite team members via email, and share workflows within the org. Right now all members have equal permissions -- there are no admin, editor, or viewer roles. Role-based access control is planned. In the meantime, use separate organizations if you need different access levels.
+You can create organizations, invite team members via email, and share workflows within the org. Organizations have three roles (owner, admin, and member) that gate sensitive wallet and security actions, while workflow collaboration is shared across all members. See [Access Control](/users-teams-orgs/permissions) for the breakdown.
 
 See [Organizations](/users-teams-orgs/organizations) for details.
 
@@ -235,7 +233,7 @@ Deletion is a soft delete -- your data is preserved but the account is deactivat
 
 ### How does KeeperHub compare to OpenZeppelin Defender, Gelato, or Chainlink Automation?
 
-The main differences: KeeperHub has a visual no-code builder (vs YAML/code), AI-assisted workflow generation, and managed MPC wallets (vs self-managed keys). There are dedicated migration guides for [Defender](/guides/defender-migration) and [Gelato](/guides/gelato-migration) with feature mapping tables.
+The main differences: KeeperHub has a visual no-code builder (vs YAML/code), AI-assisted workflow generation, and managed non-custodial wallets via Turnkey secure enclaves (vs self-managed keys). There are dedicated migration guides for [Defender](/guides/defender-migration) and [Gelato](/guides/gelato-migration) with feature mapping tables.
 
 OpenZeppelin Defender shuts down July 1, 2026. Gelato Web3 Functions shut down March 31, 2026.
 

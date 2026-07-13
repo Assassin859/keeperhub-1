@@ -16,22 +16,28 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 | [Math](/plugins/math) | Math | Aggregation operations (sum, count, average, median, min, max, product) | None |
 | [Safe](/plugins/safe) | Protocol | Safe multisig owners, threshold, nonce, module status, pending transactions | API key (for pending txs) |
 | [Aave V3](/plugins/aave-v3) | Protocol | Supply, borrow, repay, collateral management, health factor monitoring | Wallet (for writes) |
+| [Aave V4](/plugins/aave-v4) | Protocol | Hub-and-Spoke supply, borrow, repay, collateral management via the Lido Spoke | Wallet (for writes) |
 | [Aerodrome](/plugins/aerodrome) | Protocol | Pool reserves, swap quotes, ve(3,3) voting, gauge management, AERO token operations | Wallet (for writes) |
 | [Ajna](/plugins/ajna) | Protocol | Liquidation keeper operations, vault rebalancing, buffer management | Wallet (for writes) |
 | [Chainlink](/plugins/chainlink) | Protocol | Oracle price feeds -- latest prices, round data, decimals, feed metadata | None |
+| [Chronicle](/plugins/chronicle) | Protocol | Verifiable oracle price feeds with Schnorr signature verification | None (whitelisted caller) |
 | [Compound V3](/plugins/compound) | Protocol | Supply, withdraw, base/collateral/borrow balance monitoring | Wallet (for writes) |
 | [CoW Swap](/plugins/cowswap) | Protocol | Order pre-signing, fill monitoring, conditional orders, order cancellation | Wallet (for writes) |
 | [Curve](/plugins/curve) | Protocol | Pool swaps, LP management, virtual prices, CRV token operations | Wallet (for writes) |
+| [Ethena](/plugins/ethena) | Protocol | sUSDe staking vault, cooldown/unstake, USDe and ENA balances | Wallet (for writes) |
 | [Frax Ether V2](/plugins/frax-ether-v2) | Protocol | Liquid staking on Ethereum mainnet. Mint frxETH 1:1 from native ETH, or mint and stake directly into sfrxETH in one transaction | Wallet (for writes) |
 | [Lido](/plugins/lido) | Protocol | Wrap/unwrap stETH to wstETH, exchange rates, balances across Ethereum, Base, Sepolia | Wallet (for writes) |
 | [Morpho](/plugins/morpho) | Protocol | Supply, borrow, repay, liquidate, collateral management, position tracking, market monitoring | Wallet (for writes) |
 | [Pendle](/plugins/pendle) | Protocol | Yield tokenization, market data, PT/YT/SY balances, mint/redeem | Wallet (for writes) |
 | [Rocket Pool](/plugins/rocket-pool) | Protocol | rETH exchange rate, balances, total supply, ETH deposits and withdrawals | Wallet (for writes) |
-| [Sky](/plugins/sky) | Protocol | USDS savings, token balances, approvals, DAI/MKR converters | Wallet (for writes) |
+| [Sky](/plugins/sky) | Protocol | USDS savings and staking vaults, token balances, approvals, DAI/MKR converters | Wallet (for writes) |
 | [Spark](/plugins/spark) | Protocol | Lending, borrowing, sDAI savings, health factor monitoring | Wallet (for writes) |
+| [Superfluid](/plugins/superfluid) | Protocol | Open/update/close money streams, distribution pools, SuperToken wrap/unwrap | Wallet (for writes) |
 | [Uniswap](/plugins/uniswap) | Protocol | Pool discovery, LP position details, position NFT management | Wallet (for writes) |
+| [Wrapped](/plugins/wrapped) | Protocol | Wrap/unwrap a chain's native token into its wrapped ERC-20 form | Wallet (for writes) |
 | [Yearn V3](/plugins/yearn-v3) | Protocol | ERC-4626 yield vaults, strategy monitoring, profit tracking | Wallet (for writes) |
 | [Discord](/plugins/discord) | Notifications | Send messages to channels | Webhook URL |
+| [Slack](/plugins/slack) | Notifications | Send messages to channels | Bot token |
 | [Telegram](/plugins/telegram) | Notifications | Send messages to chats | Bot token |
 | [SendGrid](/plugins/sendgrid) | Notifications | Send emails | API key |
 | [Webhook](/plugins/webhook) | Integrations | Send HTTP requests to external services | None |
@@ -49,7 +55,7 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 
 ### Blockchain (Web3)
 
-Core on-chain operations: reading balances, calling smart contracts, transferring tokens, and security analysis. Read-only actions work without a wallet. Write actions require a connected Para wallet.
+Core on-chain operations: reading balances, calling smart contracts, transferring tokens, and security analysis. Read-only actions work without a wallet. Write actions require a connected Turnkey wallet.
 
 ### Code
 
@@ -65,7 +71,7 @@ Security-focused actions for transaction analysis, risk assessment, and Safe mul
 
 ### Notifications
 
-Send alerts and messages through Discord, Telegram, email, and webhooks. Typically used as the final step in monitoring workflows to notify your team when conditions are met.
+Send alerts and messages through Discord, Slack, Telegram, email, and webhooks. Typically used as the final step in monitoring workflows to notify your team when conditions are met.
 
 ### Integrations
 

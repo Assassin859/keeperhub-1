@@ -32,7 +32,7 @@ Both are functional but require you to provision and operate the infrastructure 
 | **Monitoring** | Visual workflow builder, AI-assisted creation | YAML config files |
 | **Alerting** | Slack, Discord, Email, Telegram, Webhook | Slack, Discord, Email, Webhook, Scripts |
 | **Transaction execution** | Gas optimization, retry with nonce management | Basic gas estimation, manual retry config |
-| **Key management** | Non-custodial Para wallets (MPC) | Local keystore, AWS KMS, GCP KMS, Vault, Turnkey |
+| **Key management** | Non-custodial Turnkey wallets (secure enclave) | Local keystore, AWS KMS, GCP KMS, Vault, Turnkey |
 | **Multi-chain** | EVM chains | EVM, Solana, Stellar |
 | **SDK migration** | REST API + workflow builder | Replace `defender-sdk` with `relayer-sdk` |
 | **License** | Commercial (open-source core) | AGPL-3.0 |
@@ -49,7 +49,7 @@ Transaction submission, signing, and nonce management. KeeperHub adds gas optimi
 
 ### Defender Actions --> Workflow Automation
 
-Defender Actions ran custom serverless scripts. In KeeperHub, these become visual workflows -- built through the canvas or generated with the AI assistant. The [Workflow Hub](/hub) has templates for common patterns like balance monitoring, contract execution, and multi-step alerting.
+Defender Actions ran custom serverless scripts. In KeeperHub, these become visual workflows -- built through the canvas or generated with the AI assistant. The [Workflow Hub](/workflows/hub) has templates for common patterns like balance monitoring, contract execution, and multi-step alerting.
 
 ### Additional Capabilities
 
@@ -71,7 +71,7 @@ Create your account, configure chain connections, and set up your wallet for tra
 
 ### 3. Recreate Your Workflows
 
-Use the workflow builder or AI assistant to recreate your automations. Check the [Workflow Hub](/hub) for templates that match your existing patterns.
+Use the workflow builder or AI assistant to recreate your automations. Check the [Workflow Hub](/workflows/hub) for templates that match your existing patterns.
 
 ### 4. Run in Parallel
 

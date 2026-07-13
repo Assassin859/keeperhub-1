@@ -45,25 +45,34 @@ Note: OAuth users cannot update email or name.
 }
 ```
 
-## Get User Wallet
+## Get Wallet
 
 ```http
 GET /api/user/wallet
 ```
 
-Returns the user's Para wallet information.
+Returns the Turnkey wallet for the authenticated user's active organization. The wallet is organization-scoped, not per-user.
 
 ### Response
 
 ```json
 {
-  "address": "0x...",
-  "balances": {
-    "1": "1.5",
-    "11155111": "0.1"
-  }
+  "hasWallet": true,
+  "id": "wallet_...",
+  "canExportKey": true,
+  "isOwner": true,
+  "walletAddress": "0x...",
+  "walletId": "turnkey_wallet_...",
+  "email": "wallet@example.com",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "organizationId": "org_...",
+  "isActive": true
 }
 ```
+
+When the organization has no wallet yet, the response is `{ "hasWallet": false, "message": "No wallet found for this organization" }`.
+
+Balances are not included here. Fetch them from `GET /api/user/wallet/balances`.
 
 ## RPC Preferences
 

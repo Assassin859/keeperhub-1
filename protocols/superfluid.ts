@@ -1,5 +1,10 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  fromSetupOutput,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 
 // KEEP-458 protocol-coverage test data. Ethereum mainnet (fork mode) uses
 // the canonical DAI / DAIx pair: DAIx resolved from the on-chain Superfluid
@@ -34,20 +39,27 @@ const TEST_DATA: ProtocolTestData = {
         },
       ],
     },
-    // GDA pool actions reference a zero-address placeholder pool (we don't
-    // capture the create-pool tx receipt to extract the deployed address).
-    // Skip on-chain execution; the seeder still surfaces them in the
-    // dashboard for discoverability. Output-to-binding piping would unlock
-    // them. Unlike the retired Sepolia fixtures, create-pool and
-    // grant-flow-operator run here: their old skip reason (cold-contract
-    // fetches through the throttled public Sepolia upstream) does not
-    // apply to the mainnet fork, and both were verified green on a fork
-    // 2026-07-07.
-    skipped: {
-      "update-member-units": "pool dependency; needs real pool address",
-      distribute: "pool dependency; needs real pool address",
-      "distribute-flow": "pool dependency; needs real pool address",
-      "connect-pool": "pool dependency; needs real pool address",
+    // GDA pool actions bind the pool the create-pool action deploys, piped in
+    // via fromSetupOutput (see `captures` below). The fork simulation tier
+    // predicts that address (eth_call of create-pool's calldata returns
+    // (bool, address pool)) and runs these actions against it. The app
+    // coverage tier cannot: its write step returns `result: undefined` with
+    // no logs, so create-pool's pool address is not queryable from
+    // workflow_execution_logs.output_raw the way a read's structured result
+    // is - surfacing it needs an executor change. Until then these stay in
+    // skippedCoverage (app tier skips, fork tier runs).
+    captures: {
+      "create-pool": { kind: "gda-pool", as: "create-pool", field: "pool" },
+    },
+    skippedCoverage: {
+      "update-member-units":
+        "app tier cannot capture create-pool's pool address (executor write output); piped and run in the fork tier",
+      distribute:
+        "app tier cannot capture create-pool's pool address (executor write output); piped and run in the fork tier",
+      "distribute-flow":
+        "app tier cannot capture create-pool's pool address (executor write output); piped and run in the fork tier",
+      "connect-pool":
+        "app tier cannot capture create-pool's pool address (executor write output); piped and run in the fork tier",
     },
     actions: {
       // Reads. get-flow reads the wallet -> sink flow the write fixtures
@@ -107,9 +119,11 @@ const TEST_DATA: ProtocolTestData = {
         contractAddress: "DAIX",
         amount: amount("DAIX", "1"),
       },
-      // GDA pool actions. No pool is provisioned, so the `pool` address is
-      // the zero placeholder -- the seeded workflow loads but on-chain
-      // execution reverts until a pool is created (needs output piping).
+      // GDA pool actions. `pool` is piped from the create-pool action via
+      // fromSetupOutput: the fork tier captures the deployed pool address
+      // (see `captures`) and resolves it here. On the app tier these are in
+      // skippedCoverage, so the binding resolves to an unused placeholder and
+      // is never executed.
       "create-pool": {
         token: "DAIX",
         admin: wallet(),
@@ -118,7 +132,7 @@ const TEST_DATA: ProtocolTestData = {
         // those up automatically.
       },
       "update-member-units": {
-        pool: "0x0000000000000000000000000000000000000000",
+        pool: fromSetupOutput("create-pool", "pool"),
         member: wallet(),
         units: "1",
         userData: "0x",
@@ -126,19 +140,19 @@ const TEST_DATA: ProtocolTestData = {
       distribute: {
         token: "DAIX",
         from: wallet(),
-        pool: "0x0000000000000000000000000000000000000000",
+        pool: fromSetupOutput("create-pool", "pool"),
         amount: amount("DAIX", "1"),
         userData: "0x",
       },
       "distribute-flow": {
         token: "DAIX",
         from: wallet(),
-        pool: "0x0000000000000000000000000000000000000000",
+        pool: fromSetupOutput("create-pool", "pool"),
         flowRate: "1",
         userData: "0x",
       },
       "connect-pool": {
-        pool: "0x0000000000000000000000000000000000000000",
+        pool: fromSetupOutput("create-pool", "pool"),
         userData: "0x",
       },
       // CFA flow-operator permissions: grant the burn address full permissions
@@ -177,9 +191,18 @@ const TEST_DATA: ProtocolTestData = {
       "create-flow": [
         { read: "get-flow", expect: { field: "flowRate", nonZero: true } },
       ],
+      // update-flow runs after create-flow and before delete-flow, so the
+      // flow is still open with a nonzero rate when its probe reads.
+      "update-flow": [
+        { read: "get-flow", expect: { field: "flowRate", nonZero: true } },
+      ],
       "delete-flow": [
         { read: "get-flow", expect: { field: "flowRate", equals: "0" } },
       ],
+      // wrap upgrades DAI into DAIx, crediting the super-token balance (the
+      // read has no field - the balance output is unnamed). nonZero is
+      // history-safe: the balance only grows across runs.
+      wrap: [{ read: "get-super-token-balance", expect: { nonZero: true } }],
     },
   },
 };

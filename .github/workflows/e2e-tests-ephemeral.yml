@@ -306,17 +306,62 @@ jobs:
         env:
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
 
+      # Pinned-block fork for protocols whose fixtures bind state
+      # recorded at a specific block (testData.pinnedBlock; pendle - its
+      # markets expire, so live-head bindings rot). The pin is resolved
+      # from the registry via scripts/protocol-pinned-block.ts so a
+      # fixture refresh touches only the protocol's testData. A fixed pin
+      # needs an upstream serving historical state (public endpoints
+      # refuse state reads even a few hundred blocks behind head), so
+      # without the archive secret this step no-ops and the pinned
+      # protocols self-skip (chains.test.ts gates each pinned suite on
+      # PROTOCOL_SIM_RPC_1_PINNED, which stays empty).
+      - name: Start pinned-block anvil fork
+        id: pinned-fork
+        env:
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+        run: |
+          if [ -z "$ANVIL_FORK_MAINNET_URL" ]; then
+            echo "ANVIL_FORK_MAINNET_URL not set; pinned-block fixtures need an archive upstream - pinned protocols (pendle) will self-skip"
+            exit 0
+          fi
+          pin=$(pnpm tsx scripts/protocol-pinned-block.ts 1)
+          docker run -d --name keeperhub-test-anvil-fork-mainnet-pinned -p 8549:8545 \
+            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --host 0.0.0.0 \
+            --fork-url "$ANVIL_FORK_MAINNET_URL" \
+            --fork-block-number "$pin" \
+            --chain-id 1 --block-time 1
+          retries=0
+          until curl -sf -X POST http://localhost:8549 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0x1"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "pinned anvil mainnet fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-mainnet-pinned || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "pinned mainnet fork at block ${pin} on :8549"
+          echo "rpc=http://localhost:8549" >> "$GITHUB_OUTPUT"
+
       # Fail in seconds on a dead fork or upstream instead of as vitest
       # timeouts. eth_getBalance of the beacon deposit contract forces a
       # pinned-block upstream fetch: the address is untouched by local
       # test state and never referenced by the sweep, so it cannot be
       # served from the mounted cache - the probe validates the archive
-      # upstream at the pin even on a cache-loaded fork.
+      # upstream at the pin even on a cache-loaded fork. The pinned fork
+      # line is present only when that fork started; the same probe
+      # there validates the archive upstream serves state at the fixture
+      # pin.
       - name: Fork health probe
         uses: ./.github/actions/probe-forks
         with:
           forks: |
             mainnet|http://localhost:8548|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa
+            ${{ steps.pinned-fork.outputs.rpc != '' && 'mainnet-pinned|http://localhost:8549|0x1|0x00000000219ab540356cBB839Cbe05303d7705Fa' || '' }}
 
       - name: Run Tier 1 simulations (chain 1)
         run: |
@@ -329,6 +374,103 @@ jobs:
           pnpm tsx scripts/protocol-coverage-floor.ts sim-results.json 150
         env:
           PROTOCOL_SIM_RPC_1: http://localhost:8548
+          PROTOCOL_SIM_RPC_1_PINNED: ${{ steps.pinned-fork.outputs.rpc }}
+
+  # Tier 1 fork simulations on the L2s (Base 8453, Arbitrum One 42161), one
+  # matrix leg per chain so the two sweeps run in parallel on separate
+  # runners and neither extends the chain-1 tier1 budget. Each leg forks its
+  # chain from a public upstream - simulations read forked state and never
+  # mine against the upstream, so a public endpoint is sufficient (override
+  # with the per-chain ANVIL_FORK_*_URL secret for a private one) - then runs
+  # the sweep with only that chain's PROTOCOL_SIM_RPC_<id> set, so
+  # chains.test.ts executes exactly that chain and the executed-test floor is
+  # per-chain. See specs/protocol-coverage-methodology.md.
+  tier1-simulations-l2:
+    needs: should-run
+    if: needs.should-run.outputs.run-e2e == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    strategy:
+      # One chain's flaky public upstream must not cancel the other leg.
+      fail-fast: false
+      matrix:
+        include:
+          - name: base
+            chain_id: "8453"
+            chain_hex: "0x2105"
+            default_upstream: https://base-rpc.publicnode.com
+            # Floor 15: the Base sweep executes chainlink's price-feed reads
+            # (19) plus ajna's Base reads; below 15 means chainlink is
+            # self-skipping or lost its bindings.
+            floor: "15"
+          - name: arbitrum
+            chain_id: "42161"
+            chain_hex: "0xa4b1"
+            default_upstream: https://arbitrum-one-rpc.publicnode.com
+            # Floor 12: the Arbitrum sweep executes chainlink's price-feed
+            # reads (21, including BTC/ETH); below 12 means self-skipping.
+            floor: "12"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Start anvil ${{ matrix.name }} fork
+        env:
+          ANVIL_FORK_BASE_URL: ${{ secrets.ANVIL_FORK_BASE_URL }}
+          ANVIL_FORK_ARBITRUM_URL: ${{ secrets.ANVIL_FORK_ARBITRUM_URL }}
+        run: |
+          case "${{ matrix.chain_id }}" in
+            8453) UPSTREAM="${ANVIL_FORK_BASE_URL:-${{ matrix.default_upstream }}}" ;;
+            42161) UPSTREAM="${ANVIL_FORK_ARBITRUM_URL:-${{ matrix.default_upstream }}}" ;;
+            *) echo "unknown chain ${{ matrix.chain_id }}"; exit 1 ;;
+          esac
+          # Pin a few blocks behind head so a node behind a load-balanced
+          # public upstream already has the block (bash arithmetic parses the
+          # 0x head). See scripts/protocol-local.sh start_fork.
+          HEAD=$(curl -sf -X POST -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+            "$UPSTREAM" | grep -oE '"result":"0x[0-9a-f]+"' | cut -d'"' -f4) || true
+          PIN_ARGS=""
+          if [ -n "$HEAD" ]; then
+            PIN=$((HEAD - 12))
+            PIN_ARGS="--fork-block-number $PIN"
+          fi
+          docker run -d --name keeperhub-test-anvil-fork-${{ matrix.name }} -p 8545:8545 \
+            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --host 0.0.0.0 --fork-url "$UPSTREAM" $PIN_ARGS \
+            --chain-id ${{ matrix.chain_id }} --block-time 1
+          retries=0
+          until curl -sf -X POST http://localhost:8545 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"${{ matrix.chain_hex }}"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil ${{ matrix.name }} fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork-${{ matrix.name }} || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "anvil ${{ matrix.name }} fork ready on localhost:8545"
+
+      - name: Run Tier 1 simulations (${{ matrix.name }})
+        run: |
+          pnpm vitest run tests/e2e/vitest/protocol-simulation \
+            --reporter=default --reporter=json --outputFile=sim-results-${{ matrix.name }}.json
+          pnpm tsx scripts/protocol-coverage-floor.ts \
+            sim-results-${{ matrix.name }}.json ${{ matrix.floor }}
+        env:
+          # Only the matrix leg's chain gets an RPC; chains.test.ts skips
+          # every chain whose PROTOCOL_SIM_RPC_<id> is empty, so each leg
+          # runs exactly its one chain and the floor stays per-chain.
+          PROTOCOL_SIM_RPC_8453: ${{ matrix.chain_id == '8453' && 'http://localhost:8545' || '' }}
+          PROTOCOL_SIM_RPC_42161: ${{ matrix.chain_id == '42161' && 'http://localhost:8545' || '' }}
 
   # Enablement is decided by the should-run job: the environment-level
   # ENABLE_E2E_EPHEMERAL_TESTS variable is the kill switch, plus the
@@ -606,10 +748,30 @@ jobs:
     # Same gate as e2e-vitest-ephemeral: build-app skipped (Docker path)
     # or succeeded admits this job; failed or cancelled blocks it.
     if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' && (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') }}
-    # Suites run concurrently with 10-minute setup hooks (cold archive
-    # fan-outs on a fresh fork); 45 min bounds a hung run without a
-    # 6-hour default runaway.
-    timeout-minutes: 45
+    # The suites share one anvil mainnet fork and one wallet, so they run
+    # serially within a shard (vitest fileParallelism is off). The full sweep
+    # is ~50 min serial and does not fit one runner, so the protocols are
+    # split across shards balanced by measured runtime, keeping the two
+    # ~10-minute suites (pendle, superfluid) in different shards. The
+    # protocol-coverage-floor job merges the shard results and enforces the
+    # executed floor + suite completeness across the whole sweep. Adding a
+    # protocol means adding it to a shard below; the completeness guard fails
+    # the run if a suite is left unassigned. 25 min bounds a hung shard.
+    timeout-minutes: 25
+    strategy:
+      # One slow or flaky shard must not cancel the others, and the floor
+      # job needs every shard's results to judge the sweep.
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            suites: superfluid/ethereum chronicle/ethereum rocket-pool/ethereum uniswap/ethereum
+          - shard: 2
+            suites: pendle/ethereum safe/ethereum chainlink/ethereum wrapped/ethereum
+          - shard: 3
+            suites: ethena/ethereum curve/ethereum frax-ether-v2/ethereum spark/ethereum
+          - shard: 4
+            suites: aave-v3/ethereum lido/ethereum sky/ethereum yearn/ethereum ajna/base morpho/ethereum
     runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && inputs.caller_event != 'pull_request' && 'arc-keeperhub-build' || 'ubuntu-latest' }}
     # Always staging: e2e validates against test credentials, never prod.
     environment: staging
@@ -808,33 +970,19 @@ jobs:
           # suites never depend on step ordering for correct RPCs.
           PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d keeperhub_test \
             -c "UPDATE chains SET default_primary_rpc = 'http://localhost:8548', default_fallback_rpc = NULL WHERE chain_id = 1"
-          pnpm vitest run tests/e2e/vitest/protocol-coverage \
-            --reporter=default --reporter=json --outputFile=protocol-results.json
-          # Executed-test floor: every suite self-skips when its infra
-          # gates are absent, so a green exit code alone can mean "ran
-          # nothing" (that is how coverage silently collapsed to ~35
-          # executed tests). Fails when executed tests drop below the
-          # floor; publishes run/skip counts to the step summary.
-          #
-          # Derivation (2026-07-07, from planPhaseFixtures - see
-          # specs/protocol-coverage-methodology.md). Representatives mode
-          # executes exactly one action per runnable (suite, phase) pair:
-          # 21 pairs across the 16 active mainnet-fork suites (morpho is
-          # hard-skipped; safe/chronicle/sky and others have no runnable
-          # write) plus ajna's single read pair = 22. Full mode executes
-          # every runnable action: 207 on the mainnet suites + 25 ajna
-          # reads = 232; floor 200 leaves margin for individual fixtures
-          # moving to documented skips without a same-PR floor bump.
-          # Without ANVIL_FORK_MAINNET_URL every mainnet suite self-skips
-          # and only ajna runs (25 reads, 1 representative), so the floor
-          # drops with the gate instead of failing the job spuriously.
-          if [ -n "${ANVIL_FORK_MAINNET_URL:-}" ]; then
-            if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=22; else FLOOR=200; fi
-          else
-            if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=1; else FLOOR=20; fi
-          fi
-          pnpm tsx scripts/protocol-coverage-floor.ts protocol-results.json "$FLOOR"
+          # Run only this shard's suites (assigned in the matrix above). The
+          # executed floor and suite completeness are enforced across the
+          # whole sweep by the protocol-coverage-floor job, which merges
+          # every shard's JSON, since a single shard cannot judge either.
+          SUITES=""
+          for suite in $SUITE_DIRS; do
+            SUITES="$SUITES tests/e2e/vitest/protocol-coverage/$suite/coverage.test.ts"
+          done
+          pnpm vitest run $SUITES \
+            --reporter=default --reporter=json --outputFile="protocol-results-${SHARD}.json"
         env:
+          SHARD: ${{ matrix.shard }}
+          SUITE_DIRS: ${{ matrix.suites }}
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           WORKFLOW_TARGET_WORLD: "@workflow/world-postgres"
@@ -904,16 +1052,87 @@ jobs:
           docker rm -f keeperhub-app || true
           rm -f /tmp/keeperhub-app.env
 
-      - name: Upload test results
+      # Always upload this shard's JSON so protocol-coverage-floor can merge
+      # it, even when a shard fails: the floor and completeness guards need
+      # every shard's results to judge the sweep.
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: protocol-coverage-shard-${{ matrix.shard }}
+          path: protocol-results-${{ matrix.shard }}.json
+          retention-days: 7
+
+      - name: Upload debug bundle
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: protocol-coverage-results
+          name: protocol-coverage-debug-${{ matrix.shard }}
           path: |
-            protocol-results.json
+            protocol-results-${{ matrix.shard }}.json
             test-results/
             coverage/
           retention-days: 7
+
+  # Merge the sharded protocol-coverage results and enforce the sweep-wide
+  # guards: the executed-test floor (suites self-skip when infra gates are
+  # absent, so a green shard can mean "ran nothing") and suite completeness
+  # (a suite left out of every shard's list would silently vanish). Runs only
+  # when all shards succeed; a shard's own test failures fail the run
+  # directly via that shard's non-zero vitest exit.
+  protocol-coverage-floor:
+    needs: [should-run, protocol-coverage-ephemeral]
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Download shard results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: protocol-coverage-shard-*
+          path: shard-results
+          merge-multiple: true
+
+      - name: Enforce floor and suite completeness
+        env:
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+          PROTOCOL_E2E_REPRESENTATIVES: ${{ (inputs.caller_event || github.event_name) == 'pull_request' && '1' || '' }}
+        run: |
+          # Suite completeness first: a coverage.test.ts left out of every
+          # shard's list would silently vanish from the sweep.
+          pnpm tsx scripts/protocol-coverage-completeness.ts shard-results/*.json
+          # Executed-test floor: every suite self-skips when its infra gates
+          # are absent, so a green run can mean "ran nothing" (that is how
+          # coverage silently collapsed to ~35 executed tests). Fails when
+          # merged executed tests drop below the floor; publishes run/skip
+          # counts to the step summary.
+          #
+          # Derivation (2026-07-07, from planPhaseFixtures - see
+          # specs/protocol-coverage-methodology.md). Representatives mode
+          # executes exactly one action per runnable (suite, phase) pair:
+          # 21 pairs across the 16 active mainnet-fork suites (morpho is
+          # hard-skipped; safe/chronicle/sky and others have no runnable
+          # write) plus ajna's single read pair = 22. Full mode executes
+          # every runnable action: 207 on the mainnet suites + 25 ajna
+          # reads = 232; floor 200 leaves margin for individual fixtures
+          # moving to documented skips without a same-PR floor bump.
+          # Without ANVIL_FORK_MAINNET_URL every mainnet suite self-skips
+          # and only ajna runs (25 reads, 1 representative), so the floor
+          # drops with the gate instead of failing the job spuriously.
+          if [ -n "${ANVIL_FORK_MAINNET_URL:-}" ]; then
+            if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=22; else FLOOR=200; fi
+          else
+            if [ "${PROTOCOL_E2E_REPRESENTATIVES:-}" = "1" ]; then FLOOR=1; else FLOOR=20; fi
+          fi
+          pnpm tsx scripts/protocol-coverage-floor.ts shard-results/*.json "$FLOOR"
 
   # Playwright E2E tests (browser-based, single worker, serial within the suite).
   # Runs in parallel with the Vitest job (each has its own ephemeral Postgres).

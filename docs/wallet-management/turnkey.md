@@ -5,11 +5,11 @@ description: "How KeeperHub integrates with Turnkey for secure enclave wallet ma
 
 # Turnkey Integration
 
-Turnkey is one of the wallet providers available in KeeperHub. It uses secure enclaves to protect private keys and supports key export for advanced users.
+Turnkey is the wallet provider in KeeperHub. It uses secure enclaves to protect private keys and supports key export for advanced users.
 
 ## Creating a Turnkey Wallet
 
-In the Organization Wallet dialog, select **Turnkey** as your provider and enter the email address for wallet creation. The wallet will be shared across your organization.
+Your organization's Turnkey wallet is provisioned automatically once your email is verified. The wallet is shared across your organization, and its address is visible in the Wallet tab.
 
 ## How It Works
 
@@ -41,7 +41,7 @@ The EOA plays two distinct roles in a workflow write. Keep them separate when to
 
 1. **Gas (always the EOA).** Every workflow transaction is signed and broadcast by the EOA, and the gas fee is paid from the EOA's native balance. This is true whether or not you have a Safe configured as the Sender.
 
-2. **Transactable balance (the active Sender).** If you have a [Safe](/docs/wallet-management/safe) deployed and marked as the Sender on a chain, the Safe's balance is what gets debited when the workflow transfers a native token, approves or transfers an ERC20, swaps, or deposits into a protocol. If no Safe is the Sender, the EOA's own token balance is used instead.
+2. **Transactable balance (the active Sender).** If you have a [Safe](/wallet-management/safe) deployed and marked as the Sender on a chain, the Safe's balance is what gets debited when the workflow transfers a native token, approves or transfers an ERC20, swaps, or deposits into a protocol. If no Safe is the Sender, the EOA's own token balance is used instead.
 
 The most common surprise: you turn on a Safe Sender, fund the Safe with USDC, and the workflow fails because the EOA still has no ETH for gas. Or vice versa: you fund the EOA but the Safe is the Sender, so the EOA's USDC sits idle while the swap fails for insufficient Safe balance.
 
@@ -59,11 +59,10 @@ Balance updates are reflected in the KeeperHub interface and displayed per netwo
 
 ## Network Support
 
-- Ethereum Mainnet
-- Sepolia Testnet
+Turnkey wallets work across all EVM chains KeeperHub supports, including Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, and Avalanche, plus their testnets. See the live [Chains](/api/chains) list for the current set.
 
-## When to Choose Turnkey
+## Capabilities
 
-- You want the option to export private keys
-- You prefer hardware enclave security model
-- Your organization requires key portability
+- Private key export whenever you need portability
+- Hardware enclave security model
+- Key portability for your organization

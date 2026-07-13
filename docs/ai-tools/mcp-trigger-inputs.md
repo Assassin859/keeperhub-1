@@ -5,7 +5,7 @@ description: "Reference for the four trigger input discriminants on per-workflow
 
 # MCP Trigger Inputs
 
-Every KeeperHub per-workflow MCP tool (`call_workflow_<slug>`) advertises a typed input schema based on the workflow's trigger. Use the JSON shape that matches the workflow's trigger type — your MCP client reads the schema directly from the tool definition and your agent fills it in.
+Every KeeperHub per-workflow MCP tool (registered under the workflow's listed slug) advertises a typed input schema based on the workflow's trigger. Use the JSON shape that matches the workflow's trigger type. Your MCP client reads the schema directly from the tool definition and your agent fills it in.
 
 ## Discriminant overview
 

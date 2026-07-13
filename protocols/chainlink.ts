@@ -1,6 +1,12 @@
 import type { AbiFunctionOverride } from "@/lib/protocol-registry";
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { contract, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  type ActionInputBindings,
+  contract,
+  type OutputExpectation,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 import ccipBnmAbi from "./abis/ccip-bnm.json";
 import ccipErc20Abi from "./abis/ccip-erc20.json";
 import ccipRouterAbi from "./abis/ccip-router.json";
@@ -8,6 +14,116 @@ import ccipRouterAbi from "./abis/ccip-router.json";
 // The generic feed contract is userSpecifiedAddress; bind the canonical
 // mainnet ETH/USD aggregator proxy (verified 2026-07-03 via eth_call).
 const MAINNET_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419";
+// L2 ETH/USD aggregator proxies for the custom-feed read bindings; match
+// the ethUsd contract addresses below (decimals 8, latestRoundData live,
+// verified via eth_call against public Base/Arbitrum nodes 2026-07-09).
+const BASE_ETH_USD_FEED = "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70";
+const ARBITRUM_ETH_USD_FEED = "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612";
+
+// CCIP actions are skipped on the L2 read sweeps: the fee/send actions need
+// a fully-formed EVM2AnyMessage struct and the token-surface reads need a
+// provisioned bridge/fee token position, neither of which the read-only
+// multi-chain sweep sets up.
+const CCIP_L2_SKIPS: Record<string, string> = {
+  "ccip-check-bridge-balance":
+    "CCIP token surface not provisioned for the multi-chain read sweep",
+  "ccip-check-bridge-allowance":
+    "CCIP token surface not provisioned for the multi-chain read sweep",
+  "ccip-check-fee-balance":
+    "CCIP token surface not provisioned for the multi-chain read sweep",
+  "ccip-check-fee-allowance":
+    "CCIP token surface not provisioned for the multi-chain read sweep",
+  "ccip-get-fee":
+    "requires CCIP message struct with destination chain and encoded data",
+  "ccip-send":
+    "requires CCIP message struct, bridge token balance, and fee token balance",
+  "ccip-bnm-drip": "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
+  "ccip-approve-bridge-token": "write action requiring bridge token balance",
+  "ccip-approve-fee-token": "write action requiring fee token balance",
+  "get-round-data": "requires a valid historical round ID",
+};
+
+// L2 action bindings, identical to the mainnet set except the custom-feed
+// reads bind the chain's own ETH/USD proxy. CCIP + historical-round actions
+// carry the same bindings as mainnet but self-skip via CCIP_L2_SKIPS; the
+// price-feed reads run.
+function l2FeedActions(feed: string): Record<string, ActionInputBindings> {
+  return {
+    "eth-usd-latest-round-data": {},
+    "eth-usd-decimals": {},
+    "btc-usd-latest-round-data": {},
+    "btc-usd-decimals": {},
+    "link-usd-latest-round-data": {},
+    "link-usd-decimals": {},
+    "usdc-usd-latest-round-data": {},
+    "usdc-usd-decimals": {},
+    "dai-usd-latest-round-data": {},
+    "dai-usd-decimals": {},
+    "usdt-usd-latest-round-data": {},
+    "usdt-usd-decimals": {},
+    "link-eth-latest-round-data": {},
+    "link-eth-decimals": {},
+    "btc-eth-latest-round-data": {},
+    "btc-eth-decimals": {},
+    "latest-round-data": { contractAddress: feed },
+    "latest-answer": { contractAddress: feed },
+    decimals: { contractAddress: feed },
+    description: { contractAddress: feed },
+    version: { contractAddress: feed },
+    "ccip-check-bridge-balance": { account: wallet() },
+    "ccip-check-bridge-allowance": {
+      owner: wallet(),
+      spender: contract("ccipRouter"),
+    },
+    "ccip-check-fee-balance": { account: wallet() },
+    "ccip-check-fee-allowance": {
+      owner: wallet(),
+      spender: contract("ccipRouter"),
+    },
+    "get-round-data": {},
+    "ccip-get-fee": { receiver: wallet(), feeToken: wallet() },
+    "ccip-send": { receiver: wallet(), feeToken: wallet() },
+    "ccip-bnm-drip": { to: wallet() },
+    "ccip-approve-bridge-token": { spender: contract("ccipRouter") },
+    "ccip-approve-fee-token": { spender: contract("ccipRouter") },
+  };
+}
+
+// Price-feed read oracles, parallel to l2FeedActions. Every feed's
+// latest-round-data must decode a live, nonzero answer (the field is the
+// named `answer` output of the AggregatorV3 tuple); the custom ETH/USD proxy
+// adds latest-answer (nonzero), description (nonempty), and version (nonzero),
+// whose outputs are unnamed so those assertions carry no field. decimals is
+// deliberately not asserted: a feed's decimal count is a static config that
+// varies per chain and feed (Base BTC/USD and USDC/USD report 18, not 8), so
+// pinning it adds fragility for little signal - the nonzero answer is the real
+// proof the feed decoded. btcEth/description are optional because some L2s
+// lack those surfaces (see the per-chain skips).
+function feedExpectations(opts: {
+  btcEth: boolean;
+  description: boolean;
+}): Record<string, OutputExpectation[]> {
+  const answer: OutputExpectation[] = [{ field: "answer", nonZero: true }];
+  const e: Record<string, OutputExpectation[]> = {
+    "eth-usd-latest-round-data": answer,
+    "btc-usd-latest-round-data": answer,
+    "link-usd-latest-round-data": answer,
+    "usdc-usd-latest-round-data": answer,
+    "dai-usd-latest-round-data": answer,
+    "usdt-usd-latest-round-data": answer,
+    "link-eth-latest-round-data": answer,
+    "latest-round-data": answer,
+    "latest-answer": [{ nonZero: true }],
+    version: [{ nonZero: true }],
+  };
+  if (opts.btcEth) {
+    e["btc-eth-latest-round-data"] = answer;
+  }
+  if (opts.description) {
+    e.description = [{ notEmpty: true }];
+  }
+  return e;
+}
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -16,6 +132,7 @@ const TEST_DATA: ProtocolTestData = {
       requiredTokens: [],
       approvals: [],
     },
+    expectations: feedExpectations({ btcEth: true, description: true }),
     actions: {
       "eth-usd-latest-round-data": {},
       "eth-usd-decimals": {},
@@ -74,6 +191,45 @@ const TEST_DATA: ProtocolTestData = {
       "ccip-approve-bridge-token":
         "write action requiring bridge token balance",
       "ccip-approve-fee-token": "write action requiring fee token balance",
+    },
+  },
+  // Base: Chainlink price-feed reads. Every named feed except BTC/ETH is
+  // deployed on Base; CCIP + historical-round actions self-skip (see
+  // CCIP_L2_SKIPS). Runs on an anvil Base fork in Tier 1 (gated on
+  // PROTOCOL_SIM_RPC_8453).
+  "8453": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    expectations: feedExpectations({ btcEth: false, description: true }),
+    actions: l2FeedActions(BASE_ETH_USD_FEED),
+    skipped: {
+      "btc-eth-latest-round-data": "no Chainlink BTC/ETH feed deployed on Base",
+      "btc-eth-decimals": "no Chainlink BTC/ETH feed deployed on Base",
+      ...CCIP_L2_SKIPS,
+    },
+  },
+  // Arbitrum One: same price-feed read sweep as Base, plus the BTC/ETH feed
+  // (deployed on Arbitrum). Runs on an anvil Arbitrum fork in Tier 1 (gated
+  // on PROTOCOL_SIM_RPC_42161).
+  "42161": {
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [],
+      approvals: [],
+    },
+    expectations: feedExpectations({ btcEth: true, description: false }),
+    actions: l2FeedActions(ARBITRUM_ETH_USD_FEED),
+    skipped: {
+      // description() reverts on the anvil Arbitrum fork (the proxy's
+      // dynamic-string read cold-fetches state the public upstream will
+      // not serve at the pinned block; it works live and the fixed-size
+      // reads on the same proxy pass). Not core price-feed coverage.
+      description:
+        "Arbitrum ETH/USD proxy description() reverts under fork cold-fetch",
+      ...CCIP_L2_SKIPS,
     },
   },
 };

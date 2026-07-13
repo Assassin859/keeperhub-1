@@ -130,6 +130,15 @@ env:
   JOB_ACTIVE_DEADLINE:
     type: kv
     value: "300"
+  # Ephemeral-storage guardrail for runner Job pods (mirrored by the runner's
+  # /tmp emptyDir sizeLimit). Runners use ~2 MiB each, so the 1Gi limit is a
+  # runaway-/tmp guard. Retune if a PR workflow legitimately needs a larger /tmp.
+  RUNNER_EPHEMERAL_STORAGE_REQUEST:
+    type: kv
+    value: "64Mi"
+  RUNNER_EPHEMERAL_STORAGE_LIMIT:
+    type: kv
+    value: "1Gi"
   EXECUTION_MODE:
     type: kv
     value: "isolated"
