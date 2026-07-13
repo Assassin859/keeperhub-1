@@ -14,7 +14,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { BILLING_ALERTS, BILLING_API } from "@/lib/billing/constants";
-import { PLANS, type PlanName } from "@/lib/billing/plans";
+import {
+  type BillingInterval,
+  PLANS,
+  type PlanName,
+  parseTierKey,
+  type TierKey,
+} from "@/lib/billing/plans";
 import {
   SPONSORSHIP_MAINNET_NAMES,
   SPONSORSHIP_TESTNET_NAMES,
@@ -43,6 +49,7 @@ type SubscriptionData = {
   subscription: {
     plan: string;
     tier: string | null;
+    interval: string | null;
     status: string;
     currentPeriodStart: string | null;
     currentPeriodEnd: string | null;
@@ -294,6 +301,35 @@ function StartTrialButton({
       <Sparkles className="size-3.5" />
       Start free trial
     </button>
+  );
+}
+
+// Shown in the Current Plan header while trialing. Opens the trial modal in
+// update mode so the user can switch Pro tiers without losing the trial.
+function ManageTrialButton({
+  currentTier,
+  currentInterval,
+  days,
+}: {
+  currentTier: TierKey;
+  currentInterval: BillingInterval;
+  days: number;
+}): React.ReactElement {
+  const { open } = useOverlay();
+  return (
+    <Button
+      onClick={() =>
+        open(
+          TrialUpsellModal,
+          { days, currentTier, currentInterval },
+          { size: "2xl" }
+        )
+      }
+      size="sm"
+      variant="outline"
+    >
+      Manage trial
+    </Button>
   );
 }
 
@@ -788,22 +824,35 @@ export function BillingStatus(): React.ReactElement {
 
   const sub = data?.subscription;
   const plan = (sub?.plan ?? "free") as PlanName;
+  const trialTier = parseTierKey(sub?.tier);
+  const trialInterval: BillingInterval =
+    sub?.interval === "yearly" ? "yearly" : "monthly";
+  const canManageTrial = sub?.status === "trialing" && trialTier !== null;
 
   return (
     <Card className="bg-sidebar">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Current Plan</CardTitle>
-          {plan !== "free" && (
-            <Button
-              disabled={portalLoading}
-              onClick={handleManageBilling}
-              size="sm"
-              variant="outline"
-            >
-              {portalLoading ? "Opening..." : "Manage Billing"}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {canManageTrial && trialTier && (
+              <ManageTrialButton
+                currentInterval={trialInterval}
+                currentTier={trialTier}
+                days={data?.trial?.days ?? 14}
+              />
+            )}
+            {plan !== "free" && (
+              <Button
+                disabled={portalLoading}
+                onClick={handleManageBilling}
+                size="sm"
+                variant="outline"
+              >
+                {portalLoading ? "Opening..." : "Manage Billing"}
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <BillingStatusContent
