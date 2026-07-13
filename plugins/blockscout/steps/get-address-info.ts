@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
@@ -44,7 +45,11 @@ type GetAddressInfoResult =
       hasLogs: boolean;
       blockNumberBalanceUpdatedAt: number | null;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type GetAddressInfoCoreInput = {
   address: string;
@@ -62,7 +67,7 @@ async function stepHandler(
 ): Promise<GetAddressInfoResult> {
   const address = input.address?.trim();
   if (!address) {
-    return { success: false, error: "Address is required." };
+    return { success: false, error: "Address is required.", errorClass: ExecutionErrorType.USER };
   }
 
   const result = await blockscoutGet<AddressInfoResponse>(

@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -17,7 +18,11 @@ async function stepHandler(
   input: SpotDeployStateCoreInput
 ): Promise<InfoResult> {
   if (!isEvmAddress(input.user)) {
-    return { success: false, error: "User must be a 0x-prefixed EVM address" };
+    return {
+      success: false,
+      error: "User must be a 0x-prefixed EVM address",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   return postInfo(

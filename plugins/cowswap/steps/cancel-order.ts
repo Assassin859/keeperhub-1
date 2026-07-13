@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
@@ -25,7 +26,11 @@ export type CancelOrderInput = StepInput & {
 
 type CancelOrderResult =
   | { success: true }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 async function stepHandler(input: CancelOrderInput): Promise<CancelOrderResult> {
   if (!input.orderUid) {
@@ -35,7 +40,7 @@ async function stepHandler(input: CancelOrderInput): Promise<CancelOrderResult> 
       undefined,
       { plugin_name: PLUGIN_NAME, action_name: ACTION_NAME }
     );
-    return { success: false, error: "orderUid is required" };
+    return { success: false, error: "orderUid is required", errorClass: ExecutionErrorType.USER };
   }
 
   let chainId: number;
@@ -51,6 +56,7 @@ async function stepHandler(input: CancelOrderInput): Promise<CancelOrderResult> 
     return {
       success: false,
       error: `Unsupported network: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -65,6 +71,7 @@ async function stepHandler(input: CancelOrderInput): Promise<CancelOrderResult> 
     return {
       success: false,
       error: `Chain ID ${chainId} is not supported by the CoW Swap API`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -94,6 +101,7 @@ async function stepHandler(input: CancelOrderInput): Promise<CancelOrderResult> 
       return {
         success: false,
         error: `CoW Swap API returned HTTP ${response.status}: ${errorBody}`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -108,6 +116,7 @@ async function stepHandler(input: CancelOrderInput): Promise<CancelOrderResult> 
     return {
       success: false,
       error: `Failed to cancel order: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

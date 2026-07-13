@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
@@ -70,7 +71,7 @@ type AggregateResult =
       operation: string;
       inputCount: number;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 export type AggregateCoreInput = {
   operation: AggregateOperation;
@@ -129,7 +130,7 @@ function isBinaryPostOperation(value: string): value is BinaryPostOperation {
 // ─── Error helpers ──────────────────────────────────────────────────────────
 
 function failedAggregation(error: string): AggregateResult {
-  return { success: false, error };
+  return { success: false, error, errorClass: ExecutionErrorType.USER };
 }
 
 // ─── Arithmetic implementations ─────────────────────────────────────────────

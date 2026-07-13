@@ -28,6 +28,7 @@ vi.mock("@/lib/safe-fetch", () => ({
   SsrfBlockedError: class SsrfBlockedError extends Error {},
 }));
 
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getAddressBalanceStep } from "@/plugins/blockscout/steps/get-address-balance";
 import { getAddressCountersStep } from "@/plugins/blockscout/steps/get-address-counters";
 import { getAddressInfoStep } from "@/plugins/blockscout/steps/get-address-info";
@@ -103,7 +104,11 @@ describe("blockscout get-address-balance", () => {
     global.fetch = vi.fn() as unknown as typeof fetch;
     const result = await getAddressBalanceStep({ address: "  " });
 
-    expect(result).toEqual({ success: false, error: "Address is required." });
+    expect(result).toEqual({
+      success: false,
+      error: "Address is required.",
+      errorClass: ExecutionErrorType.USER,
+    });
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -114,6 +119,7 @@ describe("blockscout get-address-balance", () => {
     expect(result).toEqual({
       success: false,
       error: "Not found on this Blockscout instance.",
+      errorClass: ExecutionErrorType.USER,
     });
   });
 });
@@ -157,6 +163,7 @@ describe("blockscout get-transaction", () => {
     expect(result).toEqual({
       success: false,
       error: "Transaction hash is required.",
+      errorClass: ExecutionErrorType.USER,
     });
   });
 });
@@ -198,6 +205,7 @@ describe("blockscout get-token-info", () => {
     expect(result).toEqual({
       success: false,
       error: "Token address is required.",
+      errorClass: ExecutionErrorType.USER,
     });
   });
 });
@@ -275,7 +283,11 @@ describe("blockscout get-address-info", () => {
     global.fetch = vi.fn() as unknown as typeof fetch;
     const result = await getAddressInfoStep({ address: "" });
 
-    expect(result).toEqual({ success: false, error: "Address is required." });
+    expect(result).toEqual({
+      success: false,
+      error: "Address is required.",
+      errorClass: ExecutionErrorType.USER,
+    });
   });
 });
 
@@ -322,7 +334,11 @@ describe("blockscout get-address-counters", () => {
     global.fetch = vi.fn() as unknown as typeof fetch;
     const result = await getAddressCountersStep({ address: "  " });
 
-    expect(result).toEqual({ success: false, error: "Address is required." });
+    expect(result).toEqual({
+      success: false,
+      error: "Address is required.",
+      errorClass: ExecutionErrorType.USER,
+    });
   });
 });
 

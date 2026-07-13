@@ -29,6 +29,7 @@ vi.mock("@/lib/credential-fetcher", () => ({
 const { safeFetch } = vi.hoisted(() => ({ safeFetch: vi.fn() }));
 vi.mock("@/lib/safe-fetch", () => ({ safeFetch }));
 
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { sendDiscordMessageStep } from "@/plugins/discord/steps/send-message";
 
 function runStep(webhookUrl: string) {
@@ -61,6 +62,7 @@ describe("discord send-message webhook URL validation", () => {
       expect(result).toEqual({
         success: false,
         error: "Invalid Discord webhook URL format",
+        errorClass: ExecutionErrorType.USER,
       });
       expect(safeFetch).not.toHaveBeenCalled();
     });
