@@ -249,5 +249,27 @@ describe("SolanaChainAdapter", () => {
 
       expect(factoryFn).toHaveBeenCalledTimes(1);
     });
+
+    it("calls the factory once for concurrent operations that start before it resolves", async () => {
+      let resolveManager: (manager: unknown) => void = () => undefined;
+      const managerReady = new Promise((resolve) => {
+        resolveManager = resolve;
+      });
+      const factoryFn = vi.fn().mockReturnValue(managerReady);
+
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factoryFn);
+
+      // Start both operations while the factory promise is still pending, so a
+      // resolved-value cache (rather than a promise cache) would invoke the
+      // factory twice.
+      const first = adapter.getBalance(null as never, SYSTEM_PROGRAM_ADDRESS);
+      const second = adapter.getBalance(null as never, SYSTEM_PROGRAM_ADDRESS);
+      resolveManager({
+        executeWithFailover: vi.fn().mockResolvedValue(BigInt(0)),
+      });
+      await Promise.all([first, second]);
+
+      expect(factoryFn).toHaveBeenCalledTimes(1);
+    });
   });
 });

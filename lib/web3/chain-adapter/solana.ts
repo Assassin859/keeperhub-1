@@ -20,18 +20,20 @@ export class SolanaChainAdapter implements ChainAdapter {
   readonly chainFamily = "solana";
   private readonly chainId: number;
   private readonly providerFactory: SolanaProviderFactory;
-  private resolvedManager: SolanaProviderManager | null = null;
+  private managerPromise: Promise<SolanaProviderManager> | null = null;
 
   constructor(chainId: number, providerFactory: SolanaProviderFactory) {
     this.chainId = chainId;
     this.providerFactory = providerFactory;
   }
 
-  private async getManager(): Promise<SolanaProviderManager> {
-    if (!this.resolvedManager) {
-      this.resolvedManager = await this.providerFactory();
-    }
-    return this.resolvedManager;
+  private getManager(): Promise<SolanaProviderManager> {
+    // Cache the in-flight promise, not the resolved value, so concurrent
+    // callers share a single providerFactory() invocation. This adapter is a
+    // process-lifetime singleton (see chain-adapter registry), so it serves
+    // overlapping requests.
+    this.managerPromise ??= this.providerFactory();
+    return this.managerPromise;
   }
 
   sendTransaction(
