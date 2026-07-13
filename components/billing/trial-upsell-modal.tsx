@@ -4,11 +4,20 @@ import { Check, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
-import { type BillingInterval, PLANS, type TierKey } from "@/lib/billing/plans";
+import {
+  type BillingInterval,
+  PLANS,
+  type TierKey,
+  TRIAL_TIER_KEY,
+} from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
 import { getTierPrice, startCheckout } from "./pricing-table/utils";
 
 const PRO = PLANS.pro;
+
+// The trial applies to a single Pro tier (25k executions); higher tiers pay now.
+const TRIAL_TIER =
+  PRO.tiers.find((t) => t.key === TRIAL_TIER_KEY) ?? PRO.tiers[0];
 
 // Plan-level Pro perks (execution volume is chosen per-tier below).
 const PRO_BENEFITS: readonly string[] = [
@@ -21,9 +30,9 @@ const PRO_BENEFITS: readonly string[] = [
 
 /**
  * Pro trial modal. Two modes:
- * - Start (default): offer a free trial to an eligible free org.
- * - Update (currentTier set): let a trialing org switch Pro tiers while the
- *   trial continues; the new tier is billed at trial end, $0 now.
+ * - Start (default): offer the Pro 25k free trial to an eligible free org.
+ * - Update (currentTier set): let a trialing org pick the billing interval its
+ *   trial converts to; the trial continues and is billed at that rate, $0 now.
  * Both send trial:true so the server keeps/starts the trial; plan cards never do.
  */
 export function TrialUpsellModal({
@@ -43,15 +52,15 @@ export function TrialUpsellModal({
 }): React.ReactElement {
   const { close } = useOverlay();
   const isUpdate = currentTier != null;
-  const [tier, setTier] = useState<TierKey>(currentTier ?? PRO.tiers[0].key);
   const [interval, setInterval] = useState<BillingInterval>(
     currentInterval ?? "monthly"
   );
   const [loading, setLoading] = useState(false);
 
-  const activeTier = PRO.tiers.find((t) => t.key === tier) ?? PRO.tiers[0];
-  const price = getTierPrice(activeTier, interval);
-  const noChange = isUpdate && tier === currentTier;
+  const price = getTierPrice(TRIAL_TIER, interval);
+  // A trial is a single tier (Pro 25k), so in update mode the only thing to
+  // change is the billing interval it converts to.
+  const noChange = isUpdate && interval === (currentInterval ?? "monthly");
 
   // Start mode leads with the reason the offer shows: nearing the free cap.
   const quotaLine =
@@ -63,7 +72,9 @@ export function TrialUpsellModal({
     setLoading(true);
     try {
       // trial:true keeps/starts the trial; the server re-checks eligibility.
-      const ok = await startCheckout("pro", tier, interval, { trial: true });
+      const ok = await startCheckout("pro", TRIAL_TIER_KEY, interval, {
+        trial: true,
+      });
       // In update mode Stripe updates in place (no redirect); refresh the page
       // to reflect the new tier. Start mode redirects to Checkout instead.
       if (ok) {
@@ -99,8 +110,8 @@ export function TrialUpsellModal({
           </h2>
           {isUpdate ? (
             <p className="text-muted-foreground text-sm">
-              Switch your Pro tier. Your trial continues and the new tier is
-              billed when it ends.
+              Choose the billing interval your trial converts to. Your trial
+              continues and is billed at that rate when it ends.
             </p>
           ) : (
             <>
@@ -133,57 +144,34 @@ export function TrialUpsellModal({
         </ul>
 
         <div className="space-y-3">
-          {!isUpdate && (
-            <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-sidebar p-1">
-              {(["monthly", "yearly"] as const).map((value) => (
-                <button
-                  className={cn(
-                    "rounded-full px-3 py-1 font-medium text-xs transition-colors",
-                    interval === value
-                      ? "bg-keeperhub-green-dark text-white"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                  key={value}
-                  onClick={() => setInterval(value)}
-                  type="button"
-                >
-                  {value === "monthly" ? "Monthly" : "Annual"}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-sidebar p-1">
+            {(["monthly", "yearly"] as const).map((value) => (
+              <button
+                className={cn(
+                  "rounded-full px-3 py-1 font-medium text-xs transition-colors",
+                  interval === value
+                    ? "bg-keeperhub-green-dark text-white"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                key={value}
+                onClick={() => setInterval(value)}
+                type="button"
+              >
+                {value === "monthly" ? "Monthly" : "Annual"}
+              </button>
+            ))}
+          </div>
 
-          <div className="space-y-2">
-            {PRO.tiers.map((t) => {
-              const selected = t.key === tier;
-              const isCurrent = t.key === currentTier;
-              return (
-                <button
-                  aria-pressed={selected}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm transition-colors",
-                    selected
-                      ? "border-keeperhub-green-dark/60 bg-keeperhub-green-dark/10"
-                      : "border-border/60 hover:border-keeperhub-green-dark/40"
-                  )}
-                  key={t.key}
-                  onClick={() => setTier(t.key)}
-                  type="button"
-                >
-                  <span className="flex items-center gap-2 font-medium">
-                    {t.executions.toLocaleString()} executions
-                    {isCurrent && (
-                      <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-[10px] text-muted-foreground uppercase">
-                        Current
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-muted-foreground">
-                    ${getTierPrice(t, interval)}/mo
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex items-center justify-between rounded-lg border border-keeperhub-green-dark/60 bg-keeperhub-green-dark/10 px-3 py-2.5 text-sm">
+            <span className="flex items-center gap-2 font-medium">
+              {TRIAL_TIER.executions.toLocaleString()} executions
+              {isUpdate && (
+                <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-[10px] text-muted-foreground uppercase">
+                  Current
+                </span>
+              )}
+            </span>
+            <span className="text-muted-foreground">${price}/mo</span>
           </div>
         </div>
       </div>
