@@ -1,9 +1,19 @@
-import type { Connection } from "@solana/web3.js";
-import { PublicKey } from "@solana/web3.js";
+import {
+  type Connection,
+  PublicKey,
+  Transaction,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import type { ethers } from "ethers";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import type { RpcOperationType } from "@/lib/rpc/providers/index";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
 import type { NonceSession } from "../nonce-manager";
+import {
+  normalizeSolanaTransaction,
+  parseComputeUnitPrice,
+} from "../solana-tx-normalize";
+import { submitSignedSolanaTransactionWithFailover } from "../submit-signed-solana";
 import { buildChainAddressUrl, buildChainTransactionUrl } from "./explorer";
 import type {
   ChainAdapter,
@@ -36,17 +46,147 @@ export class SolanaChainAdapter implements ChainAdapter {
     return this.managerPromise;
   }
 
-  sendTransaction(
-    _signer: ethers.Signer,
-    _request: SendTransactionRequest,
-    _session: NonceSession,
-    _options: TransactionOptions
+  async sendTransaction(
+    _signer: ethers.Signer, // Unused: Solana uses options.solanaSigner
+    request: SendTransactionRequest,
+    _session: NonceSession, // Unused: Solana has no EVM nonce concept
+    options: TransactionOptions
   ): Promise<TransactionReceipt> {
-    return Promise.reject(
-      new Error(
-        "[SolanaChainAdapter] sendTransaction is not supported on Solana chains. Deferred to PR 2."
-      )
+    if (!options.solanaSigner) {
+      throw new Error("[SolanaChainAdapter] Missing options.solanaSigner");
+    }
+
+    // Capture in a non-nullable local so TypeScript can narrow it inside
+    // the executeWithFailover async closure (the outer guard doesn't flow in).
+    const solanaSigner = options.solanaSigner;
+
+    // Construct a real PublicKey from the duck-typed return of getPublicKey().
+    // The SolanaTransactionSigner interface returns { toBase58(): string }
+    // but normalizeSolanaTransaction requires the full @solana/web3.js PublicKey.
+    const signerPublicKey = new PublicKey(
+      (await solanaSigner.getPublicKey()).toBase58()
     );
+
+    const { blockhash, lastValidBlockHeight } =
+      await this.executeWithSolanaFailover(
+        (connection) => connection.getLatestBlockhash("confirmed"),
+        "read"
+      );
+
+    const normalized = normalizeSolanaTransaction(
+      request.data,
+      request.to,
+      request.value,
+      signerPublicKey,
+      options.gasOverrides?.priorityFeeOverride,
+      options.gasOverrides?.gasLimitOverride
+    );
+
+    const isVersioned =
+      normalized.mode === "A" && (normalized.isVersioned ?? false);
+
+    if (isVersioned) {
+      (normalized.transaction as VersionedTransaction).message.recentBlockhash =
+        blockhash;
+    } else {
+      (normalized.transaction as Transaction).recentBlockhash = blockhash;
+    }
+
+    const txToSign = normalized.transaction;
+    const serialized = isVersioned
+      ? (txToSign as VersionedTransaction).serialize()
+      : (txToSign as Transaction).serialize({ requireAllSignatures: false });
+
+    const signedBytes = await solanaSigner.signTransaction(
+      new Uint8Array(serialized)
+    );
+
+    const signedTx = isVersioned
+      ? VersionedTransaction.deserialize(signedBytes)
+      : Transaction.from(signedBytes);
+
+    await this.executeWithSolanaFailover(async (connection) => {
+      const simResult = isVersioned
+        ? await connection.simulateTransaction(
+            signedTx as VersionedTransaction,
+            {
+              sigVerify: false,
+              replaceRecentBlockhash: false,
+            }
+          )
+        : await connection.simulateTransaction(
+            signedTx as Transaction,
+            undefined,
+            false
+          );
+
+      if (simResult.value.err) {
+        throw new Error(
+          `[SolanaChainAdapter] Simulation failed: ${JSON.stringify(simResult.value.err)}`
+        );
+      }
+    }, "preflight");
+
+    const manager = await this.getManager();
+    const { signature } = await submitSignedSolanaTransactionWithFailover(
+      signedBytes,
+      manager
+    );
+
+    const { confirmationErr, txResult } = await this.executeWithSolanaFailover(
+      async (connection) => {
+        const confirmation = await connection.confirmTransaction(
+          {
+            signature,
+            blockhash, // Original blockhash used for signing
+            lastValidBlockHeight,
+          },
+          "confirmed"
+        );
+
+        const tx = await connection.getTransaction(signature, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+        return { confirmationErr: confirmation.value.err, txResult: tx };
+      },
+      "read"
+    );
+
+    // A Solana transaction that fails execution still "confirms" - it lands
+    // on-chain with an error set. confirmation.value.err is authoritative:
+    // never report a failed tx as a successful receipt (mirrors the EVM
+    // adapter's receipt.status === 0 guard). These checks run outside the
+    // failover closure so a genuinely-failed tx is not retried. getTransaction
+    // may still be null from propagation lag after a successful confirm (an
+    // accounting gap, not a failure), but if present with meta.err it reverted.
+    if (confirmationErr) {
+      throw new Error(
+        `[SolanaChainAdapter] Transaction ${signature} failed on-chain: ${JSON.stringify(confirmationErr)}`
+      );
+    }
+    if (txResult?.meta?.err) {
+      throw new Error(
+        `[SolanaChainAdapter] Transaction ${signature} reverted on-chain: ${JSON.stringify(txResult.meta.err)}`
+      );
+    }
+
+    const computeUnitsConsumed =
+      txResult?.meta?.computeUnitsConsumed == null
+        ? BigInt(0)
+        : BigInt(txResult.meta.computeUnitsConsumed);
+
+    const effectiveGasPrice = parseComputeUnitPrice(
+      normalized.transaction,
+      isVersioned
+    );
+
+    return {
+      hash: signature,
+      gasUsed: computeUnitsConsumed,
+      effectiveGasPrice,
+      blockNumber: txResult?.slot ?? 0,
+    };
   }
 
   executeContractCall(
@@ -99,17 +239,18 @@ export class SolanaChainAdapter implements ChainAdapter {
   }
 
   async executeWithSolanaFailover<T>(
-    operation: (connection: Connection) => Promise<T>
+    operation: (connection: Connection) => Promise<T>,
+    operationType?: RpcOperationType
   ): Promise<T> {
     const manager = await this.getManager();
-    return manager.executeWithFailover(operation);
+    return manager.executeWithFailover(operation, operationType);
   }
 
-  async getTransactionUrl(txHash: string): Promise<string> {
-    return buildChainTransactionUrl(this.chainId, txHash);
+  getTransactionUrl(txHash: string): Promise<string> {
+    return Promise.resolve(buildChainTransactionUrl(this.chainId, txHash));
   }
 
-  async getAddressUrl(address: string): Promise<string> {
-    return buildChainAddressUrl(this.chainId, address);
+  getAddressUrl(address: string): Promise<string> {
+    return Promise.resolve(buildChainAddressUrl(this.chainId, address));
   }
 }
