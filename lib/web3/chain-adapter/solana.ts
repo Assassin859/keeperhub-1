@@ -133,9 +133,9 @@ export class SolanaChainAdapter implements ChainAdapter {
       manager
     );
 
-    const txResult = await this.executeWithSolanaFailover(
+    const { confirmationErr, txResult } = await this.executeWithSolanaFailover(
       async (connection) => {
-        await connection.confirmTransaction(
+        const confirmation = await connection.confirmTransaction(
           {
             signature,
             blockhash, // Original blockhash used for signing
@@ -144,13 +144,32 @@ export class SolanaChainAdapter implements ChainAdapter {
           "confirmed"
         );
 
-        return connection.getTransaction(signature, {
+        const tx = await connection.getTransaction(signature, {
           commitment: "confirmed",
           maxSupportedTransactionVersion: 0,
         });
+        return { confirmationErr: confirmation.value.err, txResult: tx };
       },
       "read"
     );
+
+    // A Solana transaction that fails execution still "confirms" - it lands
+    // on-chain with an error set. confirmation.value.err is authoritative:
+    // never report a failed tx as a successful receipt (mirrors the EVM
+    // adapter's receipt.status === 0 guard). These checks run outside the
+    // failover closure so a genuinely-failed tx is not retried. getTransaction
+    // may still be null from propagation lag after a successful confirm (an
+    // accounting gap, not a failure), but if present with meta.err it reverted.
+    if (confirmationErr) {
+      throw new Error(
+        `[SolanaChainAdapter] Transaction ${signature} failed on-chain: ${JSON.stringify(confirmationErr)}`
+      );
+    }
+    if (txResult?.meta?.err) {
+      throw new Error(
+        `[SolanaChainAdapter] Transaction ${signature} reverted on-chain: ${JSON.stringify(txResult.meta.err)}`
+      );
+    }
 
     const computeUnitsConsumed =
       txResult?.meta?.computeUnitsConsumed == null

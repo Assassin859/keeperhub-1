@@ -7,7 +7,7 @@ vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
 import { submitSignedSolanaTransactionWithFailover } from "@/lib/web3/submit-signed-solana";
 
-const MOCK_SIGNATURE =
+const _MOCK_SIGNATURE =
   "4p2wE1oGvK8p1d2Fz3H4X5y6Z7W8v9u0v1x2y3z4A5B6C7D8E9F0G1H2I3J4K5L6M7N8O9P0Q1R2S3T4U5V6W7X8Y9Z";
 
 describe("submitSignedSolanaTransactionWithFailover", () => {
@@ -91,16 +91,68 @@ describe("submitSignedSolanaTransactionWithFailover", () => {
     expect(mockConnection.getSignatureStatuses).toHaveBeenCalledTimes(1);
   });
 
-  it("re-throws other broadcast failures directly without reconciling", async () => {
+  it("reconciles on any broadcast error and rethrows when the tx never landed", async () => {
+    // A non-duplicate error (timeout, or an RPC-side rejection). The signed
+    // bytes are always reconcilable, so the status is checked; a null status
+    // means the tx never landed, so the original error is rethrown.
     mockConnection.sendRawTransaction.mockRejectedValue(
       new Error("BlockhashNotFound")
     );
+    mockConnection.getSignatureStatuses.mockResolvedValue({ value: [null] });
 
     await expect(
       submitSignedSolanaTransactionWithFailover(txBytes, mockManager)
     ).rejects.toThrow("BlockhashNotFound");
 
     expect(mockConnection.sendRawTransaction).toHaveBeenCalledTimes(1);
-    expect(mockConnection.getSignatureStatuses).not.toHaveBeenCalled();
+    expect(mockConnection.getSignatureStatuses).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a timeout as success when the tx actually finalized", async () => {
+    mockConnection.sendRawTransaction.mockRejectedValue(
+      new Error("Request timed out")
+    );
+    mockConnection.getSignatureStatuses.mockResolvedValue({
+      value: [{ confirmationStatus: "finalized", err: null }],
+    });
+
+    const result = await submitSignedSolanaTransactionWithFailover(
+      txBytes,
+      mockManager
+    );
+
+    expect(result.signature).toBeDefined();
+    expect(mockConnection.getSignatureStatuses).toHaveBeenCalledTimes(1);
+  });
+
+  it("rethrows when the reconciled tx is confirmed but has an execution error", async () => {
+    mockConnection.sendRawTransaction.mockRejectedValue(
+      new Error("already been processed")
+    );
+    mockConnection.getSignatureStatuses.mockResolvedValue({
+      value: [
+        {
+          confirmationStatus: "confirmed",
+          err: { InstructionError: [0, "Custom"] },
+        },
+      ],
+    });
+
+    await expect(
+      submitSignedSolanaTransactionWithFailover(txBytes, mockManager)
+    ).rejects.toThrow("already been processed");
+  });
+
+  it("rethrows when the reconciled tx is only at 'processed' commitment", async () => {
+    mockConnection.sendRawTransaction.mockRejectedValue(
+      new Error("already been processed")
+    );
+    mockConnection.getSignatureStatuses.mockResolvedValue({
+      value: [{ confirmationStatus: "processed", err: null }],
+    });
+
+    await expect(
+      submitSignedSolanaTransactionWithFailover(txBytes, mockManager)
+    ).rejects.toThrow("already been processed");
   });
 });

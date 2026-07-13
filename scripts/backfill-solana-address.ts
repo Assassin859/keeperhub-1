@@ -84,28 +84,50 @@ async function main(): Promise<void> {
     }
 
     try {
-      console.log(`Provisioning Solana account for sub-org ${subOrgId}...`);
-      
       const turnkeyClient = turnkey.apiClient();
-      const result = await turnkeyClient.createWalletAccounts({
-        organizationId: subOrgId,
-        walletId: walletId,
-        accounts: [
-          {
-            curve: "CURVE_ED25519",
-            pathFormat: "PATH_FORMAT_BIP32",
-            path: "m/44'/501'/0'/0'",
-            addressFormat: "ADDRESS_FORMAT_SOLANA",
-          },
-        ],
-      });
 
-      const solanaAddress = result.addresses?.[0];
-      if (!solanaAddress) {
-        throw new Error("No addresses returned from Turnkey createWalletAccounts");
+      // Idempotency: a prior run may have created the Turnkey Solana account but
+      // failed to write the DB row. Check for an existing account at the Solana
+      // derivation path before creating, so a re-run recovers that address
+      // instead of provisioning a duplicate / orphaned account.
+      const existingAccounts = await turnkeyClient.getWalletAccounts({
+        organizationId: subOrgId,
+        walletId,
+      });
+      let solanaAddress = existingAccounts.accounts?.find(
+        (a) => a.addressFormat === "ADDRESS_FORMAT_SOLANA"
+      )?.address;
+
+      if (solanaAddress) {
+        console.log(
+          `Existing Solana account found for sub-org ${subOrgId}: ${solanaAddress} (recovering, no new account created).`
+        );
+      } else {
+        console.log(`Provisioning Solana account for sub-org ${subOrgId}...`);
+        const result = await turnkeyClient.createWalletAccounts({
+          organizationId: subOrgId,
+          walletId,
+          accounts: [
+            {
+              curve: "CURVE_ED25519",
+              pathFormat: "PATH_FORMAT_BIP32",
+              path: "m/44'/501'/0'/0'",
+              addressFormat: "ADDRESS_FORMAT_SOLANA",
+            },
+          ],
+        });
+        solanaAddress = result.addresses?.[0];
       }
 
-      console.log(`Successfully provisioned Solana address: ${solanaAddress}. Updating DB row ${w.id}...`);
+      if (!solanaAddress) {
+        throw new Error(
+          "No Solana address available from Turnkey (create/getWalletAccounts)"
+        );
+      }
+
+      console.log(
+        `Updating DB row ${w.id} with Solana address ${solanaAddress}...`
+      );
 
       await db
         .update(schema.organizationWallets)

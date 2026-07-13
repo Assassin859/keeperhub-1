@@ -28,7 +28,7 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
 }));
 
 describe("transferFundsCore - Solana early branch", () => {
-  const mockSolanaDevnetChainId = 103;
+  const _mockSolanaDevnetChainId = 103;
   let mockAdapter: any;
 
   beforeEach(() => {
@@ -64,9 +64,7 @@ describe("transferFundsCore - Solana early branch", () => {
     } as any);
 
     const mockSigner = { getPublicKey: vi.fn(), signTransaction: vi.fn() };
-    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue(
-      mockSigner as any
-    );
+    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue(mockSigner as any);
 
     mockAdapter.getBalance.mockResolvedValue(BigInt(2_000_000_000)); // 2 SOL
     mockAdapter.sendTransaction.mockResolvedValue({
@@ -115,8 +113,9 @@ describe("transferFundsCore - Solana early branch", () => {
     });
 
     expect(result.success).toBe(false);
-    if (!result.success)
+    if (!result.success) {
       expect(result.error).toContain("Invalid Solana recipient address");
+    }
   });
 
   it("fails early when amount is empty or invalid", async () => {
@@ -128,8 +127,9 @@ describe("transferFundsCore - Solana early branch", () => {
     });
 
     expect(resultEmpty.success).toBe(false);
-    if (!resultEmpty.success)
+    if (!resultEmpty.success) {
       expect(resultEmpty.error).toBe("Amount is required");
+    }
 
     const resultInvalid = await transferFundsCore({
       network: "solana-devnet",
@@ -139,8 +139,9 @@ describe("transferFundsCore - Solana early branch", () => {
     });
 
     expect(resultInvalid.success).toBe(false);
-    if (!resultInvalid.success)
+    if (!resultInvalid.success) {
       expect(resultInvalid.error).toContain("Invalid SOL amount");
+    }
   });
 
   it("returns invalid SOL amount error on negative amount input", async () => {
@@ -152,8 +153,9 @@ describe("transferFundsCore - Solana early branch", () => {
     });
 
     expect(resultNegative.success).toBe(false);
-    if (!resultNegative.success)
+    if (!resultNegative.success) {
       expect(resultNegative.error).toBe("Invalid SOL amount: -1");
+    }
   });
 
   it("fails when balance is insufficient", async () => {
@@ -178,7 +180,37 @@ describe("transferFundsCore - Solana early branch", () => {
     });
 
     expect(result.success).toBe(false);
-    if (!result.success)
+    if (!result.success) {
       expect(result.error).toContain("Insufficient SOL balance");
+    }
+  });
+
+  it("fails when balance covers the amount but not the transaction fee", async () => {
+    vi.mocked(resolveOrganizationContext).mockResolvedValue({
+      success: true,
+      organizationId: "mock-org-id",
+    } as any);
+
+    vi.mocked(getOrganizationWallet).mockResolvedValue({
+      solanaAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    } as any);
+
+    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue({} as any);
+
+    // Balance equals the transfer amount exactly, leaving nothing for the
+    // 5000-lamport base fee - must be rejected at preflight.
+    mockAdapter.getBalance.mockResolvedValue(BigInt(1_000_000_000));
+
+    const result = await transferFundsCore({
+      network: "solana-devnet",
+      amount: "1.0",
+      recipientAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      _context: { organizationId: "mock-org-id" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Insufficient SOL balance");
+    }
   });
 });

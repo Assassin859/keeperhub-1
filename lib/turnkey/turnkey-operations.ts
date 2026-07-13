@@ -165,7 +165,11 @@ export async function createTurnkeyWallet(
       (a) => a.addressFormat === "ADDRESS_FORMAT_SOLANA"
     );
 
-    const walletAddress = evmAccount?.address ?? subOrg.wallet?.addresses?.[0];
+    // Resolve the EVM address strictly by addressFormat. Do NOT fall back to
+    // subOrg.wallet.addresses[0] by index: with dual EVM+Solana accounts that
+    // slot is order-dependent and could yield the Solana address, corrupting
+    // the EVM column. A missing EVM account throws below instead of guessing.
+    const walletAddress = evmAccount?.address;
     const solanaAddress = solanaAccount?.address ?? null;
 
     if (!walletAddress) {

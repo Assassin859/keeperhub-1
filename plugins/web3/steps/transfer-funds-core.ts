@@ -48,6 +48,10 @@ import {
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
 
+// Solana base transaction fee: 5000 lamports per signature. Reserved on top of
+// the transfer amount in the native-SOL balance preflight.
+const SOLANA_BASE_FEE_LAMPORTS = BigInt(5000);
+
 export type TransferFundsCoreInput = {
   network: string;
   amount: string;
@@ -521,10 +525,14 @@ async function transferFundsSolana(args: {
       undefined as unknown as RpcProviderManager, // unused by SolanaChainAdapter
       orgSolanaAddress
     );
-    if (balance < lamports) {
+    // Reserve the base transaction fee (5000 lamports per signature) on top of
+    // the transfer amount. Without this a max-balance transfer passes preflight
+    // and then fails at inclusion for not covering its own fee.
+    const requiredLamports = lamports + SOLANA_BASE_FEE_LAMPORTS;
+    if (balance < requiredLamports) {
       return {
         success: false,
-        error: `Insufficient SOL balance. Have: ${balance.toString()} lamports, Need: ${lamports.toString()} lamports`,
+        error: `Insufficient SOL balance. Have: ${balance.toString()} lamports, Need: ${requiredLamports.toString()} lamports (${lamports.toString()} transfer + ${SOLANA_BASE_FEE_LAMPORTS.toString()} fee)`,
       };
     }
   } catch (error) {

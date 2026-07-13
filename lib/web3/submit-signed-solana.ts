@@ -1,14 +1,7 @@
 import "server-only";
-import bs58 from "bs58";
 import { VersionedTransaction } from "@solana/web3.js";
+import bs58 from "bs58";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
-
-const DUPLICATE_TX_PATTERNS = [
-  "already been processed",
-  "already processed",
-  "duplicate",
-  "This transaction has already been processed",
-];
 
 export async function submitSignedSolanaTransactionWithFailover(
   signedBytes: Uint8Array,
@@ -27,39 +20,36 @@ export async function submitSignedSolanaTransactionWithFailover(
     );
     return { signature };
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const isDuplicate = DUPLICATE_TX_PATTERNS.some((pattern) =>
-      errMsg.includes(pattern)
+    // On any broadcast error - a duplicate submission (failover resends the
+    // identical signed bytes and Solana dedups by signature) or a timeout where
+    // the RPC accepted the tx but never returned a response - reconcile by
+    // deriving the deterministic signature from the signed bytes and checking
+    // its on-chain status. Only report success for a confirmed/finalized tx
+    // with NO execution error; otherwise rethrow the original error so a
+    // genuinely-failed or never-landed broadcast surfaces to the caller.
+    const firstSig =
+      VersionedTransaction.deserialize(signedBytes).signatures[0];
+    if (!firstSig) {
+      throw err;
+    }
+    const signature = bs58.encode(firstSig);
+
+    const statusResult = await manager.executeWithFailover(
+      async (connection) => {
+        const res = await connection.getSignatureStatuses([signature]);
+        return res.value[0];
+      },
+      "read"
     );
 
-    if (isDuplicate) {
-      // Decode the signature from the bytes to reconcile via getSignatureStatuses.
-      const transaction = VersionedTransaction.deserialize(signedBytes);
-      const firstSig = transaction.signatures[0];
-      if (!firstSig) {
-        throw new Error("No signatures found in signedBytes");
-      }
-      const signature = bs58.encode(firstSig);
-
-      const statusResult = await manager.executeWithFailover(
-        async (connection) => {
-          const res = await connection.getSignatureStatuses([signature]);
-          return res.value[0];
-        },
-        "read"
-      );
-
-      if (statusResult) {
-        if (
-          statusResult.confirmationStatus === "confirmed" ||
-          statusResult.confirmationStatus === "finalized" ||
-          !statusResult.err
-        ) {
-          return { signature };
-        }
-      }
+    if (
+      statusResult &&
+      !statusResult.err &&
+      (statusResult.confirmationStatus === "confirmed" ||
+        statusResult.confirmationStatus === "finalized")
+    ) {
+      return { signature };
     }
     throw err;
   }
 }
-

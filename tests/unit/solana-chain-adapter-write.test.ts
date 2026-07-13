@@ -81,6 +81,50 @@ describe("SolanaChainAdapter - sendTransaction", () => {
     ).rejects.toThrow("[SolanaChainAdapter] Missing options.solanaSigner");
   });
 
+  describe("on-chain failure handling", () => {
+    it("throws when confirmTransaction reports an execution error", async () => {
+      const { mockManager, mockConnection } = createMockManager();
+      mockConnection.confirmTransaction = vi.fn().mockResolvedValue({
+        value: { err: { InstructionError: [0, "Custom"] } },
+      });
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, () =>
+        Promise.resolve(mockManager as any)
+      );
+
+      await expect(
+        adapter.sendTransaction(
+          null as any,
+          { to: recipientKeypair.publicKey.toBase58(), value: BigInt(5000) },
+          null as any,
+          { solanaSigner, gasOverrides: {} } as any
+        )
+      ).rejects.toThrow("failed on-chain");
+    });
+
+    it("throws when getTransaction reports meta.err (reverted at inclusion)", async () => {
+      const { mockManager, mockConnection } = createMockManager();
+      mockConnection.getTransaction = vi.fn().mockResolvedValue({
+        slot: 789,
+        meta: {
+          err: { InstructionError: [0, "Custom"] },
+          computeUnitsConsumed: 10,
+        },
+      });
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, () =>
+        Promise.resolve(mockManager as any)
+      );
+
+      await expect(
+        adapter.sendTransaction(
+          null as any,
+          { to: recipientKeypair.publicKey.toBase58(), value: BigInt(5000) },
+          null as any,
+          { solanaSigner, gasOverrides: {} } as any
+        )
+      ).rejects.toThrow("reverted on-chain");
+    });
+  });
+
   describe("Mode B (Native transfer)", () => {
     it("successfully creates, simulates, signs, and processes native transfer", async () => {
       const { mockManager, mockConnection } = createMockManager();
