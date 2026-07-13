@@ -109,6 +109,9 @@ const TEST_DATA: ProtocolTestData = {
       "get-sy-exchange-rate": [{ nonZero: true }],
       // Setup funds 10 SY; only this protocol's fixtures move it.
       "get-sy-balance": [{ nonZero: true }],
+      // vePENDLE total supply is a nine-figure chain aggregate, independent
+      // of the test wallet (which locks no PENDLE).
+      "get-ve-pendle-total-supply": [{ nonZero: true }],
     },
     writeExpectations: {
       "mint-py-from-sy": [

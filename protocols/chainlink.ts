@@ -3,6 +3,7 @@ import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
   type ActionInputBindings,
   contract,
+  type OutputExpectation,
   type ProtocolTestData,
   wallet,
 } from "@/lib/test-data/types";
@@ -88,6 +89,42 @@ function l2FeedActions(feed: string): Record<string, ActionInputBindings> {
   };
 }
 
+// Price-feed read oracles, parallel to l2FeedActions. Every feed's
+// latest-round-data must decode a live, nonzero answer (the field is the
+// named `answer` output of the AggregatorV3 tuple); the custom ETH/USD proxy
+// adds latest-answer (nonzero), description (nonempty), and version (nonzero),
+// whose outputs are unnamed so those assertions carry no field. decimals is
+// deliberately not asserted: a feed's decimal count is a static config that
+// varies per chain and feed (Base BTC/USD and USDC/USD report 18, not 8), so
+// pinning it adds fragility for little signal - the nonzero answer is the real
+// proof the feed decoded. btcEth/description are optional because some L2s
+// lack those surfaces (see the per-chain skips).
+function feedExpectations(opts: {
+  btcEth: boolean;
+  description: boolean;
+}): Record<string, OutputExpectation[]> {
+  const answer: OutputExpectation[] = [{ field: "answer", nonZero: true }];
+  const e: Record<string, OutputExpectation[]> = {
+    "eth-usd-latest-round-data": answer,
+    "btc-usd-latest-round-data": answer,
+    "link-usd-latest-round-data": answer,
+    "usdc-usd-latest-round-data": answer,
+    "dai-usd-latest-round-data": answer,
+    "usdt-usd-latest-round-data": answer,
+    "link-eth-latest-round-data": answer,
+    "latest-round-data": answer,
+    "latest-answer": [{ nonZero: true }],
+    version: [{ nonZero: true }],
+  };
+  if (opts.btcEth) {
+    e["btc-eth-latest-round-data"] = answer;
+  }
+  if (opts.description) {
+    e.description = [{ notEmpty: true }];
+  }
+  return e;
+}
+
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
@@ -95,6 +132,7 @@ const TEST_DATA: ProtocolTestData = {
       requiredTokens: [],
       approvals: [],
     },
+    expectations: feedExpectations({ btcEth: true, description: true }),
     actions: {
       "eth-usd-latest-round-data": {},
       "eth-usd-decimals": {},
@@ -165,6 +203,7 @@ const TEST_DATA: ProtocolTestData = {
       requiredTokens: [],
       approvals: [],
     },
+    expectations: feedExpectations({ btcEth: false, description: true }),
     actions: l2FeedActions(BASE_ETH_USD_FEED),
     skipped: {
       "btc-eth-latest-round-data": "no Chainlink BTC/ETH feed deployed on Base",
@@ -181,6 +220,7 @@ const TEST_DATA: ProtocolTestData = {
       requiredTokens: [],
       approvals: [],
     },
+    expectations: feedExpectations({ btcEth: true, description: false }),
     actions: l2FeedActions(ARBITRUM_ETH_USD_FEED),
     skipped: {
       // description() reverts on the anvil Arbitrum fork (the proxy's
