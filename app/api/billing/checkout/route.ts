@@ -19,6 +19,7 @@ import {
 } from "@/lib/billing/trial";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
@@ -96,14 +97,14 @@ async function validateCheckoutRequest(
   if (!(plan && PAID_PLANS.has(plan))) {
     return NextResponse.json(
       { error: "Invalid plan. Must be one of: pro, business, enterprise" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
   if (!(interval && VALID_INTERVALS.has(interval))) {
     return NextResponse.json(
       { error: "Invalid interval. Must be monthly or yearly" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -116,7 +117,7 @@ async function validateCheckoutRequest(
   if (!priceId) {
     return NextResponse.json(
       { error: "Price configuration not found for selected plan" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -132,6 +133,16 @@ async function validateCheckoutRequest(
 
 function isStripeCardError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeCardError;
+}
+
+// error_if_incomplete raises this when a plan change (e.g. ending a trial to
+// upgrade) needs 3DS/SCA. Surface it as an actionable 402 rather than a 500;
+// the invoice.payment_action_required webhook sets the "Complete payment" link.
+function isPaymentActionRequired(error: unknown): boolean {
+  return (
+    error instanceof Stripe.errors.StripeError &&
+    error.code === "subscription_payment_intent_requires_action"
+  );
 }
 
 async function handleExistingSubscription(
@@ -188,7 +199,10 @@ async function handleExistingSubscription(
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Not found" },
+      { status: HttpStatus.NOT_FOUND }
+    );
   }
 
   try {
@@ -211,7 +225,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (sub.providerPriceId === priceId) {
         return NextResponse.json(
           { error: "You are already on this plan" },
-          { status: 400 }
+          { status: HttpStatus.BAD_REQUEST }
         );
       }
 
@@ -279,10 +293,20 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ url });
   } catch (error) {
+    if (isPaymentActionRequired(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "Your bank needs to authenticate this payment. Open Manage Billing to complete it.",
+        },
+        { status: HttpStatus.PAYMENT_REQUIRED }
+      );
+    }
+
     if (isStripeCardError(error)) {
       return NextResponse.json(
         { error: "Payment failed. Please update your payment method." },
-        { status: 402 }
+        { status: HttpStatus.PAYMENT_REQUIRED }
       );
     }
 
@@ -294,7 +318,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Failed to create checkout session" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }
