@@ -21,6 +21,7 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   FOR_EACH_GROUP_TYPE,
   buildChildLogsLookup,
@@ -70,7 +71,7 @@ type WorkflowExecution = {
   completedAt: Date | null;
   duration: string | null;
   error: string | null;
-  errorType: "user" | "system" | "external" | null;
+  errorType: ExecutionErrorType | null;
   errorCategory: string | null;
   errorCode: string | null;
   // Progress tracking fields

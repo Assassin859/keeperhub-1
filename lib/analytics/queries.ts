@@ -24,6 +24,7 @@ import {
   gasCreditUsage,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
@@ -73,7 +74,7 @@ export function normalizeStatus(
   }
   // External-dependency failures are stored with DB status 'error' and are only
   // distinguished by error_type, so lift them to their own normalized status.
-  if (status === "error" && errorType === "external") {
+  if (status === "error" && errorType === ExecutionErrorType.EXTERNAL) {
     return "external_error";
   }
   return status as NormalizedStatus;
@@ -120,10 +121,10 @@ function workflowStatusCondition(status: NormalizedStatus): SQL {
     sql`, `
   )})`;
   if (status === "external_error") {
-    return sql`${inClause} AND ${workflowExecutions.errorType} = 'external'`;
+    return sql`${inClause} AND ${workflowExecutions.errorType} = ${ExecutionErrorType.EXTERNAL}`;
   }
   if (status === "error") {
-    return sql`${inClause} AND ${workflowExecutions.errorType} IS DISTINCT FROM 'external'`;
+    return sql`${inClause} AND ${workflowExecutions.errorType} IS DISTINCT FROM ${ExecutionErrorType.EXTERNAL}`;
   }
   return inClause;
 }

@@ -12,6 +12,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { ErrorCode } from "../errors/error-codes";
+import type { ExecutionErrorType } from "../errors/execution-error-type";
 import type { IntegrationType } from "../types/integration";
 import { generateId } from "../utils/id";
 
@@ -583,7 +584,7 @@ export const workflowExecutions = pgTable(
       | "workflow_engine"
       | "unknown"
     >(),
-    errorType: text("error_type").$type<"user" | "system" | "external">(),
+    errorType: text("error_type").$type<ExecutionErrorType>(),
     errorCode: text("error_code").$type<ErrorCode>(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),

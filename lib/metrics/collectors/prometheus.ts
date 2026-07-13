@@ -8,6 +8,7 @@
 import "server-only";
 
 import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import type { ErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
 import type { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
@@ -957,7 +958,7 @@ const workflowExecutionErrorsCreated = getOrCreateCounter(
 export function recordWorkflowExecutionError(labels: {
   orgSlug: string;
   errorCategory: string;
-  errorType: "user" | "system" | "external";
+  errorType: ExecutionErrorType;
 }): void {
   workflowExecutionErrorsCreated.inc({
     org_slug: labels.orgSlug,
@@ -982,7 +983,7 @@ const workflowExecutionsFinished = getOrCreateCounter(
 export function recordWorkflowExecutionFinished(labels: {
   status: "success" | ErrorStatus;
   orgSlug: string;
-  errorType: "user" | "system" | "external" | typeof NA_ERROR_TYPE;
+  errorType: ExecutionErrorType | typeof NA_ERROR_TYPE;
 }): void {
   workflowExecutionsFinished.inc({
     status: labels.status,
@@ -1024,7 +1025,7 @@ const workflowExecutionErrorsByWorkflow = getOrCreateCounter(
 export function recordWorkflowExecutionErrorByWorkflow(labels: {
   workflowId: string;
   orgSlug: string;
-  errorType: "user" | "system" | "external";
+  errorType: ExecutionErrorType;
 }): void {
   workflowExecutionErrorsByWorkflow.inc({
     workflow_id: labels.workflowId,

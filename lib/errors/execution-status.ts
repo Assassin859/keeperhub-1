@@ -1,3 +1,5 @@
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+
 /**
  * Execution status values that represent a failed run. `error` is a user-,
  * workflow-, or external-dependency-caused failure; `system_error` is a
@@ -21,7 +23,7 @@ export function isErrorStatus(status: string): status is ErrorStatus {
 
 /** Map an error_type to the execution status that should be persisted. */
 export function statusForErrorType(
-  errorType: "user" | "system" | "external" | null | undefined
+  errorType: ExecutionErrorType | null | undefined
 ): ErrorStatus {
-  return errorType === "system" ? "system_error" : "error";
+  return errorType === ExecutionErrorType.SYSTEM ? "system_error" : "error";
 }

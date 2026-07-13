@@ -27,6 +27,7 @@ import { and, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { organization, workflowExecutions, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 const DEFAULT_ORGS = ["techops-services", "ajna"];
 const DEFAULT_DAYS = 90;
@@ -116,7 +117,7 @@ function recordInSummary(
   summary: Summary,
   orgSlug: string,
   errorCategory: string,
-  errorType: "user" | "system" | "external"
+  errorType: ExecutionErrorType
 ): void {
   if (!summary[orgSlug]) {
     summary[orgSlug] = {};
