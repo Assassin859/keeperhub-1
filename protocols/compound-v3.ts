@@ -1,6 +1,7 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import {
   type ActionInputBindings,
+  amount,
   type OutputExpectation,
   type ProtocolTestData,
   wallet,
@@ -73,17 +74,50 @@ const COMET_EXPECTATIONS: Record<string, OutputExpectation[]> = {
   "is-liquidatable": [{ equals: "false" }],
 };
 
-function cometChain(chainId: string): ProtocolTestData[string] {
+function cometChain(chainId: string, funded = false): ProtocolTestData[string] {
+  const comet = COMET_USDC[chainId];
+  const actions = cometActions(comet, WETH[chainId]);
+  if (!funded) {
+    return {
+      setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
+      actions,
+      skipped: COMET_SKIPS,
+      expectations: COMET_EXPECTATIONS,
+    };
+  }
+  // Fund USDC (the base asset) from the mainnet whale and fabricate the Comet
+  // approval, so supply then withdraw of the base asset execute in registry
+  // order. Supplying the base makes the wallet a lender, so get-balance reads
+  // a nonzero base position afterward. L2 chains keep supply/withdraw skipped
+  // until per-chain FORK_WHALES/faucets exist.
+  actions.supply = {
+    contractAddress: comet,
+    asset: "USDC",
+    amount: amount("USDC", "100"),
+  };
+  actions.withdraw = {
+    contractAddress: comet,
+    asset: "USDC",
+    amount: amount("USDC", "50"),
+  };
   return {
-    setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
-    actions: cometActions(COMET_USDC[chainId], WETH[chainId]),
-    skipped: COMET_SKIPS,
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [{ symbol: "USDC", human: "1000" }],
+      approvals: [],
+      fabricatedApprovals: [{ token: "USDC", spender: comet, human: "1000" }],
+    },
+    actions,
+    skipped: {},
     expectations: COMET_EXPECTATIONS,
+    writeExpectations: {
+      supply: [{ read: "get-balance", expect: { nonZero: true } }],
+    },
   };
 }
 
 const TEST_DATA: ProtocolTestData = {
-  "1": cometChain("1"),
+  "1": cometChain("1", true),
   "8453": cometChain("8453"),
   "42161": cometChain("42161"),
 };
