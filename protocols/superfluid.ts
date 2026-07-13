@@ -191,9 +191,18 @@ const TEST_DATA: ProtocolTestData = {
       "create-flow": [
         { read: "get-flow", expect: { field: "flowRate", nonZero: true } },
       ],
+      // update-flow runs after create-flow and before delete-flow, so the
+      // flow is still open with a nonzero rate when its probe reads.
+      "update-flow": [
+        { read: "get-flow", expect: { field: "flowRate", nonZero: true } },
+      ],
       "delete-flow": [
         { read: "get-flow", expect: { field: "flowRate", equals: "0" } },
       ],
+      // wrap upgrades DAI into DAIx, crediting the super-token balance (the
+      // read has no field - the balance output is unnamed). nonZero is
+      // history-safe: the balance only grows across runs.
+      wrap: [{ read: "get-super-token-balance", expect: { nonZero: true } }],
     },
   },
 };

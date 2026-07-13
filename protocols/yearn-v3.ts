@@ -99,6 +99,32 @@ const TEST_DATA: ProtocolTestData = {
       "vault-withdraw": "requires vault share balance",
       "vault-redeem": "requires vault share balance",
     },
+    // Live-vault invariants on the USDC-1 vault. Yearn V3's inline ABI has
+    // unnamed outputs, so assertions target the bare result (no field). asset
+    // is a permanent address; totals/supply/price-per-share are large and
+    // monotonic; convert/preview are pure per-share quotes; decimals mirrors
+    // USDC (6); the vault is live (not shut down) with a set role manager and
+    // a version string. max-deposit/mint are omitted deliberately: V3 vaults
+    // carry a deposit_limit, so maxDeposit can legitimately be zero at cap.
+    // Caller-position reads (balance, max-withdraw/redeem) and the
+    // can-legitimately-be-zero config reads (total-idle, total-debt,
+    // accountant, minimum-total-idle) are left unasserted.
+    expectations: {
+      "vault-asset": [{ notEmpty: true }],
+      "vault-total-assets": [{ nonZero: true }],
+      "vault-total-supply": [{ nonZero: true }],
+      "vault-convert-to-assets": [{ nonZero: true }],
+      "vault-convert-to-shares": [{ nonZero: true }],
+      "vault-preview-deposit": [{ nonZero: true }],
+      "vault-preview-mint": [{ nonZero: true }],
+      "vault-preview-withdraw": [{ nonZero: true }],
+      "vault-preview-redeem": [{ nonZero: true }],
+      "get-price-per-share": [{ nonZero: true }],
+      "get-vault-decimals": [{ equals: "6" }],
+      "get-api-version": [{ notEmpty: true }],
+      "get-is-shutdown": [{ equals: "false" }],
+      "get-role-manager": [{ notEmpty: true }],
+    },
   },
 };
 

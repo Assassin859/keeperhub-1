@@ -38,6 +38,18 @@ const TEST_DATA: ProtocolTestData = {
       "remove-liquidity-one-coin": "requires LP token balance",
       "crv-transfer": "requires CRV balance",
     },
+    // 3pool invariants (unnamed Vyper outputs, so no field): virtual price is
+    // monotonic and >= 1e18, the 1-DAI get-dy quote and the one-coin withdraw
+    // calc are always positive, coin 0 is a permanent address, and the pool
+    // balance of coin 0 is large. crv-balance-of is a shared-wallet balance
+    // (moved by other suites/fabrication) and left unasserted.
+    expectations: {
+      "get-virtual-price": [{ nonZero: true }],
+      "get-dy": [{ nonZero: true }],
+      "get-coin": [{ notEmpty: true }],
+      "get-pool-balance": [{ nonZero: true }],
+      "calc-withdraw-one-coin": [{ nonZero: true }],
+    },
     // The Tier 2 app approve path attempts gas sponsorship, which is
     // unconfigured on the CI fork, then falls back to direct signing;
     // that confirmation can take minutes, past the default 120s wait.

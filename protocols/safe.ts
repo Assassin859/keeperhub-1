@@ -33,11 +33,18 @@ const TEST_DATA: ProtocolTestData = {
     skipped: {},
     // Invariants of any live Safe: a nonzero threshold and at least one
     // owner. The test wallet is a Turnkey EOA that is not an owner of the
-    // treasury, so is-owner is a known constant false.
+    // treasury, so is-owner is a known constant false, and the wallet is not
+    // an enabled module. The bound treasury Safe has executed many
+    // transactions, so its nonce is nonzero and stable (the suite never
+    // mutates this Safe). All outputs are unnamed, so assertions have no
+    // field. get-modules-paginated returns a two-element (array, next) shape
+    // and is left unasserted.
     expectations: {
       "get-owners": [{ notEmpty: true }],
       "get-threshold": [{ nonZero: true }],
       "is-owner": [{ equals: "false" }],
+      "get-nonce": [{ nonZero: true }],
+      "is-module-enabled": [{ equals: "false" }],
     },
     // The event harness deploys a throwaway 1-of-1 Safe and drives its
     // state-changing calls (the bound treasury Safe is a third party we

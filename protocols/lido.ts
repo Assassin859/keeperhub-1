@@ -118,6 +118,19 @@ export default defineAbiProtocol({
         wrap: "requires stETH balance - not provisioned in fork setup (stETH's share-derived balanceOf defeats slot fabrication; needs a whale entry)",
         unwrap: "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
       },
+      // Chain invariants (unnamed outputs, so no field): the wstETH<->stETH
+      // exchange rates only ratchet up from 1e18, the 1-unit conversions are
+      // pure rate reads, and wstETH total supply is nine figures - each being
+      // zero means the read decoded garbage. The caller-balance reads
+      // (get-wsteth-balance, get-steth-balance) are shared-wallet values and
+      // left unasserted.
+      expectations: {
+        "steth-per-token": [{ nonZero: true }],
+        "tokens-per-steth": [{ nonZero: true }],
+        "get-steth-by-wsteth": [{ nonZero: true }],
+        "get-wsteth-by-steth": [{ nonZero: true }],
+        "get-wsteth-total-supply": [{ nonZero: true }],
+      },
       // The Tier 2 app approve path attempts gas sponsorship, which is
       // unconfigured on the CI fork, then falls back to direct signing;
       // that confirmation can take minutes, past the default 120s wait.
