@@ -1,4 +1,4 @@
-import { isSolanaChain } from "@/lib/rpc/provider-factory";
+import { getSolanaProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import { getGasStrategy } from "../gas-strategy";
 import { getNonceManager } from "../nonce-manager";
 import { EvmChainAdapter } from "./evm";
@@ -16,7 +16,9 @@ export function getChainAdapter(chainId: number): ChainAdapter {
   let adapter: ChainAdapter;
 
   if (isSolanaChain(chainId)) {
-    adapter = new SolanaChainAdapter(chainId);
+    adapter = new SolanaChainAdapter(chainId, () =>
+      getSolanaProvider({ chainId })
+    );
   } else {
     adapter = new EvmChainAdapter(chainId, getGasStrategy(), getNonceManager());
   }
