@@ -1,5 +1,10 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  native,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
 
 // The vault contract is userSpecifiedAddress, so every action binds a
@@ -13,8 +18,11 @@ const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [],
+      requiredTokens: [{ symbol: "USDC", human: "1000" }],
       approvals: [],
+      fabricatedApprovals: [
+        { token: "USDC", spender: MAINNET_TEST_VAULT, human: "1000" },
+      ],
     },
     actions: {
       "vault-asset": { contractAddress: MAINNET_TEST_VAULT },
@@ -79,25 +87,35 @@ const TEST_DATA: ProtocolTestData = {
       "get-vault-decimals": { contractAddress: MAINNET_TEST_VAULT },
       "vault-deposit": {
         contractAddress: MAINNET_TEST_VAULT,
+        assets: amount("USDC", "100"),
         receiver: wallet(),
       },
-      "vault-mint": { contractAddress: MAINNET_TEST_VAULT, receiver: wallet() },
+      "vault-mint": {
+        contractAddress: MAINNET_TEST_VAULT,
+        shares: amount("USDC", "10"),
+        receiver: wallet(),
+      },
       "vault-withdraw": {
         contractAddress: MAINNET_TEST_VAULT,
+        assets: amount("USDC", "20"),
         receiver: wallet(),
         owner: wallet(),
       },
       "vault-redeem": {
         contractAddress: MAINNET_TEST_VAULT,
+        shares: amount("USDC", "10"),
         receiver: wallet(),
         owner: wallet(),
       },
     },
-    skipped: {
-      "vault-deposit": "requires vault asset balance + approval",
-      "vault-mint": "requires vault asset balance + approval",
-      "vault-withdraw": "requires vault share balance",
-      "vault-redeem": "requires vault share balance",
+    // Funded: USDC (the vault asset) from the mainnet whale plus a fabricated
+    // vault approval unlock the deposit/mint/withdraw/redeem sequence (deposits
+    // run first in registry order and open the share position the withdraws
+    // spend).
+    skipped: {},
+    writeExpectations: {
+      "vault-deposit": [{ read: "vault-balance", expect: { nonZero: true } }],
+      "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
     },
     // Live-vault invariants on the USDC-1 vault. Yearn V3's inline ABI has
     // unnamed outputs, so assertions target the bare result (no field). asset
