@@ -10,21 +10,44 @@ const CORE_HUB = "0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9";
 const RESERVE_WSTETH = "0";
 const RESERVE_WETH = "1";
 
-// Funded: wstETH from the mainnet whale + a fabricated Spoke approval unlock the
-// collateral-side writes (supply -> withdraw -> set-collateral in registry
-// order) and the reserveId-scoped reads. get-reserve-id resolves WETH (hub
-// assetId 0) to reserveId 1 via the CORE hub. An account with no debt reports
-// the maximum health factor (a permanent nonzero invariant). borrow/repay stay
-// skipped: they need collateral enabled before borrow in the registry order and
-// WETH debt sequencing, and get-user-debt needs that open debt.
+// Funded: wstETH from the mainnet whale + fabricated Spoke approvals. Setup
+// pre-supplies wstETH and enables it as collateral, so the full sweep runs:
+// supply/withdraw/set-collateral on wstETH (reserveId 0) and borrow/repay on
+// WETH (reserveId 1) against that collateral, plus the reserveId-scoped reads.
+// get-reserve-id resolves WETH (hub assetId 0) to reserveId 1 via the CORE hub;
+// with no debt the account reports the maximum (nonzero) health factor.
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [{ symbol: "WSTETH", human: "2" }],
+      requiredTokens: [{ symbol: "WSTETH", human: "5" }],
       approvals: [],
       fabricatedApprovals: [
-        { token: "WSTETH", spender: LIDO_SPOKE, human: "2" },
+        { token: "WSTETH", spender: LIDO_SPOKE, human: "5" },
+        { token: "WETH", spender: LIDO_SPOKE, human: "1" },
+      ],
+      // Pre-supply wstETH and enable it as collateral before the action sweep,
+      // so borrow (3rd in registry order) has collateral - set-collateral runs
+      // last in the sweep and cannot enable it in time.
+      protocolSteps: [
+        {
+          protocol: "aave-v4",
+          action: "supply",
+          inputs: {
+            reserveId: RESERVE_WSTETH,
+            amount: amount("WSTETH", "2"),
+            onBehalfOf: wallet(),
+          },
+        },
+        {
+          protocol: "aave-v4",
+          action: "set-collateral",
+          inputs: {
+            reserveId: RESERVE_WSTETH,
+            usingAsCollateral: "true",
+            onBehalfOf: wallet(),
+          },
+        },
       ],
     },
     actions: {
@@ -61,18 +84,21 @@ const TEST_DATA: ProtocolTestData = {
         onBehalfOf: wallet(),
       },
     },
-    skipped: {
-      borrow:
-        "needs wstETH collateral enabled before borrow in registry order, plus WETH liquidity",
-      repay: "needs an open WETH debt position",
-      "get-user-debt": "needs an open debt position (borrow is skipped)",
-    },
+    skipped: {},
     expectations: {
       "get-user-account-data": [{ field: "healthFactor", nonZero: true }],
       "get-reserve-id": [{ equals: "1" }],
     },
     writeExpectations: {
       supply: [{ read: "get-user-supplied-assets", expect: { nonZero: true } }],
+      // After borrowing WETH the account carries debt; totalDebtValueRay is a
+      // named field of the account-data struct.
+      borrow: [
+        {
+          read: "get-user-account-data",
+          expect: { field: "totalDebtValueRay", nonZero: true },
+        },
+      ],
     },
   },
 };
