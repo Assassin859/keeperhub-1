@@ -1,5 +1,6 @@
 import "server-only";
 
+import { PublicKey } from "@solana/web3.js";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
@@ -8,7 +9,8 @@ import { getAddressUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
@@ -72,24 +74,8 @@ async function stepHandler(
     );
   }
 
-  // Validate address
-  if (!ethers.isAddress(address)) {
-    logUserError(
-      ErrorCategory.VALIDATION,
-      "[Check Balance] Invalid address:",
-      address,
-      {
-        plugin_name: "web3",
-        action_name: "check-balance",
-      }
-    );
-    return {
-      success: false,
-      error: `Invalid Ethereum address: ${address}`,
-    };
-  }
-
-  // Get chain ID from network name
+  // Resolve the chain first so address validation, RPC handling, and balance
+  // formatting can branch on the chain family (EVM vs Solana).
   let chainId: number;
   try {
     chainId = getChainIdFromNetwork(network);
@@ -110,39 +96,80 @@ async function stepHandler(
     };
   }
 
-  // Resolve RPC provider with failover support
-  let rpcManager: Awaited<ReturnType<typeof getRpcProvider>>;
-  try {
-    rpcManager = await getRpcProvider({ chainId, userId });
-  } catch (error) {
+  const isSolana = isSolanaChain(chainId);
+
+  // Validate the address for the chain family.
+  if (isSolana) {
+    try {
+      // Throws on non-base58 / wrong-length input.
+      new PublicKey(address);
+    } catch {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Check Balance] Invalid Solana address:",
+        address,
+        { plugin_name: "web3", action_name: "check-balance" }
+      );
+      return {
+        success: false,
+        error: `Invalid Solana address: ${address}`,
+      };
+    }
+  } else if (!ethers.isAddress(address)) {
     logUserError(
       ErrorCategory.VALIDATION,
-      "[Check Balance] Failed to resolve RPC config:",
-      error,
+      "[Check Balance] Invalid address:",
+      address,
       {
         plugin_name: "web3",
         action_name: "check-balance",
-        chain_id: String(chainId),
       }
     );
     return {
       success: false,
-      error: getErrorMessage(error),
+      error: `Invalid Ethereum address: ${address}`,
     };
+  }
+
+  // Resolve RPC provider (EVM only). SolanaChainAdapter owns its own provider
+  // manager and ignores the rpcManager argument, so we skip EVM RPC resolution.
+  let rpcManager: RpcProviderManager | undefined;
+  if (!isSolana) {
+    try {
+      rpcManager = await getRpcProvider({ chainId, userId });
+    } catch (error) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Check Balance] Failed to resolve RPC config:",
+        error,
+        {
+          plugin_name: "web3",
+          action_name: "check-balance",
+          chain_id: String(chainId),
+        }
+      );
+      return {
+        success: false,
+        error: getErrorMessage(error),
+      };
+    }
   }
 
   const adapter = getChainAdapter(chainId);
 
-  // Check balance
+  // Check balance. Native decimals differ by family: 18 for EVM, 9 for Solana.
   try {
-    const balance = await adapter.getBalance(rpcManager, address);
-    const balanceEth = ethers.formatEther(balance);
+    const balance = await adapter.getBalance(
+      rpcManager as RpcProviderManager,
+      address
+    );
+    const balanceFormatted = ethers.formatUnits(balance, isSolana ? 9 : 18);
 
     const addressLink = await adapter.getAddressUrl(address);
 
     return {
       success: true,
-      balance: balanceEth,
+      balance: balanceFormatted,
       balanceWei: balance.toString(),
       address,
       addressLink,
