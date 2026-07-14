@@ -9,6 +9,25 @@ import type { WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
+// The Tempo Payment Received trigger always watches the fixed TIP-20
+// TransferWithMemo event. The event-tracker's mapper needs an ABI + event name
+// on the trigger config to build a subscription, so we inject them here rather
+// than surfacing ABI/event pickers to the user.
+const TEMPO_TRANSFER_WITH_MEMO_EVENT = "TransferWithMemo";
+const TEMPO_TRANSFER_WITH_MEMO_ABI = JSON.stringify([
+  {
+    type: "event",
+    name: "TransferWithMemo",
+    anonymous: false,
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+      { name: "memo", type: "bytes32", indexed: true },
+    ],
+  },
+]);
+
 /**
  * Internal endpoint for workers to fetch active Event-type workflows.
  * Returns only enabled workflows with Event trigger type. Authentication
@@ -64,18 +83,31 @@ export async function GET(request: Request) {
             return null;
           }
 
-          // Check if trigger type is Event
+          // Admit Event triggers and the Tempo Payment Received trigger; both
+          // register through the event-tracker as on-chain log subscriptions.
           const triggerType = triggerNode.data?.config?.triggerType as
             | string
             | undefined;
 
-          if (triggerType !== WorkflowTriggerEnum.EVENT) {
+          const isEventTrigger = triggerType === WorkflowTriggerEnum.EVENT;
+          const isTempoPaymentTrigger =
+            triggerType === WorkflowTriggerEnum.TEMPO_PAYMENT;
+          if (!(isEventTrigger || isTempoPaymentTrigger)) {
             return null;
           }
 
-          // Try to infer contract address from protocol and event slug
           const config = triggerNode.data?.config;
-          if (config && !config.contractAddress) {
+
+          // Inject the fixed TransferWithMemo ABI + event name for the Tempo
+          // trigger so the mapper can build the subscription. contractAddress
+          // (the token) and network come from the user's config.
+          if (isTempoPaymentTrigger && config) {
+            config.contractABI = TEMPO_TRANSFER_WITH_MEMO_ABI;
+            config.eventName = TEMPO_TRANSFER_WITH_MEMO_EVENT;
+          }
+
+          // Try to infer contract address from protocol and event slug
+          if (isEventTrigger && config && !config.contractAddress) {
             const protocolSlug = config._eventProtocolSlug as
               | string
               | undefined;

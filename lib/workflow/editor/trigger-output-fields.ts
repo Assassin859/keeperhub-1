@@ -150,6 +150,36 @@ export function getBlockTriggerOutputFields(): OutputField[] {
 }
 
 /**
+ * Get output fields for the Tempo Payment Received trigger. The watched event
+ * is the fixed TIP-20 `TransferWithMemo(from, to, value, memo)`, so the decoded
+ * args are known up front (no ABI needed).
+ */
+export function getTempoPaymentOutputFields(): OutputField[] {
+  return [
+    { field: "args.from", description: "Sender address of the payment" },
+    {
+      field: "args.to",
+      description: "Recipient address (the watched deposit address)",
+    },
+    {
+      field: "args.value",
+      description: "Amount transferred, in the token's smallest unit",
+    },
+    {
+      field: "args.memo",
+      description: "The bytes32 memo attached to the transfer",
+    },
+    { field: "transactionHash", description: "Hash of the payment transaction" },
+    { field: "blockNumber", description: "Block height the payment landed in" },
+    {
+      field: "address",
+      description: "The TIP-20 token contract that emitted the event",
+    },
+    TRIGGERED_AT_FIELD,
+  ];
+}
+
+/**
  * Get output fields for a trigger node based on its configuration
  */
 export function getTriggerOutputFields(
@@ -158,6 +188,10 @@ export function getTriggerOutputFields(
 ): OutputField[] {
   if (triggerType === "Block") {
     return getBlockTriggerOutputFields();
+  }
+
+  if (triggerType === "Tempo Payment Received") {
+    return getTempoPaymentOutputFields();
   }
 
   if (triggerType === "Event") {
