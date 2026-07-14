@@ -256,9 +256,17 @@ export class StripeBillingProvider implements BillingProvider {
       line_items: [{ price: params.priceId, quantity: 1 }],
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
+      // Let customers redeem promotion codes created in the Stripe dashboard.
+      allow_promotion_codes: true,
+      // Always collect a card up front (do not rely on the Stripe default), so a
+      // trial has a payment method on file and auto-charges when it ends.
+      payment_method_collection: "always",
       metadata: {
         organizationId: params.organizationId,
       },
+      ...(params.trialPeriodDays !== undefined && {
+        subscription_data: { trial_period_days: params.trialPeriodDays },
+      }),
     });
 
     if (!session.url) {
@@ -419,7 +427,8 @@ export class StripeBillingProvider implements BillingProvider {
 
   async updateSubscription(
     subscriptionId: string,
-    newPriceId: string
+    newPriceId: string,
+    options?: { endTrial?: boolean }
   ): Promise<{ subscriptionId: string }> {
     const s = getStripe();
     const subscription = await s.subscriptions.retrieve(subscriptionId);
@@ -440,6 +449,9 @@ export class StripeBillingProvider implements BillingProvider {
       payment_behavior: "error_if_incomplete",
       cancel_at_period_end: false,
       ...(intervalChanging && { billing_cycle_anchor: "now" as const }),
+      // Switching a trialing sub to a non-trial plan ends the trial now so the
+      // new plan is charged immediately instead of inheriting the free trial.
+      ...(options?.endTrial && { trial_end: "now" as const }),
     });
 
     return { subscriptionId: updated.id };
@@ -483,7 +495,8 @@ export class StripeBillingProvider implements BillingProvider {
 
   async previewProration(
     subscriptionId: string,
-    newPriceId: string
+    newPriceId: string,
+    options?: { endTrial?: boolean }
   ): Promise<ProrationPreview> {
     const s = getStripe();
     const subscription = await s.subscriptions.retrieve(subscriptionId);
@@ -509,6 +522,9 @@ export class StripeBillingProvider implements BillingProvider {
         ...(!intervalChanging && {
           proration_date: Math.floor(Date.now() / 1000),
         }),
+        // Mirror the real update: ending the trial makes the preview show the
+        // full charge for the new plan instead of $0.
+        ...(options?.endTrial && { trial_end: "now" as const }),
       },
     });
 

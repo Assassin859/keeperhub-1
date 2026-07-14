@@ -382,6 +382,31 @@ app:
     NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
       type: kv
       value: "true"
+    # Free trials (server-side runtime flags). TRIALS_ENABLED gates the trial
+    # offer + in-app nudge; the rest tune length and repeat behavior.
+    # TRIALS_ENABLED and TRIAL_TIER come from Parameter Store so we can flip the
+    # feature and switch the price tier live, without a PR. Create the params
+    # before deploy (a missing SSM param blocks the pod); keep trials-enabled
+    # "false" until launch:
+    #   /eks/techops-prod/keeperhub/trials-enabled  (true|false)
+    #   /eks/techops-prod/keeperhub/trial-tier       (25k|50k|100k)
+    TRIALS_ENABLED:
+      type: parameterStore
+      name: trials-enabled
+      parameter_name: /eks/techops-prod/keeperhub/trials-enabled
+    STRIPE_TRIAL_PERIOD_DAYS:
+      type: kv
+      value: "14"
+    TRIAL_TIER:
+      type: parameterStore
+      name: trial-tier
+      parameter_name: /eks/techops-prod/keeperhub/trial-tier
+    TRIAL_ALLOW_REPEAT:
+      type: kv
+      value: "false"
+    TRIAL_REPEAT_COOLDOWN_DAYS:
+      type: kv
+      value: "90"
     # AI Prompt feature flag - disabled
     # (gates UI render in components/workflow/workflow-canvas.tsx
     #  and /api/ai/generate route)
@@ -508,7 +533,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/10 * * * *" # every 10 minutes
+        schedule: "3-59/10 * * * *" # every 10 minutes, offset by 3 minutes
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
@@ -562,7 +587,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/5 * * * *" # every 5 minutes
+        schedule: "1-59/5 * * * *" # every 5 minutes, offset by 1 minute
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
@@ -589,7 +614,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/30 * * * *" # every 30 minutes
+        schedule: "8,38 * * * *" # every 30 minutes, offset by 8 minutes
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"

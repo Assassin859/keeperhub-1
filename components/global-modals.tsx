@@ -1,5 +1,6 @@
 "use client";
 
+import { TrialUpsellController } from "@/components/billing/trial-upsell-controller";
 import { OverlayContainer } from "@/components/overlays/overlay-container";
 import { OverlaySync } from "@/components/overlays/overlay-sync";
 
@@ -11,6 +12,7 @@ export function GlobalModals() {
     <>
       <OverlayContainer />
       <OverlaySync />
+      <TrialUpsellController />
     </>
   );
 }

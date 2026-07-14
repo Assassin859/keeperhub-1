@@ -120,6 +120,36 @@ export default defineAbiProtocol({
         "vault-redeem":
           "cooldown mode disables ERC4626 redeem (cooldownDuration is 86400s on mainnet, verified 2026-07-08; StakedUSDeV2 reverts while it is nonzero) - exits are covered by cooldown-shares + unstake",
       },
+      // sUSDe (StakedUSDeV2) invariants (unnamed ERC-4626 outputs, so no
+      // field): asset is a permanent address; totals/supply are large and
+      // monotonic; convert/preview are pure per-share quotes; max-deposit/mint
+      // are the uncapped limits; the cooldown duration is a fixed protocol
+      // config (86400s, verified 2026-07-08). Caller-position reads (balance,
+      // max-withdraw/redeem, cooldown-status) and shared-wallet token balances
+      // are history-dependent and left unasserted.
+      expectations: {
+        "vault-asset": [{ notEmpty: true }],
+        "vault-total-assets": [{ nonZero: true }],
+        "vault-total-supply": [{ nonZero: true }],
+        "vault-convert-to-assets": [{ nonZero: true }],
+        "vault-convert-to-shares": [{ nonZero: true }],
+        "vault-preview-deposit": [{ nonZero: true }],
+        "vault-preview-mint": [{ nonZero: true }],
+        "vault-preview-withdraw": [{ nonZero: true }],
+        "vault-preview-redeem": [{ nonZero: true }],
+        "vault-max-deposit": [{ nonZero: true }],
+        "vault-max-mint": [{ nonZero: true }],
+        "get-cooldown-duration": [{ equals: "86400" }],
+      },
+      // Post-write oracle: a deposit/mint must actually credit sUSDe shares
+      // (checked right after the write mines, before the cooldown burns
+      // them). nonZero is history-safe on the simulation wallet.
+      writeExpectations: {
+        "vault-deposit": [
+          { read: "vault-balance", expect: { nonZero: true } },
+        ],
+        "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
+      },
     },
   },
 

@@ -56,6 +56,18 @@ const VALID_TIER_KEYS: ReadonlySet<string> = new Set<TierKey>([
   "1m",
 ]);
 
+// A free trial applies to a single Pro tier, chosen server-side from the
+// TRIAL_TIER env (resolved in lib/billing/trial.ts, no public env). These are
+// the tiers that value may select; anything else falls back to the default.
+// Every other plan and tier is pay-now.
+export const TRIAL_PLAN_NAME: PlanName = "pro";
+export const DEFAULT_TRIAL_TIER_KEY: TierKey = "25k";
+export const TRIAL_ELIGIBLE_TIER_KEYS: readonly TierKey[] = [
+  "25k",
+  "50k",
+  "100k",
+];
+
 export function isValidPlanName(value: unknown): value is PlanName {
   return typeof value === "string" && VALID_PLAN_NAMES.has(value);
 }
@@ -177,6 +189,16 @@ export const PLANS: Record<PlanName, PlanDefinition> = {
     overage: { enabled: false, ratePerThousand: 0 },
   },
 } as const;
+
+// Whether `value` is a Pro tier that may be configured as the trial tier.
+// Guards the TRIAL_TIER env against a plan/tier that does not exist.
+export function isConfigurableTrialTier(value: unknown): value is TierKey {
+  return (
+    typeof value === "string" &&
+    (TRIAL_ELIGIBLE_TIER_KEYS as readonly string[]).includes(value) &&
+    PLANS[TRIAL_PLAN_NAME].tiers.some((t) => t.key === value)
+  );
+}
 
 // -- Shared helpers (no DB) --
 

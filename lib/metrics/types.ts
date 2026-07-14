@@ -146,6 +146,8 @@ export const MetricNames = {
 
   // Billing lifecycle counters (API-process, emitted from webhook handler)
   BILLING_SUBSCRIPTION_CREATED: "billing.subscription.created",
+  BILLING_TRIAL_STARTED: "billing.trial.started",
+  BILLING_TRIAL_CONVERTED: "billing.trial.converted",
   BILLING_SUBSCRIPTION_UPDATED: "billing.subscription.updated",
   BILLING_SUBSCRIPTION_CANCELED: "billing.subscription.canceled",
   BILLING_SUBSCRIPTION_PLAN_CHANGED: "billing.subscription.plan_changed",

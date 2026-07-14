@@ -35,7 +35,12 @@ export const TESTNET_FUNDER_PK_ENV = "TESTNET_FUNDER_PK";
  * testData (aave-v3) exercised by local Tier 1 sims
  * (scripts/protocol-local.sh sim sepolia).
  */
-export const FORK_CHAIN_IDS: Set<string> = new Set(["1", "11155111"]);
+export const FORK_CHAIN_IDS: Set<string> = new Set([
+  "1",
+  "11155111",
+  "8453",
+  "42161",
+]);
 
 export type TokenSymbol =
   | "WETH"
@@ -297,6 +302,8 @@ export const FORK_WHALES: Record<
 export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("1000000000000000000"), // 1 ETH (fork mode, free via anvil_setBalance)
   "11155111": BigInt("1000000000000000000"), // 1 ETH (fork mode, free via anvil_setBalance)
+  "8453": BigInt("1000000000000000000"), // 1 ETH (Base fork, free via anvil_setBalance)
+  "42161": BigInt("1000000000000000000"), // 1 ETH (Arbitrum fork, free via anvil_setBalance)
 };
 
 /**
@@ -318,5 +325,6 @@ export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
 export const FUND_NATIVE_AMOUNT_WEI_BY_CHAIN: Record<string, bigint> = {
   "1": BigInt("10000000000000000000"), // 10 ETH (fork mode)
   "11155111": BigInt("10000000000000000000"), // 10 ETH (fork mode)
-  "8453": BigInt("15000000000000000"), // 0.015 ETH real Base mainnet ETH
+  "8453": BigInt("10000000000000000000"), // 10 ETH (Base fork mode)
+  "42161": BigInt("10000000000000000000"), // 10 ETH (Arbitrum fork mode)
 };

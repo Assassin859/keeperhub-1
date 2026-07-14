@@ -1,4 +1,59 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import {
+  type ActionInputBindings,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
+
+// Dummy order identifiers for the order-mapping reads: GPv2 order UIDs are 56
+// bytes and order hashes/keys are bytes32. A nonexistent order reads as its
+// mapping default (filled/pre-signature 0, single-order false, cabinet 0) with
+// no revert, so these reads exercise the decode path without a live order.
+const DUMMY_ORDER_UID = `0x${"00".repeat(56)}`;
+const DUMMY_HASH = `0x${"00".repeat(32)}`;
+
+// Settlement + ComposableCoW are deployed at the same canonical addresses on
+// every chain, so the bindings are chain-independent.
+function cowChain(): ProtocolTestData[string] {
+  const actions: Record<string, ActionInputBindings> = {
+    "get-domain-separator": {},
+    "get-vault-relayer": {},
+    "get-filled-amount": { orderUid: DUMMY_ORDER_UID },
+    "get-pre-signature": { orderUid: DUMMY_ORDER_UID },
+    "check-single-order": { owner: wallet(), orderHash: DUMMY_HASH },
+    "get-cabinet": { owner: wallet(), key: DUMMY_HASH },
+    "set-pre-signature": { orderUid: DUMMY_ORDER_UID, signed: "true" },
+    "invalidate-order": { orderUid: DUMMY_ORDER_UID },
+    "remove-conditional-order": { singleOrderHash: DUMMY_HASH },
+    "create-conditional-order": { params: "0x", dispatch: "false" },
+  };
+  return {
+    setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
+    actions,
+    skipped: {
+      "set-pre-signature": "requires a real order UID owned by the wallet",
+      "invalidate-order": "requires a real order UID owned by the wallet",
+      "remove-conditional-order":
+        "requires an existing ComposableCoW single order",
+      "create-conditional-order":
+        "requires an encoded ConditionalOrderParams struct and a deployed handler",
+    },
+    // Settlement invariants (unnamed outputs, so no field): the EIP-712 domain
+    // separator and the vault-relayer address are permanent constants. The
+    // order-mapping reads return per-order defaults for a nonexistent order and
+    // stay liveness-only.
+    expectations: {
+      "get-domain-separator": [{ notEmpty: true }],
+      "get-vault-relayer": [{ notEmpty: true }],
+    },
+  };
+}
+
+const TEST_DATA: ProtocolTestData = {
+  "1": cowChain(),
+  "8453": cowChain(),
+  "42161": cowChain(),
+};
 
 // Minimal settlement contract ABI covering all six current actions.
 const SETTLEMENT_ABI = JSON.stringify([
@@ -96,6 +151,7 @@ const COMPOSABLE_COW_ABI = JSON.stringify([
 export default defineAbiProtocol({
   name: "CoW Swap",
   slug: "cowswap",
+  testData: TEST_DATA,
   description:
     "CoW Protocol: batch auction DEX for MEV-protected trades, order pre-signing, and conditional orders",
   website: "https://cow.fi",
@@ -122,7 +178,10 @@ export default defineAbiProtocol({
           description:
             "Returns the EIP-712 domain separator used to compute order digests for this deployment",
           outputs: {
-            result: { name: "domainSeparator", label: "EIP-712 Domain Separator" },
+            result: {
+              name: "domainSeparator",
+              label: "EIP-712 Domain Separator",
+            },
           },
         },
         vaultRelayer: {

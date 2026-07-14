@@ -1,5 +1,10 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  native,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 
 // The pool contract is userSpecifiedAddress; bind the canonical mainnet
 // 3pool explicitly (same address as the registry fallback, which
@@ -10,10 +15,23 @@ const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [],
+      // DAI funds the exchange (swap coin 0 -> coin 1) via the MCD_JOIN_DAI
+      // whale, with a fabricated 3pool approval. remove-liquidity (needs 3CRV
+      // LP) and crv-transfer (needs CRV) stay skipped pending those tokens.
+      requiredTokens: [{ symbol: "DAI", human: "100" }],
       approvals: [],
+      fabricatedApprovals: [
+        { token: "DAI", spender: MAINNET_3POOL, human: "100" },
+      ],
     },
     actions: {
+      exchange: {
+        contractAddress: MAINNET_3POOL,
+        i: "0",
+        j: "1",
+        dx: amount("DAI", "10"),
+        min_dy: "0",
+      },
       "get-dy": {
         contractAddress: MAINNET_3POOL,
         i: "0",
@@ -34,9 +52,20 @@ const TEST_DATA: ProtocolTestData = {
       "remove-liquidity-one-coin": {},
     },
     skipped: {
-      exchange: "requires token balance and approval",
       "remove-liquidity-one-coin": "requires LP token balance",
       "crv-transfer": "requires CRV balance",
+    },
+    // 3pool invariants (unnamed Vyper outputs, so no field): virtual price is
+    // monotonic and >= 1e18, the 1-DAI get-dy quote and the one-coin withdraw
+    // calc are always positive, coin 0 is a permanent address, and the pool
+    // balance of coin 0 is large. crv-balance-of is a shared-wallet balance
+    // (moved by other suites/fabrication) and left unasserted.
+    expectations: {
+      "get-virtual-price": [{ nonZero: true }],
+      "get-dy": [{ nonZero: true }],
+      "get-coin": [{ notEmpty: true }],
+      "get-pool-balance": [{ nonZero: true }],
+      "calc-withdraw-one-coin": [{ nonZero: true }],
     },
     // The Tier 2 app approve path attempts gas sponsorship, which is
     // unconfigured on the CI fork, then falls back to direct signing;

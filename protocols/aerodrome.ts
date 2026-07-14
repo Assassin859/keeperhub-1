@@ -1,8 +1,77 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+// Base token/factory addresses for the one bindable pool read. The gauge,
+// veAERO-lock, and swap reads need a specific pool/gauge/tokenId or token
+// balances that a coverage fixture does not yet provision, so they are
+// documented skips.
+const BASE_WETH = "0x4200000000000000000000000000000000000006";
+const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const AERODROME_POOL_FACTORY = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da";
+
+const TEST_DATA: ProtocolTestData = {
+  "8453": {
+    setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
+    actions: {
+      "get-total-weight": {},
+      "get-all-pools-length": {},
+      "get-pool-for-pair": {
+        tokenA: BASE_WETH,
+        tokenB: BASE_USDC,
+        stable: "false",
+        factory: AERODROME_POOL_FACTORY,
+      },
+      "aero-balance-of": { account: wallet() },
+    },
+    skipped: {
+      "get-reserves":
+        "requires a live token pair + factory with reserves fixtured",
+      "is-gauge-alive": "requires a specific gauge address",
+      "get-gauge-for-pool": "requires a specific pool address",
+      "get-venft-balance": "requires an existing veAERO tokenId",
+      "get-lock-details": "requires an existing veAERO tokenId",
+      "get-amount-out": "requires a pool address and an input amount",
+      "swap-exact-tokens": "requires token balance, approval and a route",
+      "add-liquidity": "requires token balances and approvals",
+      "remove-liquidity": "requires an existing LP position",
+      vote: "requires a veAERO tokenId with voting power",
+      "reset-votes": "requires a veAERO tokenId that has voted",
+      "claim-rewards": "requires staked gauge positions",
+      "create-lock": "requires an AERO balance and approval",
+      "increase-lock-amount": "requires an existing veAERO lock",
+      "increase-lock-duration": "requires an existing veAERO lock",
+      "withdraw-lock": "requires an expired veAERO lock",
+      "aero-approve": "requires an AERO balance for a meaningful allowance",
+    },
+    // Base-wide invariants: nonzero total voting weight and thousands of
+    // deployed pools; the WETH/USDC volatile pool resolves to a real address.
+    // aero-balance-of reads the unprovisioned wallet's AERO (zero) and stays
+    // liveness-only. Unnamed outputs take no field; poolFor's output is named
+    // "pool".
+    expectations: {
+      "get-total-weight": [{ nonZero: true }],
+      "get-all-pools-length": [{ nonZero: true }],
+      "get-pool-for-pair": [{ field: "pool", notEmpty: true }],
+    },
+    // The Base event emitter wraps ETH for the pool swap and pulls AERO from
+    // the veAERO escrow under impersonation, then drives a swap, a lock, a
+    // vote, a lock/withdraw, and an epoch distribute - six of the seven events.
+    // gauge-created stays skipped: every whitelisted Base pair already has a
+    // gauge, so emitting it would need a freshly deployed token to pair and
+    // gauge, which the self-contained emitter does not set up.
+    events: {
+      skipped: {
+        "gauge-created":
+          "Voter.createGauge emits GaugeCreated only for a pool that has no gauge yet; every whitelisted Base pair already has one, so a fresh emission would require deploying a throwaway token to pair and gauge",
+      },
+    },
+  },
+};
 
 export default defineAbiProtocol({
   name: "Aerodrome",
   slug: "aerodrome",
+  testData: TEST_DATA,
   description:
     "Aerodrome Finance: the leading DEX on Base with volatile/stable pools, ve(3,3) voting, and gauge-based emissions",
   website: "https://aerodrome.finance",
@@ -289,13 +358,18 @@ export default defineAbiProtocol({
           label: "Get Total Voting Weight",
           description: "Get the total voting weight across all gauges",
           outputs: {
-            result: { name: "totalWeight", label: "Total Weight", decimals: 18 },
+            result: {
+              name: "totalWeight",
+              label: "Total Weight",
+              decimals: 18,
+            },
           },
         },
         isAlive: {
           slug: "is-gauge-alive",
           label: "Check Gauge Status",
-          description: "Check whether a gauge is active and receiving emissions",
+          description:
+            "Check whether a gauge is active and receiving emissions",
           inputs: {
             _gauge: { label: "Gauge Address" },
           },
@@ -317,8 +391,7 @@ export default defineAbiProtocol({
         },
         vote: {
           label: "Vote on Gauges",
-          description:
-            "Cast votes for pool gauges using veAERO voting power",
+          description: "Cast votes for pool gauges using veAERO voting power",
           inputs: {
             _tokenId: { label: "veNFT Token ID" },
             _poolVote: { label: "Pool Addresses (comma-separated)" },
@@ -346,8 +419,7 @@ export default defineAbiProtocol({
         Voted: {
           slug: "voter-voted",
           label: "Gauge Vote Cast",
-          description:
-            "Fires when a veNFT holder casts votes for a pool gauge",
+          description: "Fires when a veNFT holder casts votes for a pool gauge",
         },
         GaugeCreated: {
           slug: "gauge-created",
@@ -357,8 +429,7 @@ export default defineAbiProtocol({
         DistributeReward: {
           slug: "distribute-reward",
           label: "Reward Distributed",
-          description:
-            "Fires when AERO emissions are distributed to a gauge",
+          description: "Fires when AERO emissions are distributed to a gauge",
         },
       },
     },
@@ -458,9 +529,9 @@ export default defineAbiProtocol({
           inputs: [
             { name: "provider", type: "address", indexed: true },
             { name: "tokenId", type: "uint256", indexed: true },
+            { name: "depositType", type: "uint8", indexed: true },
             { name: "value", type: "uint256", indexed: false },
             { name: "locktime", type: "uint256", indexed: false },
-            { name: "depositType", type: "uint256", indexed: false },
             { name: "ts", type: "uint256", indexed: false },
           ],
         },
@@ -526,8 +597,7 @@ export default defineAbiProtocol({
         increase_unlock_time: {
           slug: "increase-lock-duration",
           label: "Increase Lock Duration",
-          description:
-            "Extend the lock duration of an existing veNFT position",
+          description: "Extend the lock duration of an existing veNFT position",
           inputs: {
             _tokenId: { label: "veNFT Token ID" },
             _lockDuration: { label: "New Lock Duration (seconds)" },

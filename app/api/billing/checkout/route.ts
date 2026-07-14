@@ -12,15 +12,27 @@ import {
 import type { BillingProvider } from "@/lib/billing/provider";
 import { getBillingProvider } from "@/lib/billing/providers";
 import { requireOrgOwner } from "@/lib/billing/require-org-owner";
+import {
+  getTrialPeriodDays,
+  isTrialEligible,
+  isTrialPlan,
+} from "@/lib/billing/trial";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { checkBillingRateLimit } from "../_lib/rate-limit";
 
 type CheckoutRequestBody = {
   plan?: string;
   tier?: string | null;
   interval?: string;
+  // Explicit opt-in to a free trial. Only the "Start free trial" flow sets this;
+  // plan cards leave it false so they pay immediately. The trial is still
+  // gated by server-side eligibility on top of this intent.
+  trial?: boolean;
 };
 
 async function ensureProviderCustomer(
@@ -67,6 +79,9 @@ type ValidatedCheckout = {
   email: string;
   userId: string;
   priceId: string;
+  plan: PlanName;
+  tier: TierKey | null;
+  trial: boolean;
 };
 
 async function validateCheckoutRequest(
@@ -80,18 +95,19 @@ async function validateCheckoutRequest(
 
   const body = (await request.json()) as CheckoutRequestBody;
   const { plan, tier, interval } = body;
+  const trial = body.trial === true;
 
   if (!(plan && PAID_PLANS.has(plan))) {
     return NextResponse.json(
       { error: "Invalid plan. Must be one of: pro, business, enterprise" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
   if (!(interval && VALID_INTERVALS.has(interval))) {
     return NextResponse.json(
       { error: "Invalid interval. Must be monthly or yearly" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -104,7 +120,7 @@ async function validateCheckoutRequest(
   if (!priceId) {
     return NextResponse.json(
       { error: "Price configuration not found for selected plan" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -113,11 +129,24 @@ async function validateCheckoutRequest(
     email,
     userId,
     priceId,
+    plan: plan as PlanName,
+    tier: (tier ?? null) as TierKey | null,
+    trial,
   };
 }
 
 function isStripeCardError(error: unknown): boolean {
   return error instanceof Stripe.errors.StripeCardError;
+}
+
+// error_if_incomplete raises this when a plan change (e.g. ending a trial to
+// upgrade) needs 3DS/SCA. Surface it as an actionable 402 rather than a 500;
+// the invoice.payment_action_required webhook sets the "Complete payment" link.
+function isPaymentActionRequired(error: unknown): boolean {
+  return (
+    error instanceof Stripe.errors.StripeError &&
+    error.code === "subscription_payment_intent_requires_action"
+  );
 }
 
 async function handleExistingSubscription(
@@ -126,9 +155,10 @@ async function handleExistingSubscription(
   priceId: string,
   activeOrgId: string,
   currentSub: NonNullable<Awaited<ReturnType<typeof getOrgSubscription>>>,
-  actor: { userId: string; request: Request }
+  actor: { userId: string; request: Request },
+  endTrial: boolean
 ): Promise<NextResponse> {
-  await provider.updateSubscription(subscriptionId, priceId);
+  await provider.updateSubscription(subscriptionId, priceId, { endTrial });
 
   const details = await provider.getSubscriptionDetails(subscriptionId);
   const resolved = details.priceId
@@ -173,7 +203,10 @@ async function handleExistingSubscription(
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Not found" },
+      { status: HttpStatus.NOT_FOUND }
+    );
   }
 
   try {
@@ -182,7 +215,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       return result;
     }
 
-    const { activeOrgId, email, userId, priceId } = result;
+    const { activeOrgId, email, userId, priceId, plan, tier, trial } = result;
+
+    const rateLimit = checkBillingRateLimit(activeOrgId);
+    if (!rateLimit.allowed) {
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many billing requests. Please try again shortly." },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateLimit
+      );
+    }
+
     const provider = getBillingProvider();
     const sub = await getOrgSubscription(activeOrgId);
     const existingSubId = sub?.providerSubscriptionId ?? null;
@@ -196,9 +241,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (sub.providerPriceId === priceId) {
         return NextResponse.json(
           { error: "You are already on this plan" },
-          { status: 400 }
+          { status: HttpStatus.BAD_REQUEST }
         );
       }
+
+      // Plan cards always charge: a trialing org that changes plan/tier from a
+      // card (no `trial` intent) ends the trial and is billed now. Only the
+      // Manage-trial modal sends trial:true to keep the trial, and only when the
+      // target stays on the trial plan/tier (Pro 25k).
+      const endTrial =
+        sub.status === "trialing" && !(trial && isTrialPlan(plan, tier));
 
       return await handleExistingSubscription(
         provider,
@@ -206,7 +258,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         priceId,
         activeOrgId,
         sub,
-        { userId, request }
+        { userId, request },
+        endTrial
       );
     }
 
@@ -223,12 +276,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       process.env.BETTER_AUTH_URL ??
       "http://localhost:3000";
 
+    // A trial requires BOTH an explicit opt-in (from the "Start free trial"
+    // flow) AND server-side eligibility. Plan cards omit the intent, so they
+    // subscribe and pay immediately instead of being pushed into a trial.
+    const trialPeriodDays =
+      trial && isTrialEligible(sub, plan, tier)
+        ? getTrialPeriodDays()
+        : undefined;
+
     const { url } = await provider.createCheckoutSession({
       customerId: providerCustomerId,
       priceId,
       organizationId: activeOrgId,
       successUrl: `${appUrl}/billing?checkout=success`,
       cancelUrl: `${appUrl}/billing?checkout=canceled`,
+      trialPeriodDays,
     });
 
     // The plan change itself is finalized by the provider webhook; this
@@ -240,16 +302,30 @@ export async function POST(request: Request): Promise<NextResponse> {
       action: "subscription.checkout_started",
       resourceType: "subscription",
       resourceId: activeOrgId,
-      after: { plan: target?.plan ?? null, tier: target?.tier ?? null },
+      after: {
+        plan: target?.plan ?? null,
+        tier: target?.tier ?? null,
+        trial: trialPeriodDays !== undefined,
+      },
       metadata: buildAuditMetadata(request),
     });
 
     return NextResponse.json({ url });
   } catch (error) {
+    if (isPaymentActionRequired(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "Your bank needs to authenticate this payment. Open Manage Billing to complete it.",
+        },
+        { status: HttpStatus.PAYMENT_REQUIRED }
+      );
+    }
+
     if (isStripeCardError(error)) {
       return NextResponse.json(
         { error: "Payment failed. Please update your payment method." },
-        { status: 402 }
+        { status: HttpStatus.PAYMENT_REQUIRED }
       );
     }
 
@@ -261,7 +337,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Failed to create checkout session" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

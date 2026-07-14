@@ -59,6 +59,7 @@ export const organizationWallets = pgTable(
     turnkeySubOrgId: text("turnkey_sub_org_id"),
     turnkeyWalletId: text("turnkey_wallet_id"),
     turnkeyPrivateKeyId: text("turnkey_private_key_id"),
+    solanaAddress: text("solana_address"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
@@ -891,6 +892,9 @@ export const organizationSubscriptions = pgTable(
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     billingAlert: text("billing_alert"), // "payment_action_required" | "payment_failed" | "overdue" | null
     billingAlertUrl: text("billing_alert_url"), // hosted invoice URL for action-required
+    // Set once when a Stripe trial actually begins. Its presence marks the org
+    // as having consumed its one-time trial and blocks a second one.
+    trialStartedAt: timestamp("trial_started_at"),
     // Per-org override of any PlanLimits field. Used for custom enterprise contracts
     // (e.g. higher gas credits, custom SLA, dedicated support) on top of the plan defaults.
     planOverrides: jsonb("plan_overrides").$type<Partial<PlanLimits>>(),

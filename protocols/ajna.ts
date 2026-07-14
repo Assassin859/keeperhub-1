@@ -87,6 +87,27 @@ const TEST_DATA: ProtocolTestData = {
       "vault2-move-from-buffer": "write action requiring vault admin role",
       "vault2-move-to-buffer": "write action requiring vault admin role",
     },
+    // Pool invariants on the live Base pools (named outputs). Highest price
+    // bucket and lowest utilized price are nonzero on an active pool; the
+    // price<->index conversions are pure deterministic math; the inflator is
+    // always >= 1e18; the deposit index is nonzero. The two Ajna buffer vaults
+    // are live and unpaused. Left unasserted: get-pool-htp (zero with no
+    // debt), the per-pool bucket-info price (the bound bucket index can be
+    // empty -> zero), kicker/auction/borrower reads (caller bond or an active
+    // auction, largely skipped), and vault total-assets/buffer reads (can
+    // legitimately be zero).
+    expectations: {
+      "get-hpb-index": [{ field: "index", nonZero: true }],
+      "get-pool-lup": [{ field: "lup", nonZero: true }],
+      "price-to-index": [{ field: "index", nonZero: true }],
+      "index-to-price": [{ field: "price", nonZero: true }],
+      "pool1-inflator-info": [{ field: "inflator", nonZero: true }],
+      "pool2-inflator-info": [{ field: "inflator", nonZero: true }],
+      "pool1-deposit-index": [{ field: "index", nonZero: true }],
+      "pool2-deposit-index": [{ field: "index", nonZero: true }],
+      "vault1-is-paused": [{ field: "isPaused", equals: "false" }],
+      "vault2-is-paused": [{ field: "isPaused", equals: "false" }],
+    },
   },
 };
 

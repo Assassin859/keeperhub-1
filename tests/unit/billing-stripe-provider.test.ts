@@ -69,11 +69,35 @@ describe("StripeBillingProvider", () => {
         line_items: [{ price: "price_pro_25k", quantity: 1 }],
         success_url: "http://localhost/billing?checkout=success",
         cancel_url: "http://localhost/billing?checkout=canceled",
+        allow_promotion_codes: true,
+        payment_method_collection: "always",
         metadata: { organizationId: "org_1" },
       });
       expect(result).toEqual({
         url: "https://checkout.stripe.com/session_1",
       });
+    });
+
+    it("adds trial_period_days when a trial is requested", async () => {
+      vi.mocked(s.checkout.sessions.create).mockResolvedValue({
+        url: "https://checkout.stripe.com/session_trial",
+      } as Awaited<ReturnType<typeof s.checkout.sessions.create>>);
+
+      await provider.createCheckoutSession({
+        customerId: "cus_123",
+        priceId: "price_pro_25k",
+        organizationId: "org_1",
+        successUrl: "http://localhost/success",
+        cancelUrl: "http://localhost/cancel",
+        trialPeriodDays: 14,
+      });
+
+      expect(s.checkout.sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          allow_promotion_codes: true,
+          subscription_data: { trial_period_days: 14 },
+        })
+      );
     });
 
     it("throws when session URL is null", async () => {
@@ -414,6 +438,35 @@ describe("StripeBillingProvider", () => {
         cancel_at_period_end: false,
       });
       expect(result.subscriptionId).toBe("sub_1");
+    });
+
+    it("ends the trial now when endTrial is set", async () => {
+      vi.mocked(s.subscriptions.retrieve).mockResolvedValue({
+        id: "sub_1",
+        items: {
+          data: [
+            {
+              id: "si_1",
+              price: { id: "price_old", recurring: { interval: "month" } },
+            },
+          ],
+        },
+      } as unknown as Awaited<ReturnType<typeof s.subscriptions.retrieve>>);
+      vi.mocked(s.prices.retrieve).mockResolvedValue({
+        recurring: { interval: "month" },
+      } as Awaited<ReturnType<typeof s.prices.retrieve>>);
+      vi.mocked(s.subscriptions.update).mockResolvedValue({
+        id: "sub_1",
+      } as unknown as Awaited<ReturnType<typeof s.subscriptions.update>>);
+
+      await provider.updateSubscription("sub_1", "price_new", {
+        endTrial: true,
+      });
+
+      expect(s.subscriptions.update).toHaveBeenCalledWith(
+        "sub_1",
+        expect.objectContaining({ trial_end: "now" })
+      );
     });
 
     it("resets billing_cycle_anchor when interval changes", async () => {

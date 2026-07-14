@@ -109,6 +109,9 @@ const TEST_DATA: ProtocolTestData = {
       "get-sy-exchange-rate": [{ nonZero: true }],
       // Setup funds 10 SY; only this protocol's fixtures move it.
       "get-sy-balance": [{ nonZero: true }],
+      // vePENDLE total supply is a nine-figure chain aggregate, independent
+      // of the test wallet (which locks no PENDLE).
+      "get-ve-pendle-total-supply": [{ nonZero: true }],
     },
     writeExpectations: {
       "mint-py-from-sy": [
@@ -119,31 +122,16 @@ const TEST_DATA: ProtocolTestData = {
         { read: "get-sy-balance", expect: { nonZero: true } },
       ],
     },
-    // Market and reward events fire on operations this testData binds no
-    // write action for (AMM swap/liquidity; reward/interest claim), so no
-    // fixture emits them. yt-mint / yt-burn ARE emittable via the pinned-fork
-    // mint-py-from-sy / redeem-py-to-sy fixtures, but the event harness runs
-    // lightweight self-contained emitters and does not yet perform pendle's
-    // pinned-fork setup provisioning (whale-funded SY plus router approvals);
-    // deferred follow-up.
+    // The event emitter mints fresh SY from wstETH and drives the YT and
+    // market directly (low-level mint/swap/burn, YT mintPY/redeemPY, and an
+    // interest claim after a time warp), covering seven of the eight events.
+    // redeem-rewards stays skipped: the wstETH market carries no external
+    // reward tokens, so YT.redeemDueInterestAndRewards emits RedeemInterest
+    // but never RedeemRewards.
     events: {
       skipped: {
-        "market-swap":
-          "fires on a Pendle market AMM swap; testData binds no swap write action, so no fixture emits it",
-        "market-mint":
-          "fires on Pendle market add-liquidity; testData binds no add-liquidity write action, so no fixture emits it",
-        "market-burn":
-          "fires on Pendle market remove-liquidity; testData binds no remove-liquidity write action, so no fixture emits it",
-        "update-implied-rate":
-          "fires on a Pendle market state change (swap/liquidity); testData binds no such write action, so no fixture emits it",
-        "yt-mint":
-          "emittable via the pinned-fork mint-py-from-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
-        "yt-burn":
-          "emittable via the pinned-fork redeem-py-to-sy fixture, but the event harness does not yet run pendle's pinned-fork setup provisioning (whale-funded SY plus router approvals); deferred follow-up",
         "redeem-rewards":
-          "fires on YT redeemDueInterestAndRewards; testData binds no reward-claim write action, so no fixture emits it",
-        "redeem-interest":
-          "fires on YT redeemDueInterestAndRewards; testData binds no interest-claim write action, so no fixture emits it",
+          "YT.redeemDueInterestAndRewards emits RedeemRewards only when the market has external reward tokens; the wstETH market has none, so the log never fires",
       },
     },
   },
@@ -260,13 +248,16 @@ export default defineAbiProtocol({
         balanceOf: {
           slug: "get-ve-pendle-balance",
           label: "Get vePENDLE Balance",
-          description:
-            "Check the vePENDLE voting power balance of an address",
+          description: "Check the vePENDLE voting power balance of an address",
           inputs: {
             user: { label: "Wallet Address" },
           },
           outputs: {
-            result: { name: "balance", label: "vePENDLE Balance", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "vePENDLE Balance",
+              decimals: 18,
+            },
           },
         },
         totalSupplyStored: {
@@ -409,7 +400,11 @@ export default defineAbiProtocol({
             account: { label: "Wallet Address" },
           },
           outputs: {
-            result: { name: "balance", label: "LP Token Balance", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "LP Token Balance",
+              decimals: 18,
+            },
           },
         },
         activeBalance: {
