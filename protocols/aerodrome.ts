@@ -53,6 +53,18 @@ const TEST_DATA: ProtocolTestData = {
       "get-all-pools-length": [{ nonZero: true }],
       "get-pool-for-pair": [{ field: "pool", notEmpty: true }],
     },
+    // The Base event emitter wraps ETH for the pool swap and pulls AERO from
+    // the veAERO escrow under impersonation, then drives a swap, a lock, a
+    // vote, a lock/withdraw, and an epoch distribute - six of the seven events.
+    // gauge-created stays skipped: every whitelisted Base pair already has a
+    // gauge, so emitting it would need a freshly deployed token to pair and
+    // gauge, which the self-contained emitter does not set up.
+    events: {
+      skipped: {
+        "gauge-created":
+          "Voter.createGauge emits GaugeCreated only for a pool that has no gauge yet; every whitelisted Base pair already has one, so a fresh emission would require deploying a throwaway token to pair and gauge",
+      },
+    },
   },
 };
 
@@ -517,9 +529,9 @@ export default defineAbiProtocol({
           inputs: [
             { name: "provider", type: "address", indexed: true },
             { name: "tokenId", type: "uint256", indexed: true },
+            { name: "depositType", type: "uint8", indexed: true },
             { name: "value", type: "uint256", indexed: false },
             { name: "locktime", type: "uint256", indexed: false },
-            { name: "depositType", type: "uint256", indexed: false },
             { name: "ts", type: "uint256", indexed: false },
           ],
         },
