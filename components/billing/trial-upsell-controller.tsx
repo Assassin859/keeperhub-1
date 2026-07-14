@@ -121,7 +121,7 @@ export function TrialUpsellController(): null {
       if (limit <= 0 || used / limit < MIN_USAGE_RATIO) {
         return;
       }
-      const days = data.trial.days;
+      const { days, tier } = data.trial;
 
       timer = setTimeout(() => {
         if (cancelled || shownThisSession || hasOverlaysRef.current) {
@@ -138,6 +138,7 @@ export function TrialUpsellController(): null {
           TrialUpsellModal,
           {
             days,
+            tier,
             usage: data.usage,
             onNeverShowAgain: () =>
               writeState({ ...readState(), dismissedForever: true }),

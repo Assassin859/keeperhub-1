@@ -63,7 +63,7 @@ type SubscriptionData = {
   };
   gasCredits?: GasCreditsData;
   overageCharges: OverageCharge[];
-  trial?: { eligible: boolean; days: number };
+  trial?: { eligible: boolean; days: number; tier: TierKey };
 };
 
 type SuggestionNoUpgrade = {
@@ -286,16 +286,20 @@ function UpgradeSuggestionBanner({
 // free orgs. Opens the trial offer modal (plan options + benefits).
 function StartTrialButton({
   days,
+  tier,
   usage,
 }: {
   days: number;
+  tier: TierKey;
   usage: SubscriptionData["usage"] | undefined;
 }): React.ReactElement {
   const { open } = useOverlay();
   return (
     <button
       className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-keeperhub-green-dark/30 bg-keeperhub-green-dark/10 px-3 py-1.5 font-medium text-keeperhub-green-dark text-xs transition-colors hover:bg-keeperhub-green-dark/20"
-      onClick={() => open(TrialUpsellModal, { days, usage }, { size: "2xl" })}
+      onClick={() =>
+        open(TrialUpsellModal, { days, tier, usage }, { size: "2xl" })
+      }
       type="button"
     >
       <Sparkles className="size-3.5" />
@@ -305,7 +309,7 @@ function StartTrialButton({
 }
 
 // Shown in the Current Plan header while trialing. Opens the trial modal in
-// update mode so the user can switch Pro tiers without losing the trial.
+// update mode so the user can change the interval without losing the trial.
 function ManageTrialButton({
   currentTier,
   currentInterval,
@@ -321,7 +325,7 @@ function ManageTrialButton({
       onClick={() =>
         open(
           TrialUpsellModal,
-          { days, currentTier, currentInterval },
+          { days, tier: currentTier, isUpdate: true, currentInterval },
           { size: "2xl" }
         )
       }
@@ -778,7 +782,7 @@ function BillingStatusContent({
           )}
         </div>
         {canStartTrial && trial && (
-          <StartTrialButton days={trial.days} usage={usage} />
+          <StartTrialButton days={trial.days} tier={trial.tier} usage={usage} />
         )}
       </div>
 

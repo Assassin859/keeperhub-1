@@ -4,20 +4,11 @@ import { Check, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
-import {
-  type BillingInterval,
-  PLANS,
-  type TierKey,
-  TRIAL_TIER_KEY,
-} from "@/lib/billing/plans";
+import { type BillingInterval, PLANS, type TierKey } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
 import { getTierPrice, startCheckout } from "./pricing-table/utils";
 
 const PRO = PLANS.pro;
-
-// The trial applies to a single Pro tier (25k executions); higher tiers pay now.
-const TRIAL_TIER =
-  PRO.tiers.find((t) => t.key === TRIAL_TIER_KEY) ?? PRO.tiers[0];
 
 // Plan-level Pro perks (execution volume is chosen per-tier below).
 const PRO_BENEFITS: readonly string[] = [
@@ -29,37 +20,39 @@ const PRO_BENEFITS: readonly string[] = [
 ];
 
 /**
- * Pro trial modal. Two modes:
- * - Start (default): offer the Pro 25k free trial to an eligible free org.
- * - Update (currentTier set): let a trialing org pick the billing interval its
- *   trial converts to; the trial continues and is billed at that rate, $0 now.
+ * Pro trial modal. `tier` is the server-resolved Pro trial tier. Two modes:
+ * - Start (default): offer the free trial to an eligible free org.
+ * - Update (isUpdate): let a trialing org pick the billing interval its trial
+ *   converts to; the trial continues and is billed at that rate, $0 now.
  * Both send trial:true so the server keeps/starts the trial; plan cards never do.
  */
 export function TrialUpsellModal({
   overlayId,
   days,
+  tier,
   usage,
-  currentTier,
+  isUpdate = false,
   currentInterval,
   onNeverShowAgain,
 }: {
   overlayId: string;
   days: number;
+  tier: TierKey;
   usage?: { executionsUsed: number; executionLimit: number };
-  currentTier?: TierKey;
+  isUpdate?: boolean;
   currentInterval?: BillingInterval;
   onNeverShowAgain?: () => void;
 }): React.ReactElement {
   const { close } = useOverlay();
-  const isUpdate = currentTier != null;
   const [interval, setInterval] = useState<BillingInterval>(
     currentInterval ?? "monthly"
   );
   const [loading, setLoading] = useState(false);
 
-  const price = getTierPrice(TRIAL_TIER, interval);
-  // A trial is a single tier (Pro 25k), so in update mode the only thing to
-  // change is the billing interval it converts to.
+  const trialTier = PRO.tiers.find((t) => t.key === tier) ?? PRO.tiers[0];
+  const price = getTierPrice(trialTier, interval);
+  // A trial is a single tier, so in update mode the only thing to change is the
+  // billing interval it converts to.
   const noChange = isUpdate && interval === (currentInterval ?? "monthly");
 
   // Start mode leads with the reason the offer shows: nearing the free cap.
@@ -72,7 +65,7 @@ export function TrialUpsellModal({
     setLoading(true);
     try {
       // trial:true keeps/starts the trial; the server re-checks eligibility.
-      const ok = await startCheckout("pro", TRIAL_TIER_KEY, interval, {
+      const ok = await startCheckout("pro", tier, interval, {
         trial: true,
       });
       // In update mode Stripe updates in place (no redirect); refresh the page
@@ -164,7 +157,7 @@ export function TrialUpsellModal({
 
           <div className="flex items-center justify-between rounded-lg border border-keeperhub-green-dark/60 bg-keeperhub-green-dark/10 px-3 py-2.5 text-sm">
             <span className="flex items-center gap-2 font-medium">
-              {TRIAL_TIER.executions.toLocaleString()} executions
+              {trialTier.executions.toLocaleString()} executions
               {isUpdate && (
                 <span className="rounded-full bg-muted px-1.5 py-0.5 font-medium text-[10px] text-muted-foreground uppercase">
                   Current
