@@ -133,13 +133,15 @@ export function normalizeMemo(memo?: string): Hex {
   if (BYTES32_HEX.test(trimmed)) {
     return trimmed as Hex;
   }
-  const bytes = ethers.toUtf8Bytes(trimmed);
-  if (bytes.length > 32) {
+  // Right-padded utf8 (Solidity bytes32-string convention) so the payer and the
+  // payment-received trigger derive the same indexed topic. Caps at 31 bytes.
+  try {
+    return ethers.encodeBytes32String(trimmed) as Hex;
+  } catch {
     throw new Error(
-      `Memo is ${bytes.length} bytes; a plain-text memo must encode to 32 bytes or fewer (or pass a 0x + 64-hex bytes32).`
+      `Memo "${trimmed}" is too long: a plain-text memo must be 31 bytes or fewer, or pass a 0x + 64-hex bytes32 value.`
     );
   }
-  return ethers.zeroPadValue(bytes, 32) as Hex;
 }
 
 function defaultGas(callCount: number): bigint {

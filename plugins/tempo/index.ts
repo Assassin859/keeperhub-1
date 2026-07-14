@@ -97,7 +97,7 @@ const tempoPlugin: IntegrationPlugin = {
           type: "template-input",
           placeholder: "INV-1042 or 0x... (32-byte hex)",
           helpTip:
-            "Attached on-chain as an indexed bytes32 topic. Plain text (<= 32 bytes) is utf8-encoded; a 0x + 64-hex value is used verbatim (e.g. a receipt hash).",
+            "Attached on-chain as an indexed bytes32 topic. Plain text (<= 31 bytes) is utf8-encoded; a 0x + 64-hex value is used verbatim (e.g. a receipt hash).",
         },
       ],
     },
