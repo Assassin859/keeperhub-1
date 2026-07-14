@@ -420,8 +420,13 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
   };
 
   const turnkeyAccount: WalletAccountKind | null = walletData?.walletAddress
-    ? { kind: "turnkey", address: walletData.walletAddress }
+    ? { kind: "turnkey", address: walletData.walletAddress, family: "evm" }
     : null;
+
+  const turnkeySolanaAccount: WalletAccountKind | null =
+    walletData?.solanaAddress
+      ? { kind: "turnkey", address: walletData.solanaAddress, family: "solana" }
+      : null;
 
   const safeAccounts: WalletAccountKind[] = safes
     .slice()
@@ -467,6 +472,13 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
                 account={turnkeyAccount}
                 onClick={() => openAccountDetail(turnkeyAccount)}
                 subtitle="Multi-chain"
+              />
+            )}
+            {turnkeySolanaAccount && (
+              <AccountRow
+                account={turnkeySolanaAccount}
+                onClick={() => openAccountDetail(turnkeySolanaAccount)}
+                subtitle="Solana"
               />
             )}
             {safeAccounts.map((acc) => (

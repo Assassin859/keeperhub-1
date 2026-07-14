@@ -122,6 +122,7 @@ export type SupportedTokenBalance = {
 export type WalletData = {
   hasWallet: boolean;
   walletAddress?: string;
+  solanaAddress?: string | null;
   walletId?: string;
   email?: string;
   createdAt?: string;

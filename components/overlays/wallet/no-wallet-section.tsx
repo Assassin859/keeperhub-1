@@ -1,6 +1,6 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,22 @@ function CreateWalletForm({
         This wallet will be shared by all members of your organization. Only
         admins and owners can manage it.
       </p>
+
+      <div className="rounded-lg border bg-muted/30 p-3">
+        <p className="mb-2 font-medium text-xs">
+          Creating this wallet provisions two Turnkey EOAs:
+        </p>
+        <ul className="space-y-1.5 text-muted-foreground text-xs">
+          <li className="flex items-center gap-2">
+            <Wallet className="h-3.5 w-3.5 shrink-0" />
+            Turnkey EOA (EVM Compatible)
+          </li>
+          <li className="flex items-center gap-2">
+            <Wallet className="h-3.5 w-3.5 shrink-0" />
+            Turnkey EOA (SVM Compatible)
+          </li>
+        </ul>
+      </div>
 
       <div className="space-y-2">
         <Label htmlFor="wallet-email">Email Address</Label>
