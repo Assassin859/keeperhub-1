@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
 import {
   getTrialPeriodDays,
   getTrialRepeatCooldownDays,
+  getTrialTier,
   isTrialEligible,
   isTrialOfferEligible,
   isTrialPlan,
@@ -23,6 +24,17 @@ function makeSub(overrides: Partial<TrialSub> = {}): TrialSub {
     ...overrides,
   } as TrialSub;
 }
+
+// Pin the trial tier so tests don't inherit a developer's local TRIAL_TIER
+// from .env (getTrialTier reads process.env at call time; CI has no .env).
+// Tests that exercise a specific tier re-stub it and unstub after.
+beforeEach(() => {
+  vi.stubEnv("TRIAL_TIER", "25k");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("getTrialPeriodDays", () => {
   afterEach(() => {
@@ -57,15 +69,50 @@ describe("getTrialPeriodDays", () => {
   });
 });
 
+describe("getTrialTier", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 25k when unset", () => {
+    vi.stubEnv("TRIAL_TIER", undefined);
+    expect(getTrialTier()).toBe("25k");
+  });
+
+  it("reads a valid configured Pro tier", () => {
+    vi.stubEnv("TRIAL_TIER", "50k");
+    expect(getTrialTier()).toBe("50k");
+    vi.stubEnv("TRIAL_TIER", "100k");
+    expect(getTrialTier()).toBe("100k");
+  });
+
+  it("falls back to the default for a non-Pro or unknown tier", () => {
+    vi.stubEnv("TRIAL_TIER", "250k"); // a Business tier, not trial-eligible
+    expect(getTrialTier()).toBe("25k");
+    vi.stubEnv("TRIAL_TIER", "nonsense");
+    expect(getTrialTier()).toBe("25k");
+  });
+});
+
 describe("isTrialPlan", () => {
-  it("is true only for the Pro 25k tier", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is true only for the configured trial tier (default 25k)", () => {
     expect(isTrialPlan("pro", "25k")).toBe(true);
   });
 
-  it("is false for other Pro tiers", () => {
+  it("is false for Pro tiers other than the configured one", () => {
     expect(isTrialPlan("pro", "50k")).toBe(false);
     expect(isTrialPlan("pro", "100k")).toBe(false);
     expect(isTrialPlan("pro", null)).toBe(false);
+  });
+
+  it("follows the configured tier from env", () => {
+    vi.stubEnv("TRIAL_TIER", "50k");
+    expect(isTrialPlan("pro", "50k")).toBe(true);
+    expect(isTrialPlan("pro", "25k")).toBe(false);
   });
 
   it("is false for other plans", () => {

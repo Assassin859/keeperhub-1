@@ -109,6 +109,9 @@ beforeEach(() => {
   mockExecute.mockResolvedValue([{ count: 0 }]);
   mockOverageLimit.mockResolvedValue([]);
   process.env.NEXT_PUBLIC_BILLING_ENABLED = "true";
+  // Pin the trial tier so the assertion below doesn't inherit a developer's
+  // local TRIAL_TIER from .env (CI has no .env, so it defaults there).
+  process.env.TRIAL_TIER = "25k";
 });
 
 describe("GET /api/billing/subscription", () => {
@@ -153,6 +156,7 @@ describe("GET /api/billing/subscription", () => {
     expect(json.limits.maxExecutionsPerMonth).toBe(5000);
     expect(json.trial.eligible).toBe(true);
     expect(json.trial.days).toBeGreaterThan(0);
+    expect(json.trial.tier).toBe("25k");
   });
 
   it("marks a paid org as not trial-eligible", async () => {

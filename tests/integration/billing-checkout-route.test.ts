@@ -89,6 +89,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   __resetBillingRateLimitForTests();
   process.env.NEXT_PUBLIC_BILLING_ENABLED = "true";
+  // Pin the trial tier so the trial-intent cases don't inherit a developer's
+  // local TRIAL_TIER from .env (CI has no .env, so it defaults there).
+  process.env.TRIAL_TIER = "25k";
 });
 
 describe("POST /api/billing/checkout", () => {

@@ -2,23 +2,36 @@ import "server-only";
 
 import type { OrganizationSubscription } from "@/lib/db/schema";
 import {
+  DEFAULT_TRIAL_TIER_KEY,
+  isConfigurableTrialTier,
   type PlanName,
   type TierKey,
   TRIAL_PLAN_NAME,
-  TRIAL_TIER_KEY,
 } from "./plans";
 
 /**
- * Whether `plan`/`tier` is the exact plan/tier a trial applies to (Pro 25k).
- * Used both to gate starting a trial and to end an in-flight trial when a
- * trialing org switches to anything else (a higher Pro tier, or Business), so
- * that plan is charged immediately instead of inheriting the free trial.
+ * The Pro tier a trial applies to, resolved from TRIAL_TIER (server-only).
+ * Falls back to the default when unset or not one of the configurable Pro
+ * tiers. There is no public env for it: the resolved value is sent to the
+ * client via the subscription API so prices can be changed without a deploy.
+ */
+export function getTrialTier(): TierKey {
+  const raw = process.env.TRIAL_TIER;
+  return isConfigurableTrialTier(raw) ? raw : DEFAULT_TRIAL_TIER_KEY;
+}
+
+/**
+ * Whether `plan`/`tier` is the exact plan/tier a trial currently applies to
+ * (Pro at the configured trial tier). Used both to gate starting a trial and
+ * to end an in-flight trial when a trialing org switches to anything else (a
+ * different Pro tier, or Business), so that plan is charged immediately instead
+ * of inheriting the free trial.
  */
 export function isTrialPlan(
   plan: PlanName,
   tier: TierKey | null | undefined
 ): boolean {
-  return plan === TRIAL_PLAN_NAME && tier === TRIAL_TIER_KEY;
+  return plan === TRIAL_PLAN_NAME && tier === getTrialTier();
 }
 
 const DEFAULT_TRIAL_DAYS = 14;
@@ -125,5 +138,5 @@ export function isTrialEligible(
 export function isTrialOfferEligible(
   sub: TrialEligibilityInput | undefined
 ): boolean {
-  return isTrialEligible(sub, TRIAL_PLAN_NAME, TRIAL_TIER_KEY);
+  return isTrialEligible(sub, TRIAL_PLAN_NAME, getTrialTier());
 }
