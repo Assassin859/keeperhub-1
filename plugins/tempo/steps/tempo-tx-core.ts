@@ -17,7 +17,9 @@
  * Fee model: no gas token. Fees are paid in a TIP-20 stablecoin set via the
  * envelope's `feeToken` field, drawn from the wallet's own balance. Turnkey
  * Gas Station sponsorship does not cover Tempo, so there is no sponsored path
- * here -- the wallet pays its own fees.
+ * here -- the wallet pays its own fees. Gas limit and fee prices come from the
+ * shared AdaptiveGasStrategy (per-call eth_estimateGas times the chain
+ * multiplier for the limit; live feeHistory for the prices), not constants.
  *
  * Nonce model: a persistent 2D nonce read from the nonce-manager precompile.
  * The TIP-1009 expiring-nonce marker used by the sponsored MPP path is only
@@ -35,6 +37,7 @@ import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { resolveSignerMode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getTurnkeySignerConfig } from "@/lib/turnkey/turnkey-client";
+import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 /** Tempo nonce-manager precompile (viem/tempo Addresses.nonceManager). */
@@ -58,12 +61,6 @@ const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 const KEEPERHUB_TEMPO_NONCE_KEY = BigInt(
   ethers.keccak256(ethers.toUtf8Bytes("keeperhub:tempo:nonce-lane:v1"))
 );
-
-/** Conservative fee defaults. Tempo's observed base fee runs ~20 gwei. */
-const DEFAULT_MAX_FEE_PER_GAS = BigInt(50_000_000_000); // 50 gwei
-const DEFAULT_MAX_PRIORITY_FEE_PER_GAS = BigInt(1_000_000_000); // 1 gwei
-const GAS_BASE = BigInt(120_000);
-const GAS_PER_CALL = BigInt(120_000);
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 const RECEIPT_POLL_INTERVAL_MS = 1500;
@@ -91,9 +88,6 @@ export type SignAndBroadcastParams = {
   calls: TempoCall[];
   /** TIP-20 stablecoin the fee is drawn from (usually the transferred token). */
   feeToken: Hex;
-  gas?: bigint;
-  maxFeePerGas?: bigint;
-  maxPriorityFeePerGas?: bigint;
 };
 
 export type SignAndBroadcastResult = { hash: string; from: string };
@@ -144,8 +138,29 @@ export function normalizeMemo(memo?: string): Hex {
   }
 }
 
-function defaultGas(callCount: number): bigint {
-  return GAS_BASE + GAS_PER_CALL * BigInt(Math.max(callCount, 1));
+/**
+ * Estimate execution gas for the batch by summing per-call estimates. The
+ * atomic 0x76 envelope is not directly estimable via eth_estimateGas, so each
+ * call is estimated as a standalone call from the wallet; summing slightly
+ * over-counts the shared intrinsic cost, which is safe (on Tempo the fee is
+ * charged on gas used, not the limit). The AdaptiveGasStrategy multiplier then
+ * adds the safety margin on top.
+ */
+async function estimateTempoGas(
+  rpcManager: RpcProviderManager,
+  from: string,
+  calls: TempoCall[]
+): Promise<bigint> {
+  let total = BigInt(0);
+  for (const call of calls) {
+    const gas = await rpcManager.executeWithFailover(
+      (provider) =>
+        provider.estimateGas({ from, to: call.to, data: call.data }),
+      "preflight"
+    );
+    total += gas;
+  }
+  return total;
 }
 
 async function readTempoNonce(
@@ -268,10 +283,21 @@ export async function signAndBroadcastTempoTx(
   const from = toChecksumAddress(wallet.walletAddress);
 
   const rpcManager = await getRpcProvider({ chainId, userId });
-  const nonce = await readTempoNonce(
-    rpcManager,
-    from,
-    KEEPERHUB_TEMPO_NONCE_KEY
+  const [nonce, estimatedGas] = await Promise.all([
+    readTempoNonce(rpcManager, from, KEEPERHUB_TEMPO_NONCE_KEY),
+    estimateTempoGas(rpcManager, from, calls),
+  ]);
+
+  // Gas limit (estimate x chain multiplier) and EIP-1559 fee prices come from
+  // the shared adaptive strategy, so Tempo tracks live network state the same
+  // way every other EVM write step does.
+  const gasConfig = await getGasStrategy().getGasConfig(
+    rpcManager.getProvider(),
+    estimatedGas,
+    chainId,
+    undefined,
+    undefined,
+    rpcManager
   );
 
   const envelope = TxEnvelopeTempo.from({
@@ -280,10 +306,9 @@ export async function signAndBroadcastTempoTx(
     nonce,
     nonceKey: KEEPERHUB_TEMPO_NONCE_KEY,
     feeToken,
-    gas: params.gas ?? defaultGas(calls.length),
-    maxFeePerGas: params.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS,
-    maxPriorityFeePerGas:
-      params.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+    gas: gasConfig.gasLimit,
+    maxFeePerGas: gasConfig.maxFeePerGas,
+    maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
   });
 
   const sighash = TxEnvelopeTempo.getSignPayload(envelope);
