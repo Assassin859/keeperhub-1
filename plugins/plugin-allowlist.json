@@ -12,6 +12,7 @@
     "sendgrid",
     "slack",
     "telegram",
+    "tempo",
     "web3",
     "webhook"
   ]
