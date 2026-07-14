@@ -11,6 +11,11 @@ import {
   parseTierKey,
 } from "@/lib/billing/plans";
 import { getOrgSubscription, resolvePriceId } from "@/lib/billing/plans-server";
+import {
+  getTrialPeriodDays,
+  getTrialTier,
+  isTrialOfferEligible,
+} from "@/lib/billing/trial";
 import { db } from "@/lib/db";
 import { overageBillingRecords } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -123,6 +128,11 @@ export async function GET(request: Request): Promise<NextResponse> {
             billingAlertUrl: null,
           },
       limits,
+      trial: {
+        eligible: isTrialOfferEligible(sub),
+        days: getTrialPeriodDays(),
+        tier: getTrialTier(),
+      },
     });
   } catch (error) {
     logSystemError(

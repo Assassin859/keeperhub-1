@@ -183,16 +183,22 @@ async function handleCheckoutCompleted(
     details.priceId
   );
 
+  // checkout.completed only fires on success, so the subscription is either
+  // trialing (trial requested) or active. Persist the real status and stamp
+  // trial consumption so the org cannot start a second trial.
+  const isTrialing = details.status === "trialing";
+
   const subscriptionData = {
     providerSubscriptionId,
     providerPriceId: details.priceId,
     plan,
     tier,
-    status: "active" as const,
+    status: isTrialing ? ("trialing" as const) : ("active" as const),
     currentPeriodStart: details.periodStart,
     currentPeriodEnd: details.periodEnd,
     cancelAtPeriodEnd: details.cancelAtPeriodEnd,
     updatedAt: new Date(),
+    ...(isTrialing && { trialStartedAt: new Date() }),
   };
 
   await db
@@ -208,13 +214,17 @@ async function handleCheckoutCompleted(
 
   console.info(LOG_PREFIX, "Upserted subscription for org:", organizationId);
 
-  getMetricsCollector().incrementCounter(
-    MetricNames.BILLING_SUBSCRIPTION_CREATED,
-    {
+  const metrics = getMetricsCollector();
+  metrics.incrementCounter(MetricNames.BILLING_SUBSCRIPTION_CREATED, {
+    plan,
+    tier: tier ?? "none",
+  });
+  if (isTrialing) {
+    metrics.incrementCounter(MetricNames.BILLING_TRIAL_STARTED, {
       plan,
       tier: tier ?? "none",
-    }
-  );
+    });
+  }
 }
 
 // Build the DB update payload for a subscription.updated event.
@@ -344,6 +354,15 @@ async function handleSubscriptionUpdated(
   metrics.incrementCounter(MetricNames.BILLING_SUBSCRIPTION_UPDATED, {
     plan: newPlan,
   });
+
+  // Trial conversion: a trialing subscription became active (card charged at
+  // trial end). This is the funnel counterpart to billing.trial.started.
+  if (current.status === "trialing" && data.status === "active") {
+    metrics.incrementCounter(MetricNames.BILLING_TRIAL_CONVERTED, {
+      plan: newPlan,
+      tier: (update.tier as string | null) ?? current.tier ?? "none",
+    });
+  }
 
   // Plan change is signaled by priceChanged in buildSubscriptionUpdate
   // (only present in the update payload when the price differs).

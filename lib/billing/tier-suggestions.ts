@@ -11,9 +11,23 @@ import {
   type TierKey,
 } from "./plans";
 import { getOrgSubscription } from "./plans-server";
+import { getTrialPeriodDays, isTrialOfferEligible } from "./trial";
+
+// Free-plan usage (as a % of the free cap) at which we start nudging the org to
+// begin a Pro trial. Lower than the paid-tier upgrade threshold since the goal
+// is first conversion, not overage savings.
+const TRIAL_NUDGE_USAGE_PERCENT = 50;
+
+export type StartTrialSuggestion = {
+  plan: "pro";
+  trialDays: number;
+  currentUsage: number;
+  currentLimit: number;
+  usagePercent: number;
+};
 
 export type UpgradeSuggestion =
-  | { shouldUpgrade: false }
+  | { shouldUpgrade: false; startTrial?: StartTrialSuggestion }
   | {
       shouldUpgrade: true;
       currentPlan: PlanName;
@@ -72,6 +86,25 @@ export async function getUpgradeSuggestion(
 
   const currentUsage = result[0]?.count ?? 0;
   const usagePercent = (currentUsage / limits.maxExecutionsPerMonth) * 100;
+
+  // Free-plan orgs never qualify for a savings-based tier upgrade (no overage),
+  // so nudge engaged, trial-eligible free orgs to start a Pro trial instead.
+  if (
+    plan === "free" &&
+    isTrialOfferEligible(sub) &&
+    usagePercent >= TRIAL_NUDGE_USAGE_PERCENT
+  ) {
+    return {
+      shouldUpgrade: false,
+      startTrial: {
+        plan: "pro",
+        trialDays: getTrialPeriodDays(),
+        currentUsage,
+        currentLimit: limits.maxExecutionsPerMonth,
+        usagePercent: Math.round(usagePercent),
+      },
+    };
+  }
 
   if (usagePercent < 80) {
     return { shouldUpgrade: false };

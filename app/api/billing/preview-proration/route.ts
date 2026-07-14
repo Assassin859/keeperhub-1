@@ -5,17 +5,27 @@ import type { PlanName, TierKey } from "@/lib/billing/plans";
 import { getOrgSubscription, getPriceId } from "@/lib/billing/plans-server";
 import { getBillingProvider } from "@/lib/billing/providers";
 import { requireOrgOwner } from "@/lib/billing/require-org-owner";
+import { isTrialPlan } from "@/lib/billing/trial";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
+import { checkBillingRateLimit } from "../_lib/rate-limit";
 
 type PreviewRequestBody = {
   plan?: string;
   tier?: string | null;
   interval?: string;
+  // Keep-trial intent. Only the Manage-trial modal sets it; plan cards omit it,
+  // so a trialing org previewing a card change sees the real charge.
+  trial?: boolean;
 };
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Not found" },
+      { status: HttpStatus.NOT_FOUND }
+    );
   }
 
   try {
@@ -25,15 +35,33 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     const { orgId: activeOrgId } = authResult;
 
+    const rateLimit = checkBillingRateLimit(activeOrgId);
+    if (!rateLimit.allowed) {
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many billing requests. Please try again shortly." },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateLimit
+      );
+    }
+
     const body = (await request.json()) as PreviewRequestBody;
     const { plan, tier, interval } = body;
+    const trial = body.trial === true;
 
     if (!(plan && PAID_PLANS.has(plan))) {
-      return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid plan" },
+        { status: HttpStatus.BAD_REQUEST }
+      );
     }
 
     if (!(interval && VALID_INTERVALS.has(interval))) {
-      return NextResponse.json({ error: "Invalid interval" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid interval" },
+        { status: HttpStatus.BAD_REQUEST }
+      );
     }
 
     const priceId = getPriceId(
@@ -45,7 +73,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!priceId) {
       return NextResponse.json(
         { error: "Price not found for selected plan" },
-        { status: 400 }
+        { status: HttpStatus.BAD_REQUEST }
       );
     }
 
@@ -61,8 +89,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     }
 
+    // Match the update: card changes (no trial intent) end a trial, so the
+    // preview shows the real charge. Only the Manage-trial modal keeps it.
+    const endTrial =
+      sub.status === "trialing" &&
+      !(
+        trial && isTrialPlan(plan as PlanName, (tier ?? null) as TierKey | null)
+      );
+
     const provider = getBillingProvider();
-    const preview = await provider.previewProration(existingSubId, priceId);
+    const preview = await provider.previewProration(existingSubId, priceId, {
+      endTrial,
+    });
 
     return NextResponse.json({
       amountDue: preview.amountDue,
@@ -79,7 +117,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Failed to preview proration" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

@@ -65,6 +65,7 @@ vi.mock("@/lib/billing/providers", () => ({
   }),
 }));
 
+import { __resetBillingRateLimitForTests } from "@/app/api/billing/_lib/rate-limit";
 import { POST } from "@/app/api/billing/checkout/route";
 
 function makeRequest(body: Record<string, unknown>): Request {
@@ -86,7 +87,11 @@ function mockSession(overrides: Record<string, unknown> = {}): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetBillingRateLimitForTests();
   process.env.NEXT_PUBLIC_BILLING_ENABLED = "true";
+  // Pin the trial tier so the trial-intent cases don't inherit a developer's
+  // local TRIAL_TIER from .env (CI has no .env, so it defaults there).
+  process.env.TRIAL_TIER = "25k";
 });
 
 describe("POST /api/billing/checkout", () => {
@@ -104,6 +109,70 @@ describe("POST /api/billing/checkout", () => {
 
     expect(response.status).toBe(200);
     expect(json.url).toBe("https://checkout.stripe.com/session_1");
+  });
+
+  // These assert the arg passed to createCheckoutSession, not the response,
+  // so the returned URL is an unused stub.
+  it("starts a trial when the trial intent is explicit (first-time Pro)", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    await POST(
+      makeRequest({
+        plan: "pro",
+        tier: "25k",
+        interval: "monthly",
+        trial: true,
+      })
+    );
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBe(14);
+  });
+
+  it("pays immediately (no trial) when the trial intent is absent", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    // Eligible first-time Pro org, but a plan-card checkout omits `trial`.
+    await POST(makeRequest({ plan: "pro", tier: "25k", interval: "monthly" }));
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBeUndefined();
+  });
+
+  it("does not start a trial for a Business subscription", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    await POST(
+      makeRequest({ plan: "business", tier: "250k", interval: "monthly" })
+    );
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBeUndefined();
+  });
+
+  it("does not start a trial for Pro tiers above 25k", async () => {
+    mockSession();
+    mockCreateCustomer.mockResolvedValue({ customerId: "cus_123" });
+    mockCreateCheckoutSession.mockResolvedValue({ url: "stub-url" });
+
+    // Trial intent is explicit, but only Pro 25k is trial-eligible.
+    await POST(
+      makeRequest({
+        plan: "pro",
+        tier: "50k",
+        interval: "monthly",
+        trial: true,
+      })
+    );
+
+    const arg = mockCreateCheckoutSession.mock.calls[0]?.[0];
+    expect(arg.trialPeriodDays).toBeUndefined();
   });
 
   it("returns 401 without auth", async () => {
