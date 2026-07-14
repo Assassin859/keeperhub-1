@@ -1,64 +1,104 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 import aaveV4Abi from "./abis/aave-v4.json";
 
-// V4's reserve-scoped reads and all writes need an opaque reserveId (resolved
-// from a Hub address + Hub assetId), which requires live V4 Spoke provisioning
-// not yet fixtured. This first harness exercises the one read that needs only a
-// user address - get-user-account-data - and documents the rest as skips. An
-// account with no positions reports the maximum health factor, a permanent
-// nonzero invariant that proves the struct decoded.
+// The Lido Spoke connects to the Aave V4 CORE hub. Reserve ids resolved via
+// getReserveId(CORE_HUB, assetId) on the mainnet fork (2026-07-13): wstETH
+// (hub assetId 1) -> reserveId 0; WETH (hub assetId 0) -> reserveId 1.
+const LIDO_SPOKE = "0xe1900480ac69f0B296841Cd01cC37546d92F35Cd";
+const CORE_HUB = "0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9";
+const RESERVE_WSTETH = "0";
+const RESERVE_WETH = "1";
+
+// Funded: wstETH from the mainnet whale + fabricated Spoke approvals. Setup
+// pre-supplies wstETH and enables it as collateral, so the full sweep runs:
+// supply/withdraw/set-collateral on wstETH (reserveId 0) and borrow/repay on
+// WETH (reserveId 1) against that collateral, plus the reserveId-scoped reads.
+// get-reserve-id resolves WETH (hub assetId 0) to reserveId 1 via the CORE hub;
+// with no debt the account reports the maximum (nonzero) health factor.
 const TEST_DATA: ProtocolTestData = {
   "1": {
-    setup: { minNativeHuman: "0.01", requiredTokens: [], approvals: [] },
+    setup: {
+      minNativeHuman: "0.01",
+      requiredTokens: [{ symbol: "WSTETH", human: "5" }],
+      approvals: [],
+      fabricatedApprovals: [
+        { token: "WSTETH", spender: LIDO_SPOKE, human: "5" },
+        { token: "WETH", spender: LIDO_SPOKE, human: "1" },
+      ],
+      // Pre-supply wstETH and enable it as collateral before the action sweep,
+      // so borrow (3rd in registry order) has collateral - set-collateral runs
+      // last in the sweep and cannot enable it in time.
+      protocolSteps: [
+        {
+          protocol: "aave-v4",
+          action: "supply",
+          inputs: {
+            reserveId: RESERVE_WSTETH,
+            amount: amount("WSTETH", "2"),
+            onBehalfOf: wallet(),
+          },
+        },
+        {
+          protocol: "aave-v4",
+          action: "set-collateral",
+          inputs: {
+            reserveId: RESERVE_WSTETH,
+            usingAsCollateral: "true",
+            onBehalfOf: wallet(),
+          },
+        },
+      ],
+    },
     actions: {
       "get-user-account-data": { user: wallet() },
-      "get-reserve-id": {
-        hub: "0x0000000000000000000000000000000000000000",
-        assetId: "0",
+      "get-reserve-id": { hub: CORE_HUB, assetId: "0" },
+      "get-user-supplied-assets": {
+        reserveId: RESERVE_WSTETH,
+        user: wallet(),
       },
-      "get-user-supplied-assets": { reserveId: "0", user: wallet() },
-      "get-user-debt": { reserveId: "0", user: wallet() },
+      "get-user-debt": { reserveId: RESERVE_WETH, user: wallet() },
       supply: {
-        reserveId: "0",
-        amount: "1000000000000000",
+        reserveId: RESERVE_WSTETH,
+        amount: amount("WSTETH", "1"),
         onBehalfOf: wallet(),
       },
       withdraw: {
-        reserveId: "0",
-        amount: "1000000000000000",
+        reserveId: RESERVE_WSTETH,
+        amount: amount("WSTETH", "0.05"),
         onBehalfOf: wallet(),
       },
       borrow: {
-        reserveId: "0",
-        amount: "1000000000000000",
+        reserveId: RESERVE_WETH,
+        amount: amount("WETH", "0.1"),
         onBehalfOf: wallet(),
       },
       repay: {
-        reserveId: "0",
-        amount: "1000000000000000",
+        reserveId: RESERVE_WETH,
+        amount: amount("WETH", "0.08"),
         onBehalfOf: wallet(),
       },
       "set-collateral": {
-        reserveId: "0",
+        reserveId: RESERVE_WSTETH,
         usingAsCollateral: "true",
         onBehalfOf: wallet(),
       },
     },
-    skipped: {
-      "get-reserve-id":
-        "requires a real Hub address and Hub assetId; V4 reserve resolution is not fixtured yet",
-      "get-user-supplied-assets":
-        "requires a valid opaque reserveId for the Lido Spoke",
-      "get-user-debt": "requires a valid opaque reserveId for the Lido Spoke",
-      supply: "requires a reserveId, asset balance and Spoke approval",
-      withdraw: "requires an open supplied position",
-      borrow: "requires supplied collateral and a reserveId",
-      repay: "requires an open debt position",
-      "set-collateral": "requires a supplied reserve",
-    },
+    skipped: {},
     expectations: {
       "get-user-account-data": [{ field: "healthFactor", nonZero: true }],
+      "get-reserve-id": [{ equals: "1" }],
+    },
+    writeExpectations: {
+      supply: [{ read: "get-user-supplied-assets", expect: { nonZero: true } }],
+      // After borrowing WETH the account carries debt; totalDebtValueRay is a
+      // named field of the account-data struct.
+      borrow: [
+        {
+          read: "get-user-account-data",
+          expect: { field: "totalDebtValueRay", nonZero: true },
+        },
+      ],
     },
   },
 };

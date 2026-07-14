@@ -1,16 +1,73 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  amount,
+  native,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 import factoryAbi from "./abis/uniswap-factory.json";
 import positionManagerAbi from "./abis/uniswap-position-manager.json";
 import quoterAbi from "./abis/uniswap-quoter.json";
 import swapRouterAbi from "./abis/uniswap-swap-router.json";
 
+const POSITION_MANAGER = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
+const DEAD = "0x000000000000000000000000000000000000dEaD";
+// Two fully-cleared V3 positions (liquidity 0, tokensOwed 0), verified burnable
+// on the mainnet fork 2026-07-13. Setup impersonates each current owner and
+// transfers the NFT to the test wallet: #50000 drives approve + transfer-away,
+// #100000 is burned. They rot only if someone burns them upstream (refresh
+// with another empty position then).
+const EMPTY_POS_APPROVE = "50000";
+const EMPTY_POS_APPROVE_OWNER = "0x0ac48977074E7355E09809C80e4f411D446d063c";
+const EMPTY_POS_BURN = "100000";
+const EMPTY_POS_BURN_OWNER = "0xa8eBe1eeD676d5BfEB7F7B5933625281489aF8A3";
+const ERC721_TRANSFER_FROM_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "transferFrom",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "tokenId", type: "uint256" },
+    ],
+    outputs: [],
+  },
+]);
+
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
       minNativeHuman: "0.01",
-      requiredTokens: [],
+      // USDC from the mainnet whale + a fabricated SwapRouter02 approval fund
+      // both swaps (USDC -> WETH).
+      requiredTokens: [{ symbol: "USDC", human: "2000" }],
       approvals: [],
+      fabricatedApprovals: [
+        {
+          token: "USDC",
+          spender: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",
+          human: "2000",
+        },
+      ],
+      // Provision two owned position NFTs for the position writes by
+      // impersonating their current holders and transferring them in.
+      forkImpersonatedCalls: [
+        {
+          impersonate: EMPTY_POS_APPROVE_OWNER,
+          contract: POSITION_MANAGER,
+          abi: ERC721_TRANSFER_FROM_ABI,
+          functionName: "transferFrom",
+          args: [EMPTY_POS_APPROVE_OWNER, wallet(), EMPTY_POS_APPROVE],
+        },
+        {
+          impersonate: EMPTY_POS_BURN_OWNER,
+          contract: POSITION_MANAGER,
+          abi: ERC721_TRANSFER_FROM_ABI,
+          functionName: "transferFrom",
+          args: [EMPTY_POS_BURN_OWNER, wallet(), EMPTY_POS_BURN],
+        },
+      ],
     },
     actions: {
       "get-pool": { tokenA: "WETH", tokenB: "USDC", fee: "3000" },
@@ -29,22 +86,44 @@ const TEST_DATA: ProtocolTestData = {
         fee: "3000",
         sqrtPriceLimitX96: "0",
       },
-      "get-position": {},
-      "owner-of": {},
-      "approve-position": { to: wallet() },
-      "transfer-position": { from: wallet(), to: wallet() },
-      "burn-position": {},
-      "swap-exact-input": { tokenIn: "WETH", tokenOut: "USDC", recipient: wallet() },
-      "swap-exact-output": { tokenIn: "USDC", tokenOut: "WETH", recipient: wallet() },
+      "get-position": { tokenId: "1" },
+      "owner-of": { tokenId: "1" },
+      "approve-position": { to: DEAD, tokenId: EMPTY_POS_APPROVE },
+      "transfer-position": {
+        from: wallet(),
+        to: DEAD,
+        tokenId: EMPTY_POS_APPROVE,
+      },
+      "burn-position": { tokenId: EMPTY_POS_BURN },
+      "swap-exact-input": {
+        tokenIn: "USDC",
+        tokenOut: "WETH",
+        fee: "3000",
+        recipient: wallet(),
+        amountIn: amount("USDC", "100"),
+        amountOutMinimum: "0",
+        sqrtPriceLimitX96: "0",
+      },
+      "swap-exact-output": {
+        tokenIn: "USDC",
+        tokenOut: "WETH",
+        fee: "3000",
+        recipient: wallet(),
+        amountOut: native("0.01"),
+        amountInMaximum: amount("USDC", "1000"),
+        sqrtPriceLimitX96: "0",
+      },
     },
-    skipped: {
-      "get-position": "requires a valid NFT position token ID",
-      "owner-of": "requires a valid NFT position token ID",
-      "approve-position": "write action requiring an owned position NFT",
-      "transfer-position": "write action requiring an owned position NFT",
-      "burn-position": "write action requiring an empty position NFT",
-      "swap-exact-input": "requires token balance and approval",
-      "swap-exact-output": "requires token balance and approval",
+    skipped: {},
+    // The read-only position reads bind Uniswap V3 position #1 - the genesis
+    // NonfungiblePositionManager mint (UNI/WETH 0.3%, live since 2021),
+    // verified on the mainnet fork 2026-07-13. get-position returns the
+    // position struct (named outputs) with nonzero liquidity; owner-of returns
+    // its owner. The approve/transfer/burn writes need the test wallet to own a
+    // position, which the harness cannot mint (no mint action) - left skipped.
+    expectations: {
+      "get-position": [{ field: "liquidity", nonZero: true }],
+      "owner-of": [{ notEmpty: true }],
     },
   },
 };
