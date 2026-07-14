@@ -47,6 +47,7 @@ export type IntegrationType =
   | "spark"
   | "superfluid"
   | "telegram"
+  | "tempo"
   | "uniswap"
   | "v0"
   | "web3"

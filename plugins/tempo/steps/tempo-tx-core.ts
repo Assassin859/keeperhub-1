@@ -1,0 +1,315 @@
+/**
+ * Shared Tempo transaction core.
+ *
+ * Builds, signs, and broadcasts native Tempo type-0x76 transactions from the
+ * organization's Turnkey-backed EOA. This is the extraction the plugins/tempo
+ * steps (and later the schedule-payment / receipt-anchoring steps) build on.
+ *
+ * This file must NOT contain "use step" -- it is a core module so step files
+ * can share it without the bundler pulling its transitive deps into the
+ * workflow runtime.
+ *
+ * Signing model: Turnkey signs the raw 32-byte envelope hash via
+ * `signRawPayload` (PAYLOAD_ENCODING_HEXADECIMAL + HASH_FUNCTION_NO_OP), the
+ * same primitive the production MPP charge path uses on Tempo. Tempo's
+ * SignatureEnvelope takes the raw yParity bit (0 | 1), NOT Ethereum's v+27.
+ *
+ * Fee model: no gas token. Fees are paid in a TIP-20 stablecoin set via the
+ * envelope's `feeToken` field, drawn from the wallet's own balance. Turnkey
+ * Gas Station sponsorship does not cover Tempo, so there is no sponsored path
+ * here -- the wallet pays its own fees.
+ *
+ * Nonce model: a persistent 2D nonce read from the nonce-manager precompile.
+ * The TIP-1009 expiring-nonce marker used by the sponsored MPP path is only
+ * honored when a fee-payer co-signs, so it cannot be used here.
+ */
+import "server-only";
+
+import { ethers } from "ethers";
+import { TxEnvelopeTempo } from "ox/tempo";
+import { encodeFunctionData, type Hex } from "viem";
+import { Abis } from "viem/tempo";
+import { toChecksumAddress } from "@/lib/address-utils";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { resolveSignerMode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
+import { getTurnkeySignerConfig } from "@/lib/turnkey/turnkey-client";
+import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
+
+/** Tempo nonce-manager precompile (viem/tempo Addresses.nonceManager). */
+const TEMPO_NONCE_MANAGER = "0x4e4F4E4345000000000000000000000000000000";
+
+const NONCE_ABI = [
+  "function getNonce(address account, uint256 nonceKey) view returns (uint64)",
+] as const;
+const nonceInterface = new ethers.Interface(NONCE_ABI);
+
+const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
+
+/**
+ * Fixed nonce lane for KeeperHub-initiated Tempo transactions. A stable,
+ * KeeperHub-specific 2D-nonce key keeps our sequence out of lane 0 (the
+ * protocol nonce) and the max-uint256 lane (the expiring marker). Concurrent
+ * sends from the same wallet on this lane race on the read-then-sign; that is
+ * an accepted v1 limitation for the monthly-cadence payout flows (mainnet
+ * hardening is a follow-up).
+ */
+const KEEPERHUB_TEMPO_NONCE_KEY = BigInt(
+  ethers.keccak256(ethers.toUtf8Bytes("keeperhub:tempo:nonce-lane:v1"))
+);
+
+/** Conservative fee defaults. Tempo's observed base fee runs ~20 gwei. */
+const DEFAULT_MAX_FEE_PER_GAS = BigInt(50_000_000_000); // 50 gwei
+const DEFAULT_MAX_PRIORITY_FEE_PER_GAS = BigInt(1_000_000_000); // 1 gwei
+const GAS_BASE = BigInt(120_000);
+const GAS_PER_CALL = BigInt(120_000);
+
+const RECEIPT_TIMEOUT_MS = 60_000;
+const RECEIPT_POLL_INTERVAL_MS = 1500;
+
+const TEMPO_CHAIN_IDS = new Set([4217, 42_431]);
+
+/** A pre-hashed bytes32 memo passed verbatim (0x + 64 hex chars). */
+const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
+
+export type TempoCall = { to: Hex; data: Hex };
+
+type TurnkeySignature = { r: string; s: string; v: string };
+
+type TurnkeyActivityResponse = {
+  activity?: {
+    status?: string;
+    result?: { signRawPayloadResult?: TurnkeySignature };
+  };
+};
+
+export type SignAndBroadcastParams = {
+  organizationId: string;
+  userId?: string;
+  chainId: number;
+  calls: TempoCall[];
+  /** TIP-20 stablecoin the fee is drawn from (usually the transferred token). */
+  feeToken: Hex;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+};
+
+export type SignAndBroadcastResult = { hash: string; from: string };
+
+export function isTempoChain(chainId: number): boolean {
+  return TEMPO_CHAIN_IDS.has(chainId);
+}
+
+/**
+ * Encode a TIP-20 `transferWithMemo(to, value, memo)` call for one batch entry.
+ */
+export function buildTransferWithMemoCall(
+  token: Hex,
+  recipient: Hex,
+  amountRaw: bigint,
+  memo: Hex
+): TempoCall {
+  const data = encodeFunctionData({
+    abi: Abis.tip20,
+    functionName: "transferWithMemo",
+    args: [recipient, amountRaw, memo],
+  });
+  return { to: token, data };
+}
+
+/**
+ * Normalize a user-supplied memo into a bytes32 value. A 0x-prefixed 32-byte
+ * hex string is used verbatim (e.g. a receipt hash); any other string is
+ * utf8-encoded and right-padded to 32 bytes so short invoice / pay-run refs
+ * land as an indexed topic the payment-received trigger can filter on.
+ */
+export function normalizeMemo(memo?: string): Hex {
+  if (!memo || memo.trim() === "") {
+    return `0x${"0".repeat(64)}`;
+  }
+  const trimmed = memo.trim();
+  if (BYTES32_HEX.test(trimmed)) {
+    return trimmed as Hex;
+  }
+  const bytes = ethers.toUtf8Bytes(trimmed);
+  if (bytes.length > 32) {
+    throw new Error(
+      `Memo is ${bytes.length} bytes; a plain-text memo must encode to 32 bytes or fewer (or pass a 0x + 64-hex bytes32).`
+    );
+  }
+  return ethers.zeroPadValue(bytes, 32) as Hex;
+}
+
+function defaultGas(callCount: number): bigint {
+  return GAS_BASE + GAS_PER_CALL * BigInt(Math.max(callCount, 1));
+}
+
+async function readTempoNonce(
+  rpcManager: RpcProviderManager,
+  account: string,
+  nonceKey: bigint
+): Promise<bigint> {
+  const data = nonceInterface.encodeFunctionData("getNonce", [
+    account,
+    nonceKey,
+  ]);
+  const raw = await rpcManager.executeWithFailover((provider) =>
+    provider.call({ to: TEMPO_NONCE_MANAGER, data })
+  );
+  const [nonce] = nonceInterface.decodeFunctionResult("getNonce", raw);
+  return BigInt(nonce);
+}
+
+async function signEnvelopeHash(
+  subOrgId: string,
+  signWith: string,
+  hexHash: string
+): Promise<TurnkeySignature> {
+  const { client } = getTurnkeySignerConfig(subOrgId, signWith);
+  const response = (await (
+    client as unknown as {
+      signRawPayload: (args: unknown) => Promise<TurnkeyActivityResponse>;
+    }
+  ).signRawPayload({
+    signWith,
+    payload: hexHash,
+    encoding: "PAYLOAD_ENCODING_HEXADECIMAL",
+    hashFunction: "HASH_FUNCTION_NO_OP",
+  })) as TurnkeyActivityResponse;
+
+  const status = response?.activity?.status;
+  if (status !== "ACTIVITY_STATUS_COMPLETED") {
+    throw new Error(`Turnkey returned status ${status ?? "unknown"}`);
+  }
+  const result = response?.activity?.result?.signRawPayloadResult;
+  if (!result) {
+    throw new Error("Signature missing from Turnkey response");
+  }
+  return result;
+}
+
+/**
+ * Convert a Turnkey `{r, s, v}` triple into a Tempo secp256k1 signature
+ * envelope. Tempo takes the raw yParity bit (0 | 1), NOT Ethereum's v+27, so
+ * this must not reuse the @turnkey/ethers serializer.
+ */
+function toSignatureEnvelope(sig: TurnkeySignature): {
+  type: "secp256k1";
+  signature: { r: bigint; s: bigint; yParity: 0 | 1 };
+} {
+  const yParity = Number.parseInt(sig.v, 16);
+  if (yParity !== 0 && yParity !== 1) {
+    throw new Error(
+      `Turnkey returned unexpected v-parity "${sig.v}" (expected 00 or 01)`
+    );
+  }
+  return {
+    type: "secp256k1",
+    signature: {
+      r: BigInt(`0x${sig.r}`),
+      s: BigInt(`0x${sig.s}`),
+      yParity: yParity as 0 | 1,
+    },
+  };
+}
+
+async function waitForReceipt(
+  rpcManager: RpcProviderManager,
+  hash: string
+): Promise<ethers.TransactionReceipt> {
+  const deadline = Date.now() + RECEIPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const receipt = await rpcManager.executeWithFailover((provider) =>
+      provider.getTransactionReceipt(hash)
+    );
+    if (receipt) {
+      return receipt;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, RECEIPT_POLL_INTERVAL_MS)
+    );
+  }
+  throw new Error(`Timed out waiting for Tempo transaction receipt (${hash})`);
+}
+
+/**
+ * Build, sign, and broadcast one Tempo 0x76 transaction carrying `calls`.
+ * Resolves the org's Turnkey EOA, enforces EOA-only signing (Safe is
+ * unsupported on Tempo), reads the persistent 2D nonce, signs the envelope
+ * hash via Turnkey, broadcasts, and waits for a successful receipt.
+ */
+export async function signAndBroadcastTempoTx(
+  params: SignAndBroadcastParams
+): Promise<SignAndBroadcastResult> {
+  const { organizationId, userId, chainId, calls, feeToken } = params;
+
+  if (!isTempoChain(chainId)) {
+    throw new Error(`Chain ${chainId} is not a Tempo network`);
+  }
+  if (calls.length === 0) {
+    throw new Error("Tempo transaction must contain at least one call");
+  }
+
+  const signerMode = await resolveSignerMode(organizationId, chainId);
+  if (signerMode.kind !== SIGNER_MODE.EOA) {
+    throw new Error(
+      "Tempo transactions require an EOA wallet. Safe accounts are not supported on Tempo; disable Safe mode for this workflow."
+    );
+  }
+
+  const wallet = await getOrganizationWallet(organizationId);
+  if (!wallet.turnkeySubOrgId) {
+    throw new Error("Organization wallet is missing its Turnkey sub-org id");
+  }
+  const from = toChecksumAddress(wallet.walletAddress);
+
+  const rpcManager = await getRpcProvider({ chainId, userId });
+  const nonce = await readTempoNonce(
+    rpcManager,
+    from,
+    KEEPERHUB_TEMPO_NONCE_KEY
+  );
+
+  const envelope = TxEnvelopeTempo.from({
+    chainId,
+    calls: calls.map((c) => ({ to: c.to, data: c.data })),
+    nonce,
+    nonceKey: KEEPERHUB_TEMPO_NONCE_KEY,
+    feeToken,
+    gas: params.gas ?? defaultGas(calls.length),
+    maxFeePerGas: params.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS,
+    maxPriorityFeePerGas:
+      params.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+  });
+
+  const sighash = TxEnvelopeTempo.getSignPayload(envelope);
+  const sig = await signEnvelopeHash(wallet.turnkeySubOrgId, from, sighash);
+  const signed = TxEnvelopeTempo.from(envelope, {
+    signature: toSignatureEnvelope(sig),
+  });
+  const serialized = TxEnvelopeTempo.serialize(signed);
+
+  let hash: string;
+  try {
+    hash = await rpcManager.executeWithFailover((provider) =>
+      provider.send("eth_sendRawTransaction", [serialized])
+    );
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      "[Tempo] Failed to broadcast transaction",
+      error,
+      { chain_id: String(chainId) }
+    );
+    throw error;
+  }
+
+  const receipt = await waitForReceipt(rpcManager, hash);
+  if (receipt.status === 0) {
+    throw new Error(`Tempo transaction reverted (${hash})`);
+  }
+
+  return { hash, from };
+}
