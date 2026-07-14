@@ -12,12 +12,17 @@ import { db } from "@/lib/db";
 import { explorerConfigs, supportedTokens } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { isTempoChain } from "./tempo-tx-core";
+import { isTempoChain, TEMPO_STABLECOIN_DEX } from "./tempo-tx-core";
 
 const ERC20_META_ABI = [
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
 ] as const;
+
+const DEX_QUOTE_ABI = [
+  "function quoteSwapExactAmountIn(address tokenIn, address tokenOut, uint128 amountIn) view returns (uint128 amountOut)",
+] as const;
+const dexInterface = new ethers.Interface(DEX_QUOTE_ABI);
 
 export type TempoToken = { address: Hex; decimals: number; symbol: string };
 
@@ -113,6 +118,32 @@ export async function resolveTempoToken(
   }
 
   throw new Error("Could not resolve the selected token to a contract address");
+}
+
+/**
+ * Quote a stablecoin-DEX swap: how much `tokenOut` a given `amountIn` of
+ * `tokenIn` buys right now. A view call against the enshrined DEX precompile,
+ * routed through RPC failover. The caller applies the slippage floor.
+ */
+export async function quoteTempoSwap(
+  rpcManager: RpcProviderManager,
+  tokenIn: string,
+  tokenOut: string,
+  amountIn: bigint
+): Promise<bigint> {
+  const data = dexInterface.encodeFunctionData("quoteSwapExactAmountIn", [
+    tokenIn,
+    tokenOut,
+    amountIn,
+  ]);
+  const raw = await rpcManager.executeWithFailover((provider) =>
+    provider.call({ to: TEMPO_STABLECOIN_DEX, data })
+  );
+  const [amountOut] = dexInterface.decodeFunctionResult(
+    "quoteSwapExactAmountIn",
+    raw
+  );
+  return BigInt(amountOut);
 }
 
 export function assertTempoChain(chainId: number): void {

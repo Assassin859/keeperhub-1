@@ -43,6 +43,10 @@ import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 /** Tempo nonce-manager precompile (viem/tempo Addresses.nonceManager). */
 const TEMPO_NONCE_MANAGER = "0x4e4F4E4345000000000000000000000000000000";
 
+/** Tempo enshrined stablecoin DEX precompile (viem/tempo Addresses.stablecoinDex). */
+export const TEMPO_STABLECOIN_DEX =
+  "0xdec0000000000000000000000000000000000000" as const;
+
 const NONCE_ABI = [
   "function getNonce(address account, uint256 nonceKey) view returns (uint64)",
 ] as const;
@@ -88,6 +92,9 @@ export type SignAndBroadcastParams = {
   calls: TempoCall[];
   /** TIP-20 stablecoin the fee is drawn from (usually the transferred token). */
   feeToken: Hex;
+  /** Optional inclusion window (unix seconds) for scheduled payments. */
+  validAfter?: number;
+  validBefore?: number;
 };
 
 export type SignAndBroadcastResult = { hash: string; from: string };
@@ -111,6 +118,27 @@ export function buildTransferWithMemoCall(
     args: [recipient, amountRaw, memo],
   });
   return { to: token, data };
+}
+
+/**
+ * Encode a `swapExactAmountIn(tokenIn, tokenOut, amountIn, minAmountOut)` call
+ * against the enshrined stablecoin DEX precompile. The DEX pulls tokenIn from
+ * the wallet and settles tokenOut back to it (hybrid balance model), so this is
+ * a single call with no approve/deposit; the swap reverts if the output would
+ * fall below `minAmountOut`.
+ */
+export function buildSwapExactAmountInCall(
+  tokenIn: Hex,
+  tokenOut: Hex,
+  amountIn: bigint,
+  minAmountOut: bigint
+): TempoCall {
+  const data = encodeFunctionData({
+    abi: Abis.stablecoinDex,
+    functionName: "swapExactAmountIn",
+    args: [tokenIn, tokenOut, amountIn, minAmountOut],
+  });
+  return { to: TEMPO_STABLECOIN_DEX, data };
 }
 
 /**
@@ -309,6 +337,8 @@ export async function signAndBroadcastTempoTx(
     gas: gasConfig.gasLimit,
     maxFeePerGas: gasConfig.maxFeePerGas,
     maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+    validAfter: params.validAfter,
+    validBefore: params.validBefore,
   });
 
   const sighash = TxEnvelopeTempo.getSignPayload(envelope);
