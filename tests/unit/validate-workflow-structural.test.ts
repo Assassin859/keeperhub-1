@@ -99,9 +99,16 @@ function buildLargeWorkflowFixture(nodeCount: number): ValidatorWorkflow {
 // ---------------------------------------------------------------------------
 
 describe("TRIGGERS exports", () => {
-  it("has exactly the 5 expected trigger keys", () => {
+  it("has exactly the 6 expected trigger keys", () => {
     const keys = Object.keys(TRIGGERS).sort();
-    expect(keys).toEqual(["Block", "Event", "Manual", "Schedule", "Webhook"]);
+    expect(keys).toEqual([
+      "Block",
+      "Event",
+      "Manual",
+      "Schedule",
+      "Tempo Payment Received",
+      "Webhook",
+    ]);
   });
 
   it("Event trigger outputFields contain eventName and address (Pitfall 2 guard)", () => {
