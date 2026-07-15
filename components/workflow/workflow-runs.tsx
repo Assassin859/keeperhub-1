@@ -173,9 +173,14 @@ function createExecutionLogsMap(logs: ExecutionLog[]): Record<
 // Regex for Ethereum addresses (40 hex chars) and tx hashes (64 hex chars)
 const ETH_HEX_REGEX = /^0x[a-fA-F0-9]{40,}$/;
 
-// Solana base58 addresses (32-44 chars) and tx signatures (~87-88 chars).
-// Base58 excludes 0/O/I/l, so this never collides with 0x-prefixed hex.
-const SOLANA_BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,88}$/;
+// Solana base58 addresses (32-44 chars) and tx signatures (86-88 chars).
+// Restricted to those two length bands (a 45-85 char base58 string is neither)
+// to narrow false positives; base58 excludes 0/O/I/l so it never collides with
+// 0x-prefixed hex. This is only a format gate — the copy/link treatment is
+// additionally restricted to values that appear in linkMap (see below), so
+// arbitrary base58-shaped strings render as plain text.
+const SOLANA_BASE58_REGEX =
+  /^(?:[1-9A-HJ-NP-Za-km-z]{32,44}|[1-9A-HJ-NP-Za-km-z]{86,88})$/;
 
 // Helper to check if a string is a URL
 function isUrl(str: string): boolean {
@@ -334,8 +339,10 @@ function JsonWithLinks({ data }: { data: unknown }) {
             );
           }
 
-          // Solana addresses / tx signatures (base58): copy + optional explorer link
-          if (SOLANA_BASE58_REGEX.test(innerValue)) {
+          // Solana addresses / tx signatures (base58): copy + explorer link.
+          // Only decorate values that appear in linkMap (a known address/tx
+          // field), so arbitrary base58-shaped strings render as plain text.
+          if (SOLANA_BASE58_REGEX.test(innerValue) && linkMap.has(innerValue)) {
             const explorerUrl = linkMap.get(innerValue);
             const truncated = `${innerValue.slice(0, 6)}...${innerValue.slice(-6)}`;
             return (
