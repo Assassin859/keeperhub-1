@@ -676,9 +676,19 @@ executor:
     initContainers:
       - *irsa_preflight
 
+  # Own service account + IRSA role, so queue access can be scoped to the
+  # consumer role independently of the producers. The role currently carries the
+  # same broad queue policy as the shared one, so this repoint cannot lose
+  # access; it is narrowed to receive/delete-only once every component is
+  # confirmed running on its own role.
   serviceAccount:
-    create: false
-    name: keeperhub-staging
+    create: true
+    requireRoleArn: true
+    irsaCheck:
+      enabled: true
+    annotations:
+      eks.amazonaws.com/role-arn: ${EXECUTOR_SERVICE_ACCOUNT_ROLE_ARN}
+    name: keeperhub-executor-staging
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -895,10 +905,18 @@ schedule:
     initContainers:
       - *irsa_preflight
 
-  # Use the same service account as main app
+  # Owns the scheduler service account, which the block dispatcher below shares -
+  # both are the same logical producer and sign with the same caller. The role
+  # currently carries the same broad queue policy as the shared one, so this
+  # repoint cannot lose access; it is narrowed to send-only later.
   serviceAccount:
-    create: false
-    name: keeperhub-staging
+    create: true
+    requireRoleArn: true
+    irsaCheck:
+      enabled: true
+    annotations:
+      eks.amazonaws.com/role-arn: ${SCHEDULER_SERVICE_ACCOUNT_ROLE_ARN}
+    name: keeperhub-scheduler-staging
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -1024,10 +1042,11 @@ block:
     initContainers:
       - *irsa_preflight
 
-  # Use the same service account as main app
+  # Shares the scheduler service account created by the schedule component above
+  # (same logical producer), so it is referenced here rather than created.
   serviceAccount:
     create: false
-    name: keeperhub-staging
+    name: keeperhub-scheduler-staging
 
   podAnnotations:
     reloader.stakater.com/auto: "true"

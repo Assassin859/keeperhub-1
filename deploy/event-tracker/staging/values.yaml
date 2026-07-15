@@ -22,9 +22,18 @@ image:
 deployment:
   enabled: true
 
+# Own service account + IRSA role rather than the shared app one, so queue
+# access can be scoped per producer. The role currently carries the same broad
+# queue policy as the shared one, so this repoint cannot lose access; it is
+# narrowed to send-only later.
 serviceAccount:
-  create: false
-  name: keeperhub-staging
+  create: true
+  requireRoleArn: true
+  irsaCheck:
+    enabled: true
+  annotations:
+    eks.amazonaws.com/role-arn: ${EVENTS_SERVICE_ACCOUNT_ROLE_ARN}
+  name: keeperhub-events-staging
 
 podAnnotations:
   reloader.stakater.com/auto: "true"
