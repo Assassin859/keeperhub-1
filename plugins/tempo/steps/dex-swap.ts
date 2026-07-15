@@ -152,6 +152,7 @@ async function stepHandler(input: DexSwapInput): Promise<DexSwapResult> {
       chainId,
       calls: [call],
       feeToken: tokenIn.address,
+      executionId: _context?.executionId,
     });
 
     const transactionLink = await buildTempoTxLink(chainId, hash);
