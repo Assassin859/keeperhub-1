@@ -31,6 +31,13 @@ export const CONFIG = {
   sqsQueueUrl:
     process.env.SQS_QUEUE_URL ||
     "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/keeperhub-workflow-queue",
+  // Dead-letter queue for messages rejected without ever being processed
+  // (malformed JSON, or a forged/invalid message dropped in enforce mode). When
+  // set, those are copied here before being deleted from the main queue so they
+  // are retained for audit instead of vanishing behind a log line. Unset (the
+  // default) preserves the previous delete-only behaviour, so the executor can
+  // ship ahead of the queue being provisioned.
+  sqsDlqUrl: process.env.SQS_DLQ_URL,
 
   runnerImage: process.env.RUNNER_IMAGE || "keeperhub-runner:latest",
   imagePullPolicy: process.env.IMAGE_PULL_POLICY || "Never",

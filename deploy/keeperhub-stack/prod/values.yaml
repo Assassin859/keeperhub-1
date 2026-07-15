@@ -719,6 +719,9 @@ executor:
     SQS_QUEUE_URL:
       type: kv
       value: "https://sqs.us-east-2.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-prod"
+    SQS_DLQ_URL:
+      type: kv
+      value: "https://sqs.us-east-2.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-prod-dlq"
     RUNNER_IMAGE:
       type: kv
       value: "${ECR_REGISTRY}/keeperhub-prod:workflow-runner-${IMAGE_TAG}"

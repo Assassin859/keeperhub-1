@@ -30,6 +30,7 @@ import {
   type Message,
   type MessageAttributeValue,
   ReceiveMessageCommand,
+  SendMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
 import { and, eq, inArray } from "drizzle-orm";
@@ -638,6 +639,44 @@ export function evaluateSqsMessageAuth(
   return { failure: null, stale };
 }
 
+// Reject a message that was never processed - malformed JSON, or a forged /
+// invalid message dropped in enforce mode. When a DLQ is configured, copy the
+// raw message (body + original attributes, plus a reason) into it before
+// deleting from the main queue, so the rejected message is retained for audit
+// rather than vanishing behind a log line. A redrive policy cannot capture
+// these: the delete removes the message on first receive, so it never reaches
+// maxReceiveCount. Falls back to a plain delete when SQS_DLQ_URL is unset.
+async function dropMessage(message: Message, reason: string): Promise<void> {
+  if (CONFIG.sqsDlqUrl && message.Body) {
+    try {
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: CONFIG.sqsDlqUrl,
+          MessageBody: message.Body,
+          MessageAttributes: {
+            ...message.MessageAttributes,
+            "X-KH-Reason": { DataType: "String", StringValue: reason },
+          },
+        })
+      );
+    } catch (error) {
+      // A DLQ hiccup must never strand the message on the main queue - fall
+      // through to the delete so a bad payload cannot wedge the poll loop.
+      console.error(
+        `[Executor] Failed to copy dropped message (${reason}) to DLQ:`,
+        error
+      );
+    }
+  }
+
+  await sqs.send(
+    new DeleteMessageCommand({
+      QueueUrl: CONFIG.sqsQueueUrl,
+      ReceiptHandle: message.ReceiptHandle,
+    })
+  );
+}
+
 export async function processMessage(
   message: Message,
   // The message processor is injectable so tests can drive the success and
@@ -654,20 +693,16 @@ export async function processMessage(
     body = JSON.parse(message.Body);
   } catch {
     console.error("[Executor] Malformed message body, deleting:", message.Body);
-    await sqs.send(
-      new DeleteMessageCommand({
-        QueueUrl: CONFIG.sqsQueueUrl,
-        ReceiptHandle: message.ReceiptHandle,
-      })
-    );
+    await dropMessage(message, "malformed_json");
     return;
   }
 
   // Authenticate + validate the message before it can drive a
   // fund-moving execution. In "warn" mode we record metrics but still process
   // (so shipping this ahead of every producer signing cannot cause an outage);
-  // in "enforce" mode a hard failure drops the message (no DLQ configured, and a
-  // forged/corrupt message cannot be made valid by redelivery).
+  // in "enforce" mode a hard failure drops the message - a forged/corrupt
+  // message cannot be made valid by redelivery, so it is copied to the DLQ (when
+  // configured) for audit and removed from the main queue.
   if (CONFIG.sqsHmacMode !== "off") {
     const auth = evaluateSqsMessageAuth(
       message.Body,
@@ -698,12 +733,7 @@ export async function processMessage(
         `[Executor] SQS message rejected (${failure}, mode=${CONFIG.sqsHmacMode}) for workflow ${body.workflowId}`
       );
       if (CONFIG.sqsHmacMode === "enforce") {
-        await sqs.send(
-          new DeleteMessageCommand({
-            QueueUrl: CONFIG.sqsQueueUrl,
-            ReceiptHandle: message.ReceiptHandle,
-          })
-        );
+        await dropMessage(message, failure);
         return;
       }
     }
