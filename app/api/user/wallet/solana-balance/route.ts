@@ -8,7 +8,6 @@ import {
   type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
-import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getChainAdapter } from "@/lib/web3/chain-adapter/registry";
 
 const SOLANA_DECIMALS = 9;
@@ -30,12 +29,8 @@ async function fetchSolanaBalance(
 ): Promise<SolanaChainBalance> {
   try {
     const adapter = getChainAdapter(chainId);
-    // SolanaChainAdapter owns its own provider manager and ignores the
-    // rpcManager argument, so we pass an unused placeholder.
-    const lamports = await adapter.getBalance(
-      undefined as unknown as RpcProviderManager,
-      address
-    );
+    // SolanaChainAdapter owns its own provider manager and ignores rpcManager.
+    const lamports = await adapter.getBalance(undefined, address);
     return {
       chainId,
       chainName,

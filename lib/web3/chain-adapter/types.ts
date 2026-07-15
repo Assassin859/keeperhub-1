@@ -65,7 +65,12 @@ export interface ChainAdapter {
     request: ReadContractRequest
   ): Promise<unknown>;
 
-  getBalance(rpcManager: RpcProviderManager, address: string): Promise<bigint>;
+  // rpcManager is optional: Solana adapters own their provider manager and
+  // ignore it, so Solana callers pass undefined. EVM adapters require it.
+  getBalance(
+    rpcManager: RpcProviderManager | undefined,
+    address: string
+  ): Promise<bigint>;
 
   executeWithFailover<T>(
     rpcManager: RpcProviderManager,

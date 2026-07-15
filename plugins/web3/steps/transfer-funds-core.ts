@@ -25,7 +25,6 @@ import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
 import { PublicKey } from "@solana/web3.js";
 import type { SolanaTransactionSigner } from "@/lib/web3/chain-adapter/types";
-import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { NonceSession } from "@/lib/web3/nonce-manager";
 import {
   executeNativeTransferAsRole,
@@ -521,10 +520,8 @@ async function transferFundsSolana(args: {
 
   // 7. Balance preflight check
   try {
-    const balance = await adapter.getBalance(
-      undefined as unknown as RpcProviderManager, // unused by SolanaChainAdapter
-      orgSolanaAddress
-    );
+    // SolanaChainAdapter owns its own provider manager and ignores rpcManager.
+    const balance = await adapter.getBalance(undefined, orgSolanaAddress);
     // Reserve the base transaction fee (5000 lamports per signature) on top of
     // the transfer amount. Without this a max-balance transfer passes preflight
     // and then fails at inclusion for not covering its own fee.

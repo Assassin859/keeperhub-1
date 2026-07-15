@@ -159,10 +159,7 @@ async function stepHandler(
 
   // Check balance. Native decimals differ by family: 18 for EVM, 9 for Solana.
   try {
-    const balance = await adapter.getBalance(
-      rpcManager as RpcProviderManager,
-      address
-    );
+    const balance = await adapter.getBalance(rpcManager, address);
     const balanceFormatted = ethers.formatUnits(balance, isSolana ? 9 : 18);
 
     const addressLink = await adapter.getAddressUrl(address);
