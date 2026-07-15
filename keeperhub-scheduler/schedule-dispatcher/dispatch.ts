@@ -320,10 +320,24 @@ export async function dispatch(
         // KEEP-693: pre-create a phantom row (best-effort) so the run is
         // visible even if it never reaches the executor, and carry its id on
         // the message so the executor upgrades that row instead of inserting.
-        const executionId = await createPhantomExecution(
+        // The dispatch key is stable for a given (schedule, occurrence), so an
+        // overlapping leader or a catch-up window that
+        // recomputes this occurrence collides on the unique index and we skip
+        // the duplicate enqueue below.
+        const dispatchKey = `schedule:${schedule.id}:${occurrence.toISOString()}`;
+        const { executionId, alreadyExisted } = await createPhantomExecution(
           schedule.workflowId,
           "schedule",
+          undefined,
+          dispatchKey,
         );
+
+        if (alreadyExisted) {
+          console.log(
+            `[${runId}] Skipping duplicate dispatch for ${dispatchKey} (already enqueued)`,
+          );
+          continue;
+        }
 
         try {
           await sendToQueue({

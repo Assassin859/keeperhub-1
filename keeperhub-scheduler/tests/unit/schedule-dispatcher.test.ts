@@ -440,6 +440,9 @@ describe("dispatch", () => {
     vi.setSystemTime(new Date("2024-01-15T09:00:01Z"));
     createPhantomExecution.mockReset();
     failPhantomExecution.mockReset();
+    // Default: a fresh phantom row, no dedup hit. Tests that assert the id or
+    // the dedup-skip path override this.
+    createPhantomExecution.mockResolvedValue({ alreadyExisted: false });
   });
 
   afterEach(() => {
@@ -727,7 +730,10 @@ describe("dispatch", () => {
 
   // KEEP-693: phantom pre-creation wiring.
   it("pre-creates a phantom row and carries its id on the message", async () => {
-    createPhantomExecution.mockResolvedValue("exec_ph");
+    createPhantomExecution.mockResolvedValue({
+      executionId: "exec_ph",
+      alreadyExisted: false,
+    });
     stubFetch([
       {
         id: "sched-1",
@@ -740,15 +746,47 @@ describe("dispatch", () => {
 
     await dispatch();
 
-    expect(createPhantomExecution).toHaveBeenCalledWith("wf-1", "schedule");
+    expect(createPhantomExecution).toHaveBeenCalledWith(
+      "wf-1",
+      "schedule",
+      undefined,
+      expect.stringMatching(/^schedule:sched-1:2024-01-15T09:00:00/),
+    );
     const command = mockedSqsSend.mock.calls[0][0] as SendMessageCommand;
     expect(JSON.parse(command.input.MessageBody ?? "")).toMatchObject({
       executionId: "exec_ph",
     });
   });
 
+  // An overlapping leader / catch-up window that recomputes the same occurrence
+  // gets alreadyExisted and must not enqueue a second message.
+  it("skips the enqueue when the dispatch key already exists (dedup)", async () => {
+    createPhantomExecution.mockResolvedValue({
+      executionId: "exec_existing",
+      alreadyExisted: true,
+    });
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 1, triggered: 0, errors: 0 });
+    expect(mockedSqsSend).not.toHaveBeenCalled();
+    expect(failPhantomExecution).not.toHaveBeenCalled();
+  });
+
   it("marks the phantom failed with CS-0001 when the enqueue fails", async () => {
-    createPhantomExecution.mockResolvedValue("exec_ph");
+    createPhantomExecution.mockResolvedValue({
+      executionId: "exec_ph",
+      alreadyExisted: false,
+    });
     stubFetch([
       {
         id: "sched-1",
@@ -770,7 +808,7 @@ describe("dispatch", () => {
   });
 
   it("still enqueues (id-less) when phantom creation fails", async () => {
-    createPhantomExecution.mockResolvedValue(undefined);
+    createPhantomExecution.mockResolvedValue({ alreadyExisted: false });
     stubFetch([
       {
         id: "sched-1",

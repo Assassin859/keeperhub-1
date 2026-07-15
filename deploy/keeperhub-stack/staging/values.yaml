@@ -143,6 +143,12 @@ app:
       - apiGroups: [""]
         resources: ["pods/log"]
         verbs: ["get"]
+      # Leader election for the schedule and block dispatchers. They share this
+      # service account, so the Lease permission lives here (one owner of the
+      # Role) rather than on a second SA that would need its own IRSA role-arn.
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "create", "update"]
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -859,7 +865,9 @@ schedule:
   # 3. Evaluates cron expressions against current time
   # 4. Sends matching schedules to SQS queue for execution
 
-  replicaCount: 1
+  # Two replicas with Kubernetes Lease leader election (only the leader
+  # dispatches); a node roll or crash no longer drops dispatch to zero.
+  replicaCount: 2
 
   podDisruptionBudget:
     enabled: true
@@ -940,6 +948,15 @@ schedule:
     SQS_QUEUE_URL:
       type: kv
       value: "https://sqs.us-east-1.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-staging"
+    # Leader election: only the pod holding the Lease dispatches. Namespace and
+    # holder identity are resolved in-pod (service account file + hostname), so
+    # nothing environment-scoped is hardcoded here.
+    LEADER_ELECTION_ENABLED:
+      type: kv
+      value: "true"
+    LEASE_NAME:
+      type: kv
+      value: "schedule-dispatcher-leader"
     # Health check server port
     HEALTH_PORT:
       type: kv
@@ -976,7 +993,10 @@ block:
   # 2. Maintains WebSocket connections to each chain's WSS endpoint
   # 3. Filters blocks by workflow interval and enqueues matches to SQS
 
-  replicaCount: 1
+  # Two replicas with Kubernetes Lease leader election (only the leader opens
+  # WebSocket subscriptions and enqueues); a node roll no longer drops block
+  # monitoring to zero.
+  replicaCount: 2
 
   podDisruptionBudget:
     enabled: true
@@ -1065,6 +1085,15 @@ block:
     SOCKET_MAX_AGE_MS:
       type: kv
       value: "3600000"
+    # Leader election: only the pod holding the Lease opens chain subscriptions
+    # and enqueues. Namespace and holder identity are resolved in-pod (service
+    # account file + hostname), so nothing environment-scoped is hardcoded here.
+    LEADER_ELECTION_ENABLED:
+      type: kv
+      value: "true"
+    LEASE_NAME:
+      type: kv
+      value: "block-dispatcher-leader"
     # Health check server port
     HEALTH_PORT:
       type: kv
