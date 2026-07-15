@@ -3,9 +3,7 @@
 import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { truncateAddress } from "@/lib/address-utils";
-
-const SOLANA_EXPLORER_BASE = "https://solscan.io";
-const DEVNET_CHAIN_ID = 103;
+import { solscanAccountUrl } from "@/lib/solana-explorer";
 
 type SolanaChainBalance = {
   chainId: number;
@@ -22,12 +20,6 @@ function formatSol(sol: string): string {
     return "-";
   }
   return `${n.toLocaleString(undefined, { maximumFractionDigits: 4 })} SOL`;
-}
-
-function solscanUrl(chainId: number, address: string): string {
-  return chainId === DEVNET_CHAIN_ID
-    ? `${SOLANA_EXPLORER_BASE}/account/${address}?cluster=devnet`
-    : `${SOLANA_EXPLORER_BASE}/account/${address}`;
 }
 
 /**
@@ -68,7 +60,7 @@ export function SolanaAssets({
         Could not load Solana balance.{" "}
         <a
           className="underline transition-colors hover:text-foreground"
-          href={solscanUrl(0, address)}
+          href={solscanAccountUrl(address)}
           rel="noopener noreferrer"
           target="_blank"
         >
@@ -107,7 +99,7 @@ export function SolanaAssets({
           <div className="mt-1 text-muted-foreground text-xs">
             <a
               className="font-mono transition-colors hover:text-foreground hover:underline"
-              href={solscanUrl(b.chainId, address)}
+              href={solscanAccountUrl(address, b.isTestnet)}
               rel="noopener noreferrer"
               target="_blank"
             >

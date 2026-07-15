@@ -95,6 +95,7 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
   const [walletLoading, setWalletLoading] = useState(true);
   const [walletData, setWalletData] = useState<WalletData | null>(null);
   const [chains, setChains] = useState<ChainData[]>([]);
+  const [solanaIsTestnet, setSolanaIsTestnet] = useState(false);
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>([]);
   const [safes, setSafes] = useState<SafeRow[]>([]);
@@ -112,6 +113,14 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
     try {
       const response = await fetch("/api/chains");
       const data: ChainData[] = await response.json();
+      // The Solana account row links to the cluster the org actually uses:
+      // devnet when no mainnet Solana chain is enabled.
+      const solanaChains = data.filter(
+        (chain) => chain.chainType === "solana" && chain.isEnabled
+      );
+      setSolanaIsTestnet(
+        solanaChains.length > 0 && !solanaChains.some((c) => !c.isTestnet)
+      );
       const evmChains = data.filter((chain) => chain.chainType === "evm");
       setChains(evmChains);
       return evmChains;
@@ -425,7 +434,12 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
 
   const turnkeySolanaAccount: WalletAccountKind | null =
     walletData?.solanaAddress
-      ? { kind: "turnkey", address: walletData.solanaAddress, family: "solana" }
+      ? {
+          kind: "turnkey",
+          address: walletData.solanaAddress,
+          family: "solana",
+          solanaIsTestnet,
+        }
       : null;
 
   const safeAccounts: WalletAccountKind[] = safes

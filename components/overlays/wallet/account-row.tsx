@@ -9,9 +9,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { truncateAddress } from "@/lib/address-utils";
+import { solscanAccountUrl } from "@/lib/solana-explorer";
 
 export type WalletAccountKind =
-  | { kind: "turnkey"; address: string; family: "evm" | "solana" }
+  | {
+      kind: "turnkey";
+      address: string;
+      family: "evm" | "solana";
+      /** For family === "solana": whether the org's Solana context is devnet
+       *  (no mainnet Solana chain enabled), so the explorer link uses the
+       *  devnet cluster. */
+      solanaIsTestnet?: boolean;
+    }
   | {
       kind: "safe";
       safeId: string;
@@ -34,7 +43,6 @@ type AccountRowProps = {
 
 const TURNKEY_DEFAULT_EXPLORER_CHAIN = 1;
 const MULTI_CHAIN_LABEL = "Multi-chain";
-const SOLANA_EXPLORER_BASE = "https://solscan.io";
 
 function stop(event: React.MouseEvent | React.KeyboardEvent): void {
   event.stopPropagation();
@@ -66,7 +74,7 @@ export function AccountRow({
   if (account.kind === "safe") {
     explorerUrl = getExplorerAddressUrl(account.chainId, account.address);
   } else if (account.family === "solana") {
-    explorerUrl = `${SOLANA_EXPLORER_BASE}/account/${account.address}`;
+    explorerUrl = solscanAccountUrl(account.address, account.solanaIsTestnet);
   } else {
     explorerUrl = getExplorerAddressUrl(
       TURNKEY_DEFAULT_EXPLORER_CHAIN,
