@@ -55,16 +55,29 @@ const nonceInterface = new ethers.Interface(NONCE_ABI);
 const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 
 /**
- * Fixed nonce lane for KeeperHub-initiated Tempo transactions. A stable,
- * KeeperHub-specific 2D-nonce key keeps our sequence out of lane 0 (the
- * protocol nonce) and the max-uint256 lane (the expiring marker). Concurrent
- * sends from the same wallet on this lane race on the read-then-sign; that is
- * an accepted v1 limitation for the monthly-cadence payout flows (mainnet
- * hardening is a follow-up).
+ * Derive a unique 2D-nonce lane for a single send. Tempo's nonce manager keeps
+ * an independent sequence per (account, key), so giving every broadcast its own
+ * key removes the read-then-sign race: two concurrent sends from one wallet
+ * never share a lane, so neither reads a nonce the other is about to consume.
+ *
+ * The key is namespaced under a KeeperHub-specific prefix and salted with random
+ * bytes, so it stays unique even when two sends share an execution (parallel
+ * branches) or carry no execution id. The execution id is folded in only so a
+ * lane traces back to its run in logs. The result is mapped into
+ * [1, MAX_UINT256 - 1] to stay off lane 0 (the protocol nonce) and the
+ * max-uint256 expiring-marker lane.
  */
-const KEEPERHUB_TEMPO_NONCE_KEY = BigInt(
-  ethers.keccak256(ethers.toUtf8Bytes("keeperhub:tempo:nonce-lane:v1"))
-);
+export function deriveTempoNonceKey(executionId: string | undefined): bigint {
+  const salt = ethers.hexlify(ethers.randomBytes(16));
+  const raw = BigInt(
+    ethers.keccak256(
+      ethers.toUtf8Bytes(
+        `keeperhub:tempo:nonce-lane:v2:${executionId ?? "adhoc"}:${salt}`
+      )
+    )
+  );
+  return (raw % (MAX_UINT256 - BigInt(1))) + BigInt(1);
+}
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 const RECEIPT_POLL_INTERVAL_MS = 1500;
@@ -95,6 +108,8 @@ export type SignAndBroadcastParams = {
   /** Optional inclusion window (unix seconds) for scheduled payments. */
   validAfter?: number;
   validBefore?: number;
+  /** Execution id, folded into the per-send nonce lane for traceability. */
+  executionId?: string;
 };
 
 export type SignAndBroadcastResult = { hash: string; from: string };
@@ -310,9 +325,14 @@ export async function signAndBroadcastTempoTx(
   }
   const from = toChecksumAddress(wallet.walletAddress);
 
+  // A fresh lane per send: concurrent sends from this wallet never share a
+  // 2D-nonce sequence, so the read below cannot return a nonce another send is
+  // about to consume.
+  const nonceKey = deriveTempoNonceKey(params.executionId);
+
   const rpcManager = await getRpcProvider({ chainId, userId });
   const [nonce, estimatedGas] = await Promise.all([
-    readTempoNonce(rpcManager, from, KEEPERHUB_TEMPO_NONCE_KEY),
+    readTempoNonce(rpcManager, from, nonceKey),
     estimateTempoGas(rpcManager, from, calls),
   ]);
 
@@ -332,7 +352,7 @@ export async function signAndBroadcastTempoTx(
     chainId,
     calls: calls.map((c) => ({ to: c.to, data: c.data })),
     nonce,
-    nonceKey: KEEPERHUB_TEMPO_NONCE_KEY,
+    nonceKey,
     feeToken,
     gas: gasConfig.gasLimit,
     maxFeePerGas: gasConfig.maxFeePerGas,

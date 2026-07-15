@@ -29,7 +29,6 @@ const tempoPlugin: IntegrationPlugin = {
       description:
         "Send a TIP-20 stablecoin payment on Tempo carrying an on-chain bytes32 memo (e.g. an invoice or pay-run reference)",
       category: "Tempo",
-      requiresCredentials: true,
       stepFunction: "transferWithMemoStep",
       stepImportPath: "transfer-with-memo",
       outputFields: [
@@ -107,7 +106,6 @@ const tempoPlugin: IntegrationPlugin = {
       description:
         "Pay many recipients in one atomic Tempo transaction, each payment stamped with its own memo. All payments settle together or none do.",
       category: "Tempo",
-      requiresCredentials: true,
       stepFunction: "batchPayoutStep",
       stepImportPath: "batch-payout",
       outputFields: [
@@ -179,7 +177,6 @@ const tempoPlugin: IntegrationPlugin = {
       description:
         "Market-swap one Tempo stablecoin for another on the enshrined DEX, protected by a minimum-output slippage floor",
       category: "Tempo",
-      requiresCredentials: true,
       stepFunction: "dexSwapStep",
       stepImportPath: "dex-swap",
       outputFields: [
@@ -266,7 +263,6 @@ const tempoPlugin: IntegrationPlugin = {
       description:
         "Send a stablecoin payment bounded to an inclusion window (valid-after / valid-before) so it only lands during the intended timeframe",
       category: "Tempo",
-      requiresCredentials: true,
       stepFunction: "schedulePaymentStep",
       stepImportPath: "schedule-payment",
       outputFields: [

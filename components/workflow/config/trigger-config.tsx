@@ -1,6 +1,14 @@
 "use client";
 
-import { Box, Boxes, Clock, Copy, Play, Webhook } from "lucide-react";
+import {
+  ArrowDownToLine,
+  Box,
+  Boxes,
+  Clock,
+  Copy,
+  Play,
+  Webhook,
+} from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -106,6 +114,12 @@ export function TriggerConfig({
               <div className="flex items-center gap-2">
                 <Box className="h-4 w-4" />
                 Block
+              </div>
+            </SelectItem>
+            <SelectItem value="Tempo Payment Received">
+              <div className="flex items-center gap-2">
+                <ArrowDownToLine className="h-4 w-4" />
+                Tempo Payment Received
               </div>
             </SelectItem>
           </SelectContent>
@@ -285,6 +299,52 @@ export function TriggerConfig({
                 </p>
               </div>
             </>
+          );
+        })()}
+      {/* Tempo Payment Received fields */}
+      {config?.triggerType === "Tempo Payment Received" &&
+        (() => {
+          const tempoFields: ActionConfigField[] = [
+            {
+              key: "network",
+              label: "Network",
+              type: "chain-select",
+              chainTypeFilter: "evm",
+              allowedChainIds: ["4217", "42431"],
+              placeholder: "Select a Tempo network",
+              required: true,
+            },
+            {
+              key: "contractAddress",
+              label: "Stablecoin Token",
+              type: "template-input",
+              placeholder: "0x... token contract to watch",
+              required: true,
+            },
+            {
+              key: "recipientAddress",
+              label: "Deposit Address",
+              type: "template-input",
+              placeholder: "0x... the address that receives payments",
+              required: true,
+            },
+            {
+              key: "memo",
+              label: "Memo Filter",
+              type: "template-input",
+              placeholder: "INV-1042 or 0x... (optional)",
+              helpTip:
+                "Only fire when the transfer memo matches. A 0x + 64-hex value matches exactly; a shorter string matches as a prefix.",
+            },
+          ];
+
+          return (
+            <ActionConfigRenderer
+              config={config}
+              disabled={disabled}
+              fields={tempoFields}
+              onUpdateConfig={handleConfigValue}
+            />
           );
         })()}
     </>
