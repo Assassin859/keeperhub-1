@@ -17,7 +17,9 @@
  * Fee model: no gas token. Fees are paid in a TIP-20 stablecoin set via the
  * envelope's `feeToken` field, drawn from the wallet's own balance. Turnkey
  * Gas Station sponsorship does not cover Tempo, so there is no sponsored path
- * here -- the wallet pays its own fees.
+ * here -- the wallet pays its own fees. Gas limit and fee prices come from the
+ * shared AdaptiveGasStrategy (per-call eth_estimateGas times the chain
+ * multiplier for the limit; live feeHistory for the prices), not constants.
  *
  * Nonce model: a persistent 2D nonce read from the nonce-manager precompile.
  * The TIP-1009 expiring-nonce marker used by the sponsored MPP path is only
@@ -35,10 +37,15 @@ import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { resolveSignerMode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getTurnkeySignerConfig } from "@/lib/turnkey/turnkey-client";
+import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 /** Tempo nonce-manager precompile (viem/tempo Addresses.nonceManager). */
 const TEMPO_NONCE_MANAGER = "0x4e4F4E4345000000000000000000000000000000";
+
+/** Tempo enshrined stablecoin DEX precompile (viem/tempo Addresses.stablecoinDex). */
+export const TEMPO_STABLECOIN_DEX =
+  "0xdec0000000000000000000000000000000000000" as const;
 
 const NONCE_ABI = [
   "function getNonce(address account, uint256 nonceKey) view returns (uint64)",
@@ -48,22 +55,29 @@ const nonceInterface = new ethers.Interface(NONCE_ABI);
 const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 
 /**
- * Fixed nonce lane for KeeperHub-initiated Tempo transactions. A stable,
- * KeeperHub-specific 2D-nonce key keeps our sequence out of lane 0 (the
- * protocol nonce) and the max-uint256 lane (the expiring marker). Concurrent
- * sends from the same wallet on this lane race on the read-then-sign; that is
- * an accepted v1 limitation for the monthly-cadence payout flows (mainnet
- * hardening is a follow-up).
+ * Derive a unique 2D-nonce lane for a single send. Tempo's nonce manager keeps
+ * an independent sequence per (account, key), so giving every broadcast its own
+ * key removes the read-then-sign race: two concurrent sends from one wallet
+ * never share a lane, so neither reads a nonce the other is about to consume.
+ *
+ * The key is namespaced under a KeeperHub-specific prefix and salted with random
+ * bytes, so it stays unique even when two sends share an execution (parallel
+ * branches) or carry no execution id. The execution id is folded in only so a
+ * lane traces back to its run in logs. The result is mapped into
+ * [1, MAX_UINT256 - 1] to stay off lane 0 (the protocol nonce) and the
+ * max-uint256 expiring-marker lane.
  */
-const KEEPERHUB_TEMPO_NONCE_KEY = BigInt(
-  ethers.keccak256(ethers.toUtf8Bytes("keeperhub:tempo:nonce-lane:v1"))
-);
-
-/** Conservative fee defaults. Tempo's observed base fee runs ~20 gwei. */
-const DEFAULT_MAX_FEE_PER_GAS = BigInt(50_000_000_000); // 50 gwei
-const DEFAULT_MAX_PRIORITY_FEE_PER_GAS = BigInt(1_000_000_000); // 1 gwei
-const GAS_BASE = BigInt(120_000);
-const GAS_PER_CALL = BigInt(120_000);
+export function deriveTempoNonceKey(executionId: string | undefined): bigint {
+  const salt = ethers.hexlify(ethers.randomBytes(16));
+  const raw = BigInt(
+    ethers.keccak256(
+      ethers.toUtf8Bytes(
+        `keeperhub:tempo:nonce-lane:v2:${executionId ?? "adhoc"}:${salt}`
+      )
+    )
+  );
+  return (raw % (MAX_UINT256 - BigInt(1))) + BigInt(1);
+}
 
 const RECEIPT_TIMEOUT_MS = 60_000;
 const RECEIPT_POLL_INTERVAL_MS = 1500;
@@ -91,9 +105,11 @@ export type SignAndBroadcastParams = {
   calls: TempoCall[];
   /** TIP-20 stablecoin the fee is drawn from (usually the transferred token). */
   feeToken: Hex;
-  gas?: bigint;
-  maxFeePerGas?: bigint;
-  maxPriorityFeePerGas?: bigint;
+  /** Optional inclusion window (unix seconds) for scheduled payments. */
+  validAfter?: number;
+  validBefore?: number;
+  /** Execution id, folded into the per-send nonce lane for traceability. */
+  executionId?: string;
 };
 
 export type SignAndBroadcastResult = { hash: string; from: string };
@@ -117,6 +133,27 @@ export function buildTransferWithMemoCall(
     args: [recipient, amountRaw, memo],
   });
   return { to: token, data };
+}
+
+/**
+ * Encode a `swapExactAmountIn(tokenIn, tokenOut, amountIn, minAmountOut)` call
+ * against the enshrined stablecoin DEX precompile. The DEX pulls tokenIn from
+ * the wallet and settles tokenOut back to it (hybrid balance model), so this is
+ * a single call with no approve/deposit; the swap reverts if the output would
+ * fall below `minAmountOut`.
+ */
+export function buildSwapExactAmountInCall(
+  tokenIn: Hex,
+  tokenOut: Hex,
+  amountIn: bigint,
+  minAmountOut: bigint
+): TempoCall {
+  const data = encodeFunctionData({
+    abi: Abis.stablecoinDex,
+    functionName: "swapExactAmountIn",
+    args: [tokenIn, tokenOut, amountIn, minAmountOut],
+  });
+  return { to: TEMPO_STABLECOIN_DEX, data };
 }
 
 /**
@@ -144,8 +181,29 @@ export function normalizeMemo(memo?: string): Hex {
   }
 }
 
-function defaultGas(callCount: number): bigint {
-  return GAS_BASE + GAS_PER_CALL * BigInt(Math.max(callCount, 1));
+/**
+ * Estimate execution gas for the batch by summing per-call estimates. The
+ * atomic 0x76 envelope is not directly estimable via eth_estimateGas, so each
+ * call is estimated as a standalone call from the wallet; summing slightly
+ * over-counts the shared intrinsic cost, which is safe (on Tempo the fee is
+ * charged on gas used, not the limit). The AdaptiveGasStrategy multiplier then
+ * adds the safety margin on top.
+ */
+async function estimateTempoGas(
+  rpcManager: RpcProviderManager,
+  from: string,
+  calls: TempoCall[]
+): Promise<bigint> {
+  let total = BigInt(0);
+  for (const call of calls) {
+    const gas = await rpcManager.executeWithFailover(
+      (provider) =>
+        provider.estimateGas({ from, to: call.to, data: call.data }),
+      "preflight"
+    );
+    total += gas;
+  }
+  return total;
 }
 
 async function readTempoNonce(
@@ -267,23 +325,40 @@ export async function signAndBroadcastTempoTx(
   }
   const from = toChecksumAddress(wallet.walletAddress);
 
+  // A fresh lane per send: concurrent sends from this wallet never share a
+  // 2D-nonce sequence, so the read below cannot return a nonce another send is
+  // about to consume.
+  const nonceKey = deriveTempoNonceKey(params.executionId);
+
   const rpcManager = await getRpcProvider({ chainId, userId });
-  const nonce = await readTempoNonce(
-    rpcManager,
-    from,
-    KEEPERHUB_TEMPO_NONCE_KEY
+  const [nonce, estimatedGas] = await Promise.all([
+    readTempoNonce(rpcManager, from, nonceKey),
+    estimateTempoGas(rpcManager, from, calls),
+  ]);
+
+  // Gas limit (estimate x chain multiplier) and EIP-1559 fee prices come from
+  // the shared adaptive strategy, so Tempo tracks live network state the same
+  // way every other EVM write step does.
+  const gasConfig = await getGasStrategy().getGasConfig(
+    rpcManager.getProvider(),
+    estimatedGas,
+    chainId,
+    undefined,
+    undefined,
+    rpcManager
   );
 
   const envelope = TxEnvelopeTempo.from({
     chainId,
     calls: calls.map((c) => ({ to: c.to, data: c.data })),
     nonce,
-    nonceKey: KEEPERHUB_TEMPO_NONCE_KEY,
+    nonceKey,
     feeToken,
-    gas: params.gas ?? defaultGas(calls.length),
-    maxFeePerGas: params.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS,
-    maxPriorityFeePerGas:
-      params.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+    gas: gasConfig.gasLimit,
+    maxFeePerGas: gasConfig.maxFeePerGas,
+    maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+    validAfter: params.validAfter,
+    validBefore: params.validBefore,
   });
 
   const sighash = TxEnvelopeTempo.getSignPayload(envelope);

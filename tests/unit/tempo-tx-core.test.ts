@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
 import { decodeFunctionData } from "viem";
 import { Abis } from "viem/tempo";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -26,6 +26,7 @@ vi.mock("@/lib/logging", () => ({
 
 import {
   buildTransferWithMemoCall,
+  deriveTempoNonceKey,
   isTempoChain,
   normalizeMemo,
 } from "@/plugins/tempo/steps/tempo-tx-core";
@@ -33,6 +34,38 @@ import {
 const ZERO_MEMO = `0x${"0".repeat(64)}`;
 const USDC = "0x20c0000000000000000000000000000000000001" as const;
 const RECIPIENT = "0x1111111111111111111111111111111111111111" as const;
+const TOO_LONG_MEMO = /too long/;
+
+describe("deriveTempoNonceKey", () => {
+  const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
+
+  it("gives concurrent sends from one wallet their own lanes", () => {
+    // Two sends in the same execution get distinct 2D-nonce lanes, so neither
+    // reads a nonce the other is about to consume and both can land.
+    const a = deriveTempoNonceKey("exec-1");
+    const b = deriveTempoNonceKey("exec-1");
+    expect(a).not.toBe(b);
+  });
+
+  it("produces a unique lane on every call, with or without an execution id", () => {
+    const keys = new Set(
+      Array.from({ length: 1000 }, (_, i) =>
+        deriveTempoNonceKey(i % 2 === 0 ? "exec" : undefined)
+      )
+    );
+    expect(keys.size).toBe(1000);
+  });
+
+  it("stays off lane 0 and the max-uint256 marker lane", () => {
+    const keys = Array.from({ length: 1000 }, () =>
+      deriveTempoNonceKey(undefined)
+    );
+    for (const key of keys) {
+      expect(key > BigInt(0)).toBe(true);
+      expect(key < MAX_UINT256).toBe(true);
+    }
+  });
+});
 
 describe("isTempoChain", () => {
   it("accepts Tempo mainnet and Moderato testnet", () => {
@@ -67,14 +100,19 @@ describe("normalizeMemo", () => {
   });
 
   it("throws when a plain-text memo exceeds 31 bytes", () => {
-    expect(() => normalizeMemo("x".repeat(32))).toThrow(/too long/);
+    expect(() => normalizeMemo("x".repeat(32))).toThrow(TOO_LONG_MEMO);
   });
 });
 
 describe("buildTransferWithMemoCall", () => {
   it("targets the token and encodes transferWithMemo(to, value, memo)", () => {
     const memo = normalizeMemo("INV-1042");
-    const call = buildTransferWithMemoCall(USDC, RECIPIENT, BigInt(1_500_000), memo);
+    const call = buildTransferWithMemoCall(
+      USDC,
+      RECIPIENT,
+      BigInt(1_500_000),
+      memo
+    );
 
     expect(call.to).toBe(USDC);
     const decoded = decodeFunctionData({ abi: Abis.tip20, data: call.data });

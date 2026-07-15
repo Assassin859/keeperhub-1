@@ -1,5 +1,6 @@
 import type { SQSClient } from "@aws-sdk/client-sqs";
 import type { ethers } from "ethers";
+import { hexlify, toUtf8Bytes } from "ethers";
 import {
   createPhantomExecution,
   failPhantomExecution,
@@ -27,6 +28,49 @@ import { formatError } from "./format-error";
 
 const DEFAULT_JITTER_MS = 10_000;
 
+/** A full pre-hashed bytes32 memo (0x + 64 hex), matched exactly. */
+const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Post-decode filter for the Tempo Payment Received trigger. Returns true
+ * (forward the event) when no filter is set. Otherwise the decoded `to` must
+ * equal the watched deposit address (case-insensitive), and the decoded `memo`
+ * must match the configured filter: an exact bytes32 for a 0x + 64-hex value,
+ * or a utf8 prefix otherwise (the transfer step right-pads a plain-text memo
+ * into the bytes32, so a utf8-hex prefix aligns on byte boundaries).
+ */
+export function paymentEventMatches(params: {
+  to: unknown;
+  memo: unknown;
+  recipientFilter?: string;
+  memoFilter?: string;
+}): boolean {
+  const { to, memo, recipientFilter, memoFilter } = params;
+
+  if (recipientFilter) {
+    if (
+      typeof to !== "string" ||
+      to.toLowerCase() !== recipientFilter.toLowerCase()
+    ) {
+      return false;
+    }
+  }
+
+  if (memoFilter) {
+    if (typeof memo !== "string") {
+      return false;
+    }
+    const memoHex = memo.toLowerCase();
+    if (BYTES32_HEX.test(memoFilter)) {
+      return memoHex === memoFilter.toLowerCase();
+    }
+    const prefixHex = hexlify(toUtf8Bytes(memoFilter));
+    return memoHex.startsWith(prefixHex.toLowerCase());
+  }
+
+  return true;
+}
+
 export interface EventListenerOptions {
   workflowId: string;
   userId: string;
@@ -38,6 +82,13 @@ export interface EventListenerOptions {
   eventName: string;
   eventsAbiStrings: string[];
   rawEventsAbi: AbiEvent[];
+
+  /**
+   * Optional post-decode filters (Tempo Payment Received trigger). Undefined
+   * for generic Event triggers, which forward every matching event.
+   */
+  recipientFilter?: string;
+  memoFilter?: string;
 
   sqs: SQSClient;
   sqsQueueUrl: string;
@@ -112,6 +163,15 @@ export class EventListener {
     return this.started;
   }
 
+  private matchesFilters(parsed: ethers.LogDescription): boolean {
+    return paymentEventMatches({
+      to: parsed.args?.to as unknown,
+      memo: parsed.args?.memo as unknown,
+      recipientFilter: this.opts.recipientFilter,
+      memoFilter: this.opts.memoFilter,
+    });
+  }
+
   private async onLog(log: ethers.Log): Promise<void> {
     try {
       const iface = getInterface(this.opts.eventsAbiStrings);
@@ -120,6 +180,12 @@ export class EventListener {
         data: log.data,
       });
       if (!parsed || parsed.name !== this.opts.eventName) {
+        return;
+      }
+
+      // Post-decode filtering for the Tempo Payment Received trigger. No-op
+      // when neither filter is set (generic Event triggers forward everything).
+      if (!this.matchesFilters(parsed)) {
         return;
       }
 

@@ -66,6 +66,7 @@ export function detectListingTriggerType(nodes: unknown): TriggerKind {
       return "webhook";
     case WorkflowTriggerEnum.EVENT:
     case WorkflowTriggerEnum.BLOCK:
+    case WorkflowTriggerEnum.TEMPO_PAYMENT:
       return "on-chain-event";
     default:
       return "manual";
