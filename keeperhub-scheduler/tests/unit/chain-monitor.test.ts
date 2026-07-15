@@ -159,6 +159,8 @@ describe("ChainMonitor", () => {
     vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", "1000");
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.clearAllMocks();
+    // Default: fresh phantom, no dedup hit. Tests override per case.
+    createPhantomExecution.mockResolvedValue({ alreadyExisted: false });
     providerInstances = [];
     providerFactory = (url) => new MockProvider(url);
   });
@@ -264,7 +266,10 @@ describe("ChainMonitor", () => {
 
     // KEEP-693: phantom pre-creation wiring.
     it("pre-creates a phantom and carries its id on the block message", async () => {
-      createPhantomExecution.mockResolvedValueOnce("exec_ph");
+      createPhantomExecution.mockResolvedValueOnce({
+        executionId: "exec_ph",
+        alreadyExisted: false,
+      });
       const monitor = new ChainMonitor({
         chain: makeChain(),
         workflows: [makeWorkflow()],
@@ -282,14 +287,41 @@ describe("ChainMonitor", () => {
         "wf-1",
         "block",
         "user-1",
+        expect.stringMatching(/^block:wf-1:\d+:10$/),
       );
       expect(enqueueBlockTrigger).toHaveBeenCalledWith(
         expect.objectContaining({ executionId: "exec_ph" }),
       );
     });
 
+    // An overlapping leader / re-processed block must not double-enqueue.
+    it("skips the enqueue when the dispatch key already exists (dedup)", async () => {
+      createPhantomExecution.mockResolvedValueOnce({
+        executionId: "exec_existing",
+        alreadyExisted: true,
+      });
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+
+      const { enqueueBlockTrigger } = await import(
+        "../../block-dispatcher/sqs-enqueue.js"
+      );
+      vi.mocked(enqueueBlockTrigger).mockClear();
+      latestProvider().emitBlock(10);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(enqueueBlockTrigger).not.toHaveBeenCalled();
+    });
+
     it("marks the phantom failed with BS-0001 when the enqueue fails", async () => {
-      createPhantomExecution.mockResolvedValueOnce("exec_ph");
+      createPhantomExecution.mockResolvedValueOnce({
+        executionId: "exec_ph",
+        alreadyExisted: false,
+      });
       const { enqueueBlockTrigger } = await import(
         "../../block-dispatcher/sqs-enqueue.js"
       );

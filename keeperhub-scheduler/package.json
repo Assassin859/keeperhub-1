@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1038.0",
+    "@kubernetes/client-node": "^1.0.0",
     "cron-parser": "^5.4.0",
     "ethers": "^6.16.0",
     "express": "^4.21.2",

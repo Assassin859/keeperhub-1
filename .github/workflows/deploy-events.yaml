@@ -33,6 +33,7 @@ jobs:
       NAMESPACE: keeperhub
       TRACKER_ECR_NAME: keeperhub-event-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       TRACKER_HELM_FILE: deploy/event-tracker/${{ github.ref_name == 'prod' && 'prod' || 'staging' }}/values.yaml
+      EVENTS_SERVICE_ACCOUNT_ROLE_ARN: ${{ vars.TO_EVENTS_ROLE_ARN }}
 
     steps:
       - name: Checkout
@@ -106,10 +107,12 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
           AWS_ACCOUNT_ID: ${{ vars.TO_AWS_ACCOUNT_ID }}
+          EVENTS_SERVICE_ACCOUNT_ROLE_ARN: ${{ env.EVENTS_SERVICE_ACCOUNT_ROLE_ARN }}
         run: |
           sed -i "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" "$TRACKER_HELM_FILE"
           sed -i "s|\${IMAGE_TAG}|${IMAGE_TAG}|g" "$TRACKER_HELM_FILE"
           sed -i "s|\${AWS_ACCOUNT_ID}|${AWS_ACCOUNT_ID}|g" "$TRACKER_HELM_FILE"
+          sed -i "s|\${EVENTS_SERVICE_ACCOUNT_ROLE_ARN}|${EVENTS_SERVICE_ACCOUNT_ROLE_ARN}|g" "$TRACKER_HELM_FILE"
 
       - name: Configure kubectl
         if: steps.skip.outputs.skip_deploy != 'true'
@@ -132,5 +135,11 @@ jobs:
           timeout: 5m0s
           name: keeperhub-event
           chart-repository: https://techops-services.github.io/helm-charts
-          version: 0.2.1
+          # 0.5.0 is the first version that hard-fails the render when the
+          # service account's IRSA role-arn is empty or malformed. The tracker
+          # now creates its own service account, so without this the annotation
+          # would silently render blank if the role-arn variable were unset and
+          # the pod would fall back to the node role. Rendered output is
+          # otherwise identical to 0.2.1 apart from an opt-in helm test hook.
+          version: 0.5.0
           atomic: true

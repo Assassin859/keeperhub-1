@@ -52,7 +52,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const body = JSON.parse(rawBody);
-  const { workflowId, userId, input, status, triggerSource } = body;
+  const { workflowId, userId, input, status, triggerSource, dispatchKey } =
+    body;
+
+  // Optional dispatch-idempotency key. When two dispatcher replicas
+  // overlap (failover / rolling restart) or a catch-up window re-runs an
+  // occurrence, both compute the same key; the unique index turns the second
+  // insert into a no-op so only one phantom row (and one SQS message) exists.
+  const dispatchKeyValue: string | null =
+    typeof dispatchKey === "string" && dispatchKey.length > 0
+      ? dispatchKey
+      : null;
 
   // A phantom row represents an expected-but-unstarted trigger that the
   // scheduler/event-tracker pre-creates; the executor later upgrades it to
@@ -109,7 +119,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const source = resolveTriggerSource(triggerSource);
   const attribution = buildAttribution({ request, source });
 
-  const [execution] = await withBackstopCapture(
+  const inserted = await withBackstopCapture(
     { workflowId, userId: ownerId, source },
     () =>
       db
@@ -124,6 +134,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           // billable as before.
           billable: !isPhantom,
           input: input || {},
+          dispatchKey: dispatchKeyValue,
           ...attribution,
           // Tie the run to the workflow version that fired it. For phantoms the
           // executor restamps this with the definition it actually loads at run
@@ -133,8 +144,40 @@ export async function POST(request: Request): Promise<NextResponse> {
             workflow.edges
           ),
         })
+        // No-op if another dispatcher already created a row for this dispatch
+        // key. NULL keys never conflict (Postgres treats them as distinct).
+        .onConflictDoNothing({ target: workflowExecutions.dispatchKey })
         .returning({ id: workflowExecutions.id })
   );
 
-  return NextResponse.json({ executionId: execution.id }, { status: 201 });
+  const created = inserted[0];
+  if (created) {
+    return NextResponse.json(
+      { executionId: created.id, alreadyExisted: false },
+      { status: 201 }
+    );
+  }
+
+  // Conflict: a row already exists for this dispatch key. Return its id and
+  // flag it so the caller skips the duplicate SQS send. Only reachable with a
+  // non-null key, so the lookup is well-defined.
+  const [existing] = await db
+    .select({ id: workflowExecutions.id })
+    .from(workflowExecutions)
+    .where(eq(workflowExecutions.dispatchKey, dispatchKeyValue as string))
+    .limit(1);
+
+  if (existing) {
+    return NextResponse.json(
+      { executionId: existing.id, alreadyExisted: true },
+      { status: 200 }
+    );
+  }
+
+  // Conflict reported but the row is gone (deleted between insert and lookup).
+  // Fail loudly rather than silently dropping the trigger.
+  return NextResponse.json(
+    { error: "Failed to create execution" },
+    { status: 500 }
+  );
 }

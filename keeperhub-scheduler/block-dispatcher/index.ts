@@ -26,6 +26,10 @@ import {
   RECONCILE_INTERVAL_MS,
   SQS_QUEUE_URL,
 } from "../lib/config.js";
+import {
+  type LeaderElectionHandle,
+  runWithLeaderElection,
+} from "../lib/leader-election.js";
 import { metrics, registry } from "../lib/metrics.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
 import { fetchBlockWorkflows } from "./api-client.js";
@@ -37,6 +41,10 @@ class BlockMonitorService {
   private isShuttingDown = false;
 
   async start(): Promise<void> {
+    // Reset the shutdown flag so the service is restartable: on failover the
+    // same process may lose leadership (stop()) and later regain it (start()).
+    this.isShuttingDown = false;
+
     console.log(
       `[BlockMonitorService] Starting (reconcile every ${RECONCILE_INTERVAL_MS}ms)`,
     );
@@ -252,6 +260,22 @@ async function main(): Promise<void> {
 
   const service = new BlockMonitorService();
 
+  // Gate chain monitoring on leadership: with 2 replicas only the elected
+  // leader opens WebSocket subscriptions and enqueues, otherwise every block
+  // triggers once per replica (and doubles upstream RPC/WSS load). On losing
+  // leadership the standby tears its monitors down via service.stop().
+  const election: LeaderElectionHandle = runWithLeaderElection({
+    leaseName: process.env.LEASE_NAME ?? "block-dispatcher-leader",
+    onStartedLeading: async () => {
+      console.log("[BlockDispatcher] Became leader — starting monitors");
+      await service.start();
+    },
+    onStoppedLeading: async () => {
+      console.log("[BlockDispatcher] Lost leadership — stopping monitors");
+      await service.stop();
+    },
+  });
+
   // Start health check server
   const healthApp = express();
   const HEALTH_PORT = process.env.HEALTH_PORT || 3050;
@@ -262,6 +286,7 @@ async function main(): Promise<void> {
     res.status(statusCode).json({
       status: health.healthy ? "ok" : "degraded",
       service: "block-dispatcher",
+      leader: election.isLeader(),
       timestamp: new Date().toISOString(),
       monitors: health.monitors,
     });
@@ -284,8 +309,18 @@ async function main(): Promise<void> {
   });
 
   // Shutdown handler
+  let shuttingDown = false;
   const shutdownHandler = async () => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     console.log("\n[BlockDispatcher] Shutting down...");
+    // Release the lease first so a standby can take over promptly, then tear
+    // down our own monitors and close.
+    await election.stop().catch(() => {
+      // best-effort; the lease expires on its own if release fails
+    });
     await service.stop();
     healthServer.close(() => {
       console.log("[BlockDispatcher] Health server closed");
@@ -301,9 +336,6 @@ async function main(): Promise<void> {
       "[Security] SIGUSR1 received; inspector activation suppressed",
     );
   });
-
-  // Start monitoring
-  await service.start();
 }
 
 main().catch((error: unknown) => {

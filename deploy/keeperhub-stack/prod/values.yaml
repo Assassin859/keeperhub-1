@@ -143,6 +143,12 @@ app:
       - apiGroups: [""]
         resources: ["pods/log"]
         verbs: ["get"]
+      # Leader election for the schedule and block dispatchers. They share this
+      # service account, so the Lease permission lives here (one owner of the
+      # Role) rather than on a second SA that would need its own IRSA role-arn.
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "create", "update"]
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -669,9 +675,32 @@ executor:
     initContainers:
       - *irsa_preflight
 
+  # Own service account + IRSA role, so queue access can be scoped to the
+  # consumer role independently of the producers. The role currently carries the
+  # same broad queue policy as the shared one, so this repoint cannot lose
+  # access; it is narrowed to receive/delete-only once every component is
+  # confirmed running on its own role.
   serviceAccount:
-    create: false
-    name: keeperhub-prod
+    create: true
+    requireRoleArn: true
+    irsaCheck:
+      enabled: true
+    annotations:
+      eks.amazonaws.com/role-arn: ${EXECUTOR_SERVICE_ACCOUNT_ROLE_ARN}
+    name: keeperhub-executor-prod
+    # The executor spawns the workflow runner Jobs and reads their pods/logs, so
+    # it needs its own Role once it stops sharing the app's service account.
+    # Without these it authenticates to AWS fine but gets 403 from the K8s API.
+    rules:
+      - apiGroups: ["batch"]
+        resources: ["jobs"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: [""]
+        resources: ["pods/log"]
+        verbs: ["get"]
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -719,6 +748,9 @@ executor:
     SQS_QUEUE_URL:
       type: kv
       value: "https://sqs.us-east-2.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-prod"
+    SQS_DLQ_URL:
+      type: kv
+      value: "https://sqs.us-east-2.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-prod-dlq"
     RUNNER_IMAGE:
       type: kv
       value: "${ECR_REGISTRY}/keeperhub-prod:workflow-runner-${IMAGE_TAG}"
@@ -855,7 +887,9 @@ schedule:
   # 3. Evaluates cron expressions against current time
   # 4. Sends matching schedules to SQS queue for execution
 
-  replicaCount: 1
+  # Two replicas with Kubernetes Lease leader election (only the leader
+  # dispatches); a node roll or crash no longer drops dispatch to zero.
+  replicaCount: 2
 
   podDisruptionBudget:
     enabled: true
@@ -883,10 +917,25 @@ schedule:
     initContainers:
       - *irsa_preflight
 
-  # Use the same service account as main app
+  # Owns the scheduler service account, which the block dispatcher below shares -
+  # both are the same logical producer and sign with the same caller. The role
+  # currently carries the same broad queue policy as the shared one, so this
+  # repoint cannot lose access; it is narrowed to send-only later.
   serviceAccount:
-    create: false
-    name: keeperhub-prod
+    create: true
+    requireRoleArn: true
+    irsaCheck:
+      enabled: true
+    annotations:
+      eks.amazonaws.com/role-arn: ${SCHEDULER_SERVICE_ACCOUNT_ROLE_ARN}
+    name: keeperhub-scheduler-prod
+    # Leader election for the schedule and block dispatchers, which share this
+    # service account. This Role owns the Lease permission now that they no
+    # longer run under the app's service account.
+    rules:
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "create", "update"]
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -936,6 +985,15 @@ schedule:
     SQS_QUEUE_URL:
       type: kv
       value: "https://sqs.us-east-2.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-prod"
+    # Leader election: only the pod holding the Lease dispatches. Namespace and
+    # holder identity are resolved in-pod (service account file + hostname), so
+    # nothing environment-scoped is hardcoded here.
+    LEADER_ELECTION_ENABLED:
+      type: kv
+      value: "true"
+    LEASE_NAME:
+      type: kv
+      value: "schedule-dispatcher-leader"
     # Health check server port
     HEALTH_PORT:
       type: kv
@@ -972,7 +1030,10 @@ block:
   # 2. Maintains WebSocket connections to each chain's WSS endpoint
   # 3. Filters blocks by workflow interval and enqueues matches to SQS
 
-  replicaCount: 1
+  # Two replicas with Kubernetes Lease leader election (only the leader opens
+  # WebSocket subscriptions and enqueues); a node roll no longer drops block
+  # monitoring to zero.
+  replicaCount: 2
 
   podDisruptionBudget:
     enabled: true
@@ -1000,10 +1061,11 @@ block:
     initContainers:
       - *irsa_preflight
 
-  # Use the same service account as main app
+  # Shares the scheduler service account created by the schedule component above
+  # (same logical producer), so it is referenced here rather than created.
   serviceAccount:
     create: false
-    name: keeperhub-prod
+    name: keeperhub-scheduler-prod
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -1061,6 +1123,15 @@ block:
     SOCKET_MAX_AGE_MS:
       type: kv
       value: "3600000"
+    # Leader election: only the pod holding the Lease opens chain subscriptions
+    # and enqueues. Namespace and holder identity are resolved in-pod (service
+    # account file + hostname), so nothing environment-scoped is hardcoded here.
+    LEADER_ELECTION_ENABLED:
+      type: kv
+      value: "true"
+    LEASE_NAME:
+      type: kv
+      value: "block-dispatcher-leader"
     # Health check server port
     HEALTH_PORT:
       type: kv
