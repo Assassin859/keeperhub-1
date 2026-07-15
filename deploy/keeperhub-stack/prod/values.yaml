@@ -688,6 +688,19 @@ executor:
     annotations:
       eks.amazonaws.com/role-arn: ${EXECUTOR_SERVICE_ACCOUNT_ROLE_ARN}
     name: keeperhub-executor-prod
+    # The executor spawns the workflow runner Jobs and reads their pods/logs, so
+    # it needs its own Role once it stops sharing the app's service account.
+    # Without these it authenticates to AWS fine but gets 403 from the K8s API.
+    rules:
+      - apiGroups: ["batch"]
+        resources: ["jobs"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: [""]
+        resources: ["pods/log"]
+        verbs: ["get"]
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
@@ -916,6 +929,13 @@ schedule:
     annotations:
       eks.amazonaws.com/role-arn: ${SCHEDULER_SERVICE_ACCOUNT_ROLE_ARN}
     name: keeperhub-scheduler-prod
+    # Leader election for the schedule and block dispatchers, which share this
+    # service account. This Role owns the Lease permission now that they no
+    # longer run under the app's service account.
+    rules:
+      - apiGroups: ["coordination.k8s.io"]
+        resources: ["leases"]
+        verbs: ["get", "create", "update"]
 
   podAnnotations:
     reloader.stakater.com/auto: "true"
