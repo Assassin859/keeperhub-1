@@ -1,6 +1,7 @@
 export default {
   overview: "Overview",
   web3: "Web3",
+  tempo: "Tempo",
   code: "Code",
   math: "Math",
   safe: "Safe",
