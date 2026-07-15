@@ -26,6 +26,10 @@ import {
 // v1 broadcasts within the triggering run, so the window bounds inclusion time,
 // it does not defer the send. Default the deadline to a short window when unset.
 const DEFAULT_WINDOW_SEC = 900; // 15 minutes
+// A window closing sooner than this can lapse before the payment is signed,
+// broadcast, and included, so reject it upfront instead of letting it time out
+// after the receipt wait.
+const MIN_INCLUSION_BUFFER_SEC = 60;
 const UNIX_SECONDS = /^\d+$/;
 const MILLIS_THRESHOLD = 1e12;
 
@@ -111,10 +115,11 @@ async function stepHandler(
     return { success: false, error: getErrorMessage(error) };
   }
 
-  if (validBeforeSec <= nowSec) {
+  if (validBeforeSec < nowSec + MIN_INCLUSION_BUFFER_SEC) {
     return {
       success: false,
-      error: "The payment window (validBefore) is already in the past.",
+      error:
+        "The payment window closes too soon: validBefore must be at least 60 seconds ahead so the payment can be signed and settle before it lapses.",
     };
   }
   if (validAfterSec !== undefined && validAfterSec > nowSec) {

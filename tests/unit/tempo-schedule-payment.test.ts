@@ -45,7 +45,8 @@ const mockSignAndBroadcast = vi.fn();
 const mockBuildCall = vi.fn();
 const mockNormalizeMemo = vi.fn();
 vi.mock("@/plugins/tempo/steps/tempo-tx-core", () => ({
-  signAndBroadcastTempoTx: (...args: unknown[]) => mockSignAndBroadcast(...args),
+  signAndBroadcastTempoTx: (...args: unknown[]) =>
+    mockSignAndBroadcast(...args),
   buildTransferWithMemoCall: (...args: unknown[]) => mockBuildCall(...args),
   normalizeMemo: (...args: unknown[]) => mockNormalizeMemo(...args),
 }));
@@ -145,15 +146,34 @@ describe("schedulePaymentStep", () => {
     expect(mockSignAndBroadcast).not.toHaveBeenCalled();
   });
 
-  it("rejects a validBefore already in the past", async () => {
+  it("rejects a validBefore in the past (inside the inclusion buffer)", async () => {
     const res = await schedulePaymentStep(
       baseInput({ validBefore: String(NOW_SEC - 10) })
     );
     expect(res.success).toBe(false);
     if (!res.success) {
-      expect(res.error).toContain("past");
+      expect(res.error).toContain("too soon");
     }
     expect(mockSignAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("rejects a validBefore that closes inside the inclusion buffer", async () => {
+    const res = await schedulePaymentStep(
+      baseInput({ validBefore: String(NOW_SEC + 10) })
+    );
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error).toContain("too soon");
+    }
+    expect(mockSignAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("accepts a validBefore just past the inclusion buffer", async () => {
+    const res = await schedulePaymentStep(
+      baseInput({ validBefore: String(NOW_SEC + 61) })
+    );
+    expect(res.success).toBe(true);
+    expect(mockSignAndBroadcast).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an unparseable date", async () => {
