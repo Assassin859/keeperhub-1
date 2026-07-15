@@ -15,41 +15,49 @@ describe("paymentEventMatches", () => {
 
   it("matches the recipient case-insensitively", () => {
     expect(
-      paymentEventMatches({ to: TO.toUpperCase(), recipientFilter: TO })
+      paymentEventMatches({ to: TO.toUpperCase(), recipientFilter: TO }),
     ).toBe(true);
     expect(paymentEventMatches({ to: OTHER, recipientFilter: TO })).toBe(false);
     expect(paymentEventMatches({ to: 123, recipientFilter: TO })).toBe(false);
   });
 
   it("matches a full bytes32 memo exactly", () => {
-    expect(
-      paymentEventMatches({ to: TO, memo: HASH, memoFilter: HASH })
-    ).toBe(true);
+    expect(paymentEventMatches({ to: TO, memo: HASH, memoFilter: HASH })).toBe(
+      true,
+    );
     expect(
       paymentEventMatches({
         to: TO,
         memo: HASH.toUpperCase(),
         memoFilter: HASH,
-      })
+      }),
     ).toBe(true);
     expect(
-      paymentEventMatches({ to: TO, memo: MEMO_INV1042, memoFilter: HASH })
+      paymentEventMatches({ to: TO, memo: MEMO_INV1042, memoFilter: HASH }),
     ).toBe(false);
   });
 
   it("matches a plain-text memo as a utf8 prefix", () => {
     expect(
-      paymentEventMatches({ to: TO, memo: MEMO_INV1042, memoFilter: "INV-104" })
+      paymentEventMatches({
+        to: TO,
+        memo: MEMO_INV1042,
+        memoFilter: "INV-104",
+      }),
     ).toBe(true);
     expect(
-      paymentEventMatches({ to: TO, memo: MEMO_INV1042, memoFilter: "INV-1042" })
+      paymentEventMatches({
+        to: TO,
+        memo: MEMO_INV1042,
+        memoFilter: "INV-1042",
+      }),
     ).toBe(true);
     expect(
-      paymentEventMatches({ to: TO, memo: MEMO_INV1042, memoFilter: "ABC" })
+      paymentEventMatches({ to: TO, memo: MEMO_INV1042, memoFilter: "ABC" }),
     ).toBe(false);
-    expect(
-      paymentEventMatches({ to: TO, memo: 42, memoFilter: "INV" })
-    ).toBe(false);
+    expect(paymentEventMatches({ to: TO, memo: 42, memoFilter: "INV" })).toBe(
+      false,
+    );
   });
 
   it("requires both filters to pass when both are set", () => {
@@ -59,7 +67,7 @@ describe("paymentEventMatches", () => {
         memo: MEMO_INV1042,
         recipientFilter: TO,
         memoFilter: "INV-104",
-      })
+      }),
     ).toBe(true);
     expect(
       paymentEventMatches({
@@ -67,7 +75,7 @@ describe("paymentEventMatches", () => {
         memo: MEMO_INV1042,
         recipientFilter: TO,
         memoFilter: "INV-104",
-      })
+      }),
     ).toBe(false);
     expect(
       paymentEventMatches({
@@ -75,7 +83,7 @@ describe("paymentEventMatches", () => {
         memo: MEMO_INV1042,
         recipientFilter: TO,
         memoFilter: "ZZZ",
-      })
+      }),
     ).toBe(false);
   });
 });
