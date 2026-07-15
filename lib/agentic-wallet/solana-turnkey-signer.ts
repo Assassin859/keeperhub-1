@@ -26,7 +26,10 @@ export class TurnkeySolanaSigner implements SolanaTransactionSigner {
   }
 
   async signTransaction(unsignedBytes: Uint8Array): Promise<Uint8Array> {
-    const unsignedTransaction = Buffer.from(unsignedBytes).toString("base64");
+    // Turnkey's signTransaction expects the unsigned transaction as a hex
+    // string (all TRANSACTION_TYPE_* variants), not base64. Passing base64
+    // triggers "failed to decode Solana transaction: encoding/hex: invalid byte".
+    const unsignedTransaction = Buffer.from(unsignedBytes).toString("hex");
     const client = getTurnkeyClientForOrg(this.subOrgId).apiClient();
 
     const activity = (await (
@@ -57,7 +60,7 @@ export class TurnkeySolanaSigner implements SolanaTransactionSigner {
         "signedTransaction missing from Turnkey Solana response"
       );
     }
-    // Turnkey returns base64; decode to Uint8Array
-    return Uint8Array.from(Buffer.from(signed, "base64"));
+    // Turnkey returns the signed transaction as hex; decode to Uint8Array
+    return Uint8Array.from(Buffer.from(signed, "hex"));
   }
 }

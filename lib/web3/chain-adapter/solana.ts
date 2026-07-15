@@ -214,7 +214,7 @@ export class SolanaChainAdapter implements ChainAdapter {
   }
 
   async getBalance(
-    _rpcManager: RpcProviderManager,
+    _rpcManager: RpcProviderManager | undefined,
     address: string
   ): Promise<bigint> {
     const pubkey = new PublicKey(address);

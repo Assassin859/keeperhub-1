@@ -29,6 +29,16 @@ export function SettingsTab({
   canExportKey,
 }: SettingsTabProps): React.ReactElement {
   if (account.kind === "turnkey") {
+    // The Solana account shares the same Turnkey wallet as the EVM EOA, so the
+    // org-level recovery email and key export are surfaced once on the EVM
+    // view. The Solana view just shows its own address.
+    if (account.family === "solana") {
+      return (
+        <div className="space-y-4">
+          <WalletAddressCard walletAddress={account.address} />
+        </div>
+      );
+    }
     return (
       <div className="space-y-4">
         <WalletAddressCard walletAddress={account.address} />

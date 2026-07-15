@@ -45,6 +45,9 @@ describe("turnkey-operations - createTurnkeyWallet", () => {
     process.env.TURNKEY_API_PUBLIC_KEY = "mock-public-key";
     process.env.TURNKEY_API_PRIVATE_KEY = "mock-private-key";
     process.env.TURNKEY_ORGANIZATION_ID = "mock-org-id";
+    // Default the gate ON for the existing Solana-provisioning assertions;
+    // the disabled-path test below overrides it.
+    process.env.SOLANA_WALLET_PROVISIONING_ENABLED = "true";
 
     const turnkeyInstance = new Turnkey({} as any);
     mockApiClient = turnkeyInstance.apiClient();
@@ -199,5 +202,37 @@ describe("turnkey-operations - createTurnkeyWallet", () => {
       undefined,
       expect.any(Object)
     );
+  });
+
+  it("provisions EVM-only and no Solana account when the gate is disabled", async () => {
+    delete process.env.SOLANA_WALLET_PROVISIONING_ENABLED;
+
+    mockApiClient.createSubOrganization.mockResolvedValue({
+      subOrganizationId: "mock-sub-org-id",
+      wallet: {
+        walletId: "mock-wallet-id",
+        addresses: ["evm-address-1"],
+      },
+    });
+    mockApiClient.getWalletAccounts.mockResolvedValue({
+      accounts: [
+        {
+          address: "evm-address-1",
+          addressFormat: "ADDRESS_FORMAT_ETHEREUM",
+        },
+      ],
+    });
+
+    const result = await createTurnkeyWallet("test@keeperhub.com", "test-org");
+
+    expect(result.solanaAddress).toBeNull();
+    // The sub-org must be requested with the EVM-only account set.
+    const request = mockApiClient.createSubOrganization.mock.calls[0][0];
+    expect(request.wallet.accounts).toHaveLength(1);
+    expect(request.wallet.accounts[0].addressFormat).toBe(
+      "ADDRESS_FORMAT_ETHEREUM"
+    );
+    // And no separate Solana account is ever added.
+    expect(mockApiClient.createWalletAccounts).not.toHaveBeenCalled();
   });
 });
