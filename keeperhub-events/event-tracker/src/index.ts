@@ -1,6 +1,7 @@
 import os from "node:os";
 import { logger } from "../lib/utils/logger";
 import { chainProviderManager } from "./chains/provider-manager";
+import { solanaProviderManager } from "./chains/solana-provider-manager";
 import {
   type HealthServerHandle,
   startHealthServer,
@@ -34,7 +35,7 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   // exit(1) for K8s restart. A silent bind failure would zombify the
   // pod: process alive, no workflows running, no probe.
   const healthServer: HealthServerHandle = await startHealthServer(
-    chainProviderManager,
+    [chainProviderManager, solanaProviderManager],
     HEALTH_PORT,
   );
   logger.log(`[Health] /healthz listening on :${healthServer.port}`);

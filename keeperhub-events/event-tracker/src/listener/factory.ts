@@ -1,6 +1,7 @@
 import { SQS_QUEUE_URL } from "../../lib/config/environment";
 import { sqs } from "../../lib/sqs-client";
 import { chainProviderManager } from "../chains/provider-manager";
+import { solanaProviderManager } from "../chains/solana-provider-manager";
 import { createRedisDedupStore } from "./dedup-redis";
 import { ListenerRegistry } from "./registry";
 
@@ -15,6 +16,7 @@ import { ListenerRegistry } from "./registry";
 export function createRegistry(): ListenerRegistry {
   return new ListenerRegistry({
     providerManager: chainProviderManager,
+    solanaProviderManager,
     dedup: createRedisDedupStore(),
     sqs,
     sqsQueueUrl: SQS_QUEUE_URL,

@@ -4,10 +4,12 @@ import {
   type ServerResponse,
   createServer,
 } from "node:http";
-import type { ChainProviderManager } from "../chains/provider-manager";
+import type { ChainHealth } from "../chains/provider-manager";
 
 /**
- * HTTP `/healthz` endpoint backed by ChainProviderManager.
+ * HTTP `/healthz` endpoint backed by one or more health reporters (the EVM
+ * ChainProviderManager and the SolanaProviderManager). Both expose the same
+ * `getAllHealth(): ChainHealth[]` shape, so the endpoint aggregates them.
  *
  * Semantics:
  *   - 200 `{ status: "ok", chains: [...] }` when every registered chain
@@ -18,16 +20,20 @@ import type { ChainProviderManager } from "../chains/provider-manager";
  *   - 404 for any path other than `/healthz`.
  */
 
-export interface HealthResponseBody {
-  status: "ok" | "degraded";
-  chains: ReturnType<ChainProviderManager["getAllHealth"]>;
+export interface HealthReporter {
+  getAllHealth(): ChainHealth[];
 }
 
-export function buildHealthResponse(providerManager: ChainProviderManager): {
+export interface HealthResponseBody {
+  status: "ok" | "degraded";
+  chains: ChainHealth[];
+}
+
+export function buildHealthResponse(reporters: HealthReporter[]): {
   status: 200 | 503;
   body: HealthResponseBody;
 } {
-  const chains = providerManager.getAllHealth();
+  const chains = reporters.flatMap((reporter) => reporter.getAllHealth());
   const allHealthy = chains.length === 0 || chains.every((c) => c.connected);
   return {
     status: allHealthy ? 200 : 503,
@@ -36,7 +42,7 @@ export function buildHealthResponse(providerManager: ChainProviderManager): {
 }
 
 export function createHealthRequestHandler(
-  providerManager: ChainProviderManager,
+  reporters: HealthReporter[],
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     const url = req.url ?? "";
@@ -45,7 +51,7 @@ export function createHealthRequestHandler(
       res.writeHead(404).end();
       return;
     }
-    const { status, body } = buildHealthResponse(providerManager);
+    const { status, body } = buildHealthResponse(reporters);
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body));
   };
@@ -58,10 +64,10 @@ export interface HealthServerHandle {
 }
 
 export async function startHealthServer(
-  providerManager: ChainProviderManager,
+  reporters: HealthReporter[],
   port: number,
 ): Promise<HealthServerHandle> {
-  const server = createServer(createHealthRequestHandler(providerManager));
+  const server = createServer(createHealthRequestHandler(reporters));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, () => {

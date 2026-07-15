@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
-import type { NetworksMap, RawWorkflow } from "../../lib/types";
+import { type Commitment, PublicKey } from "@solana/web3.js";
+import type { NetworkConfig, NetworksMap, RawWorkflow } from "../../lib/types";
 import { logger } from "../../lib/utils/logger";
 import { buildEventAbi } from "../chains/event-serializer";
 import type { AbiEvent } from "../chains/validation";
-import type { WorkflowRegistration } from "./registry";
+import type {
+  EvmWorkflowRegistration,
+  SolanaWorkflowRegistration,
+  WorkflowRegistration,
+} from "./registry";
+
+const VALID_COMMITMENTS: ReadonlySet<string> = new Set([
+  "processed",
+  "confirmed",
+  "finalized",
+]);
 
 /**
  * Maps the KeeperHub API workflow response shape into a WorkflowRegistration
@@ -57,6 +68,13 @@ export function buildRegistration(
       `[workflow-mapper] workflow ${workflowId} references unknown chainId ${chainId}; skipping`,
     );
     return null;
+  }
+
+  // Solana chains use a fundamentally different watch model (programId +
+  // signature cursor + slot subscription, no ABI/topics). Branch before any
+  // EVM-specific field checks.
+  if (network.chainType === "solana") {
+    return buildSolanaRegistration(workflow, workflowId, chainId, network);
   }
 
   // The DB column `chains.default_primary_wss` is nullable, but
@@ -154,7 +172,8 @@ export function buildRegistration(
   const userId = typeof workflow.userId === "string" ? workflow.userId : "";
   const workflowName = typeof workflow.name === "string" ? workflow.name : "";
 
-  const registration: Omit<WorkflowRegistration, "configHash"> = {
+  const registration: Omit<EvmWorkflowRegistration, "configHash"> = {
+    kind: "evm",
     workflowId,
     userId,
     workflowName,
@@ -173,6 +192,111 @@ export function buildRegistration(
 }
 
 /**
+ * Maps a Solana Event workflow into a SolanaWorkflowRegistration. Returns null
+ * (skip) for any malformed field, mirroring the EVM path's skip-and-log
+ * behaviour. Requires a valid base58 programId and a WSS URL (the slot
+ * subscription's block-tick); IDL/eventName are optional (absent -> raw mode).
+ */
+function buildSolanaRegistration(
+  workflow: RawWorkflow,
+  workflowId: string,
+  chainId: number,
+  network: NetworkConfig,
+): SolanaWorkflowRegistration | null {
+  const config = workflow.nodes?.[0]?.data?.config;
+  const programId =
+    typeof config?.programId === "string" ? config.programId : null;
+  if (!programId) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} missing programId; skipping`,
+    );
+    return null;
+  }
+  try {
+    // Throws on non-base58 / wrong-length input.
+    new PublicKey(programId);
+  } catch {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} programId "${programId}" is not a valid base58 address; skipping`,
+    );
+    return null;
+  }
+
+  const rpcUrl: unknown = network.defaultPrimaryRpc;
+  if (typeof rpcUrl !== "string" || rpcUrl.length === 0) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} has no defaultPrimaryRpc; skipping`,
+    );
+    return null;
+  }
+
+  const wssUrl: unknown = network.defaultPrimaryWss;
+  if (typeof wssUrl !== "string" || wssUrl.length === 0) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} has no defaultPrimaryWss (required for slot subscription); skipping`,
+    );
+    return null;
+  }
+  if (!(wssUrl.startsWith("wss://") || wssUrl.startsWith("ws://"))) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} defaultPrimaryWss is not a WebSocket URL ("${wssUrl}"); skipping`,
+    );
+    return null;
+  }
+
+  const rawFallbackRpc: unknown = network.defaultFallbackRpc;
+  const fallbackRpcUrl =
+    typeof rawFallbackRpc === "string" && rawFallbackRpc.length > 0
+      ? rawFallbackRpc
+      : undefined;
+
+  const rawFallbackWss: unknown = network.defaultFallbackWss;
+  let fallbackWssUrl: string | undefined;
+  if (typeof rawFallbackWss === "string" && rawFallbackWss.length > 0) {
+    if (
+      rawFallbackWss.startsWith("wss://") ||
+      rawFallbackWss.startsWith("ws://")
+    ) {
+      fallbackWssUrl = rawFallbackWss;
+    } else {
+      logger.warn(
+        `[workflow-mapper] workflow ${workflowId} chain ${chainId} defaultFallbackWss is not a WebSocket URL ("${rawFallbackWss}"); ignoring fallback`,
+      );
+    }
+  }
+
+  const commitment: Commitment = VALID_COMMITMENTS.has(config?.commitment ?? "")
+    ? (config?.commitment as Commitment)
+    : "confirmed";
+  const idl = typeof config?.idl === "string" ? config.idl : undefined;
+  const eventName =
+    typeof config?.eventName === "string" ? config.eventName : undefined;
+
+  const userId = typeof workflow.userId === "string" ? workflow.userId : "";
+  const workflowName = typeof workflow.name === "string" ? workflow.name : "";
+
+  const registration: Omit<SolanaWorkflowRegistration, "configHash"> = {
+    kind: "solana",
+    workflowId,
+    userId,
+    workflowName,
+    chainId,
+    rpcUrl,
+    fallbackRpcUrl,
+    wssUrl,
+    fallbackWssUrl,
+    programId,
+    commitment,
+    idl,
+    eventName,
+  };
+  return {
+    ...registration,
+    configHash: hashSolanaRegistration(registration),
+  };
+}
+
+/**
  * Content hash over the fields that affect listener behaviour. Used by the
  * reconciler to detect config changes (contract address swap, event name
  * rename, ABI update, user reassignment) and restart the listener. Excludes
@@ -182,7 +306,7 @@ export function buildRegistration(
  * buildRegistration and all values are primitives or arrays of primitives.
  */
 export function hashRegistration(
-  reg: Omit<WorkflowRegistration, "configHash">,
+  reg: Omit<EvmWorkflowRegistration, "configHash">,
 ): string {
   const canonical = JSON.stringify({
     chainId: reg.chainId,
@@ -191,6 +315,29 @@ export function hashRegistration(
     contractAddress: reg.contractAddress,
     eventName: reg.eventName,
     eventsAbiStrings: reg.eventsAbiStrings,
+    userId: reg.userId,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+/**
+ * Content hash over the Solana listener-affecting fields. The reconciler uses
+ * it to restart a listener when the program, endpoints, commitment, IDL, or
+ * event filter change. Excludes workflowId (lookup key) and workflowName.
+ */
+export function hashSolanaRegistration(
+  reg: Omit<SolanaWorkflowRegistration, "configHash">,
+): string {
+  const canonical = JSON.stringify({
+    chainId: reg.chainId,
+    rpcUrl: reg.rpcUrl,
+    fallbackRpcUrl: reg.fallbackRpcUrl ?? null,
+    wssUrl: reg.wssUrl,
+    fallbackWssUrl: reg.fallbackWssUrl ?? null,
+    programId: reg.programId,
+    commitment: reg.commitment,
+    idl: reg.idl ?? null,
+    eventName: reg.eventName ?? null,
     userId: reg.userId,
   });
   return createHash("sha256").update(canonical).digest("hex");

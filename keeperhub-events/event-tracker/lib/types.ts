@@ -31,6 +31,16 @@ export interface RawWorkflowNodeConfig {
   contractABI?: string;
   triggerType?: string;
   contractAddress?: string;
+  /**
+   * Solana Event trigger fields. Present only when the selected network is a
+   * Solana chain (`chainType === "solana"`). `programId` is a base58 program
+   * address; `idl` is an Anchor IDL JSON string used for typed event decoding
+   * (absent -> raw log mode); `eventName` (reused above) names the Anchor event
+   * to match in typed mode; `commitment` defaults to "confirmed".
+   */
+  programId?: string;
+  idl?: string;
+  commitment?: string;
 }
 
 export interface RawWorkflowNode {
