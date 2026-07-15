@@ -171,6 +171,7 @@ async function stepHandler(input: BatchPayoutInput): Promise<BatchPayoutResult> 
       chainId,
       calls,
       feeToken: token.address,
+      executionId: _context?.executionId,
     });
 
     const transactionLink = await buildTempoTxLink(chainId, hash);
