@@ -142,6 +142,11 @@ packages/*/dist/
 .claude/test-*-output.txt
 .claude/worktrees/
 
+# Locally generated Solana devnet payer keypair
+# (scripts/solana-devnet-spl-fixture.ts). Devnet-only and worthless, but it is
+# still a private key and must never be committed.
+.claude/.solana-devnet-payer.json
+
 # Local protocol-coverage rig and tier output (scripts/protocol-local.sh,
 # vitest --outputFile dumps); pattern, not filenames, so new tiers cannot
 # leak results artifacts into the repo again

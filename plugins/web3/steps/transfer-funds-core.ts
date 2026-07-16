@@ -39,6 +39,7 @@ import {
 } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
+import { SOLANA_BASE_FEE_LAMPORTS } from "@/lib/web3/solana-fees";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -46,10 +47,6 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
-
-// Solana base transaction fee: 5000 lamports per signature. Reserved on top of
-// the transfer amount in the native-SOL balance preflight.
-const SOLANA_BASE_FEE_LAMPORTS = BigInt(5000);
 
 export type TransferFundsCoreInput = {
   network: string;
