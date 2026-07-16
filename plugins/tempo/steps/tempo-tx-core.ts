@@ -114,6 +114,47 @@ export type SignAndBroadcastParams = {
 
 export type SignAndBroadcastResult = { hash: string; from: string };
 
+export type SignTempoTxParams = SignAndBroadcastParams & {
+  /**
+   * Multiply the adaptive `maxFeePerGas` ceiling for headroom. A held payment is
+   * signed now but broadcast later, so it over-provisions the ceiling to survive
+   * a base-fee rise between signing and broadcast. `maxFeePerGas` is a ceiling,
+   * not the fee paid, so over-provisioning is safe.
+   */
+  maxFeePerGasMultiplier?: number;
+  /** Floor for `maxFeePerGas` (wei), applied after the multiplier, so an
+   *  anomalously low adaptive read still yields a usable ceiling. */
+  maxFeePerGasFloor?: bigint;
+};
+
+/** A signed-but-not-broadcast Tempo transaction plus the fields needed to hold,
+ *  display, and later broadcast it. `serialized` is the self-contained 0x76
+ *  blob; broadcasting it needs no further signing. */
+export type SignedTempoTx = {
+  serialized: string;
+  hash: string;
+  from: string;
+  chainId: number;
+  nonceKey: bigint;
+  nonce: bigint;
+  maxFeePerGas: bigint;
+  validAfter?: number;
+  validBefore?: number;
+};
+
+export type BroadcastStoredTempoTxParams = {
+  chainId: number;
+  userId?: string;
+  /** The self-contained 0x76 blob from `signTempoTx` or a stored held payment. */
+  serialized: string;
+  /** When set, refuse to broadcast unless the blob still hashes to this value. */
+  expectedHash?: string;
+  /** When false, return as soon as the node accepts the tx (poller path). */
+  waitForConfirmation?: boolean;
+};
+
+export type BroadcastStoredTempoTxResult = { hash: string; confirmed: boolean };
+
 export function isTempoChain(chainId: number): boolean {
   return TEMPO_CHAIN_IDS.has(chainId);
 }
@@ -275,6 +316,27 @@ function toSignatureEnvelope(sig: TurnkeySignature): {
   };
 }
 
+/**
+ * Widen the adaptive `maxFeePerGas` ceiling for a held payment: scale it by the
+ * multiplier, then floor it. `maxFeePerGas` is a ceiling, not the fee paid, so a
+ * generous value only guards against a later base-fee rise. The multiplier is
+ * taken to two decimals to stay in bigint math.
+ */
+function applyFeeHeadroom(
+  base: bigint,
+  multiplier?: number,
+  floor?: bigint
+): bigint {
+  let ceiling = base;
+  if (multiplier && multiplier > 1) {
+    ceiling = (ceiling * BigInt(Math.round(multiplier * 100))) / BigInt(100);
+  }
+  if (floor && floor > ceiling) {
+    ceiling = floor;
+  }
+  return ceiling;
+}
+
 async function waitForReceipt(
   rpcManager: RpcProviderManager,
   hash: string
@@ -295,14 +357,20 @@ async function waitForReceipt(
 }
 
 /**
- * Build, sign, and broadcast one Tempo 0x76 transaction carrying `calls`.
- * Resolves the org's Turnkey EOA, enforces EOA-only signing (Safe is
- * unsupported on Tempo), reads the persistent 2D nonce, signs the envelope
- * hash via Turnkey, broadcasts, and waits for a successful receipt.
+ * Build and sign one Tempo 0x76 transaction carrying `calls`, WITHOUT
+ * broadcasting it. Resolves the org's Turnkey EOA, enforces EOA-only signing
+ * (Safe is unsupported on Tempo), reads a fresh 2D-nonce lane, and signs the
+ * envelope hash via Turnkey. Returns the self-contained serialized blob plus
+ * the fields a held payment needs to display and later broadcast it.
+ *
+ * A signed Tempo envelope is self-contained: broadcasting it later needs no
+ * further signing. The `validBefore` window (when set) is the on-chain safety
+ * expiry, so the tx can never settle outside its intended window even if the
+ * broadcast is deferred.
  */
-export async function signAndBroadcastTempoTx(
-  params: SignAndBroadcastParams
-): Promise<SignAndBroadcastResult> {
+export async function signTempoTx(
+  params: SignTempoTxParams
+): Promise<SignedTempoTx> {
   const { organizationId, userId, chainId, calls, feeToken } = params;
 
   if (!isTempoChain(chainId)) {
@@ -348,6 +416,15 @@ export async function signAndBroadcastTempoTx(
     rpcManager
   );
 
+  // maxFeePerGas is a ceiling, not the fee paid. A held payment broadcast later
+  // widens the ceiling (adaptive x multiplier, floored) so it survives a
+  // base-fee rise; an immediate send passes neither and keeps adaptive pricing.
+  const maxFeePerGas = applyFeeHeadroom(
+    gasConfig.maxFeePerGas,
+    params.maxFeePerGasMultiplier,
+    params.maxFeePerGasFloor
+  );
+
   const envelope = TxEnvelopeTempo.from({
     chainId,
     calls: calls.map((c) => ({ to: c.to, data: c.data })),
@@ -355,7 +432,7 @@ export async function signAndBroadcastTempoTx(
     nonceKey,
     feeToken,
     gas: gasConfig.gasLimit,
-    maxFeePerGas: gasConfig.maxFeePerGas,
+    maxFeePerGas,
     maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
     validAfter: params.validAfter,
     validBefore: params.validBefore,
@@ -367,7 +444,62 @@ export async function signAndBroadcastTempoTx(
     signature: toSignatureEnvelope(sig),
   });
   const serialized = TxEnvelopeTempo.serialize(signed);
+  const hash = TxEnvelopeTempo.hash(signed);
 
+  return {
+    serialized,
+    hash,
+    from,
+    chainId,
+    nonceKey,
+    nonce,
+    maxFeePerGas,
+    validAfter: params.validAfter,
+    validBefore: params.validBefore,
+  };
+}
+
+/**
+ * Broadcast a previously-signed Tempo 0x76 blob and (by default) wait for a
+ * successful receipt. Deserializes first to enforce the on-chain validity
+ * window before spending an RPC round-trip, and to verify the blob still hashes
+ * to `expectedHash` when supplied. With `waitForConfirmation:false` it returns
+ * as soon as the node accepts the tx, so a scheduled poller can reconcile the
+ * receipt on a later tick.
+ */
+export async function broadcastStoredTempoTx(
+  params: BroadcastStoredTempoTxParams
+): Promise<BroadcastStoredTempoTxResult> {
+  const { chainId, userId, serialized, expectedHash } = params;
+  const waitForConfirmation = params.waitForConfirmation ?? true;
+
+  if (!isTempoChain(chainId)) {
+    throw new Error(`Chain ${chainId} is not a Tempo network`);
+  }
+
+  const envelope = TxEnvelopeTempo.deserialize(
+    serialized as TxEnvelopeTempo.Serialized
+  );
+  if (envelope.validBefore !== undefined) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (envelope.validBefore <= nowSec) {
+      throw new Error(
+        `This Tempo payment's validity window closed at ${new Date(
+          envelope.validBefore * 1000
+        ).toISOString()}; it can no longer be broadcast.`
+      );
+    }
+  }
+  if (expectedHash) {
+    const actual = TxEnvelopeTempo.hash(envelope as TxEnvelopeTempo.Signed);
+    if (actual.toLowerCase() !== expectedHash.toLowerCase()) {
+      throw new Error(
+        "Stored Tempo transaction does not match its expected hash; refusing to broadcast."
+      );
+    }
+  }
+
+  const rpcManager = await getRpcProvider({ chainId, userId });
   let hash: string;
   try {
     hash = await rpcManager.executeWithFailover((provider) =>
@@ -383,10 +515,32 @@ export async function signAndBroadcastTempoTx(
     throw error;
   }
 
+  if (!waitForConfirmation) {
+    return { hash, confirmed: false };
+  }
+
   const receipt = await waitForReceipt(rpcManager, hash);
   if (receipt.status === 0) {
     throw new Error(`Tempo transaction reverted (${hash})`);
   }
+  return { hash, confirmed: true };
+}
 
-  return { hash, from };
+/**
+ * Build, sign, and broadcast one Tempo 0x76 transaction carrying `calls`,
+ * waiting for a successful receipt. Composes `signTempoTx` and
+ * `broadcastStoredTempoTx`; the four existing callers rely on this unchanged
+ * signature.
+ */
+export async function signAndBroadcastTempoTx(
+  params: SignAndBroadcastParams
+): Promise<SignAndBroadcastResult> {
+  const signed = await signTempoTx(params);
+  const { hash } = await broadcastStoredTempoTx({
+    chainId: params.chainId,
+    userId: params.userId,
+    serialized: signed.serialized,
+    waitForConfirmation: true,
+  });
+  return { hash, from: signed.from };
 }

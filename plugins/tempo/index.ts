@@ -359,6 +359,169 @@ const tempoPlugin: IntegrationPlugin = {
         },
       ],
     },
+    {
+      slug: "hold-payment",
+      label: "Sign & Hold Payment",
+      description:
+        "Sign a stablecoin payment now and hold the signed transaction to broadcast later, on demand or at a scheduled time. The on-chain validity window guarantees it can never settle after its deadline.",
+      category: "Tempo",
+      stepFunction: "holdPaymentStep",
+      stepImportPath: "hold-payment",
+      outputFields: [
+        { field: "success", description: "Whether the payment was held" },
+        {
+          field: "paymentId",
+          description:
+            "Id of the held payment, used later to broadcast or cancel it",
+        },
+        {
+          field: "precomputedHash",
+          description: "The transaction hash the signed payment will settle as",
+        },
+        { field: "from", description: "The sending wallet address" },
+        { field: "to", description: "The recipient address" },
+        { field: "amount", description: "The amount held (human-readable)" },
+        {
+          field: "memo",
+          description: "The bytes32 memo attached to the payment",
+        },
+        {
+          field: "broadcastMode",
+          description: "Whether the hold is released manually or on a schedule",
+        },
+        {
+          field: "broadcastAt",
+          description: "Scheduled broadcast time (ISO), or null for manual",
+        },
+        {
+          field: "validBefore",
+          description:
+            "On-chain deadline after which the payment can no longer settle (unix seconds)",
+        },
+        { field: "status", description: "The held payment status (pending)" },
+        { field: "chainId", description: "The Tempo chain id used" },
+        { field: "error", description: "Error message if the hold failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          allowedChainIds: TEMPO_CHAIN_IDS,
+          placeholder: "Select a Tempo network",
+          required: true,
+        },
+        {
+          key: "tokenConfig",
+          label: "Token",
+          type: "token-select",
+          networkField: "network",
+          required: true,
+        },
+        {
+          key: "amount",
+          label: "Amount",
+          type: "template-input",
+          placeholder: "100.50 or {{NodeName.amount}}",
+          example: "100.50",
+          required: true,
+        },
+        {
+          key: "recipientAddress",
+          label: "Recipient Address",
+          type: "template-input",
+          placeholder: "0x... or {{NodeName.address}}",
+          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
+          required: true,
+        },
+        {
+          key: "memo",
+          label: "Memo",
+          type: "template-input",
+          placeholder: "INV-1042 or 0x... (32-byte hex)",
+          helpTip: "Attached on-chain as an indexed bytes32 topic.",
+        },
+        {
+          key: "broadcastMode",
+          label: "Release",
+          type: "select",
+          defaultValue: "manual",
+          options: [
+            { value: "manual", label: "Manually (Broadcast Held Payment)" },
+            { value: "schedule", label: "At a scheduled time" },
+          ],
+          helpTip:
+            "Manual holds are released by a Broadcast Held Payment action or from the Held Payments UI. Scheduled holds fire automatically at the broadcast time.",
+        },
+        {
+          type: "group",
+          label: "Scheduling",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "broadcastAt",
+              label: "Broadcast At",
+              type: "template-input",
+              placeholder: "2026-07-31T09:00:00Z or unix seconds",
+              helpTip:
+                "Required when Release is 'At a scheduled time'. The time the held payment is broadcast.",
+            },
+            {
+              key: "validBefore",
+              label: "Valid Before",
+              type: "template-input",
+              placeholder: "2026-07-31T17:00:00Z or unix seconds",
+              helpTip:
+                "On-chain deadline after which the payment can no longer settle. Defaults to 24 hours from now (manual) or 1 hour past the broadcast time (scheduled).",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      slug: "broadcast-held-payment",
+      label: "Broadcast Held Payment",
+      description:
+        "Broadcast a previously held Tempo payment by its id, releasing the pre-signed transaction to the network and waiting for confirmation",
+      category: "Tempo",
+      stepFunction: "broadcastHeldPaymentStep",
+      stepImportPath: "broadcast-held-payment",
+      outputFields: [
+        { field: "success", description: "Whether the broadcast succeeded" },
+        {
+          field: "paymentId",
+          description: "Id of the held payment that was broadcast",
+        },
+        {
+          field: "transactionHash",
+          description: "The transaction hash of the broadcast payment",
+        },
+        {
+          field: "transactionLink",
+          description: "Explorer link to view the transaction",
+        },
+        { field: "from", description: "The sending wallet address" },
+        { field: "to", description: "The recipient address" },
+        { field: "status", description: "The held payment status (confirmed)" },
+        { field: "chainId", description: "The Tempo chain id used" },
+        {
+          field: "error",
+          description: "Error message if the broadcast failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "paymentId",
+          label: "Held Payment Id",
+          type: "template-input",
+          placeholder: "{{@NodeName.paymentId}}",
+          helpTip:
+            "The id returned by a Sign & Hold Payment action, e.g. {{@Hold Payment.paymentId}}.",
+          required: true,
+        },
+      ],
+    },
   ],
 };
 

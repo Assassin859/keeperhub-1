@@ -146,6 +146,32 @@ export async function quoteTempoSwap(
   return BigInt(amountOut);
 }
 
+const UNIX_SECONDS = /^\d+$/;
+const MILLIS_THRESHOLD = 1e12;
+
+/**
+ * Parse an ISO datetime or unix timestamp into unix seconds. Returns undefined
+ * when the field is blank; throws on an unparseable value. A value above the
+ * millis threshold is treated as milliseconds and divided down.
+ */
+export function parseTimestamp(raw: string | undefined): number | undefined {
+  if (!raw || raw.trim() === "") {
+    return;
+  }
+  const value = raw.trim();
+  if (UNIX_SECONDS.test(value)) {
+    const numeric = Number(value);
+    return numeric > MILLIS_THRESHOLD ? Math.floor(numeric / 1000) : numeric;
+  }
+  const millis = Date.parse(value);
+  if (Number.isNaN(millis)) {
+    throw new Error(
+      `Invalid date "${value}": use an ISO datetime (2026-07-31T17:00:00Z) or a unix timestamp.`
+    );
+  }
+  return Math.floor(millis / 1000);
+}
+
 export function assertTempoChain(chainId: number): void {
   if (!isTempoChain(chainId)) {
     throw new Error(
