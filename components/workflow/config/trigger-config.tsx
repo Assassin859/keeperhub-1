@@ -243,7 +243,7 @@ export function TriggerConfig({
               key: "network",
               label: "Network",
               type: "chain-select",
-              chainTypeFilter: "evm",
+              chainTypeFilter: ["evm", "solana"],
               placeholder: "Select network",
               required: true,
             },

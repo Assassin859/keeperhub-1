@@ -34,10 +34,10 @@ type ChainSelectFieldProps = {
   onChange: (value: unknown) => void;
   disabled?: boolean;
   /**
-   * Filter chains by type (e.g., "evm" or "solana")
-   * If not specified, all chain types are shown
+   * Filter chains by type. A single type ("evm") or several (["evm", "solana"]).
+   * If not specified, all chain types are shown.
    */
-  chainTypeFilter?: string;
+  chainTypeFilter?: string | string[];
   /**
    * KEEP-137: When true, chains with usePrivateMempoolRpc render a second
    * "ChainName (Flashbots)" entry. On selection, both config.network and
@@ -86,6 +86,13 @@ export function ChainSelectField({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Collapse the (string | string[]) filter into a stable primitive so an
+  // inline array (e.g. ["evm", "solana"]) does not retrigger the fetch effect
+  // every render via a changing array identity.
+  const chainTypeKey = Array.isArray(chainTypeFilter)
+    ? chainTypeFilter.join(",")
+    : (chainTypeFilter ?? "");
+
   useEffect(() => {
     async function fetchChains() {
       try {
@@ -99,8 +106,9 @@ export function ChainSelectField({
 
         const data = (await response.json()) as Chain[];
 
-        let filteredChains = chainTypeFilter
-          ? data.filter((chain) => chain.chainType === chainTypeFilter)
+        const allowedTypes = chainTypeKey ? chainTypeKey.split(",") : null;
+        let filteredChains = allowedTypes
+          ? data.filter((chain) => allowedTypes.includes(chain.chainType))
           : data;
 
         if (allowedChainIds && allowedChainIds.length > 0) {
@@ -119,7 +127,7 @@ export function ChainSelectField({
     }
 
     fetchChains();
-  }, [chainTypeFilter, allowedChainIds]);
+  }, [chainTypeKey, allowedChainIds]);
 
   if (isLoading) {
     return (
