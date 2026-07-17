@@ -4,30 +4,23 @@ import {
   type ServerResponse,
   createServer,
 } from "node:http";
-import type { ChainProviderManager } from "../chains/provider-manager";
+import type { ConnectionHealth } from "../ingest/solana-connection";
 
 /**
- * HTTP `/healthz` endpoint backed by ChainProviderManager.
- *
- * Semantics:
- *   - 200 `{ status: "ok", chains: [...] }` when every registered chain
- *     reports `connected: true`, OR when no chains have been registered
- *     yet (process is still starting up; nothing is "down").
- *   - 503 `{ status: "degraded", chains: [...] }` when any chain is
- *     reconnecting or has no provider.
- *   - 404 for any path other than `/healthz`.
+ * HTTP `/healthz` backed by the ingestor registry. 200 when every chain's slot
+ * subscription is connected (or none are registered yet); 503 when any chain is
+ * reconnecting / has no live subscription.
  */
 
 export interface HealthResponseBody {
   status: "ok" | "degraded";
-  chains: ReturnType<ChainProviderManager["getAllHealth"]>;
+  chains: ConnectionHealth[];
 }
 
-export function buildHealthResponse(providerManager: ChainProviderManager): {
+export function buildHealthResponse(chains: ConnectionHealth[]): {
   status: 200 | 503;
   body: HealthResponseBody;
 } {
-  const chains = providerManager.getAllHealth();
   const allHealthy = chains.length === 0 || chains.every((c) => c.connected);
   return {
     status: allHealthy ? 200 : 503,
@@ -36,16 +29,15 @@ export function buildHealthResponse(providerManager: ChainProviderManager): {
 }
 
 export function createHealthRequestHandler(
-  providerManager: ChainProviderManager,
+  getHealth: () => ConnectionHealth[],
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
-    const url = req.url ?? "";
-    const pathOnly = url.split("?")[0];
+    const pathOnly = (req.url ?? "").split("?")[0];
     if (pathOnly !== "/healthz") {
       res.writeHead(404).end();
       return;
     }
-    const { status, body } = buildHealthResponse(providerManager);
+    const { status, body } = buildHealthResponse(getHealth());
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body));
   };
@@ -58,10 +50,10 @@ export interface HealthServerHandle {
 }
 
 export async function startHealthServer(
-  providerManager: ChainProviderManager,
+  getHealth: () => ConnectionHealth[],
   port: number,
 ): Promise<HealthServerHandle> {
-  const server = createServer(createHealthRequestHandler(providerManager));
+  const server = createServer(createHealthRequestHandler(getHealth));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, () => {

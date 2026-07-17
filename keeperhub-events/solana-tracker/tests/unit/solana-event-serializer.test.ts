@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSolanaEventPayload,
   serializeSolanaArg,
-} from "../../src/chains/solana-event-serializer";
+} from "../../src/decode/solana-event-serializer";
 
 describe("serializeSolanaArg", () => {
   it("stringifies bigint", () => {

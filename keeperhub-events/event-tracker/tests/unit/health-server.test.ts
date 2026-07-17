@@ -51,7 +51,7 @@ describe("health-server", () => {
 
   describe("buildHealthResponse", () => {
     it("returns 200 + ok when no chains are registered", () => {
-      const { status, body } = buildHealthResponse([manager]);
+      const { status, body } = buildHealthResponse(manager);
       expect(status).toBe(200);
       expect(body.status).toBe("ok");
       expect(body.chains).toEqual([]);
@@ -60,7 +60,7 @@ describe("health-server", () => {
     it("returns 200 + ok when every registered chain is connected", async () => {
       await manager.getOrCreateProvider(1, "ws://a");
       await manager.getOrCreateProvider(2, "ws://b");
-      const { status, body } = buildHealthResponse([manager]);
+      const { status, body } = buildHealthResponse(manager);
       expect(status).toBe(200);
       expect(body.status).toBe("ok");
       expect(body.chains).toHaveLength(2);
@@ -82,7 +82,7 @@ describe("health-server", () => {
         entry.isReconnecting = true;
       }
 
-      const { status, body } = buildHealthResponse([manager]);
+      const { status, body } = buildHealthResponse(manager);
       expect(status).toBe(503);
       expect(body.status).toBe("degraded");
       expect(body.chains[0].connected).toBe(false);
@@ -95,7 +95,7 @@ describe("health-server", () => {
 
     beforeEach(async () => {
       // Port 0 = let the OS assign a free one, avoiding port contention in CI.
-      handle = await startHealthServer([manager], 0);
+      handle = await startHealthServer(manager, 0);
     });
 
     afterEach(async () => {

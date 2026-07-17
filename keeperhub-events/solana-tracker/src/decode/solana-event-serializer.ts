@@ -1,4 +1,4 @@
-import { type SerializedArg, serializePrimitive } from "./event-serializer";
+import { type SerializedArg, serializePrimitive } from "./serialize-primitives";
 import type { DecodedAnchorEvent } from "./solana-idl";
 
 /**

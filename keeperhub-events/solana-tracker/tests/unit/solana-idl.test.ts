@@ -1,6 +1,6 @@
 import { BN, BorshCoder, type Idl } from "@coral-xyz/anchor";
 import { describe, expect, it } from "vitest";
-import { createEventDecoder } from "../../src/chains/solana-idl";
+import { createEventDecoder } from "../../src/decode/solana-idl";
 
 // Minimal Anchor (0.30 IDL format) program with one event carrying a single
 // u64 field and an explicit 8-byte discriminator.
