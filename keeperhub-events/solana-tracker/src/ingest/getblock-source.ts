@@ -119,6 +119,10 @@ export class GetBlockSource implements BlockSource {
     const produced = await this.connection.getProducedSlots(from, tip);
     for (const slot of produced) {
       await this.processSlot(slot);
+      // Advance per slot so a failure mid-range resumes at the failed slot
+      // rather than re-processing (and re-firing block triggers for) the slots
+      // that already succeeded in this range.
+      this.lastProcessedSlot = slot;
     }
     this.lastProcessedSlot = tip;
   }
