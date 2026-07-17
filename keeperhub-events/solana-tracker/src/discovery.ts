@@ -40,19 +40,22 @@ export async function fetchSolanaTriggers(): Promise<DiscoveryData | null> {
     fetchDiscovery("/api/internal/block-workflows", "scheduler"),
   ]);
 
-  // A single failed endpoint must not blank the whole reconcile: if either
-  // succeeds we proceed with what we have (the other side keeps its listeners
-  // from the previous cycle). Only a total failure returns null.
-  if (!events && !blocks) {
+  // Reconcile is authoritative: any chain absent from the returned data has its
+  // ingestor torn down. So a partial fetch (one endpoint down) must NOT proceed
+  // with an empty list for the failed side - that would drop the triggers that
+  // endpoint owns and tear down their chains. Skip the whole cycle on any
+  // failure; existing ingestors keep running until a fully successful fetch.
+  // Both endpoints hit the same KeeperHub API, so a real outage fails both.
+  if (!events || !blocks) {
     return null;
   }
 
   // Networks are identical across both endpoints (both return all enabled
   // chains); prefer whichever responded.
-  const networks = events?.networks ?? blocks?.networks ?? {};
+  const networks = events.networks ?? blocks.networks ?? {};
   return {
-    eventWorkflows: events?.workflows ?? [],
-    blockWorkflows: blocks?.workflows ?? [],
+    eventWorkflows: events.workflows ?? [],
+    blockWorkflows: blocks.workflows ?? [],
     networks,
   };
 }
