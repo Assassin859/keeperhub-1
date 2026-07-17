@@ -1,11 +1,13 @@
 import "server-only";
 
 import {
+  ACCOUNT_SIZE,
   AccountState,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   ExtensionType,
+  getAccountLen,
   getAccountLenForMint,
   getAssociatedTokenAddressSync,
   getDefaultAccountState,
@@ -337,7 +339,12 @@ async function runPreflight(args: {
 
   const needsRecipientAta = !recipientAtaInfo;
 
-  const rent = await resolveRentLamports(adapter, mintAccount, needsRecipientAta);
+  const rent = await resolveRentLamports(
+    adapter,
+    mintAccount,
+    programId,
+    needsRecipientAta
+  );
   if ("error" in rent) {
     return rent;
   }
@@ -355,9 +362,28 @@ async function runPreflight(args: {
   return { needsRecipientAta };
 }
 
+/**
+ * The on-chain length of the associated token account the ATA program will
+ * create. getAccountLenForMint covers only the account extensions the mint
+ * implies; on Token-2022 the ATA program also always adds ImmutableOwner, which
+ * that helper omits. Add it so the rent estimate is not short: as the first
+ * account extension it introduces the account-type byte too, otherwise it is one
+ * more zero-value TLV (4 bytes).
+ */
+function ataAccountLen(mintAccount: Mint, programId: PublicKey): number {
+  const baseLen = getAccountLenForMint(mintAccount);
+  if (!programId.equals(TOKEN_2022_PROGRAM_ID)) {
+    return baseLen;
+  }
+  return baseLen === ACCOUNT_SIZE
+    ? getAccountLen([ExtensionType.ImmutableOwner])
+    : baseLen + 4;
+}
+
 async function resolveRentLamports(
   adapter: SolanaChainAdapter,
   mintAccount: Mint,
+  programId: PublicKey,
   needsRecipientAta: boolean
 ): Promise<{ lamports: bigint } | { error: string }> {
   if (!needsRecipientAta) {
@@ -365,14 +391,10 @@ async function resolveRentLamports(
   }
 
   try {
-    // getAccountLenForMint, not the fixed 165-byte helper: Token-2022 accounts
-    // size from the mint's extensions. It ignores the ImmutableOwner the ATA
-    // program adds, so this slightly under-estimates; the preflight is advisory
-    // and the on-chain create pulls what it actually needs.
     const lamports = await adapter.executeWithSolanaFailover(
       (connection) =>
         connection.getMinimumBalanceForRentExemption(
-          getAccountLenForMint(mintAccount)
+          ataAccountLen(mintAccount, programId)
         ),
       "read"
     );

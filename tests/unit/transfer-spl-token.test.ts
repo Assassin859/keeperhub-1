@@ -304,6 +304,11 @@ describe("transferSplTokenCore", () => {
     expect(tx.instructions[1].programId.equals(TOKEN_2022_PROGRAM_ID)).toBe(
       true
     );
+    // Rent must be sized for a Token-2022 ATA including the ImmutableOwner the
+    // ATA program adds (170 bytes), not the bare 165-byte account.
+    expect(
+      mockConnection.getMinimumBalanceForRentExemption
+    ).toHaveBeenCalledWith(170);
   });
 
   it("routes to the token program that owns the mint", async () => {
