@@ -205,6 +205,25 @@ export class BlockIngestor {
   }
 
   private async enqueueBlock(fire: BlockFire): Promise<void> {
+    // Block triggers have no natural idempotency key like an event's tx
+    // signature; dedup on (workflowId, blockHeight) so a re-processed block
+    // (e.g. an enqueue that partially failed and was retried) does not
+    // double-fire the workflow.
+    const dedupKey = `block:${fire.payload.blockHeight}`;
+    let alreadyProcessed = false;
+    try {
+      alreadyProcessed = await this.deps.dedup.isProcessed(
+        fire.workflowId,
+        dedupKey,
+      );
+    } catch (err) {
+      logger.warn(
+        `[ingestor] dedup read failed for ${fire.workflowId}/${dedupKey}, proceeding: ${formatError(err)}`,
+      );
+    }
+    if (alreadyProcessed) {
+      return;
+    }
     const executionId = await createPhantomExecution(
       fire.workflowId,
       fire.userId,
@@ -232,5 +251,12 @@ export class BlockIngestor {
     logger.log(
       `[ingestor] chain ${this.registration.chainId} enqueued block ${fire.workflowId} (height ${fire.payload.blockHeight})`,
     );
+    try {
+      await this.deps.dedup.markProcessed(fire.workflowId, dedupKey);
+    } catch (err) {
+      logger.warn(
+        `[ingestor] dedup mark failed for ${fire.workflowId}/${dedupKey}: ${formatError(err)}`,
+      );
+    }
   }
 }

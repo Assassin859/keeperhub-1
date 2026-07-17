@@ -95,6 +95,23 @@ function fakeDedup(isProcessed: boolean): DedupStore {
   } as unknown as DedupStore;
 }
 
+/**
+ * Key-aware dedup backed by a Set of `${workflowId}:${key}` entries, so a test
+ * can distinguish the event key (a tx signature) from the block key
+ * (`block:<height>`). `initial` pre-marks entries as already processed.
+ */
+function statefulDedup(initial: string[] = []): DedupStore {
+  const seen = new Set(initial);
+  return {
+    isProcessed: (wf: string, key: string) =>
+      Promise.resolve(seen.has(`${wf}:${key}`)),
+    markProcessed: (wf: string, key: string) => {
+      seen.add(`${wf}:${key}`);
+      return Promise.resolve();
+    },
+  } as unknown as DedupStore;
+}
+
 async function startIngestor(dedup: DedupStore): Promise<void> {
   const ingestor = new BlockIngestor({
     registration: registration(),
@@ -131,14 +148,27 @@ describe("BlockIngestor end-to-end fan-out", () => {
     expect(eventArg.triggerData.programId).toBe(PROGRAM);
   });
 
-  it("skips the event enqueue when dedup reports it already processed", async () => {
-    const dedup = fakeDedup(true);
+  it("skips the event enqueue when its signature is already processed", async () => {
+    // Only the event's signature is pre-marked; the block key is not.
+    const dedup = statefulDedup(["wf-event:sig-1"]);
     await startIngestor(dedup);
 
     await mocks.onBlock?.(block());
 
     expect(mocks.enqueueEvent).not.toHaveBeenCalled();
-    // Block triggers are not deduped by signature, so the block still fires.
+    // The block key ("block:10") is independent, so the block still fires.
+    expect(mocks.enqueueBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-enqueue a block trigger for a block already processed", async () => {
+    const dedup = statefulDedup();
+    await startIngestor(dedup);
+
+    await mocks.onBlock?.(block());
+    await mocks.onBlock?.(block()); // same block height (10) again
+
+    // Both the event (by signature) and the block (by height) fire once.
+    expect(mocks.enqueueEvent).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueBlock).toHaveBeenCalledTimes(1);
   });
 
