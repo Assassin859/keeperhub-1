@@ -31,13 +31,6 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
   })),
 }));
 
-// The transfer succeeds before the adapter builds a cosmetic explorer URL, which
-// in production reads explorer_configs from the DB. There is no DB here, so stub
-// the lookup to return nothing (yielding an empty transactionLink).
-vi.mock("@/lib/db", () => ({
-  db: { query: { explorerConfigs: { findFirst: vi.fn(async () => null) } } },
-}));
-
 vi.mock("@/lib/web3/wallet-helpers", async () => {
   const { SolanaKeypairSigner } = await import("@/lib/web3/solana-signer");
   const { Keypair: Kp } = await import("@solana/web3.js");
