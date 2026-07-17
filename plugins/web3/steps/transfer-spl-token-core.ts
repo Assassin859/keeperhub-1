@@ -31,10 +31,7 @@ import type { SolanaTransactionSigner } from "@/lib/web3/chain-adapter/types";
 import type { NonceSession } from "@/lib/web3/nonce-manager";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { SOLANA_BASE_FEE_LAMPORTS } from "@/lib/web3/solana-fees";
-import {
-  buildSolanaSignerFromWallet,
-  getOrganizationWallet,
-} from "@/lib/web3/wallet-helpers";
+import { initializeSolanaWallet } from "@/lib/web3/wallet-helpers";
 
 /**
  * Serializing a legacy Transaction requires a recentBlockhash and a feePayer or
@@ -229,10 +226,7 @@ async function resolveWallet(
   { signer: SolanaTransactionSigner; address: string } | { error: string }
 > {
   try {
-    const wallet = await getOrganizationWallet(organizationId);
-    const signer = buildSolanaSignerFromWallet(wallet);
-    // buildSolanaSignerFromWallet throws when solanaAddress is absent.
-    return { signer, address: wallet.solanaAddress as string };
+    return await initializeSolanaWallet(organizationId);
   } catch (error) {
     return {
       error: `Failed to initialize Solana wallet: ${getErrorMessage(error)}`,

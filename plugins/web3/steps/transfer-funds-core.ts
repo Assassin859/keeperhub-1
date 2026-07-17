@@ -14,9 +14,8 @@ import { chains, explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
-  buildSolanaSignerFromWallet,
-  getOrganizationWallet,
   getOrganizationWalletAddress,
+  initializeSolanaWallet,
   initializeWalletSigner,
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
@@ -498,13 +497,12 @@ async function transferFundsSolana(args: {
   }
   const { organizationId } = orgCtx;
 
-  // 5. Get signer and wallet row (one fetch, one validation check)
+  // 5. Get signer and wallet address (one fetch, one validation check)
   let solanaSigner: SolanaTransactionSigner;
   let orgSolanaAddress: string;
   try {
-    const wallet = await getOrganizationWallet(organizationId);
-    solanaSigner = buildSolanaSignerFromWallet(wallet);
-    orgSolanaAddress = wallet.solanaAddress!;
+    ({ signer: solanaSigner, address: orgSolanaAddress } =
+      await initializeSolanaWallet(organizationId));
   } catch (error) {
     return {
       success: false,

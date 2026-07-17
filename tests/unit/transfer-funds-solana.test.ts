@@ -4,18 +4,14 @@ vi.mock("server-only", () => ({}));
 
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
-import {
-  buildSolanaSignerFromWallet,
-  getOrganizationWallet,
-} from "@/lib/web3/wallet-helpers";
+import { initializeSolanaWallet } from "@/lib/web3/wallet-helpers";
 import {
   isSolanaTransferPath,
   transferFundsCore,
 } from "@/plugins/web3/steps/transfer-funds-core";
 
 vi.mock("@/lib/web3/wallet-helpers", () => ({
-  getOrganizationWallet: vi.fn(),
-  buildSolanaSignerFromWallet: vi.fn(),
+  initializeSolanaWallet: vi.fn(),
   getOrganizationWalletAddress: vi.fn().mockResolvedValue("evm-wallet-address"),
 }));
 
@@ -59,12 +55,11 @@ describe("transferFundsCore - Solana early branch", () => {
       userId: "mock-user-id",
     } as any);
 
-    vi.mocked(getOrganizationWallet).mockResolvedValue({
-      solanaAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
-    } as any);
-
     const mockSigner = { getPublicKey: vi.fn(), signTransaction: vi.fn() };
-    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue(mockSigner as any);
+    vi.mocked(initializeSolanaWallet).mockResolvedValue({
+      signer: mockSigner,
+      address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    } as any);
 
     mockAdapter.getBalance.mockResolvedValue(BigInt(2_000_000_000)); // 2 SOL
     mockAdapter.sendTransaction.mockResolvedValue({
@@ -164,11 +159,10 @@ describe("transferFundsCore - Solana early branch", () => {
       organizationId: "mock-org-id",
     } as any);
 
-    vi.mocked(getOrganizationWallet).mockResolvedValue({
-      solanaAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    vi.mocked(initializeSolanaWallet).mockResolvedValue({
+      signer: {},
+      address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     } as any);
-
-    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue({} as any);
 
     mockAdapter.getBalance.mockResolvedValue(BigInt(500_000_000)); // 0.5 SOL
 
@@ -191,11 +185,10 @@ describe("transferFundsCore - Solana early branch", () => {
       organizationId: "mock-org-id",
     } as any);
 
-    vi.mocked(getOrganizationWallet).mockResolvedValue({
-      solanaAddress: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    vi.mocked(initializeSolanaWallet).mockResolvedValue({
+      signer: {},
+      address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     } as any);
-
-    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue({} as any);
 
     // Balance equals the transfer amount exactly, leaving nothing for the
     // 5000-lamport base fee - must be rejected at preflight.

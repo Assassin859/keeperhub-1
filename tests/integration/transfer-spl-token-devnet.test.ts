@@ -35,16 +35,12 @@ vi.mock("@/lib/web3/wallet-helpers", async () => {
   const { SolanaKeypairSigner } = await import("@/lib/web3/solana-signer");
   const { Keypair: Kp } = await import("@solana/web3.js");
   return {
-    getOrganizationWallet: vi.fn(async () => ({
-      solanaAddress: holder.senderAddress,
-      turnkeySubOrgId: "devnet-test",
+    initializeSolanaWallet: vi.fn(async () => ({
+      signer: new SolanaKeypairSigner(
+        Kp.fromSecretKey(Uint8Array.from(holder.senderBytes))
+      ),
+      address: holder.senderAddress,
     })),
-    buildSolanaSignerFromWallet: vi.fn(
-      () =>
-        new SolanaKeypairSigner(
-          Kp.fromSecretKey(Uint8Array.from(holder.senderBytes))
-        )
-    ),
   };
 });
 

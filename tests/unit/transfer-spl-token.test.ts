@@ -18,19 +18,14 @@ import {
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
-import {
-  buildSolanaSignerFromWallet,
-  getOrganizationWallet,
-} from "@/lib/web3/wallet-helpers";
+import { initializeSolanaWallet } from "@/lib/web3/wallet-helpers";
 import {
   isSplTransferPath,
   transferSplTokenCore,
 } from "@/plugins/web3/steps/transfer-spl-token-core";
 
 vi.mock("@/lib/web3/wallet-helpers", () => ({
-  getOrganizationWallet: vi.fn(),
-  buildSolanaSignerFromWallet: vi.fn(),
-  getOrganizationWalletAddress: vi.fn(),
+  initializeSolanaWallet: vi.fn(),
 }));
 
 vi.mock("@/lib/web3/chain-adapter", () => ({
@@ -210,12 +205,9 @@ describe("transferSplTokenCore", () => {
       organizationId: "mock-org-id",
       userId: "mock-user-id",
     } as never);
-    vi.mocked(getOrganizationWallet).mockResolvedValue({
-      solanaAddress: OWNER.toBase58(),
-    } as never);
-    vi.mocked(buildSolanaSignerFromWallet).mockReturnValue({
-      getPublicKey: vi.fn(),
-      signTransaction: vi.fn(),
+    vi.mocked(initializeSolanaWallet).mockResolvedValue({
+      signer: { getPublicKey: vi.fn(), signTransaction: vi.fn() },
+      address: OWNER.toBase58(),
     } as never);
   });
 
