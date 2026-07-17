@@ -7,9 +7,9 @@
  * Turnkey, not by a local key), so this script only arranges the on-chain state
  * and prints the mint address to paste into the workflow node.
  *
- * A locally generated payer keypair funds and owns the mint. It is devnet-only
- * and holds no real value; it is cached so repeat runs reuse the same mint
- * authority rather than re-airdropping.
+ * The payer funds and owns the mint. It comes from SOLANA_FUNDER_KEY (base58 or
+ * a JSON byte array, e.g. a shared funded wallet loaded from .env); with no
+ * funder set it falls back to a cached locally generated devnet keypair.
  *
  * Usage:
  *   npx tsx scripts/solana-devnet-spl-fixture.ts <org-solana-address>
@@ -17,10 +17,11 @@
  *   npx tsx scripts/solana-devnet-spl-fixture.ts <org-solana-address> --mint <existing-mint>
  */
 
+import "dotenv/config";
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  createAssociatedTokenAccountIdempotent,
   createMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
@@ -31,7 +32,11 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
+  sendAndConfirmTransaction,
+  SystemProgram,
+  Transaction,
 } from "@solana/web3.js";
+import bs58 from "bs58";
 
 const DEVNET_RPC = process.env.SOLANA_DEVNET_RPC ?? "https://api.devnet.solana.com";
 const PAYER_KEY_PATH = join(process.cwd(), ".claude", ".solana-devnet-payer.json");
@@ -79,8 +84,36 @@ function parseArgs(): Args {
   };
 }
 
-/** Loads the cached devnet payer, generating one on first run. */
+/** Parses a secret key given as base58 or a JSON byte array. */
+function keypairFromSecret(raw: string): Keypair {
+  const trimmed = raw.trim();
+  const secret = trimmed.startsWith("[")
+    ? Uint8Array.from(JSON.parse(trimmed) as number[])
+    : bs58.decode(trimmed);
+  return Keypair.fromSecretKey(secret);
+}
+
+/**
+ * Resolves the payer/mint-authority keypair. Prefers SOLANA_FUNDER_KEY (a shared
+ * funded wallet, e.g. loaded from .env), so repeat runs draw from one topped-up
+ * account instead of re-airdropping. Falls back to a cached locally generated
+ * devnet keypair for zero-config use when no funder is configured.
+ */
 function loadPayer(): Keypair {
+  const funderKey = process.env.SOLANA_FUNDER_KEY;
+  if (funderKey) {
+    try {
+      const payer = keypairFromSecret(funderKey);
+      console.log("Using funder from SOLANA_FUNDER_KEY");
+      return payer;
+    } catch {
+      console.error(
+        "SOLANA_FUNDER_KEY is set but is not valid base58 or a JSON byte array"
+      );
+      process.exit(1);
+    }
+  }
+
   if (existsSync(PAYER_KEY_PATH)) {
     const secret = JSON.parse(readFileSync(PAYER_KEY_PATH, "utf8")) as number[];
     return Keypair.fromSecretKey(Uint8Array.from(secret));
@@ -137,6 +170,50 @@ async function ensureFunded(
   }
 }
 
+/**
+ * Tops `dest` up to `targetSol` by transferring the shortfall from the funder.
+ * This is how test/org wallets get funded - straight from the funder, not the
+ * rate-limited faucet.
+ */
+async function topUpFromFunder(
+  connection: Connection,
+  funder: Keypair,
+  dest: PublicKey,
+  targetSol: number,
+  label: string
+): Promise<void> {
+  const balance = await connection.getBalance(dest);
+  const targetLamports = targetSol * LAMPORTS_PER_SOL;
+
+  if (balance >= targetLamports) {
+    console.log(`${label} has ${balance / LAMPORTS_PER_SOL} SOL - no top-up needed`);
+    return;
+  }
+
+  const shortfall = targetLamports - balance;
+  const funderBalance = await connection.getBalance(funder.publicKey);
+  if (funderBalance < shortfall) {
+    console.error(
+      `Funder has ${funderBalance / LAMPORTS_PER_SOL} SOL, not enough to send ${shortfall / LAMPORTS_PER_SOL} to ${label}. Top up the funder: ${funder.publicKey.toBase58()}`
+    );
+    process.exit(1);
+  }
+
+  console.log(`Transferring ${shortfall / LAMPORTS_PER_SOL} SOL to ${label}...`);
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: funder.publicKey,
+      toPubkey: dest,
+      lamports: shortfall,
+    })
+  );
+  await sendAndConfirmTransaction(connection, tx, [funder], {
+    commitment: "confirmed",
+  });
+  const updated = await connection.getBalance(dest);
+  console.log(`${label} now has ${updated / LAMPORTS_PER_SOL} SOL`);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs();
 
@@ -155,9 +232,12 @@ async function main(): Promise<void> {
   console.log(`Payer:  ${payer.publicKey.toBase58()}`);
   console.log(`Org:    ${orgPk.toBase58()}\n`);
 
-  await ensureFunded(connection, payer.publicKey, PAYER_TARGET_SOL, "payer");
-  // The org wallet pays its own transfer fee and any recipient-ATA rent.
-  await ensureFunded(connection, orgPk, ORG_TARGET_SOL, "org wallet");
+  // The funder must hold SOL itself. When it is a configured funder wallet this
+  // is a no-op; the airdrop path only bootstraps a locally generated fallback.
+  await ensureFunded(connection, payer.publicKey, PAYER_TARGET_SOL, "funder");
+  // The org/test wallet pays its own transfer fee and any recipient-ATA rent,
+  // funded straight from the funder rather than the faucet.
+  await topUpFromFunder(connection, payer, orgPk, ORG_TARGET_SOL, "org wallet");
 
   const mint = args.existingMint
     ? new PublicKey(args.existingMint)
