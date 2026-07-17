@@ -97,7 +97,6 @@ type TransferContext = {
   adapter: SolanaChainAdapter;
   chainId: number;
   ownerPk: PublicKey;
-  ownerAddress: string;
   recipientPk: PublicKey;
   mintPk: PublicKey;
   amount: string;
@@ -283,7 +282,7 @@ async function resolveMint(
 
 async function runPreflight(args: {
   adapter: SolanaChainAdapter;
-  ownerAddress: string;
+  ownerPk: PublicKey;
   senderAta: PublicKey;
   recipientAta: PublicKey;
   recipientPk: PublicKey;
@@ -296,10 +295,12 @@ async function runPreflight(args: {
 
   let accounts: SolanaAccount[];
   try {
+    // The owner's account is read in the same batch so its lamports feed the SOL
+    // preflight without a separate getBalance round-trip.
     accounts = await adapter.executeWithSolanaFailover(
       (connection) =>
         connection.getMultipleAccountsInfo(
-          [senderAta, recipientAta, args.recipientPk],
+          [senderAta, recipientAta, args.recipientPk, args.ownerPk],
           "confirmed"
         ),
       "read"
@@ -308,7 +309,7 @@ async function runPreflight(args: {
     return { error: `Failed to read token accounts: ${getErrorMessage(error)}` };
   }
 
-  const [senderInfo, recipientAtaInfo, recipientInfo] = accounts;
+  const [senderInfo, recipientAtaInfo, recipientInfo, ownerInfo] = accounts;
 
   // A recipient address that is itself a token account means the caller pasted
   // a token account instead of a wallet; the ATA derived from it would be
@@ -349,9 +350,8 @@ async function runPreflight(args: {
     return rent;
   }
 
-  const solCheck = await checkSolBalance({
-    adapter,
-    ownerAddress: args.ownerAddress,
+  const solCheck = checkSolBalance({
+    balanceLamports: BigInt(ownerInfo?.lamports ?? 0),
     rentLamports: rent.lamports,
     needsRecipientAta,
   });
@@ -405,25 +405,19 @@ async function resolveRentLamports(
 }
 
 /** Returns an error message, or null when the balance covers fee plus rent. */
-async function checkSolBalance(args: {
-  adapter: SolanaChainAdapter;
-  ownerAddress: string;
+function checkSolBalance(args: {
+  balanceLamports: bigint;
   rentLamports: bigint;
   needsRecipientAta: boolean;
-}): Promise<string | null> {
-  try {
-    const balance = await args.adapter.getBalance(undefined, args.ownerAddress);
-    const required = SOLANA_BASE_FEE_LAMPORTS + args.rentLamports;
-    if (balance >= required) {
-      return null;
-    }
-    const breakdown = args.needsRecipientAta
-      ? `${SOLANA_BASE_FEE_LAMPORTS.toString()} fee + ${args.rentLamports.toString()} rent for the recipient's new token account`
-      : `${SOLANA_BASE_FEE_LAMPORTS.toString()} fee`;
-    return `Insufficient SOL balance. Have: ${balance.toString()} lamports, Need: ${required.toString()} lamports (${breakdown})`;
-  } catch (error) {
-    return `Failed to check SOL balance: ${getErrorMessage(error)}`;
+}): string | null {
+  const required = SOLANA_BASE_FEE_LAMPORTS + args.rentLamports;
+  if (args.balanceLamports >= required) {
+    return null;
   }
+  const breakdown = args.needsRecipientAta
+    ? `${SOLANA_BASE_FEE_LAMPORTS.toString()} fee + ${args.rentLamports.toString()} rent for the recipient's new token account`
+    : `${SOLANA_BASE_FEE_LAMPORTS.toString()} fee`;
+  return `Insufficient SOL balance. Have: ${args.balanceLamports.toString()} lamports, Need: ${required.toString()} lamports (${breakdown})`;
 }
 
 async function executeTransfer(
@@ -469,7 +463,7 @@ async function executeTransfer(
 
   const preflight = await runPreflight({
     adapter,
-    ownerAddress: ctx.ownerAddress,
+    ownerPk,
     senderAta,
     recipientAta,
     recipientPk,
@@ -610,7 +604,6 @@ export async function transferSplTokenCore(
     adapter: getChainAdapter(chainId) as SolanaChainAdapter,
     chainId,
     ownerPk,
-    ownerAddress: wallet.address,
     recipientPk,
     mintPk,
     amount,

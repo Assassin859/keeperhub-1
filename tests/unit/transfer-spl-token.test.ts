@@ -58,7 +58,16 @@ const BASE_FEE = 5000;
 const IX_TRANSFER = 3;
 const IX_TRANSFER_CHECKED = 12;
 
-type MockAccount = { owner: PublicKey; data: Buffer } | null;
+type MockAccount = {
+  owner: PublicKey;
+  data: Buffer;
+  lamports?: number;
+} | null;
+
+/** A funded system account, for the owner slot of the preflight batch read. */
+function systemAccount(lamports: number): MockAccount {
+  return { owner: PublicKey.default, data: Buffer.alloc(0), lamports };
+}
 
 function mintAccount(
   decimals: number,
@@ -144,7 +153,6 @@ function decodeSentTransaction(sendTransaction: ReturnType<typeof vi.fn>) {
 
 describe("transferSplTokenCore", () => {
   let mockAdapter: {
-    getBalance: ReturnType<typeof vi.fn>;
     sendTransaction: ReturnType<typeof vi.fn>;
     getTransactionUrl: ReturnType<typeof vi.fn>;
     executeWithSolanaFailover: ReturnType<typeof vi.fn>;
@@ -170,11 +178,12 @@ describe("transferSplTokenCore", () => {
       getAccountInfo: vi.fn().mockResolvedValue(mintAccount(6)),
       getMultipleAccountsInfo: vi
         .fn()
-        // [senderAta, recipientAta, recipientWallet]
+        // [senderAta, recipientAta, recipientWallet, ownerWallet]
         .mockResolvedValue([
           tokenAccount(BigInt(10_000_000)),
           tokenAccount(BigInt(0), MINT, RECIPIENT),
           null,
+          systemAccount(2_000_000_000),
         ]),
       getMinimumBalanceForRentExemption: vi
         .fn()
@@ -182,7 +191,6 @@ describe("transferSplTokenCore", () => {
     };
 
     mockAdapter = {
-      getBalance: vi.fn().mockResolvedValue(BigInt(2_000_000_000)),
       sendTransaction: vi.fn().mockResolvedValue({
         hash: "mock-signature",
         gasUsed: BigInt(4521), // compute units
@@ -286,6 +294,7 @@ describe("transferSplTokenCore", () => {
       tokenAccount(BigInt(10_000_000_000), MINT, OWNER, TOKEN_2022_PROGRAM_ID),
       null, // recipient ATA missing
       null,
+      systemAccount(2_000_000_000),
     ]);
 
     const result = await transferSplTokenCore(validInput);
@@ -319,6 +328,7 @@ describe("transferSplTokenCore", () => {
       tokenAccount(BigInt(10_000_000), MINT, OWNER, TOKEN_2022_PROGRAM_ID),
       tokenAccount(BigInt(0), MINT, RECIPIENT, TOKEN_2022_PROGRAM_ID),
       null,
+      systemAccount(2_000_000_000),
     ]);
 
     const result = await transferSplTokenCore(validInput);
@@ -484,7 +494,13 @@ describe("transferSplTokenCore", () => {
   });
 
   it("reports insufficient SOL for the transaction fee", async () => {
-    mockAdapter.getBalance.mockResolvedValue(BigInt(BASE_FEE - 1));
+    // Recipient ATA exists (no rent); owner cannot even cover the fee.
+    mockConnection.getMultipleAccountsInfo.mockResolvedValue([
+      tokenAccount(BigInt(10_000_000)),
+      tokenAccount(BigInt(0), MINT, RECIPIENT),
+      null,
+      systemAccount(BASE_FEE - 1),
+    ]);
 
     const result = await transferSplTokenCore(validInput);
 
@@ -500,8 +516,8 @@ describe("transferSplTokenCore", () => {
       tokenAccount(BigInt(10_000_000)),
       null, // recipient ATA missing -> rent required
       null,
+      systemAccount(BASE_FEE + 1),
     ]);
-    mockAdapter.getBalance.mockResolvedValue(BigInt(BASE_FEE + 1));
 
     const result = await transferSplTokenCore(validInput);
 
@@ -517,7 +533,13 @@ describe("transferSplTokenCore", () => {
   });
 
   it("does not charge rent when the recipient account already exists", async () => {
-    mockAdapter.getBalance.mockResolvedValue(BigInt(BASE_FEE));
+    // Recipient ATA exists, so only the fee is required and no rent is read.
+    mockConnection.getMultipleAccountsInfo.mockResolvedValue([
+      tokenAccount(BigInt(10_000_000)),
+      tokenAccount(BigInt(0), MINT, RECIPIENT),
+      null,
+      systemAccount(BASE_FEE),
+    ]);
 
     const result = await transferSplTokenCore(validInput);
 
