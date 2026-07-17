@@ -415,6 +415,22 @@ describe("transferSplTokenCore", () => {
     expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
   });
 
+  it("returns a clean error when the mint account is malformed", async () => {
+    // A token account address pasted into the mint field: owned by the token
+    // program (so isTokenProgram passes), but unpackMint throws. The step must
+    // return a clean error, not reject with an uncaught exception.
+    mockConnection.getAccountInfo.mockResolvedValue(
+      tokenAccount(BigInt(1), MINT, OWNER)
+    );
+
+    const result = await transferSplTokenCore(validInput);
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain(
+      "is not a valid SPL mint"
+    );
+  });
+
   it("reports when the sending wallet has no token account for the mint", async () => {
     mockConnection.getMultipleAccountsInfo.mockResolvedValue([
       null,

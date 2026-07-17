@@ -268,7 +268,15 @@ async function resolveMint(
     };
   }
 
-  return { mint: unpackMint(mintPk, mintInfo, programId), programId };
+  // unpackMint throws on an account that is owned by a token program but is not
+  // a well-formed mint - e.g. a token account address pasted into the mint field.
+  try {
+    return { mint: unpackMint(mintPk, mintInfo, programId), programId };
+  } catch (error) {
+    return {
+      error: `${mintPk.toBase58()} is not a valid SPL mint: ${getErrorMessage(error)}`,
+    };
+  }
 }
 
 async function runPreflight(args: {
@@ -313,7 +321,14 @@ async function runPreflight(args: {
     };
   }
 
-  const senderAccount = unpackAccount(senderAta, senderInfo, programId);
+  let senderAccount: ReturnType<typeof unpackAccount>;
+  try {
+    senderAccount = unpackAccount(senderAta, senderInfo, programId);
+  } catch (error) {
+    return {
+      error: `Failed to read the wallet's token account: ${getErrorMessage(error)}`,
+    };
+  }
   if (senderAccount.amount < amountRaw) {
     return {
       error: `Insufficient token balance. Have: ${senderAccount.amount.toString()}, Need: ${amountRaw.toString()} (raw units)`,
