@@ -7,7 +7,9 @@ import {
   AccountLayout,
   AccountState,
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  ExtensionType,
   getAssociatedTokenAddressSync,
+  getMintLen,
   MINT_SIZE,
   MintLayout,
   TOKEN_2022_PROGRAM_ID,
@@ -76,6 +78,37 @@ function mintAccount(
     data
   );
   return { owner: programId, data };
+}
+
+/**
+ * A Token-2022 mint carrying a single extension. Only the TLV type header needs
+ * to be well-formed for getExtensionTypes to recognise it; the value is zeroed.
+ */
+function mintWithExtension(
+  decimals: number,
+  extension: ExtensionType
+): MockAccount {
+  const data = Buffer.alloc(getMintLen([extension]));
+  MintLayout.encode(
+    {
+      mintAuthorityOption: 1,
+      mintAuthority: OWNER,
+      supply: BigInt(1_000_000_000),
+      decimals,
+      isInitialized: true,
+      freezeAuthorityOption: 0,
+      freezeAuthority: PublicKey.default,
+    },
+    data
+  );
+  // TLV after the padded base mint: [accountType u8][type u16][len u16][value].
+  data.writeUInt8(1, ACCOUNT_SIZE); // AccountType.Mint
+  data.writeUInt16LE(extension, ACCOUNT_SIZE + 1); // extension type
+  data.writeUInt16LE(
+    getMintLen([extension]) - ACCOUNT_SIZE - 5,
+    ACCOUNT_SIZE + 3
+  ); // value length
+  return { owner: TOKEN_2022_PROGRAM_ID, data };
 }
 
 function tokenAccount(
@@ -366,6 +399,20 @@ describe("transferSplTokenCore", () => {
       success: false,
       error: expect.stringContaining("is not an SPL token mint"),
     });
+  });
+
+  it("rejects a transfer-fee mint rather than misreport the amount", async () => {
+    // The recipient of a fee mint receives less than the requested amount, which
+    // the step cannot report without reading the fee, so it declines the mint.
+    mockConnection.getAccountInfo.mockResolvedValue(
+      mintWithExtension(6, ExtensionType.TransferFeeConfig)
+    );
+
+    const result = await transferSplTokenCore(validInput);
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain("transfer fee");
+    expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
   });
 
   it("reports when the sending wallet has no token account for the mint", async () => {

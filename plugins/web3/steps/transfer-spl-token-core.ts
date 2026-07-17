@@ -44,8 +44,13 @@ import {
 const PLACEHOLDER_BLOCKHASH = PublicKey.default.toBase58();
 
 /**
- * Mint extensions that a plain transferChecked cannot honour. Rejecting them up
- * front turns an opaque simulation failure into an actionable error.
+ * Mint extensions we decline to transfer. TransferHook and NonTransferable make
+ * a plain transferChecked fail outright. TransferFeeConfig does not - the mint
+ * transfers fine, but the program withholds a fee so the recipient receives less
+ * than the requested amount; without reading and reporting the net figure the
+ * step would overstate what was transferred, so v1 rejects these rather than
+ * report a wrong amount. Rejecting up front turns each case into an actionable
+ * error instead of an opaque simulation failure or a silent accounting gap.
  */
 const UNSUPPORTED_EXTENSIONS = new Map<ExtensionType, string>([
   [
@@ -53,6 +58,10 @@ const UNSUPPORTED_EXTENSIONS = new Map<ExtensionType, string>([
     "the mint has a transfer hook, which requires resolving extra accounts",
   ],
   [ExtensionType.NonTransferable, "the mint is non-transferable"],
+  [
+    ExtensionType.TransferFeeConfig,
+    "the mint charges a transfer fee, so the recipient would receive less than the requested amount",
+  ],
 ]);
 
 export type TransferSplTokenCoreInput = {
