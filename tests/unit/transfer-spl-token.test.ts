@@ -511,4 +511,15 @@ describe("transferSplTokenCore", () => {
       error: expect.stringContaining("Invalid token amount"),
     });
   });
+
+  it("rejects a zero amount before building or sending anything", async () => {
+    const result = await transferSplTokenCore({ ...validInput, amount: "0" });
+
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining("greater than zero"),
+    });
+    // A zero transfer must never create the recipient's token account.
+    expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
+  });
 });

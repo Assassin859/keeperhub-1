@@ -143,8 +143,11 @@ function parseAmount(
 ): { raw: bigint } | { error: string } {
   try {
     const raw = ethers.parseUnits(amount.trim(), decimals);
-    if (raw < BigInt(0)) {
-      return { error: `Invalid token amount: ${amount}` };
+    // Reject zero as well as negatives: a zero transfer moves nothing but, when
+    // the recipient has no token account, still spends the sender's SOL creating
+    // an empty one - a silent cost for a no-op reported as success.
+    if (raw <= BigInt(0)) {
+      return { error: `Token amount must be greater than zero: ${amount}` };
     }
     return { raw };
   } catch {
