@@ -9,6 +9,16 @@ import type { WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
+/** The chainId a trigger node targets (config.network), or null if absent/unparseable. */
+function triggerChainId(node: WorkflowNode | undefined): number | null {
+  const raw = node?.data?.config?.network;
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    return null;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
  * Internal endpoint for workers to fetch active Event-type workflows.
  * Returns only enabled workflows with Event trigger type. Authentication
@@ -29,6 +39,12 @@ export async function GET(request: Request) {
     const activeParam = searchParams.get("active");
 
     const filterActive = activeParam === "true";
+
+    // Additive chainType filter. Default "evm" preserves prior behavior (all
+    // existing event workflows are EVM); "solana" scopes the response to
+    // Solana-network workflows for the solana-tracker service.
+    const requestedChainType =
+      searchParams.get("chainType") === "solana" ? "solana" : "evm";
 
     const query = db
       .select({
@@ -141,8 +157,22 @@ export async function GET(request: Request) {
       networkMap[network.chainId] = network;
     }
 
+    // Asymmetric chainType filter: "evm" is the default bucket (keep unless the
+    // network resolves to a Solana chain), "solana" keeps only Solana-network
+    // workflows. Workflows with a missing/unresolvable network stay in "evm".
+    const solanaChainIds = new Set<number>(
+      networks
+        .filter((network) => network.chainType === "solana")
+        .map((network) => network.chainId)
+    );
+    const filteredWorkflows = eventWorkflows.filter((workflow) => {
+      const chainId = triggerChainId(workflow.nodes[0]);
+      const isSolana = chainId !== null && solanaChainIds.has(chainId);
+      return requestedChainType === "solana" ? isSolana : !isSolana;
+    });
+
     const response = {
-      workflows: eventWorkflows,
+      workflows: filteredWorkflows,
       networks: networkMap,
     };
 
