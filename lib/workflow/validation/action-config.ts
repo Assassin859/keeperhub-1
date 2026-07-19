@@ -378,6 +378,12 @@ export function validateWorkflowActionConfigs(
       if (RESERVED_CONFIG_KEYS.has(key)) {
         continue;
       }
+      // Underscore-prefixed keys are UI-only metadata (e.g. a datetime field's
+      // display timezone `_tz_<key>`); the step runtime never reads them, so they
+      // are never "unknown fields".
+      if (key.startsWith("_")) {
+        continue;
+      }
       if (fieldsByKey.has(key)) {
         continue;
       }
