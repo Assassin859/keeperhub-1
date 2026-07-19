@@ -98,6 +98,12 @@ const TIMEZONES = [
   },
 ];
 
+/** IANA zones this select can render. A value outside this set has no matching
+ *  item, so the trigger shows blank -- callers should fall back to 'UTC'. */
+export const SUPPORTED_TIMEZONES = new Set<string>(
+  TIMEZONES.flatMap((group) => group.zones.map((zone) => zone.value))
+);
+
 export function TimezoneSelect({ value, onValueChange, disabled, id }: TimezoneSelectProps) {
   return (
     <Select value={value} onValueChange={onValueChange} disabled={disabled}>

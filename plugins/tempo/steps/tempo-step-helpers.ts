@@ -146,6 +146,53 @@ export async function quoteTempoSwap(
   return BigInt(amountOut);
 }
 
+const UNIX_SECONDS = /^\d+$/;
+const MILLIS_THRESHOLD = 1e12;
+// Relative offset from the run time, e.g. "+2h", "+30m", "+7d" (an optional
+// "now" prefix is accepted). Resolved against `nowSec` so a workflow's window
+// stays fresh on every run instead of pointing at a stale fixed date.
+const RELATIVE_OFFSET = /^(?:now)?\+(\d+)\s*([mhd])$/i;
+const RELATIVE_UNIT_SECONDS: Record<string, number> = {
+  m: 60,
+  h: 3600,
+  d: 86_400,
+};
+
+/**
+ * Parse a datetime value into unix seconds. Accepts an absolute ISO datetime, a
+ * unix timestamp, or a relative offset from `nowSec` ("+2h", "+7d"). Returns
+ * undefined when the field is blank; throws on an unparseable value. A value
+ * above the millis threshold is treated as milliseconds and divided down.
+ * Template values (`{{...}}`) are resolved upstream, so only concrete strings
+ * reach here.
+ */
+export function parseTimestamp(
+  raw: string | undefined,
+  nowSec: number
+): number | undefined {
+  if (!raw || raw.trim() === "") {
+    return;
+  }
+  const value = raw.trim();
+  const relative = RELATIVE_OFFSET.exec(value);
+  if (relative) {
+    const amount = Number(relative[1]);
+    const unitSeconds = RELATIVE_UNIT_SECONDS[(relative[2] ?? "h").toLowerCase()];
+    return nowSec + amount * (unitSeconds ?? 3600);
+  }
+  if (UNIX_SECONDS.test(value)) {
+    const numeric = Number(value);
+    return numeric > MILLIS_THRESHOLD ? Math.floor(numeric / 1000) : numeric;
+  }
+  const millis = Date.parse(value);
+  if (Number.isNaN(millis)) {
+    throw new Error(
+      `Invalid date "${value}": use an ISO datetime (2026-07-31T17:00:00Z), a relative offset (+2h, +7d), or a unix timestamp.`
+    );
+  }
+  return Math.floor(millis / 1000);
+}
+
 export function assertTempoChain(chainId: number): void {
   if (!isTempoChain(chainId)) {
     throw new Error(

@@ -345,6 +345,52 @@ const RAW_FIXTURES: TempoTemplateFixture[] = [
       buildEdge("step-3", "step-4"),
     ],
   },
+
+  {
+    id: "tempo-recurring-payment",
+    listedSlug: "tempo-recurring-payment",
+    name: "Tempo Recurring Payment",
+    description:
+      "On a recurring schedule, send a fixed stablecoin payment on Tempo to a recipient. The payment is signed fresh at send time, so its gas and nonce are always current -- schedule the send rather than holding a pre-signed transaction.",
+    category: "Payments",
+    chain: TEMPO_TESTNET,
+    inputSchema: {
+      type: "object",
+      properties: {
+        recipient: {
+          type: "string",
+          description: "Address that receives the recurring payment",
+        },
+        amount: {
+          type: "string",
+          description: "Amount of the stablecoin to send each run",
+        },
+      },
+      required: [],
+    },
+    nodes: [
+      buildTriggerNode("trigger-1", {
+        triggerType: "Schedule",
+        scheduleCron: "0 9 * * 1",
+        scheduleTimezone: "UTC",
+      }),
+      buildActionNode(
+        "step-1",
+        "Send Payment",
+        "Send the recurring stablecoin payment on Tempo",
+        {
+          actionType: "tempo/transfer-with-memo",
+          network: TEMPO_TESTNET,
+          tokenConfig: PATH_USD,
+          amount: "{{amount}}",
+          recipientAddress: "{{recipient}}",
+          memo: "recurring-payment",
+        },
+        400
+      ),
+    ],
+    edges: [buildEdge("trigger-1", "step-1")],
+  },
 ];
 
 export const TEMPO_TEMPLATE_FIXTURES: TempoTemplateFixture[] =
