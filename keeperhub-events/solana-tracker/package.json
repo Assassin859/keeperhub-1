@@ -14,7 +14,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "e2e:injected": "tsx tests/e2e/injected.ts",
+    "e2e:devnet": "tsx tests/e2e/devnet.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1005.0",
