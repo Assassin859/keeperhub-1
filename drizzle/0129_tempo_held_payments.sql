@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS "tempo_held_payments" (
 
 CREATE INDEX IF NOT EXISTS "idx_tempo_held_payments_org"
   ON "tempo_held_payments" ("organization_id");
+-- Org-scoped list ordered by created_at (the paginated UI query).
+CREATE INDEX IF NOT EXISTS "idx_tempo_held_payments_org_created"
+  ON "tempo_held_payments" ("organization_id", "created_at");
 CREATE INDEX IF NOT EXISTS "idx_tempo_held_payments_status"
   ON "tempo_held_payments" ("status");
 -- Due poller: pending rows whose broadcast_at has arrived.

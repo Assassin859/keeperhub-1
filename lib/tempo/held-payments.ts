@@ -12,9 +12,22 @@
  * loser gets `null` and no-ops). This is the same guarded-transition pattern as
  * `resolveApprovalRequest` in lib/agentic-wallet/approval.ts.
  */
-import { and, desc, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  ilike,
+  inArray,
+  isNotNull,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/lib/db";
 import { type TempoHeldPayment, tempoHeldPayments } from "@/lib/db/schema";
+import type { HeldPaymentView } from "@/lib/tempo/held-payment-view";
 
 export type CreateHeldPaymentArgs = {
   organizationId: string;
@@ -107,21 +120,63 @@ export async function getHeldPaymentForOrg(
   return rows[0] ?? null;
 }
 
+export type HeldPaymentListFilter = {
+  status?: TempoHeldPayment["status"];
+  /** Case-insensitive substring match over memo, addresses, token, hash, id. */
+  search?: string;
+};
+
+function heldPaymentFilters(
+  organizationId: string,
+  filter?: HeldPaymentListFilter
+): SQL[] {
+  const predicates: SQL[] = [
+    eq(tempoHeldPayments.organizationId, organizationId),
+  ];
+  if (filter?.status) {
+    predicates.push(eq(tempoHeldPayments.status, filter.status));
+  }
+  const search = filter?.search?.trim();
+  if (search) {
+    const like = `%${search}%`;
+    const match = or(
+      ilike(tempoHeldPayments.memo, like),
+      ilike(tempoHeldPayments.toAddress, like),
+      ilike(tempoHeldPayments.fromAddress, like),
+      ilike(tempoHeldPayments.tokenSymbol, like),
+      ilike(tempoHeldPayments.broadcastTxHash, like),
+      ilike(tempoHeldPayments.id, like)
+    );
+    if (match) {
+      predicates.push(match);
+    }
+  }
+  return predicates;
+}
+
 export async function listHeldPayments(
   organizationId: string,
-  opts?: { status?: TempoHeldPayment["status"]; limit?: number }
+  opts?: HeldPaymentListFilter & { limit?: number; offset?: number }
 ): Promise<TempoHeldPayment[]> {
-  const predicates = [eq(tempoHeldPayments.organizationId, organizationId)];
-  if (opts?.status) {
-    predicates.push(eq(tempoHeldPayments.status, opts.status));
-  }
   const rows = await db
     .select()
     .from(tempoHeldPayments)
-    .where(and(...predicates))
+    .where(and(...heldPaymentFilters(organizationId, opts)))
     .orderBy(desc(tempoHeldPayments.createdAt))
-    .limit(opts?.limit ?? 100);
+    .limit(opts?.limit ?? 100)
+    .offset(opts?.offset ?? 0);
   return rows;
+}
+
+export async function countHeldPayments(
+  organizationId: string,
+  filter?: HeldPaymentListFilter
+): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tempoHeldPayments)
+    .where(and(...heldPaymentFilters(organizationId, filter)));
+  return row?.count ?? 0;
 }
 
 /**
@@ -252,6 +307,20 @@ export async function expireDueHeldPayments(): Promise<number> {
   return rows.length;
 }
 
+/** Rows sent to the node but not yet reconciled (poller path). A later tick
+ *  checks each receipt and advances it to `confirmed` or `failed`. */
+export async function selectBroadcastToReconcile(
+  limit: number
+): Promise<TempoHeldPayment[]> {
+  const rows = await db
+    .select()
+    .from(tempoHeldPayments)
+    .where(eq(tempoHeldPayments.status, "broadcast"))
+    .orderBy(tempoHeldPayments.updatedAt)
+    .limit(limit);
+  return rows;
+}
+
 /** Scheduled payments whose target time has arrived and whose window is still
  *  open. The poller claims each individually before broadcasting. */
 export async function selectDueHeldPayments(
@@ -273,4 +342,31 @@ export async function selectDueHeldPayments(
     .orderBy(tempoHeldPayments.broadcastAt)
     .limit(limit);
   return rows;
+}
+
+/** Map a row to the display-safe view (shared type in held-payment-view.ts).
+ *  Deliberately omits the signed blob, nonce lane, and fee ceiling (internal
+ *  diagnostics), and serializes timestamps to ISO strings. */
+export function toHeldPaymentView(row: TempoHeldPayment): HeldPaymentView {
+  return {
+    id: row.id,
+    status: row.status,
+    chainId: row.chainId,
+    from: row.fromAddress,
+    to: row.toAddress,
+    tokenAddress: row.tokenAddress,
+    tokenSymbol: row.tokenSymbol,
+    amount: row.amountDisplay,
+    amountRaw: row.amountRaw,
+    memo: row.memo,
+    precomputedHash: row.precomputedHash,
+    broadcastMode: row.broadcastAt ? "schedule" : "manual",
+    broadcastAt: row.broadcastAt ? row.broadcastAt.toISOString() : null,
+    validAfter: row.validAfter ?? null,
+    validBefore: row.validBefore,
+    broadcastTxHash: row.broadcastTxHash,
+    lastError: row.lastError,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }

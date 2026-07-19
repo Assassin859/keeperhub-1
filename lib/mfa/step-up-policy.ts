@@ -28,6 +28,8 @@ export const STEP_UP_ACTIONS = {
   auditExport: "audit_export",
   agenticWalletApprove: "agentic_wallet_approve",
   agenticWalletReject: "agentic_wallet_reject",
+  // Releasing a held Tempo payment moves funds on-chain, so it is step-up gated.
+  tempoHeldPaymentBroadcast: "tempo_held_payment_broadcast",
   sessionRevoke: "session_revoke",
   // Internal — step-up gated but not user-facing.
   stepUpEmailEnroll: "step_up_email_enroll",

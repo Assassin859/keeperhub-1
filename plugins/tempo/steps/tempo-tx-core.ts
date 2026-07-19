@@ -526,6 +526,33 @@ export async function broadcastStoredTempoTx(
   return { hash, confirmed: true };
 }
 
+export type TempoReceiptStatus = "confirmed" | "reverted" | "pending";
+
+/**
+ * Single-shot receipt check (no waiting) for a broadcast tx hash. The scheduled
+ * poller sends held payments without waiting, then a later tick reconciles them
+ * to `confirmed`/`failed` via this. Returns `pending` when the tx is not mined
+ * yet.
+ */
+export async function checkTempoReceipt(params: {
+  chainId: number;
+  userId?: string;
+  txHash: string;
+}): Promise<TempoReceiptStatus> {
+  const { chainId, userId, txHash } = params;
+  if (!isTempoChain(chainId)) {
+    throw new Error(`Chain ${chainId} is not a Tempo network`);
+  }
+  const rpcManager = await getRpcProvider({ chainId, userId });
+  const receipt = await rpcManager.executeWithFailover((provider) =>
+    provider.getTransactionReceipt(txHash)
+  );
+  if (!receipt) {
+    return "pending";
+  }
+  return receipt.status === 0 ? "reverted" : "confirmed";
+}
+
 /**
  * Build, sign, and broadcast one Tempo 0x76 transaction carrying `calls`,
  * waiting for a successful receipt. Composes `signTempoTx` and

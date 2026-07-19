@@ -89,6 +89,11 @@ export const tempoHeldPayments = pgTable(
   },
   (table) => [
     index("idx_tempo_held_payments_org").on(table.organizationId),
+    // Serves the org-scoped list ordered by created_at (the paginated UI query).
+    index("idx_tempo_held_payments_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
     index("idx_tempo_held_payments_status").on(table.status),
     // Due poller: pending rows whose broadcast_at has arrived.
     index("idx_tempo_held_payments_due").on(table.status, table.broadcastAt),
