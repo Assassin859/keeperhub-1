@@ -89,4 +89,42 @@ describe("GetBlockSource cursor advance", () => {
 
     await source.stop();
   });
+
+  it("processes only up to the confirmed tip, ignoring a processed-slot tick that runs ahead", async () => {
+    const processed: number[] = [];
+    // The slot tick delivers a *processed* slot that leads the *confirmed* tip
+    // (getCurrentSlot). start() seeds from 0; the confirmed tip is 5.
+    hooks.slotQueue = [0, 5];
+    hooks.produced = (from, to) => range(from, to);
+    hooks.getBlock = (slot: number) => ({
+      blockhash: `h${slot}`,
+      parentSlot: slot - 1,
+      blockTime: 0,
+      transactions: [],
+      blockHeight: slot,
+    });
+
+    const source = new GetBlockSource({
+      chainId: 101,
+      endpoints: [{ rpcUrl: "r", wssUrl: "w" }],
+      commitment: "confirmed",
+      watchedProgramIds: ["prog"],
+      onBlock: (block) => {
+        processed.push(block.slot);
+        return Promise.resolve();
+      },
+    });
+
+    await source.start();
+
+    // Tick reports slot 999 (processed), but the confirmed tip is only 5.
+    hooks.onSlot?.(999);
+    await vi.waitFor(() => expect(processed).toEqual([1, 2, 3, 4, 5]));
+
+    // Never reaches beyond the confirmed tip - the tick slot is only a wake-up,
+    // not the read target (regression guard for the processed-vs-confirmed bug).
+    expect(Math.max(...processed)).toBe(5);
+
+    await source.stop();
+  });
 });
