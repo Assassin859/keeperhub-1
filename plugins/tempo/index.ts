@@ -342,18 +342,16 @@ const tempoPlugin: IntegrationPlugin = {
             {
               key: "validAfter",
               label: "Valid After",
-              type: "template-input",
-              placeholder: "2026-07-31T09:00:00Z or unix seconds",
+              type: "datetime",
               helpTip:
-                "Earliest time the payment may be included. Leave blank for no lower bound. Must not be in the future (v1 broadcasts during this run).",
+                "Earliest time the payment may be included, as a fixed date, a relative offset (e.g. +2h from the run), or a value from another step. Leave blank for no lower bound. Must not be in the future (broadcasts during this run).",
             },
             {
               key: "validBefore",
               label: "Valid Before",
-              type: "template-input",
-              placeholder: "2026-07-31T17:00:00Z or unix seconds",
+              type: "datetime",
               helpTip:
-                "Deadline after which the payment can no longer be included. Defaults to 15 minutes from now.",
+                "Deadline after which the payment can no longer be included, as a fixed date, a relative offset (e.g. +15m from the run), or a value from another step. Defaults to 15 minutes from now.",
             },
           ],
         },
@@ -452,7 +450,7 @@ const tempoPlugin: IntegrationPlugin = {
             { value: "schedule", label: "At a scheduled time" },
           ],
           helpTip:
-            "Manual holds are released by a Broadcast Held Payment action or from the Held Payments UI. Scheduled holds fire automatically at the broadcast time.",
+            "Manual holds are released from the Held Payments page by an organization owner. Scheduled holds fire automatically at the broadcast time.",
         },
         {
           type: "group",
@@ -462,63 +460,18 @@ const tempoPlugin: IntegrationPlugin = {
             {
               key: "broadcastAt",
               label: "Broadcast At",
-              type: "template-input",
-              placeholder: "2026-07-31T09:00:00Z or unix seconds",
+              type: "datetime",
               helpTip:
-                "Required when Release is 'At a scheduled time'. The time the held payment is broadcast.",
+                "Required when Release is 'At a scheduled time'. A fixed date+timezone, a relative offset (e.g. +2h from the run), or a value from another step.",
             },
             {
               key: "validBefore",
               label: "Valid Before",
-              type: "template-input",
-              placeholder: "2026-07-31T17:00:00Z or unix seconds",
+              type: "datetime",
               helpTip:
-                "On-chain deadline after which the payment can no longer settle. Defaults to 24 hours from now (manual) or 1 hour past the broadcast time (scheduled).",
+                "On-chain deadline after which the payment can no longer settle. A fixed date, a relative offset (e.g. +1h from the run), or a value from another step. Defaults to 24 hours from now (manual) or 1 hour past the broadcast time (scheduled).",
             },
           ],
-        },
-      ],
-    },
-    {
-      slug: "broadcast-held-payment",
-      label: "Broadcast Held Payment",
-      description:
-        "Broadcast a previously held Tempo payment by its id, releasing the pre-signed transaction to the network and waiting for confirmation",
-      category: "Tempo",
-      stepFunction: "broadcastHeldPaymentStep",
-      stepImportPath: "broadcast-held-payment",
-      outputFields: [
-        { field: "success", description: "Whether the broadcast succeeded" },
-        {
-          field: "paymentId",
-          description: "Id of the held payment that was broadcast",
-        },
-        {
-          field: "transactionHash",
-          description: "The transaction hash of the broadcast payment",
-        },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
-        { field: "from", description: "The sending wallet address" },
-        { field: "to", description: "The recipient address" },
-        { field: "status", description: "The held payment status (confirmed)" },
-        { field: "chainId", description: "The Tempo chain id used" },
-        {
-          field: "error",
-          description: "Error message if the broadcast failed",
-        },
-      ],
-      configFields: [
-        {
-          key: "paymentId",
-          label: "Held Payment Id",
-          type: "template-input",
-          placeholder: "{{@NodeName.paymentId}}",
-          helpTip:
-            "The id returned by a Sign & Hold Payment action, e.g. {{@Hold Payment.paymentId}}.",
-          required: true,
         },
       ],
     },

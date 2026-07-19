@@ -35,10 +35,27 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
 const mockAssertTempoChain = vi.fn();
 const mockResolveTempoToken = vi.fn();
 const mockBuildTempoTxLink = vi.fn();
+const UNIX_RE = /^\d+$/;
 vi.mock("@/plugins/tempo/steps/tempo-step-helpers", () => ({
   assertTempoChain: (...args: unknown[]) => mockAssertTempoChain(...args),
   resolveTempoToken: (...args: unknown[]) => mockResolveTempoToken(...args),
   buildTempoTxLink: (...args: unknown[]) => mockBuildTempoTxLink(...args),
+  // Faithful inline copy so the window logic gets real parsing.
+  parseTimestamp: (raw?: string): number | undefined => {
+    if (!raw || raw.trim() === "") {
+      return;
+    }
+    const v = raw.trim();
+    if (UNIX_RE.test(v)) {
+      const n = Number(v);
+      return n > 1e12 ? Math.floor(n / 1000) : n;
+    }
+    const ms = Date.parse(v);
+    if (Number.isNaN(ms)) {
+      throw new Error(`Invalid date "${v}"`);
+    }
+    return Math.floor(ms / 1000);
+  },
 }));
 
 const mockSignAndBroadcast = vi.fn();

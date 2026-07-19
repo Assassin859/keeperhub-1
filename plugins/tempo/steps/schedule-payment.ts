@@ -20,6 +20,7 @@ import {
 import {
   assertTempoChain,
   buildTempoTxLink,
+  parseTimestamp,
   resolveTempoToken,
 } from "./tempo-step-helpers";
 
@@ -30,8 +31,6 @@ const DEFAULT_WINDOW_SEC = 900; // 15 minutes
 // broadcast, and included, so reject it upfront instead of letting it time out
 // after the receipt wait.
 const MIN_INCLUSION_BUFFER_SEC = 60;
-const UNIX_SECONDS = /^\d+$/;
-const MILLIS_THRESHOLD = 1e12;
 
 export type SchedulePaymentInput = StepInput & {
   network: string;
@@ -57,28 +56,6 @@ export type SchedulePaymentResult =
       chainId: number;
     }
   | { success: false; error: string };
-
-/**
- * Parse an ISO datetime or unix timestamp into unix seconds. Returns undefined
- * when the field is blank; throws on an unparseable value.
- */
-function parseTimestamp(raw: string | undefined): number | undefined {
-  if (!raw || raw.trim() === "") {
-    return;
-  }
-  const value = raw.trim();
-  if (UNIX_SECONDS.test(value)) {
-    const numeric = Number(value);
-    return numeric > MILLIS_THRESHOLD ? Math.floor(numeric / 1000) : numeric;
-  }
-  const millis = Date.parse(value);
-  if (Number.isNaN(millis)) {
-    throw new Error(
-      `Invalid date "${value}": use an ISO datetime (2026-07-31T17:00:00Z) or a unix timestamp.`
-    );
-  }
-  return Math.floor(millis / 1000);
-}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: linear guard chain over the payment window
 async function stepHandler(
@@ -109,8 +86,9 @@ async function stepHandler(
   let validAfterSec: number | undefined;
   let validBeforeSec: number;
   try {
-    validAfterSec = parseTimestamp(input.validAfter);
-    validBeforeSec = parseTimestamp(input.validBefore) ?? nowSec + DEFAULT_WINDOW_SEC;
+    validAfterSec = parseTimestamp(input.validAfter, nowSec);
+    validBeforeSec =
+      parseTimestamp(input.validBefore, nowSec) ?? nowSec + DEFAULT_WINDOW_SEC;
   } catch (error) {
     return { success: false, error: getErrorMessage(error) };
   }

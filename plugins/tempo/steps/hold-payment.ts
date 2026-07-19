@@ -84,8 +84,8 @@ function resolveWindow(
 ): ResolvedWindow {
   let broadcastAtSec: number | undefined;
   try {
-    broadcastAtSec = parseTimestamp(broadcastAtRaw);
-    const parsedValidBefore = parseTimestamp(validBeforeRaw);
+    broadcastAtSec = parseTimestamp(broadcastAtRaw, nowSec);
+    const parsedValidBefore = parseTimestamp(validBeforeRaw, nowSec);
     if (mode === "schedule") {
       if (broadcastAtSec === undefined) {
         return {
@@ -221,7 +221,9 @@ async function stepHandler(
       tokenSymbol: token.symbol,
       tokenDecimals: token.decimals,
       amountDisplay: amount,
-      memo: memoBytes,
+      // Store the human memo (what the user typed) for display and search; the
+      // on-chain bytes32 form lives in the signed blob.
+      memo: memo?.trim() ? memo.trim() : undefined,
       serializedTx: signed.serialized,
       precomputedHash: signed.hash,
       nonceKey: signed.nonceKey.toString(),
