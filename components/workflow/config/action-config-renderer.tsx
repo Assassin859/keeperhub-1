@@ -265,11 +265,22 @@ function RelativeOffsetInput({
   disabled?: boolean;
 }) {
   const match = RELATIVE_OFFSET_RE.exec(value);
-  const amount = match?.[1] ?? "";
-  const unit = (match?.[2] ?? "h").toLowerCase();
-  const commit = (nextAmount: string, nextUnit: string): void => {
+  // Hold amount + unit in local state so the unit selection sticks even before
+  // an amount is typed. Deriving both from the "+<n><unit>" string dropped the
+  // unit whenever the amount was empty (nothing to store).
+  const [amount, setAmount] = useState<string>(match?.[1] ?? "");
+  const [unit, setUnit] = useState<string>((match?.[2] ?? "h").toLowerCase());
+  const write = (nextAmount: string, nextUnit: string): void => {
     const trimmed = nextAmount.trim();
     onChange(trimmed ? `+${trimmed}${nextUnit}` : "");
+  };
+  const handleAmount = (next: string): void => {
+    setAmount(next);
+    write(next, unit);
+  };
+  const handleUnit = (next: string): void => {
+    setUnit(next);
+    write(amount, next);
   };
   return (
     <div className="flex items-center gap-2">
@@ -278,17 +289,13 @@ function RelativeOffsetInput({
         disabled={disabled}
         id={id}
         min={1}
-        onChange={(e) => commit(e.target.value, unit)}
+        onChange={(e) => handleAmount(e.target.value)}
         placeholder="2"
         type="number"
         value={amount}
       />
       <div className="w-32 [&_button]:w-full">
-        <Select
-          disabled={disabled}
-          onValueChange={(nextUnit) => commit(amount, nextUnit)}
-          value={unit}
-        >
+        <Select disabled={disabled} onValueChange={handleUnit} value={unit}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
