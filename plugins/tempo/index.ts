@@ -51,6 +51,11 @@ const tempoPlugin: IntegrationPlugin = {
           field: "memo",
           description: "The bytes32 memo attached to the transfer",
         },
+        {
+          field: "validBefore",
+          description:
+            "On-chain expiry enforced (unix seconds), or null if none set",
+        },
         { field: "chainId", description: "The Tempo chain id used" },
         {
           field: "error",
@@ -97,6 +102,20 @@ const tempoPlugin: IntegrationPlugin = {
           placeholder: "INV-1042 or 0x... (32-byte hex)",
           helpTip:
             "Attached on-chain as an indexed bytes32 topic. Plain text (<= 31 bytes) is utf8-encoded; a 0x + 64-hex value is used verbatim (e.g. a receipt hash).",
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "validBefore",
+              label: "Expire if not settled by",
+              type: "datetime",
+              helpTip:
+                "Optional on-chain expiry: if the transfer is not included by this time it fails instead of lingering. A fixed date+timezone, a relative offset (e.g. +15m from the run), or a value from another step. Leave blank for no expiry.",
+            },
+          ],
         },
       ],
     },
@@ -252,106 +271,6 @@ const tempoPlugin: IntegrationPlugin = {
               max: 9999,
               helpTip:
                 "Maximum slippage in basis points (50 = 0.5%). The swap reverts if the output falls below this floor.",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      slug: "schedule-payment",
-      label: "Scheduled Payment",
-      description:
-        "Send a stablecoin payment bounded to an inclusion window (valid-after / valid-before) so it only lands during the intended timeframe",
-      category: "Tempo",
-      stepFunction: "schedulePaymentStep",
-      stepImportPath: "schedule-payment",
-      outputFields: [
-        { field: "success", description: "Whether the payment succeeded" },
-        {
-          field: "transactionHash",
-          description: "The transaction hash of the payment",
-        },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
-        { field: "from", description: "The sending wallet address" },
-        { field: "to", description: "The recipient address" },
-        { field: "amount", description: "The amount paid (human-readable)" },
-        {
-          field: "memo",
-          description: "The bytes32 memo attached to the payment",
-        },
-        {
-          field: "validAfter",
-          description:
-            "Earliest inclusion time enforced (unix seconds), or null",
-        },
-        {
-          field: "validBefore",
-          description: "Latest inclusion time enforced (unix seconds)",
-        },
-        { field: "chainId", description: "The Tempo chain id used" },
-        { field: "error", description: "Error message if the payment failed" },
-      ],
-      configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          allowedChainIds: TEMPO_CHAIN_IDS,
-          placeholder: "Select a Tempo network",
-          required: true,
-        },
-        {
-          key: "tokenConfig",
-          label: "Token",
-          type: "token-select",
-          networkField: "network",
-          required: true,
-        },
-        {
-          key: "amount",
-          label: "Amount",
-          type: "template-input",
-          placeholder: "100.50 or {{NodeName.amount}}",
-          example: "100.50",
-          required: true,
-        },
-        {
-          key: "recipientAddress",
-          label: "Recipient Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
-          required: true,
-        },
-        {
-          key: "memo",
-          label: "Memo",
-          type: "template-input",
-          placeholder: "INV-1042 or 0x... (32-byte hex)",
-          helpTip: "Attached on-chain as an indexed bytes32 topic.",
-        },
-        {
-          type: "group",
-          label: "Inclusion Window",
-          defaultExpanded: true,
-          fields: [
-            {
-              key: "validAfter",
-              label: "Valid After",
-              type: "datetime",
-              helpTip:
-                "Earliest time the payment may be included, as a fixed date, a relative offset (e.g. +2h from the run), or a value from another step. Leave blank for no lower bound. Must not be in the future (broadcasts during this run).",
-            },
-            {
-              key: "validBefore",
-              label: "Valid Before",
-              type: "datetime",
-              helpTip:
-                "Deadline after which the payment can no longer be included, as a fixed date, a relative offset (e.g. +15m from the run), or a value from another step. Defaults to 15 minutes from now.",
             },
           ],
         },

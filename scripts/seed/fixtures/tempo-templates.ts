@@ -325,10 +325,10 @@ const RAW_FIXTURES: TempoTemplateFixture[] = [
       ),
       buildActionNode(
         "step-4",
-        "Schedule Disbursement",
-        "Schedule the owner disbursement to land during business hours",
+        "Send Disbursement",
+        "Send the owner disbursement on Tempo",
         {
-          actionType: "tempo/schedule-payment",
+          actionType: "tempo/transfer-with-memo",
           network: TEMPO_TESTNET,
           tokenConfig: ALPHA_USD,
           amount: "{{disbursementAmount}}",

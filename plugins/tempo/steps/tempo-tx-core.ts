@@ -3,7 +3,7 @@
  *
  * Builds, signs, and broadcasts native Tempo type-0x76 transactions from the
  * organization's Turnkey-backed EOA. This is the extraction the plugins/tempo
- * steps (and later the schedule-payment / receipt-anchoring steps) build on.
+ * steps build on.
  *
  * This file must NOT contain "use step" -- it is a core module so step files
  * can share it without the bundler pulling its transitive deps into the
@@ -105,7 +105,8 @@ export type SignAndBroadcastParams = {
   calls: TempoCall[];
   /** TIP-20 stablecoin the fee is drawn from (usually the transferred token). */
   feeToken: Hex;
-  /** Optional inclusion window (unix seconds) for scheduled payments. */
+  /** Optional native on-chain validity window (unix seconds): earliest and
+   *  latest the tx may settle. `validBefore` acts as an expiry. */
   validAfter?: number;
   validBefore?: number;
   /** Execution id, folded into the per-send nonce lane for traceability. */

@@ -20,8 +20,14 @@ import {
 import {
   assertTempoChain,
   buildTempoTxLink,
+  parseTimestamp,
   resolveTempoToken,
 } from "./tempo-step-helpers";
+
+// Optional native on-chain expiry: when set, the transfer can no longer settle
+// after this instant. A window closing inside this buffer is rejected up front,
+// since it could lapse before the tx is signed and included.
+const MIN_INCLUSION_BUFFER_SEC = 60;
 
 export type TransferWithMemoInput = StepInput & {
   network: string;
@@ -29,6 +35,7 @@ export type TransferWithMemoInput = StepInput & {
   amount: string;
   recipientAddress: string;
   memo?: string;
+  validBefore?: string;
 };
 
 export type TransferWithMemoResult =
@@ -40,6 +47,7 @@ export type TransferWithMemoResult =
       to: string;
       amount: string;
       memo: string;
+      validBefore: number | null;
       chainId: number;
     }
   | { success: false; error: string };
@@ -66,6 +74,24 @@ async function stepHandler(
   }
   if (!amount || amount.trim() === "") {
     return { success: false, error: "Amount is required" };
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  let validBeforeSec: number | undefined;
+  try {
+    validBeforeSec = parseTimestamp(input.validBefore, nowSec);
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) };
+  }
+  if (
+    validBeforeSec !== undefined &&
+    validBeforeSec < nowSec + MIN_INCLUSION_BUFFER_SEC
+  ) {
+    return {
+      success: false,
+      error:
+        "The expiry is too soon: 'expire if not settled by' must be at least 60 seconds ahead so the transfer can settle before it lapses.",
+    };
   }
 
   if (!(_context?.executionId || _context?.organizationId)) {
@@ -105,6 +131,7 @@ async function stepHandler(
       chainId,
       calls: [call],
       feeToken: token.address,
+      validBefore: validBeforeSec,
       executionId: _context?.executionId,
     });
 
@@ -117,6 +144,7 @@ async function stepHandler(
       to: recipient,
       amount,
       memo: memoBytes,
+      validBefore: validBeforeSec ?? null,
       chainId,
     };
   } catch (error) {

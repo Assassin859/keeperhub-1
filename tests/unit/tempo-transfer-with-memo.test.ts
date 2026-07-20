@@ -35,10 +35,26 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
 const mockAssertTempoChain = vi.fn();
 const mockResolveTempoToken = vi.fn();
 const mockBuildTempoTxLink = vi.fn();
+const UNIX_RE = /^\d+$/;
 vi.mock("@/plugins/tempo/steps/tempo-step-helpers", () => ({
   assertTempoChain: (...args: unknown[]) => mockAssertTempoChain(...args),
   resolveTempoToken: (...args: unknown[]) => mockResolveTempoToken(...args),
   buildTempoTxLink: (...args: unknown[]) => mockBuildTempoTxLink(...args),
+  parseTimestamp: (raw?: string): number | undefined => {
+    if (!raw || raw.trim() === "") {
+      return;
+    }
+    const v = raw.trim();
+    if (UNIX_RE.test(v)) {
+      const n = Number(v);
+      return n > 1e12 ? Math.floor(n / 1000) : n;
+    }
+    const ms = Date.parse(v);
+    if (Number.isNaN(ms)) {
+      throw new Error(`Invalid date "${v}"`);
+    }
+    return Math.floor(ms / 1000);
+  },
 }));
 
 const mockSignAndBroadcast = vi.fn();
@@ -172,5 +188,44 @@ describe("transferWithMemoStep", () => {
     if (!res.success) {
       expect(res.error).toContain("reverted");
     }
+  });
+
+  it("passes an optional on-chain expiry (validBefore) to the transaction", async () => {
+    const EXPIRY = 4_102_444_800; // year 2100, safely in the future
+    const res = await transferWithMemoStep(
+      baseInput({ validBefore: String(EXPIRY) })
+    );
+
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.validBefore).toBe(EXPIRY);
+    }
+    expect(mockSignAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ validBefore: EXPIRY })
+    );
+  });
+
+  it("defaults to no expiry when validBefore is unset", async () => {
+    const res = await transferWithMemoStep(baseInput());
+
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.validBefore).toBeNull();
+    }
+    expect(mockSignAndBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ validBefore: undefined })
+    );
+  });
+
+  it("rejects an expiry that is too soon", async () => {
+    const res = await transferWithMemoStep(
+      baseInput({ validBefore: "1700000000" })
+    );
+
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error).toContain("too soon");
+    }
+    expect(mockSignAndBroadcast).not.toHaveBeenCalled();
   });
 });
