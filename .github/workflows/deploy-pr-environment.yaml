@@ -1113,11 +1113,12 @@ jobs:
   # to event-${sha_short} on add (PR build from build-events-image) or
   # event-latest on remove (revert to staging events).
   deploy-events-only:
-    needs: [check-labels, build-events-image]
+    needs: [check-labels, build-events-image, build-solana-image]
     if: |
       !cancelled() &&
       needs.check-labels.outputs.should-deploy-events-only == 'true' &&
-      (needs.build-events-image.result == 'success' || needs.build-events-image.result == 'skipped')
+      (needs.build-events-image.result == 'success' || needs.build-events-image.result == 'skipped') &&
+      (needs.build-solana-image.result == 'success' || needs.build-solana-image.result == 'skipped')
     runs-on: ubuntu-latest
     environment: staging
     env:
@@ -1169,7 +1170,10 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           EVENTS_IMAGE_TAG: ${{ needs.check-labels.outputs.should-deploy-events == 'true' && format('event-{0}', steps.vars.outputs.sha_short) || 'event-latest' }}
-        run: envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
+          SOLANA_IMAGE_TAG: solana-${{ steps.vars.outputs.sha_short }}
+        run: |
+          envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
+          envsubst < deploy/pr-environment/solana-tracker.template.yaml > ${{ github.workspace }}/solana-pr-${{ env.PR_NUMBER }}.yaml
 
       - name: Add Helm repository
         run: |
@@ -1183,6 +1187,21 @@ jobs:
             techops-services/common \
             -f ${GITHUB_WORKSPACE}/event-pr-${PR_NUMBER}.yaml \
             --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
+
+      - name: Redeploy or remove solana-tracker satellite
+        # On add (deploy-pr-events present) install the solana-<sha> image built
+        # by build-solana-image. On remove there is no solana-latest baseline to
+        # revert to, so uninstall the satellite rather than leave a stale image.
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.check-labels.outputs.should-deploy-events }}" = "true" ]; then
+            helm upgrade --install solana-pr-${PR_NUMBER} \
+              techops-services/common \
+              -f ${GITHUB_WORKSPACE}/solana-pr-${PR_NUMBER}.yaml \
+              --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
+          else
+            helm uninstall solana-pr-${PR_NUMBER} --namespace "${NAMESPACE}" --ignore-not-found || true
+          fi
 
   # Remote E2E tests against deployed PR environment
   # Runs when: test label just added (deploy skipped), or deploy just completed with test label present
