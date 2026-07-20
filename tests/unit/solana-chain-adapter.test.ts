@@ -141,6 +141,19 @@ describe("SolanaChainAdapter", () => {
       const url = await adapter.getTransactionUrl(TEST_TX_HASH);
       expect(url).toBe("");
     });
+
+    it("degrades to empty string instead of throwing when the lookup fails", async () => {
+      // A transfer step calls this after the transaction is already on-chain, so
+      // a throw here would flip a completed transfer's result to failed.
+      vi.mocked(buildChainTransactionUrl).mockRejectedValue(
+        new Error("explorer config lookup failed")
+      );
+
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      await expect(adapter.getTransactionUrl(TEST_TX_HASH)).resolves.toBe("");
+    });
   });
 
   describe("getAddressUrl", () => {
@@ -168,6 +181,19 @@ describe("SolanaChainAdapter", () => {
 
       const url = await adapter.getAddressUrl(SYSTEM_PROGRAM_ADDRESS);
       expect(url).toBe("");
+    });
+
+    it("degrades to empty string instead of throwing when the lookup fails", async () => {
+      vi.mocked(buildChainAddressUrl).mockRejectedValue(
+        new Error("explorer config lookup failed")
+      );
+
+      const { factory } = createMockFactory();
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, factory);
+
+      await expect(adapter.getAddressUrl(SYSTEM_PROGRAM_ADDRESS)).resolves.toBe(
+        ""
+      );
     });
   });
 

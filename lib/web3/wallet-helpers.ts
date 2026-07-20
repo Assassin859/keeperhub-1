@@ -3,11 +3,11 @@ import { TurnkeySigner } from "@turnkey/ethers";
 import { and, eq } from "drizzle-orm";
 import type { ethers } from "ethers";
 import { toChecksumAddress } from "@/lib/address-utils";
+import { TurnkeySolanaSigner } from "@/lib/agentic-wallet/solana-turnkey-signer";
 import { db } from "@/lib/db";
 import { type OrganizationWallet, organizationWallets } from "@/lib/db/schema";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getTurnkeySignerConfig } from "@/lib/turnkey/turnkey-client";
-import { TurnkeySolanaSigner } from "@/lib/agentic-wallet/solana-turnkey-signer";
 import type { SolanaTransactionSigner } from "@/lib/web3/chain-adapter/types";
 
 /**
@@ -101,16 +101,29 @@ export function buildSolanaSignerFromWallet(
   if (!wallet.solanaAddress) {
     throw new Error(
       "[Solana] Organization wallet has no provisioned Solana address. " +
-      "The wallet was created before Solana support was added. " +
-      "Contact support to add a Solana account to this wallet."
+        "The wallet was created before Solana support was added. " +
+        "Contact support to add a Solana account to this wallet."
     );
   }
   return new TurnkeySolanaSigner(wallet.turnkeySubOrgId, wallet.solanaAddress);
 }
 
+/**
+ * Resolves an organization's Solana signer and its provisioned address in one
+ * fetch. Throws if the wallet is missing or has no Solana account; callers wrap
+ * this in their own error shape. Shared by the Solana transfer paths.
+ */
+export async function initializeSolanaWallet(
+  organizationId: string
+): Promise<{ signer: SolanaTransactionSigner; address: string }> {
+  const wallet = await getOrganizationWallet(organizationId);
+  const signer = buildSolanaSignerFromWallet(wallet);
+  // buildSolanaSignerFromWallet throws when solanaAddress is absent.
+  return { signer, address: wallet.solanaAddress as string };
+}
+
 export async function initializeSolanaWalletSigner(
   organizationId: string
 ): Promise<SolanaTransactionSigner> {
-  const wallet = await getOrganizationWallet(organizationId);
-  return buildSolanaSignerFromWallet(wallet);
+  return (await initializeSolanaWallet(organizationId)).signer;
 }
