@@ -429,6 +429,67 @@ const web3Plugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "send-raw-solana-instruction",
+      label: "Send Raw Solana Instruction",
+      description:
+        "Build and submit an arbitrary Solana transaction from raw instructions (programId, accounts, data)",
+      category: "Web3",
+      requiresCredentials: true,
+      stepFunction: "sendRawSolanaInstructionStep",
+      stepImportPath: "send-raw-solana-instruction",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the transaction succeeded",
+        },
+        {
+          field: "transactionHash",
+          description: "The transaction signature of the submitted transaction",
+        },
+        {
+          field: "transactionLink",
+          description: "Explorer link to view the transaction",
+        },
+        {
+          field: "gasUsedUnits",
+          description: "Compute units consumed by the transaction",
+        },
+        {
+          field: "effectiveGasPrice",
+          description:
+            "Compute unit price in micro-lamports, if the transaction set one",
+        },
+        {
+          field: "instructionCount",
+          description: "Number of instructions submitted in the transaction",
+        },
+        {
+          field: "error",
+          description: "Error message if the transaction failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "instructions",
+          label: "Instructions",
+          type: "json-editor",
+          placeholder:
+            '[{ "programId": "...", "accounts": [{ "pubkey": "...", "isSigner": false, "isWritable": true }], "data": "<base64 or 0x-hex>" }]',
+          helpTip:
+            "A JSON array of Solana instructions. Each entry has a base58 programId, an ordered accounts array (pubkey plus isSigner/isWritable flags), and instruction data as base64 or 0x-hex. Only the organization wallet may be marked isSigner, and it is always the fee payer.",
+          required: true,
+        },
+      ],
+    },
+    {
       slug: "read-contract",
       label: "Read Contract",
       description: "Read data from a smart contract (view/pure functions)",
