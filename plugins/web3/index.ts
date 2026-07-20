@@ -432,7 +432,7 @@ const web3Plugin: IntegrationPlugin = {
       slug: "send-raw-solana-instruction",
       label: "Send Raw Solana Instruction",
       description:
-        "Build and submit an arbitrary Solana transaction from raw instructions (programId, accounts, data)",
+        "Build and submit an arbitrary Solana transaction from raw instructions (programId, accounts, data). A low-level escape hatch with no spend limit: instructions run with the organization wallet's full authority, so treat it as trusted access to move the wallet's SOL and tokens.",
       category: "Web3",
       requiresCredentials: true,
       stepFunction: "sendRawSolanaInstructionStep",
@@ -484,7 +484,7 @@ const web3Plugin: IntegrationPlugin = {
           placeholder:
             '[{ "programId": "...", "accounts": [{ "pubkey": "...", "isSigner": false, "isWritable": true }], "data": "<base64 or 0x-hex>" }]',
           helpTip:
-            "A JSON array of Solana instructions. Each entry has a base58 programId, an ordered accounts array (pubkey plus isSigner/isWritable flags), and instruction data as base64 or 0x-hex. Only the organization wallet may be marked isSigner, and it is always the fee payer.",
+            "A JSON array of Solana instructions. Each entry has a base58 programId, an ordered accounts array (pubkey plus isSigner/isWritable flags), and instruction data as standard base64 or 0x-hex. Only the organization wallet may be marked isSigner, and it is always the fee payer. There is no spend limit - any instruction here executes with the wallet's full authority, including moving its SOL or tokens, so use with caution.",
           required: true,
         },
       ],
