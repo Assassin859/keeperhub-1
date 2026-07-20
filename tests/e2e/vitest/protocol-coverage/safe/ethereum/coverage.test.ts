@@ -5,8 +5,7 @@ import { cleanupAll, createSharedCtx, runSetup } from "../../_shared/setup";
 const PROTOCOL = "safe";
 const CHAIN_ID = "1";
 const SKIP_INFRA_TESTS =
-  !process.env.DATABASE_URL ||
-  !process.env.ANVIL_FORK_MAINNET_URL ||
+  !(process.env.DATABASE_URL && process.env.ANVIL_FORK_MAINNET_URL) ||
   process.env.SKIP_INFRA_TESTS === "true";
 
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Ethereum)`, () => {

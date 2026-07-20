@@ -55,7 +55,10 @@ async function getTestWalletAddress(): Promise<string> {
     const [row] = await db
       .select({ walletAddress: organizationWallets.walletAddress })
       .from(organizationWallets)
-      .innerJoin(organization, eq(organization.id, organizationWallets.organizationId))
+      .innerJoin(
+        organization,
+        eq(organization.id, organizationWallets.organizationId)
+      )
       .where(
         and(
           eq(organization.slug, PERSISTENT_TEST_ORG_SLUG),
@@ -173,7 +176,7 @@ export async function runSetup(opts: {
     workflow.id,
     setupSpec.executionWaitMs ?? 300_000
   );
-  if (!result || result.status !== "success") {
+  if (result?.status !== "success") {
     const diagnosis = await describeExecutionState(workflow.id);
     throw new Error(
       `setup workflow failed for ${protocol}/${chainId}: ${result?.status ?? "timeout"}${result?.error ? ` - ${result.error}` : ""}\n${diagnosis}`
@@ -200,7 +203,9 @@ async function describeExecutionState(workflowId: string): Promise<string> {
       FROM workflow_execution_logs WHERE execution_id = ${executions[0].id as string}
       ORDER BY started_at ASC LIMIT 20`;
     const execSummary = executions
-      .map((e) => `execution ${e.id}: ${e.status}${e.error ? ` (${e.error})` : ""}`)
+      .map(
+        (e) => `execution ${e.id}: ${e.status}${e.error ? ` (${e.error})` : ""}`
+      )
       .join("; ");
     // node_id disambiguates steps that share a display name (e.g. a setup
     // workflow with several protocol steps of the same action).

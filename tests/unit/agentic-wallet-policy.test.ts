@@ -213,9 +213,9 @@ describe("applyBaselinePolicies (HI-04)", () => {
     // N-1 successful creates -> N-1 rollback delete calls.
     const expectedSuccesses = BASELINE_POLICIES.length - 1;
     expect(client.deletePolicy).toHaveBeenCalledTimes(expectedSuccesses);
-    const deleteCalls = client.deletePolicy.mock.calls as unknown as Array<
-      [PolicyDeleteInput]
-    >;
+    const deleteCalls = client.deletePolicy.mock.calls as unknown as [
+      PolicyDeleteInput,
+    ][];
     const deletedIds = deleteCalls.map((c) => c[0].policyId).sort();
     const expectedIds = Array.from(
       { length: expectedSuccesses },

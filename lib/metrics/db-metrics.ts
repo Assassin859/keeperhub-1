@@ -17,6 +17,7 @@ import {
   gte,
   inArray,
   notInArray,
+  or,
   sql,
 } from "drizzle-orm";
 import {
@@ -424,13 +425,20 @@ export type SystemErrorsByCategory = Array<{
  * `statement_timeout` (Postgres 57014), the catch returned [], and the gauge
  * flapped. Bounding to the last hour keeps the row set tiny so the query is an
  * index range scan on idx_workflow_executions_error_completed_at and finishes
- * in milliseconds. No joins are needed — error_category/error_type live on
- * workflow_executions directly (migration 0073).
+ * in milliseconds. error_category/error_type live on workflow_executions
+ * directly (migration 0073); the workflows/organization left joins below exist
+ * only to resolve org_slug for the network_rpc scoping, and stay left joins so
+ * a row with no resolvable org still counts for every other category.
  *
  * errorCategory and errorType are read from the `workflow_executions`
  * error_category / error_type columns, projected to "unknown" for rows that
  * predate classification so every series carries populated labels. Cardinality
  * is bounded at roughly (~11 categories) * (~3 error types) — small and stable.
+ *
+ * network_rpc is the one exception to "platform-wide, no org filter": rows are
+ * scoped to MANAGED_ORG_SLUGS the same way the per-workflow gauge is. This still
+ * adds no org_slug label, it only narrows which rows count toward the
+ * network_rpc series, so cardinality stays fixed.
  */
 export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByCategory> {
   try {
@@ -441,13 +449,19 @@ export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByC
         count: count(),
       })
       .from(workflowExecutions)
+      .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
+      .leftJoin(organization, eq(workflows.organizationId, organization.id))
       .where(
         and(
           // KEEP-853: system errors carry status='system_error' (not 'error'),
           // so both must be matched or every system error drops out of the gauge
           // the infra P3 alert reads.
           inArray(workflowExecutions.status, [...ERROR_STATUSES]),
-          sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`
+          sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`,
+          or(
+            sql`${workflowExecutions.errorCategory} IS DISTINCT FROM 'network_rpc'`,
+            inArray(organization.slug, [...MANAGED_ORG_SLUGS])
+          )
         )
       )
       .groupBy(workflowExecutions.errorCategory, workflowExecutions.errorType);

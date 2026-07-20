@@ -6,8 +6,8 @@ const TEST_ORG_ID = "org-abc123";
 type MockOrg = { id: string; deactivatedAt: Date | null } | undefined;
 type MockWorkflows = { id: string }[];
 
-let mockOrgForSelect: MockOrg = undefined;
-let mockUpdateOrgReturning: MockOrg = undefined;
+let mockOrgForSelect: MockOrg;
+let mockUpdateOrgReturning: MockOrg;
 let mockWorkflowsDeactivated: MockWorkflows = [];
 let mockShouldThrow = false;
 
@@ -17,10 +17,14 @@ vi.mock("@/lib/db", () => {
       set: vi.fn(() => ({
         where: vi.fn(() => ({
           returning: vi.fn(() => {
-            if (mockShouldThrow) throw new Error("DB error");
+            if (mockShouldThrow) {
+              throw new Error("DB error");
+            }
             // First call = org update, second call = workflows update
             if (mockUpdateOrgReturning !== undefined) {
-              const result = mockUpdateOrgReturning ? [mockUpdateOrgReturning] : [];
+              const result = mockUpdateOrgReturning
+                ? [mockUpdateOrgReturning]
+                : [];
               mockUpdateOrgReturning = undefined;
               return Promise.resolve(result);
             }
@@ -32,7 +36,9 @@ vi.mock("@/lib/db", () => {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
-          limit: vi.fn(() => Promise.resolve(mockOrgForSelect ? [mockOrgForSelect] : [])),
+          limit: vi.fn(() =>
+            Promise.resolve(mockOrgForSelect ? [mockOrgForSelect] : [])
+          ),
         })),
       })),
     })),
@@ -40,14 +46,22 @@ vi.mock("@/lib/db", () => {
 
   return {
     db: {
-      transaction: vi.fn((fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
+      transaction: vi.fn((fn: (tx: typeof txMock) => Promise<unknown>) =>
+        fn(txMock)
+      ),
     },
   };
 });
 
 vi.mock("@/lib/db/schema", () => ({
   organization: { id: "id", deactivatedAt: "deactivated_at" },
-  workflows: { id: "id", organizationId: "organization_id", deactivatedAt: "deactivated_at", deletedAt: "deleted_at", enabled: "enabled" },
+  workflows: {
+    id: "id",
+    organizationId: "organization_id",
+    deactivatedAt: "deactivated_at",
+    deletedAt: "deleted_at",
+    enabled: "enabled",
+  },
 }));
 
 vi.mock("@/lib/logging", () => ({
@@ -59,7 +73,9 @@ import { POST } from "@/app/api/admin/orgs/[orgId]/deactivate/route";
 
 function makeRequest(token?: string): Request {
   const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
   return new Request("http://localhost/api/admin/orgs/org-abc123/deactivate", {
     method: "POST",
     headers,

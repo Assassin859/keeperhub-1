@@ -10,6 +10,7 @@
 import { decryptExportBundle, generateP256KeyPair } from "@turnkey/crypto";
 import { Turnkey } from "@turnkey/sdk-server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { isSolanaWalletProvisioningEnabled } from "@/lib/turnkey/solana-provisioning-flag";
 
 let turnkeyInstance: Turnkey | undefined;
 
@@ -126,20 +127,24 @@ export async function createTurnkeyWallet(
   const turnkey = getTurnkeyClient();
   const client = turnkey.apiClient();
 
+  // Gate Solana account creation behind an env flag so wallets can be
+  // provisioned EVM-only until a Solana RPC is configured (CHAIN_RPC_CONFIG).
+  const solanaEnabled = isSolanaWalletProvisioningEnabled();
+
   let subOrgId: string | undefined;
   let walletId: string | undefined;
 
   try {
     const apiPublicKey = process.env.TURNKEY_API_PUBLIC_KEY ?? "";
 
-    // 1. Primary path: try creating both EVM and Solana accounts in createSubOrganization
+    // 1. Primary path: create the sub-org with EVM (+ Solana when enabled).
     const subOrg = await client.createSubOrganization(
       buildSubOrgRequest(
         process.env.TURNKEY_ORGANIZATION_ID ?? "",
         organizationName,
         email,
         apiPublicKey,
-        EVM_AND_SOLANA_ACCOUNTS
+        solanaEnabled ? EVM_AND_SOLANA_ACCOUNTS : EVM_ONLY_ACCOUNTS
       )
     );
 
@@ -249,20 +254,22 @@ export async function createTurnkeyWallet(
       );
 
       let solanaAddress: string | null = null;
-      try {
-        const result = await client.createWalletAccounts({
-          organizationId: existingSubOrgId,
-          walletId: existingWalletId,
-          accounts: SOLANA_ONLY_ACCOUNT,
-        });
-        solanaAddress = result.addresses?.[0] ?? null;
-      } catch (solanaError) {
-        logSystemError(
-          ErrorCategory.EXTERNAL_SERVICE,
-          "[Turnkey] Solana account add failed on reconciled sub-org",
-          solanaError,
-          { service: "turnkey", existingSubOrgId }
-        );
+      if (solanaEnabled) {
+        try {
+          const result = await client.createWalletAccounts({
+            organizationId: existingSubOrgId,
+            walletId: existingWalletId,
+            accounts: SOLANA_ONLY_ACCOUNT,
+          });
+          solanaAddress = result.addresses?.[0] ?? null;
+        } catch (solanaError) {
+          logSystemError(
+            ErrorCategory.EXTERNAL_SERVICE,
+            "[Turnkey] Solana account add failed on reconciled sub-org",
+            solanaError,
+            { service: "turnkey", existingSubOrgId }
+          );
+        }
       }
 
       const walletAccounts = await client.getWalletAccounts({
@@ -277,7 +284,7 @@ export async function createTurnkeyWallet(
         throw new Error("EVM address not found in reconciled sub-org");
       }
 
-      if (!solanaAddress) {
+      if (solanaEnabled && !solanaAddress) {
         const solanaAccount = walletAccounts.accounts?.find(
           (a) => a.addressFormat === "ADDRESS_FORMAT_SOLANA"
         );
@@ -320,22 +327,24 @@ export async function createTurnkeyWallet(
         );
       }
 
-      // Try adding Solana account separately
+      // Try adding Solana account separately (when enabled)
       let solanaAddress: string | null = null;
-      try {
-        const solanaAccountResult = await client.createWalletAccounts({
-          organizationId: subOrgId,
-          walletId,
-          accounts: SOLANA_ONLY_ACCOUNT,
-        });
-        solanaAddress = solanaAccountResult.addresses?.[0] ?? null;
-      } catch (solanaError) {
-        logSystemError(
-          ErrorCategory.EXTERNAL_SERVICE,
-          "[Turnkey] Fallback Solana account creation failed via createWalletAccounts",
-          solanaError,
-          { service: "turnkey", subOrgId }
-        );
+      if (solanaEnabled) {
+        try {
+          const solanaAccountResult = await client.createWalletAccounts({
+            organizationId: subOrgId,
+            walletId,
+            accounts: SOLANA_ONLY_ACCOUNT,
+          });
+          solanaAddress = solanaAccountResult.addresses?.[0] ?? null;
+        } catch (solanaError) {
+          logSystemError(
+            ErrorCategory.EXTERNAL_SERVICE,
+            "[Turnkey] Fallback Solana account creation failed via createWalletAccounts",
+            solanaError,
+            { service: "turnkey", subOrgId }
+          );
+        }
       }
 
       return {

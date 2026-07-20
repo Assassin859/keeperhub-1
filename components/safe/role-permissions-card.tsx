@@ -150,6 +150,20 @@ function findDirectAllowance<
   );
 }
 
+function CardWrapper({
+  bare,
+  children,
+}: {
+  bare: boolean;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return bare ? (
+    <div>{children}</div>
+  ) : (
+    <div className="rounded-lg border bg-card p-4">{children}</div>
+  );
+}
+
 export function RolePermissionsCard({
   safeId,
   chainId,
@@ -300,19 +314,8 @@ export function RolePermissionsCard({
     </p>
   );
 
-  const Wrapper = ({
-    children,
-  }: {
-    children: React.ReactNode;
-  }): React.ReactElement =>
-    bare ? (
-      <div>{children}</div>
-    ) : (
-      <div className="rounded-lg border bg-card p-4">{children}</div>
-    );
-
   return (
-    <Wrapper>
+    <CardWrapper bare={bare}>
       {headerBar}
       {blurb}
 
@@ -521,6 +524,6 @@ export function RolePermissionsCard({
           </details>
         </div>
       )}
-    </Wrapper>
+    </CardWrapper>
   );
 }

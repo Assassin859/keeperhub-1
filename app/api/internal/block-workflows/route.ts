@@ -7,6 +7,16 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
+/** The chainId a trigger node targets (config.network), or null if absent/unparseable. */
+function triggerChainId(node: WorkflowNode | undefined): number | null {
+  const raw = node?.data?.config?.network;
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    return null;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
@@ -19,6 +29,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
     const filterActive = searchParams.get("active") === "true";
+
+    // Additive chainType filter. Default "evm" preserves prior behavior;
+    // "solana" scopes the response for the solana-tracker service.
+    const requestedChainType =
+      searchParams.get("chainType") === "solana" ? "solana" : "evm";
 
     const blockTriggerFilter = sql`${workflows.nodes} @> '[{"data":{"type":"trigger","config":{"triggerType":"Block"}}}]'::jsonb`;
 
@@ -66,8 +81,22 @@ export async function GET(request: Request): Promise<NextResponse> {
       networkMap[network.chainId] = network;
     }
 
+    // Asymmetric chainType filter: "evm" is the default bucket (keep unless the
+    // network resolves to a Solana chain), "solana" keeps only Solana-network
+    // workflows. Missing/unresolvable networks stay in "evm".
+    const solanaChainIds = new Set<number>(
+      allChains
+        .filter((network) => network.chainType === "solana")
+        .map((network) => network.chainId)
+    );
+    const filteredWorkflows = blockWorkflows.filter((workflow) => {
+      const chainId = triggerChainId(workflow.nodes[0]);
+      const isSolana = chainId !== null && solanaChainIds.has(chainId);
+      return requestedChainType === "solana" ? isSolana : !isSolana;
+    });
+
     return NextResponse.json({
-      workflows: blockWorkflows,
+      workflows: filteredWorkflows,
       networks: networkMap,
     });
   } catch (error) {

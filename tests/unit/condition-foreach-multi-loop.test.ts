@@ -99,7 +99,7 @@ function buildMaps(
     if (!edgesBySource.has(e.source)) {
       edgesBySource.set(e.source, []);
     }
-    edgesBySource.get(e.source)!.push(e.target);
+    edgesBySource.get(e.source)?.push(e.target);
   }
 
   const edgesBySourceHandle = buildEdgesBySourceHandle(edges);
@@ -481,10 +481,10 @@ describe("topology 2: five For Each loops with chained conditions (3 deep, 5 bra
           edgesBySourceHandle
         );
 
-        for (let c = 0; c < loop.condIds.length; c++) {
+        for (const condId of loop.condIds) {
           const targets = resolveBodyConditionTargets(
             false,
-            loop.condIds[c],
+            condId,
             body.bodyEdgesBySourceHandle,
             body.bodyEdgesBySource
           );
@@ -727,7 +727,7 @@ describe("topology 4: For Each with outer gate + 5 nested inner conditions", () 
   }
 
   // Inner condition nodes also need edges to collect
-  for (const ic of innerConds) {
+  for (const _ic of innerConds) {
     // Collect reachable from the inner condition nodes' children (already added above)
   }
 

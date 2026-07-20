@@ -4,7 +4,10 @@ import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
-import { invalidateOrgMfaEnforcement, parseEnforcedFactors } from "@/lib/mfa/org-mfa-enforcement";
+import {
+  invalidateOrgMfaEnforcement,
+  parseEnforcedFactors,
+} from "@/lib/mfa/org-mfa-enforcement";
 import type { StepUpFactor } from "@/lib/mfa/step-up-policy";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";

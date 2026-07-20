@@ -5,9 +5,11 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import type { ethers } from "ethers";
+import { logWarn } from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { RpcOperationType } from "@/lib/rpc/providers/index";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
+import { getErrorMessage } from "@/lib/utils";
 import type { NonceSession } from "../nonce-manager";
 import {
   normalizeSolanaTransaction,
@@ -214,7 +216,7 @@ export class SolanaChainAdapter implements ChainAdapter {
   }
 
   async getBalance(
-    _rpcManager: RpcProviderManager,
+    _rpcManager: RpcProviderManager | undefined,
     address: string
   ): Promise<bigint> {
     const pubkey = new PublicKey(address);
@@ -246,11 +248,31 @@ export class SolanaChainAdapter implements ChainAdapter {
     return manager.executeWithFailover(operation, operationType);
   }
 
-  getTransactionUrl(txHash: string): Promise<string> {
-    return Promise.resolve(buildChainTransactionUrl(this.chainId, txHash));
+  // The explorer URL is cosmetic. A failure building it (e.g. the explorer-config
+  // lookup throwing) must never propagate: by the time a transfer step calls this
+  // the transaction is already on-chain, and a throw here would flip a completed
+  // transfer's result to failed. Callers treat "" as "no link available".
+  async getTransactionUrl(txHash: string): Promise<string> {
+    try {
+      return await buildChainTransactionUrl(this.chainId, txHash);
+    } catch (error) {
+      logWarn(
+        `[SolanaChainAdapter] Failed to build transaction explorer URL: ${getErrorMessage(error)}`,
+        { chain_id: String(this.chainId) }
+      );
+      return "";
+    }
   }
 
-  getAddressUrl(address: string): Promise<string> {
-    return Promise.resolve(buildChainAddressUrl(this.chainId, address));
+  async getAddressUrl(address: string): Promise<string> {
+    try {
+      return await buildChainAddressUrl(this.chainId, address);
+    } catch (error) {
+      logWarn(
+        `[SolanaChainAdapter] Failed to build address explorer URL: ${getErrorMessage(error)}`,
+        { chain_id: String(this.chainId) }
+      );
+      return "";
+    }
   }
 }

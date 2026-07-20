@@ -1,5 +1,5 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { wallet, amount, native } from "@/lib/test-data/types";
+import { amount, native, wallet } from "@/lib/test-data/types";
 
 const WSTETH_ABI = JSON.stringify([
   {
@@ -116,7 +116,8 @@ export default defineAbiProtocol({
       },
       skipped: {
         wrap: "requires stETH balance - not provisioned in fork setup (stETH's share-derived balanceOf defeats slot fabrication; needs a whale entry)",
-        unwrap: "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
+        unwrap:
+          "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
       },
       // Chain invariants (unnamed outputs, so no field): the wstETH<->stETH
       // exchange rates only ratchet up from 1e18, the 1-unit conversions are
@@ -182,7 +183,11 @@ export default defineAbiProtocol({
             _wstETHAmount: { label: "wstETH Amount (wei)" },
           },
           outputs: {
-            result: { name: "stETHAmount", label: "stETH Value (wei)", decimals: 18 },
+            result: {
+              name: "stETHAmount",
+              label: "stETH Value (wei)",
+              decimals: 18,
+            },
           },
         },
         getWstETHByStETH: {
@@ -194,7 +199,11 @@ export default defineAbiProtocol({
             _stETHAmount: { label: "stETH Amount (wei)" },
           },
           outputs: {
-            result: { name: "wstETHAmount", label: "wstETH Value (wei)", decimals: 18 },
+            result: {
+              name: "wstETHAmount",
+              label: "wstETH Value (wei)",
+              decimals: 18,
+            },
           },
         },
         stEthPerToken: {
@@ -203,7 +212,11 @@ export default defineAbiProtocol({
           description:
             "Get the current stETH value of 1 wstETH (exchange rate from wstETH to stETH)",
           outputs: {
-            result: { name: "rate", label: "stETH per wstETH (wei)", decimals: 18 },
+            result: {
+              name: "rate",
+              label: "stETH per wstETH (wei)",
+              decimals: 18,
+            },
           },
         },
         tokensPerStEth: {
@@ -212,7 +225,11 @@ export default defineAbiProtocol({
           description:
             "Get the current wstETH value of 1 stETH (inverse exchange rate)",
           outputs: {
-            result: { name: "rate", label: "wstETH per stETH (wei)", decimals: 18 },
+            result: {
+              name: "rate",
+              label: "wstETH per stETH (wei)",
+              decimals: 18,
+            },
           },
         },
         balanceOf: {
@@ -223,7 +240,11 @@ export default defineAbiProtocol({
             account: { label: "Wallet Address" },
           },
           outputs: {
-            result: { name: "balance", label: "wstETH Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "wstETH Balance (wei)",
+              decimals: 18,
+            },
           },
         },
         totalSupply: {
@@ -231,7 +252,11 @@ export default defineAbiProtocol({
           label: "Get wstETH Total Supply",
           description: "Get the total supply of wstETH tokens",
           outputs: {
-            result: { name: "totalSupply", label: "Total wstETH Supply (wei)", decimals: 18 },
+            result: {
+              name: "totalSupply",
+              label: "Total wstETH Supply (wei)",
+              decimals: 18,
+            },
           },
         },
       },
@@ -264,7 +289,11 @@ export default defineAbiProtocol({
             _account: { name: "account", label: "Wallet Address" },
           },
           outputs: {
-            result: { name: "balance", label: "stETH Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "stETH Balance (wei)",
+              decimals: 18,
+            },
           },
         },
       },

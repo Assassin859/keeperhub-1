@@ -1,5 +1,7 @@
 import { ethers } from "ethers";
+import { logWarn } from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getErrorMessage } from "@/lib/utils";
 import { submitSignedTransactionWithFailover } from "@/lib/web3/submit-signed";
 import type { AdaptiveGasStrategy, GasConfig } from "../gas-strategy";
 import type { NonceManager, NonceSession } from "../nonce-manager";
@@ -246,9 +248,12 @@ export class EvmChainAdapter implements ChainAdapter {
   }
 
   async getBalance(
-    rpcManager: RpcProviderManager,
+    rpcManager: RpcProviderManager | undefined,
     address: string
   ): Promise<bigint> {
+    if (!rpcManager) {
+      throw new Error("[EvmChainAdapter] getBalance requires an rpcManager");
+    }
     return await rpcManager.executeWithFailover(async (provider) =>
       provider.getBalance(address)
     );
@@ -262,12 +267,32 @@ export class EvmChainAdapter implements ChainAdapter {
     return await rpcManager.executeWithFailover(operation, operationType);
   }
 
+  // The explorer URL is cosmetic. A failure building it (e.g. the explorer-config
+  // lookup throwing) must never propagate: transfer steps call this after the
+  // transaction is already mined, inside the try/catch that maps a throw to a
+  // failed result, so a throw here would report a completed transfer as failed.
   async getTransactionUrl(txHash: string): Promise<string> {
-    return buildChainTransactionUrl(this.chainId, txHash);
+    try {
+      return await buildChainTransactionUrl(this.chainId, txHash);
+    } catch (error) {
+      logWarn(
+        `[EvmChainAdapter] Failed to build transaction explorer URL: ${getErrorMessage(error)}`,
+        { chain_id: String(this.chainId) }
+      );
+      return "";
+    }
   }
 
   async getAddressUrl(address: string): Promise<string> {
-    return buildChainAddressUrl(this.chainId, address);
+    try {
+      return await buildChainAddressUrl(this.chainId, address);
+    } catch (error) {
+      logWarn(
+        `[EvmChainAdapter] Failed to build address explorer URL: ${getErrorMessage(error)}`,
+        { chain_id: String(this.chainId) }
+      );
+      return "";
+    }
   }
 
   private async confirmTransaction(

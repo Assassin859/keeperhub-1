@@ -202,6 +202,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       // resolves to false, which is correct: key export is session-only.
       isOwner: userId !== null && wallet.userId === userId,
       walletAddress: wallet.walletAddress,
+      solanaAddress: wallet.solanaAddress ?? null,
       walletId: wallet.turnkeyWalletId,
       email: wallet.email,
       createdAt: wallet.createdAt,

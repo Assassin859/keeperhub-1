@@ -449,7 +449,7 @@ describe("condition-builder-utils", () => {
     /** Parse expression and return the first rule. Throws if parsing fails. */
     function parseFirstRule(expr: string): ConditionRule {
       const result = expressionToConditionGroup(expr);
-      if (!result || result.rules.length !== 1) {
+      if (result?.rules.length !== 1) {
         throw new Error(
           `Expected single-rule group, got: ${JSON.stringify(result)}`
         );

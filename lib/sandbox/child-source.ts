@@ -190,7 +190,9 @@ function reviveSandboxNumber(token: string): number {
  */
 const SANDBOX_VIEW_CTORS: Record<
   string,
-  new (buffer: ArrayBuffer) => ArrayBufferView
+  new (
+    buffer: ArrayBuffer
+  ) => ArrayBufferView
 > = {
   Int8Array,
   Uint8Array,

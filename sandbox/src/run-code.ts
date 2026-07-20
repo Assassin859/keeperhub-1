@@ -251,7 +251,7 @@ async function runInChild(
  * a relayable tagged-JSON frame (the user result, forwarded verbatim) or a
  * synthetic ChildOutcome describing a structured error.
  */
-export async function runCode(input: {
+export function runCode(input: {
   code: string;
   timeoutMs: number;
   signal?: AbortSignal;

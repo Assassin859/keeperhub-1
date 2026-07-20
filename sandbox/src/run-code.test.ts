@@ -304,9 +304,9 @@ describe("isRelayableEnvelope shallow guard", () => {
   });
 
   it("accepts a valid ok:false envelope, ignoring a tagged errorStack", () => {
-    expect(isRelayableEnvelope({ ok: false, errorMessage: "x", logs: [] })).toBe(
-      true
-    );
+    expect(
+      isRelayableEnvelope({ ok: false, errorMessage: "x", logs: [] })
+    ).toBe(true);
     // On the un-revived frame errorStack:undefined arrives as { $: "undef" };
     // the relay guard must accept it (the client validates the revived form).
     expect(

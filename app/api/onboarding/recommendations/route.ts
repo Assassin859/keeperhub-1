@@ -106,6 +106,8 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   return NextResponse.json(map, {
-    headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=30" },
+    headers: {
+      "Cache-Control": "private, max-age=60, stale-while-revalidate=30",
+    },
   });
 }

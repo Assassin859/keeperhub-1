@@ -62,7 +62,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // No chainType filter: getBalance is supported on EVM and Solana.
           placeholder: "Select network",
           required: true,
         },
@@ -70,7 +70,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "address",
           label: "Address",
           type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
+          placeholder: "0x... / Solana address / {{NodeName.address}}",
           example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
           required: true,
         },
@@ -183,14 +183,15 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // Native transfer works on any native-token chain (EVM + Solana),
+          // so no chainType filter here - the adapter routes by chainId.
           showPrivateVariants: true,
           placeholder: "Select network",
           required: true,
         },
         {
           key: "amount",
-          label: "Amount (ETH)",
+          label: "Amount",
           type: "template-input",
           placeholder: "0.1 or {{NodeName.amount}}",
           example: "0.1",
@@ -329,6 +330,102 @@ const web3Plugin: IntegrationPlugin = {
           ],
         },
 
+      ],
+    },
+    {
+      slug: "transfer-spl-token",
+      label: "Transfer SPL Token",
+      description:
+        "Transfer SPL tokens on Solana from your wallet to a recipient address",
+      category: "Web3",
+      requiresCredentials: true,
+      stepFunction: "transferSplTokenStep",
+      stepImportPath: "transfer-spl-token",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the transfer succeeded",
+        },
+        {
+          field: "transactionHash",
+          description: "The transaction signature of the successful transfer",
+        },
+        {
+          field: "transactionLink",
+          description: "Explorer link to view the transaction",
+        },
+        {
+          field: "amount",
+          description: "The amount transferred (human-readable)",
+        },
+        {
+          field: "mint",
+          description: "The SPL token mint address",
+        },
+        {
+          field: "decimals",
+          description: "The mint's decimals, read from the mint account",
+        },
+        {
+          field: "recipient",
+          description: "The recipient wallet address",
+        },
+        {
+          field: "recipientTokenAccount",
+          description:
+            "The recipient's associated token account that received the transfer",
+        },
+        {
+          field: "createdRecipientAccount",
+          description:
+            "Whether the recipient's token account was created by this transfer (the sender pays its rent)",
+        },
+        {
+          field: "error",
+          description: "Error message if the transfer failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          // Keyed "mint" rather than "mintAddress" on purpose: the field
+          // renderer treats any key ending in "address" as an EVM address,
+          // applying checksum formatting and an Ethereum-only address book to
+          // what is a base58 mint.
+          key: "mint",
+          label: "Token Mint",
+          type: "template-input",
+          placeholder: "Mint address or {{NodeName.mint}}",
+          example: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          helpTip:
+            "The SPL token's mint address (base58). Decimals are read from the mint account at execution time.",
+          required: true,
+        },
+        {
+          key: "amount",
+          label: "Amount",
+          type: "template-input",
+          placeholder: "100.50 or {{NodeName.amount}}",
+          example: "100.50",
+          required: true,
+        },
+        {
+          // No isAddressField: it would validate against an Ethereum address
+          // pattern and reject every valid base58 Solana address.
+          key: "recipientAddress",
+          label: "Recipient Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+          required: true,
+        },
       ],
     },
     {

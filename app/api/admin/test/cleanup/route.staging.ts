@@ -39,13 +39,17 @@ async function cleanupSeededUserWorkflows(): Promise<SeededCleanupCounts> {
     .execute(sql`
     UPDATE workflows SET enabled = false WHERE user_id IN (${userSubquery})
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
   await db
     .execute(sql`
     UPDATE workflow_executions SET status = 'cancelled'
     WHERE status = 'running' AND workflow_id IN (${wfSubquery})
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
 
   const statements = [
     sql`DELETE FROM workflow_execution_logs WHERE execution_id IN (
@@ -55,7 +59,9 @@ async function cleanupSeededUserWorkflows(): Promise<SeededCleanupCounts> {
     sql`DELETE FROM workflows WHERE user_id IN (${userSubquery})`,
   ];
   for (const stmt of statements) {
-    await db.execute(stmt).catch(() => {});
+    await db.execute(stmt).catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
   }
 
   return {
@@ -76,7 +82,9 @@ async function cleanupPass(): Promise<number> {
     UPDATE workflows SET enabled = false
     WHERE user_id IN (${userSubquery})
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
 
   // Cancel running executions so rows aren't locked.
   await db
@@ -84,7 +92,9 @@ async function cleanupPass(): Promise<number> {
     UPDATE workflow_executions SET status = 'cancelled'
     WHERE status = 'running' AND workflow_id IN (${wfSubquery})
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
 
   // Delete in FK-safe order. Each statement runs independently —
   // if one fails (lock, timeout), the next pass will retry.
@@ -96,7 +106,9 @@ async function cleanupPass(): Promise<number> {
   ];
 
   for (const stmt of statements) {
-    await db.execute(stmt).catch(() => {});
+    await db.execute(stmt).catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
   }
 
   // Discover all tables with a direct FK to users.id and delete from each.
@@ -122,8 +134,12 @@ async function cleanupPass(): Promise<number> {
   const sorted = [...fkRows]
     .filter((r) => !skip.has(r.table_name))
     .sort((a, b) => {
-      if (a.table_name === "workflows") return 1;
-      if (b.table_name === "workflows") return -1;
+      if (a.table_name === "workflows") {
+        return 1;
+      }
+      if (b.table_name === "workflows") {
+        return -1;
+      }
       return 0;
     });
 
@@ -136,7 +152,9 @@ async function cleanupPass(): Promise<number> {
       DELETE FROM ${sql.identifier(row.table_name)}
       WHERE ${sql.identifier(row.column_name)} IN (${userSubquery})
     `)
-      .catch(() => {});
+      .catch(() => {
+        // best-effort cleanup: ignore errors from missing tables/rows
+      });
   }
 
   // Verifications by email pattern (no FK to users).
@@ -145,7 +163,9 @@ async function cleanupPass(): Promise<number> {
     DELETE FROM verifications
     WHERE identifier LIKE ${VERIFICATION_PATTERN}
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
 
   // Organizations — cascade handles org-scoped tables.
   await db
@@ -155,14 +175,18 @@ async function cleanupPass(): Promise<number> {
       WHERE m.user_id IN (${userSubquery})
     )
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
 
   // Users themselves.
   await db
     .execute(sql`
     DELETE FROM users WHERE email LIKE ${K6_EMAIL_PATTERN}
   `)
-    .catch(() => {});
+    .catch(() => {
+      // best-effort cleanup: ignore errors from missing tables/rows
+    });
 
   // Count remaining.
   const remaining = await db

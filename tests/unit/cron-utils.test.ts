@@ -64,7 +64,7 @@ describe("parseIntervalSeconds", () => {
       expect(() => parseIntervalSeconds(59)).toThrow(IntervalTooSmallError);
     });
 
-    it("throws for a numeric string at the boundary (\"59\")", () => {
+    it('throws for a numeric string at the boundary ("59")', () => {
       expect(() => parseIntervalSeconds("59")).toThrow(IntervalTooSmallError);
     });
 
@@ -92,7 +92,7 @@ describe("parseIntervalSeconds", () => {
       expect(parseIntervalSeconds(60)).toBe(60);
     });
 
-    it("accepts a numeric string at the floor (\"60\")", () => {
+    it('accepts a numeric string at the floor ("60")', () => {
       expect(parseIntervalSeconds("60")).toBe(60);
     });
 

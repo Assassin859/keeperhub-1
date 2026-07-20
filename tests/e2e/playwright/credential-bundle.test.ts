@@ -129,7 +129,7 @@ function generateId(): string {
  */
 function encryptConfig(config: Record<string, unknown>): string {
   const keyHex = process.env.INTEGRATION_ENCRYPTION_KEY;
-  if (!keyHex || keyHex.length !== 64) {
+  if (keyHex?.length !== 64) {
     throw new Error(
       "INTEGRATION_ENCRYPTION_KEY must be a 64-char hex string for this test"
     );

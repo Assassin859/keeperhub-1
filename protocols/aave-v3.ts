@@ -298,7 +298,8 @@ export default defineAbiProtocol({
         },
         withdraw: {
           label: "Withdraw Asset",
-          description: "Withdraw a supplied asset from the Aave V3 lending pool",
+          description:
+            "Withdraw a supplied asset from the Aave V3 lending pool",
           inputs: {
             asset: { label: "Asset Token Address" },
             amount: { label: "Amount (wei)" },

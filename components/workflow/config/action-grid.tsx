@@ -35,6 +35,7 @@ import { useIsTouch } from "@/hooks/use-touch";
 import type { FeatureDefinition } from "@/lib/features";
 import { resolveActionFeature } from "@/lib/features";
 import { cn } from "@/lib/utils";
+import { filterActionsByAvailableChainTypes } from "@/lib/workflow/action-chain-availability";
 import { nodesAtom } from "@/lib/workflow/store";
 import { getAllActions } from "@/plugins/registry";
 
@@ -80,15 +81,61 @@ const SYSTEM_ACTIONS: ActionType[] = [
   },
 ];
 
+/**
+ * The set of chain types (e.g. "evm", "solana") that have at least one enabled
+ * chain, from /api/chains. Returns undefined while loading or on failure so the
+ * palette falls back to showing every action (fail open). Server-only env flags
+ * cannot gate the client palette, so chain availability is the client-safe
+ * signal for whether a chain-type-specific node (e.g. Solana-only) should show.
+ */
+function useEnabledChainTypes(): ReadonlySet<string> | undefined {
+  const [chainTypes, setChainTypes] = useState<ReadonlySet<string> | undefined>(
+    undefined
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/chains")
+      .then((res) =>
+        res.ok ? res.json() : Promise.reject(new Error(`chains ${res.status}`))
+      )
+      .then((data: { chainType?: string }[]) => {
+        if (!cancelled) {
+          setChainTypes(
+            new Set(
+              data
+                .map((chain) => chain.chainType)
+                .filter((type): type is string => Boolean(type))
+            )
+          );
+        }
+      })
+      .catch(() => {
+        // Fail open: leave undefined so useAllActions shows every action.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return chainTypes;
+}
+
 // Combine System actions with plugin actions
 function useAllActions(): ActionType[] {
   const nodes = useAtomValue(nodesAtom);
   const hasForEach = nodes.some(
     (n) => n.data?.config?.actionType === "For Each"
   );
+  const enabledChainTypes = useEnabledChainTypes();
 
   return useMemo(() => {
-    const pluginActions = getAllActions();
+    // Hide nodes restricted to a chain type with no enabled chains (e.g. the
+    // Solana-only Transfer SPL Token node when Solana is off). While chain types
+    // are still loading, show all.
+    const pluginActions = enabledChainTypes
+      ? filterActionsByAvailableChainTypes(getAllActions(), enabledChainTypes)
+      : getAllActions();
 
     const mappedPluginActions: ActionType[] = pluginActions.map((action) => ({
       id: action.id,
@@ -103,7 +150,7 @@ function useAllActions(): ActionType[] {
       : SYSTEM_ACTIONS.filter((a) => a.id !== "Collect");
 
     return [...systemActions, ...mappedPluginActions];
-  }, [hasForEach]);
+  }, [hasForEach, enabledChainTypes]);
 }
 
 type ActionGridProps = {

@@ -2,13 +2,13 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getSafeForOrg, validateSafeOwner } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
   DIRECT_RULE_PROTOCOL_SLUG,
   revokeRoleTokenAllowance,
 } from "@/lib/safe/roles-orchestrator";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // Slugs that may key an allowance bucket: any known protocol plus the
 // synthetic "direct" slug used by per-rule (transfer/approve) caps.

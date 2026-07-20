@@ -14,9 +14,8 @@ import { chains, explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
-  buildSolanaSignerFromWallet,
-  getOrganizationWallet,
   getOrganizationWalletAddress,
+  initializeSolanaWallet,
   initializeWalletSigner,
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
@@ -25,7 +24,6 @@ import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
 import { PublicKey } from "@solana/web3.js";
 import type { SolanaTransactionSigner } from "@/lib/web3/chain-adapter/types";
-import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { NonceSession } from "@/lib/web3/nonce-manager";
 import {
   executeNativeTransferAsRole,
@@ -40,6 +38,7 @@ import {
 } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
+import { SOLANA_BASE_FEE_LAMPORTS } from "@/lib/web3/solana-fees";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -47,10 +46,6 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
-
-// Solana base transaction fee: 5000 lamports per signature. Reserved on top of
-// the transfer amount in the native-SOL balance preflight.
-const SOLANA_BASE_FEE_LAMPORTS = BigInt(5000);
 
 export type TransferFundsCoreInput = {
   network: string;
@@ -502,13 +497,12 @@ async function transferFundsSolana(args: {
   }
   const { organizationId } = orgCtx;
 
-  // 5. Get signer and wallet row (one fetch, one validation check)
+  // 5. Get signer and wallet address (one fetch, one validation check)
   let solanaSigner: SolanaTransactionSigner;
   let orgSolanaAddress: string;
   try {
-    const wallet = await getOrganizationWallet(organizationId);
-    solanaSigner = buildSolanaSignerFromWallet(wallet);
-    orgSolanaAddress = wallet.solanaAddress!;
+    ({ signer: solanaSigner, address: orgSolanaAddress } =
+      await initializeSolanaWallet(organizationId));
   } catch (error) {
     return {
       success: false,
@@ -521,10 +515,8 @@ async function transferFundsSolana(args: {
 
   // 7. Balance preflight check
   try {
-    const balance = await adapter.getBalance(
-      undefined as unknown as RpcProviderManager, // unused by SolanaChainAdapter
-      orgSolanaAddress
-    );
+    // SolanaChainAdapter owns its own provider manager and ignores rpcManager.
+    const balance = await adapter.getBalance(undefined, orgSolanaAddress);
     // Reserve the base transaction fee (5000 lamports per signature) on top of
     // the transfer amount. Without this a max-balance transfer passes preflight
     // and then fails at inclusion for not covering its own fee.

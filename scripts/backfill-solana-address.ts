@@ -13,6 +13,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { Turnkey } from "@turnkey/sdk-server";
 import * as schema from "../lib/db/schema";
+import { isSolanaWalletProvisioningEnabled } from "../lib/turnkey/solana-provisioning-flag";
 
 const connectionString = process.env.DATABASE_URL;
 const apiPublicKey = process.env.TURNKEY_API_PUBLIC_KEY;
@@ -43,6 +44,17 @@ const turnkey = new Turnkey({
 });
 
 async function main(): Promise<void> {
+  // Gate: only backfill Solana accounts when provisioning is enabled, matching
+  // the live createTurnkeyWallet path. Prevents adding Solana accounts before a
+  // Solana RPC is configured (CHAIN_RPC_CONFIG).
+  if (!isSolanaWalletProvisioningEnabled()) {
+    console.log(
+      'Solana wallet provisioning is disabled (SOLANA_WALLET_PROVISIONING_ENABLED != "true"). Nothing to do.'
+    );
+    await client.end();
+    return;
+  }
+
   if (dryRun) {
     console.log("[DRY RUN] No changes will be written.\n");
   }

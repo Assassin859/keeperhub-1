@@ -75,7 +75,7 @@ async function sendAndWait(
       gasLimit: estimated * GAS_LIMIT_MULTIPLIER,
     });
     const receipt = await sent.wait();
-    if (!receipt || receipt.status !== 1) {
+    if (receipt?.status !== 1) {
       throw new Error(`event emitter tx to ${tx.to} reverted`);
     }
     return receipt;

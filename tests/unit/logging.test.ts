@@ -61,7 +61,7 @@ describe("Unified Logging Helpers", () => {
     spy: ReturnType<typeof vi.spyOn>
   ): Record<string, unknown> {
     const last = spy.mock.calls.at(-1);
-    if (!last || last.length !== 1) {
+    if (last?.length !== 1) {
       throw new Error(
         `expected exactly one structured log arg, got ${JSON.stringify(spy.mock.calls)}`
       );
