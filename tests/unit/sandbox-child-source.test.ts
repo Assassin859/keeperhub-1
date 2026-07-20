@@ -543,7 +543,9 @@ describe("sandbox grandchild pins the resolved address at dial time (F-024)", ()
   it("wires the single-resolve pin: http/https dial, manual redirects, no global fetch in the loop", () => {
     expect(SANDBOX_CHILD_SOURCE).toContain('require("node:http")');
     expect(SANDBOX_CHILD_SOURCE).toContain('require("node:https")');
-    expect(SANDBOX_CHILD_SOURCE).toContain("function resolveValidatedAddresses");
+    expect(SANDBOX_CHILD_SOURCE).toContain(
+      "function resolveValidatedAddresses"
+    );
     expect(SANDBOX_CHILD_SOURCE).toContain('redirect: "manual"');
     // The loop dials through the pinning fetch, never the global fetch that
     // would re-resolve DNS at connect time (the rebinding window).
@@ -594,9 +596,7 @@ describe("sandbox grandchild pins the resolved address at dial time (F-024)", ()
     // The redirect target is a name the stub maps to IMDS link-local; the
     // per-hop resolveValidatedAddresses must catch it before pinning/dialing.
     const source = withStubbedDns(REDIRECT_TEST_SOURCE, {
-      "evil-redirect.invalid": [
-        { address: "169.254.169.254", family: 4 },
-      ],
+      "evil-redirect.invalid": [{ address: "169.254.169.254", family: 4 }],
     });
     const code = `return await fetch("http://127.0.0.1:${port}/r/rebind");`;
     const outcome = await runSandboxed(code, 3000, source);
@@ -678,10 +678,14 @@ describe("sandbox grandchild validates the dialed URL, not a divergent resource 
       'await fetch("http://[::ffff:169.254.169.254]/")',
       "IPv4-mapped IPv6 -> IMDS",
     ],
-  ])("blocks non-canonical literal %s (%s)", async (snippet) => {
-    const outcome = await runSandboxed(`return ${snippet};`);
-    expectBlocked(outcome);
-  }, 10_000);
+  ])(
+    "blocks non-canonical literal %s (%s)",
+    async (snippet) => {
+      const outcome = await runSandboxed(`return ${snippet};`);
+      expectBlocked(outcome);
+    },
+    10_000
+  );
 
   it("still allows an object resource whose coerced URL is an allowed host (no over-block)", async () => {
     // Negative control: object resources remain usable for legitimate targets.
@@ -743,7 +747,9 @@ describe("sandbox grandchild pinned fetch preserves the Response contract", () =
         "content-encoding": "gzip",
         "x-pinned": "yes",
       });
-      res.end(gzipSync(Buffer.from(JSON.stringify({ ok: true, path: req.url }))));
+      res.end(
+        gzipSync(Buffer.from(JSON.stringify({ ok: true, path: req.url })))
+      );
     });
     await new Promise<void>((resolve) => {
       server.listen(0, "127.0.0.1", resolve);
@@ -1094,7 +1100,7 @@ describe("sandbox grandchild result codec preserves structured-type fidelity", (
     }
   });
 
-  it("does NOT misinterpret a user object that literally has a \"$\" key", async () => {
+  it('does NOT misinterpret a user object that literally has a "$" key', async () => {
     // Collision safety: a user object shaped like a type tag must round-trip as
     // a plain object, not be decoded as a BigInt.
     const outcome = await runSandboxed('return { "$": "bigint", v: "5" };');
@@ -1113,9 +1119,7 @@ describe("sandbox grandchild result codec preserves structured-type fidelity", (
   });
 
   it("returns a clean error for a circular reference", async () => {
-    const outcome = await runSandboxed(
-      "const a = {}; a.self = a; return a;"
-    );
+    const outcome = await runSandboxed("const a = {}; a.self = a; return a;");
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.errorMessage).toMatch(/serializable|circular/i);
@@ -1149,9 +1153,10 @@ describe("decodeSandboxResult is safe on untrusted input", () => {
   });
 
   it("treats an escaped {$:obj} wrapper as a literal object", () => {
-    expect(
-      decodeSandboxResult('{"$":"obj","v":{"$":"x","y":1}}')
-    ).toEqual({ $: "x", y: 1 });
+    expect(decodeSandboxResult('{"$":"obj","v":{"$":"x","y":1}}')).toEqual({
+      $: "x",
+      y: 1,
+    });
   });
 
   it("throws on malformed JSON (callers map this to an error outcome)", () => {

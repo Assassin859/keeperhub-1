@@ -104,8 +104,8 @@ export function VerifyMfaForm({ next, mode }: Props): React.ReactElement {
         <DialogHeader>
           <DialogTitle>Confirm it's you</DialogTitle>
           <DialogDescription>
-            Enter the code we just emailed you and the current code from
-            your authenticator app to continue.
+            Enter the code we just emailed you and the current code from your
+            authenticator app to continue.
           </DialogDescription>
         </DialogHeader>
         <DualFactorSteps

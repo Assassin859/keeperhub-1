@@ -45,13 +45,15 @@ export function pendingSignupCookieName(): string {
   return COOKIE_NAME;
 }
 
+const BASE64_PADDING_RE = /=+$/;
+
 function base64UrlEncode(input: Buffer | string): string {
   const buf = typeof input === "string" ? Buffer.from(input) : input;
   return buf
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
-    .replace(/=+$/, "");
+    .replace(BASE64_PADDING_RE, "");
 }
 
 function base64UrlDecode(input: string): Buffer {
@@ -61,9 +63,7 @@ function base64UrlDecode(input: string): Buffer {
 }
 
 function sign(payload: string, secret: string): string {
-  return base64UrlEncode(
-    createHmac("sha256", secret).update(payload).digest()
-  );
+  return base64UrlEncode(createHmac("sha256", secret).update(payload).digest());
 }
 
 export function encodePendingSignupCookie(
@@ -131,14 +131,12 @@ export function buildPendingSignupSetCookie(
   ttlMs: number = DEFAULT_TTL_MS
 ): string {
   const maxAge = Math.floor(ttlMs / 1000);
-  const secureSegment =
-    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
   return `${COOKIE_NAME}=${encodedValue}; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=${maxAge}`;
 }
 
 export function buildPendingSignupClearCookie(): string {
-  const secureSegment =
-    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
   return `${COOKIE_NAME}=; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=0`;
 }
 

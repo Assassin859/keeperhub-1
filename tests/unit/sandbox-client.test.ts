@@ -148,7 +148,6 @@ describe("lib/sandbox-client runRemote", () => {
     const { runRemote } = await import("@/lib/sandbox/client");
     const startConnections = connectionCount;
     for (const _iteration of [1, 2, 3, 4, 5]) {
-      void _iteration;
       await runRemote({ code: "return 0;", timeoutMs: 1000 });
     }
     const delta = connectionCount - startConnections;
@@ -477,7 +476,7 @@ describe("lib/sandbox-client runRemote", () => {
           "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
           "Transfer-Encoding": "chunked",
         });
-        res.write("RESULT{\"ok\":tr");
+        res.write('RESULT{"ok":tr');
         // Destroy the socket before the body is complete.
         req.socket.destroy();
       }

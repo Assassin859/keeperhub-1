@@ -20,8 +20,11 @@ import {
   type ProtocolAction,
   type ProtocolDefinition,
 } from "@/lib/protocol-registry";
+import type {
+  WorkflowEdgeJson,
+  WorkflowNodeJson,
+} from "@/lib/workflow/node-builders";
 import { TOKEN_REGISTRY, type TokenSymbol } from "./chain-test-data";
-import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/workflow/node-builders";
 import {
   type ActionInputBindings,
   type InputBinding,

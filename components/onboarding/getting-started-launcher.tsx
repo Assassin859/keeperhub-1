@@ -544,7 +544,7 @@ export function GettingStartedLauncher({
     if (action?.kind === "deeplink") {
       openDeepLink(action.target);
     } else if (action?.kind === "ai-prompt") {
-      void startStepWorkflow(step, action.prompt);
+      startStepWorkflow(step, action.prompt);
     }
     gs.refetch();
   };
@@ -600,9 +600,9 @@ export function GettingStartedLauncher({
   const onChip = (step: Step, chip: Chip): void => {
     gs.markStepActioned(step);
     if (chip.workflowId) {
-      void cloneStarterWorkflow(step, chip);
+      cloneStarterWorkflow(step, chip);
     } else {
-      void startStepWorkflow(step, chip.prompt);
+      startStepWorkflow(step, chip.prompt);
     }
   };
 
@@ -611,7 +611,7 @@ export function GettingStartedLauncher({
   const onTour = (step: Step): void => {
     gs.markStepActioned(step);
     const prompt = step.action?.kind === "ai-prompt" ? step.action.prompt : "";
-    void startStepWorkflow(step, prompt, { tour: true });
+    startStepWorkflow(step, prompt, { tour: true });
   };
 
   // Lives in the sidebar, just above the Discord/Documentation footer. The pill

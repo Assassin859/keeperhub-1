@@ -28,7 +28,7 @@ export async function requireOrgOwner(): Promise<OrgOwnerResult> {
   }
 
   const activeMember = await auth.api.getActiveMember({ headers: hdrs });
-  if (!activeMember || activeMember.role !== "owner") {
+  if (activeMember?.role !== "owner") {
     return {
       error: NextResponse.json(
         { error: "Only organization owners can manage billing" },

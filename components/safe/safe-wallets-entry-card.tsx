@@ -61,7 +61,7 @@ export function SafeWalletsEntryCard({
         }
       }
     };
-    void load();
+    load();
     return (): void => {
       cancelled = true;
     };

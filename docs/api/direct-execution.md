@@ -25,6 +25,28 @@ Direct execution requests are limited to 60 requests per minute per API key. Eve
 
 Organizations can configure daily spending caps in wei. If the cap is exceeded, execution requests return a `403` status with the error message `Daily spending cap exceeded`.
 
+## Safe First-Write Sequence
+
+Use the same request body from simulation through broadcast so the transaction
+you inspected is the transaction you send:
+
+1. Read `GET /api/chains` and choose a chain where `isEnabled` and `isTestnet`
+   are both `true`.
+2. Send the intended request with `"simulate": true`. Continue only when the
+   response has `success: true` and `wouldRevert: false`.
+3. Remove `simulate`, add a unique `Idempotency-Key` header, and send the
+   request once.
+4. Save the returned `executionId`, then poll
+   `GET /api/execute/{executionId}/status`. Honor the
+   `X-Poll-Interval-Hint` response header between polls.
+5. Treat the status response's `transactionHash` and `transactionLink` as the
+   authoritative onchain proof.
+
+This sequence catches bad addresses, ABI mistakes, insufficient balances, and
+reverts before broadcast, while idempotency makes an interrupted client safe to
+retry. Start with a testnet and testnet funds; simulation does not sign or send
+a transaction.
+
 ## Idempotency
 
 Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID).
@@ -59,17 +81,19 @@ Transfer native tokens (ETH, MATIC, etc.) or ERC-20 tokens directly.
 
 ```json
 {
-  "network": "ethereum",
+  "chainId": 11155111,
   "recipientAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
   "amount": "0.1",
-  "tokenAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "tokenAddress": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   "gasLimitMultiplier": "1.2"
 }
 ```
 
 **Parameters:**
 
-- `network` (required): Blockchain network name (e.g., `ethereum`, `base`, `polygon`)
+- `chainId` (required): Numeric chain ID as a number or numeric string (for
+  example, `11155111` for Ethereum Sepolia or `8453` for Base). The legacy
+  `network` field still accepts known chain names but is deprecated.
 - `recipientAddress` (required): Destination wallet address
 - `amount` (required): Amount in human-readable units (e.g., "0.1" for 0.1 ETH or tokens)
 - `tokenAddress` (optional): ERC-20 token contract address. Omit for native token transfers.
@@ -77,6 +101,8 @@ Transfer native tokens (ETH, MATIC, etc.) or ERC-20 tokens directly.
 - `gasLimitMultiplier` (optional): Gas limit multiplier (e.g., "1.5" for 50% buffer)
 
 ### Response
+
+Successful broadcast requests return HTTP `202 Accepted`:
 
 ```json
 {
@@ -100,7 +126,7 @@ Call any smart contract function. Automatically detects read vs write operations
 ```json
 {
   "contractAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-  "network": "ethereum",
+  "chainId": 1,
   "functionName": "balanceOf",
   "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
   "abi": "[{...}]",
@@ -112,7 +138,8 @@ Call any smart contract function. Automatically detects read vs write operations
 **Parameters:**
 
 - `contractAddress` (required): Smart contract address
-- `network` (required): Blockchain network name
+- `chainId` (required): Numeric chain ID as a number or numeric string. The
+  legacy `network` field still accepts known chain names but is deprecated.
 - `functionName` (required): Name of the function to call
 - `functionArgs` (optional): JSON array string of function arguments (e.g., `"[\"0x...\", \"1000\"]"`)
 - `abi` (optional): Contract ABI as JSON string. Auto-fetched from block explorer if omitted.
@@ -155,7 +182,7 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
 ```json
 {
   "contractAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-  "network": "ethereum",
+  "chainId": 1,
   "functionName": "balanceOf",
   "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
   "abi": "[{...}]",
@@ -227,7 +254,7 @@ Add `"simulate": true` to any of the standard request bodies:
 ```json
 {
   "contractAddress": "0x...",
-  "network": "ethereum",
+  "chainId": 1,
   "functionName": "transfer",
   "functionArgs": "[\"0x...\", \"1000000\"]",
   "abi": "[{...}]",
@@ -254,7 +281,7 @@ Add `"simulate": true` to any of the standard request bodies:
 
 - `from`: the org's wallet address used as the sender (see "Known limitation" below)
 - `value`: native value in wei sent with the call
-- `gasEstimate`: gas the network would charge, as a decimal string in wei
+- `gasEstimate`: estimated gas units required by the call, as a decimal string
 - `simulatedReturnValue`: the decoded return value of the call (e.g. `true` for ERC-20 `transfer`, the read value for view functions, `null` for native transfers to an EOA recipient)
 - `wouldRevert`: always `false` on this path
 

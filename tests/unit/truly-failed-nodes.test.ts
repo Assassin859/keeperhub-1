@@ -25,9 +25,9 @@ describe("computeTrulyFailedNodes", () => {
   });
 
   it("flags a top-level node that has only an error row", () => {
-    expect(computeTrulyFailedNodes([row({ nodeId: "a", status: "error" })])).toEqual([
-      "a",
-    ]);
+    expect(
+      computeTrulyFailedNodes([row({ nodeId: "a", status: "error" })])
+    ).toEqual(["a"]);
   });
 
   it("flags a top-level node with only a running row (no success)", () => {

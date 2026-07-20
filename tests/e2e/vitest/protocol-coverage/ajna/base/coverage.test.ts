@@ -7,8 +7,7 @@ const CHAIN_ID = "8453";
 // Base mainnet — not a fork chain, uses TESTNET_FUNDER_PK to provide gas to
 // the test wallet (0.01 ETH needed for read-only test execution).
 const SKIP_INFRA_TESTS =
-  !process.env.DATABASE_URL ||
-  !process.env.TESTNET_FUNDER_PK ||
+  !(process.env.DATABASE_URL && process.env.TESTNET_FUNDER_PK) ||
   process.env.SKIP_INFRA_TESTS === "true";
 
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Base)`, () => {

@@ -97,7 +97,9 @@ test.describe("wallet org invite", () => {
       //    acceptance signs the invite challenge with the stub wallet.
       const inviteId = await walletInviteId();
       await gotoAcceptInvite(walletPage, inviteId);
-      await walletPage.getByRole("button", { name: SIGN_TO_JOIN_REGEX }).click();
+      await walletPage
+        .getByRole("button", { name: SIGN_TO_JOIN_REGEX })
+        .click();
       await expect(walletPage.locator("[data-sonner-toast]")).toContainText(
         WELCOME_REGEX,
         { timeout: 20_000 }

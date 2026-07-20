@@ -21,7 +21,8 @@
  *   }
  */
 
-import { logWarn } from "@/lib/logging";
+import { gunzipSync } from "node:zlib";
+import { ErrorCategory, logSystemError, logWarn } from "@/lib/logging";
 
 /**
  * Public RPC defaults (no API keys required)
@@ -372,6 +373,29 @@ export type ParseRpcConfigResult = {
 };
 
 /**
+ * Marks a gzip-compressed, base64-encoded CHAIN_RPC_CONFIG value ("KeeperHub
+ * GZip v1"). The chain-config delivery pipeline emits values with this prefix;
+ * legacy raw-JSON values (no prefix) are still accepted, so the producer and
+ * this consumer can roll out independently and roll back at any time. A raw
+ * JSON object always begins with "{", never this prefix, so detection is
+ * unambiguous.
+ */
+export const RPC_CONFIG_GZIP_PREFIX = "KHGZ1:";
+
+/**
+ * Decode a CHAIN_RPC_CONFIG value into its JSON string form. Prefixed values
+ * are base64-decoded then gunzipped; unprefixed values are returned unchanged.
+ * May throw if a prefixed value is not valid base64+gzip (handled by callers).
+ */
+function decodeRpcConfigValue(envValue: string): string {
+  if (envValue.startsWith(RPC_CONFIG_GZIP_PREFIX)) {
+    const base64 = envValue.slice(RPC_CONFIG_GZIP_PREFIX.length);
+    return gunzipSync(Buffer.from(base64, "base64")).toString("utf8");
+  }
+  return envValue;
+}
+
+/**
  * Parse JSON config from environment variable
  *
  * @param envValue - The CHAIN_RPC_CONFIG environment variable value
@@ -379,7 +403,7 @@ export type ParseRpcConfigResult = {
  */
 export function parseRpcConfig(envValue: string | undefined): RpcConfig {
   try {
-    return JSON.parse(envValue || "{}");
+    return JSON.parse(decodeRpcConfigValue(envValue || "{}"));
   } catch {
     return {};
   }
@@ -398,14 +422,29 @@ export function parseRpcConfigWithDetails(
     return { config: {} };
   }
 
+  const isCompressed = envValue.startsWith(RPC_CONFIG_GZIP_PREFIX);
+
   try {
-    const config = JSON.parse(envValue);
+    const config = JSON.parse(decodeRpcConfigValue(envValue));
     return { config };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     // Truncate raw value for logging (may contain sensitive URLs)
     const rawValue =
       envValue.length > 100 ? `${envValue.slice(0, 100)}...` : envValue;
+    // A value carrying the compression prefix that fails to decode is
+    // unambiguously a producer/consumer format mismatch (a bad deploy), never a
+    // normal state. Surface it to Sentry/Prometheus rather than let it fall
+    // through to the silent public-default RPC fallback an unprefixed parse
+    // failure gets.
+    if (isCompressed) {
+      logSystemError(
+        ErrorCategory.CONFIGURATION,
+        "[rpc-config] Failed to decode compressed CHAIN_RPC_CONFIG",
+        err,
+        { prefix: RPC_CONFIG_GZIP_PREFIX }
+      );
+    }
     return { config: {}, error, rawValue };
   }
 }

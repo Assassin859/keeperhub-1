@@ -118,7 +118,7 @@ describe("prometheusMetricsCollector.recordError -- defensive label filtering", 
   });
 
   it("survives multiple recordings with rotating mixes of valid and invalid labels", () => {
-    const labelMixes: Array<Record<string, string>> = [
+    const labelMixes: Record<string, string>[] = [
       { contract_address: "0x1", service: "etherscan" },
       { unknown_label: "x", endpoint: "/api/web3/fetch-abi" },
       { workflow_id: "wf_1", random_field: "y" },

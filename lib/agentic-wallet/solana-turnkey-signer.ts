@@ -16,13 +16,16 @@ type TurnkeyActivityResponse = {
 };
 
 export class TurnkeySolanaSigner implements SolanaTransactionSigner {
-  constructor(
-    private readonly subOrgId: string,
-    private readonly solanaAddress: string // base58 public key
-  ) {}
+  private readonly subOrgId: string;
+  private readonly solanaAddress: string; // base58 public key
 
-  async getPublicKey(): Promise<{ toBase58(): string }> {
-    return new PublicKey(this.solanaAddress);
+  constructor(subOrgId: string, solanaAddress: string) {
+    this.subOrgId = subOrgId;
+    this.solanaAddress = solanaAddress;
+  }
+
+  getPublicKey(): Promise<{ toBase58(): string }> {
+    return Promise.resolve(new PublicKey(this.solanaAddress));
   }
 
   async signTransaction(unsignedBytes: Uint8Array): Promise<Uint8Array> {

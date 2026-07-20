@@ -295,7 +295,10 @@ const MOCK_EXECUTED_CALL = {
   contractAddress: "0x6b175474e89094c44da98b954eedeac495271d0f",
   functionName: "approve",
   functionSignature: "approve(address,uint256)",
-  args: { spender: "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", amount: "100000000000000000000" },
+  args: {
+    spender: "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45",
+    amount: "100000000000000000000",
+  },
   sponsored: false,
   topLevelTo: "0x6b175474e89094c44da98b954eedeac495271d0f",
   reverted: false,

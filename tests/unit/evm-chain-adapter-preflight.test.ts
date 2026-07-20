@@ -122,13 +122,11 @@ describe("EvmChainAdapter preflight signer address", () => {
     }
 
     expect(mockStaticCall).toHaveBeenCalledTimes(1);
-    const staticOverrides =
-      mockStaticCall.mock.calls[0][mockStaticCall.mock.calls[0].length - 1];
+    const staticOverrides = mockStaticCall.mock.calls[0].at(-1);
     expect(staticOverrides.from).toBe(SIGNER_ADDRESS);
 
     expect(mockEstimateGas).toHaveBeenCalledTimes(1);
-    const gasOverrides =
-      mockEstimateGas.mock.calls[0][mockEstimateGas.mock.calls[0].length - 1];
+    const gasOverrides = mockEstimateGas.mock.calls[0].at(-1);
     expect(gasOverrides.from).toBe(SIGNER_ADDRESS);
   });
 
@@ -156,13 +154,11 @@ describe("EvmChainAdapter preflight signer address", () => {
       // confirmTransaction fails with mocks - expected
     }
 
-    const staticOverrides =
-      mockStaticCall.mock.calls[0][mockStaticCall.mock.calls[0].length - 1];
+    const staticOverrides = mockStaticCall.mock.calls[0].at(-1);
     expect(staticOverrides.from).toBe(SIGNER_ADDRESS);
     expect(staticOverrides.value).toBe(ethValue);
 
-    const gasOverrides =
-      mockEstimateGas.mock.calls[0][mockEstimateGas.mock.calls[0].length - 1];
+    const gasOverrides = mockEstimateGas.mock.calls[0].at(-1);
     expect(gasOverrides.from).toBe(SIGNER_ADDRESS);
     expect(gasOverrides.value).toBe(ethValue);
   });

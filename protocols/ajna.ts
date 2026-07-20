@@ -1,5 +1,13 @@
-import { defineAbiProtocol, type AbiFunctionOverride } from "@/lib/protocol-registry";
-import { contract, native, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+import {
+  type AbiFunctionOverride,
+  defineAbiProtocol,
+} from "@/lib/protocol-registry";
+import {
+  contract,
+  native,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 
 const TEST_DATA: ProtocolTestData = {
   "8453": {
@@ -14,8 +22,14 @@ const TEST_DATA: ProtocolTestData = {
       "get-pool-htp": { ajnaPool_: contract("pool1") },
       "price-to-index": { price: native("1") },
       "index-to-price": { index_: "5000" },
-      "get-auction-status": { ajnaPool_: contract("pool1"), borrower_: wallet() },
-      "get-borrower-info": { ajnaPool_: contract("pool1"), borrower_: wallet() },
+      "get-auction-status": {
+        ajnaPool_: contract("pool1"),
+        borrower_: wallet(),
+      },
+      "get-borrower-info": {
+        ajnaPool_: contract("pool1"),
+        borrower_: wallet(),
+      },
       "pool1-inflator-info": {},
       "pool1-bucket-info": { index_: "5000" },
       "pool1-kicker-info": { kicker_: wallet() },
@@ -69,13 +83,15 @@ const TEST_DATA: ProtocolTestData = {
       "pool1-bucket-take": "requires an active liquidation auction",
       "pool1-settle": "requires a completed liquidation auction",
       "pool1-withdraw-bonds": "requires prior kicker bond balance",
-      "pool1-update-interest": "write action with no predictable outcome on mainnet fork",
+      "pool1-update-interest":
+        "write action with no predictable outcome on mainnet fork",
       "pool2-auction-info": "requires an active auction in the pool",
       "pool2-kick": "requires an undercollateralized borrower position",
       "pool2-bucket-take": "requires an active liquidation auction",
       "pool2-settle": "requires a completed liquidation auction",
       "pool2-withdraw-bonds": "requires prior kicker bond balance",
-      "pool2-update-interest": "write action with no predictable outcome on mainnet fork",
+      "pool2-update-interest":
+        "write action with no predictable outcome on mainnet fork",
       "vault1-lp-to-value": "requires an active bucket with LP in the vault",
       "vault1-drain": "write action requiring vault admin role",
       "vault1-move": "write action requiring vault admin role",
@@ -724,8 +740,7 @@ export default defineAbiProtocol({
         },
         priceToIndex: {
           label: "Price to Bucket Index",
-          description:
-            "Convert a price to its corresponding Ajna bucket index",
+          description: "Convert a price to its corresponding Ajna bucket index",
           inputs: {
             price: { label: "Price (WAD)" },
           },

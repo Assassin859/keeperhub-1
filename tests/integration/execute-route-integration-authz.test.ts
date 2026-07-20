@@ -180,7 +180,11 @@ describe("execute route - lifecycle executability gate", () => {
       scheme: "hmac",
     });
     mockOwnerLimit.mockResolvedValue([
-      { workflow: { ...workflow, enabled: false }, orgDeactivatedAt: null, organizationName: null },
+      {
+        workflow: { ...workflow, enabled: false },
+        orgDeactivatedAt: null,
+        organizationName: null,
+      },
     ]);
 
     const response = await callExecute();
@@ -192,7 +196,11 @@ describe("execute route - lifecycle executability gate", () => {
 
   it("allows a disabled workflow on the interactive path (editor test run)", async () => {
     mockOwnerLimit.mockResolvedValue([
-      { workflow: { ...workflow, enabled: false }, orgDeactivatedAt: null, organizationName: null },
+      {
+        workflow: { ...workflow, enabled: false },
+        orgDeactivatedAt: null,
+        organizationName: null,
+      },
     ]);
     // Force a 403 downstream so we can prove the disabled gate did NOT short
     // -circuit: reaching the integration check means the workflow passed.
@@ -209,7 +217,11 @@ describe("execute route - lifecycle executability gate", () => {
 
   it("blocks a soft-deleted workflow on the interactive path with 404", async () => {
     mockOwnerLimit.mockResolvedValue([
-      { workflow: { ...workflow, deletedAt: new Date() }, orgDeactivatedAt: null, organizationName: null },
+      {
+        workflow: { ...workflow, deletedAt: new Date() },
+        orgDeactivatedAt: null,
+        organizationName: null,
+      },
     ]);
 
     const response = await callExecute();

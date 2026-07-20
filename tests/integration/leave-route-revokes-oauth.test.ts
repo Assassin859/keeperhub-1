@@ -144,7 +144,9 @@ describe("POST /api/organizations/[id]/leave -- OAuth refresh token revocation",
     });
 
     expect(oauthDelete).toBeDefined();
-    const conditions = (oauthDelete?.whereArg as AndCondition).conditions;
+    const conditions = (
+      (oauthDelete as { whereArg: unknown }).whereArg as AndCondition
+    ).conditions;
     expect(conditions).toContainEqual({
       op: "eq",
       column: "mcp.userId",
@@ -184,7 +186,9 @@ describe("POST /api/organizations/[id]/leave -- OAuth refresh token revocation",
     });
 
     expect(oauthDelete).toBeDefined();
-    const conditions = (oauthDelete?.whereArg as AndCondition).conditions;
+    const conditions = (
+      (oauthDelete as { whereArg: unknown }).whereArg as AndCondition
+    ).conditions;
     expect(conditions).toContainEqual({
       op: "eq",
       column: "mcp.userId",

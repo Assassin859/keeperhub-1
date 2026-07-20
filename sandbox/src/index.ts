@@ -238,7 +238,7 @@ export function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   }
 
   if (req.method === "POST" && url === "/run") {
-    void handlePostRun(req, res);
+    handlePostRun(req, res);
     return;
   }
 
@@ -278,10 +278,10 @@ async function main(): Promise<void> {
   };
 
   process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
+    shutdown("SIGTERM");
   });
   process.on("SIGINT", () => {
-    void shutdown("SIGINT");
+    shutdown("SIGINT");
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -300,5 +300,5 @@ if (
   import.meta.url === `file://${process.argv[1]}` ||
   process.env.SANDBOX_AUTOSTART === "1"
 ) {
-  void main();
+  main();
 }

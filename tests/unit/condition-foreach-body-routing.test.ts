@@ -32,7 +32,7 @@ function buildBodyEdgesBySource(edges: EdgeLike[]): Map<string, string[]> {
     if (!map.has(edge.source)) {
       map.set(edge.source, []);
     }
-    map.get(edge.source)!.push(edge.target);
+    map.get(edge.source)?.push(edge.target);
   }
   return map;
 }

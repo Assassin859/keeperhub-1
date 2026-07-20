@@ -315,7 +315,8 @@ describe("POST /api/agentic-wallet/provision", () => {
     );
     expect(creditValuesCall).toBeDefined();
     expect(
-      (creditValuesCall?.[0] as { amountUsdcCents: number }).amountUsdcCents
+      ((creditValuesCall as unknown[])[0] as { amountUsdcCents: number })
+        .amountUsdcCents
     ).toBe(50);
     // Legacy hmac_secret column is no longer written (Task 19 drop column
     // deferred per SPEC.md line 117).
@@ -327,7 +328,8 @@ describe("POST /api/agentic-wallet/provision", () => {
     );
     expect(walletValuesCall).toBeDefined();
     expect(
-      "hmacSecret" in (walletValuesCall?.[0] as Record<string, unknown>)
+      "hmacSecret" in
+        ((walletValuesCall as unknown[])[0] as Record<string, unknown>)
     ).toBe(false);
   });
 

@@ -15,8 +15,7 @@ const CHAIN_ID = "1";
 // Requires a live anvil mainnet fork. Skip cleanly when the fork is absent
 // so PR / staging-push CI stays green (fork spinup is gated by secret availability).
 const SKIP_INFRA_TESTS =
-  !process.env.DATABASE_URL ||
-  !process.env.ANVIL_FORK_MAINNET_URL ||
+  !(process.env.DATABASE_URL && process.env.ANVIL_FORK_MAINNET_URL) ||
   process.env.SKIP_INFRA_TESTS === "true";
 
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Ethereum)`, () => {

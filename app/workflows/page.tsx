@@ -41,7 +41,7 @@ export default function WorkflowsIndexPage(): React.ReactElement | null {
       }
     };
 
-    void resolve();
+    resolve();
   }, [hasDeepLink, router]);
 
   if (!empty) {

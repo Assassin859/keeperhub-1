@@ -38,10 +38,10 @@ type ProviderResult =
 
 export type TransactionListResult =
   | {
-    success: true;
-    transactions: NormalizedTransaction[];
-    usedBackup: boolean;
-  }
+      success: true;
+      transactions: NormalizedTransaction[];
+      usedBackup: boolean;
+    }
   | { success: false; error: string };
 
 /**
@@ -66,7 +66,10 @@ export function getAddressUrl(config: ExplorerConfig, address: string): string {
     return "";
   }
   const path = config.explorerAddressPath || "/address/{address}";
-  return joinExplorerUrl(config.explorerUrl, path.replace("{address}", address));
+  return joinExplorerUrl(
+    config.explorerUrl,
+    path.replace("{address}", address)
+  );
 }
 
 /**
@@ -267,11 +270,11 @@ export async function fetchContractTransactions(
   const backup =
     config.backupExplorerApiType != null && config.backupExplorerApiUrl != null
       ? {
-        apiType: config.backupExplorerApiType,
-        apiUrl: config.backupExplorerApiUrl,
-        apiKey: config.backupExplorerApiKey ?? undefined,
-        apiKeyNeeded: config.backupExplorerApiKeyNeeded,
-      }
+          apiType: config.backupExplorerApiType,
+          apiUrl: config.backupExplorerApiUrl,
+          apiKey: config.backupExplorerApiKey ?? undefined,
+          apiKeyNeeded: config.backupExplorerApiKeyNeeded,
+        }
       : null;
 
   let lastPrimaryError: string | undefined;

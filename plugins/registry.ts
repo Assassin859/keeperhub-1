@@ -58,8 +58,8 @@ export type ActionConfigFieldBase = {
     | "protocol-eth-value" // Decimal ETH value input (e.g. 0.1, 1.5)
     | "protocol-tuple-array"; // Structured array of tuple items (e.g. tokenAmounts)
 
-  // For chain-select: filter by chain type (e.g., "evm" or "solana")
-  chainTypeFilter?: string;
+  // For chain-select: filter by chain type - one ("evm") or several (["evm", "solana"])
+  chainTypeFilter?: string | string[];
 
   // For chain-select: restrict to specific chain IDs (e.g., ["1", "8453"])
   allowedChainIds?: string[];

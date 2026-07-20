@@ -321,7 +321,7 @@ function wireApprovalStore(): void {
   mockResolveApprovalRequest.mockImplementation(
     async (id: string, userId: string, decision: "approved" | "rejected") => {
       const row = approvalStore.get(id) as ApprovalRow | undefined;
-      if (!row || row.status !== "pending") {
+      if (row?.status !== "pending") {
         return null;
       }
       row.status = decision;

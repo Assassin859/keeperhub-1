@@ -156,9 +156,9 @@ describe("POST /api/agentic-wallet/link", () => {
     // reached the linkedUserId/linkedAt write step.
     expect(mockDbUpdate).toHaveBeenCalledTimes(1);
     // The set() call carries the user id + linkedAt timestamp.
-    const setCalls = mockDbUpdateSet.mock.calls as unknown as Array<
-      [{ linkedUserId: string; linkedAt: Date }]
-    >;
+    const setCalls = mockDbUpdateSet.mock.calls as unknown as [
+      { linkedUserId: string; linkedAt: Date },
+    ][];
     expect(setCalls.length).toBeGreaterThan(0);
     const setArg = setCalls[0]?.[0];
     expect(setArg?.linkedUserId).toBe("user_test");

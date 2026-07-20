@@ -35,7 +35,11 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/db/schema", () => ({
   workflowExecutions: { id: "id", userId: "userId", workflowId: "workflowId" },
   explorerConfigs: { id: "id", chainId: "chainId" },
-  supportedTokens: { id: "id", chainId: "chainId", tokenAddress: "tokenAddress" },
+  supportedTokens: {
+    id: "id",
+    chainId: "chainId",
+    tokenAddress: "tokenAddress",
+  },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -67,7 +71,9 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
 }));
 
 vi.mock("@/lib/explorer", () => ({
-  getTransactionUrl: vi.fn().mockReturnValue("https://etherscan.io/tx/0xtxhash"),
+  getTransactionUrl: vi
+    .fn()
+    .mockReturnValue("https://etherscan.io/tx/0xtxhash"),
   getAddressUrl: vi.fn().mockReturnValue("https://etherscan.io/address/0xabc"),
 }));
 
@@ -75,7 +81,8 @@ const mockExecuteContractCall = vi.fn();
 const mockGetTransactionUrl = vi.fn();
 vi.mock("@/lib/web3/chain-adapter", () => ({
   getChainAdapter: () => ({
-    executeContractCall: (...args: unknown[]) => mockExecuteContractCall(...args),
+    executeContractCall: (...args: unknown[]) =>
+      mockExecuteContractCall(...args),
     getTransactionUrl: (...args: unknown[]) => mockGetTransactionUrl(...args),
   }),
 }));
@@ -126,8 +133,12 @@ vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({
 
 vi.mock("@/lib/safe/signer-resolver", () => ({
   SIGNER_MODE: { EOA: "eoa", SAFE: "safe", SAFE_ROLE: "safe-role" },
-  resolveSignerMode: vi.fn().mockResolvedValue({ kind: "eoa", ownerAddress: "0xWalletAddress" }),
-  resolveSignerForNode: vi.fn().mockResolvedValue({ kind: "eoa", ownerAddress: "0xWalletAddress" }),
+  resolveSignerMode: vi
+    .fn()
+    .mockResolvedValue({ kind: "eoa", ownerAddress: "0xWalletAddress" }),
+  resolveSignerForNode: vi
+    .fn()
+    .mockResolvedValue({ kind: "eoa", ownerAddress: "0xWalletAddress" }),
 }));
 
 vi.mock("@/lib/safe/execute-as-safe", () => ({
@@ -136,8 +147,11 @@ vi.mock("@/lib/safe/execute-as-safe", () => ({
 }));
 
 vi.mock("@/lib/web3/transaction-manager", () => ({
-  withNonceSession: (_ctx: unknown, _wallet: unknown, fn: (session: unknown) => unknown) =>
-    fn({ id: "mock-session" }),
+  withNonceSession: (
+    _ctx: unknown,
+    _wallet: unknown,
+    fn: (session: unknown) => unknown
+  ) => fn({ id: "mock-session" }),
 }));
 
 const mockTraceExecutedCall = vi.fn();
@@ -191,7 +205,9 @@ const MOCK_EXECUTED_CALL = {
   reverted: false,
 };
 
-function makeInput(overrides: Partial<TransferTokenCoreInput> = {}): TransferTokenCoreInput {
+function makeInput(
+  overrides: Partial<TransferTokenCoreInput> = {}
+): TransferTokenCoreInput {
   return {
     network: "ethereum",
     tokenConfig: VALID_TOKEN,
@@ -257,17 +273,20 @@ describe("transfer-token-core - executedCall on direct send", () => {
       })
     );
   });
-
 });
 
 describe("transfer-token-core - validation", () => {
   it("fails when token address is invalid", async () => {
-    const result = await transferTokenCore(makeInput({ tokenConfig: "not-an-address" }));
+    const result = await transferTokenCore(
+      makeInput({ tokenConfig: "not-an-address" })
+    );
     expect(result.success).toBe(false);
   });
 
   it("fails when recipient address is invalid", async () => {
-    const result = await transferTokenCore(makeInput({ recipientAddress: "invalid" }));
+    const result = await transferTokenCore(
+      makeInput({ recipientAddress: "invalid" })
+    );
     expect(result.success).toBe(false);
   });
 

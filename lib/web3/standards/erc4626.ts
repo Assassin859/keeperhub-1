@@ -1,4 +1,7 @@
-import type { AbiFunctionOverride, ProtocolAction } from "@/lib/protocol-registry";
+import type {
+  AbiFunctionOverride,
+  ProtocolAction,
+} from "@/lib/protocol-registry";
 
 /**
  * Returns the 18 standard ERC-4626 vault actions for a given contract key.
@@ -398,7 +401,8 @@ export function erc4626AbiOverrides(options?: {
     redeem: {
       slug: `${p}vault-redeem`,
       label: `${lp}Vault Redeem`,
-      description: "Redeem shares from the ERC-4626 vault for underlying assets",
+      description:
+        "Redeem shares from the ERC-4626 vault for underlying assets",
       inputs: {
         shares: { label: "Shares Amount (wei)" },
         receiver: { label: "Receiver Address" },
@@ -418,7 +422,11 @@ export function erc4626AbiOverrides(options?: {
       description:
         "Get the total amount of underlying assets held by the vault",
       outputs: {
-        result: { name: "totalAssets", label: "Total Assets (wei)", decimals: d },
+        result: {
+          name: "totalAssets",
+          label: "Total Assets (wei)",
+          decimals: d,
+        },
       },
     },
     totalSupply: {
@@ -426,7 +434,11 @@ export function erc4626AbiOverrides(options?: {
       label: `${lp}Vault Total Supply`,
       description: "Get the total supply of vault shares",
       outputs: {
-        result: { name: "totalSupply", label: "Total Shares (wei)", decimals: d },
+        result: {
+          name: "totalSupply",
+          label: "Total Shares (wei)",
+          decimals: d,
+        },
       },
     },
     balanceOf: {

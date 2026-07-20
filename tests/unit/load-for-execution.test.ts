@@ -68,7 +68,9 @@ describe("loadWorkflowForExecution", () => {
   });
 
   it("returns not_found when row has no workflow (null left-join result)", async () => {
-    mockDbRows = [{ workflow: null, orgDeactivatedAt: null, organizationName: null }];
+    mockDbRows = [
+      { workflow: null, orgDeactivatedAt: null, organizationName: null },
+    ];
     const result = await loadWorkflowForExecution("wf-1", {
       requireEnabled: true,
     });
@@ -77,7 +79,11 @@ describe("loadWorkflowForExecution", () => {
 
   it("returns ok with workflow and organizationName when executable", async () => {
     mockDbRows = [
-      { workflow: WORKFLOW, orgDeactivatedAt: null, organizationName: "Test Org" },
+      {
+        workflow: WORKFLOW,
+        orgDeactivatedAt: null,
+        organizationName: "Test Org",
+      },
     ];
     mockGetWorkflowExecutability.mockReturnValue({ executable: true });
     const result = await loadWorkflowForExecution("wf-1", {

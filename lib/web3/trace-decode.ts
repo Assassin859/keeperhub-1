@@ -146,7 +146,6 @@ export function flattenCallTree(root: RawCallFrame | null): FlatCall[] {
   return out;
 }
 
-
 /**
  * Decode a single flattened call against an ABI interface.
  *
