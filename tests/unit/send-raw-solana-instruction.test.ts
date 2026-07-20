@@ -270,7 +270,7 @@ describe("sendRawSolanaInstructionCore", () => {
 
     expect(result).toMatchObject({ success: false });
     expect((result as { error: string }).error).toContain(
-      "not valid base64 or 0x-hex"
+      "not valid standard base64 or 0x-hex"
     );
   });
 
@@ -324,9 +324,24 @@ describe("sendRawSolanaInstructionCore", () => {
 
     expect(result).toMatchObject({ success: false });
     expect((result as { error: string }).error).toContain(
-      "not valid base64 or 0x-hex"
+      "not valid standard base64 or 0x-hex"
     );
     expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("accepts base64 with internal whitespace (line-wrapped)", async () => {
+    const canonical = Buffer.from([1, 2, 3, 4, 5, 6]).toString("base64");
+    const wrapped = `${canonical.slice(0, 4)}\n${canonical.slice(4)}`;
+    const result = await sendRawSolanaInstructionCore({
+      ...validInput,
+      instructions: JSON.stringify([instruction({ data: wrapped })]),
+    });
+
+    expect(result.success).toBe(true);
+    const tx = decodeSentTransaction(mockAdapter.sendTransaction);
+    expect(Buffer.from(tx.instructions[0].data)).toEqual(
+      Buffer.from([1, 2, 3, 4, 5, 6])
+    );
   });
 
   it("accepts an instruction with empty data", async () => {

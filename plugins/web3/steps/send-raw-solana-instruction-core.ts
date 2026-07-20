@@ -29,6 +29,7 @@ const MAX_TX_SIZE_BYTES = 1232;
 const HEX_BODY = /^[0-9a-fA-F]*$/;
 const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
 const TRAILING_PADDING = /=+$/;
+const WHITESPACE = /\s+/g;
 
 export type RawSolanaAccount = {
   pubkey: string;
@@ -79,9 +80,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Buffer.from does not error on malformed input - it silently drops characters
  * that do not form complete groups, so a typo'd payload would decode to fewer
  * bytes than intended. Both branches guard against that: hex requires an even
- * length over the hex charset, and base64 is confirmed lossless by re-encoding
- * the decoded bytes and comparing (padding-insensitive, so padded and unpadded
- * inputs are both accepted).
+ * length over the hex charset, and standard base64 is confirmed lossless by
+ * re-encoding the decoded bytes and comparing (padding-insensitive, so padded
+ * and unpadded inputs are both accepted). Internal whitespace is stripped from
+ * the base64 candidate first, since long payloads are often pasted line-wrapped.
  */
 function decodeInstructionData(value: string): Buffer | null {
   const trimmed = value.trim();
@@ -94,12 +96,13 @@ function decodeInstructionData(value: string): Buffer | null {
     return Buffer.from(body, "hex");
   }
 
-  if (!BASE64_BODY.test(trimmed)) {
+  const base64 = trimmed.replace(WHITESPACE, "");
+  if (!BASE64_BODY.test(base64)) {
     return null;
   }
-  const decoded = Buffer.from(trimmed, "base64");
+  const decoded = Buffer.from(base64, "base64");
   const reencoded = decoded.toString("base64").replace(TRAILING_PADDING, "");
-  if (reencoded !== trimmed.replace(TRAILING_PADDING, "")) {
+  if (reencoded !== base64.replace(TRAILING_PADDING, "")) {
     return null;
   }
   return decoded;
@@ -202,7 +205,7 @@ function buildInstruction(
   const data = decodeInstructionData(raw.data);
   if (!data) {
     return {
-      error: `Instruction ${index} data is not valid base64 or 0x-hex`,
+      error: `Instruction ${index} data is not valid standard base64 or 0x-hex`,
     };
   }
 
