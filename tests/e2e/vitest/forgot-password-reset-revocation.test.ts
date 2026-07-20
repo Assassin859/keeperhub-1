@@ -203,9 +203,7 @@ async function purge(s: Seeded): Promise<void> {
     await tx.delete(apiKeys).where(eq(apiKeys.userId, s.userId));
     await tx.delete(sessions).where(eq(sessions.userId, s.userId));
     await tx.delete(accounts).where(eq(accounts.userId, s.userId));
-    await tx
-      .delete(verifications)
-      .where(eq(verifications.identifier, s.email));
+    await tx.delete(verifications).where(eq(verifications.identifier, s.email));
     await tx.delete(organization).where(eq(organization.id, s.orgId));
     await tx.delete(users).where(eq(users.id, s.userId));
   });

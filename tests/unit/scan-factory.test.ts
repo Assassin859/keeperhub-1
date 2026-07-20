@@ -997,39 +997,30 @@ const YIELD_DESCRIPTOR_WITH_DEST: SuggestionDescriptor = {
 };
 
 describe("YIELD-04: yield workflow destination reference + read-only guard (57-01)", () => {
-  it(
-    "destination-ref: buildWorkflow output JSON references the destinationAddress (RED — 57-03 wires it)",
-    () => {
-      const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
-      const workflowJson = JSON.stringify({
-        nodes: result.nodes,
-        edges: result.edges,
-      });
-      // RED: factory does not yet embed destinationAddress in any node config.
-      // 57-03 will modify stablecoin-yield.ts to surface it (e.g. in alert body).
-      expect(workflowJson).toContain(
-        YIELD_DESCRIPTOR_WITH_DEST.confirmInputs.destinationAddress
-      );
-    }
-  );
+  it("destination-ref: buildWorkflow output JSON references the destinationAddress (RED — 57-03 wires it)", () => {
+    const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
+    const workflowJson = JSON.stringify({
+      nodes: result.nodes,
+      edges: result.edges,
+    });
+    // RED: factory does not yet embed destinationAddress in any node config.
+    // 57-03 will modify stablecoin-yield.ts to surface it (e.g. in alert body).
+    expect(workflowJson).toContain(
+      YIELD_DESCRIPTOR_WITH_DEST.confirmInputs.destinationAddress
+    );
+  });
 
-  it(
-    "read-only guard: validateNoApproveTokenNode passes on APY-aware yield workflow",
-    () => {
-      const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
-      const { valid } = validateNoApproveTokenNode(result.nodes);
-      // GREEN: stablecoin-yield.ts never emits approve-token nodes (YIELD-04 invariant)
-      expect(valid).toBe(true);
-    }
-  );
+  it("read-only guard: validateNoApproveTokenNode passes on APY-aware yield workflow", () => {
+    const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
+    const { valid } = validateNoApproveTokenNode(result.nodes);
+    // GREEN: stablecoin-yield.ts never emits approve-token nodes (YIELD-04 invariant)
+    expect(valid).toBe(true);
+  });
 
-  it(
-    "read-only guard: validateNoMaxUint256Approval passes on APY-aware yield workflow",
-    () => {
-      const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
-      const { valid } = validateNoMaxUint256Approval(result.nodes);
-      // GREEN: no MaxUint256 approval possible in a read-only monitor (YIELD-04 invariant)
-      expect(valid).toBe(true);
-    }
-  );
+  it("read-only guard: validateNoMaxUint256Approval passes on APY-aware yield workflow", () => {
+    const result = buildWorkflow(YIELD_DESCRIPTOR_WITH_DEST);
+    const { valid } = validateNoMaxUint256Approval(result.nodes);
+    // GREEN: no MaxUint256 approval possible in a read-only monitor (YIELD-04 invariant)
+    expect(valid).toBe(true);
+  });
 });

@@ -14,11 +14,11 @@ export class SolanaKeypairSigner implements SolanaTransactionSigner {
     this.keypair = keypair;
   }
 
-  async getPublicKey(): Promise<PublicKey> {
-    return this.keypair.publicKey;
+  getPublicKey(): Promise<PublicKey> {
+    return Promise.resolve(this.keypair.publicKey);
   }
 
-  async signTransaction(serializedTx: Uint8Array): Promise<Uint8Array> {
+  signTransaction(serializedTx: Uint8Array): Promise<Uint8Array> {
     let transaction: Transaction | VersionedTransaction;
     let isVersioned = false;
 
@@ -29,7 +29,7 @@ export class SolanaKeypairSigner implements SolanaTransactionSigner {
       try {
         transaction = Transaction.from(serializedTx);
         isVersioned = false;
-      } catch (err) {
+      } catch (_err) {
         throw new Error(
           "Failed to deserialize transaction bytes in signTransaction"
         );
@@ -39,10 +39,10 @@ export class SolanaKeypairSigner implements SolanaTransactionSigner {
     if (isVersioned) {
       const vTx = transaction as VersionedTransaction;
       vTx.sign([this.keypair]);
-      return vTx.serialize();
+      return Promise.resolve(vTx.serialize());
     }
     const legacyTx = transaction as Transaction;
     legacyTx.sign(this.keypair);
-    return legacyTx.serialize();
+    return Promise.resolve(legacyTx.serialize());
   }
 }

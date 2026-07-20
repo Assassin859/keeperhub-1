@@ -4,5 +4,6 @@
 declare module "bs58" {
   function encode(bytes: Uint8Array | Buffer): string;
   function decode(str: string): Buffer;
-  export { encode, decode };
+
+  export { decode, encode };
 }

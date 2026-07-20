@@ -7,7 +7,7 @@ import type { ActionConfigField } from "@/plugins/registry";
  */
 export function actionRequiredChainType(
   configFields: readonly ActionConfigField[] | undefined
-): string | undefined {
+): string | string[] | undefined {
   for (const field of configFields ?? []) {
     if (field.type === "group") {
       for (const inner of field.fields) {
@@ -37,6 +37,10 @@ export function filterActionsByAvailableChainTypes<
 >(actions: readonly T[], enabledChainTypes: ReadonlySet<string>): T[] {
   return actions.filter((action) => {
     const required = actionRequiredChainType(action.configFields);
-    return required === undefined || enabledChainTypes.has(required);
+    if (required === undefined) {
+      return true;
+    }
+    const requiredTypes = Array.isArray(required) ? required : [required];
+    return requiredTypes.some((type) => enabledChainTypes.has(type));
   });
 }

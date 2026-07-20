@@ -2,7 +2,12 @@ import { and, count, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { organizationApiKeys, sessions, users, walletAddress } from "@/lib/db/schema";
+import {
+  organizationApiKeys,
+  sessions,
+  users,
+  walletAddress,
+} from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { authorizeAction } from "@/lib/middleware/authorize-action";

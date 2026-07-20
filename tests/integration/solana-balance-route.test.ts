@@ -145,8 +145,12 @@ describe("GET /api/user/wallet/solana-balance", () => {
 
     expect(res.status).toBe(200);
     expect(body.hasSolanaWallet).toBe(true);
-    const mainnet = body.balances.find((b: { chainId: number }) => b.chainId === 101);
-    const devnet = body.balances.find((b: { chainId: number }) => b.chainId === 103);
+    const mainnet = body.balances.find(
+      (b: { chainId: number }) => b.chainId === 101
+    );
+    const devnet = body.balances.find(
+      (b: { chainId: number }) => b.chainId === 103
+    );
     expect(mainnet).toMatchObject({ error: false, balanceSol: "2.5" });
     expect(devnet).toMatchObject({ error: true, balanceSol: "" });
   });

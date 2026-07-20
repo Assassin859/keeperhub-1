@@ -788,7 +788,8 @@ export function NavigationSidebar(): React.ReactNode {
   const projectWorkflowsByTagId: Record<string, WorkflowEntry[]> = {};
   for (const w of projectWorkflows) {
     if (w.tagId) {
-      (projectWorkflowsByTagId[w.tagId] ??= []).push(w);
+      projectWorkflowsByTagId[w.tagId] ??= [];
+      projectWorkflowsByTagId[w.tagId].push(w);
     }
   }
 

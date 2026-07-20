@@ -1,10 +1,9 @@
-import { once } from "node:events";
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { type AddressInfo, createServer as createNetServer } from "node:net";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   decodeSandboxResult,
@@ -159,7 +158,12 @@ describe("sandbox HTTP server", () => {
   });
 
   it("POST /run with valid JSON but no code field returns 400 malformed body", async () => {
-    const res = await request(port, "POST", "/run", JSON.stringify({ timeout: 5 }));
+    const res = await request(
+      port,
+      "POST",
+      "/run",
+      JSON.stringify({ timeout: 5 })
+    );
     expect(res.status).toBe(400);
     expect(res.body.toString()).toBe("malformed body");
   });
@@ -336,9 +340,3 @@ describe("sandbox HTTP server", () => {
     expect(mod.getSandboxPort()).toBeGreaterThan(0);
   });
 });
-
-// Reserve a random port helper is not needed in test — listen(0) picks one.
-// Kept createNetServer/once imports available for future async readiness
-// checks if the server gains explicit ready signals.
-void createNetServer;
-void once;

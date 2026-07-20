@@ -38,13 +38,15 @@ export function pendingIpCookieName(): string {
   return COOKIE_NAME;
 }
 
+const BASE64_PADDING_RE = /=+$/;
+
 function base64UrlEncode(input: Buffer | string): string {
   const buf = typeof input === "string" ? Buffer.from(input) : input;
   return buf
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
-    .replace(/=+$/, "");
+    .replace(BASE64_PADDING_RE, "");
 }
 
 function base64UrlDecode(input: string): Buffer {

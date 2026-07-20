@@ -27,7 +27,12 @@ export async function GET(request: Request) {
       })
       .from(member)
       .innerJoin(organization, eq(organization.id, member.organizationId))
-      .where(and(eq(member.userId, session.user.id), isNull(organization.deactivatedAt)));
+      .where(
+        and(
+          eq(member.userId, session.user.id),
+          isNull(organization.deactivatedAt)
+        )
+      );
 
     return NextResponse.json(rows, { status: 200 });
   } catch (error) {

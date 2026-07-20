@@ -210,7 +210,11 @@ describe("org principal", () => {
 
   it("uses its own org-visible integration", () => {
     expect(
-      isIntegrationUsable(row({ visibility: "organization" }), ORG_PRINCIPAL, NO_CTX)
+      isIntegrationUsable(
+        row({ visibility: "organization" }),
+        ORG_PRINCIPAL,
+        NO_CTX
+      )
     ).toBe(true);
   });
 

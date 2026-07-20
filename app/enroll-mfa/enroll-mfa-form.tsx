@@ -35,7 +35,7 @@ const REDIRECT_COUNTDOWN_SECONDS = 10;
  * swaps to a success card with a 10-second auto-redirect plus a
  * Continue button so the redirect is acknowledged rather than abrupt.
  */
-export function EnrollMfaForm({ next, mode }: Props): React.ReactElement {
+export function EnrollMfaForm({ next }: Props): React.ReactElement {
   const target = next || "/";
   const [dialogOpen, setDialogOpen] = useState(true);
   const [enrolled, setEnrolled] = useState(false);
@@ -71,9 +71,9 @@ export function EnrollMfaForm({ next, mode }: Props): React.ReactElement {
         credentials: "include",
       });
       if (res.ok) {
-        const data = (await res.json().catch(() => null)) as
-          | { user?: unknown }
-          | null;
+        const data = (await res.json().catch(() => null)) as {
+          user?: unknown;
+        } | null;
         if (data?.user) {
           window.location.assign(target);
           return;

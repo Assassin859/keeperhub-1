@@ -47,7 +47,7 @@ export function normalizeSolanaTransaction(
     let toPubkey: PublicKey;
     try {
       toPubkey = new PublicKey(to);
-    } catch (err) {
+    } catch (_err) {
       logUserError(
         ErrorCategory.VALIDATION,
         "[Solana Normalizer] Invalid recipient 'to' address"
@@ -103,7 +103,7 @@ export function normalizeSolanaTransaction(
     } else {
       buffer = Buffer.from(trimmed, "base64");
     }
-  } catch (err) {
+  } catch (_err) {
     logUserError(
       ErrorCategory.VALIDATION,
       "[Solana Normalizer] Failed to decode transaction payload"
@@ -124,7 +124,7 @@ export function normalizeSolanaTransaction(
     try {
       transaction = Transaction.from(buffer);
       isVersioned = false;
-    } catch (err) {
+    } catch (_err) {
       logUserError(
         ErrorCategory.VALIDATION,
         "[Solana Normalizer] Failed to parse transaction bytes"
@@ -144,7 +144,7 @@ export function normalizeSolanaTransaction(
     const staticAccountKeys = vTx.message.staticAccountKeys;
     for (const ix of instructions) {
       const programId = staticAccountKeys[ix.programIdIndex];
-      if (programId && programId.equals(ComputeBudgetProgram.programId)) {
+      if (programId?.equals(ComputeBudgetProgram.programId)) {
         hasComputeBudget = true;
         break;
       }
@@ -166,96 +166,93 @@ export function normalizeSolanaTransaction(
         "[Solana Normalizer] Skipping compute budget overrides because transaction already contains budget instructions"
       );
     }
-  } else {
+  } else if (
+    priorityFeeOverride !== undefined ||
+    gasLimitOverride !== undefined
+  ) {
     // Inject overrides
-    if (priorityFeeOverride !== undefined || gasLimitOverride !== undefined) {
-      if (isVersioned) {
-        const vTx = transaction as VersionedTransaction;
-        // ALT guard
-        if (
-          vTx.message.addressTableLookups &&
-          vTx.message.addressTableLookups.length > 0
-        ) {
-          logUserError(
-            ErrorCategory.VALIDATION,
-            "[Solana Normalizer] Overrides not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
-          );
-          throw new Error(
-            "Overrides not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
-          );
-        }
-
-        const decompiled = TransactionMessage.decompile(vTx.message);
-
-        if (gasLimitOverride !== undefined) {
-          validateGasLimit(gasLimitOverride);
-          decompiled.instructions.unshift(
-            ComputeBudgetProgram.setComputeUnitLimit({
-              units: Number(gasLimitOverride),
-            })
-          );
-        }
-        if (priorityFeeOverride !== undefined) {
-          decompiled.instructions.unshift(
-            ComputeBudgetProgram.setComputeUnitPrice({
-              microLamports: priorityFeeOverride,
-            })
-          );
-        }
-
-        // Set/Overwrite Fee Payer
-        decompiled.payerKey = signerPublicKey;
-
-        const recompiled = decompiled.compileToV0Message();
-        transaction = new VersionedTransaction(recompiled);
-      } else {
-        const legacyTx = transaction as Transaction;
-        if (gasLimitOverride !== undefined) {
-          validateGasLimit(gasLimitOverride);
-          legacyTx.instructions.unshift(
-            ComputeBudgetProgram.setComputeUnitLimit({
-              units: Number(gasLimitOverride),
-            })
-          );
-        }
-        if (priorityFeeOverride !== undefined) {
-          legacyTx.instructions.unshift(
-            ComputeBudgetProgram.setComputeUnitPrice({
-              microLamports: priorityFeeOverride,
-            })
-          );
-        }
-        legacyTx.feePayer = signerPublicKey;
+    if (isVersioned) {
+      const vTx = transaction as VersionedTransaction;
+      // ALT guard
+      if (
+        vTx.message.addressTableLookups &&
+        vTx.message.addressTableLookups.length > 0
+      ) {
+        logUserError(
+          ErrorCategory.VALIDATION,
+          "[Solana Normalizer] Overrides not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
+        );
+        throw new Error(
+          "Overrides not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
+        );
       }
+
+      const decompiled = TransactionMessage.decompile(vTx.message);
+
+      if (gasLimitOverride !== undefined) {
+        validateGasLimit(gasLimitOverride);
+        decompiled.instructions.unshift(
+          ComputeBudgetProgram.setComputeUnitLimit({
+            units: Number(gasLimitOverride),
+          })
+        );
+      }
+      if (priorityFeeOverride !== undefined) {
+        decompiled.instructions.unshift(
+          ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: priorityFeeOverride,
+          })
+        );
+      }
+
+      // Set/Overwrite Fee Payer
+      decompiled.payerKey = signerPublicKey;
+
+      const recompiled = decompiled.compileToV0Message();
+      transaction = new VersionedTransaction(recompiled);
     } else {
-      // Overwrite Fee Payer if no overrides but different payer
-      if (isVersioned) {
-        const vTx = transaction as VersionedTransaction;
-        const payerKey = vTx.message.staticAccountKeys[0];
-        if (!(payerKey && payerKey.equals(signerPublicKey))) {
-          if (
-            vTx.message.addressTableLookups &&
-            vTx.message.addressTableLookups.length > 0
-          ) {
-            logUserError(
-              ErrorCategory.VALIDATION,
-              "[Solana Normalizer] Fee payer normalization not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
-            );
-            throw new Error(
-              "Fee payer normalization not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
-            );
-          }
-          const decompiled = TransactionMessage.decompile(vTx.message);
-          decompiled.payerKey = signerPublicKey;
-          transaction = new VersionedTransaction(
-            decompiled.compileToV0Message()
-          );
-        }
-      } else {
-        const legacyTx = transaction as Transaction;
-        legacyTx.feePayer = signerPublicKey;
+      const legacyTx = transaction as Transaction;
+      if (gasLimitOverride !== undefined) {
+        validateGasLimit(gasLimitOverride);
+        legacyTx.instructions.unshift(
+          ComputeBudgetProgram.setComputeUnitLimit({
+            units: Number(gasLimitOverride),
+          })
+        );
       }
+      if (priorityFeeOverride !== undefined) {
+        legacyTx.instructions.unshift(
+          ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: priorityFeeOverride,
+          })
+        );
+      }
+      legacyTx.feePayer = signerPublicKey;
     }
+  } else if (isVersioned) {
+    // Overwrite Fee Payer if no overrides but different payer
+    const vTx = transaction as VersionedTransaction;
+    const payerKey = vTx.message.staticAccountKeys[0];
+    if (!payerKey?.equals(signerPublicKey)) {
+      if (
+        vTx.message.addressTableLookups &&
+        vTx.message.addressTableLookups.length > 0
+      ) {
+        logUserError(
+          ErrorCategory.VALIDATION,
+          "[Solana Normalizer] Fee payer normalization not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
+        );
+        throw new Error(
+          "Fee payer normalization not supported on VersionedTransaction containing Address Lookup Tables (ALTs)"
+        );
+      }
+      const decompiled = TransactionMessage.decompile(vTx.message);
+      decompiled.payerKey = signerPublicKey;
+      transaction = new VersionedTransaction(decompiled.compileToV0Message());
+    }
+  } else {
+    const legacyTx = transaction as Transaction;
+    legacyTx.feePayer = signerPublicKey;
   }
 
   return { mode: "A", transaction, isVersioned };
@@ -286,13 +283,16 @@ export function parseComputeUnitPrice(
     const staticAccountKeys = vTx.message.staticAccountKeys;
     for (const ix of instructions) {
       const programId = staticAccountKeys[ix.programIdIndex];
-      if (programId && programId.equals(ComputeBudgetProgram.programId)) {
-        // Discriminator check (first byte is 3 for SetComputeUnitPrice)
-        if (ix.data && ix.data.length === 9 && ix.data[0] === 3) {
-          const bufferData = Buffer.from(ix.data);
-          const microLamports = bufferData.readBigUInt64LE(1);
-          return BigInt(microLamports);
-        }
+      // Discriminator check (first byte is 3 for SetComputeUnitPrice)
+      if (
+        programId?.equals(ComputeBudgetProgram.programId) &&
+        ix.data &&
+        ix.data.length === 9 &&
+        ix.data[0] === 3
+      ) {
+        const bufferData = Buffer.from(ix.data);
+        const microLamports = bufferData.readBigUInt64LE(1);
+        return BigInt(microLamports);
       }
     }
   } else {

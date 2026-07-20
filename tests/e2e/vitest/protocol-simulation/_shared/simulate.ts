@@ -22,10 +22,7 @@
 
 import { Contract, Interface, JsonRpcProvider, parseUnits } from "ethers";
 import { expect, test } from "vitest";
-import {
-  getProtocol,
-  type ProtocolDefinition,
-} from "@/lib/protocol-registry";
+import { getProtocol, type ProtocolDefinition } from "@/lib/protocol-registry";
 import { resolveBinding } from "@/lib/test-data/build-workflow";
 import { TOKEN_REGISTRY } from "@/lib/test-data/chain-test-data";
 import {
@@ -79,7 +76,7 @@ async function sendImpersonatedOnce(
       gasLimit: estimated * GAS_LIMIT_MULTIPLIER,
     });
     const receipt = await sent.wait();
-    if (!receipt || receipt.status !== 1) {
+    if (receipt?.status !== 1) {
       throw new Error(`impersonated tx to ${tx.to} reverted`);
     }
   });

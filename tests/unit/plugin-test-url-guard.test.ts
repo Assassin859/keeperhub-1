@@ -6,7 +6,10 @@ vi.mock("server-only", () => ({}));
 // avoiding loading the real server-only safe-fetch module (undici/sentry).
 const { assertUrlIsPublic, FakeSsrfBlockedError } = vi.hoisted(() => {
   class HoistedSsrfBlockedError extends Error {}
-  return { assertUrlIsPublic: vi.fn(), FakeSsrfBlockedError: HoistedSsrfBlockedError };
+  return {
+    assertUrlIsPublic: vi.fn(),
+    FakeSsrfBlockedError: HoistedSsrfBlockedError,
+  };
 });
 vi.mock("@/lib/safe-fetch", () => ({
   assertUrlIsPublic,
@@ -84,7 +87,9 @@ describe("handlePluginTest url-field SSRF guard", () => {
       apiUrl: "https://eth.blockscout.com",
     });
 
-    expect(assertUrlIsPublic).toHaveBeenCalledWith("https://eth.blockscout.com");
+    expect(assertUrlIsPublic).toHaveBeenCalledWith(
+      "https://eth.blockscout.com"
+    );
     expect(testFn).toHaveBeenCalledTimes(1);
     expect(result.status).toBe("success");
   });

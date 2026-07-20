@@ -88,7 +88,9 @@ async function gate(
   });
   let response: Response;
   try {
-    response = await handler(request, { params: Promise.resolve({ tagId: "t1" }) });
+    response = await handler(request, {
+      params: Promise.resolve({ tagId: "t1" }),
+    });
   } catch {
     // Threw in downstream code => execution got past the scope gate.
     return "passed";

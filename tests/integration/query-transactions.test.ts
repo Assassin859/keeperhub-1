@@ -49,7 +49,7 @@ vi.mock("ethers", () => ({
       (addr: string) => addr.startsWith("0x") && addr.length === 42
     ),
     Interface: class MockInterface {
-      private abi: Array<{
+      private readonly abi: Array<{
         type: string;
         name: string;
         inputs?: Array<{ name: string }>;

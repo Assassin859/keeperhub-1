@@ -201,7 +201,11 @@ function createContext(workflowId: string): {
 
 function setupHappyPath(): void {
   mockOrgGateLimit.mockResolvedValue([
-    { workflow: webhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+    {
+      workflow: webhookWorkflow,
+      orgDeactivatedAt: null,
+      organizationName: null,
+    },
   ]);
   mockApiKeysFindFirst.mockResolvedValue({
     id: "key-1",
@@ -225,7 +229,11 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
     // The mock for that chain is mockOrgGateLimit; it must include the workflow
     // field so the helper recognises a found row.
     mockOrgGateLimit.mockResolvedValue([
-      { workflow: webhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+      {
+        workflow: webhookWorkflow,
+        orgDeactivatedAt: null,
+        organizationName: null,
+      },
     ]);
     mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
@@ -247,7 +255,11 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
   describe("disabled workflow", () => {
     it("should return 410 Gone when workflow.enabled is false", async () => {
       mockOrgGateLimit.mockResolvedValue([
-        { workflow: disabledWebhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+        {
+          workflow: disabledWebhookWorkflow,
+          orgDeactivatedAt: null,
+          organizationName: null,
+        },
       ]);
 
       const response = await POST(
@@ -261,7 +273,11 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
 
     it("should not validate API key for a disabled workflow", async () => {
       mockOrgGateLimit.mockResolvedValue([
-        { workflow: disabledWebhookWorkflow, orgDeactivatedAt: null, organizationName: null },
+        {
+          workflow: disabledWebhookWorkflow,
+          orgDeactivatedAt: null,
+          organizationName: null,
+        },
       ]);
 
       await POST(
@@ -277,7 +293,11 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
     it("should return 404 when the workflow owner is deactivated", async () => {
       // Return a deactivated org so the executability gate rejects before auth.
       mockOrgGateLimit.mockResolvedValue([
-        { workflow: webhookWorkflow, orgDeactivatedAt: new Date(), organizationName: null },
+        {
+          workflow: webhookWorkflow,
+          orgDeactivatedAt: new Date(),
+          organizationName: null,
+        },
       ]);
 
       const response = await POST(
@@ -394,7 +414,11 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
   describe("webhook trigger validation", () => {
     it("should return 400 when workflow is not webhook-triggered", async () => {
       mockOrgGateLimit.mockResolvedValue([
-        { workflow: manualWorkflow, orgDeactivatedAt: null, organizationName: null },
+        {
+          workflow: manualWorkflow,
+          orgDeactivatedAt: null,
+          organizationName: null,
+        },
       ]);
       mockApiKeysFindFirst.mockResolvedValue({
         id: "key-1",

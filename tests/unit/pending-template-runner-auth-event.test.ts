@@ -151,10 +151,14 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
 
   function readFlag(workflowId: string): { at: number } | null {
     const raw = store.get(`${PREFIX}${workflowId}`);
-    if (!raw) return null;
+    if (!raw) {
+      return null;
+    }
     try {
       const parsed = JSON.parse(raw) as { at: number };
-      if (typeof parsed?.at === "number") return parsed;
+      if (typeof parsed?.at === "number") {
+        return parsed;
+      }
     } catch {
       // Malformed entry — treat as absent.
     }
@@ -169,7 +173,9 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
     writeFlag("wf_fresh", Date.now());
     const flag = readFlag("wf_fresh");
     expect(flag).not.toBeNull();
-    expect(isFlagFresh(flag!, Date.now())).toBe(true);
+    expect(isFlagFresh(flag as NonNullable<typeof flag>, Date.now())).toBe(
+      true
+    );
   });
 
   it("a flag written more than 30 seconds ago is considered stale", () => {
@@ -177,7 +183,9 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
     writeFlag("wf_stale", thirtyOneSecondsAgo);
     const flag = readFlag("wf_stale");
     expect(flag).not.toBeNull();
-    expect(isFlagFresh(flag!, Date.now())).toBe(false);
+    expect(isFlagFresh(flag as NonNullable<typeof flag>, Date.now())).toBe(
+      false
+    );
   });
 
   it("absent flag returns null", () => {
@@ -193,7 +201,7 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
     writeFlag("wf_key_test", Date.now());
     const raw = store.get(`${PREFIX}wf_key_test`);
     expect(raw).not.toBeNull();
-    const parsed = JSON.parse(raw!) as { at: number };
+    const parsed = JSON.parse(raw as string) as { at: number };
     expect(typeof parsed.at).toBe("number");
   });
 

@@ -13,7 +13,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { authClient } from "@/lib/auth-client";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { authClient } from "@/lib/auth-client";
 import type { StepUpFactor } from "@/lib/mfa/step-up-policy";
 
 type Enrolled = { totp: boolean; email: boolean };
@@ -81,9 +81,7 @@ function AddEmailDialog({
       toast.success("Email added.");
       onAdded();
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Verification failed."
-      );
+      toast.error(err instanceof Error ? err.message : "Verification failed.");
     } finally {
       setLoading(false);
     }
@@ -278,12 +276,7 @@ export function EnforceMfaForm({
             Switch to {org.name}
           </Button>
         ))}
-        <Button
-          disabled={leaving}
-          onClick={signOut}
-          size="sm"
-          variant="ghost"
-        >
+        <Button disabled={leaving} onClick={signOut} size="sm" variant="ghost">
           Sign out
         </Button>
       </CardFooter>

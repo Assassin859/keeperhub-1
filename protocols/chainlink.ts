@@ -37,7 +37,8 @@ const CCIP_L2_SKIPS: Record<string, string> = {
     "requires CCIP message struct with destination chain and encoded data",
   "ccip-send":
     "requires CCIP message struct, bridge token balance, and fee token balance",
-  "ccip-bnm-drip": "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
+  "ccip-bnm-drip":
+    "CCIP-BnM test token is testnet only (Sepolia, Base Sepolia)",
   "ccip-approve-bridge-token": "write action requiring bridge token balance",
   "ccip-approve-fee-token": "write action requiring fee token balance",
   "get-round-data": "requires a valid historical round ID",

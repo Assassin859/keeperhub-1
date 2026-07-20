@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
@@ -12,6 +11,7 @@ import {
   tokenAddressForWire,
 } from "@/lib/safe/roles-orchestrator";
 import type { DroppedInput } from "@/lib/safe/route-input";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RouteParams = { params: Promise<{ safeId: string }> };
 

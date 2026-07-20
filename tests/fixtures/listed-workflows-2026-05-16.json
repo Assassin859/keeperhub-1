@@ -30,9 +30,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getReserveData",
-              "args": [
-                "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-              ]
+              "args": ["0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"]
             }
           }
         },
@@ -150,9 +148,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getUserAccountData",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -168,9 +164,7 @@
               "contractAddress": "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -186,9 +180,7 @@
               "contractAddress": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -243,9 +235,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress"
-        ]
+        "required": ["walletAddress"]
       },
       "outputMapping": {
         "positions": "combine-1"
@@ -280,9 +270,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getUserAccountData",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -298,9 +286,7 @@
               "contractAddress": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
               "abi": "[]",
               "abiFunction": "getUserAccountData",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -316,9 +302,7 @@
               "contractAddress": "0xae78736Cd615f374D3085123A210448E74Fc6393",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -373,9 +357,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress"
-        ]
+        "required": ["walletAddress"]
       },
       "outputMapping": {
         "positions": "combine-1"
@@ -509,10 +491,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress",
-          "spenderAddress"
-        ]
+        "required": ["walletAddress", "spenderAddress"]
       },
       "outputMapping": {
         "allowances": "combine-1"
@@ -639,9 +618,7 @@
               "contractAddress": "0x4200000000000000000000000000000000000006",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         }
@@ -660,9 +637,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress"
-        ]
+        "required": ["walletAddress"]
       },
       "outputMapping": {
         "balance": "weth-balance"
@@ -698,9 +673,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getUserAccountData",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -742,9 +715,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress"
-        ]
+        "required": ["walletAddress"]
       },
       "outputMapping": {
         "riskStatus": "condition-1"
@@ -888,9 +859,7 @@
               "contractAddress": "0xEC568fffba86c094cf06b22134B23074DFE2252c",
               "abi": "[]",
               "abiFunction": "state",
-              "args": [
-                "{{@trigger-1:Trigger.proposalId}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.proposalId}}"]
             }
           }
         }
@@ -914,9 +883,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "proposalId"
-        ]
+        "required": ["proposalId"]
       },
       "outputMapping": {
         "proposalState": "proposal-state"
@@ -952,9 +919,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getReserveData",
-              "args": [
-                "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-              ]
+              "args": ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"]
             }
           }
         },
@@ -970,9 +935,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getReserveData",
-              "args": [
-                "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-              ]
+              "args": ["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"]
             }
           }
         },
@@ -1118,11 +1081,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "tokenIn",
-          "tokenOut",
-          "amountIn"
-        ]
+        "required": ["tokenIn", "tokenOut", "amountIn"]
       },
       "outputMapping": {
         "quote": "combine-1"
@@ -1218,11 +1177,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "sourceChain",
-          "destChain",
-          "amount"
-        ]
+        "required": ["sourceChain", "destChain", "amount"]
       },
       "outputMapping": {
         "bridgeQuotes": "combine-1"
@@ -1535,9 +1490,7 @@
               "contractAddress": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -1582,9 +1535,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress"
-        ]
+        "required": ["walletAddress"]
       },
       "outputMapping": {
         "stakingStats": "combine-1"
@@ -1636,9 +1587,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "ensName"
-        ]
+        "required": ["ensName"]
       },
       "outputMapping": {
         "address": "ens-resolve"
@@ -1782,9 +1731,7 @@
               "contractAddress": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -1800,9 +1747,7 @@
               "contractAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
               "abi": "[]",
               "abiFunction": "balanceOf",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -1818,9 +1763,7 @@
               "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
               "abi": "[]",
               "abiFunction": "getUserAccountData",
-              "args": [
-                "{{@trigger-1:Trigger.walletAddress}}"
-              ]
+              "args": ["{{@trigger-1:Trigger.walletAddress}}"]
             }
           }
         },
@@ -1875,9 +1818,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "walletAddress"
-        ]
+        "required": ["walletAddress"]
       },
       "outputMapping": {
         "report": "combine-1"

@@ -14,7 +14,10 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import postgres from "postgres";
-import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/workflow/node-builders";
+import type {
+  WorkflowEdgeJson,
+  WorkflowNodeJson,
+} from "@/lib/workflow/node-builders";
 import {
   createManualWorkflow,
   createScheduledWorkflow,

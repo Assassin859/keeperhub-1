@@ -108,6 +108,30 @@
       "linter": {
         "rules": { "suspicious": { "noMisplacedAssertion": "off" } }
       }
+    },
+    {
+      // Test-only rule noise. These rules carry no signal in test code and are
+      // needlessly noisy against test suites:
+      //  - useTopLevelRegex: a runtime-perf rule; a regex allocated inside a
+      //    test body has no production cost.
+      //  - useAwait: test helpers and mocks are declared async for signature
+      //    parity with the async code they stand in for, without awaiting.
+      //  - noMisplacedAssertion: false positives from custom expect() wrappers
+      //    (fixtures, table-driven helpers) that the rule does not recognise.
+      "includes": ["tests/**", "**/*.test.ts", "**/*.test.tsx"],
+      "linter": {
+        "rules": {
+          "performance": { "useTopLevelRegex": "off" },
+          "suspicious": { "useAwait": "off", "noMisplacedAssertion": "off" }
+        }
+      }
+    },
+    {
+      // Static brand/icon SVGs shipped as assets (logos, decorative glyphs),
+      // not interactive UI. The a11y <title> requirement does not apply to
+      // these files.
+      "includes": ["public/**"],
+      "linter": { "rules": { "a11y": { "noSvgWithoutTitle": "off" } } }
     }
   ]
 }

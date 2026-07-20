@@ -65,6 +65,7 @@ import {
   clearExecution,
   getSuccessfulSteps,
 } from "@/lib/workflow/executor/step-success-tracker";
+import type { SystemActionType } from "@/lib/workflow/executor/system-action-types";
 import {
   assertResolved,
   createTracker,
@@ -84,7 +85,6 @@ import {
 } from "@/lib/workflow/nodes/condition/validator";
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
-import type { SystemActionType } from "@/lib/workflow/executor/system-action-types";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
@@ -95,20 +95,20 @@ import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 // versa) fails the build, so a new system action cannot ship unclassified.
 const SYSTEM_ACTIONS = {
   "Database Query": {
-    // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
     importer: () =>
+      // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
       import("@/lib/workflow/nodes/database-query/step") as Promise<any>,
     stepFunction: "databaseQueryStep",
   },
   "HTTP Request": {
-    // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
     importer: () =>
+      // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
       import("@/lib/workflow/nodes/http-request/step") as Promise<any>,
     stepFunction: "httpRequestStep",
   },
   Condition: {
-    // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
     importer: () =>
+      // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
       import("@/lib/workflow/nodes/condition/step") as Promise<any>,
     stepFunction: "conditionStep",
   },
@@ -952,10 +952,7 @@ function computeCommentRanges(code: string): [number, number][] {
   return ranges;
 }
 
-function offsetInRanges(
-  offset: number,
-  ranges: [number, number][]
-): boolean {
+function offsetInRanges(offset: number, ranges: [number, number][]): boolean {
   return ranges.some(([start, end]) => offset >= start && offset < end);
 }
 
@@ -1034,8 +1031,7 @@ function resolveDisplayCodeRef(
 
 // Matches a stored ref `{{@nodeId:Label.field}}` OR a display ref
 // `{{Label.field}}` in one pass so offsets align with the comment scan below.
-const CODE_TEMPLATE_PATTERN =
-  /\{\{@([^:]+):([^}]+)\}\}|\{\{([^@}][^}]*)\}\}/g;
+const CODE_TEMPLATE_PATTERN = /\{\{@([^:]+):([^}]+)\}\}|\{\{([^@}][^}]*)\}\}/g;
 
 export function processCodeTemplates(
   code: string,
@@ -1525,7 +1521,7 @@ export function identifyLoopBody(
     if (!bodyEdgesBySource.has(forEachNodeId)) {
       bodyEdgesBySource.set(forEachNodeId, []);
     }
-    bodyEdgesBySource.get(forEachNodeId)!.push(targetId);
+    bodyEdgesBySource.get(forEachNodeId)?.push(targetId);
   }
 
   const queue: Array<{ nodeId: string; depth: number }> = seedTargets.map(
@@ -1582,7 +1578,7 @@ export function identifyLoopBody(
       if (!bodyEdgesBySource.has(nodeId)) {
         bodyEdgesBySource.set(nodeId, []);
       }
-      bodyEdgesBySource.get(nodeId)!.push(nextId);
+      bodyEdgesBySource.get(nodeId)?.push(nextId);
       queue.push({ nodeId: nextId, depth: nextDepth });
     }
   }
@@ -1949,7 +1945,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // an unresolved literal. The tracker is the authority for code-field refs.
     let renderedCode: string | undefined;
     if (actionType === "code/run-code" && typeof originalCode === "string") {
-      renderedCode = processCodeTemplates(originalCode, currentOutputs, tracker);
+      renderedCode = processCodeTemplates(
+        originalCode,
+        currentOutputs,
+        tracker
+      );
     }
 
     // KEEP-468 hotfix: scan + assert BEFORE re-attaching condition fields.
@@ -2449,7 +2449,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       arrayLength: resolvedArray.length,
       maxIterations,
       iterationsRan: itemsToProcess.length,
-      failedIterations: firstIterationFailure !== undefined ? 1 : 0,
+      failedIterations: firstIterationFailure === undefined ? 0 : 1,
       firstFailureError: firstIterationFailure?.error,
       firstFailureNodeId: undefined,
     };

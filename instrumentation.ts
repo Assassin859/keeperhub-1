@@ -4,6 +4,11 @@
  * https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
+const WORKFLOW_ENTRYPOINT_IMPORT_RE =
+  /^import \{ workflowEntrypoint \} from ['"]workflow\/runtime['"];?$/m;
+const WORKFLOW_ENTRYPOINT_POST_RE =
+  /^export const POST = workflowEntrypoint\(workflowCode\);?$/m;
+
 /**
  * Ensure special characters in postgres URL passwords are percent-encoded.
  * postgres.js parses connection strings via new URL() which requires encoding.
@@ -147,15 +152,17 @@ export async function register() {
       const tryRegisterHandler = async (): Promise<boolean> => {
         try {
           const routeContent = readFileSync(routePath, "utf8");
-          if (routeContent.includes("__workflowRouteStub")) return false;
+          if (routeContent.includes("__workflowRouteStub")) {
+            return false;
+          }
 
           const vmScript = routeContent
             .replace(
-              /^import \{ workflowEntrypoint \} from ['"]workflow\/runtime['"];?$/m,
+              WORKFLOW_ENTRYPOINT_IMPORT_RE,
               "const workflowEntrypoint = (code) => code;"
             )
             .replace(
-              /^export const POST = workflowEntrypoint\(workflowCode\);?$/m,
+              WORKFLOW_ENTRYPOINT_POST_RE,
               "__wkfResult.code = workflowEntrypoint(workflowCode);"
             );
 
