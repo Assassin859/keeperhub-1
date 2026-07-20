@@ -81,6 +81,13 @@ env:
   AWS_REGION:
     type: kv
     value: "us-east-1"
+  # Route all AWS calls (SQS send + STS credential resolution) at localstack.
+  # Without this the SDK resolves creds via STS AssumeRoleWithWebIdentity
+  # against real AWS and is denied, so the enqueue fails. localstack emulates
+  # STS and returns usable creds. Matches the block/schedule/executor templates.
+  AWS_ENDPOINT_URL:
+    type: kv
+    value: "http://localstack.pr-${PR_NUMBER}.svc.cluster.local:4566"
 
 externalSecrets:
   clusterSecretStoreName: techops-staging
