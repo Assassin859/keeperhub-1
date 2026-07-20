@@ -7,9 +7,12 @@ import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { postHeldPaymentBroadcast } from "@/lib/api-client";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
+import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import type { HeldPaymentView } from "@/lib/tempo/held-payment-view";
+import { runWalletStepUp } from "@/lib/wallet/step-up-client";
 
 // Human "in 3 hours" / "5 minutes ago" from a target unix-seconds instant.
 // No date library in the repo, so this uses the built-in Intl.RelativeTimeFormat.
@@ -47,6 +50,8 @@ export function BroadcastHeldPaymentOverlay({
 }): React.ReactElement {
   const { pop } = useOverlay();
   const dual = useDualFactorState();
+  const session = useSession();
+  const isWallet = isWalletEmail(session.data?.user?.email);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [step, setStep] = useState<"confirm" | "mfa">("confirm");
   useEffect(() => {
@@ -67,11 +72,11 @@ export function BroadcastHeldPaymentOverlay({
   const recipient = `${payment.to.slice(0, 6)}...${payment.to.slice(-4)}`;
   const validBeforeDate = new Date(payment.validBefore * 1000).toLocaleString();
 
-  const post = (withCodes: boolean): Promise<Response> =>
-    postHeldPaymentBroadcast(payment.id, {
-      code: withCodes ? dual.totpCode.trim() : undefined,
-      emailOtp: withCodes ? dual.emailOtp.trim() || undefined : undefined,
-    });
+  const post = (extra: {
+    code?: string;
+    emailOtp?: string;
+    signature?: string;
+  }): Promise<Response> => postHeldPaymentBroadcast(payment.id, extra);
 
   const startMfa = (): void => {
     dual.reset();
@@ -80,14 +85,25 @@ export function BroadcastHeldPaymentOverlay({
 
   const handleSubmit = async (): Promise<void> => {
     try {
-      const res = await post(true);
+      // Wallet accounts prove step-up with a wallet signature (runWalletStepUp
+      // answers the server's signature_required challenge); email/oauth accounts
+      // use the dual-factor code + email OTP. Mirrors the withdraw flow.
+      const res = isWallet
+        ? await runWalletStepUp((extra) => post(extra))
+        : await post({
+            code: dual.totpCode.trim(),
+            emailOtp: dual.emailOtp.trim() || undefined,
+          });
       if (!res.ok) {
         if (await handleGuardError(res)) {
           pop();
           return;
         }
         const data = (await res.json()) as { code?: string; error?: string };
-        if (dual.handleResponse(data.code, data.error, (m) => toast.error(m))) {
+        if (
+          !isWallet &&
+          dual.handleResponse(data.code, data.error, (m) => toast.error(m))
+        ) {
           return;
         }
         throw new Error(data.error ?? "Broadcast failed");
@@ -103,6 +119,29 @@ export function BroadcastHeldPaymentOverlay({
   };
 
   if (step === "mfa") {
+    if (isWallet) {
+      return (
+        <Overlay
+          actions={[
+            {
+              label: "Back",
+              onClick: () => setStep("confirm"),
+              variant: "outline" as const,
+            },
+            { label: "Broadcast", onClick: handleSubmit },
+          ]}
+          overlayId={overlayId}
+          title="Broadcast held payment"
+        >
+          <p className="text-muted-foreground text-sm">
+            Broadcast <strong className="text-foreground">{amountLabel}</strong>{" "}
+            to <strong className="text-foreground">{recipient}</strong>. This
+            releases the pre-signed transaction to the network and cannot be
+            undone. Sign with your wallet to continue.
+          </p>
+        </Overlay>
+      );
+    }
     return (
       <Overlay overlayId={overlayId} title="Broadcast held payment">
         <DualFactorSteps
@@ -115,8 +154,8 @@ export function BroadcastHeldPaymentOverlay({
           }
           dual={dual}
           onBack={() => setStep("confirm")}
-          onPrefetchEmail={() => dual.prefetchEmail(() => post(false))}
-          onResendEmail={() => dual.resendEmail(() => post(false))}
+          onPrefetchEmail={() => dual.prefetchEmail(() => post({}))}
+          onResendEmail={() => dual.resendEmail(() => post({}))}
           onSubmit={handleSubmit}
           submitLabel="Broadcast"
         />
@@ -169,7 +208,9 @@ export function BroadcastHeldPaymentOverlay({
         <p className="text-muted-foreground text-sm">
           The on-chain window closes{" "}
           {formatRelative(payment.validBefore, nowMs)} (at {validBeforeDate}).
-          You will confirm with a verification code on the next step.
+          {isWallet
+            ? " You will sign with your wallet on the next step."
+            : " You will confirm with a verification code on the next step."}
         </p>
       </div>
     );

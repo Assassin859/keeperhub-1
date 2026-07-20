@@ -564,7 +564,7 @@ export const heldPaymentApi = {
  *  MFA codes (factors_required / mfa_code_invalid) carried in the JSON body. */
 export function postHeldPaymentBroadcast(
   id: string,
-  body: { code?: string; emailOtp?: string }
+  body: { code?: string; emailOtp?: string; signature?: string }
 ): Promise<Response> {
   return fetch(`/api/tempo/held-payments/${id}/broadcast`, {
     method: "POST",
