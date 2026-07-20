@@ -2,12 +2,13 @@
 
 import { Box, Boxes, Clock, Copy, Play, Webhook } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -243,7 +244,7 @@ export function TriggerConfig({
               key: "network",
               label: "Network",
               type: "chain-select",
-              chainTypeFilter: "evm",
+              chainTypeFilter: ["evm", "solana"],
               placeholder: "Select network",
               required: true,
             },
@@ -306,6 +307,8 @@ function EventTriggerFields({
 }: EventTriggerFieldsProps): React.ReactElement {
   const [protocols, setProtocols] = useState<ProtocolDefinition[]>([]);
 
+  const [chainTypes, setChainTypes] = useState<Record<string, string>>({});
+
   useEffect(() => {
     fetch("/api/protocols")
       .then((res) => res.json())
@@ -316,6 +319,24 @@ function EventTriggerFields({
         // Silently ignore -- custom mode still works
       });
   }, []);
+
+  useEffect(() => {
+    fetch("/api/chains")
+      .then((res) => res.json())
+      .then((data: { chainId: number; chainType: string }[]) => {
+        const map: Record<string, string> = {};
+        for (const chain of data) {
+          map[String(chain.chainId)] = chain.chainType;
+        }
+        setChainTypes(map);
+      })
+      .catch(() => {
+        // Fall back to EVM rendering if chains can't be fetched.
+      });
+  }, []);
+
+  const selectedNetwork = (config.network as string) || "";
+  const isSolanaNetwork = chainTypes[selectedNetwork] === "solana";
 
   const selectedProtocolSlug =
     (config._eventProtocolSlug as string) || CUSTOM_PROTOCOL_VALUE;
@@ -436,15 +457,20 @@ function EventTriggerFields({
     );
   }
 
-  const customFields: ActionConfigField[] = [
+  const networkField: ActionConfigField[] = [
     {
       key: "network",
       label: "Network",
       type: "chain-select",
-      chainTypeFilter: "evm",
+      chainTypeFilter: ["evm", "solana"],
       placeholder: "Select network",
       required: true,
     },
+  ];
+
+  // EVM contract-event fields (address + ABI + event). Shown when the selected
+  // network is EVM; a Solana network swaps in SolanaEventFields below.
+  const evmContractFields: ActionConfigField[] = [
     {
       key: "contractAddress",
       label: "Contract Address",
@@ -474,7 +500,7 @@ function EventTriggerFields({
 
   return (
     <>
-      {protocols.length > 0 && (
+      {protocols.length > 0 && !isSolanaNetwork && (
         <ProtocolSelector
           config={config}
           disabled={disabled}
@@ -485,9 +511,125 @@ function EventTriggerFields({
       <ActionConfigRenderer
         config={config}
         disabled={disabled}
-        fields={customFields}
+        fields={networkField}
         onUpdateConfig={onUpdateConfig}
       />
+      {isSolanaNetwork ? (
+        <SolanaEventFields
+          config={config}
+          disabled={disabled}
+          onUpdateConfig={onUpdateConfig}
+        />
+      ) : (
+        <ActionConfigRenderer
+          config={config}
+          disabled={disabled}
+          fields={evmContractFields}
+          onUpdateConfig={onUpdateConfig}
+        />
+      )}
+    </>
+  );
+}
+
+// Solana event-trigger config. A Solana event fires on a decoded Anchor event,
+// so programId + IDL + eventName are all required - eventName filters to a
+// single event rather than firing on every program transaction.
+function SolanaEventFields({
+  config,
+  disabled,
+  onUpdateConfig,
+}: EventTriggerFieldsProps): React.ReactElement {
+  const programId = (config.programId as string) || "";
+  const idl = (config.idl as string) || "";
+  const eventName = (config.eventName as string) || "";
+
+  const idlEventNames = useMemo(() => {
+    if (!idl.trim()) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(idl) as { events?: { name?: string }[] };
+      return (parsed.events ?? [])
+        .map((event) => event.name)
+        .filter((name): name is string => Boolean(name));
+    } catch {
+      return [];
+    }
+  }, [idl]);
+
+  return (
+    <>
+      <div className="space-y-2">
+        <Label className="ml-1" htmlFor="solana-program-id">
+          Program ID <span className="text-red-500">*</span>
+        </Label>
+        <Input
+          disabled={disabled}
+          id="solana-program-id"
+          onChange={(e) => onUpdateConfig("programId", e.target.value)}
+          placeholder="Base58 program address"
+          value={programId}
+        />
+        <p className="text-muted-foreground text-xs">
+          The Solana program whose events trigger the workflow.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="ml-1" htmlFor="solana-idl">
+          Anchor IDL <span className="text-red-500">*</span>
+        </Label>
+        <Textarea
+          className="font-mono text-xs"
+          disabled={disabled}
+          id="solana-idl"
+          onChange={(e) => onUpdateConfig("idl", e.target.value)}
+          placeholder='{ "events": [ { "name": "..." } ], ... }'
+          rows={6}
+          value={idl}
+        />
+        <p className="text-muted-foreground text-xs">
+          Paste the program's Anchor IDL JSON so events can be decoded and the
+          event name can be matched.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="ml-1" htmlFor="solana-event-name">
+          Event Name <span className="text-red-500">*</span>
+        </Label>
+        {idlEventNames.length > 0 ? (
+          <Select
+            disabled={disabled}
+            onValueChange={(value) => onUpdateConfig("eventName", value)}
+            value={eventName}
+          >
+            <SelectTrigger className="w-full" id="solana-event-name">
+              <SelectValue placeholder="Select an event" />
+            </SelectTrigger>
+            <SelectContent>
+              {idlEventNames.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            disabled={disabled}
+            id="solana-event-name"
+            onChange={(e) => onUpdateConfig("eventName", e.target.value)}
+            placeholder="Add a valid IDL above to pick an event"
+            value={eventName}
+          />
+        )}
+        <p className="text-muted-foreground text-xs">
+          Required - the workflow fires only on this event, not on every program
+          transaction.
+        </p>
+      </div>
     </>
   );
 }
