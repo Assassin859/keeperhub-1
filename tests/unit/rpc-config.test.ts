@@ -4,15 +4,32 @@
  * Tests the priority chain: JSON config → individual env vars → public defaults
  */
 
+import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { logSystemError } from "@/lib/logging";
 import {
   getConfigValue,
   getRpcUrl,
   getWssUrl,
-  PUBLIC_RPCS,
   parseRpcConfig,
+  parseRpcConfigWithDetails,
+  PUBLIC_RPCS,
+  RPC_CONFIG_GZIP_PREFIX,
   type RpcConfig,
 } from "../../lib/rpc/rpc-config";
+
+vi.mock("@/lib/logging", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/logging")>();
+  return { ...actual, logSystemError: vi.fn(), logWarn: vi.fn() };
+});
+
+/** Compress a JSON string into the KHGZ1 wire format the pipeline emits. */
+function toCompressedValue(json: string): string {
+  return (
+    RPC_CONFIG_GZIP_PREFIX +
+    gzipSync(Buffer.from(json, "utf8"), { level: 9 }).toString("base64")
+  );
+}
 
 describe("RPC Config Resolution", () => {
   const originalEnv = process.env;
@@ -77,6 +94,67 @@ describe("RPC Config Resolution", () => {
       expect(config["solana-mainnet"]?.primaryRpcUrl).toBe(
         "https://solana.example.com"
       );
+    });
+  });
+
+  describe("parseRpcConfig compression (KHGZ1)", () => {
+    const sample = {
+      "eth-mainnet": {
+        chainId: 1,
+        primaryRpcUrl: "https://eth.example.com/v2/abc",
+      },
+      "solana-mainnet": {
+        chainId: 101,
+        primaryRpcUrl: "https://sol.example.com",
+        isEnabled: false,
+      },
+    };
+
+    it("should decode a gzip-compressed value to the same config as raw JSON", () => {
+      const json = JSON.stringify(sample);
+
+      expect(parseRpcConfig(toCompressedValue(json))).toEqual(
+        parseRpcConfig(json)
+      );
+    });
+
+    it("should decode a value produced by the CLI gzip -9 | base64 pipeline", () => {
+      // Golden blob generated with the exact producer recipe the chain-config
+      // workflow runs: printf '%s' "$MINIFIED" | gzip -9 | base64 -w0, prefixed.
+      // Locks the cross-repo format contract against the real CLI toolchain,
+      // not just Node's zlib round-tripping with itself.
+      const golden =
+        "KHGZ1:H4sIAAAAAAACA33MsQ6DIBRG4Xf5ZyqtI3sHV5M+wBVvA8kFCZCmxvDuZXQw3c7ynQNc3S2Qj5ErzAHrek8rzEMhZR8o73OyrywwcLWmYrTuZOAvhSQ82C3oz6hpsWgKZROKdP27/zl2dz5CwZdnpEW4yzdJ4dZ+VZ9k5KsAAAA=";
+
+      expect(parseRpcConfig(golden)).toEqual(sample);
+    });
+
+    it("should return empty object for a malformed compressed value", () => {
+      expect(parseRpcConfig(`${RPC_CONFIG_GZIP_PREFIX}not-real-gzip`)).toEqual(
+        {}
+      );
+    });
+
+    it("should surface a decode error and log it for a malformed compressed value", () => {
+      vi.mocked(logSystemError).mockClear();
+
+      const result = parseRpcConfigWithDetails(
+        `${RPC_CONFIG_GZIP_PREFIX}not-real-gzip`
+      );
+
+      expect(result.config).toEqual({});
+      expect(result.error).toBeDefined();
+      expect(logSystemError).toHaveBeenCalledTimes(1);
+    });
+
+    it("should not log for an unprefixed (legacy) parse failure", () => {
+      vi.mocked(logSystemError).mockClear();
+
+      const result = parseRpcConfigWithDetails("not valid json {{{");
+
+      expect(result.config).toEqual({});
+      expect(result.error).toBeDefined();
+      expect(logSystemError).not.toHaveBeenCalled();
     });
   });
 
