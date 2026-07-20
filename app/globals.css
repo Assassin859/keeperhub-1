@@ -158,8 +158,8 @@
 .thin-scrollbar::-webkit-scrollbar {
   -webkit-appearance: none !important;
   appearance: none !important;
-  width: 8px !important;
-  height: 8px !important;
+  width: 4px !important;
+  height: 4px !important;
 }
 .thin-scrollbar::-webkit-scrollbar-track {
   background: transparent !important;
@@ -170,8 +170,6 @@
     var(--color-muted-foreground) 60%,
     transparent
   ) !important;
-  background-clip: content-box !important;
-  border: 2px solid transparent !important;
   border-radius: 9999px !important;
 }
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -196,8 +194,8 @@
 *::-webkit-scrollbar {
   -webkit-appearance: none !important;
   appearance: none !important;
-  width: 8px !important;
-  height: 8px !important;
+  width: 4px !important;
+  height: 4px !important;
 }
 *::-webkit-scrollbar-track {
   background: transparent !important;
@@ -208,8 +206,6 @@
     var(--color-muted-foreground) 60%,
     transparent
   ) !important;
-  background-clip: content-box !important;
-  border: 2px solid transparent !important;
   border-radius: 9999px !important;
 }
 *::-webkit-scrollbar-thumb:hover {
