@@ -63,7 +63,9 @@ const LARGE_OUTPUT = {
 };
 const LONG_ERROR = `revert: ${"E".repeat(250)}`;
 
-function makeLogRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeLogRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
   return {
     id: "log-1",
     executionId: "exec-fixture",
@@ -270,10 +272,10 @@ describe("get_execution_logs backward compat (TEST-03)", () => {
         preview: expect.any(String),
       });
       expect(
-        ((nodeBEntry?.output) as Record<string, unknown>)?.preview as string
+        (nodeBEntry?.output as Record<string, unknown>)?.preview as string
       ).toHaveLength(50);
       expect(
-        ((nodeBEntry?.output) as Record<string, unknown>)?.originalSize as number
+        (nodeBEntry?.output as Record<string, unknown>)?.originalSize as number
       ).toBeGreaterThan(50);
       expect(nodeBEntry?.outputRaw).toMatchObject({
         _truncated: true,
@@ -282,7 +284,9 @@ describe("get_execution_logs backward compat (TEST-03)", () => {
       });
 
       expect(nodeCEntry?.error).toBe(LONG_ERROR);
-      expect((nodeCEntry?.error as string).length).toBeGreaterThan(50);
+      expect(
+        ((nodeCEntry as { error: unknown }).error as string).length
+      ).toBeGreaterThan(50);
     });
   });
 

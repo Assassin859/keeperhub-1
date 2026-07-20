@@ -115,7 +115,7 @@ for (const edge of edges) {
   if (!edgesBySource.has(edge.source)) {
     edgesBySource.set(edge.source, []);
   }
-  edgesBySource.get(edge.source)!.push(edge.target);
+  edgesBySource.get(edge.source)?.push(edge.target);
 }
 
 const edgesBySourceHandle = buildEdgesBySourceHandle(edges);

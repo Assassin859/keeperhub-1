@@ -163,7 +163,8 @@ describe("redactSecretUrls", () => {
   });
 
   it("keeps plain user-owned URLs readable", () => {
-    const input = "Failed to send webhook: https://users-own-site.com/hook returned 404";
+    const input =
+      "Failed to send webhook: https://users-own-site.com/hook returned 404";
     expect(redactSecretUrls(input)).toBe(input);
   });
 

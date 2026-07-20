@@ -34,10 +34,6 @@ import {
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { startSafeRoleInstallMetrics } from "@/lib/metrics/instrumentation/safe";
-import {
-  getOrganizationWallet,
-  initializeWalletSigner,
-} from "@/lib/web3/wallet-helpers";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
 import {
   TEMPLATE_SPECS,
@@ -78,6 +74,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import {
+  getOrganizationWallet,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 
 const ROLE_TYPE_AUTOMATION = "automation" as const;
 
@@ -1890,7 +1890,7 @@ export async function setRoleTokenAllowance(
     return { success: false, error: "Safe not found for this chain" };
   }
   const role = await findRoleForSafe(safe.id);
-  if (!role || role.status !== "active") {
+  if (role?.status !== "active") {
     return {
       success: false,
       error: "Install Zodiac Roles before setting spending limits",
@@ -2072,7 +2072,7 @@ export async function revokeRoleTokenAllowance(input: {
     return { success: false, error: "Safe not found" };
   }
   const role = await findRoleForSafe(safe.id);
-  if (!role || role.status !== "active") {
+  if (role?.status !== "active") {
     return { success: false, error: "No active role for this Safe" };
   }
 

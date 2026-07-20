@@ -212,7 +212,7 @@ export async function runForkImpersonatedCalls(
       const target = new ethers.Contract(to, [fn], signer);
       const tx = await target[call.functionName](...args);
       const receipt = await tx.wait();
-      if (!receipt || receipt.status !== 1) {
+      if (receipt?.status !== 1) {
         throw new Error(
           `${protocolSlug}: impersonated ${call.functionName} on ${to} reverted`
         );
@@ -282,8 +282,7 @@ export async function runFabricatedApprovals(
   rpcUrlOverride?: string
 ): Promise<void> {
   const protocol = getProtocol(protocolSlug);
-  const approvals =
-    protocol?.testData?.[chainId]?.setup?.fabricatedApprovals;
+  const approvals = protocol?.testData?.[chainId]?.setup?.fabricatedApprovals;
   if (!(protocol && approvals) || approvals.length === 0) {
     return;
   }

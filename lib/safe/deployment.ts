@@ -8,10 +8,6 @@ import { db } from "@/lib/db";
 import { chains, type SafeWallet, safeWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { startSafeDeployMetrics } from "@/lib/metrics/instrumentation/safe";
-import {
-  getOrganizationWallet,
-  initializeWalletSigner,
-} from "@/lib/web3/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {
@@ -35,6 +31,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import {
+  getOrganizationWallet,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 
 export type DeployOrgSafeInput = {
   organizationId: string;

@@ -16,7 +16,7 @@ import {
 } from "@/scripts/seed/seed-protocol-workflows";
 
 const SEED_AT = new Date("2026-05-12T14:00:00.000Z");
-const after = (ms: number): Date => new Date(SEED_AT.getTime() + ms);
+const afterSeed = (ms: number): Date => new Date(SEED_AT.getTime() + ms);
 
 describe("decideSeedAction", () => {
   it("returns insert when no existing row", () => {
@@ -46,7 +46,7 @@ describe("decideSeedAction", () => {
   it("returns refresh when gapMs is just below epsilon", () => {
     expect(
       decideSeedAction(
-        { updatedAt: after(USER_EDIT_EPSILON_MS - 1), seededAt: SEED_AT },
+        { updatedAt: afterSeed(USER_EDIT_EPSILON_MS - 1), seededAt: SEED_AT },
         USER_EDIT_EPSILON_MS
       )
     ).toEqual({ kind: "refresh" });
@@ -59,7 +59,7 @@ describe("decideSeedAction", () => {
     // them without false-positive "user-edited" classifications.
     expect(
       decideSeedAction(
-        { updatedAt: after(USER_EDIT_EPSILON_MS), seededAt: SEED_AT },
+        { updatedAt: afterSeed(USER_EDIT_EPSILON_MS), seededAt: SEED_AT },
         USER_EDIT_EPSILON_MS
       )
     ).toEqual({ kind: "refresh" });
@@ -68,7 +68,7 @@ describe("decideSeedAction", () => {
   it("returns skip(user-edited) when gapMs exceeds epsilon", () => {
     expect(
       decideSeedAction(
-        { updatedAt: after(USER_EDIT_EPSILON_MS + 1), seededAt: SEED_AT },
+        { updatedAt: afterSeed(USER_EDIT_EPSILON_MS + 1), seededAt: SEED_AT },
         USER_EDIT_EPSILON_MS
       )
     ).toEqual({
@@ -85,7 +85,7 @@ describe("decideSeedAction", () => {
     // treat it as the seeder's own touch.
     expect(
       decideSeedAction(
-        { updatedAt: SEED_AT, seededAt: after(10) },
+        { updatedAt: SEED_AT, seededAt: afterSeed(10) },
         USER_EDIT_EPSILON_MS
       )
     ).toEqual({ kind: "refresh" });
@@ -98,7 +98,7 @@ describe("decideSeedAction", () => {
     const small = 100;
     expect(
       decideSeedAction(
-        { updatedAt: after(small + 1), seededAt: SEED_AT },
+        { updatedAt: afterSeed(small + 1), seededAt: SEED_AT },
         small
       )
     ).toEqual({ kind: "skip", reason: "user-edited", gapMs: small + 1 });

@@ -61,9 +61,7 @@ describe("resolveExecutionOrgMetadata", () => {
   });
 
   it("returns slug, name, and plan when all fields are present", async () => {
-    mockSelectRows = [
-      { slug: "my-org", name: "My Organization", plan: "pro" },
-    ];
+    mockSelectRows = [{ slug: "my-org", name: "My Organization", plan: "pro" }];
     const result = await resolveExecutionOrgMetadata("org-1");
     expect(result.slug).toBe("my-org");
     expect(result.name).toBe("My Organization");

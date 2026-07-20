@@ -26,7 +26,9 @@ function createBodyNodes(mockFetch: ReturnType<typeof vi.fn>): WorkflowNode[] {
   const createCall = mockFetch.mock.calls.find(([url]) =>
     String(url).endsWith("/api/workflows/create")
   );
-  const body = JSON.parse((createCall?.[1] as { body: string }).body) as {
+  const body = JSON.parse(
+    ((createCall as unknown[])[1] as { body: string }).body
+  ) as {
     nodes: WorkflowNode[];
   };
   return body.nodes;

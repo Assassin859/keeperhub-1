@@ -152,12 +152,12 @@ let mockOrgRows: Array<{ slug: string | null }> = [{ slug: "acme" }];
 // that don't seed mockExecution.
 type WhereChain = {
   then: <T>(
-    onFulfilled?: ((value: void) => T | PromiseLike<T>) | null,
+    onFulfilled?: ((value: undefined) => T | PromiseLike<T>) | null,
     onRejected?: ((reason: unknown) => T | PromiseLike<T>) | null
   ) => Promise<T>;
   catch: <T>(
     onRejected: (reason: unknown) => T | PromiseLike<T>
-  ) => Promise<T | void>;
+  ) => Promise<T | undefined>;
   returning: (
     ..._args: unknown[]
   ) => Promise<Array<{ workflowId?: string; previousStatus?: string }>>;
@@ -169,10 +169,11 @@ type SetChain = {
 type UpdateChain = { set: (values: Record<string, unknown>) => SetChain };
 
 function makeWhereChain(failure: Error | null): WhereChain {
-  const promise: Promise<void> = failure
+  const promise: Promise<undefined> = failure
     ? Promise.reject(failure)
-    : Promise.resolve();
+    : Promise.resolve(undefined);
   return {
+    // biome-ignore lint/suspicious/noThenProperty: intentional thenable mocking Drizzle's query builder
     then: (onFulfilled, onRejected) => promise.then(onFulfilled, onRejected),
     catch: (onRejected) => promise.catch(onRejected),
     returning: () => Promise.resolve(mockReturningRows),

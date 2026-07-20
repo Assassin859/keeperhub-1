@@ -72,6 +72,9 @@ import {
   workflows,
 } from "./db/schema";
 
+// SIWE wallet emails are always `0x<40-hex>@wallet.keeperhub.com`.
+const WALLET_LOCAL_PART_RE = /^0x[0-9a-f]{40}$/i;
+
 // Define custom access control for organization resources
 const statement = {
   workflow: ["create", "read", "update", "delete"],
@@ -758,7 +761,7 @@ export const auth = betterAuth({
           // as a wallet account everywhere (bypassing TOTP enrollment gates).
           if (email && isWalletEmail(email)) {
             const localPart = email.split("@")[0] ?? "";
-            if (!/^0x[0-9a-f]{40}$/i.test(localPart)) {
+            if (!WALLET_LOCAL_PART_RE.test(localPart)) {
               throw new APIError("BAD_REQUEST", {
                 message: "This email domain is reserved.",
               });
@@ -853,7 +856,7 @@ export const auth = betterAuth({
             // immediately available for use in workflows.
             if (isWallet) {
               const walletAddress = user.email.split("@")[0];
-              void recordWalletInAddressBook({
+              recordWalletInAddressBook({
                 organizationId: org.id,
                 address: walletAddress,
                 label: "My Wallet",

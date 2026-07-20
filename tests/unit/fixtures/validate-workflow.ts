@@ -63,7 +63,9 @@ export function makeWorkflow(
   };
 }
 
-export function buildLargeWorkflowFixture(nodeCount: number): ValidatorWorkflow {
+export function buildLargeWorkflowFixture(
+  nodeCount: number
+): ValidatorWorkflow {
   const nodes: unknown[] = [triggerNode("trigger-1")];
   const edges: unknown[] = [];
   let prev = "trigger-1";

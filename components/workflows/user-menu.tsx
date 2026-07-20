@@ -208,7 +208,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
                   className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs leading-none transition-colors hover:text-foreground"
                   onClick={(event) => {
                     event.preventDefault();
-                    void copySigninAddress();
+                    copySigninAddress();
                   }}
                   type="button"
                 >

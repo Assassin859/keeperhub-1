@@ -229,7 +229,9 @@ describe("POST /api/workflows/create action config validation", () => {
         updatedAt: new Date("2024-01-01"),
       },
     ]);
-    mockInsert.mockReturnValue({ values: vi.fn().mockReturnValue({ returning: mockReturning }) });
+    mockInsert.mockReturnValue({
+      values: vi.fn().mockReturnValue({ returning: mockReturning }),
+    });
 
     const protocolMeta = JSON.stringify({
       protocolSlug: "aave-v3",

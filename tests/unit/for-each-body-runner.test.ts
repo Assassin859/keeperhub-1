@@ -260,8 +260,12 @@ describe("runBodyNode: production-shape Autoline Job Keeper iteration", () => {
       edges,
       forEachNodeId: "for-each",
       stepResultFor: (nodeId) => {
-        if (nodeId === "c-master") return { condition: true };
-        if (nodeId === "c-workable") return { condition: false };
+        if (nodeId === "c-master") {
+          return { condition: true };
+        }
+        if (nodeId === "c-workable") {
+          return { condition: false };
+        }
         if (nodeId === "autoline") {
           return {
             success: true,
@@ -293,7 +297,9 @@ describe("runBodyNode: production-shape Autoline Job Keeper iteration", () => {
       edges,
       forEachNodeId: "for-each",
       stepResultFor: (nodeId) => {
-        if (nodeId === "c-master") return { condition: false };
+        if (nodeId === "c-master") {
+          return { condition: false };
+        }
         return { success: true };
       },
     });
@@ -309,7 +315,9 @@ describe("runBodyNode: production-shape Autoline Job Keeper iteration", () => {
       edges,
       forEachNodeId: "for-each",
       stepResultFor: (nodeId) => {
-        if (nodeId === "c-master") return { condition: true };
+        if (nodeId === "c-master") {
+          return { condition: true };
+        }
         if (nodeId === "autoline") {
           return { success: false, error: "RPC down" };
         }

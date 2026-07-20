@@ -57,7 +57,7 @@ for (const chain of CHAINS) {
   const rpcUrl = process.env[`PROTOCOL_SIM_RPC_${chain.chainId}`];
   const pinnedRpcUrl = process.env[`PROTOCOL_SIM_RPC_${chain.chainId}_PINNED`];
 
-  describe.skipIf(!rpcUrl || !anyUnpinnedEvents(chain.chainId))(
+  describe.skipIf(!(rpcUrl && anyUnpinnedEvents(chain.chainId)))(
     `protocol event simulation (${chain.name})`,
     () => {
       for (const protocol of getRegisteredProtocols()) {
@@ -79,7 +79,7 @@ for (const chain of CHAINS) {
     }
   );
 
-  describe.skipIf(!pinnedRpcUrl || !anyPinnedEvents(chain.chainId))(
+  describe.skipIf(!(pinnedRpcUrl && anyPinnedEvents(chain.chainId)))(
     `protocol event simulation (${chain.name}, pinned block)`,
     () => {
       for (const protocol of getRegisteredProtocols()) {

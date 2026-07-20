@@ -265,20 +265,22 @@ describe("processCodeTemplates: refs in comments are documentation, not deps", (
 
   // Data-driven: every comment style x both ref forms (stored + display) must
   // be left untouched and never recorded as unresolved.
-  const COMMENT_WRAPPERS: Array<{ name: string; wrap: (ref: string) => string }> =
-    [
-      { name: "// line comment", wrap: (r) => `// ${r}\nconst x = 1;` },
-      { name: "/* block */ comment", wrap: (r) => `/* ${r} */\nconst x = 1;` },
-      {
-        name: "/** jsdoc */ comment",
-        wrap: (r) => `/**\n * @example ${r}\n */\nconst x = 1;`,
-      },
-      { name: "trailing inline // comment", wrap: (r) => `const x = 1; // ${r}` },
-      {
-        name: "commented-out code",
-        wrap: (r) => `// const old = ${r};\nconst x = 1;`,
-      },
-    ];
+  const COMMENT_WRAPPERS: Array<{
+    name: string;
+    wrap: (ref: string) => string;
+  }> = [
+    { name: "// line comment", wrap: (r) => `// ${r}\nconst x = 1;` },
+    { name: "/* block */ comment", wrap: (r) => `/* ${r} */\nconst x = 1;` },
+    {
+      name: "/** jsdoc */ comment",
+      wrap: (r) => `/**\n * @example ${r}\n */\nconst x = 1;`,
+    },
+    { name: "trailing inline // comment", wrap: (r) => `const x = 1; // ${r}` },
+    {
+      name: "commented-out code",
+      wrap: (r) => `// const old = ${r};\nconst x = 1;`,
+    },
+  ];
   const REF_FORMS = [
     "{{@missing:Foo.bar}}", // stored form, unknown node
     "{{@src:Src.value}}", // stored form, KNOWN node (must still be skipped in a comment)

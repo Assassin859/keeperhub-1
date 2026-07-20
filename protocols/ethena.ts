@@ -1,16 +1,36 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { amount, contract, native, wallet } from "@/lib/test-data/types";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
-import { wallet, native, amount, contract } from "@/lib/test-data/types";
 import sUsdeAbi from "./abis/ethena-susde.json";
 
 const SUSDE_ALLOWED = new Set<string>([
-  "asset", "totalAssets", "totalSupply", "balanceOf", "convertToShares", "convertToAssets",
-  "previewDeposit", "previewMint", "previewWithdraw", "previewRedeem",
-  "maxDeposit", "maxMint", "maxWithdraw", "maxRedeem",
-  "deposit", "mint", "withdraw", "redeem",
-  "cooldownAssets", "cooldownShares", "cooldownDuration", "cooldowns", "unstake",
+  "asset",
+  "totalAssets",
+  "totalSupply",
+  "balanceOf",
+  "convertToShares",
+  "convertToAssets",
+  "previewDeposit",
+  "previewMint",
+  "previewWithdraw",
+  "previewRedeem",
+  "maxDeposit",
+  "maxMint",
+  "maxWithdraw",
+  "maxRedeem",
+  "deposit",
+  "mint",
+  "withdraw",
+  "redeem",
+  "cooldownAssets",
+  "cooldownShares",
+  "cooldownDuration",
+  "cooldowns",
+  "unstake",
 ]);
-const SUSDE_ABI = JSON.stringify(sUsdeAbi.filter((fn) => SUSDE_ALLOWED.has(fn.name)));
+const SUSDE_ABI = JSON.stringify(
+  sUsdeAbi.filter((fn) => SUSDE_ALLOWED.has(fn.name))
+);
 
 const ERC20_MINIMAL_ABI = JSON.stringify([
   {
@@ -145,9 +165,7 @@ export default defineAbiProtocol({
       // (checked right after the write mines, before the cooldown burns
       // them). nonZero is history-safe on the simulation wallet.
       writeExpectations: {
-        "vault-deposit": [
-          { read: "vault-balance", expect: { nonZero: true } },
-        ],
+        "vault-deposit": [{ read: "vault-balance", expect: { nonZero: true } }],
         "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
       },
     },
@@ -235,7 +253,11 @@ export default defineAbiProtocol({
           description: "Check the USDe stablecoin balance of an address",
           inputs: { account: { label: "Wallet Address" } },
           outputs: {
-            result: { name: "balance", label: "USDe Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "USDe Balance (wei)",
+              decimals: 18,
+            },
           },
         },
         approve: {
@@ -263,7 +285,11 @@ export default defineAbiProtocol({
           description: "Check the ENA governance token balance of an address",
           inputs: { account: { label: "Wallet Address" } },
           outputs: {
-            result: { name: "balance", label: "ENA Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "ENA Balance (wei)",
+              decimals: 18,
+            },
           },
         },
       },

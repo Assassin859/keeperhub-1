@@ -123,11 +123,7 @@ export function MfaEnforcementSection({
     return (
       <div className="py-6 text-center text-muted-foreground text-sm">
         Failed to load MFA settings.{" "}
-        <button
-          className="underline"
-          onClick={() => load()}
-          type="button"
-        >
+        <button className="underline" onClick={() => load()} type="button">
           Retry
         </button>
       </div>

@@ -1,6 +1,6 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
+import { amount, contract, wallet } from "@/lib/test-data/types";
 import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
-import { wallet, amount, contract } from "@/lib/test-data/types";
 
 // Standard ERC-4626 interface. Input param names must match the keys in
 // erc4626AbiOverrides so overrides bind correctly. All outputs are unnamed
@@ -371,9 +371,7 @@ export default defineAbiProtocol({
       // (a mined receipt alone misses a no-op write). nonZero is
       // history-safe on the simulation tier's dedicated wallet.
       writeExpectations: {
-        "vault-deposit": [
-          { read: "vault-balance", expect: { nonZero: true } },
-        ],
+        "vault-deposit": [{ read: "vault-balance", expect: { nonZero: true } }],
         "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
         "st-usds-vault-deposit": [
           { read: "st-usds-vault-balance", expect: { nonZero: true } },
@@ -406,7 +404,10 @@ export default defineAbiProtocol({
         // Ethereum Mainnet
         "1": "0x99CD4Ec3f88A45940936F469E4bB72A2A701EEB9",
       },
-      overrides: erc4626AbiOverrides({ slugPrefix: "st-usds", labelPrefix: "stUSDS" }),
+      overrides: erc4626AbiOverrides({
+        slugPrefix: "st-usds",
+        labelPrefix: "stUSDS",
+      }),
     },
     usds: {
       label: "USDS Stablecoin",
@@ -426,7 +427,11 @@ export default defineAbiProtocol({
           description: "Check the USDS balance of an address",
           inputs: { account: { label: "Wallet Address" } },
           outputs: {
-            result: { name: "balance", label: "USDS Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "USDS Balance (wei)",
+              decimals: 18,
+            },
           },
         },
         approve: {
@@ -454,7 +459,11 @@ export default defineAbiProtocol({
           description: "Check the DAI balance of an address",
           inputs: { account: { label: "Wallet Address" } },
           outputs: {
-            result: { name: "balance", label: "DAI Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "DAI Balance (wei)",
+              decimals: 18,
+            },
           },
         },
         approve: {
@@ -482,7 +491,11 @@ export default defineAbiProtocol({
           description: "Check the SKY balance of an address",
           inputs: { account: { label: "Wallet Address" } },
           outputs: {
-            result: { name: "balance", label: "SKY Balance (wei)", decimals: 18 },
+            result: {
+              name: "balance",
+              label: "SKY Balance (wei)",
+              decimals: 18,
+            },
           },
         },
       },

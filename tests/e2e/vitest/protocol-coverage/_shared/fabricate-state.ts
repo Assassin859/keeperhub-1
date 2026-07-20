@@ -22,9 +22,7 @@
 
 import { ethers } from "ethers";
 
-const BALANCE_VIEW_ABI = [
-  "function balanceOf(address) view returns (uint256)",
-];
+const BALANCE_VIEW_ABI = ["function balanceOf(address) view returns (uint256)"];
 
 const ALLOWANCE_VIEW_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
@@ -52,12 +50,8 @@ const abiCoder = ethers.AbiCoder.defaultAbiCoder();
  *  Solidity hashes key-then-slot, Vyper hashes slot-then-key. */
 function candidateSlots(holder: string, index: number): string[] {
   return [
-    ethers.keccak256(
-      abiCoder.encode(["address", "uint256"], [holder, index])
-    ),
-    ethers.keccak256(
-      abiCoder.encode(["uint256", "address"], [index, holder])
-    ),
+    ethers.keccak256(abiCoder.encode(["address", "uint256"], [holder, index])),
+    ethers.keccak256(abiCoder.encode(["uint256", "address"], [index, holder])),
   ];
 }
 
@@ -161,11 +155,7 @@ export async function fabricateErc20Allowance(
   spender: string,
   amountWei: bigint
 ): Promise<void> {
-  const token = new ethers.Contract(
-    tokenAddress,
-    ALLOWANCE_VIEW_ABI,
-    provider
-  );
+  const token = new ethers.Contract(tokenAddress, ALLOWANCE_VIEW_ABI, provider);
   const current: bigint = await token.allowance(owner, spender);
   if (current >= amountWei) {
     return;
@@ -217,9 +207,10 @@ export async function fabricateElapsedCooldown(
     COOLDOWNS_VIEW_ABI,
     provider
   );
-  const [cooldownEnd, underlyingAmount] = (await vault.cooldowns(
-    holder
-  )) as [bigint, bigint];
+  const [cooldownEnd, underlyingAmount] = (await vault.cooldowns(holder)) as [
+    bigint,
+    bigint,
+  ];
   if (underlyingAmount === BigInt(0) && cooldownEnd === BigInt(0)) {
     throw new Error(
       `fabricateElapsedCooldown: ${holder} has no pending cooldown on ${contractAddress}; a real cooldown call must run first (it funds the silo the unstake draws from).`

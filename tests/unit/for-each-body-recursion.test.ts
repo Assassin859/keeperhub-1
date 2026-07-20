@@ -52,7 +52,7 @@ type SimulationResult = {
   /** Order in which body steps were invoked across all iterations. */
   visitOrder: Array<{ iterationIndex: number; nodeId: string }>;
   /** Whether each iteration visited each node at least once. */
-  perIteration: Array<Set<string>>;
+  perIteration: Set<string>[];
 };
 
 function action(id: string, actionType: string, label?: string): WorkflowNode {
@@ -114,7 +114,7 @@ async function simulate(options: SimulationOptions): Promise<SimulationResult> {
     identifyLoopBody(forEachNodeId, edgesBySource, nodeMap, fullHandleMap);
 
   const visitOrder: Array<{ iterationIndex: number; nodeId: string }> = [];
-  const perIteration: Array<Set<string>> = [];
+  const perIteration: Set<string>[] = [];
 
   async function executeBodyNode(
     nodeId: string,
@@ -269,12 +269,15 @@ describe("For Each body recursion: action -> condition -> action -> action chain
       items: ["MAKER"],
       runStep: async ({ nodeId, actionType }) => {
         if (actionType === "Condition") {
-          if (nodeId === "c-master")
+          if (nodeId === "c-master") {
             return { success: true, data: { condition: true } };
-          if (nodeId === "c-workable")
+          }
+          if (nodeId === "c-workable") {
             return { success: true, data: { condition: false } };
-          if (nodeId === "c-line")
+          }
+          if (nodeId === "c-line") {
             return { success: true, data: { condition: false } };
+          }
         }
         return { success: true, data: { ok: true } };
       },

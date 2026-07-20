@@ -23,7 +23,7 @@ import {
 } from "@/lib/mcp/validate-workflow";
 
 const FIXTURE_PATH = resolve(
-  __dirname,
+  import.meta.dirname,
   "../fixtures/listed-workflows-2026-05-16.json"
 );
 
@@ -46,10 +46,10 @@ const CHAIN_IDS = new Set([
   1, // Ethereum
   8453, // Base
   10, // Optimism
-  42161, // Arbitrum
+  42_161, // Arbitrum
   137, // Polygon
   100, // Gnosis
-  11155111, // Sepolia
+  11_155_111, // Sepolia
   4217, // Tempo
 ]);
 
@@ -67,7 +67,7 @@ describe("validate_workflow smoke (TEST-01)", () => {
     expect(
       fixture.workflowCount,
       `fixture has ${fixture.workflowCount} workflows but test expects ${EXPECTED_WORKFLOW_COUNT}. ` +
-        `Either update EXPECTED_WORKFLOW_COUNT to reflect the new catalog size, or revert the fixture.`
+        "Either update EXPECTED_WORKFLOW_COUNT to reflect the new catalog size, or revert the fixture."
     ).toBe(EXPECTED_WORKFLOW_COUNT);
   });
 

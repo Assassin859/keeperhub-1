@@ -41,17 +41,24 @@ describe("ONBOARDING_WORKFLOW_FIXTURES", () => {
       it("edge source and target IDs reference existing nodes", () => {
         type NodeLike = { id: string };
         type EdgeLike = { source: string; target: string };
-        const nodeIds = new Set(
-          (fixture.nodes as NodeLike[]).map((n) => n.id)
-        );
+        const nodeIds = new Set((fixture.nodes as NodeLike[]).map((n) => n.id));
         for (const edge of fixture.edges as EdgeLike[]) {
-          expect(nodeIds.has(edge.source), `edge source "${edge.source}" missing from nodes`).toBe(true);
-          expect(nodeIds.has(edge.target), `edge target "${edge.target}" missing from nodes`).toBe(true);
+          expect(
+            nodeIds.has(edge.source),
+            `edge source "${edge.source}" missing from nodes`
+          ).toBe(true);
+          expect(
+            nodeIds.has(edge.target),
+            `edge target "${edge.target}" missing from nodes`
+          ).toBe(true);
         }
       });
 
       it("first node is a trigger", () => {
-        type NodeLike = { id: string; data?: { config?: { triggerType?: string } } };
+        type NodeLike = {
+          id: string;
+          data?: { config?: { triggerType?: string } };
+        };
         const first = (fixture.nodes as NodeLike[])[0];
         expect(first.id).toBe("trigger-1");
         expect(first.data?.config?.triggerType).toBeTruthy();
@@ -62,7 +69,7 @@ describe("ONBOARDING_WORKFLOW_FIXTURES", () => {
 
 describe("USER_EDIT_EPSILON_MS", () => {
   it("is 5000 ms", () => {
-    expect(USER_EDIT_EPSILON_MS).toBe(5_000);
+    expect(USER_EDIT_EPSILON_MS).toBe(5000);
   });
 });
 
@@ -76,14 +83,21 @@ describe("whale-withdrawal fixture", () => {
   });
 
   it("has a condition node as step-1", () => {
-    type NodeLike = { id: string; data?: { config?: { actionType?: string; condition?: string } } };
+    type NodeLike = {
+      id: string;
+      data?: { config?: { actionType?: string; condition?: string } };
+    };
     const step1 = (fixture.nodes as NodeLike[]).find((n) => n.id === "step-1");
     expect(step1?.data?.config?.actionType).toBe("Condition");
     expect(step1?.data?.config?.condition).toContain("100000000000");
   });
 
   it("routes only the true branch to Discord", () => {
-    type EdgeLike = { source: string; target: string; sourceHandle?: string | null };
+    type EdgeLike = {
+      source: string;
+      target: string;
+      sourceHandle?: string | null;
+    };
     const discordEdge = (fixture.edges as EdgeLike[]).find(
       (e) => e.source === "step-1"
     );

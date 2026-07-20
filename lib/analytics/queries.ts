@@ -1232,6 +1232,22 @@ async function getUnifiedRunsTotal(
   return workflowTotal + directTotal;
 }
 
+// Redact on read so rows persisted before URL redaction existed do not
+// re-display provider RPC URLs. web3 step errors only ever contain provider
+// URLs, so drop every URL there; other steps may legitimately reference
+// user-owned URLs.
+function redactStepLogError(
+  error: string | null,
+  nodeType: string
+): string | null {
+  if (error === null) {
+    return null;
+  }
+  return nodeType.startsWith("web3/")
+    ? redactAllUrls(error)
+    : redactSecretUrls(error);
+}
+
 /**
  * Fetch step-level logs for a workflow execution.
  */
@@ -1289,16 +1305,7 @@ export async function getStepLogs(
     startedAt: row.startedAt.toISOString(),
     completedAt: row.completedAt?.toISOString() ?? null,
     durationMs: row.duration ? Number(row.duration) : null,
-    // Redact on read so rows persisted before URL redaction existed do not
-    // re-display provider RPC URLs. web3 step errors only ever contain
-    // provider URLs, so drop every URL there; other steps may legitimately
-    // reference user-owned URLs.
-    error:
-      row.error === null
-        ? null
-        : row.nodeType.startsWith("web3/")
-          ? redactAllUrls(row.error)
-          : redactSecretUrls(row.error),
+    error: redactStepLogError(row.error, row.nodeType),
     iterationIndex: row.iterationIndex,
     forEachNodeId: row.forEachNodeId,
     network: row.network,

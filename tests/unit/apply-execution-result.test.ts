@@ -49,13 +49,11 @@ vi.mock("../../keeperhub-executor/lib/serialize", () => ({
   toJsonSafe: (v: unknown) => v,
 }));
 
-import { applyExecutionResult } from "../../keeperhub-executor/lib/db-helpers";
-import type { DbSchema } from "../../keeperhub-executor/lib/db-helpers";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import type { DbSchema } from "../../keeperhub-executor/lib/db-helpers";
+import { applyExecutionResult } from "../../keeperhub-executor/lib/db-helpers";
 
-function makeMockDb(
-  scheduleRow?: object | null
-): PostgresJsDatabase<DbSchema> {
+function makeMockDb(scheduleRow?: object | null): PostgresJsDatabase<DbSchema> {
   // where() must be awaitable (updateScheduleStatus awaits it directly) AND
   // expose .returning() (updateExecutionStatus chains it for the terminal
   // counter gate). Modeled as a custom thenable; returning [] means "no row
@@ -63,6 +61,7 @@ function makeMockDb(
   const mockWhere = vi.fn().mockImplementation(() => {
     const promise = Promise.resolve([]);
     return {
+      // biome-ignore lint/suspicious/noThenProperty: intentional thenable mocking Drizzle's query builder
       then: (
         onFulfilled?: (value: unknown[]) => unknown,
         onRejected?: (reason: unknown) => unknown
@@ -75,9 +74,8 @@ function makeMockDb(
   const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
   const mockUpdate = vi.fn().mockReturnValue({ set: mockSet });
   const mockFindFirst = vi.fn().mockResolvedValue(
-    scheduleRow !== undefined
-      ? scheduleRow
-      : {
+    scheduleRow === undefined
+      ? {
           id: "sched-1",
           cronExpression: "0 * * * *",
           timezone: "UTC",
@@ -85,6 +83,7 @@ function makeMockDb(
           anchorAt: null,
           runCount: "5",
         }
+      : scheduleRow
   );
 
   return {
@@ -103,14 +102,22 @@ const SUCCESS_RESULT = {
   success: true,
   results: {},
   outputs: { "step-1": { label: "Result", data: "done" } },
-} as unknown as Awaited<ReturnType<typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow>>;
+} as unknown as Awaited<
+  ReturnType<
+    typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow
+  >
+>;
 
 const FAILURE_RESULT = {
   success: false,
   results: {},
   outputs: {},
   error: "Step failed: timeout",
-} as unknown as Awaited<ReturnType<typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow>>;
+} as unknown as Awaited<
+  ReturnType<
+    typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow
+  >
+>;
 
 const FAILURE_RESULT_FROM_STEP = {
   success: false,
@@ -119,7 +126,11 @@ const FAILURE_RESULT_FROM_STEP = {
     "step-2": { success: true },
   },
   outputs: {},
-} as unknown as Awaited<ReturnType<typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow>>;
+} as unknown as Awaited<
+  ReturnType<
+    typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow
+  >
+>;
 
 describe("applyExecutionResult", () => {
   beforeEach(() => {
@@ -129,7 +140,12 @@ describe("applyExecutionResult", () => {
   describe("successful execution", () => {
     it("returns null errorMessage on success", async () => {
       const db = makeMockDb(null);
-      const result = await applyExecutionResult(db, "exec-1", SUCCESS_RESULT, {});
+      const result = await applyExecutionResult(
+        db,
+        "exec-1",
+        SUCCESS_RESULT,
+        {}
+      );
       expect(result.errorMessage).toBeNull();
     });
 
@@ -151,7 +167,12 @@ describe("applyExecutionResult", () => {
   describe("failed execution", () => {
     it("returns the top-level error message from result.error", async () => {
       const db = makeMockDb(null);
-      const result = await applyExecutionResult(db, "exec-1", FAILURE_RESULT, {});
+      const result = await applyExecutionResult(
+        db,
+        "exec-1",
+        FAILURE_RESULT,
+        {}
+      );
       expect(result.errorMessage).toBe("Step failed: timeout");
     });
 
@@ -172,8 +193,17 @@ describe("applyExecutionResult", () => {
         success: false,
         results: {},
         outputs: {},
-      } as unknown as Awaited<ReturnType<typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow>>;
-      const result = await applyExecutionResult(db, "exec-1", noErrorResult, {});
+      } as unknown as Awaited<
+        ReturnType<
+          typeof import("../../lib/workflow/executor/executor.workflow").executeWorkflow
+        >
+      >;
+      const result = await applyExecutionResult(
+        db,
+        "exec-1",
+        noErrorResult,
+        {}
+      );
       expect(result.errorMessage).toBe("Unknown error");
     });
 

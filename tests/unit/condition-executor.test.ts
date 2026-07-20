@@ -970,7 +970,8 @@ describe("dead-branch grace: references to nodes that never executed", () => {
   it("keeps a real null value as null in resolvedValues (not 'undefined')", () => {
     // A node that executed and produced a genuine null must stay null, so null
     // and undefined remain distinguishable in the display.
-    const expression = "{{@ran:Check if already scheduled?.matchCount}} === null";
+    const expression =
+      "{{@ran:Check if already scheduled?.matchCount}} === null";
     const outputs = {
       ran: { label: "Check if already scheduled?", data: { matchCount: null } },
     };

@@ -37,7 +37,9 @@ describe("TurnkeySolanaSigner", () => {
   it("signTransaction hex-encodes the request and hex-decodes the response", async () => {
     const mockUnsignedBytes = new Uint8Array([1, 2, 3]);
     // Turnkey speaks hex for both the unsigned request and the signed result.
-    const mockSignedHex = Buffer.from(new Uint8Array([4, 5, 6])).toString("hex");
+    const mockSignedHex = Buffer.from(new Uint8Array([4, 5, 6])).toString(
+      "hex"
+    );
 
     mockApiClient.signTransaction.mockResolvedValue({
       activity: {

@@ -258,10 +258,7 @@ describe("buildApyContext: USDC/USDT max-APY ranking with TVL tie-break (YIELD-0
       chainId: 1,
       tokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     };
-    const ctx = buildApyContext(
-      [POOL_SPARKLEND_REWARD_ONLY],
-      [ethUsdcStable]
-    );
+    const ctx = buildApyContext([POOL_SPARKLEND_REWARD_ONLY], [ethUsdcStable]);
     const entry = ctx.getBestYield("USDC", 1);
     expect(entry?.apy).toBe(3.45);
   });

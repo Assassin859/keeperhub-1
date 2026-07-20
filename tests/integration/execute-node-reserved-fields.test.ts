@@ -192,14 +192,20 @@ describe("POST /api/execute/node reserved-field gating", () => {
     );
     expect(mocks.capturedInput?.network).toBe("1");
     expect(
-      (mocks.capturedInput?._context as { organizationId: string })
-        .organizationId
+      (
+        (mocks.capturedInput as { _context: unknown })._context as {
+          organizationId: string;
+        }
+      ).organizationId
     ).toBe("org_a");
     // The route reserved the value itself, so the step wrapper is told not to
     // reserve again (prevents the node route double-charging the cap).
     expect(
-      (mocks.capturedInput?._context as { valueCapReserved: boolean })
-        .valueCapReserved
+      (
+        (mocks.capturedInput as { _context: unknown })._context as {
+          valueCapReserved: boolean;
+        }
+      ).valueCapReserved
     ).toBe(true);
   });
 
@@ -213,8 +219,11 @@ describe("POST /api/execute/node reserved-field gating", () => {
 
     expect(response.status).toBe(200);
     expect(
-      (mocks.capturedInput?._context as { organizationId: string })
-        .organizationId
+      (
+        (mocks.capturedInput as { _context: unknown })._context as {
+          organizationId: string;
+        }
+      ).organizationId
     ).toBe("org_a");
   });
 
