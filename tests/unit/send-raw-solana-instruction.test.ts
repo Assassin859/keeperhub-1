@@ -149,6 +149,28 @@ describe("sendRawSolanaInstructionCore", () => {
     expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
   });
 
+  it("rejects a foreign signer in a non-first instruction", async () => {
+    // The first instruction is clean; the foreign signer is in the second, so
+    // findForeignSigner must scan past instruction 0.
+    const result = await sendRawSolanaInstructionCore({
+      ...validInput,
+      instructions: JSON.stringify([
+        instruction(),
+        instruction({
+          accounts: [
+            { pubkey: ACCOUNT_A.toBase58(), isSigner: true, isWritable: false },
+          ],
+        }),
+      ]),
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain(
+      "only the organization wallet"
+    );
+    expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
+  });
+
   it("accepts instructions as a native array, not only a JSON string", async () => {
     const result = await sendRawSolanaInstructionCore({
       ...validInput,
