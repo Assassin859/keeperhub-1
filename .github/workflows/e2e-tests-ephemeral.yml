@@ -141,7 +141,17 @@ jobs:
           CI: true
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           NEXT_PUBLIC_BILLING_ENABLED: "true"
-          NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "true"
+          # Off for e2e: Turnkey Gas Station broadcasts via Turnkey's own
+          # infrastructure, which cannot reach the local anvil fork. Since
+          # 7359f703d ("confirm sponsored tx outcome before falling back to
+          # direct signing"), a sponsored fork write that Turnkey accepts but
+          # cannot confirm raises SponsoredTxPendingError and no longer falls
+          # back to direct signing, so fork writes whose outcome depends on
+          # fabricated state (e.g. ethena unstake after an elapsed-cooldown
+          # cheatcode) fail instead of executing. The fork wallet is already
+          # gas-funded via ensureNativeGas/anvil_setBalance, so direct signing
+          # works; nothing in tests/e2e asserts the sponsored path.
+          NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "false"
           # Inlined into the shared artifact at build time, so the
           # /api/ai/generate route is ungated in every consumer of the
           # artifact. The e2e vitest job's api-key-auth suite needs it;
