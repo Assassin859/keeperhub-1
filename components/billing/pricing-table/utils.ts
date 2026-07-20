@@ -76,12 +76,18 @@ export function getExecutionsDisplay(
 export async function startCheckout(
   plan: PlanName,
   tier: TierKey | null,
-  interval: BillingInterval
+  interval: BillingInterval,
+  options?: { trial?: boolean }
 ): Promise<boolean> {
   const response = await fetch(BILLING_API.CHECKOUT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan, tier, interval }),
+    body: JSON.stringify({
+      plan,
+      tier,
+      interval,
+      trial: options?.trial === true,
+    }),
   });
 
   const data = (await response.json()) as {

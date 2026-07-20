@@ -723,6 +723,19 @@ export const workflowExecutions = pgTable(
      * the full stored snapshot without duplicating the graph per execution.
      */
     executedWorkflowHash: text("executed_workflow_hash"),
+    /**
+     * Dispatch-idempotency key. The schedule and block dispatchers
+     * run two replicas with leader election; this key makes a duplicate
+     * dispatch a no-op instead of a second SQS message and a second run. The
+     * dispatcher sets a stable per-occurrence value
+     * (`schedule:<scheduleId>:<occurrenceIso>` / `block:<workflowId>:<chainId>:<blockNumber>`)
+     * and the create-phantom insert is `ON CONFLICT DO NOTHING` on the unique
+     * index below, so an overlapping leader or a catch-up window that re-runs an
+     * occurrence collides and skips its enqueue. Null for rows with no dedup key
+     * (manual/webhook/direct); Postgres treats those NULLs as distinct so they
+     * never collide.
+     */
+    dispatchKey: text("dispatch_key"),
   },
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
@@ -731,6 +744,9 @@ export const workflowExecutions = pgTable(
     index("idx_workflow_executions_executed_hash").on(
       table.executedWorkflowHash
     ),
+    // Idempotency guard for dispatch dedup; NULL keys are distinct so only real
+    // per-occurrence keys are constrained.
+    uniqueIndex("idx_workflow_executions_dispatch_key").on(table.dispatchKey),
   ]
 );
 

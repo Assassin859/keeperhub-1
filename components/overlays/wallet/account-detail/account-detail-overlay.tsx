@@ -56,7 +56,9 @@ function defaultTab(account: WalletAccountKind): DetailTab {
 
 function detailTitle(account: WalletAccountKind): string {
   if (account.kind === "turnkey") {
-    return "Turnkey EOA";
+    return account.family === "solana"
+      ? "Turnkey EOA (SVM Compatible)"
+      : "Turnkey EOA (EVM Compatible)";
   }
   return `Safe · ${account.chainName}`;
 }

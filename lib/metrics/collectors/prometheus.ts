@@ -373,6 +373,15 @@ const orgTotalByPlan = getOrCreateGauge(
   ["plan", "tier", "billing_status"]
 );
 
+// Trial funnel snapshot: orgs that ever started a trial, by current outcome.
+// outcome="active" (still trialing), "converted" (now paying), "churned".
+const billingTrialsByOutcome = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_billing_trials",
+  "Orgs that have used a trial, by outcome (active|converted|churned)",
+  ["outcome"]
+);
+
 // Per-org execution counts (rolling 30-day window). Keyed only on
 // org_slug so the series identity stays stable when an org changes plan.
 // Join with keeperhub_org_info for plan/billing_status context.
@@ -747,6 +756,20 @@ const billingSubscriptionCreated = getOrCreateCounter(
   apiRegistry,
   "keeperhub_billing_subscription_created_total",
   "Subscriptions created (paid plan attached after checkout)",
+  BILLING_LIFECYCLE_LABELS
+);
+
+const billingTrialStarted = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_trial_started_total",
+  "Free trials started at checkout",
+  BILLING_LIFECYCLE_LABELS
+);
+
+const billingTrialConverted = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_trial_converted_total",
+  "Trials that converted to a paying subscription (trialing -> active)",
   BILLING_LIFECYCLE_LABELS
 );
 
@@ -1219,6 +1242,8 @@ const counterMap: Record<string, Counter> = {
   "sponsorship.gas_cost_usd_micro.total": sponsorshipGasCostUsdMicro,
   // Billing lifecycle counters
   "billing.subscription.created": billingSubscriptionCreated,
+  "billing.trial.started": billingTrialStarted,
+  "billing.trial.converted": billingTrialConverted,
   "billing.subscription.updated": billingSubscriptionUpdated,
   "billing.subscription.canceled": billingSubscriptionCanceled,
   "billing.subscription.plan_changed": billingSubscriptionPlanChanged,
@@ -1784,6 +1809,11 @@ async function refreshDbMetricsNow(): Promise<void> {
         },
         entry.count
       );
+    }
+
+    billingTrialsByOutcome.reset();
+    for (const entry of billingStats.trialsByOutcome ?? []) {
+      billingTrialsByOutcome.set({ outcome: entry.outcome }, entry.count);
     }
 
     orgExecutions30d.reset();

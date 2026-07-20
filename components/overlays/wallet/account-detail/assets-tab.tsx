@@ -12,6 +12,7 @@ import type {
   SupportedTokenBalance,
   TokenBalance,
 } from "@/lib/wallet/types";
+import { SolanaAssets } from "./solana-assets";
 
 type AssetsTabProps = {
   account: WalletAccountKind;
@@ -44,6 +45,13 @@ export function AssetsTab({
   onRemoveToken,
   onWithdraw,
 }: AssetsTabProps): React.ReactElement {
+  // The Solana Turnkey EOA is not an EVM address, so the EVM balance/token
+  // machinery (chain rows, withdraw, add-token) does not apply. Render the
+  // dedicated Solana view, which fetches live native SOL balances.
+  if (account.kind === "turnkey" && account.family === "solana") {
+    return <SolanaAssets address={account.address} />;
+  }
+
   const visibleBalances = (
     account.kind === "safe"
       ? balances.filter((b) => b.chainId === account.chainId)

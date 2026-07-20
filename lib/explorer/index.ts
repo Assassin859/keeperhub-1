@@ -7,6 +7,7 @@
  * - solscan: Solana (IDL fetch not supported via API)
  */
 
+import { joinExplorerUrl } from "@/lib/build-explorer-url";
 import type { ExplorerConfig } from "@/lib/db/schema";
 import {
   type BlockscoutTransaction,
@@ -54,7 +55,7 @@ export function getTransactionUrl(
     return "";
   }
   const path = config.explorerTxPath || "/tx/{hash}";
-  return `${config.explorerUrl}${path.replace("{hash}", txHash)}`;
+  return joinExplorerUrl(config.explorerUrl, path.replace("{hash}", txHash));
 }
 
 /**
@@ -65,7 +66,7 @@ export function getAddressUrl(config: ExplorerConfig, address: string): string {
     return "";
   }
   const path = config.explorerAddressPath || "/address/{address}";
-  return `${config.explorerUrl}${path.replace("{address}", address)}`;
+  return joinExplorerUrl(config.explorerUrl, path.replace("{address}", address));
 }
 
 /**
@@ -80,14 +81,20 @@ export function getContractUrl(
   }
 
   if (config.explorerContractPath) {
-    return `${config.explorerUrl}${config.explorerContractPath.replace("{address}", address)}`;
+    return joinExplorerUrl(
+      config.explorerUrl,
+      config.explorerContractPath.replace("{address}", address)
+    );
   }
 
   // Fallback defaults based on chain type
   if (config.chainType === "solana") {
-    return `${config.explorerUrl}/account/${address}#anchorProgramIDL`;
+    return joinExplorerUrl(
+      config.explorerUrl,
+      `/account/${address}#anchorProgramIDL`
+    );
   }
-  return `${config.explorerUrl}/address/${address}#code`;
+  return joinExplorerUrl(config.explorerUrl, `/address/${address}#code`);
 }
 
 /**

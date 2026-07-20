@@ -792,7 +792,25 @@ export class ChainMonitor {
     blockNumber: number,
     block: { hash: string; timestamp: number; parentHash: string },
   ): Promise<void> {
-    const executionId = await createPhantomExecution(wf.id, "block", wf.userId);
+    // Stable per (workflow, chain, block) key. Two leaders that
+    // overlap on failover, or both process the same block, collide on the
+    // unique index so only one enqueue lands. The in-memory lastProcessedBlock
+    // dedup only guards a single instance, so this is what covers 2 replicas.
+    const dispatchKey = `block:${wf.id}:${this.chainId}:${blockNumber}`;
+    const { executionId, alreadyExisted } = await createPhantomExecution(
+      wf.id,
+      "block",
+      wf.userId,
+      dispatchKey,
+    );
+
+    if (alreadyExisted) {
+      console.log(
+        `[BlockMonitor:${this.chainName}] Skipping duplicate dispatch for ${dispatchKey} (already enqueued)`,
+      );
+      return;
+    }
+
     try {
       await enqueueBlockTrigger({
         executionId,

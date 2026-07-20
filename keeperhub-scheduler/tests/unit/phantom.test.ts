@@ -18,9 +18,9 @@ describe("createPhantomExecution", () => {
   it("POSTs a phantom row and returns the new execution id", async () => {
     apiRequest.mockResolvedValue({ executionId: "exec_123" });
 
-    const id = await createPhantomExecution("wf_1", "schedule");
+    const result = await createPhantomExecution("wf_1", "schedule");
 
-    expect(id).toBe("exec_123");
+    expect(result).toEqual({ executionId: "exec_123", alreadyExisted: false });
     const [path, options] = apiRequest.mock.calls[0];
     expect(path).toBe("/api/internal/executions");
     expect(options.method).toBe("POST");
@@ -31,22 +31,42 @@ describe("createPhantomExecution", () => {
     });
   });
 
-  it("forwards userId when provided (block path)", async () => {
+  it("forwards userId and dispatchKey when provided (block path)", async () => {
     apiRequest.mockResolvedValue({ executionId: "exec_456" });
 
-    await createPhantomExecution("wf_1", "block", "owner_1");
+    await createPhantomExecution("wf_1", "block", "owner_1", "block:wf_1:1:99");
 
     const body = JSON.parse(apiRequest.mock.calls[0][1].body);
     expect(body.userId).toBe("owner_1");
     expect(body.triggerSource).toBe("block");
+    expect(body.dispatchKey).toBe("block:wf_1:1:99");
   });
 
-  it("returns undefined when the API call fails (best-effort)", async () => {
+  it("reports alreadyExisted when the API returns it (dedup hit)", async () => {
+    apiRequest.mockResolvedValue({
+      executionId: "exec_existing",
+      alreadyExisted: true,
+    });
+
+    const result = await createPhantomExecution(
+      "wf_1",
+      "schedule",
+      undefined,
+      "schedule:s1:2026-01-01T00:00:00.000Z",
+    );
+
+    expect(result).toEqual({
+      executionId: "exec_existing",
+      alreadyExisted: true,
+    });
+  });
+
+  it("returns no id and alreadyExisted=false when the API call fails", async () => {
     apiRequest.mockRejectedValue(new Error("api down"));
 
-    const id = await createPhantomExecution("wf_1", "schedule");
+    const result = await createPhantomExecution("wf_1", "schedule");
 
-    expect(id).toBeUndefined();
+    expect(result).toEqual({ alreadyExisted: false });
   });
 });
 

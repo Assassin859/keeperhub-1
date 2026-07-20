@@ -85,6 +85,7 @@ const DEFAULT_DB_RETURNS: Record<string, unknown> = {
     orgsExecutions: [],
     mrrCentsByPlan: [],
     mrrCentsTotal: 0,
+    trialsByOutcome: [],
   },
 };
 

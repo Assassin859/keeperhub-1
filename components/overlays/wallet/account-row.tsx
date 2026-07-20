@@ -9,9 +9,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { truncateAddress } from "@/lib/address-utils";
+import { solscanAccountUrl } from "@/lib/solana-explorer";
 
 export type WalletAccountKind =
-  | { kind: "turnkey"; address: string }
+  | {
+      kind: "turnkey";
+      address: string;
+      family: "evm" | "solana";
+      /** For family === "solana": whether the org's Solana context is devnet
+       *  (no mainnet Solana chain enabled), so the explorer link uses the
+       *  devnet cluster. */
+      solanaIsTestnet?: boolean;
+    }
   | {
       kind: "safe";
       safeId: string;
@@ -47,15 +56,31 @@ export function AccountRow({
   onSigningChange,
 }: AccountRowProps): React.ReactElement {
   const isTurnkey = account.kind === "turnkey";
+  const isSolanaTurnkey = account.kind === "turnkey" && account.family === "solana";
   const Icon = isTurnkey ? Wallet : ShieldCheck;
 
-  const title = isTurnkey ? "Turnkey EOA" : `Safe · ${account.chainName}`;
+  let title: string;
+  if (account.kind === "safe") {
+    title = `Safe · ${account.chainName}`;
+  } else {
+    title =
+      account.family === "solana"
+        ? "Turnkey EOA (SVM Compatible)"
+        : "Turnkey EOA (EVM Compatible)";
+  }
   const addressLine = truncateAddress(account.address);
 
-  const explorerChainId = isTurnkey
-    ? TURNKEY_DEFAULT_EXPLORER_CHAIN
-    : account.chainId;
-  const explorerUrl = getExplorerAddressUrl(explorerChainId, account.address);
+  let explorerUrl: string | null;
+  if (account.kind === "safe") {
+    explorerUrl = getExplorerAddressUrl(account.chainId, account.address);
+  } else if (account.family === "solana") {
+    explorerUrl = solscanAccountUrl(account.address, account.solanaIsTestnet);
+  } else {
+    explorerUrl = getExplorerAddressUrl(
+      TURNKEY_DEFAULT_EXPLORER_CHAIN,
+      account.address
+    );
+  }
 
   const handleKey = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Enter" || event.key === " ") {
@@ -137,9 +162,9 @@ export function AccountRow({
             </button>
           </TooltipTrigger>
           <TooltipContent className="max-w-xs" side="bottom">
-            The key that signs every workflow transaction. Always your Turnkey
-            EOA, owner of every Safe. Also signs directly on chains where you
-            haven't deployed a Safe yet.
+            {isSolanaTurnkey
+              ? "The key that signs every Solana workflow transaction, held in your Turnkey wallet."
+              : "The key that signs every workflow transaction. Always your Turnkey EOA, owner of every Safe. Also signs directly on chains where you haven't deployed a Safe yet."}
           </TooltipContent>
         </Tooltip>
       )}

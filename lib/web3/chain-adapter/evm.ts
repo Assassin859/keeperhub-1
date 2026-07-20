@@ -246,9 +246,12 @@ export class EvmChainAdapter implements ChainAdapter {
   }
 
   async getBalance(
-    rpcManager: RpcProviderManager,
+    rpcManager: RpcProviderManager | undefined,
     address: string
   ): Promise<bigint> {
+    if (!rpcManager) {
+      throw new Error("[EvmChainAdapter] getBalance requires an rpcManager");
+    }
     return await rpcManager.executeWithFailover(async (provider) =>
       provider.getBalance(address)
     );

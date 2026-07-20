@@ -15,6 +15,10 @@ vi.mock("ethers", () => {
         (addr: string) => addr.startsWith("0x") && addr.length === 42
       ),
       formatEther: vi.fn((wei: bigint) => (Number(wei) / 1e18).toString()),
+      formatUnits: vi.fn(
+        (value: bigint, decimals: number) =>
+          (Number(value) / 10 ** decimals).toString()
+      ),
       parseEther: vi.fn((eth: string) =>
         BigInt(Math.floor(Number.parseFloat(eth) * 1e18))
       ),

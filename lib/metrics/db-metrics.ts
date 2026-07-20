@@ -17,6 +17,7 @@ import {
   gte,
   inArray,
   notInArray,
+  or,
   sql,
 } from "drizzle-orm";
 import {
@@ -424,13 +425,20 @@ export type SystemErrorsByCategory = Array<{
  * `statement_timeout` (Postgres 57014), the catch returned [], and the gauge
  * flapped. Bounding to the last hour keeps the row set tiny so the query is an
  * index range scan on idx_workflow_executions_error_completed_at and finishes
- * in milliseconds. No joins are needed — error_category/error_type live on
- * workflow_executions directly (migration 0073).
+ * in milliseconds. error_category/error_type live on workflow_executions
+ * directly (migration 0073); the workflows/organization left joins below exist
+ * only to resolve org_slug for the network_rpc scoping, and stay left joins so
+ * a row with no resolvable org still counts for every other category.
  *
  * errorCategory and errorType are read from the `workflow_executions`
  * error_category / error_type columns, projected to "unknown" for rows that
  * predate classification so every series carries populated labels. Cardinality
  * is bounded at roughly (~11 categories) * (~3 error types) — small and stable.
+ *
+ * network_rpc is the one exception to "platform-wide, no org filter": rows are
+ * scoped to MANAGED_ORG_SLUGS the same way the per-workflow gauge is. This still
+ * adds no org_slug label, it only narrows which rows count toward the
+ * network_rpc series, so cardinality stays fixed.
  */
 export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByCategory> {
   try {
@@ -441,13 +449,19 @@ export async function getSystemErrorsByCategoryFromDb(): Promise<SystemErrorsByC
         count: count(),
       })
       .from(workflowExecutions)
+      .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
+      .leftJoin(organization, eq(workflows.organizationId, organization.id))
       .where(
         and(
           // KEEP-853: system errors carry status='system_error' (not 'error'),
           // so both must be matched or every system error drops out of the gauge
           // the infra P3 alert reads.
           inArray(workflowExecutions.status, [...ERROR_STATUSES]),
-          sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`
+          sql`${workflowExecutions.completedAt} >= now() - interval '1 hour'`,
+          or(
+            sql`${workflowExecutions.errorCategory} IS DISTINCT FROM 'network_rpc'`,
+            inArray(organization.slug, [...MANAGED_ORG_SLUGS])
+          )
         )
       )
       .groupBy(workflowExecutions.errorCategory, workflowExecutions.errorType);
@@ -1226,7 +1240,23 @@ export type BillingStats = {
 
   // Total MRR in USD cents across all plans and tiers.
   mrrCentsTotal: number;
+
+  // Trial funnel snapshot: orgs that have ever started a trial, by current
+  // outcome. "active" = still trialing, "converted" = now paying (came from a
+  // trial), "churned" = trialed but no longer active.
+  trialsByOutcome: Array<{
+    outcome: TrialOutcome;
+    count: number;
+  }>;
 };
+
+export type TrialOutcome = "active" | "converted" | "churned";
+
+const VALID_TRIAL_OUTCOMES: ReadonlySet<string> = new Set<TrialOutcome>([
+  "active",
+  "converted",
+  "churned",
+]);
 
 function emptyBillingStats(): BillingStats {
   return {
@@ -1234,6 +1264,7 @@ function emptyBillingStats(): BillingStats {
     orgsExecutions: [],
     mrrCentsByPlan: [],
     mrrCentsTotal: 0,
+    trialsByOutcome: [],
   };
 }
 
@@ -1316,6 +1347,22 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
         sql`${organizationSubscriptions.status} IN ('active', 'trialing', 'past_due')`
       );
 
+    // Trial funnel snapshot: any org that ever started a trial
+    // (trial_started_at IS NOT NULL), grouped by current outcome. Bounded to
+    // trial-touched rows so it stays a small aggregate.
+    const trialOutcomeResult = await db
+      .select({
+        outcome: sql<string>`CASE
+          WHEN ${organizationSubscriptions.status} = 'trialing' THEN 'active'
+          WHEN ${organizationSubscriptions.status} = 'active' THEN 'converted'
+          ELSE 'churned'
+        END`,
+        count: count(),
+      })
+      .from(organizationSubscriptions)
+      .where(sql`${organizationSubscriptions.trialStartedAt} IS NOT NULL`)
+      .groupBy(sql`1`);
+
     const stats = emptyBillingStats();
 
     // Tally orgs by plan + tier + billing_status
@@ -1375,6 +1422,16 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
         stats.mrrCentsByPlan.push({ plan, tier, cents });
       }
       stats.mrrCentsTotal += cents;
+    }
+
+    // Tally trial outcomes (active / converted / churned)
+    for (const row of trialOutcomeResult) {
+      if (VALID_TRIAL_OUTCOMES.has(row.outcome)) {
+        stats.trialsByOutcome.push({
+          outcome: row.outcome as TrialOutcome,
+          count: Number(row.count) || 0,
+        });
+      }
     }
 
     return stats;

@@ -34,18 +34,17 @@ describe("TurnkeySolanaSigner", () => {
     expect(pubkey.toBase58()).toBe(mockSolanaAddress);
   });
 
-  it("signTransaction successfully signs when status is completed", async () => {
+  it("signTransaction hex-encodes the request and hex-decodes the response", async () => {
     const mockUnsignedBytes = new Uint8Array([1, 2, 3]);
-    const mockSignedBase64 = Buffer.from(new Uint8Array([4, 5, 6])).toString(
-      "base64"
-    );
+    // Turnkey speaks hex for both the unsigned request and the signed result.
+    const mockSignedHex = Buffer.from(new Uint8Array([4, 5, 6])).toString("hex");
 
     mockApiClient.signTransaction.mockResolvedValue({
       activity: {
         status: "ACTIVITY_STATUS_COMPLETED",
         result: {
           signTransactionResult: {
-            signedTransaction: mockSignedBase64,
+            signedTransaction: mockSignedHex,
           },
         },
       },
@@ -58,8 +57,15 @@ describe("TurnkeySolanaSigner", () => {
     expect(mockApiClient.signTransaction).toHaveBeenCalledWith({
       signWith: mockSolanaAddress,
       type: "TRANSACTION_TYPE_SOLANA",
-      unsignedTransaction: Buffer.from(mockUnsignedBytes).toString("base64"),
+      unsignedTransaction: Buffer.from(mockUnsignedBytes).toString("hex"),
     });
+
+    // Regression guard: Turnkey rejects non-hex payloads with
+    // "failed to decode Solana transaction: encoding/hex: invalid byte".
+    // A base64 payload would contain non-hex characters (e.g. uppercase, +, /, =).
+    const sentPayload =
+      mockApiClient.signTransaction.mock.calls[0][0].unsignedTransaction;
+    expect(sentPayload).toMatch(/^[0-9a-f]*$/);
   });
 
   it("throws PolicyBlockedError when status is consensus needed", async () => {
