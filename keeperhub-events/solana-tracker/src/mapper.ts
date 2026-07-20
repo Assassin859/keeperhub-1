@@ -8,12 +8,6 @@ import type {
   SolanaEventTrigger,
 } from "./registrations";
 
-const VALID_COMMITMENTS: ReadonlySet<string> = new Set([
-  "processed",
-  "confirmed",
-  "finalized",
-]);
-
 function sha256(input: unknown): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
