@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { PublicKey, Transaction } from "@solana/web3.js";
+import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { initializeSolanaWallet } from "@/lib/web3/wallet-helpers";
@@ -311,5 +311,71 @@ describe("sendRawSolanaInstructionCore", () => {
 
     expect(result).toMatchObject({ success: false });
     expect((result as { error: string }).error).toContain("Simulation failed");
+  });
+
+  it("rejects malformed base64 that would silently truncate", async () => {
+    // "A" passes the base64 charset but is not a complete group; Buffer.from
+    // decodes it to zero bytes. The lossless round-trip check must reject it
+    // rather than submit an unintended empty-data instruction.
+    const result = await sendRawSolanaInstructionCore({
+      ...validInput,
+      instructions: JSON.stringify([instruction({ data: "A" })]),
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain(
+      "not valid base64 or 0x-hex"
+    );
+    expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("accepts an instruction with empty data", async () => {
+    const result = await sendRawSolanaInstructionCore({
+      ...validInput,
+      instructions: JSON.stringify([instruction({ data: "" })]),
+    });
+
+    expect(result.success).toBe(true);
+    const tx = decodeSentTransaction(mockAdapter.sendTransaction);
+    expect(tx.instructions[0].data).toHaveLength(0);
+  });
+
+  it("rejects when the compiled transaction overflows even though data fits", async () => {
+    // Data (1000 bytes) is under the 1232 pre-check, but 25 account keys push
+    // the serialized message past the packet limit, so serialize() throws and
+    // the translating catch reports it as a size overflow.
+    const accounts = Array.from({ length: 25 }, () => ({
+      pubkey: Keypair.generate().publicKey.toBase58(),
+      isSigner: false,
+      isWritable: false,
+    }));
+    const result = await sendRawSolanaInstructionCore({
+      ...validInput,
+      instructions: JSON.stringify([
+        instruction({
+          accounts,
+          data: Buffer.alloc(1000, 9).toString("base64"),
+        }),
+      ]),
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain(
+      "too large to serialize"
+    );
+    expect(mockAdapter.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("reports the index of a non-first invalid instruction", async () => {
+    const result = await sendRawSolanaInstructionCore({
+      ...validInput,
+      instructions: JSON.stringify([
+        instruction(),
+        instruction({ programId: "not-base58!!" }),
+      ]),
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain("instruction 1");
   });
 });

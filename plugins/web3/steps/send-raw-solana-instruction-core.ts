@@ -28,6 +28,7 @@ const MAX_TX_SIZE_BYTES = 1232;
 
 const HEX_BODY = /^[0-9a-fA-F]*$/;
 const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
+const TRAILING_PADDING = /=+$/;
 
 export type RawSolanaAccount = {
   pubkey: string;
@@ -73,8 +74,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Decodes an instruction's data field. Mirrors normalizeSolanaTransaction: a
  * "0x" prefix means hex, otherwise base64. Empty data is valid (some
- * instructions carry no bytes). Buffer.from silently drops invalid characters,
- * so the input is validated against a strict charset first.
+ * instructions carry no bytes).
+ *
+ * Buffer.from does not error on malformed input - it silently drops characters
+ * that do not form complete groups, so a typo'd payload would decode to fewer
+ * bytes than intended. Both branches guard against that: hex requires an even
+ * length over the hex charset, and base64 is confirmed lossless by re-encoding
+ * the decoded bytes and comparing (padding-insensitive, so padded and unpadded
+ * inputs are both accepted).
  */
 function decodeInstructionData(value: string): Buffer | null {
   const trimmed = value.trim();
@@ -90,7 +97,12 @@ function decodeInstructionData(value: string): Buffer | null {
   if (!BASE64_BODY.test(trimmed)) {
     return null;
   }
-  return Buffer.from(trimmed, "base64");
+  const decoded = Buffer.from(trimmed, "base64");
+  const reencoded = decoded.toString("base64").replace(TRAILING_PADDING, "");
+  if (reencoded !== trimmed.replace(TRAILING_PADDING, "")) {
+    return null;
+  }
+  return decoded;
 }
 
 function parseInstructionsInput(
@@ -124,16 +136,14 @@ function parseInstructionsInput(
 }
 
 /**
- * Validates one account entry and builds its AccountMeta. Any pubkey marked
- * isSigner must be the org wallet - it is the only key this action can sign
- * with, so a non-wallet signer would produce a transaction that can never gather
- * its signatures. Rejecting up front turns that into an actionable error instead
- * of an opaque on-chain signature-verification failure.
+ * Validates one account entry and builds its AccountMeta. Structural only - the
+ * signer-identity check (a signer must be the org wallet) runs later in
+ * findForeignSigner, once the wallet has been resolved, so purely malformed
+ * input can be rejected without a wallet lookup.
  */
 function buildAccountMeta(
   account: unknown,
-  index: number,
-  walletPk: PublicKey
+  index: number
 ): { key: AccountMeta } | { error: string } {
   if (!isRecord(account)) {
     return { error: `Account at index ${index} must be an object` };
@@ -151,11 +161,6 @@ function buildAccountMeta(
   if (typeof account.isWritable !== "boolean") {
     return { error: `Account at index ${index} is missing a boolean isWritable` };
   }
-  if (account.isSigner && !pubkey.equals(walletPk)) {
-    return {
-      error: `Account ${account.pubkey} is marked isSigner, but only the organization wallet (${walletPk.toBase58()}) can sign`,
-    };
-  }
 
   return {
     key: { pubkey, isSigner: account.isSigner, isWritable: account.isWritable },
@@ -164,8 +169,7 @@ function buildAccountMeta(
 
 function buildInstruction(
   raw: unknown,
-  index: number,
-  walletPk: PublicKey
+  index: number
 ): { instruction: TransactionInstruction } | { error: string } {
   if (!isRecord(raw)) {
     return { error: `Instruction at index ${index} must be an object` };
@@ -185,7 +189,7 @@ function buildInstruction(
 
   const keys: AccountMeta[] = [];
   for (const [accountIndex, account] of raw.accounts.entries()) {
-    const meta = buildAccountMeta(account, accountIndex, walletPk);
+    const meta = buildAccountMeta(account, accountIndex);
     if ("error" in meta) {
       return { error: `Instruction ${index}: ${meta.error}` };
     }
@@ -222,13 +226,12 @@ async function resolveWallet(
 }
 
 function buildAllInstructions(
-  instructions: unknown[],
-  walletPk: PublicKey
+  instructions: unknown[]
 ): { built: TransactionInstruction[]; totalDataBytes: number } | { error: string } {
   const built: TransactionInstruction[] = [];
   let totalDataBytes = 0;
   for (const [index, raw] of instructions.entries()) {
-    const result = buildInstruction(raw, index, walletPk);
+    const result = buildInstruction(raw, index);
     if ("error" in result) {
       return { error: result.error };
     }
@@ -236,6 +239,28 @@ function buildAllInstructions(
     totalDataBytes += result.instruction.data.length;
   }
   return { built, totalDataBytes };
+}
+
+/**
+ * Returns the base58 of the first account marked isSigner that is not the org
+ * wallet, or null when every signer is the wallet. The wallet is the only key
+ * this action can sign with (and is always the fee payer / signer #0), so a
+ * foreign signer would compile to a transaction that can never gather its
+ * signatures. Rejecting up front turns that into an actionable error instead of
+ * an opaque on-chain signature-verification failure.
+ */
+function findForeignSigner(
+  instructions: TransactionInstruction[],
+  walletPk: PublicKey
+): string | null {
+  for (const ix of instructions) {
+    for (const key of ix.keys) {
+      if (key.isSigner && !key.pubkey.equals(walletPk)) {
+        return key.pubkey.toBase58();
+      }
+    }
+  }
+  return null;
 }
 
 export async function sendRawSolanaInstructionCore(
@@ -260,6 +285,25 @@ export async function sendRawSolanaInstructionCore(
   const parsed = parseInstructionsInput(input.instructions);
   if ("error" in parsed) {
     return { success: false, error: parsed.error };
+  }
+
+  // Structural validation and the size pre-check are pure and cheap, so they run
+  // before the wallet lookup: malformed input fails without resolving the org
+  // wallet. The signer-identity check needs the wallet, so it is deferred below.
+  const built = buildAllInstructions(parsed.instructions);
+  if ("error" in built) {
+    return { success: false, error: built.error };
+  }
+
+  // Deterministic guardrail: the instruction data alone already overflows the
+  // packet limit, so the transaction cannot be built regardless of account
+  // count. Caught here so the message is clear rather than serialize()'s opaque
+  // "offset out of range".
+  if (built.totalDataBytes > MAX_TX_SIZE_BYTES) {
+    return {
+      success: false,
+      error: `Transaction too large: instruction data totals ${built.totalDataBytes} bytes, over Solana's ${MAX_TX_SIZE_BYTES}-byte single-packet limit. Reduce the number or size of instructions.`,
+    };
   }
 
   if (!(_context?.executionId || _context?.organizationId)) {
@@ -291,19 +335,11 @@ export async function sendRawSolanaInstructionCore(
     };
   }
 
-  const built = buildAllInstructions(parsed.instructions, walletPk);
-  if ("error" in built) {
-    return { success: false, error: built.error };
-  }
-
-  // Deterministic guardrail: the instruction data alone already overflows the
-  // packet limit, so the transaction cannot be built regardless of account
-  // count. Caught here so the message is clear rather than serialize()'s opaque
-  // "offset out of range".
-  if (built.totalDataBytes > MAX_TX_SIZE_BYTES) {
+  const foreignSigner = findForeignSigner(built.built, walletPk);
+  if (foreignSigner) {
     return {
       success: false,
-      error: `Transaction too large: instruction data totals ${built.totalDataBytes} bytes, over Solana's ${MAX_TX_SIZE_BYTES}-byte single-packet limit. Reduce the number or size of instructions.`,
+      error: `Account ${foreignSigner} is marked isSigner, but only the organization wallet (${walletPk.toBase58()}) can sign`,
     };
   }
 
