@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -18,7 +19,11 @@ async function stepHandler(
   input: ClearinghouseStateCoreInput
 ): Promise<InfoResult> {
   if (!isEvmAddress(input.user)) {
-    return { success: false, error: "User must be a 0x-prefixed EVM address" };
+    return {
+      success: false,
+      error: "User must be a 0x-prefixed EVM address",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   const body: Record<string, unknown> = {

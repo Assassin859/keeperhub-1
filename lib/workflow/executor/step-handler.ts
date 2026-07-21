@@ -5,6 +5,7 @@
  */
 import "server-only";
 
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordStepMetrics } from "@/lib/metrics/instrumentation/workflow";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
@@ -189,6 +190,7 @@ export async function logWorkflowComplete(options: {
   status: "success" | "error";
   output?: unknown;
   error?: string;
+  errorClass?: ExecutionErrorType;
   startTime: number;
 }): Promise<void> {
   try {
@@ -199,6 +201,7 @@ export async function logWorkflowComplete(options: {
       status: options.status,
       output: redactedOutput,
       error: options.error,
+      errorClass: options.errorClass,
       startTime: options.startTime,
     });
   } catch (err) {

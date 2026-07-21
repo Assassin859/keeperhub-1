@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyErrorClassHint,
   classifyExecutionError,
   isDefaultClassification,
 } from "@/lib/errors/classify";
+import { DEFAULT_SYSTEM_ERROR_CODE } from "@/lib/errors/error-codes";
 import { ErrorCategory } from "@/lib/logging";
 
 describe("isDefaultClassification", () => {
@@ -54,6 +56,7 @@ describe("classifyExecutionError", () => {
       "Unresolved template reference(s): {{@nodeId:Foo.bar}} (Reference left in render)",
       "Missing template variable(s) in URL: address",
       "HTTP request failed: Missing template variable(s) in URL: address",
+      'Action node "abc123" has no action type configured',
     ])("classifies %s as configuration + user", (input) => {
       const r = classifyExecutionError(input);
       expect(r.errorCategory).toBe(ErrorCategory.CONFIGURATION);
@@ -171,12 +174,12 @@ describe("classifyExecutionError", () => {
     });
   });
 
-  describe("user-config: external HTTP endpoint failures", () => {
+  describe("user-config: bad request/auth to an external endpoint (4xx)", () => {
     it.each([
       'HTTP 401: {"error":"unauthorized"}',
       "HTTP 404: Not Found",
-      "HTTP 500: Internal Server Error",
-      "HTTP 502: Failed to send Discord message",
+      "HTTP 400: Bad Request",
+      "HTTP request failed with status 403: Forbidden",
     ])("classifies %s as external_service + user", (input) => {
       const r = classifyExecutionError(input);
       expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
@@ -184,24 +187,61 @@ describe("classifyExecutionError", () => {
     });
 
     it.each([
-      "HTTP request failed: fetch failed: read ECONNRESET",
+      "URL is required",
+      "HTTP request failed: URL is required",
+    ])("keeps %s as validation + user (config fault, not transport)", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
+      expect(r.errorType).toBe("user");
+    });
+
+    it.each([
+      "Failed to send webhook: fetch failed: getaddrinfo EAI_AGAIN events.pagerduty.com",
       "HTTP request failed: fetch failed: getaddrinfo ENOTFOUND api.example.com",
+    ])(
+      "keeps DNS-resolution failure %s as user (configured host does not resolve)",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+        expect(r.errorType).toBe("user");
+      }
+    );
+  });
+
+  describe("external: third-party dependency failures", () => {
+    it.each([
+      "HTTP request failed: fetch failed: read ECONNRESET",
       "HTTP request failed: The operation was aborted",
-      "HTTP request failed with status 503: Service Unavailable",
-    ])("classifies %s as external_service + user", (input) => {
+      "Failed to send webhook: fetch failed: read ECONNRESET",
+      "Failed to send webhook: socket hang up",
+    ])("classifies transport failure %s as external", (input) => {
       const r = classifyExecutionError(input);
       expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
-      expect(r.errorType).toBe("user");
+      expect(r.errorType).toBe("external");
+      expect(r.code).toBeNull();
+    });
+
+    it.each([
+      "HTTP 500: Internal Server Error",
+      "HTTP 502: Failed to send Discord message",
+      "HTTP 503: Service Unavailable",
+      "HTTP request failed with status 503: Service Unavailable",
+    ])("classifies 5xx endpoint response %s as external", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+      expect(r.errorType).toBe("external");
+      expect(r.code).toBeNull();
     });
   });
 
-  describe("network / RPC: external dependencies", () => {
+  describe("system: KeeperHub-managed RPC failures", () => {
     it("RPC failed on both endpoints: network_rpc + system", () => {
       const r = classifyExecutionError(
         "RPC failed on both endpoints. Primary: request timeout. Fallback: request timeout"
       );
       expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
       expect(r.errorType).toBe("system");
+      expect(r.code).toBe("N-0001");
     });
 
     it("Failed to check balance: RPC failed: network_rpc + system", () => {
@@ -210,14 +250,6 @@ describe("classifyExecutionError", () => {
       );
       expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
       expect(r.errorType).toBe("system");
-    });
-
-    it("Failed to send webhook DNS failure: external_service + user (likely bad URL)", () => {
-      const r = classifyExecutionError(
-        "Failed to send webhook: fetch failed: getaddrinfo EAI_AGAIN events.pagerduty.com"
-      );
-      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
-      expect(r.errorType).toBe("user");
     });
   });
 
@@ -309,8 +341,57 @@ describe("classifyExecutionError", () => {
       for (const s of samples) {
         const r = classifyExecutionError(s);
         expect(allCategoryValues.has(r.errorCategory)).toBe(true);
-        expect(r.errorType === "user" || r.errorType === "system").toBe(true);
+        expect(
+          r.errorType === "user" ||
+            r.errorType === "system" ||
+            r.errorType === "external"
+        ).toBe(true);
       }
     });
+  });
+});
+
+describe("applyErrorClassHint", () => {
+  it("returns the classification unchanged when the hint is null/undefined", () => {
+    const base = classifyExecutionError("Execution timed out");
+    expect(applyErrorClassHint(base, null)).toEqual(base);
+    expect(applyErrorClassHint(base, undefined)).toEqual(base);
+  });
+
+  it("returns unchanged when the hint already agrees with the classifier", () => {
+    const base = classifyExecutionError("Unresolved template reference {{x}}");
+    expect(applyErrorClassHint(base, "user")).toEqual(base);
+  });
+
+  it("overrides an unmatched (default-system) failure to external with no code", () => {
+    // A third-party integration message the string classifier does not know.
+    const base = classifyExecutionError("Failed to send Slack message: 503");
+    expect(base.errorType).toBe("system");
+    const hinted = applyErrorClassHint(base, "external");
+    expect(hinted).toEqual({
+      errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+      errorType: "external",
+      code: null,
+    });
+  });
+
+  it("overrides to user with no code, keeping the classifier category", () => {
+    const base = classifyExecutionError("some novel provider message");
+    const hinted = applyErrorClassHint(base, "user");
+    expect(hinted.errorType).toBe("user");
+    expect(hinted.code).toBeNull();
+    expect(hinted.errorCategory).toBe(base.errorCategory);
+  });
+
+  it("keeps a system hint coded (classifier code, or the default)", () => {
+    const coded = classifyExecutionError("Execution timed out");
+    expect(applyErrorClassHint(coded, "system")).toEqual(coded);
+
+    const uncoded = applyErrorClassHint(
+      classifyExecutionError("HTTP request failed: fetch failed: read ECONNRESET"),
+      "system"
+    );
+    expect(uncoded.errorType).toBe("system");
+    expect(uncoded.code).toBe(DEFAULT_SYSTEM_ERROR_CODE);
   });
 });

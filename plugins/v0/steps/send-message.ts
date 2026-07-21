@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { createClient, type ChatsSendMessageResponse } from "v0-sdk";
 import { fetchCredentials } from "@/lib/credential-fetcher";
@@ -8,7 +9,11 @@ import type { V0Credentials } from "../credentials";
 
 type SendMessageResult =
   | { success: true; chatId: string; demoUrl?: string }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type SendMessageCoreInput = {
   chatId: string;
@@ -34,6 +39,7 @@ async function stepHandler(
       success: false,
       error:
         "V0_API_KEY is not configured. Please add it in Project Integrations.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -54,6 +60,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to send message: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

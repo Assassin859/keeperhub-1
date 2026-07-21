@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -27,7 +28,7 @@ async function stepHandler(
   input: FundingHistoryCoreInput
 ): Promise<InfoResult> {
   if (!input.coin) {
-    return { success: false, error: "Coin is required" };
+    return { success: false, error: "Coin is required", errorClass: ExecutionErrorType.USER };
   }
 
   const startTime = parseTimestamp(input.startTime);
@@ -35,6 +36,7 @@ async function stepHandler(
     return {
       success: false,
       error: "startTime must be a positive integer Unix timestamp in milliseconds",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -50,12 +52,14 @@ async function stepHandler(
       return {
         success: false,
         error: "endTime must be a positive integer Unix timestamp in milliseconds",
+        errorClass: ExecutionErrorType.USER,
       };
     }
     if (endTime < startTime) {
       return {
         success: false,
         error: "endTime must be greater than or equal to startTime",
+        errorClass: ExecutionErrorType.USER,
       };
     }
     body.endTime = endTime;

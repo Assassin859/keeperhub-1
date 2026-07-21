@@ -21,6 +21,7 @@ const STATUS_OPTIONS: Array<{
   { value: undefined, label: "All" },
   { value: "success", label: "Success" },
   { value: "error", label: "Error" },
+  { value: "external_error", label: "External" },
   { value: "system_error", label: "System Error" },
   { value: "cancelled", label: "Cancelled" },
   { value: "running", label: "Running" },

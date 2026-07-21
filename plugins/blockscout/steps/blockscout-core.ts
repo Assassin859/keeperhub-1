@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
@@ -20,7 +21,11 @@ const TRAILING_SLASH_RE = /\/+$/;
 
 export type BlockscoutFetchResult<T> =
   | { success: true; data: T }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 type InstanceResolution =
   | { url: string }
@@ -81,7 +86,7 @@ export async function blockscoutGet<T>(
 ): Promise<BlockscoutFetchResult<T>> {
   const resolved = resolveInstance(credentials, network);
   if ("error" in resolved) {
-    return { success: false, error: resolved.error };
+    return { success: false, error: resolved.error, errorClass: ExecutionErrorType.USER };
   }
 
   const apiKey = credentials.BLOCKSCOUT_API_KEY?.trim();
@@ -107,9 +112,17 @@ export async function blockscoutGet<T>(
 
     if (!response.ok) {
       if (response.status === 404) {
-        return { success: false, error: "Not found on this Blockscout instance." };
+        return {
+          success: false,
+          error: "Not found on this Blockscout instance.",
+          errorClass: ExecutionErrorType.USER,
+        };
       }
-      return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText}`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
+      };
     }
 
     const data = (await response.json()) as T;
@@ -125,11 +138,13 @@ export async function blockscoutGet<T>(
       return {
         success: false,
         error: `Blockscout instance URL is not allowed: ${error.message}`,
+        errorClass: ExecutionErrorType.USER,
       };
     }
     return {
       success: false,
       error: `Failed to reach Blockscout: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

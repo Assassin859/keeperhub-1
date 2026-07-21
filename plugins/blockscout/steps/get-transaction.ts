@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
@@ -34,7 +35,11 @@ type GetTransactionResult =
       fee: string | null;
       method: string | null;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type GetTransactionCoreInput = {
   txHash: string;
@@ -52,7 +57,11 @@ async function stepHandler(
 ): Promise<GetTransactionResult> {
   const txHash = input.txHash?.trim();
   if (!txHash) {
-    return { success: false, error: "Transaction hash is required." };
+    return {
+      success: false,
+      error: "Transaction hash is required.",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   const result = await blockscoutGet<TransactionResponse>(

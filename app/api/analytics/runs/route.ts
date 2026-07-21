@@ -12,6 +12,7 @@ const VALID_STATUSES = new Set<NormalizedStatus>([
   "success",
   "error",
   "system_error",
+  "external_error",
   "cancelled",
 ]);
 
