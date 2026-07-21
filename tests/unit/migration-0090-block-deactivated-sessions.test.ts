@@ -16,7 +16,7 @@ import {
 // assertions below are deliberately strict to catch a silent weakening.
 
 const MIGRATION_PATH = join(
-  __dirname,
+  import.meta.dirname,
   "../../drizzle/0090_block_sessions_for_deactivated_users.sql"
 );
 
@@ -70,7 +70,9 @@ describe("migration 0090: block sessions for deactivated owners", () => {
 
   it("installs a BEFORE INSERT row trigger on sessions by exact name", () => {
     const ddl = READ_SQL_DDL_ONLY();
-    expect(ddl).toMatch(/DROP TRIGGER IF EXISTS block_sessions_for_deactivated_users ON sessions;/);
+    expect(ddl).toMatch(
+      /DROP TRIGGER IF EXISTS block_sessions_for_deactivated_users ON sessions;/
+    );
     expect(ddl).toMatch(
       /CREATE TRIGGER block_sessions_for_deactivated_users\s+BEFORE INSERT ON sessions\s+FOR EACH ROW\s+EXECUTE FUNCTION public\.block_sessions_for_deactivated_users\(\);/
     );

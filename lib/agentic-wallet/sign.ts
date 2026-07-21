@@ -123,9 +123,6 @@ export class PolicyBlockedError extends Error {
 
 export class TurnkeyUpstreamError extends Error {
   readonly name = "TurnkeyUpstreamError";
-  constructor(message: string) {
-    super(message);
-  }
 }
 
 // Source: lib/x402/reconcile.ts:4 + @x402/evm domain constant. Base USDC
@@ -292,7 +289,7 @@ async function signTypedData(
   return serializeSignature(result);
 }
 
-export async function signX402Challenge(
+export function signX402Challenge(
   subOrgId: string,
   walletAddress: string,
   challenge: X402Challenge

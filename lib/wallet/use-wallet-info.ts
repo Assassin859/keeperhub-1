@@ -43,7 +43,7 @@ export function useInvalidateWalletInfo(): () => void {
 export function useWalletInfo(): WalletInfoState {
   const { data: session } = useSession();
   const { data: activeOrg } = authClient.useActiveOrganization();
-  const refreshCounter = useAtomValue(walletInfoRefreshAtom);
+  const _refreshCounter = useAtomValue(walletInfoRefreshAtom);
   const [hasWallet, setHasWallet] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -59,7 +59,7 @@ export function useWalletInfo(): WalletInfoState {
     !email.startsWith("temp-") &&
     (session?.user?.emailVerified === true || isWalletEmail(email));
 
-  const activeOrgId = activeOrg?.id ?? null;
+  const _activeOrgId = activeOrg?.id ?? null;
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!isAuthed) {
@@ -95,7 +95,7 @@ export function useWalletInfo(): WalletInfoState {
   // useInvalidateWalletInfo bumps the counter (wallet create / switch active).
   useEffect(() => {
     refresh();
-  }, [refresh, activeOrgId, refreshCounter]);
+  }, [refresh]);
 
   return { hasWallet, walletAddress, isLoading, refresh };
 }

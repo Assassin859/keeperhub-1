@@ -6,10 +6,15 @@ const TEST_EMAIL = "blocked@example.com";
 const TEST_NAME = "Blocked User";
 
 type MockUser =
-  | { id: string; name: string | null; email: string; deactivatedAt: Date | null }
+  | {
+      id: string;
+      name: string | null;
+      email: string;
+      deactivatedAt: Date | null;
+    }
   | undefined;
 
-let mockUserForSelect: MockUser = undefined;
+let mockUserForSelect: MockUser;
 let mockShouldThrow = false;
 
 vi.mock("@/lib/db", () => {
@@ -17,7 +22,9 @@ vi.mock("@/lib/db", () => {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
-          limit: vi.fn(() => Promise.resolve(mockUserForSelect ? [mockUserForSelect] : [])),
+          limit: vi.fn(() =>
+            Promise.resolve(mockUserForSelect ? [mockUserForSelect] : [])
+          ),
         })),
       })),
     })),
@@ -34,7 +41,9 @@ vi.mock("@/lib/db", () => {
   return {
     db: {
       transaction: vi.fn((fn: (tx: typeof txMock) => Promise<unknown>) => {
-        if (mockShouldThrow) throw new Error("DB error");
+        if (mockShouldThrow) {
+          throw new Error("DB error");
+        }
         return fn(txMock);
       }),
     },
@@ -62,20 +71,27 @@ const sendAccountDeactivatedEmail = vi.fn(
   (_data: { email: string; name?: string | null }) => Promise.resolve(true)
 );
 vi.mock("@/lib/email", () => ({
-  sendAccountDeactivatedEmail: (data: { email: string; name?: string | null }) =>
-    sendAccountDeactivatedEmail(data),
+  sendAccountDeactivatedEmail: (data: {
+    email: string;
+    name?: string | null;
+  }) => sendAccountDeactivatedEmail(data),
 }));
 
 import { POST } from "@/app/api/admin/users/[userId]/deactivate/route";
 
 function makeRequest(token?: string, body?: unknown): Request {
   const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return new Request("http://localhost/api/admin/users/user-abc123/deactivate", {
-    method: "POST",
-    headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return new Request(
+    "http://localhost/api/admin/users/user-abc123/deactivate",
+    {
+      method: "POST",
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }
+  );
 }
 
 function makeContext(userId = TEST_USER_ID) {

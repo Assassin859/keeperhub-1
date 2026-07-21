@@ -68,7 +68,6 @@ export async function getNativeUsdPrice(
     if (answer <= BigInt(0)) {
       return null;
     }
-    const divisor = BigInt(10) ** decimals;
     // Convert to a float with decimals.
     const asString = ethers.formatUnits(answer, Number(decimals));
     const asNumber = Number.parseFloat(asString);
@@ -79,8 +78,6 @@ export async function getNativeUsdPrice(
       priceUsd: asNumber,
       cachedAt: Date.now(),
     });
-    // Tie divisor to usage so the arithmetic stays evident to reviewers.
-    void divisor;
     return asNumber;
   } catch {
     // Chainlink feed down or misconfigured — return null so callers can

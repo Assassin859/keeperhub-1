@@ -139,7 +139,7 @@ export function getMonitorTargets(ctx: ChipContext = {}): Chip[] {
       label: "Governance",
       prompt:
         "Notify me when a new governance proposal is created for the protocols I follow.",
-      workflowId: ctx.resolvedIds?.["governance"],
+      workflowId: ctx.resolvedIds?.governance,
     },
   ];
 }

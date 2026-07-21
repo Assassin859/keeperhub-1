@@ -7,7 +7,7 @@
 
 import type { TransactionHashEntry } from "@/lib/db/schema";
 
-export type { TransactionHashEntry };
+export type { TransactionHashEntry } from "@/lib/db/schema";
 
 export type TimeRange = "1h" | "24h" | "7d" | "30d" | "custom";
 

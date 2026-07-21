@@ -126,12 +126,14 @@ function resolveOriginForRedirect(req: Request): string {
   return new URL(req.url).origin;
 }
 
+const OAUTH_CALLBACK_PATH_RE = /^\/api\/auth\/callback\/[^/]+$/;
+
 async function interceptOauthCallback(
   req: Request,
   res: Response
 ): Promise<Response> {
   const url = new URL(req.url);
-  if (!/^\/api\/auth\/callback\/[^/]+$/.test(url.pathname)) {
+  if (!OAUTH_CALLBACK_PATH_RE.test(url.pathname)) {
     return res;
   }
   const publicOrigin = resolveOriginForRedirect(req);
@@ -198,7 +200,7 @@ async function interceptOauthCallback(
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);
-  if (!(user && user.email)) {
+  if (!user?.email) {
     // Without an email we have no inbox to deliver an OTP to, so we
     // cannot defer the session for either flow. Fall through to
     // Better Auth's default response; the proxy MFA gate will still

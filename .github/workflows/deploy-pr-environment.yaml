@@ -385,6 +385,71 @@ jobs:
             type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache-pr
           cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache-pr,mode=max
 
+  # Builds a PR-specific solana-tracker image when the deploy-pr-events label
+  # is present. Unlike event-tracker there is no solana-latest staging
+  # baseline, so solana-tracker is only deployed to the PR env when this
+  # sha-tagged image is built. Pushed to the shared events ECR with a
+  # solana-${sha_short} tag; never solana-latest, and to a solana-specific
+  # cache tag so it cannot poison the event-tracker cache.
+  build-solana-image:
+    needs: check-labels
+    if: needs.check-labels.outputs.should-deploy-events == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      REGION: ${{ vars.TO_REGION }}
+      EVENTS_ECR_NAME: keeperhub-event-staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Extract commit hash
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check if solana image exists
+        id: check-image
+        run: |
+          IMAGE_TAG="${{ steps.vars.outputs.sha_short }}"
+          if aws ecr describe-images \
+            --repository-name ${{ env.EVENTS_ECR_NAME }} \
+            --image-ids imageTag=solana-${IMAGE_TAG} \
+            --region ${{ env.REGION }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push solana image
+        if: steps.check-image.outputs.exists != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ./keeperhub-events
+          file: ./keeperhub-events/solana-tracker/Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:solana-${{ steps.vars.outputs.sha_short }}
+          cache-from: |
+            type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache
+            type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache-solana-pr
+          cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache-solana-pr,mode=max
+
   # Builds a PR-specific executor image when the deploy-pr-executor label is
   # present alongside deploy-pr-environment. Without it, the PR environment
   # always deploys an executor anyway (using the executor-latest staging tag),
@@ -467,6 +532,7 @@ jobs:
         check-labels,
         build-images,
         build-events-image,
+        build-solana-image,
         build-executor-image,
         build-collector-image,
       ]
@@ -482,6 +548,7 @@ jobs:
       needs.check-labels.outputs.should-deploy == 'true' &&
       needs.build-images.result == 'success' &&
       (needs.build-events-image.result == 'success' || needs.build-events-image.result == 'skipped') &&
+      (needs.build-solana-image.result == 'success' || needs.build-solana-image.result == 'skipped') &&
       (needs.build-executor-image.result == 'success' || needs.build-executor-image.result == 'skipped') &&
       (needs.build-collector-image.result == 'success' || needs.build-collector-image.result == 'skipped')
     runs-on: ubuntu-latest
@@ -651,6 +718,10 @@ jobs:
           # (build-events-image job ran). Otherwise stays on the staging
           # event-latest tag.
           EVENTS_IMAGE_TAG: ${{ needs.check-labels.outputs.should-deploy-events == 'true' && format('event-{0}', steps.vars.outputs.sha_short) || 'event-latest' }}
+          # PR-specific solana-tracker tag. Meaningful only when deploy-pr-events
+          # ran (build-solana-image built solana-<sha>); the solana deploy step
+          # is gated on the same label, so the rendered file is unused otherwise.
+          SOLANA_IMAGE_TAG: solana-${{ steps.vars.outputs.sha_short }}
           # PR-specific executor image tag if deploy-pr-executor label was set
           # (build-executor-image job ran). Otherwise stays on executor-latest
           # so the PR env still has a working SQS consumer for schedule / block
@@ -684,6 +755,7 @@ jobs:
           envsubst < deploy/pr-environment/scheduler-dispatcher.template.yaml > ${{ github.workspace }}/schedule-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/block-dispatcher.template.yaml > ${{ github.workspace }}/block-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
+          envsubst < deploy/pr-environment/solana-tracker.template.yaml > ${{ github.workspace }}/solana-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/executor.template.yaml > ${{ github.workspace }}/executor-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/metrics-collector.template.yaml > ${{ github.workspace }}/metrics-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/sandbox.template.yaml > ${{ github.workspace }}/sandbox-pr-${{ env.PR_NUMBER }}.yaml
@@ -836,6 +908,18 @@ jobs:
           helm upgrade --install metrics-pr-${PR_NUMBER} \
             techops-services/common \
             -f ${GITHUB_WORKSPACE}/metrics-pr-${PR_NUMBER}.yaml \
+            --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
+
+      # Opt-in (deploy-pr-events label). Deploys the solana-tracker satellite
+      # from the solana-${sha} image built by build-solana-image. Runs healthy
+      # but idle until Solana RPC/WSS is configured in chain-config.
+      - name: Deploy solana-tracker (PR, opt-in)
+        if: needs.check-labels.outputs.should-deploy-events == 'true'
+        run: |
+          set -euo pipefail
+          helm upgrade --install solana-pr-${PR_NUMBER} \
+            techops-services/common \
+            -f ${GITHUB_WORKSPACE}/solana-pr-${PR_NUMBER}.yaml \
             --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
 
       - name: Deploy satellite services (parallel)
@@ -1029,11 +1113,12 @@ jobs:
   # to event-${sha_short} on add (PR build from build-events-image) or
   # event-latest on remove (revert to staging events).
   deploy-events-only:
-    needs: [check-labels, build-events-image]
+    needs: [check-labels, build-events-image, build-solana-image]
     if: |
       !cancelled() &&
       needs.check-labels.outputs.should-deploy-events-only == 'true' &&
-      (needs.build-events-image.result == 'success' || needs.build-events-image.result == 'skipped')
+      (needs.build-events-image.result == 'success' || needs.build-events-image.result == 'skipped') &&
+      (needs.build-solana-image.result == 'success' || needs.build-solana-image.result == 'skipped')
     runs-on: ubuntu-latest
     environment: staging
     env:
@@ -1085,7 +1170,10 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           EVENTS_IMAGE_TAG: ${{ needs.check-labels.outputs.should-deploy-events == 'true' && format('event-{0}', steps.vars.outputs.sha_short) || 'event-latest' }}
-        run: envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
+          SOLANA_IMAGE_TAG: solana-${{ steps.vars.outputs.sha_short }}
+        run: |
+          envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
+          envsubst < deploy/pr-environment/solana-tracker.template.yaml > ${{ github.workspace }}/solana-pr-${{ env.PR_NUMBER }}.yaml
 
       - name: Add Helm repository
         run: |
@@ -1099,6 +1187,21 @@ jobs:
             techops-services/common \
             -f ${GITHUB_WORKSPACE}/event-pr-${PR_NUMBER}.yaml \
             --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
+
+      - name: Redeploy or remove solana-tracker satellite
+        # On add (deploy-pr-events present) install the solana-<sha> image built
+        # by build-solana-image. On remove there is no solana-latest baseline to
+        # revert to, so uninstall the satellite rather than leave a stale image.
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.check-labels.outputs.should-deploy-events }}" = "true" ]; then
+            helm upgrade --install solana-pr-${PR_NUMBER} \
+              techops-services/common \
+              -f ${GITHUB_WORKSPACE}/solana-pr-${PR_NUMBER}.yaml \
+              --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
+          else
+            helm uninstall solana-pr-${PR_NUMBER} --namespace "${NAMESPACE}" --ignore-not-found || true
+          fi
 
   # Remote E2E tests against deployed PR environment
   # Runs when: test label just added (deploy skipped), or deploy just completed with test label present

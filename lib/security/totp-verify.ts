@@ -4,6 +4,7 @@ import { symmetricDecrypt } from "better-auth/crypto";
 const PERIOD_SECONDS = 30;
 const DIGITS = 6;
 const WINDOW = 1;
+const DIGITS_ONLY_RE = /^\d+$/;
 
 /**
  * RFC 6238 TOTP / RFC 4226 HOTP generator. Mirrors @better-auth/utils
@@ -23,7 +24,7 @@ function generateTotp(secret: string, counter: number): string {
   const hmac = createHmac("sha1", Buffer.from(secret, "utf8"))
     .update(buffer)
     .digest();
-  const offset = hmac[hmac.length - 1] & 0xf;
+  const offset = (hmac.at(-1) ?? 0) & 0xf;
   const truncated =
     ((hmac[offset] & 0x7f) << 24) |
     ((hmac[offset + 1] & 0xff) << 16) |
@@ -54,7 +55,7 @@ export async function verifyUserTotp(
   providedCode: string,
   serverSecret: string
 ): Promise<boolean> {
-  if (providedCode.length !== DIGITS || !/^\d+$/.test(providedCode)) {
+  if (providedCode.length !== DIGITS || !DIGITS_ONLY_RE.test(providedCode)) {
     return false;
   }
   let decrypted: string;

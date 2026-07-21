@@ -1,5 +1,4 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
-import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
 import {
   amount,
   contract,
@@ -7,6 +6,7 @@ import {
   type ProtocolTestData,
   wallet,
 } from "@/lib/test-data/types";
+import { erc4626AbiOverrides } from "@/lib/web3/standards/erc4626";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -59,8 +59,16 @@ const TEST_DATA: ProtocolTestData = {
         onBehalfOf: wallet(),
       },
       withdraw: { asset: "WETH", amount: amount("WETH", "0.05"), to: wallet() },
-      borrow: { asset: "DAI", amount: amount("DAI", "100"), onBehalfOf: wallet() },
-      repay: { asset: "DAI", amount: amount("DAI", "80"), onBehalfOf: wallet() },
+      borrow: {
+        asset: "DAI",
+        amount: amount("DAI", "100"),
+        onBehalfOf: wallet(),
+      },
+      repay: {
+        asset: "DAI",
+        amount: amount("DAI", "80"),
+        onBehalfOf: wallet(),
+      },
       "set-collateral": { asset: "WETH", useAsCollateral: "true" },
       "vault-deposit": { assets: amount("DAI", "100"), receiver: wallet() },
       "vault-mint": { shares: amount("DAI", "10"), receiver: wallet() },
@@ -116,9 +124,7 @@ const TEST_DATA: ProtocolTestData = {
           expect: { field: "totalDebtBase", nonZero: true },
         },
       ],
-      "vault-deposit": [
-        { read: "vault-balance", expect: { nonZero: true } },
-      ],
+      "vault-deposit": [{ read: "vault-balance", expect: { nonZero: true } }],
       "vault-mint": [{ read: "vault-balance", expect: { nonZero: true } }],
     },
   },

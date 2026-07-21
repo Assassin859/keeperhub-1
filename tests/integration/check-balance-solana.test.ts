@@ -5,9 +5,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("ethers", () => ({
   ethers: {
     isAddress: vi.fn((a: string) => a.startsWith("0x") && a.length === 42),
-    formatUnits: vi.fn(
-      (value: bigint, decimals: number) =>
-        (Number(value) / 10 ** decimals).toString()
+    formatUnits: vi.fn((value: bigint, decimals: number) =>
+      (Number(value) / 10 ** decimals).toString()
     ),
   },
 }));

@@ -87,10 +87,13 @@ export function findAbiFunction(
   const targetTypes = typesStr === "" ? [] : typesStr.split(",");
 
   return abi.find((item): item is AbiFunctionItem => {
-    if (item == null || item.type !== "function" || item.name !== name)
+    if (item == null || item.type !== "function" || item.name !== name) {
       return false;
+    }
     const inputTypes = (item.inputs ?? []).map((i) => i.type);
-    if (inputTypes.length !== targetTypes.length) return false;
+    if (inputTypes.length !== targetTypes.length) {
+      return false;
+    }
     return inputTypes.every((t, idx) => t === targetTypes[idx]);
   });
 }

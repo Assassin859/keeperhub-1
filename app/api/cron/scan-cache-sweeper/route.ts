@@ -39,12 +39,6 @@ export async function GET(request: Request): Promise<Response> {
       .returning({ id: scanResults.id });
 
     const body: SweeperResponse = { pruned: pruned.length };
-    console.warn(
-      JSON.stringify({
-        event: "scan.cache_sweeper.pruned",
-        pruned: pruned.length,
-      })
-    );
     return Response.json(body);
   } catch (error) {
     logSystemError(

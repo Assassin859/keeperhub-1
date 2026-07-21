@@ -54,7 +54,7 @@ if (typeof window !== "undefined") {
     },
   };
 
-  void import("monaco-editor").then((monaco) => {
+  import("monaco-editor").then((monaco) => {
     loader.config({ monaco });
   });
 }

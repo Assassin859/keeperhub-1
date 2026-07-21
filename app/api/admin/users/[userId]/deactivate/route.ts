@@ -89,7 +89,10 @@ export async function POST(
       if (result.conflict === "not_found") {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
-      return NextResponse.json({ error: "User is already deactivated" }, { status: 409 });
+      return NextResponse.json(
+        { error: "User is already deactivated" },
+        { status: 409 }
+      );
     }
 
     // Best-effort notification, fired after the transaction commits. A failed
@@ -129,9 +132,17 @@ export async function POST(
       deactivatedAt: result.deactivatedAt,
     });
   } catch (error) {
-    logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to deactivate user", error, {
-      userId,
-    });
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[Admin] Failed to deactivate user",
+      error,
+      {
+        userId,
+      }
+    );
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

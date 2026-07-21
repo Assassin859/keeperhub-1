@@ -3,6 +3,8 @@
  * Lives outside the React component so the matching logic can be unit-tested.
  */
 
+const WHITESPACE_RE = /\s+/;
+
 export type AutocompleteOption = {
   type: "node" | "field";
   nodeId: string;
@@ -44,7 +46,7 @@ export function filterOptionsByQuery<T extends IndexedAutocompleteOption>(
   if (!normalized) {
     return options;
   }
-  const tokens = normalized.split(/\s+/);
+  const tokens = normalized.split(WHITESPACE_RE);
   return options.filter((opt) =>
     tokens.every((token) => opt.haystack.includes(token))
   );

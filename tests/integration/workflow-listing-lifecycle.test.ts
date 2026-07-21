@@ -146,7 +146,9 @@ describe("workflow listing lifecycle", () => {
       slug: "my-test-workflow",
     });
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.isListed).toBe(true);
     expect(result.listing.listedSlug).toBe("my-test-workflow");
     expect(result.listing.listedAt).toBeInstanceOf(Date);
@@ -159,14 +161,18 @@ describe("workflow listing lifecycle", () => {
     // uncallable row. The PATCH backdoor route enforces the same SLUG_REQUIRED.
     const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {});
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("SLUG_REQUIRED");
   });
 
   it("list with a whitespace-only slug returns SLUG_REQUIRED (matches the PATCH route's trim check)", async () => {
     const result = await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "   " });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("SLUG_REQUIRED");
   });
 
@@ -175,7 +181,9 @@ describe("workflow listing lifecycle", () => {
       slug: "  padded-slug  ",
     });
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.listedSlug).toBe("padded-slug");
   });
 
@@ -185,7 +193,9 @@ describe("workflow listing lifecycle", () => {
 
     const result = await unlistWorkflow(WORKFLOW_ID, ORG_ID);
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.isListed).toBe(false);
     expect(result.listing.listedSlug).toBe("my-test-workflow");
     expect(result.listing.listedAt?.getTime()).toBe(
@@ -210,7 +220,9 @@ describe("workflow listing lifecycle", () => {
 
     const unlistedRead = await getWorkflowListing("leak-test");
     expect(unlistedRead.ok).toBe(false);
-    if (unlistedRead.ok) return;
+    if (unlistedRead.ok) {
+      return;
+    }
     expect(unlistedRead.error).toBe("NOT_FOUND");
   });
 
@@ -231,7 +243,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("MISSING_WRITE_ACTION");
     expect(workflowState.isListed).toBe(false);
   });
@@ -258,7 +272,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.isListed).toBe(true);
     expect(result.listing.workflowType).toBe("write");
   });
@@ -284,7 +300,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("MISSING_WRITE_ACTION");
   });
 
@@ -310,7 +328,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("INPUT_SCHEMA_REQUIRED");
     expect(workflowState.isListed).toBe(false);
   });
@@ -324,7 +344,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.isListed).toBe(true);
     expect(result.listing.inputSchema).toEqual({ type: "object" });
   });
@@ -351,7 +373,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("INVALID_TEMPLATE_LITERALS");
     // details.literals surfaces the offending tokens so the route can return
     // them in the 422 body for debuggability.
@@ -389,7 +413,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("INVALID_TEMPLATE_LITERALS");
     expect(result.details?.literals).toContain("@40");
   });
@@ -405,7 +431,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok) {
+      return;
+    }
     expect(result.error).toBe("INPUT_SCHEMA_REQUIRED");
   });
 
@@ -457,7 +485,9 @@ describe("workflow listing lifecycle", () => {
     // Relist without passing slug — existing listedSlug should be preserved
     const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {});
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.isListed).toBe(true);
     expect(result.listing.listedSlug).toBe("my-test-workflow");
     expect(result.listing.listedAt).toBeInstanceOf(Date);
@@ -494,7 +524,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.workflowType).toBe("write");
   });
 
@@ -508,7 +540,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.workflowType).toBe("write");
   });
 
@@ -522,7 +556,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.workflowType).toBe("write");
   });
 
@@ -543,7 +579,9 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) {
+      return;
+    }
     expect(result.listing.workflowType).toBe("read");
   });
 

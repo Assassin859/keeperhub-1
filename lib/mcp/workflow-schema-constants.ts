@@ -69,7 +69,7 @@ export const SYSTEM_ACTIONS = {
     requiredFields: {
       integrationId: "string - ID of the database integration",
       dbQuery:
-        "string - SQL query with inline template references for dynamic values. Use {{@nodeId:Label.field}} directly in the SQL string. Example: \"INSERT INTO logs (vault, price) VALUES ('{{@compute:Compare.bestVault}}', '{{@compute:Compare.bestPrice}}')\" or \"SELECT * FROM positions WHERE address = '{{@trigger:Trigger.data.address}}'\"",
+        "string - SQL query with inline template references for dynamic values. Use {{@nodeId:Label.field}} directly in the SQL string. Example: \"INSERT INTO logs (vault, price) VALUES ('{{@compute:Compare.bestVault}}', '{{@compute:Compare.bestPrice}}')\" or \"SELECT * FROM positions WHERE address = '{{@trigger-1:Trigger.address}}'\"",
     },
     optionalFields: {
       dbSchema: "string - JSON schema for result typing",
@@ -244,8 +244,9 @@ export const TEMPLATE_SYNTAX = {
         "Reference the 'balance' output from a node labeled 'Check Balance'",
     },
     {
-      template: "{{@trigger:Trigger.body.amount}}",
-      description: "Reference nested field 'amount' from webhook trigger body",
+      template: "{{@trigger-1:Trigger.amount}}",
+      description:
+        "Reference field 'amount' from a webhook (or manual) trigger. Trigger inputs are spread at the TOP LEVEL of the trigger output - there is no 'body' or 'data' wrapper - and the reference uses the trigger node's actual id (e.g. trigger-1), not a bare 'trigger' alias",
     },
     {
       template: "{{@http-1:Fetch Price.data.price}}",
@@ -271,6 +272,7 @@ export const TEMPLATE_SYNTAX = {
     "nodeId is the unique identifier of the node (visible in node settings)",
     "Label is the human-readable name shown on the node",
     "Nested fields use dot notation (e.g., data.nested.value)",
+    "Trigger inputs (webhook JSON body / event fields) are placed at the TOP LEVEL of the trigger output - reference them as {{@<triggerNodeId>:Trigger.<field>}} (e.g. {{@trigger-1:Trigger.amount}}), NOT {{@trigger:Trigger.body.<field>}}; the bare 'trigger' alias resolves only in calldata/event-trigger contexts, so use the trigger node's real id",
     "Tuple/struct outputs surface their components as NAMED fields - use result.<componentName> (e.g. result.liquidityIndex), NOT positional result[1]",
     "Bracket indexing [n] is only for ARRAY fields, applied inside the field path (e.g. result.items[0]); numeric indices only",
     "Condition expressions use this same reference and path grammar - never a bare step2[1] (this fails validation with an actionable error)",

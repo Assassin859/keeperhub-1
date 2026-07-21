@@ -29,9 +29,7 @@ test.describe("wallet login (SIWE)", () => {
     await page.goto("/welcome", { waitUntil: "domcontentloaded" });
 
     // Reveal the wallet picker and pick the injected wallet.
-    await page
-      .getByRole("button", { name: "Wallet" })
-      .click();
+    await page.getByRole("button", { name: "Wallet" }).click();
     const walletButton = page.getByTestId("connect-wallet-io.metamask");
     await expect(walletButton).toBeVisible({ timeout: 15_000 });
     await walletButton.click();

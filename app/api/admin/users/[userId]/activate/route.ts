@@ -1,4 +1,4 @@
-import { eq, isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
@@ -46,7 +46,10 @@ export async function POST(
       if (result.conflict === "not_found") {
         return NextResponse.json({ error: "User not found" }, { status: 404 });
       }
-      return NextResponse.json({ error: "User is not deactivated" }, { status: 409 });
+      return NextResponse.json(
+        { error: "User is not deactivated" },
+        { status: 409 }
+      );
     }
 
     await recordAuditEvent({
@@ -64,9 +67,17 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to activate user", error, {
-      userId,
-    });
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[Admin] Failed to activate user",
+      error,
+      {
+        userId,
+      }
+    );
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }
