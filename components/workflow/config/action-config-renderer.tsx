@@ -353,6 +353,11 @@ function DateTimeField({
     setMode(next);
     // The three encodings are not interchangeable, so clear on a mode switch.
     onChange("");
+    // Only Absolute mode carries a display zone; drop the companion metadata
+    // when leaving it so a stale `_tz_<key>` is not persisted.
+    if (next !== "absolute" && storedTz !== undefined) {
+      onUpdateConfig?.(tzKey, undefined);
+    }
   };
 
   // Reinterpret the current wall-clock in the new zone (so "09:00" stays 09:00,

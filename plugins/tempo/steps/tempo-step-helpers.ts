@@ -157,6 +157,9 @@ const RELATIVE_UNIT_SECONDS: Record<string, number> = {
   h: 3600,
   d: 86_400,
 };
+// Cap a relative offset at one year so a fat-fingered value (e.g. "+99999d")
+// fails fast instead of resolving to a nonsensical far-future window.
+const MAX_RELATIVE_OFFSET_SECONDS = 366 * 86_400;
 
 /**
  * Parse a datetime value into unix seconds. Accepts an absolute ISO datetime, a
@@ -178,7 +181,13 @@ export function parseTimestamp(
   if (relative) {
     const amount = Number(relative[1]);
     const unitSeconds = RELATIVE_UNIT_SECONDS[(relative[2] ?? "h").toLowerCase()];
-    return nowSec + amount * (unitSeconds ?? 3600);
+    const offsetSeconds = amount * (unitSeconds ?? 3600);
+    if (offsetSeconds > MAX_RELATIVE_OFFSET_SECONDS) {
+      throw new Error(
+        `Relative offset "${value}" is too far in the future: keep it within one year.`
+      );
+    }
+    return nowSec + offsetSeconds;
   }
   if (UNIX_SECONDS.test(value)) {
     const numeric = Number(value);

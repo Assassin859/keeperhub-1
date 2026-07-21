@@ -54,6 +54,14 @@ describe("parseTimestamp", () => {
     expect(parseTimestamp("now+1h", NOW)).toBe(NOW + HOUR);
   });
 
+  it("accepts a relative offset at the one-year ceiling", () => {
+    expect(parseTimestamp("+366d", NOW)).toBe(NOW + 366 * DAY);
+  });
+
+  it("throws on a relative offset beyond one year", () => {
+    expect(() => parseTimestamp("+99999d", NOW)).toThrow(/within one year/);
+  });
+
   it("throws on an unparseable value", () => {
     expect(() => parseTimestamp("not-a-date", NOW)).toThrow();
   });

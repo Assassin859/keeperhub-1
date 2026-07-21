@@ -81,7 +81,7 @@ describe("validateWorkflowActionConfigs", () => {
     );
   });
 
-  it("skips underscore-prefixed UI metadata but still flags real unknown fields", () => {
+  it("skips known companion metadata but still flags real unknown fields", () => {
     const result = validateWorkflowActionConfigs([
       actionNode("aave-v3/supply", {
         network: "1",
@@ -98,6 +98,24 @@ describe("validateWorkflowActionConfigs", () => {
       .filter((issue) => issue.code === "UNKNOWN_FIELD")
       .map((issue) => issue.field);
     expect(unknownFields).toEqual(["typoField"]);
+  });
+
+  it("reports an underscore key outside the metadata allowlist (typo guard)", () => {
+    const result = validateWorkflowActionConfigs([
+      actionNode("aave-v3/supply", {
+        network: "1",
+        asset: "{{trigger.walletAddress}}",
+        amount: "{{@node-1:Previous.amount}}",
+        onBehalfOf: "{{@node-1:Previous.recipient}}",
+        _tz_broadcastAt: "America/Bogota",
+        _bogusMeta: "should not silently pass",
+      }),
+    ]);
+
+    const unknownFields = result.issues
+      .filter((issue) => issue.code === "UNKNOWN_FIELD")
+      .map((issue) => issue.field);
+    expect(unknownFields).toEqual(["_bogusMeta"]);
   });
 
   it("allows template values in typed protocol fields", () => {
