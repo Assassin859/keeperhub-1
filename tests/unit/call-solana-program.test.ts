@@ -215,6 +215,57 @@ describe("encodeAnchorInstruction", () => {
       error: expect.stringContaining("Invalid base64 bytes"),
     });
   });
+
+  it("round-trips vec, option (Some), bytes, and a defined struct", () => {
+    const result = encode({
+      instructionName: "do_composite",
+      args: {
+        amounts: ["1", "2", "3"],
+        maybe: 42,
+        blob: "0xdeadbeef",
+        cfg: { flag: true, owner: RECIPIENT },
+      },
+      accountPubkeys: { authority: WALLET },
+    });
+    if (!("instruction" in result)) {
+      throw new Error(result.error);
+    }
+
+    const decoded = new BorshInstructionCoder(fixtureIdl() as never).decode(
+      Buffer.from(result.instruction.data)
+    );
+    expect(decoded?.name).toBe("do_composite");
+    const data = decoded?.data as {
+      amounts: BN[];
+      maybe: number | null;
+      blob: Buffer;
+      cfg: { flag: boolean; owner: PublicKey };
+    };
+    expect(data.amounts.map((n) => n.toString())).toEqual(["1", "2", "3"]);
+    expect(data.maybe).toBe(42);
+    expect(Buffer.from(data.blob)).toEqual(
+      Buffer.from([0xde, 0xad, 0xbe, 0xef])
+    );
+    expect(data.cfg.flag).toBe(true);
+    expect(data.cfg.owner.toBase58()).toBe(RECIPIENT);
+  });
+
+  it("encodes an omitted option argument as None", () => {
+    const result = encode({
+      instructionName: "do_composite",
+      args: { amounts: [], blob: "", cfg: { flag: false, owner: RECIPIENT } },
+      accountPubkeys: { authority: WALLET },
+    });
+    if (!("instruction" in result)) {
+      throw new Error(result.error);
+    }
+
+    const decoded = new BorshInstructionCoder(fixtureIdl() as never).decode(
+      Buffer.from(result.instruction.data)
+    );
+    const data = decoded?.data as { maybe: number | null };
+    expect(data.maybe).toBe(null);
+  });
 });
 
 describe("parseAnchorIdl", () => {
