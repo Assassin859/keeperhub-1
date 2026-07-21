@@ -345,6 +345,12 @@ function resolveAccounts(
       pubkeyStr = walletPk.toBase58();
     }
     if (!pubkeyStr) {
+      // MVP limitation: an unfilled optional account is dropped from the list,
+      // which renumbers the accounts after it. Anchor programs that read a fixed
+      // slot may instead expect the program ID as a placeholder in that
+      // position; that convention (and PDA derivation) is deferred to the typed
+      // account-resolution work. For now, callers must supply optional accounts
+      // they want included.
       if (account.optional) {
         continue;
       }
