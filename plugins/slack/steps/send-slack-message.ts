@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { safeFetch } from "@/lib/safe-fetch";
@@ -17,7 +18,7 @@ type SlackPostMessageResponse = {
 
 type SendSlackMessageResult =
   | { success: true; ts: string; channel: string }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 export type SendSlackMessageCoreInput = {
   slackChannel: string;
@@ -43,6 +44,7 @@ async function stepHandler(
       success: false,
       error:
         "SLACK_API_KEY is not configured. Please add it in Project Integrations.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -64,6 +66,7 @@ async function stepHandler(
       return {
         success: false,
         error: `HTTP ${response.status}: Failed to send Slack message`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -73,6 +76,7 @@ async function stepHandler(
       return {
         success: false,
         error: result.error || "Failed to send Slack message",
+        errorClass: ExecutionErrorType.USER,
       };
     }
 
@@ -85,6 +89,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to send Slack message: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

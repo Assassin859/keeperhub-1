@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -21,6 +22,7 @@ async function stepHandler(
     return {
       success: false,
       error: "Vault address must be a 0x-prefixed EVM address",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -33,6 +35,7 @@ async function stepHandler(
       return {
         success: false,
         error: "User must be a 0x-prefixed EVM address",
+        errorClass: ExecutionErrorType.USER,
       };
     }
     body.user = input.user;

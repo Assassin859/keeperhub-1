@@ -6,6 +6,7 @@
  * exporting functions from "use step" files (which breaks the workflow bundler).
  */
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
@@ -37,7 +38,7 @@ export type ReadContractCoreInput = {
 
 export type ReadContractResult =
   | { success: true; result: unknown; addressLink: string }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 async function getUserIdFromExecution(
   executionId: string | undefined
@@ -77,6 +78,7 @@ export async function readContractCore(
     return {
       success: false,
       error: "Missing `abiFunction` in the step config",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -95,6 +97,7 @@ export async function readContractCore(
     return {
       success: false,
       error: `Invalid contract address: ${contractAddress}`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -112,6 +115,7 @@ export async function readContractCore(
     return {
       success: false,
       error: `Invalid ABI JSON: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -122,7 +126,7 @@ export async function readContractCore(
       parsedAbi,
       { plugin_name: "web3", action_name: "read-contract" }
     );
-    return { success: false, error: "ABI must be a JSON array" };
+    return { success: false, error: "ABI must be a JSON array", errorClass: ExecutionErrorType.USER };
   }
 
   const functionAbi = findAbiFunction(parsedAbi, abiFunction);
@@ -137,6 +141,7 @@ export async function readContractCore(
     return {
       success: false,
       error: `Function '${abiFunction}' not found in ABI`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -157,6 +162,7 @@ export async function readContractCore(
         return {
           success: false,
           error: "Function arguments must be a JSON array",
+          errorClass: ExecutionErrorType.USER,
         };
       }
       args = parsedArgs.filter((arg, index) => {
@@ -172,6 +178,7 @@ export async function readContractCore(
         return {
           success: false,
           error: `Invalid function arguments: ${validation.error}`,
+          errorClass: ExecutionErrorType.USER,
         };
       }
     } catch (error) {
@@ -184,6 +191,7 @@ export async function readContractCore(
       return {
         success: false,
         error: `Invalid function arguments JSON: ${getErrorMessage(error)}`,
+        errorClass: ExecutionErrorType.USER,
       };
     }
   }
@@ -199,7 +207,7 @@ export async function readContractCore(
       error,
       { plugin_name: "web3", action_name: "read-contract" }
     );
-    return { success: false, error: getErrorMessage(error) };
+    return { success: false, error: getErrorMessage(error), errorClass: ExecutionErrorType.USER };
   }
 
   // Resolve RPC provider
@@ -217,7 +225,7 @@ export async function readContractCore(
         chain_id: String(chainId),
       }
     );
-    return { success: false, error: getErrorMessage(error) };
+    return { success: false, error: getErrorMessage(error), errorClass: ExecutionErrorType.SYSTEM };
   }
 
   const contractInterface = new ethers.Interface(
@@ -289,6 +297,7 @@ export async function readContractCore(
     return {
       success: false,
       error: formatContractError(error, contractInterface),
+      errorClass: ExecutionErrorType.USER,
     };
   }
 }

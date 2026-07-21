@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeFetch } from "@/lib/safe-fetch";
@@ -14,7 +15,11 @@ export function isEvmAddress(value: unknown): value is string {
 
 export type InfoResult<T = unknown> =
   | { success: true; data: T }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export async function postInfo<T = unknown>(
   body: Record<string, unknown>,
@@ -43,6 +48,7 @@ export async function postInfo<T = unknown>(
       return {
         success: false,
         error: `HTTP ${response.status}: ${text || response.statusText}`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -62,6 +68,7 @@ export async function postInfo<T = unknown>(
       return {
         success: false,
         error: `Hyperliquid returned non-JSON content-type "${contentType}"`,
+        errorClass: ExecutionErrorType.EXTERNAL,
       };
     }
 
@@ -82,6 +89,7 @@ export async function postInfo<T = unknown>(
       return {
         success: false,
         error: `Invalid JSON response from Hyperliquid: ${getErrorMessage(parseError)}`,
+        errorClass: ExecutionErrorType.EXTERNAL,
       };
     }
 
@@ -97,6 +105,10 @@ export async function postInfo<T = unknown>(
         service: "hyperliquid",
       }
     );
-    return { success: false, error: getErrorMessage(error) };
+    return {
+      success: false,
+      error: getErrorMessage(error),
+      errorClass: ExecutionErrorType.EXTERNAL,
+    };
   }
 }

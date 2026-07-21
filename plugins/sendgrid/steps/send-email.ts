@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { eq } from "drizzle-orm";
 import { fetchCredentials } from "@/lib/credential-fetcher";
@@ -21,7 +22,7 @@ type SendGridErrorResponse = {
 
 type SendEmailResult =
   | { success: true; id: string }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 export type SendEmailCoreInput = {
   emailFrom?: string;
@@ -64,6 +65,7 @@ async function stepHandler(
       error: useKeeperHubApiKey
         ? "SENDGRID_API_KEY is not configured in environment variables."
         : "SENDGRID_API_KEY is not configured. Please add it in Project Integrations.",
+      errorClass: useKeeperHubApiKey ? ExecutionErrorType.SYSTEM : ExecutionErrorType.USER,
     };
   }
 
@@ -119,6 +121,7 @@ async function stepHandler(
       return {
         success: false,
         error: errorMessage,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -130,6 +133,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to send email: ${message}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }
@@ -165,6 +169,7 @@ export async function sendEmailStep(
     return {
       success: false,
       error: "Please sign in to send emails.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 

@@ -429,6 +429,163 @@ const web3Plugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "send-raw-solana-instruction",
+      label: "Send Raw Solana Instruction",
+      description:
+        "Build and submit an arbitrary Solana transaction from raw instructions (programId, accounts, data). A low-level escape hatch with no spend limit: instructions run with the organization wallet's full authority, so treat it as trusted access to move the wallet's SOL and tokens.",
+      category: "Web3",
+      requiresCredentials: true,
+      stepFunction: "sendRawSolanaInstructionStep",
+      stepImportPath: "send-raw-solana-instruction",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the transaction succeeded",
+        },
+        {
+          field: "transactionHash",
+          description: "The transaction signature of the submitted transaction",
+        },
+        {
+          field: "transactionLink",
+          description: "Explorer link to view the transaction",
+        },
+        {
+          field: "gasUsedUnits",
+          description: "Compute units consumed by the transaction",
+        },
+        {
+          field: "effectiveGasPrice",
+          description:
+            "Compute unit price in micro-lamports, if the transaction set one",
+        },
+        {
+          field: "instructionCount",
+          description: "Number of instructions submitted in the transaction",
+        },
+        {
+          field: "error",
+          description: "Error message if the transaction failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "instructions",
+          label: "Instructions",
+          type: "json-editor",
+          placeholder:
+            '[{ "programId": "...", "accounts": [{ "pubkey": "...", "isSigner": false, "isWritable": true }], "data": "<base64 or 0x-hex>" }]',
+          helpTip:
+            "A JSON array of Solana instructions. Each entry has a base58 programId, an ordered accounts array (pubkey plus isSigner/isWritable flags), and instruction data as standard base64 or 0x-hex. Only the organization wallet may be marked isSigner, and it is always the fee payer. There is no spend limit - any instruction here executes with the wallet's full authority, including moving its SOL or tokens, so use with caution.",
+          required: true,
+        },
+      ],
+    },
+    {
+      slug: "call-solana-program-anchor",
+      label: "Call Solana Program (Anchor)",
+      description:
+        "Call an Anchor program instruction on Solana using its IDL for typed encoding. Signed and paid by the organization wallet, so any instruction it can express executes with the wallet's full authority - treat it as trusted spending access.",
+      category: "Web3",
+      requiresCredentials: true,
+      stepFunction: "callSolanaProgramStep",
+      stepImportPath: "call-solana-program",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the instruction call succeeded",
+        },
+        {
+          field: "transactionHash",
+          description: "The transaction signature of the submitted transaction",
+        },
+        {
+          field: "transactionLink",
+          description: "Explorer link to view the transaction",
+        },
+        {
+          field: "gasUsedUnits",
+          description: "Compute units consumed by the transaction",
+        },
+        {
+          field: "effectiveGasPrice",
+          description:
+            "Compute unit price in micro-lamports, if the transaction set one",
+        },
+        {
+          field: "instruction",
+          description: "The Anchor instruction name that was called",
+        },
+        {
+          field: "error",
+          description: "Error message if the call failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "programId",
+          label: "Program ID",
+          type: "template-input",
+          placeholder: "Program address (base58) or {{NodeName.programId}}",
+          example: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          helpTip:
+            "The base58 address of the Anchor program to call. Must match the address in the IDL.",
+          required: true,
+        },
+        {
+          key: "idl",
+          label: "Anchor IDL",
+          type: "json-editor",
+          placeholder:
+            '{ "address": "...", "metadata": {...}, "instructions": [...], "types": [...] }',
+          helpTip:
+            "The program's Anchor IDL as JSON (Anchor 0.30 or newer, with per-instruction discriminators). Paste the published IDL. Used to encode the instruction and its typed arguments.",
+          required: true,
+        },
+        {
+          key: "instruction",
+          label: "Instruction",
+          type: "template-input",
+          placeholder: "Instruction name, e.g. initialize",
+          helpTip:
+            "The name of the instruction to call, exactly as it appears in the IDL (snake_case).",
+          required: true,
+        },
+        {
+          key: "args",
+          label: "Arguments",
+          type: "json-editor",
+          placeholder: '{ "amount": "1000000", "authority": "<base58>" }',
+          helpTip:
+            "A JSON object of the instruction's arguments keyed by name. Integers wider than 32 bits may be passed as strings, pubkeys as base58 strings, and bytes as 0x-hex, base64, or a byte array.",
+        },
+        {
+          key: "accounts",
+          label: "Accounts",
+          type: "json-editor",
+          placeholder: '{ "authority": "<base58>", "tokenAccount": "<base58>" }',
+          helpTip:
+            "A JSON object mapping each account name in the IDL instruction to its base58 pubkey. Accounts with a fixed address in the IDL (e.g. system program) are filled automatically, and a signer slot left empty defaults to the organization wallet. Only the organization wallet may sign.",
+        },
+      ],
+    },
+    {
       slug: "read-contract",
       label: "Read Contract",
       description: "Read data from a smart contract (view/pure functions)",

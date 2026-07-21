@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { spawn } from "node:child_process";
 import { ErrorCategory, logUserError } from "@/lib/logging";
@@ -20,7 +21,13 @@ type LogEntry = {
 
 type RunCodeResult =
   | { success: true; result: unknown; logs: LogEntry[] }
-  | { success: false; error: string; logs: LogEntry[]; line?: number };
+  | {
+      success: false;
+      error: string;
+      logs: LogEntry[];
+      line?: number;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type RunCodeCoreInput = {
   code: string;
@@ -323,7 +330,7 @@ async function runInChild(
 function validateInput(input: RunCodeCoreInput): RunCodeResult | null {
   const { code } = input;
   if (!code || code.trim() === "") {
-    return { success: false, error: "No code provided", logs: [] };
+    return { success: false, error: "No code provided", logs: [], errorClass: ExecutionErrorType.USER };
   }
   const unresolvedTemplates = stripStringsAndComments(code).match(
     UNRESOLVED_TEMPLATE_REGEX,
@@ -334,6 +341,7 @@ function validateInput(input: RunCodeCoreInput): RunCodeResult | null {
       success: false,
       error: `Unresolved template variables: ${unique.join(", ")}. Make sure upstream nodes have executed and their outputs are available.`,
       logs: [],
+      errorClass: ExecutionErrorType.USER,
     };
   }
   return null;
@@ -381,6 +389,7 @@ async function runLocal(
     success: false,
     error: errorMessage,
     logs: outcome.logs,
+    errorClass: ExecutionErrorType.USER,
     ...(line !== undefined ? { line } : {}),
   };
 }

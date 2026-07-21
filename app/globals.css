@@ -158,8 +158,8 @@
 .thin-scrollbar::-webkit-scrollbar {
   -webkit-appearance: none !important;
   appearance: none !important;
-  width: 12px !important;
-  height: 12px !important;
+  width: 4px !important;
+  height: 4px !important;
 }
 .thin-scrollbar::-webkit-scrollbar-track {
   background: transparent !important;
@@ -170,8 +170,6 @@
     var(--color-muted-foreground) 60%,
     transparent
   ) !important;
-  background-clip: content-box !important;
-  border: 4px solid transparent !important;
   border-radius: 9999px !important;
 }
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -180,6 +178,45 @@
     var(--color-muted-foreground) 85%,
     transparent
   ) !important;
+}
+
+/* Global scrollbar override: style every native scrollbar app-wide so panels
+   that don't opt into .thin-scrollbar don't fall back to the default bar. */
+* {
+  scrollbar-width: thin !important;
+  scrollbar-color: color-mix(
+      in oklch,
+      var(--color-muted-foreground) 60%,
+      transparent
+    )
+    transparent !important;
+}
+*::-webkit-scrollbar {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 4px !important;
+  height: 4px !important;
+}
+*::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(
+    in oklch,
+    var(--color-muted-foreground) 60%,
+    transparent
+  ) !important;
+  border-radius: 9999px !important;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(
+    in oklch,
+    var(--color-muted-foreground) 85%,
+    transparent
+  ) !important;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent !important;
 }
 
 /* This layer is by next-forge */

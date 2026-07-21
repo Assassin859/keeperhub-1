@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { ErrorCategory, logUserError } from "@/lib/logging";
@@ -18,7 +19,7 @@ type DiscordWebhookResponse = {
 
 type SendDiscordMessageResult =
   | { success: true; messageId: string }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 export type SendDiscordMessageCoreInput = {
   discordMessage: string;
@@ -85,6 +86,7 @@ async function stepHandler(
       success: false,
       error:
         "Discord webhook URL is required. Please configure it in the integration settings.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -102,6 +104,7 @@ async function stepHandler(
     return {
       success: false,
       error: "Invalid Discord webhook URL format",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -138,6 +141,7 @@ async function stepHandler(
         error:
           errorData.message ||
           `HTTP ${response.status}: Failed to send Discord message`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -167,6 +171,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to send Discord message: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { safeFetch } from "@/lib/safe-fetch";
@@ -22,7 +23,11 @@ type PublishSiteResult =
       success: true;
       data: { publishedDomains: string[]; publishedToSubdomain: boolean };
     }
-  | { success: false; error: { message: string } };
+  | {
+      success: false;
+      error: { message: string };
+      errorClass?: ExecutionErrorType;
+    };
 
 export type PublishSiteCoreInput = {
   siteId: string;
@@ -48,6 +53,7 @@ async function stepHandler(
         message:
           "WEBFLOW_API_KEY is not configured. Please add it in Project Integrations.",
       },
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -55,6 +61,7 @@ async function stepHandler(
     return {
       success: false,
       error: { message: "Site ID is required" },
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -106,6 +113,7 @@ async function stepHandler(
       return {
         success: false,
         error: { message: errorData.message || `HTTP ${response.status}` },
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -122,6 +130,7 @@ async function stepHandler(
     return {
       success: false,
       error: { message: `Failed to publish site: ${getErrorMessage(error)}` },
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

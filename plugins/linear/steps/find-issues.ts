@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { safeFetch } from "@/lib/safe-fetch";
 import { fetchCredentials } from "@/lib/credential-fetcher";
@@ -41,7 +42,11 @@ type LinearIssue = {
 
 type FindIssuesResult =
   | { success: true; data: { issues: LinearIssue[]; count: number } }
-  | { success: false; error: { message: string } };
+  | {
+      success: false;
+      error: { message: string };
+      errorClass?: ExecutionErrorType;
+    };
 
 export type FindIssuesCoreInput = {
   linearAssigneeId?: string;
@@ -93,6 +98,7 @@ async function stepHandler(
         message:
           "LINEAR_API_KEY is not configured. Please add it in Project Integrations.",
       },
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -141,6 +147,7 @@ async function stepHandler(
       return {
         success: false,
         error: { message: result.errors[0].message },
+        errorClass: ExecutionErrorType.USER,
       };
     }
 
@@ -166,6 +173,7 @@ async function stepHandler(
     return {
       success: false,
       error: { message: `Failed to find issues: ${getErrorMessage(error)}` },
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { safeFetch } from "@/lib/safe-fetch";
@@ -19,7 +20,7 @@ type ResendErrorResponse = {
 
 type SendEmailResult =
   | { success: true; id: string }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 export type SendEmailCoreInput = {
   emailFrom?: string;
@@ -54,6 +55,7 @@ async function stepHandler(
       success: false,
       error:
         "RESEND_API_KEY is not configured. Please add it in Project Integrations.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -64,6 +66,7 @@ async function stepHandler(
       success: false,
       error:
         "No sender is configured. Please add it in the action or in Project Integrations.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -98,6 +101,7 @@ async function stepHandler(
       return {
         success: false,
         error: errorData.message || `HTTP ${response.status}: Failed to send email`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -108,6 +112,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to send email: ${message}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

@@ -168,6 +168,8 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
   error: "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20",
   system_error:
     "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
+  external_error:
+    "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20",
   cancelled:
     "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20",
   running: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20",
@@ -176,6 +178,7 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
 
 const STATUS_LABELS: Partial<Record<NormalizedStatus, string>> = {
   system_error: "System Error",
+  external_error: "External",
 };
 
 function StatusBadge({ status }: { status: NormalizedStatus }): ReactNode {

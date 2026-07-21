@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { organization, workflows } from "../../lib/db/schema";
 import { classifyExecutionError } from "../../lib/errors/classify";
+import type { ExecutionErrorType } from "../../lib/errors/execution-error-type";
 import type { ErrorStatus } from "../../lib/errors/execution-status";
 import { NA_ERROR_TYPE } from "../../lib/metrics/metric-constants";
 import { resolveOrgSlugCached } from "../../lib/metrics/org-slug-cache";
@@ -22,7 +23,7 @@ export async function recordTerminalSample(
     workflowId: string;
     status: "success" | ErrorStatus;
     errorMessage?: string | null;
-    errorType?: "user" | "system";
+    errorType?: ExecutionErrorType;
     errorCategory?: string;
   }
 ): Promise<void> {

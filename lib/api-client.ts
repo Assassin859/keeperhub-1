@@ -3,6 +3,7 @@
  * Replaces server actions with API endpoints
  */
 
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import type { Page } from "@/lib/pagination";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import type { WorkflowExportV1 } from "@/lib/workflow/export-schema";
@@ -704,7 +705,7 @@ export const workflowApi = {
         input: unknown;
         output: unknown;
         error: string | null;
-        errorType: "user" | "system" | null;
+        errorType: ExecutionErrorType | null;
         errorCategory: string | null;
         errorCode: string | null;
         startedAt: Date;
@@ -744,7 +745,7 @@ export const workflowApi = {
         input: unknown;
         output: unknown;
         error: string | null;
-        errorType: "user" | "system" | null;
+        errorType: ExecutionErrorType | null;
         errorCategory: string | null;
         errorCode: string | null;
         startedAt: Date;

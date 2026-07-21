@@ -6,6 +6,7 @@
  */
 
 import type { TransactionHashEntry } from "@/lib/db/schema";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 export type { TransactionHashEntry } from "@/lib/db/schema";
 
@@ -30,6 +31,7 @@ export type NormalizedStatus =
   | "success"
   | "error"
   | "system_error"
+  | "external_error"
   | "cancelled";
 
 export type UnifiedRun = {
@@ -62,7 +64,7 @@ export type UnifiedRun = {
   completedSteps: number | null;
   error: string | null;
   errorCode: string | null;
-  errorType: "user" | "system" | null;
+  errorType: ExecutionErrorType | null;
   errorCategory: string | null;
 };
 

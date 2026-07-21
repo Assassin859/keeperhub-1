@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
@@ -24,7 +25,11 @@ type GetAddressCountersResult =
       gasUsageCount: string;
       validationsCount: string;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type GetAddressCountersCoreInput = {
   address: string;
@@ -42,7 +47,7 @@ async function stepHandler(
 ): Promise<GetAddressCountersResult> {
   const address = input.address?.trim();
   if (!address) {
-    return { success: false, error: "Address is required." };
+    return { success: false, error: "Address is required.", errorClass: ExecutionErrorType.USER };
   }
 
   const result = await blockscoutGet<CountersResponse>(

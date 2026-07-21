@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { safeFetch } from "@/lib/safe-fetch";
@@ -32,6 +33,7 @@ async function stepHandler(
         message:
           "CLERK_SECRET_KEY is not configured. Please add it in Project Integrations.",
       },
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -39,6 +41,7 @@ async function stepHandler(
     return {
       success: false,
       error: { message: "User ID is required." },
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -64,6 +67,7 @@ async function stepHandler(
             errorBody.errors?.[0]?.message ||
             `Failed to get user: ${response.status}`,
         },
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -73,6 +77,7 @@ async function stepHandler(
     return {
       success: false,
       error: { message: `Failed to get user: ${getErrorMessage(err)}` },
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }
