@@ -55,8 +55,30 @@ function fixtureIdl() {
           { name: "recipient", type: "pubkey" },
         ],
       },
+      {
+        name: "do_composite",
+        discriminator: [9, 9, 9, 9, 9, 9, 9, 9],
+        accounts: [{ name: "authority", signer: true }],
+        args: [
+          { name: "amounts", type: { vec: "u64" } },
+          { name: "maybe", type: { option: "u32" } },
+          { name: "blob", type: "bytes" },
+          { name: "cfg", type: { defined: { name: "Config" } } },
+        ],
+      },
     ],
-    types: [],
+    types: [
+      {
+        name: "Config",
+        type: {
+          kind: "struct",
+          fields: [
+            { name: "flag", type: "bool" },
+            { name: "owner", type: "pubkey" },
+          ],
+        },
+      },
+    ],
   };
 }
 
@@ -178,6 +200,19 @@ describe("encodeAnchorInstruction", () => {
     });
     expect(result).toMatchObject({
       error: expect.stringContaining("Invalid base58 pubkey"),
+    });
+  });
+
+  it("rejects a bytes argument whose base64 would silently truncate", () => {
+    // "A" passes the base64 charset but is an incomplete group that decodes to
+    // zero bytes; the lossless check must reject it rather than encode nothing.
+    const result = encode({
+      instructionName: "do_composite",
+      args: { amounts: [], blob: "A", cfg: { flag: false, owner: RECIPIENT } },
+      accountPubkeys: { authority: WALLET },
+    });
+    expect(result).toMatchObject({
+      error: expect.stringContaining("Invalid base64 bytes"),
     });
   });
 });

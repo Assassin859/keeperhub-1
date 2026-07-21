@@ -19,6 +19,9 @@ type IdlType = IdlField["type"];
 
 const INTEGER = /^-?\d+$/;
 const HEX_BODY = /^[0-9a-fA-F]*$/;
+const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
+const TRAILING_PADDING = /=+$/;
+const WHITESPACE = /\s+/g;
 
 // 64-bit and wider integers must be passed to the borsh layout as BN; narrower
 // integers and floats use plain numbers.
@@ -149,7 +152,21 @@ function toBytes(value: unknown): Buffer {
       }
       throw new IdlCoercionError(`Invalid hex bytes: ${trimmed}`);
     }
-    return Buffer.from(trimmed, "base64");
+    // Mirror the raw-instruction action: Buffer.from silently drops characters
+    // that do not form complete base64 groups, so confirm the decode is
+    // lossless (padding-insensitive) rather than encode truncated bytes.
+    const base64 = trimmed.replace(WHITESPACE, "");
+    if (!BASE64_BODY.test(base64)) {
+      throw new IdlCoercionError(`Invalid base64 bytes: ${trimmed}`);
+    }
+    const decoded = Buffer.from(base64, "base64");
+    if (
+      decoded.toString("base64").replace(TRAILING_PADDING, "") !==
+      base64.replace(TRAILING_PADDING, "")
+    ) {
+      throw new IdlCoercionError(`Invalid base64 bytes: ${trimmed}`);
+    }
+    return decoded;
   }
   throw new IdlCoercionError(
     "bytes must be a number array, 0x-hex string, or base64 string"
