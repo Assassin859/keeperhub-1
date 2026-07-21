@@ -71,6 +71,13 @@ const RULES: readonly Rule[] = [
     errorType: ExecutionErrorType.USER,
     code: null,
   },
+  // An action node the author never assigned an action type to.
+  {
+    pattern: /has no action type configured/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
   {
     pattern: /safe-fetch:\s*invalid URL/i,
     errorCategory: ErrorCategory.VALIDATION,

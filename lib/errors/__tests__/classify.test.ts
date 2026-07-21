@@ -56,6 +56,7 @@ describe("classifyExecutionError", () => {
       "Unresolved template reference(s): {{@nodeId:Foo.bar}} (Reference left in render)",
       "Missing template variable(s) in URL: address",
       "HTTP request failed: Missing template variable(s) in URL: address",
+      'Action node "abc123" has no action type configured',
     ])("classifies %s as configuration + user", (input) => {
       const r = classifyExecutionError(input);
       expect(r.errorCategory).toBe(ErrorCategory.CONFIGURATION);
