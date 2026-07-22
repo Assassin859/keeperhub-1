@@ -36,6 +36,7 @@ import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
 import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
+import type { ApiExecuteTriggerType } from "./api-execute";
 import {
   applyExecutionResult,
   initializeExecutionProgress,
@@ -49,6 +50,7 @@ function validateEnv(): {
   workflowId: string;
   executionId: string;
   input: Record<string, unknown>;
+  triggerType?: ApiExecuteTriggerType;
   scheduleId?: string;
 } {
   const workflowId = process.env.WORKFLOW_ID;
@@ -83,6 +85,7 @@ function validateEnv(): {
     workflowId,
     executionId,
     input,
+    triggerType: process.env.TRIGGER_TYPE as ApiExecuteTriggerType | undefined,
     scheduleId: process.env.SCHEDULE_ID,
   };
 }
@@ -156,7 +159,8 @@ process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
 
 async function main(): Promise<void> {
   const startTime = Date.now();
-  const { workflowId, executionId, input, scheduleId } = validateEnv();
+  const { workflowId, executionId, input, triggerType, scheduleId } =
+    validateEnv();
 
   currentExecutionId = executionId;
   currentScheduleId = scheduleId ?? null;
@@ -178,8 +182,14 @@ async function main(): Promise<void> {
     // workflow could have been disabled, soft-deleted, deactivated, or its
     // owning org deactivated between dispatch and pod startup. Cancel rather
     // than run. The org owns the workflow, so org deactivation is the owner gate.
+    //
+    // Manual runs are the exception: the editor "Run" button must work on
+    // not-yet-enabled drafts, so manual triggers pass requireEnabled: false to
+    // match the interactive execute route. That only bypasses the "disabled"
+    // reason - deleted/deactivated/org-deactivated still block - so it stays
+    // safe. Automated triggers (schedule/event/block/webhook) keep the guard.
     const loaded = await loadWorkflowForExecution(workflowId, {
-      requireEnabled: true,
+      requireEnabled: triggerType !== "manual",
     });
     if (loaded.status === "not_found") {
       throw new Error(`Workflow not found: ${workflowId}`);
