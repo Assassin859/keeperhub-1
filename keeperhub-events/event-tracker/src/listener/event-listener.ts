@@ -32,7 +32,7 @@ const DEFAULT_JITTER_MS = 10_000;
 const BYTES32_HEX = /^0x[0-9a-fA-F]{64}$/;
 
 /**
- * Post-decode filter for the Tempo Payment Received trigger. Returns true
+ * Post-decode filter for the Transfer trigger. Returns true
  * (forward the event) when no filter is set. Otherwise the decoded `to` must
  * equal the watched deposit address (case-insensitive), and the decoded `memo`
  * must match the configured filter: an exact bytes32 for a 0x + 64-hex value,
@@ -84,7 +84,7 @@ export interface EventListenerOptions {
   rawEventsAbi: AbiEvent[];
 
   /**
-   * Optional post-decode filters (Tempo Payment Received trigger). Undefined
+   * Optional post-decode filters (Transfer trigger). Undefined
    * for generic Event triggers, which forward every matching event.
    */
   recipientFilter?: string;
@@ -183,7 +183,7 @@ export class EventListener {
         return;
       }
 
-      // Post-decode filtering for the Tempo Payment Received trigger. No-op
+      // Post-decode filtering for the Transfer trigger. No-op
       // when neither filter is set (generic Event triggers forward everything).
       if (!this.matchesFilters(parsed)) {
         return;

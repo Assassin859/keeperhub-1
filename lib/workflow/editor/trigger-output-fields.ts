@@ -150,7 +150,7 @@ export function getBlockTriggerOutputFields(): OutputField[] {
 }
 
 /**
- * Get output fields for the Tempo Payment Received trigger. The watched event
+ * Get output fields for the Transfer trigger. The watched event
  * is the fixed TIP-20 `TransferWithMemo(from, to, value, memo)`, so the decoded
  * args are known up front (no ABI needed).
  */
@@ -190,7 +190,7 @@ export function getTriggerOutputFields(
     return getBlockTriggerOutputFields();
   }
 
-  if (triggerType === "Tempo Payment Received") {
+  if (triggerType === "Transfer") {
     return getTempoPaymentOutputFields();
   }
 

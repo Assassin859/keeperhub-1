@@ -154,7 +154,7 @@ export function buildRegistration(
   const userId = typeof workflow.userId === "string" ? workflow.userId : "";
   const workflowName = typeof workflow.name === "string" ? workflow.name : "";
 
-  // Optional post-decode filters carried by the Tempo Payment Received trigger.
+  // Optional post-decode filters carried by the Transfer trigger.
   // Undefined for generic Event triggers, which never filter on decoded args.
   const recipientFilter =
     typeof config.recipientAddress === "string" &&

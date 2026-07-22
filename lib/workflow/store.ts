@@ -16,7 +16,7 @@ export enum WorkflowTriggerEnum {
   WEBHOOK = "Webhook",
   EVENT = "Event", // keeperhub custom field //
   BLOCK = "Block", // keeperhub custom field //
-  TEMPO_PAYMENT = "Tempo Payment Received", // keeperhub custom field //
+  TEMPO_PAYMENT = "Transfer", // keeperhub custom field //
 }
 
 export type WorkflowTriggerType = `${WorkflowTriggerEnum}`;

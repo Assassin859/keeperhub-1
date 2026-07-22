@@ -117,10 +117,10 @@ export function TriggerConfig({
                 Block
               </div>
             </SelectItem>
-            <SelectItem value="Tempo Payment Received">
+            <SelectItem value="Transfer">
               <div className="flex items-center gap-2">
                 <ArrowDownToLine className="h-4 w-4" />
-                Tempo Payment Received
+                Transfer
               </div>
             </SelectItem>
           </SelectContent>
@@ -302,8 +302,8 @@ export function TriggerConfig({
             </>
           );
         })()}
-      {/* Tempo Payment Received fields */}
-      {config?.triggerType === "Tempo Payment Received" &&
+      {/* Transfer fields */}
+      {config?.triggerType === "Transfer" &&
         (() => {
           const tempoFields: ActionConfigField[] = [
             {

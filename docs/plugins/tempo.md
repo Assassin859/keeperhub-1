@@ -14,7 +14,7 @@ Accept a stablecoin payment on Tempo and automatically mark the matching invoice
 1. **Use your KeeperHub wallet.** Your organization already has a wallet, and it works on Tempo as-is, with no separate connection to add. On Tempo it signs as an EOA (see [Accounts](#networks-and-accounts) below). Fund it with a Tempo stablecoin so it can pay network fees.
 2. **Deploy the template.** Open **Tempo Invoice Reconciliation** from the templates gallery and deploy a copy into your organization.
 3. **Configure the inputs.** Set the deposit address to watch (your KeeperHub wallet address), the accounting endpoint the workflow posts to when an invoice is paid, and the receipt email. Optionally set a memo prefix so only payments whose memo starts with your invoice reference trigger the flow.
-4. **Enable the workflow.** Once enabled, the **Tempo Payment Received** trigger subscribes to incoming payments on your deposit address.
+4. **Enable the workflow.** Once enabled, the **Transfer** trigger subscribes to incoming payments on your deposit address.
 5. **Send a test payment.** From any Tempo wallet, send the stablecoin to your deposit address with the invoice reference as the memo.
 
 When the payment lands, the workflow checks the amount, posts to your accounting endpoint to mark the invoice paid, and emails the payer a receipt. Because the memo is an indexed field on the transfer event, the reconciliation is verifiable directly from a block explorer.
@@ -43,7 +43,7 @@ When the payment lands, the workflow checks the amount, posts to your accounting
 
 | Trigger | Description |
 |---------|-------------|
-| Tempo Payment Received | Fires when a stablecoin payment lands on a watched address, with an optional memo filter for invoice matching |
+| Transfer | Fires when a stablecoin payment lands on a watched address, with an optional memo filter for invoice matching |
 
 ## Capability matrix
 
@@ -121,7 +121,7 @@ Market-swap one Tempo stablecoin for another on the native DEX, protected by a m
 
 **When to use:** Treasury operations that rebalance between stablecoins before disbursing.
 
-## Tempo Payment Received trigger
+## Transfer trigger
 
 Start a workflow when a stablecoin payment lands on an address you watch.
 
@@ -138,7 +138,7 @@ Start a workflow when a stablecoin payment lands on an address you watch.
 ## Example: invoice reconciliation
 
 ```
-Tempo Payment Received (deposit address, memo prefix = invoice reference)
+Transfer (deposit address, memo prefix = invoice reference)
   -> Condition (amount is at least the invoice total)
   -> HTTP Request (POST to your accounting system: mark the invoice paid)
   -> Send Email (receipt to the payer, with the explorer link)

@@ -9,7 +9,7 @@ import type { WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
-// The Tempo Payment Received trigger always watches the fixed TIP-20
+// The Transfer trigger always watches the fixed TIP-20
 // TransferWithMemo event. The event-tracker's mapper needs an ABI + event name
 // on the trigger config to build a subscription, so we inject them here rather
 // than surfacing ABI/event pickers to the user.
@@ -99,7 +99,7 @@ export async function GET(request: Request) {
             return null;
           }
 
-          // Admit Event triggers and the Tempo Payment Received trigger; both
+          // Admit Event triggers and the Transfer trigger; both
           // register through the event-tracker as on-chain log subscriptions.
           const triggerType = triggerNode.data?.config?.triggerType as
             | string

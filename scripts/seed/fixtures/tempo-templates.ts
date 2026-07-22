@@ -112,7 +112,7 @@ const RAW_FIXTURES: TempoTemplateFixture[] = [
     },
     nodes: [
       buildTriggerNode("trigger-1", {
-        triggerType: "Tempo Payment Received",
+        triggerType: "Transfer",
         network: TEMPO_TESTNET,
         contractAddress: PATH_USD,
         recipientAddress: "",
@@ -121,7 +121,7 @@ const RAW_FIXTURES: TempoTemplateFixture[] = [
       buildConditionNode(
         "step-1",
         {
-          condition: "{{@trigger-1:Tempo Payment Received.args.value}} >= 0",
+          condition: "{{@trigger-1:Transfer.args.value}} >= 0",
           group: {
             id: "group-1",
             logic: "AND",
@@ -129,7 +129,7 @@ const RAW_FIXTURES: TempoTemplateFixture[] = [
               {
                 id: "rule-1",
                 leftOperand:
-                  "{{@trigger-1:Tempo Payment Received.args.value}}",
+                  "{{@trigger-1:Transfer.args.value}}",
                 operator: ">=",
                 rightOperand: "0",
               },
@@ -146,7 +146,7 @@ const RAW_FIXTURES: TempoTemplateFixture[] = [
           actionType: "HTTP Request",
           method: "POST",
           url: "{{accountingApiUrl}}",
-          body: '{"memo":"{{@trigger-1:Tempo Payment Received.args.memo}}","amount":"{{@trigger-1:Tempo Payment Received.args.value}}"}',
+          body: '{"memo":"{{@trigger-1:Transfer.args.memo}}","amount":"{{@trigger-1:Transfer.args.value}}"}',
         },
         600
       ),

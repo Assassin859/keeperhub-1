@@ -105,7 +105,7 @@ describe("TRIGGERS exports", () => {
       "Event",
       "Manual",
       "Schedule",
-      "Tempo Payment Received",
+      "Transfer",
       "Webhook",
     ]);
   });

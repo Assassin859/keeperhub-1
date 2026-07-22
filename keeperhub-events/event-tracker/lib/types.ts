@@ -31,7 +31,7 @@ export interface RawWorkflowNodeConfig {
   contractABI?: string;
   triggerType?: string;
   contractAddress?: string;
-  // Tempo Payment Received trigger: the watched deposit address and an optional
+  // Transfer trigger: the watched deposit address and an optional
   // memo filter, applied as post-decode predicates in the listener.
   recipientAddress?: string;
   memo?: string;

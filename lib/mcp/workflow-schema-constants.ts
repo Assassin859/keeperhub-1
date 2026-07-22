@@ -227,9 +227,9 @@ export const TRIGGERS = {
         "string - ISO timestamp when the block was detected (available on all trigger types)",
     },
   },
-  "Tempo Payment Received": {
-    triggerType: "Tempo Payment Received",
-    label: "Tempo Payment Received",
+  Transfer: {
+    triggerType: "Transfer",
+    label: "Transfer",
     description:
       "Fires when a TIP-20 TransferWithMemo payment lands on a watched Tempo address, with an optional memo filter for invoice matching",
     requiredFields: {
