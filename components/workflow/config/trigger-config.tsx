@@ -6,6 +6,7 @@ import {
   Boxes,
   Clock,
   Copy,
+  ExternalLink,
   Play,
   Webhook,
 } from "lucide-react";
@@ -303,56 +304,228 @@ export function TriggerConfig({
           );
         })()}
       {/* Transfer fields */}
-      {config?.triggerType === "Transfer" &&
-        (() => {
-          const tempoFields: ActionConfigField[] = [
-            {
-              key: "network",
-              label: "Network",
-              type: "chain-select",
-              chainTypeFilter: "evm",
-              allowedChainIds: ["4217", "42431"],
-              placeholder: "Select a Tempo network",
-              required: true,
-            },
-            {
-              key: "contractAddress",
-              label: "Stablecoin Token",
-              type: "template-input",
-              placeholder: "0x... token contract to watch",
-              required: true,
-            },
-            {
-              key: "recipientAddress",
-              label: "Deposit Address",
-              type: "template-input",
-              placeholder: "0x... the address that receives payments",
-              required: true,
-            },
-            {
-              key: "memo",
-              label: "Memo Filter",
-              type: "template-input",
-              placeholder: "INV-1042 or 0x... (optional)",
-              helpTip:
-                "Only fire when the transfer memo matches. A 0x + 64-hex value matches exactly; a shorter string matches as a prefix.",
-            },
-          ];
-
-          return (
-            <ActionConfigRenderer
-              config={config}
-              disabled={disabled}
-              fields={tempoFields}
-              onUpdateConfig={handleConfigValue}
-            />
-          );
-        })()}
+      {config?.triggerType === "Transfer" && (
+        <TransferTriggerFields
+          config={config}
+          disabled={disabled}
+          onUpdateConfig={handleConfigValue}
+        />
+      )}
     </>
   );
 }
 
 const CUSTOM_PROTOCOL_VALUE = "__custom__";
+
+const CUSTOM_TOKEN_VALUE = "__custom__";
+
+type TempoStablecoin = {
+  tokenAddress: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  isStablecoin: boolean;
+  explorerUrl?: string | null;
+};
+
+function shortenAddress(address: string): string {
+  return address.length > 12
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : address;
+}
+
+type TransferTriggerFieldsProps = {
+  config: Record<string, unknown>;
+  disabled: boolean;
+  onUpdateConfig: (key: string, value: unknown) => void;
+};
+
+// Tempo "Transfer" trigger config. The token watched for payments is a fixed
+// on-chain stablecoin, so it renders as a dropdown of the network's supported
+// stablecoins (from supported_tokens) instead of the wallet address book, with
+// a custom-address escape hatch for tokens not yet in the registry.
+function TransferTriggerFields({
+  config,
+  disabled,
+  onUpdateConfig,
+}: TransferTriggerFieldsProps): React.ReactElement {
+  const network = (config.network as string) || "";
+  const contractAddress = (config.contractAddress as string) || "";
+  const [tokens, setTokens] = useState<TempoStablecoin[]>([]);
+  const [customMode, setCustomMode] = useState(false);
+
+  useEffect(() => {
+    if (!network) {
+      setTokens([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/supported-tokens?chainId=${encodeURIComponent(network)}`)
+      .then((res) => res.json())
+      .then((data: { tokens?: TempoStablecoin[] }) => {
+        if (!cancelled) {
+          setTokens((data.tokens ?? []).filter((t) => t.isStablecoin));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTokens([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [network]);
+
+  // A stored token that isn't one of the network's known stablecoins is treated
+  // as a custom address, so reopening the config keeps the input visible.
+  useEffect(() => {
+    if (contractAddress && tokens.length > 0) {
+      const known = tokens.some(
+        (t) => t.tokenAddress.toLowerCase() === contractAddress.toLowerCase()
+      );
+      if (!known) {
+        setCustomMode(true);
+      }
+    }
+  }, [contractAddress, tokens]);
+
+  const matched = tokens.find(
+    (t) => t.tokenAddress.toLowerCase() === contractAddress.toLowerCase()
+  );
+  const selectValue = customMode
+    ? CUSTOM_TOKEN_VALUE
+    : (matched?.tokenAddress ?? "");
+
+  function handleTokenChange(value: string): void {
+    if (value === CUSTOM_TOKEN_VALUE) {
+      setCustomMode(true);
+      onUpdateConfig("contractAddress", "");
+      return;
+    }
+    setCustomMode(false);
+    onUpdateConfig("contractAddress", value);
+  }
+
+  const networkField: ActionConfigField[] = [
+    {
+      key: "network",
+      label: "Network",
+      type: "chain-select",
+      chainTypeFilter: "evm",
+      allowedChainIds: ["4217", "42431"],
+      placeholder: "Select a Tempo network",
+      required: true,
+    },
+  ];
+  const trailingFields: ActionConfigField[] = [
+    {
+      key: "recipientAddress",
+      label: "Deposit Address",
+      type: "template-input",
+      placeholder: "0x... the address that receives payments",
+      required: true,
+    },
+    {
+      key: "memo",
+      label: "Memo Filter",
+      type: "template-input",
+      placeholder: "INV-1042 or 0x... (optional)",
+      helpTip:
+        "Only fire when the transfer memo matches. A 0x + 64-hex value matches exactly; a shorter string matches as a prefix.",
+    },
+  ];
+
+  return (
+    <>
+      <ActionConfigRenderer
+        config={config}
+        disabled={disabled}
+        fields={networkField}
+        onUpdateConfig={onUpdateConfig}
+      />
+      <div className="space-y-2">
+        <Label className="ml-1">
+          Stablecoin Token <span className="text-red-500">*</span>
+        </Label>
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <Select
+              disabled={disabled || !network}
+              onValueChange={handleTokenChange}
+              value={selectValue}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue
+                  placeholder={
+                    network ? "Select a stablecoin" : "Select a network first"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {tokens.map((t) => (
+                  <SelectItem key={t.tokenAddress} value={t.tokenAddress}>
+                    <span className="flex items-center gap-2">
+                      <span>{t.symbol}</span>
+                      <span className="font-mono text-muted-foreground text-xs">
+                        {shortenAddress(t.tokenAddress)}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_TOKEN_VALUE}>
+                  Custom address...
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {matched && !customMode && (
+            <>
+              <button
+                aria-label="Copy token address"
+                className="rounded p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  navigator.clipboard.writeText(matched.tokenAddress);
+                  toast.success("Token address copied");
+                }}
+                title="Copy token address"
+                type="button"
+              >
+                <Copy className="size-4" />
+              </button>
+              {matched.explorerUrl && (
+                <a
+                  aria-label="View token on explorer"
+                  className="rounded p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  href={matched.explorerUrl}
+                  rel="noopener"
+                  target="_blank"
+                  title="View token on explorer"
+                >
+                  <ExternalLink className="size-4" />
+                </a>
+              )}
+            </>
+          )}
+        </div>
+        {customMode && (
+          <Input
+            disabled={disabled}
+            onChange={(e) => onUpdateConfig("contractAddress", e.target.value)}
+            placeholder="0x... custom TIP-20 token contract"
+            value={contractAddress}
+          />
+        )}
+      </div>
+      <ActionConfigRenderer
+        config={config}
+        disabled={disabled}
+        fields={trailingFields}
+        onUpdateConfig={onUpdateConfig}
+      />
+    </>
+  );
+}
 
 type EventTriggerFieldsProps = {
   config: Record<string, unknown>;
