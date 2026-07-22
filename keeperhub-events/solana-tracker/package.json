@@ -16,6 +16,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "e2e:injected": "tsx tests/e2e/injected.ts",
+    "e2e:injected-block": "tsx tests/e2e/injected-block.ts",
     "e2e:devnet": "tsx tests/e2e/devnet.ts"
   },
   "dependencies": {
