@@ -318,3 +318,21 @@ export function deserializeEventTriggerData(
 
   return deserialized;
 }
+
+/**
+ * Turn a workflow's raw trigger input into trigger data. On-chain event triggers
+ * (Event and Tempo Transfer) arrive with each ABI field as a { value, type }
+ * wrapper, so they run through deserializeEventTriggerData to become real scalars
+ * (BigInt/boolean/etc.); conditions and downstream templates then compare against
+ * the value, not the wrapper object. Every other trigger type (Manual, Schedule,
+ * Webhook, Block, ...) has no such wrappers and passes through untouched.
+ */
+export function deserializeTriggerInput(
+  triggerType: string | undefined,
+  triggerInput: Record<string, unknown>
+): Record<string, unknown> {
+  if (triggerType === "Event" || triggerType === "Transfer") {
+    return deserializeEventTriggerData(triggerInput);
+  }
+  return triggerInput;
+}

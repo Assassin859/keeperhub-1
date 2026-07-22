@@ -24,7 +24,7 @@ import {
   getStepImporter,
   type StepImporter,
 } from "@/lib/step-registry";
-import { deserializeEventTriggerData, getErrorMessageAsync } from "@/lib/utils";
+import { deserializeTriggerInput, getErrorMessageAsync } from "@/lib/utils";
 import {
   BUILTIN_NODE_ID,
   BUILTIN_NODE_LABEL,
@@ -2643,19 +2643,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             );
           }
         } else if (triggerInput && Object.keys(triggerInput).length > 0) {
-          // Use provided trigger input
-          // For Event triggers, deserialize { value: string, type: string } objects
-          // back to appropriate types (BigInt for uint/int, boolean for bool, etc.)
-          if (triggerType === "Event") {
-            const deserialized = deserializeEventTriggerData(triggerInput);
-            triggerData = {
-              ...triggerData,
-              ...deserialized,
-            };
+          // On-chain event triggers (Event, Tempo Transfer) arrive with each arg
+          // as a { value, type } wrapper; deserializeTriggerInput turns them into
+          // real scalars so conditions and templates compare against the value,
+          // not the wrapper object. Other trigger types pass through untouched.
+          triggerData = {
+            ...triggerData,
+            ...deserializeTriggerInput(triggerType, triggerInput),
+          };
 
-            // Enrich event data with explorer links so the execution log UI
-            // can render clickable transaction/address links.
-            // Uses a step function to keep db/schema out of the workflow bundle.
+          if (triggerType === "Event" || triggerType === "Transfer") {
+            // Enrich event data with explorer links so the execution log UI can
+            // render clickable transaction/address links. Uses a step function
+            // to keep db/schema out of the workflow bundle.
             if (config.network) {
               try {
                 const { enrichExplorerLinks } = await import(
@@ -2669,18 +2669,14 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 // Non-critical: skip explorer links if lookup fails
               }
             }
-          } else {
-            // For other trigger types, use as-is
-            triggerData = { ...triggerData, ...triggerInput };
-            // Normalize schedule trigger: map triggerTime -> triggeredAt
-            // so the runtime field matches the declared output schema
-            if (
-              triggerType === "Schedule" &&
-              "triggerTime" in triggerInput &&
-              triggerInput.triggerTime
-            ) {
-              triggerData.triggeredAt = triggerInput.triggerTime;
-            }
+          } else if (
+            triggerType === "Schedule" &&
+            "triggerTime" in triggerInput &&
+            triggerInput.triggerTime
+          ) {
+            // Normalize schedule trigger: map triggerTime -> triggeredAt so the
+            // runtime field matches the declared output schema.
+            triggerData.triggeredAt = triggerInput.triggerTime;
           }
         }
 
