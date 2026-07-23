@@ -17,6 +17,32 @@ describe("classifyExecutionError", () => {
     });
   });
 
+  it("classifies a missing network as a user validation error, including step-wrapped forms", () => {
+    const bare = classifyExecutionError("Network is required");
+    expect(bare).toEqual({
+      errorCategory: ErrorCategory.VALIDATION,
+      errorType: "user",
+      code: null,
+    });
+
+    const wrapped = classifyExecutionError(
+      "Failed to check balance: Network is required"
+    );
+    expect(wrapped.errorType).toBe("user");
+    expect(wrapped.errorCategory).toBe(ErrorCategory.VALIDATION);
+  });
+
+  it("classifies an unsupported network name as a user validation error", () => {
+    const result = classifyExecutionError(
+      "Unsupported network: polygon. Supported: mainnet, sepolia or numeric chain IDs"
+    );
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.VALIDATION,
+      errorType: "user",
+      code: null,
+    });
+  });
+
   it("defaults unmatched messages to system so real engine faults still page", () => {
     const result = classifyExecutionError("some unexpected internal failure");
     expect(result.errorType).toBe("system");

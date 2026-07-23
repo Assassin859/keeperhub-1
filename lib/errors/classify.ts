@@ -151,6 +151,20 @@ const RULES: readonly Rule[] = [
     errorType: ExecutionErrorType.USER,
     code: null,
   },
+  // Unanchored so step-wrapped forms (`Failed to check balance: Network is
+  // required`) stay a user config fault.
+  {
+    pattern: /Network is required/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  {
+    pattern: /Unsupported network:/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
   {
     pattern: /^For Each:\s*arraySource is required/i,
     errorCategory: ErrorCategory.CONFIGURATION,

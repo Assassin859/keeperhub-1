@@ -13,6 +13,12 @@ import { SUPPORTED_CHAIN_IDS } from "./types";
  * - Legacy network names (e.g., "mainnet", "sepolia", "base")
  */
 export function getChainIdFromNetwork(network: string | number): number {
+  // Runtime guard: untyped step configs can pass a missing value despite the
+  // signature, which would otherwise die on .toLowerCase() with a TypeError.
+  if (network === undefined || network === null || network === "") {
+    throw new Error("Network is required");
+  }
+
   // If already a number, return as-is
   if (typeof network === "number") {
     return network;
