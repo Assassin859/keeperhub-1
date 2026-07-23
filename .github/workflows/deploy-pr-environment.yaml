@@ -467,6 +467,7 @@ jobs:
     env:
       REGION: ${{ vars.TO_REGION }}
       EXECUTOR_ECR_NAME: keeperhub-executor-staging
+      RUNNER_ECR_NAME: keeperhub-staging
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -521,6 +522,38 @@ jobs:
             type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EXECUTOR_ECR_NAME }}:cache
             type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EXECUTOR_ECR_NAME }}:cache-pr
           cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EXECUTOR_ECR_NAME }}:cache-pr,mode=max
+
+      - name: Check if runner image exists
+        id: check-runner-image
+        run: |
+          IMAGE_TAG="${{ steps.vars.outputs.sha_short }}"
+          if aws ecr describe-images \
+            --repository-name ${{ env.RUNNER_ECR_NAME }} \
+            --image-ids imageTag=workflow-runner-${IMAGE_TAG} \
+            --region ${{ env.REGION }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push runner image
+        if: steps.check-runner-image.outputs.exists != 'true'
+        # The workflow steps run in a per-execution Job using RUNNER_IMAGE, so a
+        # PR-specific runner is required to exercise executor.workflow.ts changes.
+        # Same Dockerfile as the executor (target: workflow-runner). Uses a
+        # runner-scoped PR cache so it never writes the app's :cache layer.
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: workflow-runner
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.RUNNER_ECR_NAME }}:workflow-runner-${{ steps.vars.outputs.sha_short }}
+          cache-from: |
+            type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.RUNNER_ECR_NAME }}:workflow-runner-cache-pr
+          cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.RUNNER_ECR_NAME }}:workflow-runner-cache-pr,mode=max
 
   deploy:
     permissions:
@@ -728,6 +761,11 @@ jobs:
           # / event triggers. The template prepends "executor-" itself, so we
           # set only the bare tag here (matches the {{IMAGE_TAG}} pattern).
           EXECUTOR_IMAGE_TAG: ${{ needs.check-labels.outputs.should-build-executor == 'true' && steps.vars.outputs.sha_short || 'latest' }}
+          # Workflow steps run in a per-execution Job using RUNNER_IMAGE, so
+          # executor.workflow.ts changes only take effect with a PR runner.
+          # deploy-pr-executor builds workflow-runner-<sha>; else stay on the
+          # staging workflow-runner-latest. Full tag (template uses it verbatim).
+          RUNNER_IMAGE_TAG: ${{ needs.check-labels.outputs.should-build-executor == 'true' && format('workflow-runner-{0}', steps.vars.outputs.sha_short) || 'workflow-runner-latest' }}
           # PR-specific collector image tag when deploy-pr-metrics was set
           # (build-collector-image ran); else the collector-latest baseline.
           # Bare tag; the template prepends "collector-". (TECH-6484)

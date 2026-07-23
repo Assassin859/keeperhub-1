@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   DollarSign,
   Globe,
   Info,
@@ -468,6 +469,9 @@ type NavItemDef = {
   // Visible only to organization owners/admins (the audit feed is gated the
   // same way server-side).
   adminOnly?: boolean;
+  // Visible only to organization owners (fund-moving surfaces like held
+  // payments; enforced server-side too).
+  ownerOnly?: boolean;
 };
 
 function NavItem({
@@ -567,6 +571,14 @@ const NAV_ITEMS: NavItemDef[] = [
     requireAuth: true,
   },
   {
+    id: "held-payments",
+    icon: Clock,
+    label: "Held Payments",
+    href: "/held-payments",
+    requireAuth: true,
+    ownerOnly: true,
+  },
+  {
     id: "address-book",
     icon: Bookmark,
     label: "Address Book",
@@ -590,7 +602,7 @@ export function NavigationSidebar(): React.ReactNode {
   const { data: session, isPending } = useSession();
   const { openAuthPrompt } = useAuthPrompt();
   const { open: openOverlay } = useOverlay();
-  const { isAdmin } = useActiveMember();
+  const { isAdmin, isOwner } = useActiveMember();
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
@@ -671,6 +683,7 @@ export function NavigationSidebar(): React.ReactNode {
   const isHubPage = pathname === "/hub";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
+  const isHeldPaymentsPage = pathname === "/held-payments";
   const isActivityPage = pathname === "/activity";
 
   const expanded = navState.state.sidebar;
@@ -809,6 +822,9 @@ export function NavigationSidebar(): React.ReactNode {
     if (id === "earnings") {
       return isEarningsPage;
     }
+    if (id === "held-payments") {
+      return isHeldPaymentsPage;
+    }
     if (id === "activity") {
       return isActivityPage;
     }
@@ -911,7 +927,9 @@ export function NavigationSidebar(): React.ReactNode {
   // NAV-01: render every nav item for everyone (anonymous, signed-out, signed-in).
   // Click-gating for requireAuth items happens in handleNavClick. The exception
   // is adminOnly items (e.g. org Activity), hidden for non-owner/admin members.
-  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+  const navItems = NAV_ITEMS.filter(
+    (item) => (!item.adminOnly || isAdmin) && (!item.ownerOnly || isOwner)
+  );
 
   // NAV-03: branch on isPending FIRST. While the better-auth session resolves,
   // render a neutral skeleton with the same width as the fully-loaded sidebar

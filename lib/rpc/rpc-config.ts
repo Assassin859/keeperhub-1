@@ -36,6 +36,8 @@ export const PUBLIC_RPCS = {
   BASE_SEPOLIA: "https://sepolia.base.org",
   TEMPO_TESTNET: "https://rpc.testnet.tempo.xyz",
   TEMPO_MAINNET: "https://rpc.tempo.xyz",
+  TEMPO_TESTNET_WSS: "wss://rpc.moderato.tempo.xyz",
+  TEMPO_MAINNET_WSS: "wss://rpc.tempo.xyz",
   BSC_MAINNET: "https://bsc-dataseed.binance.org",
   BSC_MAINNET_FALLBACK: "https://rpc.ankr.com/bsc",
   BSC_TESTNET: "https://bsc-testnet-rpc.publicnode.com",
@@ -82,6 +84,11 @@ export type ChainConfigEntry = {
   fallbackEnvKey: string;
   publicDefault: string;
   publicFallback?: string;
+  // Public WebSocket defaults. Only set for chains that publish a reliable
+  // public WSS endpoint (e.g. Tempo). getWssUrl falls back to these when the
+  // JSON config has no WSS URL, mirroring publicDefault on the HTTP path.
+  publicWssDefault?: string;
+  publicWssFallback?: string;
 };
 
 export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
@@ -120,6 +127,7 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     envKey: "CHAIN_TEMPO_TESTNET_PRIMARY_RPC",
     fallbackEnvKey: "CHAIN_TEMPO_TESTNET_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.TEMPO_TESTNET,
+    publicWssDefault: PUBLIC_RPCS.TEMPO_TESTNET_WSS,
   },
   // Tempo Mainnet
   4217: {
@@ -127,6 +135,7 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     envKey: "CHAIN_TEMPO_MAINNET_PRIMARY_RPC",
     fallbackEnvKey: "CHAIN_TEMPO_MAINNET_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.TEMPO_MAINNET,
+    publicWssDefault: PUBLIC_RPCS.TEMPO_MAINNET_WSS,
   },
   // BNB Chain (BSC) Mainnet
   56: {
@@ -483,14 +492,20 @@ export function getWssUrl(options: GetWssUrlOptions): string | undefined {
   const { rpcConfig, jsonKey, type } = options;
   const entry = rpcConfig[jsonKey];
 
-  if (!entry) {
-    return;
+  const fromJson =
+    type === "primary" ? entry?.primaryWssUrl : entry?.fallbackWssUrl;
+  if (fromJson) {
+    return fromJson;
   }
 
-  if (type === "primary") {
-    return entry.primaryWssUrl;
-  }
-  return entry.fallbackWssUrl;
+  // Fall back to the chain's public WSS default (mirrors the HTTP publicDefault
+  // path). Only chains that publish a reliable public WSS endpoint set this.
+  const chainEntry = Object.values(CHAIN_CONFIG).find(
+    (c) => c.jsonKey === jsonKey
+  );
+  return type === "primary"
+    ? chainEntry?.publicWssDefault
+    : chainEntry?.publicWssFallback;
 }
 
 /**

@@ -38,6 +38,14 @@ export interface WorkflowRegistration {
   eventsAbiStrings: string[];
   rawEventsAbi: AbiEvent[];
   /**
+   * Optional post-decode filters for the Transfer trigger.
+   * `recipientFilter` matches the decoded `to` arg; `memoFilter` matches the
+   * decoded `memo` (exact for a 0x + 64-hex value, prefix otherwise). Undefined
+   * for generic Event triggers, which never filter on decoded args.
+   */
+  recipientFilter?: string;
+  memoFilter?: string;
+  /**
    * Stable hash over the listener-affecting fields of this registration.
    * Produced by `workflow-mapper.hashRegistration` and used by the Phase 4
    * reconciler to detect config changes (contract swap, event rename, ABI

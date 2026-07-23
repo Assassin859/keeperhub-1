@@ -586,6 +586,15 @@ export class AdaptiveGasStrategy {
         minPriorityFeeGwei: 4.0,
         maxPriorityFeeGwei: 500,
       },
+      // Tempo mainnet -- fees paid in a TIP-20 stablecoin, estimates are
+      // accurate, so an L2-like 1.5x limit multiplier is enough headroom.
+      4217: {
+        gasLimitMultiplier: 1.5,
+      },
+      // Tempo Moderato testnet
+      42431: {
+        gasLimitMultiplier: 1.5,
+      },
     };
 
     return overrides[chainId] || {};
