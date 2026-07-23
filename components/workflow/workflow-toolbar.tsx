@@ -606,10 +606,13 @@ function useWorkflowHandlers({
     }
 
     setIsSaving(true);
+    // Cancel before the await, not after: an edit made while this save is in
+    // flight schedules a new autosave that must survive; only the schedule
+    // this save supersedes should be dropped.
+    cancelPendingAutosave();
     try {
       await api.workflow.update(currentWorkflowId, { nodes, edges });
       setHasUnsavedChanges(false);
-      cancelPendingAutosave();
       return true;
     } catch (error) {
       console.error("Failed to save workflow:", error);
