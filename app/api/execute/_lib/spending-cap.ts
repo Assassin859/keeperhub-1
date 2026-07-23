@@ -3,7 +3,10 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { directExecutions, organizationSpendCaps } from "@/lib/db/schema";
-import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
+import {
+  sumOrgSolanaValueTodayLamports,
+  sumOrgValueTodayWei,
+} from "@/lib/execute/value-ledger";
 import { generateId } from "@/lib/utils/id";
 
 export type SpendCapResult =
@@ -17,9 +20,16 @@ type ReserveExecutionParams = {
   network?: string;
   // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
   input: any;
-  // Native notional value (wei) this execution moves. "0" for token-only or
-  // no-value calls. Charged against the org's daily value cap at reservation.
-  reservedValueWei: string;
+  // Native notional value this execution moves, and which chain family's cap it
+  // is charged against. "0" for token-only or no-value calls. EVM amounts are
+  // wei and charge dailyValueCapWei; Solana amounts are lamports and charge
+  // dailySolanaValueCapLamports. The two caps and their ledger columns are
+  // independent - a Solana execution is never charged against the wei cap and
+  // vice versa - because wei and lamports are different units and the caps are
+  // set in different assets.
+  reserved:
+    | { kind: "evm"; valueWei: string }
+    | { kind: "solana"; valueLamports: string };
 };
 
 type ReserveResult =
@@ -30,23 +40,37 @@ type ReserveResult =
  * Atomically check the daily value cap and create the execution record.
  *
  * The cap bounds the native notional VALUE moved per org per day, not gas.
- * `reservedValueWei` (known at request time) is charged against
- * `organizationSpendCaps.dailyValueCapWei` inside a SELECT FOR UPDATE on the
- * cap row, which serializes concurrent requests for the same organization. The
- * execution record is inserted in the same transaction carrying its
- * `valueWei`, so the reserved value is immediately visible to subsequent
- * callers -- closing the TOCTOU that the old gas-based cap had (pending/running
- * rows had null gasUsedWei and contributed 0 to the SUM).
+ * `params.reserved` (known at request time) is charged against the cap for its
+ * chain family inside a SELECT FOR UPDATE on the cap row, which serializes
+ * concurrent requests for the same organization. The execution record is
+ * inserted in the same transaction carrying its value, so the reservation is
+ * immediately visible to subsequent callers -- closing the TOCTOU that the old
+ * gas-based cap had (pending/running rows had null gasUsedWei and contributed 0
+ * to the SUM).
  *
- * The cap is the org's `dailyValueCapWei`, set by org admins/owners. When no
- * cap row exists, or it is null, value spending is unlimited.
+ * There are two independent caps, both set by org admins/owners:
+ *   EVM    -> dailyValueCapWei             charged in wei      (18 decimals)
+ *   Solana -> dailySolanaValueCapLamports  charged in lamports (9 decimals)
+ *
+ * They are deliberately not one number. An admin sets the wei cap thinking in
+ * ETH; folding SOL into it would compare non-commensurable assets against a
+ * single figure, and scaling SOL to 18 decimals to fit was only ever a
+ * workaround for the missing second cap. Each cap sums only its own ledger
+ * column, so neither chain family's activity consumes the other's budget.
+ *
+ * When no cap row exists, or the column for that family is null, spending of
+ * that kind is unlimited. An unset Solana cap does NOT fall back to the wei cap.
  */
 export async function checkAndReserveExecution(
   params: ReserveExecutionParams
 ): Promise<ReserveResult> {
   return await db.transaction(async (tx) => {
     const caps = await tx
-      .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
+      .select({
+        dailyValueCapWei: organizationSpendCaps.dailyValueCapWei,
+        dailySolanaValueCapLamports:
+          organizationSpendCaps.dailySolanaValueCapLamports,
+      })
       .from(organizationSpendCaps)
       .where(eq(organizationSpendCaps.organizationId, params.organizationId))
       .for("update")
@@ -54,6 +78,7 @@ export async function checkAndReserveExecution(
 
     const cap = caps[0];
     const id = generateId();
+    const isSolana = params.reserved.kind === "solana";
 
     const insertReservation = () =>
       tx.insert(directExecutions).values({
@@ -63,12 +88,25 @@ export async function checkAndReserveExecution(
         type: params.type,
         network: params.network ?? null,
         input: params.input,
-        valueWei: params.reservedValueWei,
+        // Exactly one unit column is written per row, so each daily SUM stays
+        // single-unit.
+        valueWei:
+          params.reserved.kind === "evm" ? params.reserved.valueWei : null,
+        valueLamports:
+          params.reserved.kind === "solana"
+            ? params.reserved.valueLamports
+            : null,
         status: "pending",
       });
 
-    // No cap configured (no row, or value cap unset) -> unlimited.
-    if (!cap || cap.dailyValueCapWei === null) {
+    const configuredCap = isSolana
+      ? cap?.dailySolanaValueCapLamports
+      : cap?.dailyValueCapWei;
+
+    // No cap configured for this chain family (no row, or that column unset)
+    // -> unlimited. The two caps are independent: an unset Solana cap does NOT
+    // fall back to the wei cap.
+    if (!cap || configuredCap === null || configuredCap === undefined) {
       await insertReservation();
       return { allowed: true, executionId: id } as const;
     }
@@ -77,13 +115,24 @@ export async function checkAndReserveExecution(
     // protocol value ledger) so a direct-API request is charged against value
     // moved by workflow runs too, and cannot exceed the cap by racing them.
     // Runs inside this FOR UPDATE tx, so it is consistent under concurrency.
-    const totalWei = await sumOrgValueTodayWei(tx, params.organizationId);
-    const reservedWei = BigInt(params.reservedValueWei);
-    const dailyCap = BigInt(cap.dailyValueCapWei);
+    const total = isSolana
+      ? await sumOrgSolanaValueTodayLamports(tx, params.organizationId)
+      : await sumOrgValueTodayWei(tx, params.organizationId);
+    const reserved = BigInt(
+      params.reserved.kind === "solana"
+        ? params.reserved.valueLamports
+        : params.reserved.valueWei
+    );
+    const dailyCap = BigInt(configuredCap);
 
     // Pre-charge: deny if this request would push the day's total over the cap.
-    if (totalWei + reservedWei > dailyCap) {
-      return { allowed: false, reason: "Daily spending cap exceeded" } as const;
+    if (total + reserved > dailyCap) {
+      return {
+        allowed: false,
+        reason: isSolana
+          ? "Daily Solana spending cap exceeded"
+          : "Daily spending cap exceeded",
+      } as const;
     }
 
     await insertReservation();

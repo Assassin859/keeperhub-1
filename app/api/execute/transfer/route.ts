@@ -29,7 +29,11 @@ import {
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { parseNativeValueWei } from "../_lib/reserved-value";
+import {
+  isSolanaNetwork,
+  parseNativeValueLamports,
+  parseNativeValueWei,
+} from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
@@ -187,12 +191,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 6. Spending cap + create execution atomically. Native transfers charge
-  // their ETH value against the daily value cap; ERC-20 transfers move no
-  // native value (token value is not yet priced into the cap) so reserve 0.
+  // their value against the daily cap for the chain family: this route serves
+  // Solana too (transferFundsCore branches on a Solana chainId), so a SOL
+  // transfer is parsed at 9 decimals and charged to the lamports cap rather
+  // than being scaled to 18 and charged to the ETH-denominated one. Token
+  // transfers move no native value (token value is not yet priced into the
+  // cap) so reserve 0.
   const redactedInput = redactInput(withRejectedSignerOverride(body, body));
+  const isSolanaTransfer = isSolanaNetwork(network);
   let reservedValueWei = "0";
+  let reservedValueLamports = "0";
   if (!isTokenTransfer) {
-    const parsedValue = parseNativeValueWei(amount);
+    const parsedValue = isSolanaTransfer
+      ? parseNativeValueLamports(amount)
+      : parseNativeValueWei(amount);
     if (!parsedValue.ok) {
       return applyRateLimitHeaders(
         await recordIdempotentResponse(
@@ -206,7 +218,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         rateLimit
       );
     }
-    reservedValueWei = parsedValue.valueWei;
+    if (isSolanaTransfer) {
+      reservedValueLamports = parsedValue.valueWei;
+    } else {
+      reservedValueWei = parsedValue.valueWei;
+    }
   }
   const reserve = await checkAndReserveExecution({
     organizationId: apiKeyCtx.organizationId,
@@ -214,7 +230,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     type: "transfer",
     network,
     input: redactedInput,
-    reservedValueWei,
+    reserved: isSolanaTransfer
+      ? { kind: "solana", valueLamports: reservedValueLamports }
+      : { kind: "evm", valueWei: reservedValueWei },
   });
   if (!reserve.allowed) {
     // Pre-broadcast gating failure: release so the same key can be retried.

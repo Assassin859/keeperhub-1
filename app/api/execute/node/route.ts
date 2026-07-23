@@ -627,7 +627,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       type: resolved.actionType,
       network: effectiveNetwork,
       input: redactedInput,
-      reservedValueWei: parsedValue.valueWei,
+      reserved:
+        parsedValue.kind === "solana"
+          ? { kind: "solana", valueLamports: parsedValue.valueLamports }
+          : { kind: "evm", valueWei: parsedValue.valueWei },
     });
     if (!reserve.allowed) {
       return applyRateLimitHeaders(

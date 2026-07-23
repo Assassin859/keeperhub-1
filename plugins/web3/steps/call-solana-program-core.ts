@@ -28,7 +28,19 @@ export type CallSolanaProgramCoreInput = {
   instruction: string;
   args?: string | Record<string, unknown>;
   accounts?: string | Record<string, unknown>;
-  _context?: { executionId?: string; organizationId?: string };
+  /**
+   * Maximum SOL (human decimal) this instruction may move out of the
+   * organization wallet. Charged against the daily value cap before the
+   * transaction is built and enforced against the simulated balance delta
+   * before submit. Required: an Anchor instruction can move lamports through a
+   * CPI that never appears in its encoded arguments.
+   */
+  maxSol?: string;
+  _context?: {
+    executionId?: string;
+    organizationId?: string;
+    valueCapReserved?: boolean;
+  };
 };
 
 export type CallSolanaProgramResult =

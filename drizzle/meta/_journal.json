@@ -918,6 +918,20 @@
       "when": 1784120180000,
       "tag": "0130_keep_974_dispatch_key",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1784120180001,
+      "tag": "0131_keep_1017_solana_value_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1784120180002,
+      "tag": "0132_keep_1017_value_lamports",
+      "breakpoints": true
     }
   ]
 }

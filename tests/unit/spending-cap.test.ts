@@ -5,9 +5,12 @@ vi.mock("@/lib/utils/id", () => ({ generateId: () => "exec_test" }));
 
 // Hoisted state the fake tx reads from / writes to, set per test.
 const state = vi.hoisted(() => ({
-  caps: [] as Array<{ dailyValueCapWei: string | null }>,
-  sumRows: [] as Array<{ totalWei: string }>,
-  ledgerRows: [] as Array<{ totalWei: string }>,
+  caps: [] as Array<{
+    dailyValueCapWei: string | null;
+    dailySolanaValueCapLamports?: string | null;
+  }>,
+  sumRows: [] as Array<{ totalWei?: string; totalLamports?: string }>,
+  ledgerRows: [] as Array<{ totalWei?: string; totalLamports?: string }>,
   inserted: [] as Record<string, unknown>[],
 }));
 
@@ -76,7 +79,7 @@ describe("checkAndReserveExecution value cap", () => {
 
     const result = await checkAndReserveExecution({
       ...baseParams,
-      reservedValueWei: "5",
+      reserved: { kind: "evm", valueWei: "5" },
     });
 
     expect(result).toEqual({ allowed: true, executionId: "exec_test" });
@@ -92,7 +95,7 @@ describe("checkAndReserveExecution value cap", () => {
 
     const result = await checkAndReserveExecution({
       ...baseParams,
-      reservedValueWei: "999",
+      reserved: { kind: "evm", valueWei: "999" },
     });
 
     expect(result.allowed).toBe(true);
@@ -105,7 +108,7 @@ describe("checkAndReserveExecution value cap", () => {
 
     const result = await checkAndReserveExecution({
       ...baseParams,
-      reservedValueWei: "400",
+      reserved: { kind: "evm", valueWei: "400" },
     });
 
     expect(result.allowed).toBe(true);
@@ -118,7 +121,7 @@ describe("checkAndReserveExecution value cap", () => {
 
     const result = await checkAndReserveExecution({
       ...baseParams,
-      reservedValueWei: "500",
+      reserved: { kind: "evm", valueWei: "500" },
     });
 
     expect(result).toEqual({
@@ -138,7 +141,7 @@ describe("checkAndReserveExecution value cap", () => {
 
     const result = await checkAndReserveExecution({
       ...baseParams,
-      reservedValueWei: "200",
+      reserved: { kind: "evm", valueWei: "200" },
     });
 
     expect(result.allowed).toBe(false);
@@ -153,10 +156,88 @@ describe("checkAndReserveExecution value cap", () => {
 
     const result = await checkAndReserveExecution({
       ...baseParams,
-      reservedValueWei: "5000000000000000000",
+      reserved: { kind: "evm", valueWei: "5000000000000000000" },
     });
 
     expect(result.allowed).toBe(false);
     expect(state.inserted).toHaveLength(0);
+  });
+});
+
+describe("checkAndReserveExecution Solana cap", () => {
+  it("charges the lamports cap and records valueLamports, not valueWei", async () => {
+    state.caps = [
+      { dailyValueCapWei: "1000", dailySolanaValueCapLamports: "2000000000" },
+    ];
+    state.sumRows = [{ totalLamports: "500000000" }];
+    state.ledgerRows = [{ totalLamports: "0" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      network: "103",
+      reserved: { kind: "solana", valueLamports: "1000000000" },
+    });
+
+    expect(result.allowed).toBe(true);
+    // The unit columns are mutually exclusive, so each daily SUM stays
+    // single-unit.
+    expect(state.inserted[0]).toMatchObject({
+      valueLamports: "1000000000",
+      valueWei: null,
+    });
+  });
+
+  it("denies with the Solana-specific reason when the lamports cap is exceeded", async () => {
+    state.caps = [
+      { dailyValueCapWei: null, dailySolanaValueCapLamports: "1000000000" },
+    ];
+    state.sumRows = [{ totalLamports: "900000000" }];
+    state.ledgerRows = [{ totalLamports: "0" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      network: "103",
+      reserved: { kind: "solana", valueLamports: "200000000" },
+    });
+
+    expect(result).toEqual({
+      allowed: false,
+      reason: "Daily Solana spending cap exceeded",
+    });
+    expect(state.inserted).toHaveLength(0);
+  });
+
+  it("treats an unset Solana cap as unlimited and does NOT fall back to the wei cap", async () => {
+    // A wei cap that would reject this figure outright, to prove the Solana
+    // path never consults it.
+    state.caps = [{ dailyValueCapWei: "1", dailySolanaValueCapLamports: null }];
+    state.sumRows = [{ totalLamports: "0" }];
+    state.ledgerRows = [{ totalLamports: "0" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      network: "103",
+      reserved: { kind: "solana", valueLamports: "5000000000" },
+    });
+
+    expect(result.allowed).toBe(true);
+  });
+
+  it("does not let an exhausted wei cap block a Solana reservation", async () => {
+    state.caps = [
+      { dailyValueCapWei: "1000", dailySolanaValueCapLamports: "2000000000" },
+    ];
+    // Solana totals are read from the lamports columns; the wei day-total is
+    // irrelevant to this reservation and must not be consulted.
+    state.sumRows = [{ totalWei: "999999", totalLamports: "0" }];
+    state.ledgerRows = [{ totalWei: "999999", totalLamports: "0" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      network: "103",
+      reserved: { kind: "solana", valueLamports: "1000000000" },
+    });
+
+    expect(result.allowed).toBe(true);
   });
 });

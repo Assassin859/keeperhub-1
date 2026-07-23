@@ -68,6 +68,57 @@ export async function sumOrgValueTodayWei(
 }
 
 /**
+ * Total native value (LAMPORTS) an org has moved / has in-flight today on
+ * Solana, summed across both stores. The Solana twin of `sumOrgValueTodayWei`,
+ * with identical staleness and status semantics.
+ *
+ * Sums the dedicated `value_lamports` columns rather than sharing `value_wei`:
+ * the two are different units (1e9 vs 1e18), so one column would add the scales
+ * together and understate usage against whichever cap was being checked. Rows
+ * belonging to the other chain family contribute NULL, which COALESCE folds to
+ * 0, so the two totals never contaminate each other.
+ */
+export async function sumOrgSolanaValueTodayLamports(
+  executor: Executor,
+  organizationId: string
+): Promise<bigint> {
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+
+  const directRows = await executor
+    .select({
+      totalLamports: sql<string>`COALESCE(SUM(CAST(${directExecutions.valueLamports} AS NUMERIC)), 0)::text`,
+    })
+    .from(directExecutions)
+    .where(
+      and(
+        eq(directExecutions.organizationId, organizationId),
+        ne(directExecutions.status, "failed"),
+        gte(directExecutions.createdAt, todayStart),
+        sql`(${directExecutions.status} = 'completed' OR ${directExecutions.createdAt} > now() - interval '${sql.raw(String(STALE_INFLIGHT_MINUTES))} minutes')`
+      )
+    );
+
+  const ledgerRows = await executor
+    .select({
+      totalLamports: sql<string>`COALESCE(SUM(CAST(${orgValueReservations.valueLamports} AS NUMERIC)), 0)::text`,
+    })
+    .from(orgValueReservations)
+    .where(
+      and(
+        eq(orgValueReservations.organizationId, organizationId),
+        ne(orgValueReservations.status, "released"),
+        gte(orgValueReservations.createdAt, todayStart),
+        sql`(${orgValueReservations.status} = 'settled' OR ${orgValueReservations.createdAt} > now() - interval '${sql.raw(String(STALE_INFLIGHT_MINUTES))} minutes')`
+      )
+    );
+
+  const direct = BigInt(directRows[0]?.totalLamports ?? "0");
+  const ledger = BigInt(ledgerRows[0]?.totalLamports ?? "0");
+  return direct + ledger;
+}
+
+/**
  * The org's total value moved today (wei) across both stores, for read-only
  * surfaces (the dashboard gauge). Uses the app db, not a transaction.
  */
