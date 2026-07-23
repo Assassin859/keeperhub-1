@@ -327,12 +327,63 @@ export function deserializeEventTriggerData(
  * the value, not the wrapper object. Every other trigger type (Manual, Schedule,
  * Webhook, Block, ...) has no such wrappers and passes through untouched.
  */
+const MEMO_BYTES32 = /^0x[0-9a-fA-F]{64}$/;
+const MEMO_TRAILING_ZEROS = /(?:00)+$/;
+const MEMO_HEX_PAIRS = /.{2}/g;
+
+/**
+ * Decode a bytes32 memo to its UTF-8 text when it holds a printable string (an
+ * invoice / pay-run ref right-padded by encodeBytes32String), else null. A raw
+ * 32-byte hash memo is not printable text, so it returns null rather than
+ * surfacing as garbage. The canonical hex stays on args.memo; this is the
+ * human-readable companion.
+ */
+export function decodeMemoText(memo: unknown): string | null {
+  if (typeof memo !== "string" || !MEMO_BYTES32.test(memo)) {
+    return null;
+  }
+  const hex = memo.slice(2).replace(MEMO_TRAILING_ZEROS, "");
+  const pairs = hex.match(MEMO_HEX_PAIRS);
+  if (!pairs) {
+    return null;
+  }
+  const bytes = Uint8Array.from(pairs.map((b) => Number.parseInt(b, 16)));
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code > 0x7e) {
+      return null;
+    }
+  }
+  return text.length > 0 ? text : null;
+}
+
+// The Transfer trigger's bytes32 memo usually encodes an invoice ref, so expose
+// the decoded text as args.memoText next to the canonical hex args.memo.
+function attachDecodedMemo(data: Record<string, unknown>): void {
+  const args = data.args;
+  if (args && typeof args === "object" && !Array.isArray(args)) {
+    (args as Record<string, unknown>).memoText = decodeMemoText(
+      (args as Record<string, unknown>).memo
+    );
+  }
+}
+
 export function deserializeTriggerInput(
   triggerType: string | undefined,
   triggerInput: Record<string, unknown>
 ): Record<string, unknown> {
   if (triggerType === "Event" || triggerType === "Transfer") {
-    return deserializeEventTriggerData(triggerInput);
+    const deserialized = deserializeEventTriggerData(triggerInput);
+    if (triggerType === "Transfer") {
+      attachDecodedMemo(deserialized);
+    }
+    return deserialized;
   }
   return triggerInput;
 }

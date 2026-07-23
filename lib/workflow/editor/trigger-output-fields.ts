@@ -169,6 +169,11 @@ export function getTempoPaymentOutputFields(): OutputField[] {
       field: "args.memo",
       description: "The bytes32 memo attached to the transfer",
     },
+    {
+      field: "args.memoText",
+      description:
+        "The memo decoded to text (e.g. INV-1042), or empty for a non-text memo",
+    },
     { field: "transactionHash", description: "Hash of the payment transaction" },
     { field: "blockNumber", description: "Block height the payment landed in" },
     {
