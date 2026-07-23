@@ -5,7 +5,7 @@ import {
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ErrorCategory } from "@/lib/logging";
 
-export { ExecutionErrorType };
+export { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 /**
  * Classification of a workflow execution failure into:
