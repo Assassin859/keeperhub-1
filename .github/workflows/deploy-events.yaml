@@ -9,6 +9,7 @@ on:
     paths:
       - "keeperhub-events/**"
       - "deploy/event-tracker/**"
+      - "deploy/solana-tracker/**"
       - ".github/workflows/deploy-events.yaml"
   workflow_dispatch:
 
@@ -33,6 +34,7 @@ jobs:
       NAMESPACE: keeperhub
       TRACKER_ECR_NAME: keeperhub-event-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       TRACKER_HELM_FILE: deploy/event-tracker/${{ github.ref_name == 'prod' && 'prod' || 'staging' }}/values.yaml
+      SOLANA_HELM_FILE: deploy/solana-tracker/${{ github.ref_name == 'prod' && 'prod' || 'staging' }}/values.yaml
       EVENTS_SERVICE_ACCOUNT_ROLE_ARN: ${{ vars.TO_EVENTS_ROLE_ARN }}
 
     steps:
@@ -79,14 +81,16 @@ jobs:
         if: steps.skip.outputs.skip_build == 'true'
         run: |
           IMAGE_TAG="${{ steps.vars.outputs.sha_short }}"
-          if ! aws ecr describe-images \
-            --repository-name "$TRACKER_ECR_NAME" \
-            --image-ids "imageTag=event-${IMAGE_TAG}" \
-            --region "${{ env.REGION }}" >/dev/null 2>&1; then
-            echo "::error::Cannot skip build: event-${IMAGE_TAG} not found in ${TRACKER_ECR_NAME}. Remove [skip build] or push a build first."
-            exit 1
-          fi
-          echo "event-${IMAGE_TAG} exists in ${TRACKER_ECR_NAME}"
+          for prefix in event solana; do
+            if ! aws ecr describe-images \
+              --repository-name "$TRACKER_ECR_NAME" \
+              --image-ids "imageTag=${prefix}-${IMAGE_TAG}" \
+              --region "${{ env.REGION }}" >/dev/null 2>&1; then
+              echo "::error::Cannot skip build: ${prefix}-${IMAGE_TAG} not found in ${TRACKER_ECR_NAME}. Remove [skip build] or push a build first."
+              exit 1
+            fi
+            echo "${prefix}-${IMAGE_TAG} exists in ${TRACKER_ECR_NAME}"
+          done
 
       - name: Build and push event tracker image
         if: steps.skip.outputs.skip_build != 'true'
@@ -101,7 +105,7 @@ jobs:
           targets: events
           push: true
 
-      - name: Replace variables in Helm values file
+      - name: Replace variables in Helm values files
         if: steps.skip.outputs.skip_deploy != 'true'
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -113,6 +117,11 @@ jobs:
           sed -i "s|\${IMAGE_TAG}|${IMAGE_TAG}|g" "$TRACKER_HELM_FILE"
           sed -i "s|\${AWS_ACCOUNT_ID}|${AWS_ACCOUNT_ID}|g" "$TRACKER_HELM_FILE"
           sed -i "s|\${EVENTS_SERVICE_ACCOUNT_ROLE_ARN}|${EVENTS_SERVICE_ACCOUNT_ROLE_ARN}|g" "$TRACKER_HELM_FILE"
+          # solana-tracker reuses the events service account (create: false), so
+          # it has no role-arn placeholder - only image/registry/account.
+          sed -i "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" "$SOLANA_HELM_FILE"
+          sed -i "s|\${IMAGE_TAG}|${IMAGE_TAG}|g" "$SOLANA_HELM_FILE"
+          sed -i "s|\${AWS_ACCOUNT_ID}|${AWS_ACCOUNT_ID}|g" "$SOLANA_HELM_FILE"
 
       - name: Configure kubectl
         if: steps.skip.outputs.skip_deploy != 'true'
@@ -141,5 +150,23 @@ jobs:
           # would silently render blank if the role-arn variable were unset and
           # the pod would fall back to the node role. Rendered output is
           # otherwise identical to 0.2.1 apart from an opt-in helm test hook.
+          version: 0.5.0
+          atomic: true
+
+      # Separate Helm release from event-tracker: same chart, its own values
+      # (solana image tag, port 3001, HTTP health probes) and its own image in
+      # the shared events ECR. Reuses the keeperhub-events service account, so
+      # no role-arn is required here.
+      - name: Deploy solana-tracker
+        if: steps.skip.outputs.skip_deploy != 'true'
+        uses: bitovi/github-actions-deploy-eks-helm@v1.2.12
+        with:
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          config-files: ${{ env.SOLANA_HELM_FILE }}
+          chart-path: techops-services/common
+          namespace: ${{ env.NAMESPACE }}
+          timeout: 5m0s
+          name: keeperhub-solana
+          chart-repository: https://techops-services.github.io/helm-charts
           version: 0.5.0
           atomic: true

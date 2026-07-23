@@ -219,10 +219,22 @@ export const TRIGGERS = {
     },
     optionalFields: {},
     outputFields: {
-      blockNumber: "number - The block height",
-      blockHash: "string - Hash of the block",
-      blockTimestamp: "number - Unix timestamp of the block",
-      parentHash: "string - Hash of the parent block",
+      // EVM chains
+      blockNumber: "number - EVM: the block number",
+      blockHash: "string - EVM: hash of the block",
+      blockTimestamp: "number - EVM: Unix timestamp of the block",
+      parentHash: "string - EVM: hash of the parent block",
+      // Solana chains (fields emitted by the solana-tracker block payload;
+      // keep in sync with buildBlockPayload in
+      // keeperhub-events/solana-tracker/src/payload/block-payload.ts)
+      chainType: 'string - Solana: "solana"; absent on EVM block triggers',
+      slot: "number - Solana: the slot the block was produced in",
+      blockHeight:
+        "number - Solana: the block height (null for skipped/empty slots)",
+      blockhash:
+        "string - Solana: the block hash (note: lower-case, distinct from EVM blockHash)",
+      blockTime: "number - Solana: Unix timestamp of the block (may be null)",
+      parentSlot: "number - Solana: the parent slot",
       triggeredAt:
         "string - ISO timestamp when the block was detected (available on all trigger types)",
     },
