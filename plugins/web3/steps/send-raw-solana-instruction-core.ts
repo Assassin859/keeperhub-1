@@ -46,7 +46,19 @@ export type RawSolanaInstruction = {
 export type SendRawSolanaInstructionCoreInput = {
   network: string;
   instructions: string | RawSolanaInstruction[];
-  _context?: { executionId?: string; organizationId?: string };
+  /**
+   * Maximum SOL (human decimal) this transaction may move out of the
+   * organization wallet. Charged against the daily value cap before the
+   * transaction is built and enforced against the simulated balance delta
+   * before submit. Required: an arbitrary instruction can invoke any program,
+   * so the value moved is not derivable from the instruction data.
+   */
+  maxSol?: string;
+  _context?: {
+    executionId?: string;
+    organizationId?: string;
+    valueCapReserved?: boolean;
+  };
 };
 
 export type SendRawSolanaInstructionResult =

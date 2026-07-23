@@ -489,6 +489,41 @@ services:
       - minikube
 
   # ===========================================================================
+  # Solana Tracker (keeperhub-events/solana-tracker)
+  # Unified Solana ingestion for event + block triggers; routes to the same SQS
+  # queue as event-tracker. Serves an HTTP health server on HEALTH_PORT.
+  # ===========================================================================
+  solana-tracker:
+    build:
+      context: ./keeperhub-events
+      dockerfile: solana-tracker/Dockerfile
+    container_name: keeperhub-solana-tracker
+    restart: unless-stopped
+    environment:
+      HEALTH_PORT: "3001"
+      LOG_LEVEL: info
+      KEEPERHUB_API_URL: http://keeperhub:3000
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/keeperhub-workflow-queue
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      NODE_ENV: development
+    depends_on:
+      redis:
+        condition: service_started
+      localstack:
+        condition: service_healthy
+      app-dev:
+        condition: service_started
+    profiles:
+      - dev
+      - minikube
+
+  # ===========================================================================
   # Block Dispatcher (keeperhub-scheduler)
   # Monitors blockchain blocks and routes matching workflows to SQS
   # ===========================================================================

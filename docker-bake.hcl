@@ -34,7 +34,7 @@ group "default" {
 }
 
 group "events" {
-  targets = ["event-tracker"]
+  targets = ["event-tracker", "solana-tracker"]
 }
 
 group "scheduler" {
@@ -57,7 +57,7 @@ group "pipeline" {
 }
 
 group "all" {
-  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox", "metrics-collector"]
+  targets = ["app", "migrator", "workflow-runner", "event-tracker", "solana-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox", "metrics-collector"]
 }
 
 target "app" {
@@ -165,6 +165,22 @@ target "event-tracker" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache,mode=max"]
+  attest     = []
+}
+
+# Solana ingestion (event + block triggers). Shares the events ECR repo, so all
+# tags/cache are "solana-" prefixed to avoid colliding with the event-tracker
+# images. Final Dockerfile stage is "runtime", so no explicit target is needed.
+target "solana-tracker" {
+  context    = "./keeperhub-events"
+  dockerfile = "solana-tracker/Dockerfile"
+  tags = compact([
+    "${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:solana-${IMAGE_TAG}",
+    "${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:solana-latest",
+    ENVIRONMENT_TAG != "" ? "${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:solana-${ENVIRONMENT_TAG}" : "",
+  ])
+  cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache-solana"]
+  cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache-solana,mode=max"]
   attest     = []
 }
 

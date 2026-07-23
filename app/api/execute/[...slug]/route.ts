@@ -256,7 +256,7 @@ async function executeProtocolAction(
     type: "protocol-action",
     network,
     input: redactInput(withRejectedSignerOverride(body, body)),
-    reservedValueWei: parsedValue.valueWei,
+    reserved: { kind: "evm", valueWei: parsedValue.valueWei },
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(

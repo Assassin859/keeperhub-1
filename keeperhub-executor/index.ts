@@ -237,6 +237,7 @@ async function dispatchExecution(params: {
         workflowId,
         executionId,
         input,
+        triggerType,
         scheduleId,
         db,
       });
@@ -288,13 +289,19 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   );
 
   // Load the workflow and evaluate its lifecycle state in one round-trip.
-  // A soft-deleted, disabled, or deactivated workflow - or one whose owning
-  // org is deactivated - must never execute, even if a stale schedule or
-  // queued message still references it. The block_executions DB trigger is the
+  // A soft-deleted or deactivated workflow - or one whose owning org is
+  // deactivated - must never execute, even if a stale schedule or queued
+  // message still references it. The block_executions DB trigger is the
   // INSERT-time backstop; this skips the work before it gets that far. The org
   // owns the workflow, so org deactivation is the owner gate.
+  //
+  // Manual runs are the exception: the editor "Run" button must work on
+  // not-yet-enabled drafts, so manual triggers pass requireEnabled: false to
+  // match the interactive execute route. That only bypasses the "disabled"
+  // reason - deleted/deactivated/org-deactivated still block - so it stays safe.
+  // Automated triggers (schedule/event/block/webhook) keep the enabled gate.
   const loaded = await loadWorkflowForExecution(workflowId, {
-    requireEnabled: true,
+    requireEnabled: triggerType !== "manual",
   });
   if (loaded.status === "not_found") {
     console.error(`[Executor] Workflow not found: ${workflowId}`);

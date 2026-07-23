@@ -26,7 +26,10 @@ import {
 } from "@/lib/db/schema-extensions";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
-import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
+import {
+  sumOrgSolanaValueTodayLamports,
+  sumOrgValueTodayWei,
+} from "@/lib/execute/value-ledger";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
@@ -1337,24 +1340,36 @@ export async function getStepLogs(
 export async function getSpendCapData(organizationId: string): Promise<{
   dailyCapWei: string | null;
   dailyUsedWei: string;
+  dailySolanaCapLamports: string | null;
+  dailySolanaUsedLamports: string;
 }> {
   // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
   // per day, summed across BOTH stores (direct executions AND the workflow/
   // protocol value ledger, with the same stale-window aging), against the org's
   // daily value cap. Using the shared SUM keeps the gauge honest -- it shows the
   // same number enforcement checks, so workflow spend counts too.
-  const [capResult, dailyUsedWei] = await Promise.all([
+  // Solana is reported alongside as its own pair: its cap and usage are
+  // lamports-denominated and enforced against a separate column, so folding
+  // them into the wei figures would misreport both gauges.
+  const [capResult, dailyUsedWei, dailySolanaUsedLamports] = await Promise.all([
     db
-      .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
+      .select({
+        dailyValueCapWei: organizationSpendCaps.dailyValueCapWei,
+        dailySolanaValueCapLamports:
+          organizationSpendCaps.dailySolanaValueCapLamports,
+      })
       .from(organizationSpendCaps)
       .where(eq(organizationSpendCaps.organizationId, organizationId))
       .limit(1),
     sumOrgValueTodayWei(db, organizationId),
+    sumOrgSolanaValueTodayLamports(db, organizationId),
   ]);
 
   return {
     dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
     dailyUsedWei: dailyUsedWei.toString(),
+    dailySolanaCapLamports: capResult[0]?.dailySolanaValueCapLamports ?? null,
+    dailySolanaUsedLamports: dailySolanaUsedLamports.toString(),
   };
 }
 

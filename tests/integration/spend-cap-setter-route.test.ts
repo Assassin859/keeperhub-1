@@ -119,6 +119,7 @@ describe("PUT /api/analytics/spend-cap", () => {
     expect(mocks.upsertValues).toHaveBeenCalledWith({
       organizationId: ORG_ID,
       dailyValueCapWei: "1000000000000000000",
+      dailySolanaValueCapLamports: null,
     });
     expect(mocks.upsertConflict).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -138,6 +139,7 @@ describe("PUT /api/analytics/spend-cap", () => {
     expect(mocks.upsertValues).toHaveBeenCalledWith({
       organizationId: ORG_ID,
       dailyValueCapWei: null,
+      dailySolanaValueCapLamports: null,
     });
   });
 });
