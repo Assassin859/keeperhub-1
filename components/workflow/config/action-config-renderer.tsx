@@ -1,9 +1,14 @@
 "use client";
 
 import { ChevronDown, Info } from "lucide-react";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  SUPPORTED_TIMEZONES,
+  TimezoneSelect,
+} from "@/components/ui/timezone-select";
 import {
   Tooltip,
   TooltipContent,
@@ -39,6 +44,10 @@ type FieldProps = {
   field: ActionConfigFieldBase;
   value: string;
   onChange: (value: unknown) => void;
+  // Writes an arbitrary config key. Fields that persist companion metadata
+  // (e.g. a datetime field's display timezone) use this instead of `onChange`,
+  // which is pinned to `field.key`.
+  onUpdateConfig?: (key: string, value: unknown) => void;
   disabled?: boolean;
   config?: Record<string, unknown>;
   nodeId?: string;
@@ -133,6 +142,282 @@ function NumberInputField({ field, value, onChange, disabled }: FieldProps) {
       type="number"
       value={value}
     />
+  );
+}
+
+// Minutes the IANA `timeZone` is ahead of UTC at a given instant (handles DST).
+function tzOffsetMinutes(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(instant);
+  const get = (type: string): number =>
+    Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const asUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second")
+  );
+  return (asUtc - instant.getTime()) / 60_000;
+}
+
+// Stored UTC instant -> the "YYYY-MM-DDTHH:MM" wall-clock the picker shows for
+// the chosen zone. "" for empty/unparseable values (legacy unix / template).
+function instantToWall(iso: string, timeZone: string): string {
+  if (!iso) {
+    return "";
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const shifted = new Date(date.getTime() + tzOffsetMinutes(date, timeZone) * 60_000);
+  return shifted.toISOString().slice(0, 16);
+}
+
+// Wall-clock the user entered in `timeZone` -> the absolute UTC instant to store.
+function wallToInstant(wall: string, timeZone: string): string {
+  const naiveUtc = new Date(`${wall}:00Z`);
+  if (Number.isNaN(naiveUtc.getTime())) {
+    return "";
+  }
+  const firstOffset = tzOffsetMinutes(naiveUtc, timeZone);
+  const candidate = new Date(naiveUtc.getTime() - firstOffset * 60_000);
+  // Re-derive the offset at the candidate instant to settle DST boundaries.
+  const settledOffset = tzOffsetMinutes(candidate, timeZone);
+  return new Date(naiveUtc.getTime() - settledOffset * 60_000).toISOString();
+}
+
+type DateTimeMode = "absolute" | "relative" | "dynamic";
+
+// Relative offset from the run time: "+2h", "+30m", "+7d" (optional "now" prefix).
+const RELATIVE_OFFSET_RE = /^(?:now)?\+(\d+)\s*([mhd])$/i;
+const RELATIVE_UNITS: { value: string; label: string }[] = [
+  { value: "m", label: "Minutes" },
+  { value: "h", label: "Hours" },
+  { value: "d", label: "Days" },
+];
+const DATETIME_MODES: { value: DateTimeMode; label: string }[] = [
+  { value: "absolute", label: "Fixed date" },
+  { value: "relative", label: "Relative" },
+  { value: "dynamic", label: "Dynamic" },
+];
+
+// The stored value's shape selects the editor: "{{..}}" is a template reference,
+// "+2h" is a relative offset, anything else is an absolute instant.
+function inferDateTimeMode(value: string): DateTimeMode {
+  if (value.startsWith("{{")) {
+    return "dynamic";
+  }
+  if (RELATIVE_OFFSET_RE.test(value)) {
+    return "relative";
+  }
+  return "absolute";
+}
+
+function DateTimeModeToggle({
+  mode,
+  onMode,
+  disabled,
+}: {
+  mode: DateTimeMode;
+  onMode: (mode: DateTimeMode) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex gap-1">
+      {DATETIME_MODES.map((option) => (
+        <Button
+          disabled={disabled}
+          key={option.value}
+          onClick={() => onMode(option.value)}
+          size="sm"
+          type="button"
+          variant={mode === option.value ? "default" : "outline"}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+// Number + unit, stored as "+<n><unit>" and resolved against the run time by the
+// step, so the window is recomputed fresh on every run instead of going stale.
+function RelativeOffsetInput({
+  id,
+  value,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: unknown) => void;
+  disabled?: boolean;
+}) {
+  const match = RELATIVE_OFFSET_RE.exec(value);
+  // Hold amount + unit in local state so the unit selection sticks even before
+  // an amount is typed. Deriving both from the "+<n><unit>" string dropped the
+  // unit whenever the amount was empty (nothing to store).
+  const [amount, setAmount] = useState<string>(match?.[1] ?? "");
+  const [unit, setUnit] = useState<string>((match?.[2] ?? "h").toLowerCase());
+  const write = (nextAmount: string, nextUnit: string): void => {
+    const trimmed = nextAmount.trim();
+    onChange(trimmed ? `+${trimmed}${nextUnit}` : "");
+  };
+  const handleAmount = (next: string): void => {
+    setAmount(next);
+    write(next, unit);
+  };
+  const handleUnit = (next: string): void => {
+    setUnit(next);
+    write(amount, next);
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        className="w-24"
+        disabled={disabled}
+        id={id}
+        min={1}
+        onChange={(e) => handleAmount(e.target.value)}
+        placeholder="2"
+        type="number"
+        value={amount}
+      />
+      <div className="w-32 [&_button]:w-full">
+        <Select disabled={disabled} onValueChange={handleUnit} value={unit}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RELATIVE_UNITS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <span className="text-muted-foreground text-sm">after the run</span>
+    </div>
+  );
+}
+
+// Date/time field with three modes. The value is an absolute UTC ISO instant, a
+// relative offset ("+2h"), or a template ("{{@Node.date}}") -- all resolved to
+// unix seconds by the step at run time. Absolute mode persists its display zone
+// as `_tz_<key>` metadata (like the schedule trigger's `scheduleTimezone`) so a
+// reload shows the same wall-clock the user entered.
+function DateTimeField({
+  field,
+  value,
+  onChange,
+  onUpdateConfig,
+  disabled,
+  config,
+}: FieldProps) {
+  const tzKey = `_tz_${field.key}`;
+  const storedTz = config?.[tzKey];
+  const [mode, setMode] = useState<DateTimeMode>(() =>
+    inferDateTimeMode(value)
+  );
+
+  const [browserTz, setBrowserTz] = useState<string>("UTC");
+  useEffect(() => {
+    // Default to the browser zone only when the picker can render it; otherwise
+    // fall back to UTC so the trigger never shows blank.
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    setBrowserTz(detected && SUPPORTED_TIMEZONES.has(detected) ? detected : "UTC");
+  }, []);
+
+  // Prefer the saved zone; fall back to the browser zone only when none stored.
+  const timeZone =
+    typeof storedTz === "string" && SUPPORTED_TIMEZONES.has(storedTz)
+      ? storedTz
+      : browserTz;
+
+  const changeMode = (next: DateTimeMode): void => {
+    if (next === mode) {
+      return;
+    }
+    setMode(next);
+    // The three encodings are not interchangeable, so clear on a mode switch.
+    onChange("");
+    // Only Absolute mode carries a display zone; drop the companion metadata
+    // when leaving it so a stale `_tz_<key>` is not persisted.
+    if (next !== "absolute" && storedTz !== undefined) {
+      onUpdateConfig?.(tzKey, undefined);
+    }
+  };
+
+  // Reinterpret the current wall-clock in the new zone (so "09:00" stays 09:00,
+  // now in the chosen zone) and persist the recomputed instant plus the zone.
+  const handleTimeZoneChange = (nextZone: string): void => {
+    onUpdateConfig?.(tzKey, nextZone);
+    if (value) {
+      const wall = instantToWall(value, timeZone);
+      if (wall) {
+        onChange(wallToInstant(wall, nextZone));
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <DateTimeModeToggle disabled={disabled} mode={mode} onMode={changeMode} />
+      {mode === "absolute" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="min-w-0 flex-1"
+            disabled={disabled}
+            id={field.key}
+            onChange={(e) =>
+              onChange(
+                e.target.value ? wallToInstant(e.target.value, timeZone) : ""
+              )
+            }
+            type="datetime-local"
+            value={instantToWall(value, timeZone)}
+          />
+          {/* Capped + truncated so the long IANA label never stretches the row. */}
+          <div className="w-40 shrink-0 [&_button]:w-full">
+            <TimezoneSelect
+              disabled={disabled}
+              id={`${field.key}-tz`}
+              onValueChange={handleTimeZoneChange}
+              value={timeZone}
+            />
+          </div>
+        </div>
+      )}
+      {mode === "relative" && (
+        <RelativeOffsetInput
+          disabled={disabled}
+          id={field.key}
+          onChange={onChange}
+          value={value}
+        />
+      )}
+      {mode === "dynamic" && (
+        <TemplateBadgeInput
+          disabled={disabled}
+          id={field.key}
+          onChange={onChange}
+          placeholder="{{@Node.date}}"
+          value={value}
+        />
+      )}
+    </div>
   );
 }
 
@@ -420,6 +705,7 @@ const FIELD_RENDERERS: Partial<
   "template-textarea": TemplateTextareaField,
   text: TextInputField,
   number: NumberInputField,
+  datetime: DateTimeField,
   select: SelectField,
   "schema-builder": SchemaBuilderField,
 };
@@ -605,6 +891,7 @@ function renderField(
         field={field}
         nodeId={nodeId}
         onChange={(val: unknown) => onUpdateConfig(field.key, val)}
+        onUpdateConfig={onUpdateConfig}
         value={value}
       />
     </div>

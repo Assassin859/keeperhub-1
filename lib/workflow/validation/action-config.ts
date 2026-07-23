@@ -164,6 +164,17 @@ function isLegacyIgnoredField(actionType: string, key: string): boolean {
   return LEGACY_IGNORED_FIELDS[actionType]?.has(key) ?? false;
 }
 
+// UI-only companion metadata carries one of these prefixes (a datetime field's
+// display timezone `_tz_<key>`, event/protocol picker state). The step runtime
+// never reads them, so they are tolerated by config validation. An `_`-prefixed
+// key outside this set still surfaces as UNKNOWN_FIELD so a typo does not pass
+// silently.
+const METADATA_KEY_PREFIXES = ["_tz_", "_event", "_protocol"] as const;
+
+function isMetadataKey(key: string): boolean {
+  return METADATA_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
 // Whether a config key is accepted for the given action. Mirrors the
 // UNKNOWN_FIELD check in validateWorkflowActionConfigs so the editor can prune
 // cross-action leftovers before save with the same allowlist the server uses.
@@ -359,12 +370,11 @@ export function validateWorkflowActionConfigs(
     }
 
     // Draft state: the config contains only actionType, reserved keys, and
-    // underscore-prefixed metadata keys — no user-supplied parameters yet.
-    // Skip all validation for this node: required-field, type, and UNKNOWN_FIELD
-    // checks are omitted because underscore-prefixed keys (e.g. _protocolMeta)
-    // would otherwise be flagged as unknown fields.
+    // known metadata keys — no user-supplied parameters yet. Skip all validation
+    // for this node: required-field, type, and UNKNOWN_FIELD checks are omitted
+    // because companion metadata (e.g. `_tz_<key>`) would otherwise be flagged.
     const hasUserParams = Object.keys(config).some(
-      (k) => !(RESERVED_CONFIG_KEYS.has(k) || k.startsWith("_"))
+      (k) => !(RESERVED_CONFIG_KEYS.has(k) || isMetadataKey(k))
     );
     if (!hasUserParams) {
       continue;
@@ -376,6 +386,12 @@ export function validateWorkflowActionConfigs(
 
     for (const [key, value] of Object.entries(config)) {
       if (RESERVED_CONFIG_KEYS.has(key)) {
+        continue;
+      }
+      // Known companion metadata (e.g. a datetime field's display timezone
+      // `_tz_<key>`) is UI-only; the step runtime never reads it, so it is never
+      // an "unknown field". Other `_`-prefixed keys still fall through and report.
+      if (isMetadataKey(key)) {
         continue;
       }
       if (fieldsByKey.has(key)) {
@@ -469,7 +485,7 @@ export function hasDraftActionNodes(
       continue;
     }
     const hasUserParams = Object.keys(config).some(
-      (k) => !(RESERVED_CONFIG_KEYS.has(k) || k.startsWith("_"))
+      (k) => !(RESERVED_CONFIG_KEYS.has(k) || isMetadataKey(k))
     );
     if (!hasUserParams) {
       return true;

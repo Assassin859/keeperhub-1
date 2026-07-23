@@ -8,7 +8,8 @@
 # .github/workflows/deploy-pr-environment.yaml).
 #
 # Variables substituted by envsubst at deploy time:
-#   ${PR_NUMBER}, ${ECR_REGISTRY}, ${IMAGE_TAG}, ${EXECUTOR_IMAGE_TAG}
+#   ${PR_NUMBER}, ${ECR_REGISTRY}, ${IMAGE_TAG}, ${EXECUTOR_IMAGE_TAG},
+#   ${RUNNER_IMAGE_TAG}
 
 replicaCount: 1
 
@@ -84,16 +85,15 @@ env:
   SQS_DLQ_URL:
     type: kv
     value: "http://localstack.pr-${PR_NUMBER}.svc.cluster.local:4566/000000000000/keeperhub-workflow-queue-dlq"
-  # PR deploys do not build a workflow-runner image per-sha (see commit
-  # message of the matrix-trim: "satellite services use pre-built
-  # staging images"). The runner therefore points at the rolling
-  # workflow-runner-latest tag, mirroring how the executor falls back
-  # to executor-latest without the deploy-pr-executor label. If
-  # PR-specific runner code changes need testing, add a deploy-pr-runner
-  # label and a build-runner-image job mirroring build-executor-image.
+  # The workflow steps run in a per-execution Job using RUNNER_IMAGE, so the
+  # runner must carry the PR's executor.workflow.ts changes to exercise them.
+  # The deploy-pr-executor label builds a PR runner (workflow-runner-<sha>) from
+  # the same Dockerfile as the executor; without the label, RUNNER_IMAGE_TAG
+  # stays workflow-runner-latest (staging), mirroring how the executor falls
+  # back to executor-latest.
   RUNNER_IMAGE:
     type: kv
-    value: "${ECR_REGISTRY}/keeperhub-staging:workflow-runner-latest"
+    value: "${ECR_REGISTRY}/keeperhub-staging:${RUNNER_IMAGE_TAG}"
   # Code Node sandbox. Forwarded into runner Job pods via
   # RUNNER_SYSTEM_ENV_VARS in keeperhub-executor/runner-env.ts. Without
   # both set the runner trips the NODE_ENV=production assertion at

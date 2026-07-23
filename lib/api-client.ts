@@ -5,6 +5,7 @@
 
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import type { Page } from "@/lib/pagination";
+import type { HeldPaymentView } from "@/lib/tempo/held-payment-view";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import type { WorkflowExportV1 } from "@/lib/workflow/export-schema";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -528,6 +529,50 @@ export const addressBookApi = {
       method: "DELETE",
     }),
 };
+
+// Tempo Held Payments API
+export const heldPaymentApi = {
+  list: (params?: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) {
+      qs.set("page", String(params.page));
+    }
+    if (params?.limit) {
+      qs.set("limit", String(params.limit));
+    }
+    if (params?.status) {
+      qs.set("status", params.status);
+    }
+    if (params?.q?.trim()) {
+      qs.set("q", params.q.trim());
+    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiCall<Page<HeldPaymentView>>(`/api/tempo/held-payments${suffix}`);
+  },
+  cancel: (id: string) =>
+    apiCall<{ ok: boolean; status: string }>(
+      `/api/tempo/held-payments/${id}/cancel`,
+      { method: "POST" }
+    ),
+};
+
+/** Broadcast returns the raw Response so the caller can branch on the step-up
+ *  MFA codes (factors_required / mfa_code_invalid) carried in the JSON body. */
+export function postHeldPaymentBroadcast(
+  id: string,
+  body: { code?: string; emailOtp?: string; signature?: string }
+): Promise<Response> {
+  return fetch(`/api/tempo/held-payments/${id}/broadcast`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 
 // User API
 export const userApi = {

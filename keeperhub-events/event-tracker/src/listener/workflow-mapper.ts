@@ -154,6 +154,18 @@ export function buildRegistration(
   const userId = typeof workflow.userId === "string" ? workflow.userId : "";
   const workflowName = typeof workflow.name === "string" ? workflow.name : "";
 
+  // Optional post-decode filters carried by the Transfer trigger.
+  // Undefined for generic Event triggers, which never filter on decoded args.
+  const recipientFilter =
+    typeof config.recipientAddress === "string" &&
+    config.recipientAddress.length > 0
+      ? config.recipientAddress
+      : undefined;
+  const memoFilter =
+    typeof config.memo === "string" && config.memo.length > 0
+      ? config.memo
+      : undefined;
+
   const registration: Omit<WorkflowRegistration, "configHash"> = {
     workflowId,
     userId,
@@ -165,6 +177,8 @@ export function buildRegistration(
     eventName,
     eventsAbiStrings,
     rawEventsAbi,
+    recipientFilter,
+    memoFilter,
   };
   return {
     ...registration,
@@ -192,6 +206,8 @@ export function hashRegistration(
     eventName: reg.eventName,
     eventsAbiStrings: reg.eventsAbiStrings,
     userId: reg.userId,
+    recipientFilter: reg.recipientFilter ?? null,
+    memoFilter: reg.memoFilter ?? null,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

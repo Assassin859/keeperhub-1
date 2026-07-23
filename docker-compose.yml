@@ -453,6 +453,39 @@ services:
       - minikube
 
   # ===========================================================================
+  # Tempo Broadcast Due (held payments)
+  # Broadcasts scheduled Tempo held payments whose broadcastAt has arrived,
+  # expires lapsed ones, and reconciles already-broadcast ones. The endpoint is
+  # idempotent and self-scoping, so polling often only affects how soon a due
+  # payment is released.
+  # ===========================================================================
+  tempo-broadcast-due:
+    image: alpine:3.20
+    container_name: keeperhub-tempo-broadcast-due
+    restart: unless-stopped
+    environment:
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
+    volumes:
+      - ./deploy/scripts:/scripts:ro
+    depends_on:
+      app-dev:
+        condition: service_started
+      hmac-seed:
+        condition: service_completed_successfully
+    command: |
+      sh -c 'apk add --no-cache curl openssl >/dev/null;
+        while true; do
+          echo "[TempoBroadcastDue] Running at $$(date)"
+          sh /scripts/reaper.sh http://app-dev:3000/api/internal/tempo/broadcast-due || echo "[TempoBroadcastDue] Failed"
+          echo ""
+          echo "[TempoBroadcastDue] Sleeping 60s..."
+          sleep 60
+        done'
+    profiles:
+      - dev
+      - minikube
+
+  # ===========================================================================
   # Event Tracker (keeperhub-events)
   # Monitors blockchain events and routes to SQS for unified executor
   # ===========================================================================

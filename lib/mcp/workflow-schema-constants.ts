@@ -239,6 +239,33 @@ export const TRIGGERS = {
         "string - ISO timestamp when the block was detected (available on all trigger types)",
     },
   },
+  Transfer: {
+    triggerType: "Transfer",
+    label: "Transfer",
+    description:
+      "Fires when a TIP-20 TransferWithMemo payment lands on a watched Tempo address, with an optional memo filter for invoice matching",
+    requiredFields: {
+      network: 'string - Tempo chain ID ("4217" mainnet, "42431" Moderato)',
+      contractAddress:
+        "string - TIP-20 stablecoin token contract to watch for payments",
+      recipientAddress:
+        "string - The deposit address to match against the transfer recipient",
+    },
+    optionalFields: {
+      memo: "string - Only fire when the transfer memo matches. A 0x + 64-hex value matches exactly; a shorter string matches as a prefix",
+    },
+    outputFields: {
+      "args.from": "string - Sender address of the payment",
+      "args.to": "string - Recipient address (the watched deposit address)",
+      "args.value": "string - Amount transferred, in the token's smallest unit",
+      "args.memo": "string - The bytes32 memo attached to the transfer",
+      transactionHash: "string - Hash of the payment transaction",
+      blockNumber: "number - Block height the payment landed in",
+      address: "string - The TIP-20 token contract that emitted the event",
+      triggeredAt:
+        "string - ISO timestamp when the payment was detected (available on all trigger types)",
+    },
+  },
 } as const;
 
 // =============================================================================
