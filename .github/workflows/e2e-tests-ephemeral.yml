@@ -644,6 +644,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          solana_wallet_provisioning_enabled: "true"
           # NEXT_PUBLIC_AI_PROMPT_ENABLED is baked into the build-app
           # artifact, so only the runtime AI provider env is set here.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -931,6 +932,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          solana_wallet_provisioning_enabled: "true"
           # Shadow-mode SSRF so the app's setup workflows can reach the
           # localhost anvil mainnet fork (chain 1 -> :8548).
           safe_fetch_shadow: "true"
@@ -1239,6 +1241,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          solana_wallet_provisioning_enabled: "true"
           load_test_bypass_token: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
           # Enable testEndpointsEnabled() so the strict-signin/start credential
           # rate-limit bypass honors playwright's X-Test-API-Key header (the
