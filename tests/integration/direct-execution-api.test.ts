@@ -346,7 +346,7 @@ describe("Direct Execution API", () => {
       expect(mocks.checkAndReserveExecution).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "transfer",
-          reservedValueWei: "1000000000000000000",
+          reserved: { kind: "evm", valueWei: "1000000000000000000" },
         })
       );
     });
@@ -366,7 +366,9 @@ describe("Direct Execution API", () => {
       );
 
       expect(mocks.checkAndReserveExecution).toHaveBeenCalledWith(
-        expect.objectContaining({ reservedValueWei: "0" })
+        expect.objectContaining({
+          reserved: { kind: "evm", valueWei: "0" },
+        })
       );
     });
 
