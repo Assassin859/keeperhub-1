@@ -164,7 +164,7 @@ async function handleWriteCall(
     type: "contract-call",
     network: body.network as string,
     input: redactedInput,
-    reservedValueWei: parsedValue.valueWei,
+    reserved: { kind: "evm", valueWei: parsedValue.valueWei },
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(

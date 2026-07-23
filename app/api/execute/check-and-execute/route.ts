@@ -147,7 +147,7 @@ async function executeConditionalWrite(
     input: redactedInput,
     // The conditional write never forwards native value (writeContractCore is
     // called without ethValue), so nothing is charged to the value cap here.
-    reservedValueWei: "0",
+    reserved: { kind: "evm", valueWei: "0" },
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(

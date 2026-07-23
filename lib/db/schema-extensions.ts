@@ -634,6 +634,12 @@ export const directExecutions = pgTable(
     // that move no native value (treated as 0). ERC-20 token value is not yet
     // priced into this figure.
     valueWei: text("value_wei"),
+    // Native notional value (lamports) a Solana execution moves. Deliberately a
+    // separate column from valueWei rather than a shared one: the daily cap sums
+    // these per org, and wei and lamports are different units, so a shared
+    // column would silently add 1e18-scaled and 1e9-scaled figures together.
+    // Exactly one of valueWei / valueLamports is set per row.
+    valueLamports: text("value_lamports"),
     // Populated by a future price-oracle integration; null until then
     estimatedCostUsd: text("estimated_cost_usd"),
     retryCount: integer("retry_count").notNull().default(0),
@@ -710,8 +716,17 @@ export type NewIdempotencyRecord = typeof idempotencyRecords.$inferInsert;
  * gas-denominated figure, no longer enforced or displayed; nullable so a
  * value-only cap row can be created without it.
  *
- * When no row exists for an org, or `dailyValueCapWei` is null, value spending
- * is unlimited (no cap enforced).
+ * `dailySolanaValueCapLamports` is the Solana equivalent, denominated in
+ * lamports. Solana native value is NOT charged against `dailyValueCapWei`:
+ * that column is wei-denominated and an admin sets it thinking in ETH, so
+ * mixing SOL into it would compare two non-commensurable assets against one
+ * number. Keeping a separate per-chain-family cap is what lets SOL be
+ * accounted at its true 9-decimal precision instead of being scaled to 18
+ * decimals to share the ETH cap.
+ *
+ * When no row exists for an org, or the relevant cap column is null, spending
+ * of that kind is unlimited (no cap enforced). The two caps are independent:
+ * a null Solana cap does not fall back to the wei cap.
  */
 export const organizationSpendCaps = pgTable("organization_spend_caps", {
   id: text("id")
@@ -723,6 +738,7 @@ export const organizationSpendCaps = pgTable("organization_spend_caps", {
     .references(() => organization.id),
   dailyCapWei: text("daily_cap_wei"),
   dailyValueCapWei: text("daily_value_cap_wei"),
+  dailySolanaValueCapLamports: text("daily_solana_value_cap_lamports"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -752,6 +768,12 @@ export const orgValueReservations = pgTable(
       .notNull()
       .references(() => organization.id),
     valueWei: text("value_wei").notNull(),
+    // Native notional value (lamports) for Solana reservations. Separate from
+    // valueWei because the two are different units and each daily cap sums only
+    // its own column. A Solana row carries valueWei "0" (the column is NOT NULL
+    // and predates this) plus the real figure here, so the wei SUM is unaffected
+    // by Solana activity and vice versa.
+    valueLamports: text("value_lamports"),
     status: text("status").notNull().default("reserved"), // reserved | settled | released
     // Origin of the value-moving execution, for audit only.
     source: text("source"), // direct | workflow | protocol

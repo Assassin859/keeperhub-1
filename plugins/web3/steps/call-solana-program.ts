@@ -1,5 +1,6 @@
 import "server-only";
 
+import { withStepValueCap } from "@/lib/execute/value-ledger";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
   type StepInput,
@@ -34,7 +35,18 @@ export async function callSolanaProgramStep(
       actionName: "call-solana-program-anchor",
       executionId: input._context?.executionId,
     },
-    () => withStepLogging(input, () => callSolanaProgramCore(input))
+    () =>
+      withStepLogging(input, () =>
+        withStepValueCap(
+          {
+            organizationId: input._context?.organizationId,
+            amountEth: input.maxSol,
+            executionId: input._context?.executionId,
+            valueCapReserved: input._context?.valueCapReserved,
+          },
+          () => callSolanaProgramCore(input)
+        )
+      )
   );
 }
 

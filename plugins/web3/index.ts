@@ -484,7 +484,17 @@ const web3Plugin: IntegrationPlugin = {
           placeholder:
             '[{ "programId": "...", "accounts": [{ "pubkey": "...", "isSigner": false, "isWritable": true }], "data": "<base64 or 0x-hex>" }]',
           helpTip:
-            "A JSON array of Solana instructions. Each entry has a base58 programId, an ordered accounts array (pubkey plus isSigner/isWritable flags), and instruction data as standard base64 or 0x-hex. Only the organization wallet may be marked isSigner, and it is always the fee payer. There is no spend limit - any instruction here executes with the wallet's full authority, including moving its SOL or tokens, so use with caution.",
+            "A JSON array of Solana instructions. Each entry has a base58 programId, an ordered accounts array (pubkey plus isSigner/isWritable flags), and instruction data as standard base64 or 0x-hex. Only the organization wallet may be marked isSigner, and it is always the fee payer. Any instruction here executes with the wallet's full authority, including moving its SOL or tokens, so use with caution.",
+          required: true,
+        },
+        {
+          key: "maxSol",
+          label: "Max SOL to Move",
+          type: "template-input",
+          placeholder: "0.5 or {{NodeName.maxSol}}",
+          example: "0.5",
+          helpTip:
+            "The maximum SOL this transaction is permitted to move out of the organization wallet. Charged against the organization's daily value cap before the transaction is built, and enforced against the simulated balance change before it is submitted: if the simulation shows a larger outflow, the transaction is rejected rather than sent. Required, because the value an arbitrary instruction moves cannot be determined from the instruction data alone.",
           required: true,
         },
       ],
@@ -582,6 +592,16 @@ const web3Plugin: IntegrationPlugin = {
           placeholder: '{ "authority": "<base58>", "tokenAccount": "<base58>" }',
           helpTip:
             "A JSON object mapping each account name in the IDL instruction to its base58 pubkey. Accounts with a fixed address in the IDL (e.g. system program) are filled automatically, and a signer slot left empty defaults to the organization wallet. Only the organization wallet may sign.",
+        },
+        {
+          key: "maxSol",
+          label: "Max SOL to Move",
+          type: "template-input",
+          placeholder: "0.5 or {{NodeName.maxSol}}",
+          example: "0.5",
+          helpTip:
+            "The maximum SOL this instruction is permitted to move out of the organization wallet. Charged against the organization's daily value cap before the transaction is built, and enforced against the simulated balance change before it is submitted: if the simulation shows a larger outflow, the transaction is rejected rather than sent. Required, because an Anchor instruction can move lamports through a CPI that does not appear in its encoded arguments.",
+          required: true,
         },
       ],
     },
