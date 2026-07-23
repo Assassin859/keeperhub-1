@@ -10,7 +10,7 @@
  */
 
 import "dotenv/config";
-import { eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
@@ -840,6 +840,46 @@ async function seedChains() {
 
     await db.insert(chains).values(chain);
     console.log(`  + ${chain.name} (${chain.chainId}) inserted`);
+  }
+
+  // Disable any chain row whose chainId is no longer produced by this seed.
+  //
+  // The upsert above is keyed on chainId, so changing a chain's id leaves the
+  // old row behind, still enabled. That is not hypothetical: moving Solana
+  // devnet from 102 to 103 inserted 103 and left 102 in place, so an
+  // environment ended up serving two enabled rows both named "Solana Devnet" -
+  // one of them an id the app rejects as not a Solana chain.
+  //
+  // Disable rather than delete: chains are referenced by workflows, executions
+  // and supported tokens, so removing a row would orphan live data. A disabled
+  // row is invisible to resolveRpcConfig (it filters on isEnabled) which is the
+  // behaviour we want, and stays available for historical lookups.
+  const seededChainIds = DEFAULT_CHAINS.map((c) => c.chainId);
+
+  // Guard: only prune when CHAIN_RPC_CONFIG actually parsed. Without it the
+  // chainIds above fall back to hardcoded defaults, so a config that failed to
+  // load would disable every chain whose id is set from config - turning a
+  // recoverable parse failure into an outage.
+  if (Object.keys(rpcConfig).length === 0) {
+    console.warn(
+      "  ! Skipping stale-chain prune: CHAIN_RPC_CONFIG did not parse, so seeded chainIds may be defaults rather than the configured values"
+    );
+  } else {
+    const stale = await db
+      .update(chains)
+      .set({ isEnabled: false, updatedAt: new Date() })
+      .where(
+        and(notInArray(chains.chainId, seededChainIds), eq(chains.isEnabled, true))
+      )
+      .returning({ chainId: chains.chainId, name: chains.name });
+
+    if (stale.length === 0) {
+      console.log("  = No stale chains to disable");
+    } else {
+      for (const c of stale) {
+        console.log(`  - ${c.name} (${c.chainId}) disabled - no longer in config`);
+      }
+    }
   }
 
   // Build EXPLORER_CONFIGS dynamically using resolved chainIds from DEFAULT_CHAINS
