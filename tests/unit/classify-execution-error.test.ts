@@ -43,6 +43,17 @@ describe("classifyExecutionError", () => {
     });
   });
 
+  it("keeps RPC failover exhaustion as system even when the provider response mentions an unsupported network", () => {
+    const result = classifyExecutionError(
+      'Event query failed: RPC failed on both endpoints. Primary: server response 400 Bad Request ({ "message": "Unsupported network: eth" }). Fallback: timeout'
+    );
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.NETWORK_RPC,
+      errorType: "system",
+      code: "N-0001",
+    });
+  });
+
   it("defaults unmatched messages to system so real engine faults still page", () => {
     const result = classifyExecutionError("some unexpected internal failure");
     expect(result.errorType).toBe("system");
