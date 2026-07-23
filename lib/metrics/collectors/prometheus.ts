@@ -388,29 +388,33 @@ const billingTrialsByOutcome = getOrCreateGauge(
 // Per-org execution counts (rolling 30-day window). Keyed only on
 // org_slug so the series identity stays stable when an org changes plan.
 // Join with keeperhub_org_info for plan/billing_status context.
+// Counts billable executions only (same predicate as the billing guard), so
+// billing-blocked phantom rows and x402 pay-per-call runs are excluded.
 const orgExecutions30d = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_30d",
-  "Workflow executions per org in the last 30 days",
+  "Billable workflow executions per org in the last 30 days",
   ["org_slug"]
 );
 
 // Per-org execution counts (current calendar month, used for plan limit
-// pressure).
+// pressure). Billable-only, matching what the billing guard counts.
 const orgExecutionsMonth = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_month",
-  "Workflow executions per org since start of the current calendar month",
+  "Billable workflow executions per org since start of the current calendar month",
   ["org_slug"]
 );
 
-// Plan usage ratio: current-month executions / monthly limit. 0 when the
-// plan is unlimited (enterprise) or when there is no usage. Drives the
-// "approaching plan limit" alert and the dashboard heatmap.
+// Plan usage ratio: current-month billable executions / monthly limit. 0 when
+// the plan is unlimited (enterprise) or when there is no usage. Drives the
+// "approaching plan limit" alert and the dashboard heatmap. Billable-only, so
+// an over-limit org whose triggers keep getting blocked stays at ~1.0 instead
+// of climbing without bound.
 const orgPlanUsageRatio = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_plan_usage_ratio",
-  "Current-month executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
+  "Current-month billable executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
   ["org_slug"]
 );
 
