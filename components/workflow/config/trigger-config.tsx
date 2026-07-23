@@ -10,7 +10,6 @@ import {
   Play,
   Webhook,
 } from "lucide-react";
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -309,8 +308,6 @@ export function TriggerConfig({
     </>
   );
 }
-
-const CUSTOM_PROTOCOL_VALUE = "__custom__";
 
 const CUSTOM_TOKEN_VALUE = "__custom__";
 
