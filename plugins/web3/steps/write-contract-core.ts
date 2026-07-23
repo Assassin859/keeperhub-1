@@ -6,6 +6,7 @@
  * exporting functions from "use step" files (which breaks the workflow bundler).
  */
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
@@ -96,7 +97,12 @@ export type WriteContractResult =
       // cannot trace the transaction.
       executedCall?: ExecutedCall;
     }
-  | { success: false; error: string; rejection?: RevertKind };
+  | {
+      success: false;
+      error: string;
+      rejection?: RevertKind;
+      errorClass?: ExecutionErrorType;
+    };
 
 /**
  * Core write contract logic
@@ -132,6 +138,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: "Missing `abiFunction` in the step config",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -144,6 +151,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: `Invalid contract address: ${contractAddress}`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -155,6 +163,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: `Invalid ABI JSON: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -163,6 +172,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: "ABI must be a JSON array",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -172,6 +182,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: `Function '${abiFunction}' not found in ABI`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -186,6 +197,7 @@ export async function writeContractCore(
         return {
           success: false,
           error: "Function arguments must be a JSON array",
+          errorClass: ExecutionErrorType.USER,
         };
       }
       // Filter out empty strings at the end of the array (from UI padding)
@@ -204,12 +216,14 @@ export async function writeContractCore(
         return {
           success: false,
           error: `Invalid function arguments: ${validation.error}`,
+          errorClass: ExecutionErrorType.USER,
         };
       }
     } catch (error) {
       return {
         success: false,
         error: `Invalid function arguments JSON: ${getErrorMessage(error)}`,
+        errorClass: ExecutionErrorType.USER,
       };
     }
   }
@@ -221,7 +235,7 @@ export async function writeContractCore(
     "write-contract"
   );
   if (!orgCtx.success) {
-    return { success: false, error: orgCtx.error };
+    return { success: false, error: orgCtx.error, errorClass: ExecutionErrorType.SYSTEM };
   }
   const { organizationId, userId } = orgCtx;
 
@@ -263,6 +277,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: `Failed to get wallet address: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.SYSTEM,
     };
   }
 
@@ -280,6 +295,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: `Failed to resolve Web3 Connection: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.SYSTEM,
     };
   }
 
@@ -313,6 +329,7 @@ export async function writeContractCore(
       return {
         success: false,
         error: `Invalid payable value "${ethValue}" -- expected a decimal string like "0.1" or "1.5"`,
+        errorClass: ExecutionErrorType.USER,
       };
     }
 
@@ -324,6 +341,7 @@ export async function writeContractCore(
       return {
         success: false,
         error: `Function '${abiFunction}' is not payable -- cannot send a non-zero value with this call`,
+        errorClass: ExecutionErrorType.USER,
       };
     }
   }

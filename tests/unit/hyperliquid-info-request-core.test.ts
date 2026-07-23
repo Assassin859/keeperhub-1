@@ -17,6 +17,7 @@ vi.mock("@/lib/logging", () => ({
 
 vi.mock("@/lib/safe-fetch", () => ({ safeFetch }));
 
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   HYPERLIQUID_INFO_URL,
   isEvmAddress,
@@ -114,6 +115,7 @@ describe("postInfo", () => {
     expect(result).toEqual({
       success: false,
       error: "HTTP 422: bad request",
+      errorClass: ExecutionErrorType.USER,
     });
     expect(logUserError).toHaveBeenCalledWith(
       "external_service",
@@ -136,6 +138,7 @@ describe("postInfo", () => {
     expect(result).toEqual({
       success: false,
       error: 'Hyperliquid returned non-JSON content-type "text/html"',
+      errorClass: ExecutionErrorType.EXTERNAL,
     });
     expect(logUserError).toHaveBeenCalledWith(
       "validation",
@@ -182,7 +185,11 @@ describe("postInfo", () => {
       "validator-summaries"
     );
 
-    expect(result).toEqual({ success: false, error: "ECONNRESET" });
+    expect(result).toEqual({
+      success: false,
+      error: "ECONNRESET",
+      errorClass: ExecutionErrorType.EXTERNAL,
+    });
     expect(logUserError).toHaveBeenCalledWith(
       "external_service",
       expect.stringContaining("Network error"),

@@ -31,12 +31,20 @@ export const GET = requireOrganization(
 );
 
 /**
- * Set or clear the organization's daily value cap (native wei).
+ * Set or clear the organization's daily value caps.
+ *
+ * Two independent caps, each optional in the body:
+ *   dailyValueCapWei             EVM, wei      (18 decimals)
+ *   dailySolanaValueCapLamports  Solana, lamports (9 decimals)
+ *
+ * An omitted field is left unchanged; an explicit null clears that cap
+ * (unlimited). Partial updates matter here: the two caps are edited by separate
+ * controls, so treating an absent field as "clear" would let saving one cap
+ * silently remove the other.
  *
  * Gated by `organization:update` (admin/owner) over the session. A leaked `kh_`
  * API key or MCP OAuth token authenticates a different layer and never satisfies
  * the org session context, so a compromised key cannot raise its own ceiling.
- * A null `dailyValueCapWei` clears the cap (unlimited).
  */
 export const PUT = requirePermission(
   "organization",
@@ -50,42 +58,106 @@ export const PUT = requirePermission(
       );
     }
 
-    let body: { dailyValueCapWei?: unknown };
+    let body: {
+      dailyValueCapWei?: unknown;
+      dailySolanaValueCapLamports?: unknown;
+    };
     try {
-      body = (await req.json()) as { dailyValueCapWei?: unknown };
+      body = (await req.json()) as typeof body;
     } catch {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const raw = body.dailyValueCapWei;
-    let dailyValueCapWei: string | null;
-    if (raw === null) {
-      dailyValueCapWei = null;
-    } else if (typeof raw === "string" && NON_NEGATIVE_INTEGER.test(raw)) {
-      dailyValueCapWei = raw;
-    } else {
+    const wei = parseCapField(body, "dailyValueCapWei", "wei");
+    if ("error" in wei) {
+      return NextResponse.json(wei.error, { status: 400 });
+    }
+    const lamports = parseCapField(
+      body,
+      "dailySolanaValueCapLamports",
+      "lamports"
+    );
+    if ("error" in lamports) {
+      return NextResponse.json(lamports.error, { status: 400 });
+    }
+
+    if (!(wei.present || lamports.present)) {
       return NextResponse.json(
         {
           error:
-            "dailyValueCapWei must be a non-negative integer wei string, or null to clear the cap",
-          field: "dailyValueCapWei",
+            "Provide dailyValueCapWei and/or dailySolanaValueCapLamports (null clears a cap)",
         },
         { status: 400 }
       );
     }
 
+    // Only columns explicitly present in the body are written, so updating one
+    // cap never clears the other.
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (wei.present) {
+      set.dailyValueCapWei = wei.value;
+    }
+    if (lamports.present) {
+      set.dailySolanaValueCapLamports = lamports.value;
+    }
+
     try {
       await db
         .insert(organizationSpendCaps)
-        .values({ organizationId, dailyValueCapWei })
+        .values({
+          organizationId,
+          dailyValueCapWei: wei.present ? wei.value : null,
+          dailySolanaValueCapLamports: lamports.present ? lamports.value : null,
+        })
         .onConflictDoUpdate({
           target: organizationSpendCaps.organizationId,
-          set: { dailyValueCapWei, updatedAt: new Date() },
+          set,
         });
     } catch (error: unknown) {
       return apiError(error, "Failed to update spend cap");
     }
 
-    return NextResponse.json({ dailyValueCapWei }, { status: 200 });
+    return NextResponse.json(
+      {
+        ...(wei.present ? { dailyValueCapWei: wei.value } : {}),
+        ...(lamports.present
+          ? { dailySolanaValueCapLamports: lamports.value }
+          : {}),
+      },
+      { status: 200 }
+    );
   }
 );
+
+type CapField =
+  | { present: false }
+  | { present: true; value: string | null }
+  | { error: { error: string; field: string } };
+
+/**
+ * Absent -> unchanged, explicit null -> clear, non-negative integer string ->
+ * set. Any other shape is rejected rather than coerced, so a malformed cap can
+ * never be silently stored as unlimited.
+ */
+function parseCapField(
+  body: Record<string, unknown>,
+  field: string,
+  unit: string
+): CapField {
+  if (!(field in body)) {
+    return { present: false };
+  }
+  const raw = body[field];
+  if (raw === null) {
+    return { present: true, value: null };
+  }
+  if (typeof raw === "string" && NON_NEGATIVE_INTEGER.test(raw)) {
+    return { present: true, value: raw };
+  }
+  return {
+    error: {
+      error: `${field} must be a non-negative integer ${unit} string, or null to clear the cap`,
+      field,
+    },
+  };
+}

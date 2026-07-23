@@ -113,6 +113,7 @@ export async function createWorkflowJob(params: {
     { name: "WORKFLOW_ID", value: workflowId },
     { name: "EXECUTION_ID", value: executionId },
     { name: "WORKFLOW_INPUT", value: JSON.stringify(input) },
+    { name: "TRIGGER_TYPE", value: triggerType },
     // With readOnlyRootFilesystem the only writable path is the /tmp emptyDir
     // below. tsx/esbuild and any plugin temp writes resolve through TMPDIR, so
     // point it there to keep the runner working under the hardened context.

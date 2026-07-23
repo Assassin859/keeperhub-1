@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -22,10 +23,14 @@ async function stepHandler(
   input: ActiveAssetDataCoreInput
 ): Promise<InfoResult> {
   if (!isEvmAddress(input.user)) {
-    return { success: false, error: "User must be a 0x-prefixed EVM address" };
+    return {
+      success: false,
+      error: "User must be a 0x-prefixed EVM address",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
   if (!input.coin) {
-    return { success: false, error: "Coin is required" };
+    return { success: false, error: "Coin is required", errorClass: ExecutionErrorType.USER };
   }
 
   return postInfo(

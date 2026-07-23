@@ -1312,6 +1312,11 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
     // in JS to keep the SQL straightforward. Anonymous workflows (no
     // organization) are excluded — they're already covered by ANONYMOUS_ORG_SLUG
     // in the per-org error gauge.
+    // Only billable rows count: this matches the billing guard's
+    // countMonthlyExecutions predicate, so the plan-usage ratio reflects quota
+    // actually consumed. Excludes billing-blocked phantom rows (never ran) and
+    // x402 pay-per-call runs (paid per call, no quota consumed) — without the
+    // filter a capped free org's blocked triggers inflate the ratio far past 1.
     const execByOrgResult = await db
       .select({
         orgSlug: organization.slug,
@@ -1327,7 +1332,10 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
         organizationSubscriptions,
         eq(organizationSubscriptions.organizationId, organization.id)
       )
-      .where(sql`${workflowExecutions.startedAt} >= NOW() - INTERVAL '30 days'`)
+      .where(
+        sql`${workflowExecutions.startedAt} >= NOW() - INTERVAL '30 days'
+            AND ${workflowExecutions.billable} = TRUE`
+      )
       .groupBy(
         organization.slug,
         organizationSubscriptions.plan,

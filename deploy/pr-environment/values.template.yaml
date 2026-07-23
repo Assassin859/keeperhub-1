@@ -16,6 +16,11 @@ shared_env: &shared_env
     type: parameterStore
     name: chain-rpc-config
     parameter_name: /eks/techops-staging/keeperhub/chain-rpc-config
+  # KEEP-988: PR environments exercise the Solana rollout end to end, so
+  # provision EVM + Solana wallets at signup (mirrors staging).
+  SOLANA_WALLET_PROVISIONING_ENABLED:
+    type: kv
+    value: "true"
 
 replicaCount: 1
 

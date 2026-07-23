@@ -85,12 +85,23 @@ describe("classifyExecutionError code contract", () => {
       "Cannot find module './credential-map'",
       "TURNKEY_API_PUBLIC_KEY and TURNKEY_API_PRIVATE_KEY must be set",
       "Failed to initialize organization wallet: turnkey down",
-      "Failed to send webhook: socket hang up",
     ];
     for (const msg of systemMessages) {
       const r = classifyExecutionError(msg);
       expect(r.errorType, msg).toBe("system");
       expect(isErrorCode(r.code), `${msg} -> ${r.code}`).toBe(true);
+    }
+  });
+
+  it("external dependency failures never carry a code", () => {
+    const externalMessages = [
+      "Failed to send webhook: socket hang up",
+      "HTTP request failed: fetch failed: read ECONNRESET",
+    ];
+    for (const msg of externalMessages) {
+      const r = classifyExecutionError(msg);
+      expect(r.errorType, msg).toBe("external");
+      expect(r.code, msg).toBeNull();
     }
   });
 
@@ -102,7 +113,6 @@ describe("classifyExecutionError code contract", () => {
       "Contract call failed: reverted",
       "Code execution failed: require is not defined",
       "HTTP 404: Not Found",
-      "HTTP request failed: fetch failed: read ECONNRESET",
       "DATABASE_URL is not configured.",
       "Failed to initialize organization wallet: Para session expired.",
     ];

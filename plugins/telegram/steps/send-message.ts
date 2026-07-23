@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { ErrorCategory, logUserError } from "@/lib/logging";
@@ -24,7 +25,7 @@ type TelegramApiResponse = {
 
 type SendTelegramMessageResult =
   | { success: true; messageId: number }
-  | { success: false; error: string };
+  | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 export type SendTelegramMessageCoreInput = {
   chatId: string;
@@ -95,6 +96,7 @@ async function sendMessage(
         error:
           errorData.description ||
           `HTTP ${response.status}: Failed to send Telegram message`,
+        errorClass: response.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -119,6 +121,7 @@ async function sendMessage(
         error:
           enhanceErrorMessage(data.description, parseMode) ||
           `HTTP ${response.status}: Failed to send Telegram message`,
+        errorClass: ExecutionErrorType.USER,
       };
     }
 
@@ -135,6 +138,7 @@ async function sendMessage(
     return {
       success: false,
       error: `Failed to send Telegram message: ${error instanceof Error ? error.message : String(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }
@@ -164,6 +168,7 @@ async function stepHandler(
       success: false,
       error:
         "Telegram bot token is required. Please configure it in the integration settings.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -180,6 +185,7 @@ async function stepHandler(
     return {
       success: false,
       error: "Chat ID is required. Please provide a valid chat ID.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -196,6 +202,7 @@ async function stepHandler(
     return {
       success: false,
       error: "Message text is required.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -232,6 +239,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to send Telegram message: ${error instanceof Error ? error.message : String(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

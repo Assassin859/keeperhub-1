@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -15,7 +16,11 @@ export type ReferralInput = StepInput & ReferralCoreInput;
 
 async function stepHandler(input: ReferralCoreInput): Promise<InfoResult> {
   if (!isEvmAddress(input.user)) {
-    return { success: false, error: "User must be a 0x-prefixed EVM address" };
+    return {
+      success: false,
+      error: "User must be a 0x-prefixed EVM address",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   return postInfo({ type: "referral", user: input.user }, "referral");

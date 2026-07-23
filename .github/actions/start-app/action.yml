@@ -55,6 +55,10 @@ inputs:
     description: 'TURNKEY_ORGANIZATION_ID for the Turnkey-managed org wallet path'
     required: false
     default: ''
+  solana_wallet_provisioning_enabled:
+    description: 'SOLANA_WALLET_PROVISIONING_ENABLED - when "true", Turnkey sub-orgs are created with a Solana account alongside the EVM one. Unset leaves wallets EVM-only, so any suite touching a Solana address must set it.'
+    required: false
+    default: ''
   ai_prompt_enabled:
     description: 'NEXT_PUBLIC_AI_PROMPT_ENABLED - gates /api/ai/generate (e2e api-key-auth suite). Scoped per-job so AI UI is not surfaced elsewhere.'
     required: false
@@ -138,6 +142,7 @@ runs:
         TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
         TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
+        SOLANA_WALLET_PROVISIONING_ENABLED: ${{ inputs.solana_wallet_provisioning_enabled }}
         ALLOW_TEST_ENDPOINTS: ${{ inputs.allow_test_endpoints }}
         LOAD_TEST_BYPASS_TOKEN: ${{ inputs.load_test_bypass_token }}
         SAFE_FETCH_SHADOW: ${{ inputs.safe_fetch_shadow }}
@@ -158,6 +163,7 @@ runs:
           "CI=true" \
           "TEST_API_KEY=${TEST_API_KEY}" \
           "WORKFLOW_TARGET_WORLD=@workflow/world-postgres" \
+          "SOLANA_WALLET_PROVISIONING_ENABLED=${SOLANA_WALLET_PROVISIONING_ENABLED}" \
           > /tmp/keeperhub-app.env
 
         # Jobs that execute workflow step bundles (e.g. the credential-bundle
@@ -278,6 +284,7 @@ runs:
         TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
         TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
+        SOLANA_WALLET_PROVISIONING_ENABLED: ${{ inputs.solana_wallet_provisioning_enabled }}
         SANDBOX_BACKEND: remote
         SANDBOX_URL: http://localhost:8787
         # Present so the production captcha guard (lib/auth.ts) lets the server

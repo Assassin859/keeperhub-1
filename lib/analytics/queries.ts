@@ -9,6 +9,7 @@ import {
   inArray,
   isNotNull,
   lt,
+  type SQL,
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -23,8 +24,12 @@ import {
   gasCreditUsage,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
-import { sumOrgValueTodayWei } from "@/lib/execute/value-ledger";
+import {
+  sumOrgSolanaValueTodayLamports,
+  sumOrgValueTodayWei,
+} from "@/lib/execute/value-ledger";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
@@ -51,7 +56,8 @@ import type {
  */
 export function normalizeStatus(
   status: string,
-  source: RunSource
+  source: RunSource,
+  errorType?: string | null
 ): NormalizedStatus {
   if (source === "direct") {
     if (status === "completed") {
@@ -68,6 +74,11 @@ export function normalizeStatus(
   // user-facing status of their own and surface as pending everywhere in the UI.
   if (status === "phantom") {
     return "pending";
+  }
+  // External-dependency failures are stored with DB status 'error' and are only
+  // distinguished by error_type, so lift them to their own normalized status.
+  if (status === "error" && errorType === ExecutionErrorType.EXTERNAL) {
+    return "external_error";
   }
   return status as NormalizedStatus;
 }
@@ -94,10 +105,31 @@ export function workflowDbStatuses(status: NormalizedStatus): string[] {
   if (status === "pending") {
     return ["pending", "phantom"];
   }
-  if (status === "error") {
+  if (status === "error" || status === "external_error") {
     return ["error"];
   }
   return [status];
+}
+
+/**
+ * SQL predicate selecting workflow_executions rows for a normalized status.
+ * External-dependency failures share DB status 'error' with user/config
+ * failures and are split out only by error_type, so the "error" filter excludes
+ * them and "external_error" selects exactly them.
+ */
+function workflowStatusCondition(status: NormalizedStatus): SQL {
+  const dbStatuses = workflowDbStatuses(status);
+  const inClause = sql`${workflowExecutions.status} IN (${sql.join(
+    dbStatuses.map((s) => sql`${s}`),
+    sql`, `
+  )})`;
+  if (status === "external_error") {
+    return sql`${inClause} AND ${workflowExecutions.errorType} = ${ExecutionErrorType.EXTERNAL}`;
+  }
+  if (status === "error") {
+    return sql`${inClause} AND ${workflowExecutions.errorType} IS DISTINCT FROM ${ExecutionErrorType.EXTERNAL}`;
+  }
+  return inClause;
 }
 
 /**
@@ -911,13 +943,7 @@ async function fetchWorkflowRuns(
   ];
 
   if (status) {
-    const dbStatuses = workflowDbStatuses(status);
-    conditions.push(
-      sql`${workflowExecutions.status} IN (${sql.join(
-        dbStatuses.map((s) => sql`${s}`),
-        sql`, `
-      )})`
-    );
+    conditions.push(workflowStatusCondition(status));
   }
 
   if (cursor) {
@@ -1034,7 +1060,7 @@ async function fetchWorkflowRuns(
   return result.map((row) => ({
     id: row.id,
     source: "workflow" as const,
-    status: normalizeStatus(row.status, "workflow"),
+    status: normalizeStatus(row.status, "workflow", row.errorType),
     startedAt: row.startedAt.toISOString(),
     completedAt: row.completedAt?.toISOString() ?? null,
     durationMs: row.duration ? Number(row.duration) : null,
@@ -1160,13 +1186,7 @@ async function getWorkflowRunsTotal(
     conditions.push(eq(workflows.projectId, projectId));
   }
   if (status) {
-    const dbStatuses = workflowDbStatuses(status);
-    conditions.push(
-      sql`${workflowExecutions.status} IN (${sql.join(
-        dbStatuses.map((s) => sql`${s}`),
-        sql`, `
-      )})`
-    );
+    conditions.push(workflowStatusCondition(status));
   }
   const result = await db
     .select({ count: count() })
@@ -1320,24 +1340,36 @@ export async function getStepLogs(
 export async function getSpendCapData(organizationId: string): Promise<{
   dailyCapWei: string | null;
   dailyUsedWei: string;
+  dailySolanaCapLamports: string | null;
+  dailySolanaUsedLamports: string;
 }> {
   // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
   // per day, summed across BOTH stores (direct executions AND the workflow/
   // protocol value ledger, with the same stale-window aging), against the org's
   // daily value cap. Using the shared SUM keeps the gauge honest -- it shows the
   // same number enforcement checks, so workflow spend counts too.
-  const [capResult, dailyUsedWei] = await Promise.all([
+  // Solana is reported alongside as its own pair: its cap and usage are
+  // lamports-denominated and enforced against a separate column, so folding
+  // them into the wei figures would misreport both gauges.
+  const [capResult, dailyUsedWei, dailySolanaUsedLamports] = await Promise.all([
     db
-      .select({ dailyValueCapWei: organizationSpendCaps.dailyValueCapWei })
+      .select({
+        dailyValueCapWei: organizationSpendCaps.dailyValueCapWei,
+        dailySolanaValueCapLamports:
+          organizationSpendCaps.dailySolanaValueCapLamports,
+      })
       .from(organizationSpendCaps)
       .where(eq(organizationSpendCaps.organizationId, organizationId))
       .limit(1),
     sumOrgValueTodayWei(db, organizationId),
+    sumOrgSolanaValueTodayLamports(db, organizationId),
   ]);
 
   return {
     dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
     dailyUsedWei: dailyUsedWei.toString(),
+    dailySolanaCapLamports: capResult[0]?.dailySolanaValueCapLamports ?? null,
+    dailySolanaUsedLamports: dailySolanaUsedLamports.toString(),
   };
 }
 

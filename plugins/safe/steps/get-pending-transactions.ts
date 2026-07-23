@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { ethers } from "ethers";
 import { fetchCredentials } from "@/lib/credential-fetcher";
@@ -70,7 +71,11 @@ type PendingTransaction = {
 
 type GetPendingTransactionsResult =
   | { success: true; transactions: PendingTransaction[]; count: number }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type GetPendingTransactionsCoreInput = {
   safeAddress: string;
@@ -123,6 +128,7 @@ async function stepHandler(
       success: false,
       error:
         "Safe API key is required. Configure it in the integration settings.",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -133,7 +139,11 @@ async function stepHandler(
       undefined,
       { plugin_name: PLUGIN_NAME, action_name: ACTION_NAME }
     );
-    return { success: false, error: "Safe address is required" };
+    return {
+      success: false,
+      error: "Safe address is required",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   const rawAddress = input.safeAddress.trim();
@@ -144,7 +154,11 @@ async function stepHandler(
       rawAddress,
       { plugin_name: PLUGIN_NAME, action_name: ACTION_NAME }
     );
-    return { success: false, error: "Invalid Safe address format" };
+    return {
+      success: false,
+      error: "Invalid Safe address format",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   const address = ethers.getAddress(rawAddress);
@@ -162,6 +176,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Unsupported network: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -176,6 +191,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Chain ID ${chainId} is not supported by the Safe Transaction Service`,
+      errorClass: ExecutionErrorType.USER,
     };
   }
 
@@ -222,6 +238,7 @@ async function stepHandler(
       return {
         success: false,
         error: `Safe API returned HTTP ${txResponse.status}: ${errorBody}`,
+        errorClass: txResponse.status >= 500 ? ExecutionErrorType.EXTERNAL : ExecutionErrorType.USER,
       };
     }
 
@@ -273,6 +290,7 @@ async function stepHandler(
     return {
       success: false,
       error: `Failed to fetch pending transactions: ${getErrorMessage(error)}`,
+      errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
 }

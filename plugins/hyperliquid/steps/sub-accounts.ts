@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -18,6 +19,7 @@ async function stepHandler(input: SubAccountsCoreInput): Promise<InfoResult> {
     return {
       success: false,
       error: "Master address must be a 0x-prefixed EVM address",
+      errorClass: ExecutionErrorType.USER,
     };
   }
 

@@ -8,6 +8,7 @@
 import "server-only";
 
 import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import type { ErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
 import type { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
@@ -102,10 +103,12 @@ function getOrCreateGauge(
 // across org_slug for a given status equals the global per-status total.
 //
 // error_type label values:
-//   "user"    - errored execution caused by user input/config/external service
-//   "system"  - errored execution caused by KeeperHub system/infrastructure
-//   "unknown" - errored row predating classification (NULL in DB)
-//   "na"      - non-error status (success/running/pending/cancelled)
+//   "user"     - errored execution caused by user input/config
+//   "system"   - errored execution caused by KeeperHub system/infrastructure
+//   "external" - errored execution caused by a third-party dependency the
+//                workflow calls (HTTP/RPC/webhook transport failure)
+//   "unknown"  - errored row predating classification (NULL in DB)
+//   "na"       - non-error status (success/running/pending/cancelled)
 //
 // PromQL queries that do not filter on error_type continue to work — Prometheus
 // auto-aggregates across all label values when a label is unconstrained. The
@@ -385,29 +388,33 @@ const billingTrialsByOutcome = getOrCreateGauge(
 // Per-org execution counts (rolling 30-day window). Keyed only on
 // org_slug so the series identity stays stable when an org changes plan.
 // Join with keeperhub_org_info for plan/billing_status context.
+// Counts billable executions only (same predicate as the billing guard), so
+// billing-blocked phantom rows and x402 pay-per-call runs are excluded.
 const orgExecutions30d = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_30d",
-  "Workflow executions per org in the last 30 days",
+  "Billable workflow executions per org in the last 30 days",
   ["org_slug"]
 );
 
 // Per-org execution counts (current calendar month, used for plan limit
-// pressure).
+// pressure). Billable-only, matching what the billing guard counts.
 const orgExecutionsMonth = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_month",
-  "Workflow executions per org since start of the current calendar month",
+  "Billable workflow executions per org since start of the current calendar month",
   ["org_slug"]
 );
 
-// Plan usage ratio: current-month executions / monthly limit. 0 when the
-// plan is unlimited (enterprise) or when there is no usage. Drives the
-// "approaching plan limit" alert and the dashboard heatmap.
+// Plan usage ratio: current-month billable executions / monthly limit. 0 when
+// the plan is unlimited (enterprise) or when there is no usage. Drives the
+// "approaching plan limit" alert and the dashboard heatmap. Billable-only, so
+// an over-limit org whose triggers keep getting blocked stays at ~1.0 instead
+// of climbing without bound.
 const orgPlanUsageRatio = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_plan_usage_ratio",
-  "Current-month executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
+  "Current-month billable executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
   ["org_slug"]
 );
 
@@ -962,9 +969,10 @@ const systemWorkflowEngineErrors = getOrCreateCounter(
 //   org_slug       per-organization slug (or ANONYMOUS_ORG_SLUG for personal)
 //   error_category one of the ErrorCategory enum values (validation,
 //                  configuration, database, workflow_engine, etc.)
-//   error_type     "user" for workflow-author bugs, "system" for engine/infra
+//   error_type     "user" for workflow-author bugs, "system" for engine/infra,
+//                  "external" for third-party dependency transport failures
 //
-// Cardinality: ~200 active orgs * 10 categories * 2 = 4k worst case;
+// Cardinality: ~200 active orgs * 10 categories * 3 = 6k worst case;
 // realistic ~1k (most orgs hit 1-2 categories).
 const workflowExecutionErrorsCreated = getOrCreateCounter(
   apiRegistry,
@@ -976,7 +984,7 @@ const workflowExecutionErrorsCreated = getOrCreateCounter(
 export function recordWorkflowExecutionError(labels: {
   orgSlug: string;
   errorCategory: string;
-  errorType: "user" | "system";
+  errorType: ExecutionErrorType;
 }): void {
   workflowExecutionErrorsCreated.inc({
     org_slug: labels.orgSlug,
@@ -1001,7 +1009,7 @@ const workflowExecutionsFinished = getOrCreateCounter(
 export function recordWorkflowExecutionFinished(labels: {
   status: "success" | ErrorStatus;
   orgSlug: string;
-  errorType: "user" | "system" | typeof NA_ERROR_TYPE;
+  errorType: ExecutionErrorType | typeof NA_ERROR_TYPE;
 }): void {
   workflowExecutionsFinished.inc({
     status: labels.status,
@@ -1107,7 +1115,7 @@ export function recordWorkflowCreatedFromSource(
 // Labels are kept to (workflow_id, org_slug, error_type) — no error_category —
 // so cardinality stays bounded: only workflows that actually fail contribute
 // series, and the set of actively-failing workflows at any moment is small.
-// Cardinality ceiling: ~N_failing_workflows * 2 orgs * 2 error_types ≪ 1k.
+// Cardinality ceiling: ~N_failing_workflows * 2 orgs * 3 error_types ≪ 1k.
 const workflowExecutionErrorsByWorkflow = getOrCreateCounter(
   apiRegistry,
   "keeperhub_workflow_execution_errors_by_workflow_total",
@@ -1118,7 +1126,7 @@ const workflowExecutionErrorsByWorkflow = getOrCreateCounter(
 export function recordWorkflowExecutionErrorByWorkflow(labels: {
   workflowId: string;
   orgSlug: string;
-  errorType: "user" | "system";
+  errorType: ExecutionErrorType;
 }): void {
   workflowExecutionErrorsByWorkflow.inc({
     workflow_id: labels.workflowId,

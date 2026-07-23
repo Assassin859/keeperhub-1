@@ -4,6 +4,7 @@ import { buildExecutorInput } from "../lib/workflow/executor/build-executor-inpu
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
 import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
+import type { ApiExecuteTriggerType } from "./api-execute";
 import type { DbSchema } from "./lib/db-helpers";
 import {
   applyExecutionResult,
@@ -21,10 +22,12 @@ export async function executeInProcess(params: {
   workflowId: string;
   executionId: string;
   input: Record<string, unknown>;
+  triggerType: ApiExecuteTriggerType;
   scheduleId?: string;
   db: PostgresJsDatabase<DbSchema>;
 }): Promise<void> {
-  const { workflowId, executionId, input, scheduleId, db } = params;
+  const { workflowId, executionId, input, triggerType, scheduleId, db } =
+    params;
   const startTime = Date.now();
 
   console.log("[Executor:InProcess] Starting workflow execution");
@@ -38,8 +41,14 @@ export async function executeInProcess(params: {
     // workflow could have been disabled, soft-deleted, deactivated, or its
     // owning org deactivated between dispatch and execution. Cancel rather than
     // run. The org owns the workflow, so org deactivation is the owner gate.
+    //
+    // Manual runs are the exception: the editor "Run" button must work on
+    // not-yet-enabled drafts, so manual triggers pass requireEnabled: false to
+    // match the interactive execute route. That only bypasses the "disabled"
+    // reason - deleted/deactivated/org-deactivated still block - so it stays
+    // safe. Automated triggers (schedule/event/block/webhook) keep the guard.
     const loaded = await loadWorkflowForExecution(workflowId, {
-      requireEnabled: true,
+      requireEnabled: triggerType !== "manual",
     });
     if (loaded.status === "not_found") {
       throw new Error(`Workflow not found: ${workflowId}`);

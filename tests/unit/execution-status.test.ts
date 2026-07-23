@@ -13,6 +13,10 @@ describe("statusForErrorType", () => {
     expect(statusForErrorType("user")).toBe("error");
   });
 
+  it("maps external dependency failures to error (KeeperHub is healthy)", () => {
+    expect(statusForErrorType("external")).toBe("error");
+  });
+
   it("defaults null/undefined to error", () => {
     expect(statusForErrorType(null)).toBe("error");
     expect(statusForErrorType(undefined)).toBe("error");

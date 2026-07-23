@@ -451,15 +451,49 @@ jobs:
           # -> Alchemy, Arbitrum -> arb1.arbitrum.io), verified to serve the
           # storage/account reads fabrication needs; the primary is the
           # techops load balancer used for reads.
+          # chain-config stores the value gzip-compressed and base64-encoded
+          # behind a KHGZ1 prefix (see update-ssm-parameter.yml). jq cannot read
+          # that, and `// empty` swallows the failure, so a compressed secret
+          # silently degraded the fork to the public default - which is what
+          # made this job flaky. Decode first when the prefix is present.
           if [ -n "$CHAIN_RPC_CONFIG" ] && [ -n "$CFG_KEY" ]; then
-            ARCHIVE_FROM_CONFIG=$(echo "$CHAIN_RPC_CONFIG" | jq -r --arg k "$CFG_KEY" \
-              '.[$k].fallbackRpcUrl // empty')
+            case "$CHAIN_RPC_CONFIG" in
+              KHGZ1:*)
+                DECODED_CFG=$(printf '%s' "${CHAIN_RPC_CONFIG#KHGZ1:}" | base64 -d 2>/dev/null | gunzip 2>/dev/null) || DECODED_CFG=""
+                if [ -z "$DECODED_CFG" ]; then
+                  echo "::warning::CHAIN_RPC_CONFIG carries the KHGZ1 prefix but failed to decode; falling back to the public upstream"
+                fi
+                ;;
+              *) DECODED_CFG="$CHAIN_RPC_CONFIG" ;;
+            esac
+            if [ -n "$DECODED_CFG" ]; then
+              # Prefer the archive-grade fallback, but accept the primary so a
+              # config without a fallback still beats the public default.
+              ARCHIVE_FROM_CONFIG=$(printf '%s' "$DECODED_CFG" | jq -r --arg k "$CFG_KEY" \
+                '.[$k].fallbackRpcUrl // .[$k].primaryRpcUrl // empty' 2>/dev/null) || ARCHIVE_FROM_CONFIG=""
+              if [ -z "$ARCHIVE_FROM_CONFIG" ]; then
+                echo "::warning::CHAIN_RPC_CONFIG parsed but has no RPC URL for ${CFG_KEY}; falling back to the public upstream"
+              fi
+            fi
+          elif [ -z "$CHAIN_RPC_CONFIG" ]; then
+            echo "::warning::CHAIN_RPC_CONFIG is empty for this job; the fork will use the public upstream"
           fi
           case "${{ matrix.chain_id }}" in
             8453) UPSTREAM="${ANVIL_FORK_BASE_URL:-${ARCHIVE_FROM_CONFIG:-${{ matrix.default_upstream }}}}" ;;
             42161) UPSTREAM="${ANVIL_FORK_ARBITRUM_URL:-${ARCHIVE_FROM_CONFIG:-${{ matrix.default_upstream }}}}" ;;
             *) echo "unknown chain ${{ matrix.chain_id }}"; exit 1 ;;
           esac
+          # Log which source won, host only - these URLs carry provider API
+          # keys. Without this the job gives no way to tell a credentialed
+          # upstream from the flaky public fallback.
+          if [ -n "$ANVIL_FORK_BASE_URL" ] || [ -n "$ANVIL_FORK_ARBITRUM_URL" ]; then
+            UPSTREAM_SOURCE="ANVIL_FORK_*_URL secret"
+          elif [ -n "$ARCHIVE_FROM_CONFIG" ]; then
+            UPSTREAM_SOURCE="CHAIN_RPC_CONFIG"
+          else
+            UPSTREAM_SOURCE="public default (matrix.default_upstream)"
+          fi
+          echo "fork upstream source: ${UPSTREAM_SOURCE} (host: $(printf '%s' "$UPSTREAM" | sed -E 's#^[a-z]+://([^/]+).*#\1#'))"
           # Pin a few blocks behind head so a node behind a load-balanced
           # public upstream already has the block (bash arithmetic parses the
           # 0x head). See scripts/protocol-local.sh start_fork.
@@ -644,6 +678,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          solana_wallet_provisioning_enabled: "true"
           # NEXT_PUBLIC_AI_PROMPT_ENABLED is baked into the build-app
           # artifact, so only the runtime AI provider env is set here.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -931,6 +966,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          solana_wallet_provisioning_enabled: "true"
           # Shadow-mode SSRF so the app's setup workflows can reach the
           # localhost anvil mainnet fork (chain 1 -> :8548).
           safe_fetch_shadow: "true"
@@ -1239,6 +1275,7 @@ jobs:
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+          solana_wallet_provisioning_enabled: "true"
           load_test_bypass_token: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
           # Enable testEndpointsEnabled() so the strict-signin/start credential
           # rate-limit bypass honors playwright's X-Test-API-Key header (the

@@ -38,7 +38,7 @@ spec:
               kubernetes.io/metadata.name: keeperhub
           podSelector:
             matchLabels:
-              app.kubernetes.io/instance: keeperhub-executor
+              app.kubernetes.io/serviceName: keeperhub-executor-common
       ports:
         - protocol: TCP
           port: 3080

@@ -1,4 +1,5 @@
 import "server-only";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
@@ -31,7 +32,11 @@ type GetTokenInfoResult =
       type: string | null;
       holders: string | null;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    };
 
 export type GetTokenInfoCoreInput = {
   tokenAddress: string;
@@ -49,7 +54,11 @@ async function stepHandler(
 ): Promise<GetTokenInfoResult> {
   const tokenAddress = input.tokenAddress?.trim();
   if (!tokenAddress) {
-    return { success: false, error: "Token address is required." };
+    return {
+      success: false,
+      error: "Token address is required.",
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   const result = await blockscoutGet<TokenResponse>(

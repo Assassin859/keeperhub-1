@@ -1,3 +1,4 @@
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 export type ClerkApiUser = {
   id: string;
   first_name: string | null;
@@ -30,7 +31,11 @@ export type ClerkUserData = {
  */
 export type ClerkUserResult =
   | { success: true; data: ClerkUserData }
-  | { success: false; error: { message: string } };
+  | {
+      success: false;
+      error: { message: string };
+      errorClass?: ExecutionErrorType;
+    };
 
 export function toClerkUserData(apiUser: ClerkApiUser): ClerkUserData {
   const primaryEmail = apiUser.email_addresses.find(
