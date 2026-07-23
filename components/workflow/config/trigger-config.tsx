@@ -1,7 +1,6 @@
 "use client";
 
 import { Box, Boxes, Clock, Copy, Play, Webhook } from "lucide-react";
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,11 +16,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TimezoneSelect } from "@/components/ui/timezone-select";
-import { buildEventAbiFragment } from "@/lib/protocol-registry";
-import type {
-  ProtocolDefinition,
-  ProtocolEvent,
-} from "@/lib/protocol-registry";
 import { parseIntervalSeconds } from "@/lib/cron-utils";
 import type { ActionConfigField } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
@@ -292,8 +286,6 @@ export function TriggerConfig({
   );
 }
 
-const CUSTOM_PROTOCOL_VALUE = "__custom__";
-
 type EventTriggerFieldsProps = {
   config: Record<string, unknown>;
   disabled: boolean;
@@ -305,20 +297,7 @@ function EventTriggerFields({
   disabled,
   onUpdateConfig,
 }: EventTriggerFieldsProps): React.ReactElement {
-  const [protocols, setProtocols] = useState<ProtocolDefinition[]>([]);
-
   const [chainTypes, setChainTypes] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    fetch("/api/protocols")
-      .then((res) => res.json())
-      .then((data: ProtocolDefinition[]) => {
-        setProtocols(data.filter((p) => p.events && p.events.length > 0));
-      })
-      .catch(() => {
-        // Silently ignore -- custom mode still works
-      });
-  }, []);
 
   useEffect(() => {
     fetch("/api/chains")
@@ -337,125 +316,6 @@ function EventTriggerFields({
 
   const selectedNetwork = (config.network as string) || "";
   const isSolanaNetwork = chainTypes[selectedNetwork] === "solana";
-
-  const selectedProtocolSlug =
-    (config._eventProtocolSlug as string) || CUSTOM_PROTOCOL_VALUE;
-  const selectedProtocol = protocols.find(
-    (p) => p.slug === selectedProtocolSlug
-  );
-
-  function handleProtocolChange(slug: string): void {
-    if (slug === CUSTOM_PROTOCOL_VALUE) {
-      onUpdateConfig("_eventProtocolSlug", "");
-      onUpdateConfig("_eventSlug", "");
-      onUpdateConfig("_eventProtocolIconPath", "");
-      onUpdateConfig("contractABI", "");
-      onUpdateConfig("eventName", "");
-      return;
-    }
-
-    const protocol = protocols.find((p) => p.slug === slug);
-    if (!protocol) {
-      return;
-    }
-
-    onUpdateConfig("_eventProtocolSlug", slug);
-    onUpdateConfig("_eventProtocolIconPath", protocol.icon ?? "");
-    onUpdateConfig("_eventSlug", "");
-    onUpdateConfig("contractABI", "");
-    onUpdateConfig("eventName", "");
-  }
-
-  function handleEventChange(eventSlug: string): void {
-    if (!selectedProtocol?.events) {
-      return;
-    }
-    const event = selectedProtocol.events.find((e) => e.slug === eventSlug);
-    if (!event) {
-      return;
-    }
-
-    onUpdateConfig("_eventSlug", event.slug);
-    onUpdateConfig("eventName", event.eventName);
-    onUpdateConfig("contractABI", buildEventAbiFragment(event));
-  }
-
-  if (selectedProtocol) {
-    const contract = selectedProtocol.contracts[
-      selectedProtocol.events?.[0]?.contract ?? ""
-    ];
-
-    const protocolFields: ActionConfigField[] = [
-      {
-        key: "network",
-        label: "Network",
-        type: "chain-select",
-        chainTypeFilter: "evm",
-        placeholder: "Select network",
-        required: true,
-      },
-    ];
-
-    if (contract?.userSpecifiedAddress) {
-      protocolFields.push({
-        key: "contractAddress",
-        label: `${contract.label} Address`,
-        type: "template-input",
-        placeholder: "0x...",
-        required: true,
-      });
-    }
-
-    return (
-      <>
-        <ProtocolSelector
-          config={config}
-          disabled={disabled}
-          onChange={handleProtocolChange}
-          protocols={protocols}
-        />
-        <ActionConfigRenderer
-          config={config}
-          disabled={disabled}
-          fields={protocolFields}
-          onUpdateConfig={onUpdateConfig}
-        />
-        <div className="space-y-2">
-          <Label className="ml-1">
-            Event <span className="text-red-500">*</span>
-          </Label>
-          <Select
-            disabled={disabled}
-            onValueChange={handleEventChange}
-            value={(config._eventSlug as string) || ""}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select an event" />
-            </SelectTrigger>
-            <SelectContent>
-              {selectedProtocol.events?.map((event) => (
-                <SelectItem key={event.slug} value={event.slug}>
-                  <div className="flex flex-col">
-                    <span>{event.label}</span>
-                    <span className="text-muted-foreground text-xs">
-                      {event.eventName}(
-                      {event.inputs
-                        .map(
-                          (inp) =>
-                            `${inp.type}${inp.indexed ? " indexed" : ""} ${inp.name}`
-                        )
-                        .join(", ")}
-                      )
-                    </span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </>
-    );
-  }
 
   const networkField: ActionConfigField[] = [
     {
@@ -500,14 +360,6 @@ function EventTriggerFields({
 
   return (
     <>
-      {protocols.length > 0 && !isSolanaNetwork && (
-        <ProtocolSelector
-          config={config}
-          disabled={disabled}
-          onChange={handleProtocolChange}
-          protocols={protocols}
-        />
-      )}
       <ActionConfigRenderer
         config={config}
         disabled={disabled}
@@ -631,52 +483,5 @@ function SolanaEventFields({
         </p>
       </div>
     </>
-  );
-}
-
-function ProtocolSelector({
-  protocols,
-  config,
-  disabled,
-  onChange,
-}: {
-  protocols: ProtocolDefinition[];
-  config: Record<string, unknown>;
-  disabled: boolean;
-  onChange: (slug: string) => void;
-}): React.ReactElement {
-  const value =
-    (config._eventProtocolSlug as string) || CUSTOM_PROTOCOL_VALUE;
-
-  return (
-    <div className="space-y-2">
-      <Label className="ml-1">Protocol</Label>
-      <Select disabled={disabled} onValueChange={onChange} value={value}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder="Select protocol" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={CUSTOM_PROTOCOL_VALUE}>
-            Custom (paste ABI)
-          </SelectItem>
-          {protocols.map((protocol) => (
-            <SelectItem key={protocol.slug} value={protocol.slug}>
-              <div className="flex items-center gap-2">
-                {protocol.icon && (
-                  <Image
-                    alt={protocol.name}
-                    className="rounded"
-                    height={16}
-                    src={protocol.icon}
-                    width={16}
-                  />
-                )}
-                {protocol.name}
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }
