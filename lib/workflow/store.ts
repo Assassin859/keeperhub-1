@@ -208,6 +208,18 @@ export const lastExecutionLogsAtom = atom<LastExecutionLogsState>({
 let autosaveTimeoutId: NodeJS.Timeout | null = null;
 const AUTOSAVE_DELAY = 2500; // debounce so rapid edits don't each save/version
 
+/**
+ * Cancel a scheduled (debounced) autosave. Called after an out-of-band save
+ * (manual Save, pre-run flush) so the already-scheduled debounced write does
+ * not fire redundantly after a fresher save has landed.
+ */
+export function cancelPendingAutosave(): void {
+  if (autosaveTimeoutId) {
+    clearTimeout(autosaveTimeoutId);
+    autosaveTimeoutId = null;
+  }
+}
+
 // Autosave atom that handles saving workflow state
 export const autosaveAtom = atom(
   null,
@@ -250,7 +262,9 @@ export const autosaveAtom = atom(
     };
 
     if (options?.immediate) {
-      // Save immediately (for add/delete/connect operations)
+      // Save immediately (for add/delete/connect operations); drop any
+      // pending debounced save so it doesn't re-fire with an older snapshot
+      cancelPendingAutosave();
       await saveFunc();
     } else {
       // Debounce for typing operations
