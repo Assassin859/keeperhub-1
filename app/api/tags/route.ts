@@ -9,6 +9,7 @@ import {
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { COLOR_PALETTE } from "@/lib/palette";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { loadCreators } from "@/lib/security/creator-lookup";
 
@@ -102,15 +103,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
-    if (!body.color) {
-      return NextResponse.json({ error: "Color is required" }, { status: 400 });
-    }
+    const existingCount = await db
+      .select({ value: count() })
+      .from(tags)
+      .where(eq(tags.organizationId, organizationId));
+
+    const colorIndex = (existingCount[0]?.value ?? 0) % COLOR_PALETTE.length;
+    const color = body.color || COLOR_PALETTE[colorIndex];
 
     const [newTag] = await db
       .insert(tags)
       .values({
         name,
-        color: body.color,
+        color,
         organizationId,
         userId: creatorUserId,
       })
