@@ -1143,8 +1143,30 @@ jobs:
           for suite in $SUITE_DIRS; do
             SUITES="$SUITES tests/e2e/vitest/protocol-coverage/$suite/coverage.test.ts"
           done
-          pnpm vitest run $SUITES \
-            --reporter=default --reporter=json --outputFile="protocol-results-${SHARD}.json"
+          # Bound the sweep just under the job's timeout-minutes (25) with a
+          # shell timeout so a hung shard exits NON-ZERO (a failure) rather than
+          # being cancelled by timeout-minutes. A timeout-minutes cancellation
+          # is reported as "cancelled", which slips past deploy's !failure()
+          # guard; a real failure blocks deploy. The 2-minute headroom lets the
+          # failure/dump/upload steps still run before the job cap.
+          set +e
+          timeout --signal=SIGTERM --kill-after=30s 23m \
+            pnpm vitest run $SUITES \
+              --reporter=default --reporter=json --outputFile="protocol-results-${SHARD}.json"
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+            echo "::error::protocol-coverage shard ${SHARD} exceeded 23m and was killed; failing the shard so a hung protocol gate blocks deploy instead of being silently cancelled at the job timeout."
+          fi
+          # A kill can leave no results JSON (reporter flushes on completion) or
+          # a truncated one. Leave a parseable empty result so the floor job
+          # fails cleanly on "shard suites missing" rather than crashing on a
+          # JSON parse error. The shard still exits non-zero below, so deploy is
+          # blocked either way.
+          if [ "$code" -ne 0 ] && { [ ! -s "protocol-results-${SHARD}.json" ] || ! jq empty "protocol-results-${SHARD}.json" >/dev/null 2>&1; }; then
+            echo '{"testResults":[]}' > "protocol-results-${SHARD}.json"
+          fi
+          exit "$code"
         env:
           SHARD: ${{ matrix.shard }}
           SUITE_DIRS: ${{ matrix.suites }}
@@ -1176,6 +1198,20 @@ jobs:
           # instead of blowing the shard timeout. The other chain-1 suites
           # run fine cold and stay gated on ANVIL_FORK_MAINNET_URL alone.
           PROTOCOL_FORK_CACHED: ${{ steps.fork-cache.outputs.dir != '' && '1' || '' }}
+          # Non-empty only on the direct-signing path (bare-metal app, i.e.
+          # image_tag empty: build-app builds with
+          # NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED=false, so fork writes sign
+          # directly and mine fast). The staging-push docker path runs the
+          # production image with gas sponsorship on, routing writes through
+          # Turnkey sponsorship - measured ~10x slower and flaky on a fork
+          # (aave-v3 18s -> 256s, lido 14s -> 204s, pre-flight-simulation
+          # failures). morpho's setup write chain is the longest in the
+          # registry and only fits the shard budget on the direct-sign path, so
+          # it also gates on this: it runs in the nightly full sweep and
+          # self-skips on the docker staging push until that path is moved to
+          # direct signing. Tracked separately; the other suites tolerate the
+          # slow path today.
+          PROTOCOL_DIRECT_SIGN: ${{ inputs.image_tag == '' && '1' || '' }}
           # PR-gate/nightly split: PR-triggered runs shrink each phase to
           # its first runnable action (run-fixture.ts) and the floor
           # derivation above switches to the representatives floor with
