@@ -16,22 +16,19 @@ import { cleanupAll, createSharedCtx, runSetup } from "../../_shared/setup";
 
 const PROTOCOL = "morpho";
 const CHAIN_ID = "1";
-const _SKIP_INFRA_TESTS =
+const SKIP_INFRA_TESTS =
   !(process.env.DATABASE_URL && process.env.ANVIL_FORK_MAINNET_URL) ||
   process.env.SKIP_INFRA_TESTS === "true";
 
-// Hard-skipped: morpho has the registry's longest setup write chain (two
-// token provisions, three approvals, vault interactions), and on the CI
-// fork the archive upstream's cold-fetch latency under 16 concurrent
-// suite setups pushes single approves past 3.5 minutes - the setup
-// workflow cannot finish inside any sane budget (measured twice on
-// first activation, 2026-07-07). Every morpho action retains full Tier 1
-// fork-simulation coverage including writes and oracles; Tier 2's shared
-// execution path is proven by the sibling suites.
-// Unlock: mount the nightly fork RPC cache into this job's mainnet fork
-// (as tier1 does) so setup writes run against warmed state, then
-// re-enable.
-describe.skip(`${PROTOCOL} (Ethereum)`, () => {
+// morpho has the registry's longest setup write chain (two token
+// provisions, three approvals, vault interactions). On a cold fork the
+// archive upstream's fetch latency under concurrent suite setups pushed
+// single approves past 3.5 minutes, so this suite was hard-skipped on
+// first activation (2026-07-07). The protocol-coverage job now mounts the
+// nightly fork RPC cache and pins the fork to the cache block, so setup
+// writes run against warmed state and finish inside budget - re-enabled on
+// the same infra gate as the sibling suites.
+describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Ethereum)`, () => {
   const ctx = createSharedCtx();
 
   beforeAll(async () => {
