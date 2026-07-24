@@ -16,10 +16,33 @@ inputs:
     description: Full ECR ref of a prebuilt sandbox image to pull. Empty builds locally.
     required: false
     default: ""
+  aws_role_arn:
+    description: IAM role to assume for the ECR pull. Only used when image_ref is set.
+    required: false
+    default: ""
+  aws_region:
+    description: AWS region for the ECR login. Only used when image_ref is set.
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    # Authenticate to ECR ourselves rather than relying on a prior start-app
+    # step - the playwright job starts the sandbox before the app, so an
+    # ordering assumption would silently fall back to a local build there.
+    # Skipped when image_ref is empty (PRs), which build locally anyway.
+    - name: Configure AWS credentials for sandbox pull
+      if: inputs.image_ref != '' && inputs.aws_role_arn != ''
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: ${{ inputs.aws_role_arn }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Login to AWS ECR for sandbox pull
+      if: inputs.image_ref != '' && inputs.aws_role_arn != ''
+      uses: aws-actions/amazon-ecr-login@v2
+
     - name: Provide sandbox image (pull prebuilt, else build)
       shell: bash
       env:

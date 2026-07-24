@@ -741,6 +741,8 @@ jobs:
         uses: ./.github/actions/start-sandbox
         with:
           image_ref: ${{ inputs.sandbox_image }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          aws_region: ${{ inputs.ecr_region }}
 
       - name: Run E2E Vitest tests
         run: pnpm test:e2e:vitest
@@ -1122,6 +1124,8 @@ jobs:
         uses: ./.github/actions/start-sandbox
         with:
           image_ref: ${{ inputs.sandbox_image }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          aws_region: ${{ inputs.ecr_region }}
 
       - name: Run protocol-coverage tests
         run: |
@@ -1355,6 +1359,8 @@ jobs:
         uses: ./.github/actions/start-sandbox
         with:
           image_ref: ${{ inputs.sandbox_image }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          aws_region: ${{ inputs.ecr_region }}
 
       - name: Start application
         uses: ./.github/actions/start-app
