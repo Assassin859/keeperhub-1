@@ -25,6 +25,8 @@ describe("getRequiredScopeForTool (KEEP-483)", () => {
     "list_action_schemas",
     "search_plugins",
     "list_integrations",
+    "list_projects",
+    "list_tags",
   ])("returns mcp:read for read tool %s", (toolName) => {
     expect(getRequiredScopeForTool(toolName)).toBe(SCOPE_MCP_READ);
   });
@@ -41,6 +43,8 @@ describe("getRequiredScopeForTool (KEEP-483)", () => {
     "call_workflow",
     "list_workflow",
     "unlist_workflow",
+    "create_project",
+    "create_tag",
   ])("returns mcp:write for write tool %s", (toolName) => {
     expect(getRequiredScopeForTool(toolName)).toBe(SCOPE_MCP_WRITE);
   });

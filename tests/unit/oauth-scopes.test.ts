@@ -38,6 +38,25 @@ describe("oauth-scopes — read-only consent (only the Read box ticked)", () => 
   });
 });
 
+describe("oauth-scopes — project & tag tools", () => {
+  it("mcp:read allows listing projects and tags", () => {
+    expect(isToolAllowed("list_projects", "mcp:read")).toBe(true);
+    expect(isToolAllowed("list_tags", "mcp:read")).toBe(true);
+  });
+
+  it("mcp:read denies creating projects and tags", () => {
+    expect(isToolAllowed("create_project", "mcp:read")).toBe(false);
+    expect(isToolAllowed("create_tag", "mcp:read")).toBe(false);
+  });
+
+  it("mcp:write allows creating projects and tags", () => {
+    expect(isToolAllowed("create_project", "mcp:write")).toBe(true);
+    expect(isToolAllowed("create_tag", "mcp:write")).toBe(true);
+    expect(isToolAllowed("list_projects", "mcp:write")).toBe(true);
+    expect(isToolAllowed("list_tags", "mcp:write")).toBe(true);
+  });
+});
+
 describe("oauth-scopes — scopeSatisfies (A-03)", () => {
   it("undefined granted scope passes every level (non-OAuth full access)", () => {
     expect(scopeSatisfies(undefined, "mcp:read")).toBe(true);

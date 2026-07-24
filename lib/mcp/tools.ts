@@ -465,6 +465,119 @@ export function registerTools(
   );
 
   // =========================================================================
+  // Projects & Tags (workflow organization)
+  // =========================================================================
+
+  server.tool(
+    "list_projects",
+    "List all projects for the authenticated organization, each with its workflow count. Use a project's id as projectId when creating, updating, or filtering workflows.",
+    {},
+    { title: "List Projects", readOnlyHint: true, destructiveHint: false },
+    withScopeCheck("list_projects", scope, (_args) =>
+      withToolLogging("list_projects", undefined, async () => {
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          "/api/projects",
+          "GET"
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  server.tool(
+    "create_project",
+    "Create a project to group workflows. Returns the new project including its id, which you can pass as projectId to create_workflow or update_workflow to assign workflows to it.",
+    {
+      name: z.string().describe("Project name"),
+      description: z
+        .string()
+        .optional()
+        .describe("Optional project description"),
+      color: z
+        .string()
+        .optional()
+        .describe(
+          "Optional hex color (e.g. #4A90D9). Auto-assigned from the palette when omitted."
+        ),
+    },
+    { title: "Create Project", readOnlyHint: false, destructiveHint: false },
+    withScopeCheck("create_project", scope, (args) =>
+      withToolLogging("create_project", undefined, async () => {
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          "/api/projects",
+          "POST",
+          {
+            name: args.name,
+            description: args.description,
+            color: args.color,
+          }
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  server.tool(
+    "list_tags",
+    "List all tags for the authenticated organization, each with its workflow count. Use a tag's id as tagId when creating, updating, or filtering workflows.",
+    {},
+    { title: "List Tags", readOnlyHint: true, destructiveHint: false },
+    withScopeCheck("list_tags", scope, (_args) =>
+      withToolLogging("list_tags", undefined, async () => {
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          "/api/tags",
+          "GET"
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  server.tool(
+    "create_tag",
+    "Create a tag to label workflows. Returns the new tag including its id, which you can pass as tagId to create_workflow or update_workflow to label workflows.",
+    {
+      name: z.string().describe("Tag name"),
+      color: z
+        .string()
+        .optional()
+        .describe(
+          "Optional hex color (e.g. #4A90D9). Auto-assigned from the palette when omitted."
+        ),
+    },
+    { title: "Create Tag", readOnlyHint: false, destructiveHint: false },
+    withScopeCheck("create_tag", scope, (args) =>
+      withToolLogging("create_tag", undefined, async () => {
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          "/api/tags",
+          "POST",
+          {
+            name: args.name,
+            color: args.color,
+          }
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // =========================================================================
   // Execution
   // =========================================================================
 
@@ -862,6 +975,13 @@ export function registerTools(
           "- get_workflow: Fetch a single workflow by ID",
           "- update_workflow: Modify name, nodes, edges, project, or tag",
           "- delete_workflow: Permanently delete a workflow",
+          "",
+          "PROJECTS & TAGS",
+          "Projects group workflows; tags label them. Both are org-scoped.",
+          "- list_projects / list_tags: Discover existing IDs to link to",
+          "- create_project / create_tag: Create one, then use the returned id",
+          "- Link: pass projectId/tagId to create_workflow or update_workflow",
+          "- Unlink: call update_workflow with projectId=null or tagId=null",
           "",
           "INTEGRATIONS",
           "- list_integrations: See all configured credentials (Discord, Sendgrid, wallets)",

@@ -53,12 +53,16 @@ const READ_TOOLS = new Set<string>([
   "validate_workflow",
   "prepare_test_pin_data",
   "get_workflow_listing",
+  "list_projects",
+  "list_tags",
 ]);
 
 const WRITE_TOOLS = new Set<string>([
   ...READ_TOOLS,
   "create_workflow",
   "update_workflow",
+  "create_project",
+  "create_tag",
   "delete_workflow",
   "execute_workflow",
   "deploy_template",
