@@ -13,6 +13,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { BILLING_API } from "@/lib/billing/constants";
 import type { InvoiceItem } from "@/lib/billing/provider";
 
@@ -28,6 +33,8 @@ type InvoiceResponse = {
     periodEnd: string;
     invoiceUrl: string | null;
     pdfUrl: string | null;
+    executionsUsed: number;
+    executionLimit: number;
   }>;
   hasMore: boolean;
 };
@@ -69,6 +76,22 @@ function formatPeriod(start: string, end: string): string {
     year: "numeric",
   });
   return `${startDate} - ${endDate}`;
+}
+
+const compactNumber = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function formatUsageCompact(used: number, limit: number): string {
+  const usedLabel = compactNumber.format(used);
+  const limitLabel = limit === -1 ? "∞" : compactNumber.format(limit);
+  return `${usedLabel} / ${limitLabel}`;
+}
+
+function formatUsageExact(used: number, limit: number): string {
+  const limitLabel = limit === -1 ? "Unlimited" : limit.toLocaleString();
+  return `${used.toLocaleString()} / ${limitLabel} executions`;
 }
 
 const PAGE_SIZE = 10;
@@ -144,6 +167,7 @@ export function BillingHistory(): React.ReactElement {
               <Skeleton className="h-4 w-32" />
               <Skeleton className="h-4 w-16" />
               <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 w-20" />
               <Skeleton className="h-4 w-12" />
               <Skeleton className="h-4 w-16" />
             </div>
@@ -153,6 +177,7 @@ export function BillingHistory(): React.ReactElement {
                 <Skeleton className="h-4 w-32" />
                 <Skeleton className="h-4 w-16" />
                 <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-20" />
                 <Skeleton className="h-4 w-12 rounded-full" />
                 <Skeleton className="h-4 w-16" />
               </div>
@@ -191,6 +216,7 @@ export function BillingHistory(): React.ReactElement {
               <TableHead>Description</TableHead>
               <TableHead>Amount</TableHead>
               <TableHead>Period</TableHead>
+              <TableHead>Usage</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Invoice</TableHead>
             </TableRow>
@@ -201,12 +227,39 @@ export function BillingHistory(): React.ReactElement {
                 <TableCell className="whitespace-nowrap">
                   {formatDate(invoice.date)}
                 </TableCell>
-                <TableCell>{invoice.description}</TableCell>
+                <TableCell>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="block max-w-[240px] truncate text-left">
+                        {invoice.description}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{invoice.description}</TooltipContent>
+                  </Tooltip>
+                </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatAmount(invoice.amount, invoice.currency)}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatPeriod(invoice.periodStart, invoice.periodEnd)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help tabular-nums">
+                        {formatUsageCompact(
+                          invoice.executionsUsed,
+                          invoice.executionLimit
+                        )}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {formatUsageExact(
+                        invoice.executionsUsed,
+                        invoice.executionLimit
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
                   <Badge variant={STATUS_VARIANT[invoice.status]}>
