@@ -10,6 +10,9 @@ on:
       image_tag:
         description: "Short SHA used as image tag"
         value: ${{ jobs.build.outputs.image_tag }}
+      sandbox_image:
+        description: "Full ECR ref of the prebuilt sandbox image for e2e to pull"
+        value: ${{ jobs.build.outputs.sandbox_image }}
       ecr_registry:
         description: "ECR registry URL"
         value: ${{ jobs.build.outputs.ecr_registry }}
@@ -19,6 +22,12 @@ on:
       ecr_region:
         description: "AWS region for ECR"
         value: ${{ jobs.build.outputs.ecr_region }}
+      skip_build:
+        description: "true when [skip build] was in the commit message"
+        value: ${{ jobs.build.outputs.skip_build }}
+      images_exist:
+        description: "true when every pipeline image already exists in ECR for this SHA"
+        value: ${{ jobs.build.outputs.images_exist }}
 
 permissions:
   contents: read
@@ -30,9 +39,14 @@ jobs:
     environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
     outputs:
       image_tag: ${{ steps.vars.outputs.sha_short }}
+      sandbox_image: ${{ steps.vars.outputs.sandbox_image }}
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
       ecr_repo: ${{ steps.vars.outputs.ecr_repo }}
       ecr_region: ${{ steps.vars.outputs.ecr_region }}
+      # Surfaced so the sibling sentry-upload job (ci-pipeline.yml) can reuse the
+      # same skip/rerun guard the build steps use without re-querying ECR.
+      skip_build: ${{ steps.skip.outputs.skip_build }}
+      images_exist: ${{ steps.check-image.outputs.exists }}
     env:
       REGION: ${{ vars.TO_REGION }}
       AWS_ECR_NAME: ${{ vars.TO_ECR_NAME }}
@@ -41,6 +55,11 @@ jobs:
       EXECUTOR_ECR_NAME: keeperhub-executor-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       SCHEDULER_ECR_NAME: keeperhub-scheduler-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       COLLECTOR_ECR_NAME: keeperhub-metrics-collector-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+      # Baked alongside the pipeline on push so the e2e jobs pull a prebuilt
+      # image instead of each rebuilding the sandbox locally (~72s/job). Same
+      # convention deploy-sandbox.yaml uses; the sandbox target has its own
+      # Dockerfile and cache scope, so it does not share the app builder stage.
+      SANDBOX_ECR_NAME: keeperhub-sandbox-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       ENVIRONMENT_TAG: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       # INCLUDE_TEST_ENDPOINTS is derived from ENVIRONMENT_TAG in the
       # "Derive build flags" step below (KEEP-237).
@@ -95,6 +114,7 @@ jobs:
             echo "sha_short=${SHA}"
             echo "ecr_repo=${AWS_ECR_NAME}"
             echo "ecr_region=${REGION}"
+            echo "sandbox_image=${{ steps.login-ecr.outputs.registry }}/${SANDBOX_ECR_NAME}:sandbox-${SHA}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check if images already exist
@@ -110,7 +130,8 @@ jobs:
             "${{ env.EXECUTOR_ECR_NAME }}:executor" \
             "${{ env.SCHEDULER_ECR_NAME }}:schedule" \
             "${{ env.SCHEDULER_ECR_NAME }}:block" \
-            "${{ env.COLLECTOR_ECR_NAME }}:collector"; do
+            "${{ env.COLLECTOR_ECR_NAME }}:collector" \
+            "${{ env.SANDBOX_ECR_NAME }}:sandbox"; do
             repo="${pair%%:*}"; prefix="${pair##*:}"
             if aws ecr describe-images \
               --repository-name "${repo}" \
@@ -186,6 +207,7 @@ jobs:
           EXECUTOR_ECR_REPO: ${{ env.EXECUTOR_ECR_NAME }}
           SCHEDULER_ECR_REPO: ${{ env.SCHEDULER_ECR_NAME }}
           METRICS_COLLECTOR_ECR_REPO: ${{ env.COLLECTOR_ECR_NAME }}
+          SANDBOX_ECR_REPO: ${{ env.SANDBOX_ECR_NAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
           NEXT_PUBLIC_AUTH_PROVIDERS: ${{ env.NEXT_PUBLIC_AUTH_PROVIDERS }}
           NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ env.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
@@ -202,27 +224,17 @@ jobs:
           SENTRY_RELEASE: ${{ steps.vars.outputs.sha_short }}
         with:
           files: docker-bake.hcl
-          targets: pipeline
+          # sandbox baked in the same session so it pushes under the app-compile
+          # shadow instead of adding a serial ~72s to every e2e job. It has its
+          # own Dockerfile/context and cache scope, so it builds independently
+          # of the shared app builder stage.
+          targets: |
+            pipeline
+            sandbox
           push: true
 
-      - name: Upload Sentry source maps
-        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
-        uses: docker/bake-action@v7
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPO: ${{ env.AWS_ECR_NAME }}
-          NEXT_PUBLIC_AUTH_PROVIDERS: ${{ env.NEXT_PUBLIC_AUTH_PROVIDERS }}
-          NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ env.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
-          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
-          NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
-          NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: ${{ env.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED }}
-          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ env.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
-          NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
-          INCLUDE_TEST_ENDPOINTS: ${{ env.INCLUDE_TEST_ENDPOINTS }}
-          SENTRY_ORG: ${{ env.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
-          SENTRY_AUTH_TOKEN: ${{ env.SENTRY_AUTH_TOKEN }}
-          SENTRY_RELEASE: ${{ steps.vars.outputs.sha_short }}
-        with:
-          files: docker-bake.hcl
-          targets: sentry-upload
+      # Sentry source-map upload moved out to its own sentry-upload.yml job,
+      # fanned out from build-images in ci-pipeline.yml so it runs parallel to
+      # e2e instead of extending this job's critical path. It consumes the
+      # :cache-app scope this pipeline bake just pushed, so it stays ordered
+      # after build via `needs: [build-images]`.

@@ -737,6 +737,13 @@ export const workflowExecutions = pgTable(
      * never collide.
      */
     dispatchKey: text("dispatch_key"),
+    /**
+     * Soft-delete marker for execution history. Purging a workflow's runs sets
+     * this instead of hard-deleting the row; billing usage counters count all
+     * rows regardless of deleted_at, while user-facing execution listings
+     * filter deleted_at IS NULL.
+     */
+    deletedAt: timestamp("deleted_at"),
   },
   (table) => [
     index("idx_workflow_executions_status").on(table.status),

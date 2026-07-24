@@ -8,6 +8,16 @@ on:
     types: [labeled, synchronize]
   workflow_dispatch: {}
 
+# Cancel a PR's in-flight run when it is superseded by a newer push to the same
+# PR - saves runner queue time on rapid iteration. Scoped to pull_request only:
+# push (staging/prod) and workflow_dispatch each get a unique per-run group via
+# github.run_id, so deploys are never cancelled and always run to completion.
+# Deliberately NOT cancel-on-failure - a run must be able to surface multiple
+# test failures at once.
+concurrency:
+  group: ci-pipeline-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: write
   pull-requests: write
@@ -39,9 +49,26 @@ jobs:
       # Pass build outputs only on staging; '' must be the `||` fallthrough since
       # an empty string is falsy (`cond && '' || x` would always yield x).
       image_tag: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.image_tag || '') || '' }}
+      # Prebuilt sandbox ref, staging only (same fallthrough rule as image_tag);
+      # empty on PRs/prod makes the e2e jobs build the sandbox locally.
+      sandbox_image: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.sandbox_image || '') || '' }}
       ecr_registry: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_registry || '') || '' }}
       ecr_repo: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_repo || '') || '' }}
       ecr_region: ${{ github.ref_name == 'staging' && (needs.build-images.outputs.ecr_region || '') || '' }}
+    secrets: inherit
+
+  # Sentry source-map upload, fanned out from build-images alongside e2e so it
+  # no longer extends the build critical path. Runs on staging/prod pushes only
+  # (PRs never build images), and only when the build actually baked - a
+  # [skip build] or all-images-exist rerun skips it, mirroring the guard the
+  # old in-build step used. Deploy does not depend on it, so a source-map
+  # failure surfaces as a red run without blocking the deploy.
+  sentry-upload:
+    needs: [build-images]
+    if: ${{ github.event_name != 'pull_request' && !failure() && !cancelled() && needs.build-images.outputs.skip_build != 'true' && needs.build-images.outputs.images_exist != 'true' }}
+    uses: ./.github/workflows/sentry-upload.yml
+    with:
+      image_tag: ${{ needs.build-images.outputs.image_tag }}
     secrets: inherit
 
   # Deploy runs after build-images and e2e-tests.

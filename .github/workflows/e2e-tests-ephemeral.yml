@@ -29,6 +29,11 @@ on:
         type: string
         required: false
         default: ""
+      sandbox_image:
+        description: "Full ECR ref of the prebuilt sandbox image. When provided, start-sandbox pulls it instead of building locally."
+        type: string
+        required: false
+        default: ""
       ecr_registry:
         description: "ECR registry URL"
         type: string
@@ -734,6 +739,10 @@ jobs:
 
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
+        with:
+          image_ref: ${{ inputs.sandbox_image }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          aws_region: ${{ inputs.ecr_region }}
 
       - name: Run E2E Vitest tests
         run: pnpm test:e2e:vitest
@@ -980,15 +989,101 @@ jobs:
           # instead of rebuilding.
           prebuilt: "true"
 
+      # The cache is produced by protocol-nightly.yml, a different workflow,
+      # and actions/download-artifact cannot fetch across workflows without a
+      # concrete run id - list and download through gh api with github.token
+      # instead. Consumption requires ANVIL_FORK_MAINNET_URL: the cache serves
+      # warmed state locally, but cold reads at a day-old pin need an archive
+      # upstream. Every failure mode (no secret, no fresh staging artifact, API
+      # error, corrupt zip/tar, bad name) exits 0 with empty outputs so the
+      # fork-start step falls back to the live fork. Same mechanism as
+      # tier1-simulations - see that job for the annotated reference.
+      - name: Download latest fork RPC cache
+        id: fork-cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+        run: |
+          if [ -z "$ANVIL_FORK_MAINNET_URL" ]; then
+            echo "ANVIL_FORK_MAINNET_URL not set; cold reads at a stale pin need an archive upstream - will start a live fork"
+            exit 0
+          fi
+          # Freshness gates: only a non-expired artifact from the last
+          # 36 hours whose producing run was on staging (a nightly on
+          # the default branch, not a fork-cache job from a topic
+          # branch experiment).
+          cutoff=$(date -u -d '36 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=fork-cache-mainnet&per_page=10" \
+            --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"staging\" and .created_at > \"${cutoff}\")] | sort_by(.created_at) | last | .id // empty" \
+            2>/dev/null) || artifact_id=""
+          if [ -z "$artifact_id" ]; then
+            echo "no fresh fork-cache-mainnet artifact from staging; will start a live fork"
+            exit 0
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > fork-cache.zip; then
+            echo "artifact ${artifact_id} download failed; will start a live fork"
+            exit 0
+          fi
+          if ! unzip -o fork-cache.zip -d fork-cache-artifact; then
+            echo "artifact ${artifact_id} unzip failed; will start a live fork"
+            exit 0
+          fi
+          tarball=$(find fork-cache-artifact -maxdepth 1 -name 'fork-cache-mainnet-*.tgz' | head -n 1)
+          block=""
+          if [ -n "$tarball" ]; then
+            block=$(basename "$tarball" .tgz | grep -oE '[0-9]+$') || true
+          fi
+          if [ -z "$tarball" ] || [ -z "$block" ]; then
+            echo "artifact has no fork-cache-mainnet-<block>.tgz; will start a live fork"
+            exit 0
+          fi
+          mkdir -p fork-cache
+          if ! tar -xzf "$tarball" -C fork-cache; then
+            echo "cache tar extraction failed; will start a live fork"
+            rm -rf fork-cache
+            exit 0
+          fi
+          if [ ! -f "fork-cache/rpc/mainnet/${block}/storage.json" ]; then
+            echo "cache tar lacks rpc/mainnet/${block}/storage.json; will start a live fork"
+            rm -rf fork-cache
+            exit 0
+          fi
+          # anvil runs as uid 1000 (foundry) in the container; the
+          # runner user extracting the tar is a different uid.
+          chmod -R a+rX fork-cache
+          echo "using fork cache at pinned block ${block}"
+          echo "dir=fork-cache" >> "$GITHUB_OUTPUT"
+          echo "block=$block" >> "$GITHUB_OUTPUT"
+
       - name: Start anvil Ethereum mainnet fork
-        # ANVIL_FORK_MAINNET_URL feeds the compose fork-url (falls back to
-        # publicnode when the secret is unset), matching tier1-simulations.
+        # With a fresh cache the fork is pinned to the cache block and serves
+        # warmed state locally; without one it falls back to the live-head
+        # compose fork feeding ANVIL_FORK_MAINNET_URL (publicnode when unset),
+        # matching tier1-simulations.
         env:
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
         run: |
-          docker network create keeperhub-network 2>/dev/null || true
-          docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
-            docker compose --profile test up -d test-anvil-fork-mainnet
+          CACHE_DIR="${{ steps.fork-cache.outputs.dir }}"
+          if [ -n "$CACHE_DIR" ]; then
+            # Cache-loaded fork: mount the nightly RPC fetch cache at foundry's
+            # cache path and re-pin to the block its values were fetched at, so
+            # setup writes run against warmed state with zero upstream requests
+            # (this is what unblocks morpho's long setup chain). Cold state
+            # lazy-fetches from the archive upstream at the pin, which the
+            # download step guaranteed is configured. The app reaches this fork
+            # over --network host at localhost:8548, same as the compose path.
+            docker run -d --name keeperhub-test-anvil-fork-mainnet -p 8548:8545 \
+              -v "$PWD/$CACHE_DIR:/home/foundry/.foundry/cache" \
+              --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+              --host 0.0.0.0 \
+              --fork-url "$ANVIL_FORK_MAINNET_URL" \
+              --fork-block-number "${{ steps.fork-cache.outputs.block }}" \
+              --chain-id 1 --block-time 1
+          else
+            docker network create keeperhub-network 2>/dev/null || true
+            docker compose --profile test up -d --wait test-anvil-fork-mainnet || \
+              docker compose --profile test up -d test-anvil-fork-mainnet
+          fi
           # Health-poll up to ~60s. Chain ID 0x1 confirms we are on the
           # mainnet fork (not another anvil on the same port).
           retries=0
@@ -1027,6 +1122,10 @@ jobs:
 
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
+        with:
+          image_ref: ${{ inputs.sandbox_image }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          aws_region: ${{ inputs.ecr_region }}
 
       - name: Run protocol-coverage tests
         run: |
@@ -1044,8 +1143,30 @@ jobs:
           for suite in $SUITE_DIRS; do
             SUITES="$SUITES tests/e2e/vitest/protocol-coverage/$suite/coverage.test.ts"
           done
-          pnpm vitest run $SUITES \
-            --reporter=default --reporter=json --outputFile="protocol-results-${SHARD}.json"
+          # Bound the sweep just under the job's timeout-minutes (25) with a
+          # shell timeout so a hung shard exits NON-ZERO (a failure) rather than
+          # being cancelled by timeout-minutes. A timeout-minutes cancellation
+          # is reported as "cancelled", which slips past deploy's !failure()
+          # guard; a real failure blocks deploy. The 2-minute headroom lets the
+          # failure/dump/upload steps still run before the job cap.
+          set +e
+          timeout --signal=SIGTERM --kill-after=30s 23m \
+            pnpm vitest run $SUITES \
+              --reporter=default --reporter=json --outputFile="protocol-results-${SHARD}.json"
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+            echo "::error::protocol-coverage shard ${SHARD} exceeded 23m and was killed; failing the shard so a hung protocol gate blocks deploy instead of being silently cancelled at the job timeout."
+          fi
+          # A kill can leave no results JSON (reporter flushes on completion) or
+          # a truncated one. Leave a parseable empty result so the floor job
+          # fails cleanly on "shard suites missing" rather than crashing on a
+          # JSON parse error. The shard still exits non-zero below, so deploy is
+          # blocked either way.
+          if [ "$code" -ne 0 ] && { [ ! -s "protocol-results-${SHARD}.json" ] || ! jq empty "protocol-results-${SHARD}.json" >/dev/null 2>&1; }; then
+            echo '{"testResults":[]}' > "protocol-results-${SHARD}.json"
+          fi
+          exit "$code"
         env:
           SHARD: ${{ matrix.shard }}
           SUITE_DIRS: ${{ matrix.suites }}
@@ -1069,6 +1190,28 @@ jobs:
           # chronicle, superfluid) run for real. When unset those suites
           # skip cleanly and the floor above drops accordingly.
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+          # Non-empty only when the fork-cache download produced a warmed,
+          # pinned cache (set = its `dir` output). morpho gates on this in
+          # addition to ANVIL_FORK_MAINNET_URL: its setup write chain is the
+          # longest in the registry and only fits the shard budget against
+          # warmed state, so on a cache miss (live cold fork) it self-skips
+          # instead of blowing the shard timeout. The other chain-1 suites
+          # run fine cold and stay gated on ANVIL_FORK_MAINNET_URL alone.
+          PROTOCOL_FORK_CACHED: ${{ steps.fork-cache.outputs.dir != '' && '1' || '' }}
+          # Non-empty only on the direct-signing path (bare-metal app, i.e.
+          # image_tag empty: build-app builds with
+          # NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED=false, so fork writes sign
+          # directly and mine fast). The staging-push docker path runs the
+          # production image with gas sponsorship on, routing writes through
+          # Turnkey sponsorship - measured ~10x slower and flaky on a fork
+          # (aave-v3 18s -> 256s, lido 14s -> 204s, pre-flight-simulation
+          # failures). morpho's setup write chain is the longest in the
+          # registry and only fits the shard budget on the direct-sign path, so
+          # it also gates on this: it runs in the nightly full sweep and
+          # self-skips on the docker staging push until that path is moved to
+          # direct signing. Tracked separately; the other suites tolerate the
+          # slow path today.
+          PROTOCOL_DIRECT_SIGN: ${{ inputs.image_tag == '' && '1' || '' }}
           # PR-gate/nightly split: PR-triggered runs shrink each phase to
           # its first runnable action (run-fixture.ts) and the floor
           # derivation above switches to the representatives floor with
@@ -1143,11 +1286,16 @@ jobs:
   # Merge the sharded protocol-coverage results and enforce the sweep-wide
   # guards: the executed-test floor (suites self-skip when infra gates are
   # absent, so a green shard can mean "ran nothing") and suite completeness
-  # (a suite left out of every shard's list would silently vanish). Runs only
-  # when all shards succeed; a shard's own test failures fail the run
-  # directly via that shard's non-zero vitest exit.
+  # (a suite left out of every shard's list would silently vanish).
+  #
+  # Runs whenever e2e is meant to run, even if a shard FAILED or was cancelled
+  # (e.g. hit its timeout) - a cancelled shard uploads no/partial results, so
+  # completeness sees its suites missing and fails here. This is the deploy
+  # gate: without it, a timed-out shard is "cancelled" not "failed", which
+  # slips past deploy's !failure() guard and lets the sweep ship uncovered.
   protocol-coverage-floor:
     needs: [should-run, protocol-coverage-ephemeral]
+    if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 10
@@ -1258,6 +1406,10 @@ jobs:
       # vitest job, which already runs a sandbox for its execution suites.
       - name: Start code-execution sandbox
         uses: ./.github/actions/start-sandbox
+        with:
+          image_ref: ${{ inputs.sandbox_image }}
+          aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
+          aws_region: ${{ inputs.ecr_region }}
 
       - name: Start application
         uses: ./.github/actions/start-app

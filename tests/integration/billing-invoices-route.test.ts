@@ -32,6 +32,14 @@ vi.mock("@/lib/billing/providers", () => ({
   }),
 }));
 
+const mockDbExecute = vi.fn();
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    execute: (...args: unknown[]) => mockDbExecute(...args),
+  },
+}));
+
 import { GET } from "@/app/api/billing/invoices/route";
 
 function makeRequest(query = ""): Request {
@@ -55,21 +63,33 @@ beforeEach(() => {
 });
 
 describe("GET /api/billing/invoices", () => {
-  it("returns invoices for org owner", async () => {
+  it("returns invoices annotated with per-period usage for org owner", async () => {
     mockSession();
     mockGetOrgSubscription.mockResolvedValue({
       providerCustomerId: "cus_1",
+      plan: "pro",
+      tier: "25k",
     });
     mockListInvoices.mockResolvedValue({
-      invoices: [{ id: "inv_1" }],
+      invoices: [
+        {
+          id: "inv_1",
+          periodStart: new Date("2026-06-13T00:00:00Z"),
+          periodEnd: new Date("2026-07-13T00:00:00Z"),
+        },
+      ],
       hasMore: false,
     });
+    // Usage count for the invoice's period.
+    mockDbExecute.mockResolvedValue([{ count: 22_140 }]);
 
     const response = await GET(makeRequest());
     const json = await response.json();
 
     expect(response.status).toBe(200);
     expect(json.invoices).toHaveLength(1);
+    expect(json.invoices[0].executionsUsed).toBe(22_140);
+    expect(json.invoices[0].executionLimit).toBe(25_000);
   });
 
   it("returns 401 without auth", async () => {

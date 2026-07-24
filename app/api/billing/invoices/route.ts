@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
+import { getExecutionsUsedForPeriods } from "@/lib/billing/execution-usage";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
+import {
+  getPlanLimits,
+  parsePlanName,
+  parseTierKey,
+} from "@/lib/billing/plans";
 import { getOrgSubscription } from "@/lib/billing/plans-server";
 import { getBillingProvider } from "@/lib/billing/providers";
 import { requireOrgOwner } from "@/lib/billing/require-org-owner";
@@ -34,7 +40,27 @@ export async function GET(request: Request): Promise<NextResponse> {
       startingAfter,
     });
 
-    return NextResponse.json(result);
+    // Annotate each invoice with the executions used during its own billing
+    // period, so usage reconciles with the period the customer was billed on.
+    const limits = getPlanLimits(
+      parsePlanName(sub.plan),
+      parseTierKey(sub.tier),
+      sub.planOverrides
+    );
+    const usage = await getExecutionsUsedForPeriods(
+      activeOrgId,
+      result.invoices.map((invoice) => ({
+        periodStart: invoice.periodStart,
+        periodEnd: invoice.periodEnd,
+      }))
+    );
+    const invoices = result.invoices.map((invoice, index) => ({
+      ...invoice,
+      executionsUsed: usage[index] ?? 0,
+      executionLimit: limits.maxExecutionsPerMonth,
+    }));
+
+    return NextResponse.json({ invoices, hasMore: result.hasMore });
   } catch (error) {
     logSystemError(
       ErrorCategory.EXTERNAL_SERVICE,
