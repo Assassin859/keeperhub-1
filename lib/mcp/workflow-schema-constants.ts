@@ -259,6 +259,8 @@ export const TRIGGERS = {
       "args.to": "string - Recipient address (the watched deposit address)",
       "args.value": "string - Amount transferred, in the token's smallest unit",
       "args.memo": "string - The bytes32 memo attached to the transfer",
+      "args.memoText":
+        "string - The memo decoded to text (e.g. INV-1042), or empty for a non-text memo",
       transactionHash: "string - Hash of the payment transaction",
       blockNumber: "number - Block height the payment landed in",
       address: "string - The TIP-20 token contract that emitted the event",
