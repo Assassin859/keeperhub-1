@@ -16,18 +16,23 @@ import { cleanupAll, createSharedCtx, runSetup } from "../../_shared/setup";
 
 const PROTOCOL = "morpho";
 const CHAIN_ID = "1";
-const SKIP_INFRA_TESTS =
-  !(process.env.DATABASE_URL && process.env.ANVIL_FORK_MAINNET_URL) ||
-  process.env.SKIP_INFRA_TESTS === "true";
-
 // morpho has the registry's longest setup write chain (two token
 // provisions, three approvals, vault interactions). On a cold fork the
 // archive upstream's fetch latency under concurrent suite setups pushed
-// single approves past 3.5 minutes, so this suite was hard-skipped on
-// first activation (2026-07-07). The protocol-coverage job now mounts the
-// nightly fork RPC cache and pins the fork to the cache block, so setup
-// writes run against warmed state and finish inside budget - re-enabled on
-// the same infra gate as the sibling suites.
+// single approves past 3.5 minutes, blowing the shard timeout, so this
+// suite additionally requires a warmed, pinned fork cache (PROTOCOL_FORK_CACHED,
+// set by the CI fork-cache download step only when a fresh nightly cache is
+// mounted). On a cache miss it self-skips like before instead of timing out;
+// with the cache its setup writes run against warmed state and finish in
+// budget. The sibling chain-1 suites run fine cold and gate on
+// ANVIL_FORK_MAINNET_URL alone.
+const SKIP_INFRA_TESTS =
+  !(
+    process.env.DATABASE_URL &&
+    process.env.ANVIL_FORK_MAINNET_URL &&
+    process.env.PROTOCOL_FORK_CACHED
+  ) || process.env.SKIP_INFRA_TESTS === "true";
+
 describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Ethereum)`, () => {
   const ctx = createSharedCtx();
 

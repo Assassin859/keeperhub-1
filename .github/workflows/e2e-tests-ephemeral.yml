@@ -1168,6 +1168,14 @@ jobs:
           # chronicle, superfluid) run for real. When unset those suites
           # skip cleanly and the floor above drops accordingly.
           ANVIL_FORK_MAINNET_URL: ${{ secrets.ANVIL_FORK_MAINNET_URL }}
+          # Non-empty only when the fork-cache download produced a warmed,
+          # pinned cache (set = its `dir` output). morpho gates on this in
+          # addition to ANVIL_FORK_MAINNET_URL: its setup write chain is the
+          # longest in the registry and only fits the shard budget against
+          # warmed state, so on a cache miss (live cold fork) it self-skips
+          # instead of blowing the shard timeout. The other chain-1 suites
+          # run fine cold and stay gated on ANVIL_FORK_MAINNET_URL alone.
+          PROTOCOL_FORK_CACHED: ${{ steps.fork-cache.outputs.dir != '' && '1' || '' }}
           # PR-gate/nightly split: PR-triggered runs shrink each phase to
           # its first runnable action (run-fixture.ts) and the floor
           # derivation above switches to the representatives floor with
@@ -1242,11 +1250,16 @@ jobs:
   # Merge the sharded protocol-coverage results and enforce the sweep-wide
   # guards: the executed-test floor (suites self-skip when infra gates are
   # absent, so a green shard can mean "ran nothing") and suite completeness
-  # (a suite left out of every shard's list would silently vanish). Runs only
-  # when all shards succeed; a shard's own test failures fail the run
-  # directly via that shard's non-zero vitest exit.
+  # (a suite left out of every shard's list would silently vanish).
+  #
+  # Runs whenever e2e is meant to run, even if a shard FAILED or was cancelled
+  # (e.g. hit its timeout) - a cancelled shard uploads no/partial results, so
+  # completeness sees its suites missing and fails here. This is the deploy
+  # gate: without it, a timed-out shard is "cancelled" not "failed", which
+  # slips past deploy's !failure() guard and lets the sweep ship uncovered.
   protocol-coverage-floor:
     needs: [should-run, protocol-coverage-ephemeral]
+    if: ${{ !cancelled() && needs.should-run.outputs.run-e2e == 'true' }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 10
