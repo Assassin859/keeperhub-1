@@ -1276,7 +1276,6 @@ export function WorkflowRuns({
     <div data-ready={String(isReady)} data-testid="workflow-runs" className="space-y-3">
       {executions.map((execution, index) => {
         const isExpanded = expandedRuns.has(execution.id);
-        const isSelected = selectedExecutionId === execution.id;
         const executionLogs = (logs[execution.id] || []).sort((a, b) => {
           // Sort by startedAt to ensure first to last order
           return (
@@ -1294,11 +1293,7 @@ export function WorkflowRuns({
 
         return (
           <div
-            className={cn(
-              "overflow-hidden rounded-lg border bg-card transition-all",
-              isSelected &&
-                "ring-2 ring-primary ring-offset-2 ring-offset-background"
-            )}
+            className="overflow-hidden rounded-lg border bg-card transition-all"
             key={execution.id}
           >
             <div className="flex w-full items-center gap-3 p-4">
