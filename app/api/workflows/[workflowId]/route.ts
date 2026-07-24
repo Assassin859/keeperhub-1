@@ -914,10 +914,12 @@ export async function DELETE(
 
     // KEEP-440: soft-delete the workflow row instead of hard-deleting it. The
     // surviving row keeps its listedSlug bound in idx_workflows_listed_slug, so
-    // the slug can never be re-claimed by another workflow. Execution history
-    // is still hard-deleted on force (only the workflow row must persist), and
-    // schedules are removed explicitly -- the ON DELETE CASCADE that used to
-    // clean them up no longer fires now that the row is not actually deleted.
+    // the slug can never be re-claimed by another workflow. On force, the bulky
+    // per-step logs are hard-deleted to reclaim storage but the execution runs
+    // are soft-deleted (deleted_at) so usage counters, which count every row,
+    // stay accurate; schedules are removed explicitly -- the ON DELETE CASCADE
+    // that used to clean them up no longer fires now that the row is not
+    // actually deleted.
     const softDelete = softDeleteValues();
 
     if (hasExecutions && force) {
@@ -938,7 +940,8 @@ export async function DELETE(
             .where(inArray(workflowExecutionLogs.executionId, executionIds));
 
           await tx
-            .delete(workflowExecutions)
+            .update(workflowExecutions)
+            .set({ deletedAt: new Date() })
             .where(eq(workflowExecutions.workflowId, workflowId));
         }
 

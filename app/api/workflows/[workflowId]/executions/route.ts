@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
@@ -58,9 +58,12 @@ export async function GET(
       );
     }
 
-    // Fetch executions
+    // Fetch executions, excluding runs whose history was purged.
     const executions = await db.query.workflowExecutions.findMany({
-      where: eq(workflowExecutions.workflowId, workflowId),
+      where: and(
+        eq(workflowExecutions.workflowId, workflowId),
+        isNull(workflowExecutions.deletedAt)
+      ),
       orderBy: [desc(workflowExecutions.startedAt)],
       limit: 50,
     });
@@ -190,27 +193,33 @@ export async function DELETE(
       );
     }
 
-    // Get all execution IDs for this workflow
+    // Only the runs not already purged; keeps deletedCount accurate on re-runs.
     const executions = await db.query.workflowExecutions.findMany({
-      where: eq(workflowExecutions.workflowId, workflowId),
+      where: and(
+        eq(workflowExecutions.workflowId, workflowId),
+        isNull(workflowExecutions.deletedAt)
+      ),
       columns: { id: true },
     });
 
     const executionIds = executions.map((e) => e.id);
 
-    // Delete logs first (if there are any executions)
     if (executionIds.length > 0) {
       const { workflowExecutionLogs } = await import("@/lib/db/schema");
-      const { inArray } = await import("drizzle-orm");
 
+      // Per-step logs are the bulky payloads and are not billing-relevant, so
+      // hard-delete them to reclaim storage.
       await db
         .delete(workflowExecutionLogs)
         .where(inArray(workflowExecutionLogs.executionId, executionIds));
 
-      // Then delete the executions
+      // Soft-delete the runs themselves: usage counters count every row, so the
+      // billing total cannot be reset by purging history. Listings filter
+      // deleted_at IS NULL.
       await db
-        .delete(workflowExecutions)
-        .where(eq(workflowExecutions.workflowId, workflowId));
+        .update(workflowExecutions)
+        .set({ deletedAt: new Date() })
+        .where(inArray(workflowExecutions.id, executionIds));
     }
 
     return NextResponse.json({
