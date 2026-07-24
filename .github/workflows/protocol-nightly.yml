@@ -18,6 +18,11 @@ permissions:
   # only downgrade caller permissions): the tier1 job lists/downloads
   # the nightly fork-cache artifact.
   actions: read
+  # Required: e2e-tests-ephemeral.yml declares id-token: write for AWS OIDC
+  # (configure-aws-credentials in build-app/start-app). A called workflow
+  # requesting a permission the caller lacks fails the whole run at startup,
+  # which is why this nightly never once ran since the reusable call was added.
+  id-token: write
 
 jobs:
   e2e-full:
