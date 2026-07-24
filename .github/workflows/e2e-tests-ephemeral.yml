@@ -1158,6 +1158,14 @@ jobs:
           if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
             echo "::error::protocol-coverage shard ${SHARD} exceeded 23m and was killed; failing the shard so a hung protocol gate blocks deploy instead of being silently cancelled at the job timeout."
           fi
+          # A kill can leave no results JSON (reporter flushes on completion) or
+          # a truncated one. Leave a parseable empty result so the floor job
+          # fails cleanly on "shard suites missing" rather than crashing on a
+          # JSON parse error. The shard still exits non-zero below, so deploy is
+          # blocked either way.
+          if [ "$code" -ne 0 ] && { [ ! -s "protocol-results-${SHARD}.json" ] || ! jq empty "protocol-results-${SHARD}.json" >/dev/null 2>&1; }; then
+            echo '{"testResults":[]}' > "protocol-results-${SHARD}.json"
+          fi
           exit "$code"
         env:
           SHARD: ${{ matrix.shard }}
