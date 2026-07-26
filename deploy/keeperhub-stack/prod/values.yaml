@@ -30,11 +30,11 @@ app:
       name: chain-rpc-config
       parameter_name: /eks/techops-prod/keeperhub/chain-rpc-config
     # KEEP-988: gate Solana wallet provisioning at signup (Turnkey provisions an
-    # ed25519 Solana account alongside the EVM EOA). Off in prod until the prod
-    # Solana rollout; flip to "true" in a PR when ready.
+    # ed25519 Solana account alongside the EVM EOA). Enabled for the prod Solana
+    # rollout; existing wallets were backfilled via scripts/backfill-solana-address.ts.
     SOLANA_WALLET_PROVISIONING_ENABLED:
       type: kv
-      value: "false"
+      value: "true"
     TURNKEY_API_PUBLIC_KEY:
       type: parameterStore
       name: turnkey-api-public-key
