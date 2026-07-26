@@ -57,6 +57,30 @@ describe("getChainIdFromNetwork", () => {
     });
   });
 
+  describe("with missing network values", () => {
+    it("should throw a validation error for undefined", () => {
+      expect(() =>
+        getChainIdFromNetwork(undefined as unknown as string)
+      ).toThrow("Network is required");
+    });
+
+    it("should throw a validation error for null", () => {
+      expect(() => getChainIdFromNetwork(null as unknown as string)).toThrow(
+        "Network is required"
+      );
+    });
+
+    it("should throw a validation error for empty string", () => {
+      expect(() => getChainIdFromNetwork("")).toThrow("Network is required");
+    });
+
+    it("should not throw a TypeError for missing values", () => {
+      expect(() =>
+        getChainIdFromNetwork(undefined as unknown as string)
+      ).not.toThrow(TypeError);
+    });
+  });
+
   describe("with numeric chain IDs", () => {
     it("should return the same chain ID for numbers", () => {
       expect(getChainIdFromNetwork(1)).toBe(1);

@@ -5,7 +5,7 @@ import {
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ErrorCategory } from "@/lib/logging";
 
-export { ExecutionErrorType };
+export { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 /**
  * Classification of a workflow execution failure into:
@@ -224,6 +224,23 @@ const RULES: readonly Rule[] = [
     errorCategory: ErrorCategory.NETWORK_RPC,
     errorType: ExecutionErrorType.SYSTEM,
     code: "N-0001",
+  },
+  // User-config: missing or unrecognized network input. Unanchored so
+  // step-wrapped forms (`Failed to check balance: Network is required`) still
+  // match. Must come AFTER the RPC failover rules above: provider response
+  // bodies embedded in exhaustion messages can themselves contain phrases like
+  // `Unsupported network:`, and those must stay system/N-0001.
+  {
+    pattern: /Network is required/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  {
+    pattern: /Unsupported network:/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
   },
   // User-config: webhook hostname does not resolve -- the configured URL points
   // at a host that does not exist. Must come before the generic webhook rule.

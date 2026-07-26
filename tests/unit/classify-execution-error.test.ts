@@ -17,6 +17,43 @@ describe("classifyExecutionError", () => {
     });
   });
 
+  it("classifies a missing network as a user validation error, including step-wrapped forms", () => {
+    const bare = classifyExecutionError("Network is required");
+    expect(bare).toEqual({
+      errorCategory: ErrorCategory.VALIDATION,
+      errorType: "user",
+      code: null,
+    });
+
+    const wrapped = classifyExecutionError(
+      "Failed to check balance: Network is required"
+    );
+    expect(wrapped.errorType).toBe("user");
+    expect(wrapped.errorCategory).toBe(ErrorCategory.VALIDATION);
+  });
+
+  it("classifies an unsupported network name as a user validation error", () => {
+    const result = classifyExecutionError(
+      "Unsupported network: polygon. Supported: mainnet, sepolia or numeric chain IDs"
+    );
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.VALIDATION,
+      errorType: "user",
+      code: null,
+    });
+  });
+
+  it("keeps RPC failover exhaustion as system even when the provider response mentions an unsupported network", () => {
+    const result = classifyExecutionError(
+      'Event query failed: RPC failed on both endpoints. Primary: server response 400 Bad Request ({ "message": "Unsupported network: eth" }). Fallback: timeout'
+    );
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.NETWORK_RPC,
+      errorType: "system",
+      code: "N-0001",
+    });
+  });
+
   it("defaults unmatched messages to system so real engine faults still page", () => {
     const result = classifyExecutionError("some unexpected internal failure");
     expect(result.errorType).toBe("system");
