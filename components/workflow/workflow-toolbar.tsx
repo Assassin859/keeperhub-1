@@ -51,10 +51,12 @@ import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import { cn } from "@/lib/utils";
 import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
+import { ensureSavedBeforeRun } from "@/lib/workflow/run-preflight";
 import {
   addNodeAtom,
   canRedoAtom,
   canUndoAtom,
+  cancelPendingAutosave,
   clearWorkflowAtom,
   currentExecutionIdAtom,
   currentWorkflowIdAtom,
@@ -77,6 +79,7 @@ import {
   isWorkflowEnabled,
   isWorkflowOwnerAtom,
   nodesAtom,
+  previewVersionAtom,
   propertiesPanelActiveTabAtom,
   redoAtom,
   runsRefreshTriggerAtom,
@@ -551,6 +554,7 @@ type WorkflowHandlerParams = {
   isExecuting: boolean;
   setIsExecuting: (value: boolean) => void;
   setIsSaving: (value: boolean) => void;
+  hasUnsavedChanges: boolean;
   setHasUnsavedChanges: (value: boolean) => void;
   setActiveTab: (value: string) => void;
   setNodes: (nodes: WorkflowNode[]) => void;
@@ -570,6 +574,7 @@ function useWorkflowHandlers({
   isExecuting,
   setIsExecuting,
   setIsSaving,
+  hasUnsavedChanges,
   setHasUnsavedChanges,
   setActiveTab,
   setNodes,
@@ -583,6 +588,7 @@ function useWorkflowHandlers({
   const { open: openOverlay } = useOverlay();
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const setRunsRefreshTrigger = useSetAtom(runsRefreshTriggerAtom);
+  const previewVersion = useAtomValue(previewVersionAtom);
 
   // Cleanup polling interval on unmount
   useEffect(
@@ -594,26 +600,48 @@ function useWorkflowHandlers({
     []
   );
 
-  const handleSave = async () => {
+  const saveWorkflow = async (): Promise<boolean> => {
     if (!currentWorkflowId) {
-      return;
+      return false;
     }
 
     setIsSaving(true);
+    // Cancel before the await, not after: an edit made while this save is in
+    // flight schedules a new autosave that must survive; only the schedule
+    // this save supersedes should be dropped.
+    cancelPendingAutosave();
     try {
       await api.workflow.update(currentWorkflowId, { nodes, edges });
       setHasUnsavedChanges(false);
+      return true;
     } catch (error) {
       console.error("Failed to save workflow:", error);
       toast.error("Failed to save workflow. Please try again.");
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
 
+  const handleSave = async () => {
+    await saveWorkflow();
+  };
+
   const executeWorkflow = async () => {
     if (!currentWorkflowId) {
       toast.error("Please save the workflow before executing");
+      return;
+    }
+
+    // The server executes the stored definition, not the canvas state, so
+    // edits still waiting on the debounced autosave must be flushed first.
+    // saveWorkflow already toasts on failure, so a failed flush aborts quietly.
+    const saved = await ensureSavedBeforeRun({
+      hasUnsavedChanges,
+      isPreviewingVersion: previewVersion !== null,
+      save: saveWorkflow,
+    });
+    if (!saved) {
       return;
     }
 
@@ -914,6 +942,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     isExecuting,
     setIsExecuting,
     setIsSaving,
+    hasUnsavedChanges,
     setHasUnsavedChanges,
     clearWorkflow,
     workflowVisibility,
@@ -960,6 +989,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
       isExecuting,
       setIsExecuting,
       setIsSaving,
+      hasUnsavedChanges,
       setHasUnsavedChanges,
       setActiveTab,
       setNodes,
