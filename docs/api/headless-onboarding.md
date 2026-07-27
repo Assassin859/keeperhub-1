@@ -202,10 +202,45 @@ simulate with the same body you intend to send, then send it once with an
 `Idempotency-Key` so an interrupted client can retry without double-executing,
 then poll `GET /api/execute/{executionId}/status`.
 
+## 6. Your first transaction should move zero
+
+A brand-new organization wallet holds nothing, so a first run with a non-zero
+`amount` never reaches the chain. It fails inside the simulator as:
+
+```
+Simulation reverted: missing revert data (action="estimateGas", data=null,
+reason=null, transaction={...}, invocation=null, revert=null,
+code=CALL_EXCEPTION, version=6.16.0)
+```
+
+That message names neither the balance nor the wallet, so on a first run it
+reads as a broken endpoint rather than an empty account - and the obvious next
+moves, re-checking the API key or re-reading this page, are all wrong.
+
+Send `amount: "0"` instead. A zero-value self-transfer is a real, mined,
+independently verifiable transaction, and because the relayer pays the gas
+(section 4) a wallet that has never held a wei can land one. That gets you a
+transaction hash on the first attempt, with no faucet and no bridge, and proves
+the whole path end to end before any value is at stake.
+
+Once you do move value, read the balance first and say the real reason yourself:
+
+```ts
+const balance = await publicClient.getBalance({ address: user.walletAddress });
+if (parseEther(amount) > balance) {
+  throw new Error(
+    `Fund ${user.walletAddress} on chain ${chainId} - it holds ${formatEther(balance)}`,
+  );
+}
+```
+
 ## Full script
 
 Signs in, creates a key, finds the organization wallet and executes a transfer.
-No browser and no manual step.
+No browser and no manual step. A runnable version of this path, with the balance
+preflight and an onchain verification step that checks the receipt against a
+public RPC rather than trusting the API's own `"completed"`, is at
+[piiiico/keeperhub-headless-starter](https://github.com/piiiico/keeperhub-headless-starter).
 
 ```ts
 import { privateKeyToAccount } from "viem/accounts";
@@ -279,10 +314,13 @@ const { body: user } = await api("/api/user");
 console.log("fund this address:", user.walletAddress);
 
 // 4. Simulate, then execute once with an idempotency key.
+// amount "0" on purpose: a new organization wallet is empty, and a zero-value
+// self-transfer still lands a real, verifiable transaction because the relayer
+// pays the gas. Raise it only after the wallet above is funded (section 6).
 const transfer = {
   chainId: 8453,
   recipientAddress: user.walletAddress,
-  amount: "0.00001",
+  amount: "0",
 };
 const sim = await api("/api/execute/transfer", {
   method: "POST",
