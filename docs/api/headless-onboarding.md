@@ -126,7 +126,9 @@ Details that otherwise cost debugging time:
   non-wallet factors are missing the code is `factors_required` rather than
   `signature_required`.
 
-The same challenge-and-retry protocol guards the other step-up actions: wallet
+`DELETE /api/keys/{keyId}` is gated by the same `org_api_key_manage` action, so
+a headless client has to answer the challenge to clean up after itself too. The
+same challenge-and-retry protocol guards the other step-up actions: wallet
 withdrawal, private-key export, session revocation, account deactivation, TOTP
 removal and audit-log export.
 

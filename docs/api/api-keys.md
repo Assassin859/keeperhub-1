@@ -105,6 +105,9 @@ DELETE /api/keys/{keyId}
 
 Soft-revokes the key. Subsequent requests with that key return `401`.
 
+Revocation is behind the same `org_api_key_manage` step-up gate as creation: the
+first `DELETE` returns `401 signature_required` with a challenge to sign.
+
 #### Response
 
 ```json
