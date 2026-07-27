@@ -3,6 +3,11 @@ import "server-only";
 import { ethers } from "ethers";
 import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
+import {
+  describeNativeShortfall,
+  getNativeSymbol,
+  type InsufficientBalanceCode,
+} from "@/lib/execute/native-balance";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
@@ -23,6 +28,11 @@ import { parseTokenAddress } from "@/plugins/web3/steps/transfer-token-core";
  * Every chain call is routed through rpcManager.executeWithFailover so
  * a primary-RPC blip falls over to the chain's configured fallback,
  * matching the behaviour of read paths in the broadcast cores.
+ *
+ * When the preflight fails because the funding address cannot cover the
+ * native value, the failure carries `code: "insufficient_balance"` with the
+ * balance, the requirement and the shortfall — the same answer the broadcast
+ * preflight gives — rather than the node's revert-data-less CALL_EXCEPTION.
  *
  * Known limitation: `from` is resolved via getOrganizationWalletAddress
  * (the org's EOA / smart account address). Orgs that route writes
@@ -69,6 +79,20 @@ export type SimulateFailure = {
   wouldRevert: true;
   revertReason: string;
   error: string;
+  /**
+   * Machine-readable cause, set only when the simulator could attribute the
+   * failure to something more specific than "the call reverted". Clients
+   * should branch on this rather than string-matching `revertReason`.
+   */
+  code?: InsufficientBalanceCode;
+  /** Set with `code: "insufficient_balance"`: `from`'s native balance, in wei. */
+  balanceWei?: string;
+  /** Set with `code: "insufficient_balance"`: native value needed, in wei. */
+  requiredWei?: string;
+  /** Set with `code: "insufficient_balance"`: how much is missing, in wei. */
+  shortfallWei?: string;
+  /** Set with `code: "insufficient_balance"`: e.g. "ETH". */
+  nativeSymbol?: string;
 };
 
 export type SimulateResult = SimulateSuccess | SimulateFailure;
@@ -146,6 +170,64 @@ function failure(
     revertReason: message,
     error: message,
   };
+}
+
+/**
+ * Attribute a failed preflight to a funding wallet that cannot cover the
+ * transfer value.
+ *
+ * `eth_estimateGas` from an address holding less than `value` is rejected by
+ * the node without revert data, which ethers surfaces as a bare
+ * `missing revert data (action="estimateGas", ..., code=CALL_EXCEPTION)`.
+ * That string names neither the balance nor the address, so a headless caller
+ * — the exact case a dry run exists for — has nothing to act on. Read the
+ * balance once, on the failure path only, and report the same shortfall the
+ * broadcast preflight in transfer-funds-core already reports.
+ *
+ * Returns null whenever the balance does not explain the failure (or cannot
+ * be read), so a real revert reason is never masked by a guess. The balance
+ * is read for the same `from` the simulation used, inheriting the Safe
+ * routing limitation documented at the top of this file.
+ */
+async function nativeShortfallFailure(input: {
+  rpc: RpcProviderManager;
+  chainId: number;
+  from: string;
+  to: string;
+  value: bigint;
+}): Promise<SimulateFailure | null> {
+  // A zero-value call can never be short, so skip the extra round trip.
+  if (input.value <= BigInt(0)) {
+    return null;
+  }
+
+  try {
+    const balance = await input.rpc.executeWithFailover(
+      (p) => p.getBalance(input.from),
+      "preflight"
+    );
+    if (balance >= input.value) {
+      return null;
+    }
+    const shortfall = describeNativeShortfall({
+      symbol: await getNativeSymbol(input.chainId),
+      balance,
+      required: input.value,
+      holder: input.from,
+    });
+    return {
+      ...failure(input.from, input.to, input.value, shortfall.message),
+      code: shortfall.code,
+      balanceWei: shortfall.balanceWei,
+      requiredWei: shortfall.requiredWei,
+      shortfallWei: shortfall.shortfallWei,
+      nativeSymbol: shortfall.nativeSymbol,
+    };
+  } catch {
+    // Attribution is best-effort: it runs inside an error path, so it must
+    // fall back to the original failure rather than raise one of its own.
+    return null;
+  }
 }
 
 async function getRpcManagerForChain(
@@ -242,7 +324,7 @@ export async function simulateContractCall(
     );
   }
 
-  const { rpc } = await getRpcManagerForChain(input.network);
+  const { rpc, chainId } = await getRpcManagerForChain(input.network);
   const tx: ethers.TransactionRequest = { from, to, data: encodedData, value };
 
   let gasEstimate: bigint;
@@ -256,10 +338,24 @@ export async function simulateContractCall(
       "preflight"
     );
   } catch (err) {
-    const reason =
-      decodeRevertReason(err, iface) ??
-      `Simulation reverted: ${getErrorMessage(err)}`;
-    return failure(from, to, value, reason);
+    // A decoded revert is the most specific answer available, so it wins.
+    // Only when the node returned no revert data is an empty wallet a
+    // plausible explanation worth spending an extra RPC read on.
+    const reason = decodeRevertReason(err, iface);
+    if (reason) {
+      return failure(from, to, value, reason);
+    }
+    const shortfall = await nativeShortfallFailure({
+      rpc,
+      chainId,
+      from,
+      to,
+      value,
+    });
+    return (
+      shortfall ??
+      failure(from, to, value, `Simulation reverted: ${getErrorMessage(err)}`)
+    );
   }
 
   let simulatedReturnValue: unknown = null;
@@ -300,7 +396,7 @@ export async function simulateNativeTransfer(
   }
   const value = valueOrError;
 
-  const { rpc } = await getRpcManagerForChain(input.network);
+  const { rpc, chainId } = await getRpcManagerForChain(input.network);
   const tx: ethers.TransactionRequest = { from, to, value };
 
   // Run estimateGas + provider.call together so a contract recipient
@@ -315,11 +411,16 @@ export async function simulateNativeTransfer(
       "preflight"
     );
   } catch (err) {
-    return failure(
+    const shortfall = await nativeShortfallFailure({
+      rpc,
+      chainId,
       from,
       to,
       value,
-      `Simulation reverted: ${getErrorMessage(err)}`
+    });
+    return (
+      shortfall ??
+      failure(from, to, value, `Simulation reverted: ${getErrorMessage(err)}`)
     );
   }
 

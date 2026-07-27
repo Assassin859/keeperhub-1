@@ -7,6 +7,9 @@
  *
  *   - happy path: gas + decoded return value come back serialised
  *   - revert path: provider throws -> decoded reason in revertReason
+ *   - empty-wallet path: a revert-data-less estimateGas failure is
+ *     attributed to the funding address with code "insufficient_balance",
+ *     and is NOT claimed when the balance covers the value or cannot be read
  *   - input-validation paths short-circuit before any RPC call
  *   - simulateTokenTransfer resolves the token address via
  *     parseTokenAddress (same helper the broadcast path uses) and
@@ -53,6 +56,24 @@ vi.mock("@/plugins/web3/steps/transfer-token-core", () => ({
 vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
   ErrorCategory: { DATABASE: "database" },
+}));
+
+// getNativeSymbol reads the chain's symbol from the seeded `chains` table.
+// Only the insufficient-balance path touches it, and only for wording.
+vi.mock("@/lib/db", () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([{ symbol: "ETH" }]),
+        }),
+      }),
+    }),
+  },
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  chains: { chainId: "chain_id", symbol: "symbol" },
 }));
 
 // Import after mocks so the simulate module binds to the stubbed deps.
@@ -151,6 +172,32 @@ describe("simulateContractCall", () => {
     if (!result.success) {
       expect(result.revertReason).toContain("Insufficient balance");
       expect(result.error).toBe(result.revertReason);
+    }
+  });
+
+  it("attributes an undecodable failure on a value-bearing call to an empty wallet", async () => {
+    resetSpies();
+    // No revert data to decode, and the wallet cannot cover the 1 ETH value.
+    executeWithFailover.mockRejectedValueOnce(
+      new Error('missing revert data (action="estimateGas")')
+    );
+    executeWithFailover.mockResolvedValueOnce(ethers.parseEther("0.25"));
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: JSON.stringify(["1"]),
+      value: "1.0",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("insufficient_balance");
+      expect(result.shortfallWei).toBe(ethers.parseEther("0.75").toString());
+      expect(result.revertReason).toContain("Have: 0.25, Need: 1.0");
     }
   });
 
@@ -296,6 +343,9 @@ describe("simulateNativeTransfer", () => {
     executeWithFailover.mockRejectedValueOnce(
       new Error("insufficient funds for gas * price + value")
     );
+    // Balance covers the value, so the node's own message is the truthful
+    // answer and must not be replaced by a shortfall claim.
+    executeWithFailover.mockResolvedValueOnce(ethers.parseEther("10"));
 
     const result = await simulateNativeTransfer({
       organizationId: "org_test",
@@ -307,7 +357,84 @@ describe("simulateNativeTransfer", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.revertReason).toContain("insufficient funds");
+      expect(result.code).toBeUndefined();
     }
+  });
+
+  it("attributes a revert-data-less estimateGas failure to an empty wallet", async () => {
+    resetSpies();
+    // What Base (and most nodes) return when `from` cannot cover the value:
+    // an error with no revert data, which ethers surfaces as a bare
+    // CALL_EXCEPTION naming neither the balance nor the address.
+    executeWithFailover.mockRejectedValueOnce(
+      new Error(
+        'missing revert data (action="estimateGas", data=null, reason=null, code=CALL_EXCEPTION, version=6.16.0)'
+      )
+    );
+    executeWithFailover.mockResolvedValueOnce(BigInt(0));
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "1",
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "0.001",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.wouldRevert).toBe(true);
+    if (!result.success) {
+      expect(result.code).toBe("insufficient_balance");
+      expect(result.balanceWei).toBe("0");
+      expect(result.requiredWei).toBe(ethers.parseEther("0.001").toString());
+      expect(result.shortfallWei).toBe(ethers.parseEther("0.001").toString());
+      expect(result.nativeSymbol).toBe("ETH");
+      // The message has to carry the two facts the caller cannot look up:
+      // which address to fund, and by how much.
+      expect(result.revertReason).toContain(FROM_ADDRESS);
+      expect(result.revertReason).toContain("Have: 0.0, Need: 0.001");
+      expect(result.revertReason).toContain("at least 0.001 ETH");
+      expect(result.error).toBe(result.revertReason);
+    }
+    // One estimateGas/call round trip, then exactly one balance read.
+    expect(executeWithFailover).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the original error when the balance read itself fails", async () => {
+    resetSpies();
+    executeWithFailover.mockRejectedValueOnce(new Error("node exploded"));
+    executeWithFailover.mockRejectedValueOnce(new Error("balance read failed"));
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "1",
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "0.001",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.revertReason).toContain("node exploded");
+      expect(result.code).toBeUndefined();
+    }
+  });
+
+  it("does not read the balance for a zero-value transfer", async () => {
+    resetSpies();
+    executeWithFailover.mockRejectedValueOnce(new Error("node exploded"));
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "1",
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "0",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBeUndefined();
+    }
+    // A zero-value call cannot be short of funds: no extra round trip.
+    expect(executeWithFailover).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a malformed amount before touching the network", async () => {
