@@ -69,6 +69,8 @@ POST /api/keys
 
 **Session authentication required.** Cannot be invoked with an API key. Otherwise a leaked key could mint additional keys for the same organization.
 
+**Step-up confirmation required.** Key creation sits behind the same confirmation gate as wallet withdrawals: the first request returns `401` with `code: "signature_required"` and a `challenge` to sign (or `factors_required` when a non-wallet factor is outstanding). The dashboard handles this with a wallet popup or an authenticator prompt. Scripted clients must answer it themselves - see [Headless Onboarding](/api/headless-onboarding#2-create-an-organization-api-key) for the retry protocol.
+
 #### Request Body
 
 ```json
