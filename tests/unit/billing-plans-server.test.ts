@@ -27,6 +27,7 @@ function mockExecuteReturning(rows: Record<string, unknown>[]): void {
   mockExecute.mockResolvedValue(rows);
 }
 
+import { __resetExecutionCountCacheForTest } from "@/lib/billing/execution-limit-core";
 import type { BillingInterval, PlanName, TierKey } from "@/lib/billing/plans";
 import {
   checkExecutionLimit,
@@ -41,6 +42,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetActiveDebtExecutions.mockResolvedValue(0);
+  __resetExecutionCountCacheForTest();
 });
 
 describe("getOrgSubscription", () => {

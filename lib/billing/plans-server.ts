@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { getActiveDebtExecutions } from "./execution-debt";
 import {
-  countMonthlyExecutions,
+  countMonthlyExecutionsCached,
   decideExecutionLimit,
   effectiveExecutionLimit,
 } from "./execution-limit-core";
@@ -250,7 +250,7 @@ export async function checkExecutionLimit(
     debtExecutions
   );
 
-  const used = await countMonthlyExecutions(db, organizationId);
+  const used = await countMonthlyExecutionsCached(db, organizationId);
   const planDef = PLANS[plan];
 
   const outcome = decideExecutionLimit({
