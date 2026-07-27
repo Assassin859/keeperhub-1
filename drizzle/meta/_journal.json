@@ -946,6 +946,13 @@
       "when": 1784325442000,
       "tag": "0134_keep_1035_workflow_executions_soft_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1785116800000,
+      "tag": "0135_keep_1039_billable_execution_count_indexes",
+      "breakpoints": true
     }
   ]
 }

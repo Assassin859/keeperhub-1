@@ -186,14 +186,14 @@ describe("classifyExecutionError", () => {
       expect(r.errorType).toBe("user");
     });
 
-    it.each([
-      "URL is required",
-      "HTTP request failed: URL is required",
-    ])("keeps %s as validation + user (config fault, not transport)", (input) => {
-      const r = classifyExecutionError(input);
-      expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
-      expect(r.errorType).toBe("user");
-    });
+    it.each(["URL is required", "HTTP request failed: URL is required"])(
+      "keeps %s as validation + user (config fault, not transport)",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
+        expect(r.errorType).toBe("user");
+      }
+    );
 
     it.each([
       "Failed to send webhook: fetch failed: getaddrinfo EAI_AGAIN events.pagerduty.com",
@@ -388,7 +388,9 @@ describe("applyErrorClassHint", () => {
     expect(applyErrorClassHint(coded, "system")).toEqual(coded);
 
     const uncoded = applyErrorClassHint(
-      classifyExecutionError("HTTP request failed: fetch failed: read ECONNRESET"),
+      classifyExecutionError(
+        "HTTP request failed: fetch failed: read ECONNRESET"
+      ),
       "system"
     );
     expect(uncoded.errorType).toBe("system");

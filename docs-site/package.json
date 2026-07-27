@@ -10,7 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "~16.2.6",
+    "next": "16.2.11",
     "nextra": "^4.0.0",
     "nextra-theme-docs": "^4.0.0",
     "react": "^19.2.5",
@@ -30,8 +30,9 @@
       "postcss": "^8.5.10",
       "mermaid": ">=11.15.0",
       "@xmldom/xmldom": ">=0.9.10",
-      "dompurify": ">=3.4.11",
-      "brace-expansion": ">=5.0.6"
+      "dompurify": ">=3.4.12",
+      "brace-expansion": ">=5.0.7",
+      "sharp": ">=0.35.0"
     }
   }
 }
