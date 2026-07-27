@@ -101,6 +101,11 @@ const countCache = new Map<string, CountCacheEntry>();
  * its limit can overshoot by roughly TTL x its throughput, once, in the
  * window that straddles the crossing. The next refresh blocks it.
  *
+ * For admission control only. The paths that turn a count into money - overage
+ * billing (lib/billing/overage.ts) and the invoice usage figures
+ * (lib/billing/execution-usage.ts) - must keep reading the exact committed
+ * count for their own billing period, so they do not use this.
+ *
  * Set BILLING_COUNT_CACHE_TTL_MS=0 to disable (recompute on every call).
  */
 export function countMonthlyExecutionsCached<

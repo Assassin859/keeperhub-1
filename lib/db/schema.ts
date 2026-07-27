@@ -748,17 +748,6 @@ export const workflowExecutions = pgTable(
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
     index("idx_workflow_executions_user_id").on(table.userId),
-    // Covers the monthly billing count (workflow_id join key, started_at range,
-    // billable filter all in the key) so it resolves as an index-only scan
-    // instead of heap fetches across the whole table. The (workflow_id,
-    // started_at) prefix also serves the analytics org+window aggregations.
-    // Created out-of-band with CONCURRENTLY on large environments - see
-    // drizzle/0135 (@requires-db-prep).
-    index("idx_workflow_executions_workflow_started").on(
-      table.workflowId,
-      table.startedAt,
-      table.billable
-    ),
     // Resolve "which runs executed this snapshot" / join to workflow_history.
     index("idx_workflow_executions_executed_hash").on(
       table.executedWorkflowHash
