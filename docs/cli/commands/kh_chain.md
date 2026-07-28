@@ -1,26 +1,18 @@
-## kh project create
+## kh chain
 
-Create a project
-
-```
-kh project create <name> [flags]
-```
+Manage blockchain chains
 
 ### Examples
 
 ```
-  # Create a project
-  kh p create "My Project"
-
-  # Create with a description
-  kh p create "DeFi Automations" --description "Uniswap and Aave workflows"
+  # List supported chains
+  kh ch ls
 ```
 
 ### Options
 
 ```
-      --description string   Project description
-  -h, --help                 help for create
+  -h, --help   help for chain
 ```
 
 ### Options inherited from parent commands
@@ -36,5 +28,6 @@ kh project create <name> [flags]
 
 ### SEE ALSO
 
-* [kh project](kh_project.md)	 - Manage projects
+* [kh](kh.md)	 - KeeperHub CLI
+* [kh chain list](kh_chain_list.md)	 - List supported blockchain chains
 

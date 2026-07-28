@@ -1,26 +1,21 @@
-## kh project create
+## kh plugin
 
-Create a project
-
-```
-kh project create <name> [flags]
-```
+Browse available plugins and integrations
 
 ### Examples
 
 ```
-  # Create a project
-  kh p create "My Project"
+  # List all plugins
+  kh plugin ls
 
-  # Create with a description
-  kh p create "DeFi Automations" --description "Uniswap and Aave workflows"
+  # Get details for a plugin
+  kh plugin g aave
 ```
 
 ### Options
 
 ```
-      --description string   Project description
-  -h, --help                 help for create
+  -h, --help   help for plugin
 ```
 
 ### Options inherited from parent commands
@@ -36,5 +31,7 @@ kh project create <name> [flags]
 
 ### SEE ALSO
 
-* [kh project](kh_project.md)	 - Manage projects
+* [kh](kh.md)	 - KeeperHub CLI
+* [kh plugin get](kh_plugin_get.md)	 - Get plugin details and available actions
+* [kh plugin list](kh_plugin_list.md)	 - List available plugins and integrations
 

@@ -1,25 +1,26 @@
-## kh run cancel
+## kh workflow resume
 
-Cancel a run
+Resume a paused workflow
 
 ```
-kh run cancel <run-id> [flags]
+kh workflow resume <workflow-id> [flags]
 ```
 
 ### Examples
 
 ```
-  # Cancel a run (will prompt for confirmation)
-  kh r cancel abc123
+  # Resume a workflow (will prompt for confirmation)
+  kh wf resume abc123
 
-  # Cancel without prompting
-  kh r cancel abc123 --yes
+  # Resume without prompting
+  kh wf resume abc123 --yes
 ```
 
 ### Options
 
 ```
-  -h, --help   help for cancel
+  -h, --help   help for resume
+  -y, --yes    Skip confirmation prompt
 ```
 
 ### Options inherited from parent commands
@@ -30,10 +31,9 @@ kh run cancel <run-id> [flags]
       --json          Output as JSON
       --no-color      Disable color output
       --org string    Organization ID to use (overrides default from auth)
-  -y, --yes           Skip confirmation prompts
 ```
 
 ### SEE ALSO
 
-* [kh run](kh_run.md)	 - Monitor workflow runs
+* [kh workflow](kh_workflow.md)	 - Manage workflows
 

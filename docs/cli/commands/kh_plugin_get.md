@@ -1,26 +1,26 @@
-## kh project create
+## kh plugin get
 
-Create a project
+Get plugin details and available actions
 
 ```
-kh project create <name> [flags]
+kh plugin get <plugin-name> [flags]
 ```
 
 ### Examples
 
 ```
-  # Create a project
-  kh p create "My Project"
+  # Get plugin reference card
+  kh plugin g aave
 
-  # Create with a description
-  kh p create "DeFi Automations" --description "Uniswap and Aave workflows"
+  # Get plugin details as JSON
+  kh plugin g morpho --json
 ```
 
 ### Options
 
 ```
-      --description string   Project description
-  -h, --help                 help for create
+  -h, --help      help for get
+      --refresh   Bypass local cache and fetch fresh data
 ```
 
 ### Options inherited from parent commands
@@ -36,5 +36,5 @@ kh project create <name> [flags]
 
 ### SEE ALSO
 
-* [kh project](kh_project.md)	 - Manage projects
+* [kh plugin](kh_plugin.md)	 - Browse available plugins and integrations
 

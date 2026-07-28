@@ -1,27 +1,23 @@
-## kh wallet tokens
+## kh wallet add
 
-List wallet tokens
+Provision a new agentic wallet (no KeeperHub account required)
+
+### Synopsis
+
+Provision a new agentic wallet by calling POST /api/agentic-wallet/provision.
+
+This is a thin wrapper around `npx @keeperhub/wallet add` -- the npm package is the
+canonical tool. Writes {subOrgId, walletAddress, hmacSecret} to ~/.keeperhub/wallet.json
+(chmod 0o600) and prints subOrgId + walletAddress (hmacSecret is NEVER printed).
 
 ```
-kh wallet tokens [flags]
-```
-
-### Examples
-
-```
-  # List supported tokens
-  kh w tokens
-
-  # Filter to a specific chain
-  kh w tokens --chain 1
+kh wallet add [flags]
 ```
 
 ### Options
 
 ```
-      --chain string   Filter by chain
-  -h, --help           help for tokens
-      --limit int      Maximum number of tokens to list (default 50)
+  -h, --help   help for add
 ```
 
 ### Options inherited from parent commands
