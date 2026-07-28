@@ -1,26 +1,21 @@
-## kh project create
+## kh wallet info
 
-Create a project
+Print subOrgId and walletAddress from local agentic wallet config
+
+### Synopsis
+
+Print subOrgId and walletAddress from ~/.keeperhub/wallet.json.
+
+Thin wrapper around `npx @keeperhub/wallet info`. Exits non-zero if the config is missing.
 
 ```
-kh project create <name> [flags]
-```
-
-### Examples
-
-```
-  # Create a project
-  kh p create "My Project"
-
-  # Create with a description
-  kh p create "DeFi Automations" --description "Uniswap and Aave workflows"
+kh wallet info [flags]
 ```
 
 ### Options
 
 ```
-      --description string   Project description
-  -h, --help                 help for create
+  -h, --help   help for info
 ```
 
 ### Options inherited from parent commands
@@ -36,5 +31,5 @@ kh project create <name> [flags]
 
 ### SEE ALSO
 
-* [kh project](kh_project.md)	 - Manage projects
+* [kh wallet](kh_wallet.md)	 - Manage wallets (creator-wallet REST API or agentic-wallet npm package)
 
