@@ -1,27 +1,22 @@
-## kh wallet tokens
+## kh wallet fund
 
-List wallet tokens
+Print Coinbase Onramp URL (Base USDC) and Tempo deposit address for the agentic wallet
+
+### Synopsis
+
+Print a Coinbase Onramp URL for Base USDC funding plus the Tempo deposit address.
+
+Thin wrapper around `npx @keeperhub/wallet fund`. No HTTP calls, no browser launch --
+prints copy-paste instructions only.
 
 ```
-kh wallet tokens [flags]
-```
-
-### Examples
-
-```
-  # List supported tokens
-  kh w tokens
-
-  # Filter to a specific chain
-  kh w tokens --chain 1
+kh wallet fund [flags]
 ```
 
 ### Options
 
 ```
-      --chain string   Filter by chain
-  -h, --help           help for tokens
-      --limit int      Maximum number of tokens to list (default 50)
+  -h, --help   help for fund
 ```
 
 ### Options inherited from parent commands

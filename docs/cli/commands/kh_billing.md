@@ -25,6 +25,7 @@ View billing and usage
 ```
   -H, --host string   KeeperHub host (default: app.keeperhub.com)
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 

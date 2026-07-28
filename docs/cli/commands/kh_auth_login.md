@@ -5,7 +5,7 @@ Log in to KeeperHub
 ### Synopsis
 
 Authenticate with KeeperHub using the device code flow.
-Opens a browser to confirm a one-time code.
+Prints a URL and a one-time code; open the URL in a browser to confirm it.
 Use --with-token to read an API key from stdin for non-interactive automation.
 
 See also: kh auth status, kh auth logout
