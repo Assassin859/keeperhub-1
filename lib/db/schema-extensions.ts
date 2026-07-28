@@ -41,6 +41,17 @@ import { generateId } from "@/lib/utils/id";
  *
  * NOTE: userId tracks who created the wallet, but the wallet belongs to the organization.
  * Only organization admins and owners can create/manage wallets.
+ *
+ * This row is where the signing key actually lives. Workflow node configs do
+ * not reference it directly - they carry an `integrationId` pointing at the
+ * org's single `web3` row in `integrations` (lib/db/schema.ts), which holds no
+ * key and exists mainly so the builder has something to show. Resolving a
+ * signer means going integration -> org -> this table.
+ *
+ * One row covers both chain families: `walletAddress` is the EVM address and
+ * `solanaAddress` the Solana one, derived from the same Turnkey sub-org. That
+ * is why a single integrationId is valid for EVM and Solana actions alike; the
+ * chain comes from the node's own `network` config, not from the integration.
  */
 export const organizationWallets = pgTable(
   "organization_wallets",
