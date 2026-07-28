@@ -1,22 +1,11 @@
 /**
- * #1841: the direct-execution tools take numeric arguments as strings, and
- * `function_args` as a JSON array that has itself been stringified. That is
- * correct on the wire, but it is not the first thing a client emits, and the
- * rejections arrive one field at a time on the first call anyone makes after
- * the handshake.
- *
- * The schema already publishes `"type": "string"` for every one of these
- * fields, so this is not a typing gap - it is that the natural first guess was
- * refused when it could have been accepted. These tests pin both halves of the
- * fix:
- *
- *   - a number where a decimal string is wanted, and an array/object where its
- *     JSON encoding is wanted, are accepted and normalised before the handler,
- *     so the REST body downstream is byte-identical to the hand-encoded call;
- *   - the published schema still says `string`, because the coercion is a
- *     fallback for the first guess rather than a second supported encoding;
- *   - input that is genuinely wrong (a boolean chain id) is still rejected, so
- *     the fallback did not become "validation off".
+ * #1841: the natural first guess - a number where a decimal string is wanted,
+ * an array where its JSON encoding is wanted - is accepted and normalised
+ * before the handler, so the REST body is byte-identical to the hand-encoded
+ * call and the published schema still says `string`. A guess that cannot
+ * round-trip losslessly (an integer past 2^53, anything that stringifies in
+ * exponential notation) keeps its rejection rather than being corrupted, which
+ * is what the second half of these tests pins.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -42,6 +31,10 @@ function jsonOkResponse(body: Record<string, unknown>): unknown {
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(""),
   };
+}
+
+function errorText(result: ToolCallResult): string {
+  return (result.content ?? []).map((part) => part.text ?? "").join("\n");
 }
 
 function lastBody(): Record<string, unknown> {
@@ -246,5 +239,189 @@ describe("MCP execute tools accept the natural first-guess encoding (#1841)", ()
     } finally {
       await close();
     }
+  });
+
+  /**
+   * A bare `preprocess` accepts `unknown`, so schema generation reads the field
+   * as omittable and silently drops it from `required` - `chain_id` and
+   * `amount` stopped being advertised as required, with no runtime symptom to
+   * notice. `.nonoptional()` in the helpers is what holds this; checking
+   * `properties[...].type` alone does not catch it.
+   */
+  it.each([
+    ["execute_transfer", ["chain_id", "to_address", "amount"]],
+    [
+      "execute_contract_call",
+      ["contract_address", "chain_id", "function_name"],
+    ],
+    [
+      "execute_check_and_execute",
+      ["contract_address", "chain_id", "function_name", "condition", "action"],
+    ],
+  ])("keeps every %s field in the published required list", async (toolName, required) => {
+    const { client, close } = await connectedClient();
+    try {
+      const listed = await client.listTools();
+      const tool = listed.tools.find((t) => t.name === toolName);
+      if (!tool) {
+        throw new Error(`${toolName} is not exposed`);
+      }
+      const schema = tool.inputSchema as { required?: string[] };
+      expect(schema.required).toEqual(required);
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps the nested condition value required", async () => {
+    const { client, close } = await connectedClient();
+    try {
+      const listed = await client.listTools();
+      const tool = listed.tools.find(
+        (t) => t.name === "execute_check_and_execute"
+      );
+      const properties = (
+        tool?.inputSchema as {
+          properties: Record<string, { required?: string[] }>;
+        }
+      ).properties;
+
+      expect(properties.condition?.required).toEqual(["operator", "value"]);
+    } finally {
+      await close();
+    }
+  });
+
+  it("publishes string types for the nested check_and_execute fields too", async () => {
+    const { client, close } = await connectedClient();
+    try {
+      const listed = await client.listTools();
+      const tool = listed.tools.find(
+        (t) => t.name === "execute_check_and_execute"
+      );
+      if (!tool) {
+        throw new Error("execute_check_and_execute is not exposed");
+      }
+      const { properties } = tool.inputSchema as {
+        properties: Record<
+          string,
+          { type?: string; properties?: Record<string, { type?: string }> }
+        >;
+      };
+
+      expect(properties.condition?.properties?.value?.type).toBe("string");
+      for (const field of ["function_args", "abi", "gas_limit_multiplier"]) {
+        expect(properties.action?.properties?.[field]?.type).toBe("string");
+      }
+    } finally {
+      await close();
+    }
+  });
+});
+
+/**
+ * `String()` is only a safe encoder inside the range where it round-trips. Past
+ * 2^53 it drops the low digits, and outside a narrow band it switches to
+ * exponential notation, which no downstream parser recovers: `BigInt("1e+21")`
+ * throws and `evaluateCondition` then falls through to a string `eq`/`neq`, so
+ * a `gt` threshold silently never fires. Taking the guess in those ranges would
+ * turn a clean rejection into a wrong amount on-chain, so the rejection stays.
+ */
+describe("the coercion refuses guesses it cannot encode losslessly", () => {
+  // Written as a string on purpose: as a literal it would lose precision at
+  // parse time, which is the very thing under test. This is what the client's
+  // own JSON.parse hands the transport - already rounded to ...800.
+  const UNSAFE_INTEGER = Number("1234567890123456789");
+  const ABOVE_1E21 = 1e21;
+
+  it.each([
+    ["an integer past 2^53", UNSAFE_INTEGER],
+    ["a value that stringifies in exponential notation", ABOVE_1E21],
+    ["a small value that stringifies in exponential notation", 0.000_000_1],
+  ])("rejects %s as a transfer amount", async (_label, amount) => {
+    const result = await callTool("execute_transfer", {
+      chain_id: 11_155_111,
+      to_address: "0xabc",
+      amount,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(errorText(result)).toContain("pass this value as a string");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsafe integer inside function_args rather than encoding a wrong amount", async () => {
+    const result = await callTool("execute_contract_call", {
+      contract_address: "0xc",
+      chain_id: 11_155_111,
+      function_name: "transfer",
+      function_args: ["0xdef", UNSAFE_INTEGER],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(errorText(result)).toContain("cannot be encoded");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("walks nested ABI arguments - tuples and arrays of structs, not just the top level", async () => {
+    const result = await callTool("execute_contract_call", {
+      contract_address: "0xc",
+      chain_id: 11_155_111,
+      function_name: "multicall",
+      function_args: [[{ to: "0xdef", amount: UNSAFE_INTEGER }]],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a condition value at or above 1e21, which BigInt cannot parse", async () => {
+    const result = await callTool("execute_check_and_execute", {
+      contract_address: "0xc",
+      chain_id: 42_161,
+      function_name: "balanceOf",
+      condition: { operator: "gt", value: ABOVE_1E21 },
+      action: { contract_address: "0xa", function_name: "withdraw" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects NaN and Infinity, which are not values at all", async () => {
+    for (const amount of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      fetchMock.mockClear();
+      const result = await callTool("execute_transfer", {
+        chain_id: 1,
+        to_address: "0xabc",
+        amount,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects null for a JSON-string field - it is not an encodable object", async () => {
+    const result = await callTool("execute_contract_call", {
+      contract_address: "0xc",
+      chain_id: "1",
+      function_name: "transfer",
+      function_args: null,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still takes the guess at the edge of the safe range", async () => {
+    const result = await callTool("execute_transfer", {
+      chain_id: 11_155_111,
+      to_address: "0xabc",
+      amount: Number.MAX_SAFE_INTEGER,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(lastBody().amount).toBe("9007199254740991");
   });
 });

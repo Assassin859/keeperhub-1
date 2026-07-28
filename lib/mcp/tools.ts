@@ -233,52 +233,123 @@ const IDEMPOTENCY_KEY_ARG = z
   );
 
 /**
- * #1841: the execution tools carry their numeric arguments as strings, which is
- * right on the wire - chain ids and wei-scale values outlive Number's exact
- * integer range, and `function_args` is a JSON array that has itself been
- * stringified. It is not, however, what a client emits on its first attempt.
+ * #1841: these fields take their values as decimal strings, which is right on
+ * the wire - chain ids and wei-scale amounts outlive Number's exact integer
+ * range - but it is not what a client emits on its first attempt. `preprocess`
+ * takes the natural guess and normalises it before the handler; `union` would
+ * emit `anyOf` and change what every existing client generates, so the
+ * published type stays `string` deliberately.
  *
- * The gap is not a documentation one. The schema already publishes
- * `"type": "string"` on every one of these fields, so the report's first
- * suggestion is satisfied today. The problem is that a rejection is all a
- * builder gets for a guess the schema could simply have accepted, and the
- * guesses arrive one at a time: fix `chain_id`, hit `function_args`, fix that,
- * hit `gas_limit_multiplier`. Three round trips on the first call anyone makes
- * after the handshake, at the point where they are least sure whether the
- * problem is their encoding, their key, or their wallet.
- *
- * So take the guess. A number where a decimal string is wanted is unambiguous,
- * and an array where its JSON encoding is wanted is unambiguous. Both are
- * normalised here, before the handler, so nothing downstream sees a new shape.
- *
- * The advertised type deliberately stays `string`: the coercion is a fallback
- * for the natural first guess, not a second supported encoding, and clients
- * that already read the schema keep generating exactly what they generate now.
+ * The guess is only taken when it round-trips losslessly. `String()` is not a
+ * safe encoder across the double range: it drops the low digits of an integer
+ * past 2^53 and emits exponential notation outside a narrow band, and nothing
+ * downstream recovers either - `BigInt("1e+21")` throws, and a transfer amount
+ * that arrives 200 wei short is the wrong amount, on-chain. Those values keep
+ * the rejection they had before, because refusal is what pushes the client to
+ * the string encoding that preserves them. The message now says so.
+ */
+const PRECISION_HINT =
+  "pass this value as a string. A JSON number cannot carry it exactly: integers above 2^53 lose their low digits, and very large or very small values stringify in exponential notation.";
+
+/** Deepest JSON nesting walked before an argument is refused outright. */
+const MAX_JSON_DEPTH = 32;
+
+const EXPONENTIAL_NOTATION = /[eE]/;
+
+/** True when `String(value)` reproduces `value` exactly, as a plain decimal. */
+function isExactAsDecimalString(value: number): boolean {
+  if (!Number.isFinite(value)) {
+    return false;
+  }
+  // Already rounded by the client's own JSON.parse - the digits are gone.
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    return false;
+  }
+  return !EXPONENTIAL_NOTATION.test(String(value));
+}
+
+/** Leaves the input untouched when it cannot be encoded, so `z.string()` rejects it. */
+function toDecimalString(value: unknown): unknown {
+  return typeof value === "number" && isExactAsDecimalString(value)
+    ? String(value)
+    : value;
+}
+
+/**
+ * ABI arguments nest - tuples, arrays of structs - so the walk is recursive
+ * rather than shallow, and one unrepresentable number anywhere fails the whole
+ * argument instead of encoding a wrong value into a call that moves funds.
+ */
+function hasInexactNumber(value: unknown, depth = 0): boolean {
+  if (typeof value === "number") {
+    return !isExactAsDecimalString(value);
+  }
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  if (depth >= MAX_JSON_DEPTH) {
+    return true;
+  }
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.some((child) => hasInexactNumber(child, depth + 1));
+}
+
+function toJsonString(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || hasInexactNumber(value)) {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return value;
+  }
+}
+
+function precisionError(input: unknown): string | undefined {
+  if (typeof input !== "number") {
+    return;
+  }
+  return Number.isFinite(input)
+    ? PRECISION_HINT
+    : "expected a decimal string; NaN and Infinity are not values.";
+}
+
+/**
+ * `.nonoptional()` is load-bearing, not decoration: a bare `preprocess` accepts
+ * `unknown` as its input, so JSON Schema generation treats the field as
+ * omittable and drops it from the object's `required` list. Runtime validation
+ * is unaffected - a missing value still fails - but the published schema would
+ * stop advertising `chain_id` and `amount` as required, which is exactly the
+ * client-visible change this coercion is supposed to avoid.
  */
 function looseString(description: string) {
   return z
     .preprocess(
-      (value) => (typeof value === "number" ? String(value) : value),
-      z.string()
+      toDecimalString,
+      z.string({ error: (issue) => precisionError(issue.input) })
     )
+    .nonoptional()
     .describe(description);
 }
 
 /**
- * Same idea for the fields that want a stringified JSON value: accept the
- * array or object itself and encode it. `[]` and `{...}` are what a model
- * writes for something described as "JSON array of function arguments"; the
- * `"[]"` form is unusual enough that it is rarely the first thing tried.
+ * Same idea for the fields that want a stringified JSON value: accept the array
+ * or object itself and encode it. `[]` and `{...}` are what a model writes for
+ * something described as "JSON array of function arguments"; the `"[]"` form is
+ * rarely the first thing tried.
  */
 function looseJsonString(description: string) {
   return z
     .preprocess(
-      (value) =>
-        typeof value === "object" && value !== null
-          ? JSON.stringify(value)
-          : value,
-      z.string()
+      toJsonString,
+      z.string({
+        error: (issue) =>
+          issue.input !== null && typeof issue.input === "object"
+            ? `a value inside this JSON argument cannot be encoded - ${PRECISION_HINT}`
+            : precisionError(issue.input),
+      })
     )
+    .nonoptional()
     .describe(description);
 }
 
@@ -1161,7 +1232,7 @@ export function registerTools(
 
   server.tool(
     "execute_check_and_execute",
-    "Read a contract value, evaluate a condition, and execute an action if the condition is met. Useful for conditional on-chain operations (e.g., 'if balance > 1000, then transfer'). Requires a wallet integration.",
+    'Read a contract value, evaluate a condition, and execute an action if the condition is met. Useful for conditional on-chain operations (e.g., \'if balance > 1000, then transfer\'). Requires a wallet integration. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "balanceOf", "function_args": "[\\"0xHolder...\\"]", "condition": {"operator": "gt", "value": "1000"}, "action": {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"}} - note that function_args is a JSON array encoded as a string, on both the check and the action.',
     {
       contract_address: z
         .string()
