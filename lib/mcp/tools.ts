@@ -232,6 +232,56 @@ const IDEMPOTENCY_KEY_ARG = z
     "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Reusing a key with different arguments returns a 409 conflict."
   );
 
+/**
+ * #1841: the execution tools carry their numeric arguments as strings, which is
+ * right on the wire - chain ids and wei-scale values outlive Number's exact
+ * integer range, and `function_args` is a JSON array that has itself been
+ * stringified. It is not, however, what a client emits on its first attempt.
+ *
+ * The gap is not a documentation one. The schema already publishes
+ * `"type": "string"` on every one of these fields, so the report's first
+ * suggestion is satisfied today. The problem is that a rejection is all a
+ * builder gets for a guess the schema could simply have accepted, and the
+ * guesses arrive one at a time: fix `chain_id`, hit `function_args`, fix that,
+ * hit `gas_limit_multiplier`. Three round trips on the first call anyone makes
+ * after the handshake, at the point where they are least sure whether the
+ * problem is their encoding, their key, or their wallet.
+ *
+ * So take the guess. A number where a decimal string is wanted is unambiguous,
+ * and an array where its JSON encoding is wanted is unambiguous. Both are
+ * normalised here, before the handler, so nothing downstream sees a new shape.
+ *
+ * The advertised type deliberately stays `string`: the coercion is a fallback
+ * for the natural first guess, not a second supported encoding, and clients
+ * that already read the schema keep generating exactly what they generate now.
+ */
+function looseString(description: string) {
+  return z
+    .preprocess(
+      (value) => (typeof value === "number" ? String(value) : value),
+      z.string()
+    )
+    .describe(description);
+}
+
+/**
+ * Same idea for the fields that want a stringified JSON value: accept the
+ * array or object itself and encode it. `[]` and `{...}` are what a model
+ * writes for something described as "JSON array of function arguments"; the
+ * `"[]"` form is unusual enough that it is rarely the first thing tried.
+ */
+function looseJsonString(description: string) {
+  return z
+    .preprocess(
+      (value) =>
+        typeof value === "object" && value !== null
+          ? JSON.stringify(value)
+          : value,
+      z.string()
+    )
+    .describe(description);
+}
+
 async function callApi(
   internalApiBaseUrl: string,
   authHeader: string,
@@ -1018,13 +1068,13 @@ export function registerTools(
     "execute_transfer",
     "Transfer native tokens (ETH, MATIC) or ERC20 tokens from your wallet to a recipient address. Requires a wallet integration.",
     {
-      chain_id: z
-        .string()
-        .describe("Chain ID (e.g., '1' for Ethereum, '8453' for Base)"),
+      chain_id: looseString(
+        "Chain ID (e.g., '1' for Ethereum, '8453' for Base)"
+      ),
       to_address: z.string().describe("Recipient wallet address (0x...)"),
-      amount: z
-        .string()
-        .describe("Amount to transfer in human-readable units (e.g., '0.1')"),
+      amount: looseString(
+        "Amount to transfer in human-readable units (e.g., '0.1')"
+      ),
       token_address: z
         .string()
         .optional()
@@ -1058,41 +1108,28 @@ export function registerTools(
 
   server.tool(
     "execute_contract_call",
-    "Call a smart contract function. For view/pure functions, returns the result directly. For state-changing functions, submits a transaction and returns the execution ID. Requires a wallet integration for write calls.",
+    'Call a smart contract function. For view/pure functions, returns the result directly. For state-changing functions, submits a transaction and returns the execution ID. Requires a wallet integration for write calls. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"} - note that function_args is a JSON array encoded as a string.',
     {
       contract_address: z.string().describe("Contract address (0x...)"),
-      chain_id: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
+      chain_id: looseString("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
         .describe("Solidity function name (e.g., 'balanceOf', 'transfer')"),
-      function_args: z
-        .string()
-        .optional()
-        .describe(
-          'JSON array of function arguments (e.g., \'["0x...", "1000"]\')'
-        ),
-      abi: z
-        .string()
-        .optional()
-        .describe(
-          "Contract ABI as JSON string. Auto-fetched for verified contracts if omitted."
-        ),
-      value: z
-        .string()
-        .optional()
-        .describe(
-          "Native value to send with the call, as a decimal string in ether units (e.g. '0.1'). For payable functions."
-        ),
-      gas_limit_multiplier: z
-        .string()
-        .optional()
-        .describe("Gas limit multiplier (e.g., '1.5' for 50% buffer)"),
-      priority_fee_gwei: z
-        .string()
-        .optional()
-        .describe(
-          "Explicit maxPriorityFeePerGas in gwei (e.g., '2'). Bypasses the chain's default min/max priority-fee clamp. Use when the network's mempool requires a tip above the configured floor."
-        ),
+      function_args: looseJsonString(
+        'JSON array of function arguments (e.g., \'["0x...", "1000"]\')'
+      ).optional(),
+      abi: looseJsonString(
+        "Contract ABI as JSON string. Auto-fetched for verified contracts if omitted."
+      ).optional(),
+      value: looseString(
+        "Native value to send with the call, as a decimal string in ether units (e.g. '0.1'). For payable functions."
+      ).optional(),
+      gas_limit_multiplier: looseString(
+        "Gas limit multiplier (e.g., '1.5' for 50% buffer)"
+      ).optional(),
+      priority_fee_gwei: looseString(
+        "Explicit maxPriorityFeePerGas in gwei (e.g., '2'). Bypasses the chain's default min/max priority-fee clamp. Use when the network's mempool requires a tip above the configured floor."
+      ).optional(),
       idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Contract Call", readOnlyHint: false, destructiveHint: false },
@@ -1129,23 +1166,21 @@ export function registerTools(
       contract_address: z
         .string()
         .describe("Contract address to read the check value from (0x...)"),
-      chain_id: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
+      chain_id: looseString("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
         .describe("Function to call for the check (e.g., 'balanceOf')"),
-      function_args: z
-        .string()
-        .optional()
-        .describe("JSON array of function arguments for the check"),
-      abi: z
-        .string()
-        .optional()
-        .describe("ABI for the check contract (auto-fetched if omitted)"),
+      function_args: looseJsonString(
+        "JSON array of function arguments for the check"
+      ).optional(),
+      abi: looseJsonString(
+        "ABI for the check contract (auto-fetched if omitted)"
+      ).optional(),
       condition: z.object({
         operator: z
           .enum(["eq", "neq", "gt", "lt", "gte", "lte"])
           .describe("Comparison operator"),
-        value: z.string().describe("Target value to compare against"),
+        value: looseString("Target value to compare against"),
       }),
       action: z.object({
         contract_address: z
@@ -1154,15 +1189,13 @@ export function registerTools(
         function_name: z
           .string()
           .describe("Function to execute if condition met"),
-        function_args: z
-          .string()
-          .optional()
-          .describe("JSON array of function arguments for the action"),
-        abi: z.string().optional().describe("ABI for the action contract"),
-        gas_limit_multiplier: z
-          .string()
-          .optional()
-          .describe("Gas limit multiplier for the action"),
+        function_args: looseJsonString(
+          "JSON array of function arguments for the action"
+        ).optional(),
+        abi: looseJsonString("ABI for the action contract").optional(),
+        gas_limit_multiplier: looseString(
+          "Gas limit multiplier for the action"
+        ).optional(),
       }),
       idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
