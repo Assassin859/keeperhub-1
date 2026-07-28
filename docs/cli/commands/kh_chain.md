@@ -1,25 +1,18 @@
-## kh protocol get
+## kh chain
 
-Get a protocol
-
-```
-kh protocol get <protocol-slug> [flags]
-```
+Manage blockchain chains
 
 ### Examples
 
 ```
-  # Get protocol reference card
-  kh pr g uniswap
-
-  # Get protocol details as JSON
-  kh pr g aave --json
+  # List supported chains
+  kh ch ls
 ```
 
 ### Options
 
 ```
-  -h, --help   help for get
+  -h, --help   help for chain
 ```
 
 ### Options inherited from parent commands
@@ -29,10 +22,12 @@ kh protocol get <protocol-slug> [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 
 ### SEE ALSO
 
-* [kh protocol](kh_protocol.md)	 - Browse blockchain protocols
+* [kh](kh.md)	 - KeeperHub CLI
+* [kh chain list](kh_chain_list.md)	 - List supported blockchain chains
 

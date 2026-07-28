@@ -36,6 +36,7 @@ kh auth logout [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 

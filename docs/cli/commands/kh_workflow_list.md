@@ -14,13 +14,19 @@ kh workflow list [flags]
 
   # List with a higher limit
   kh wf ls --limit 5
+
+  # List workflows in a project or with a tag
+  kh wf ls --project proj_123
+  kh wf ls --tag tag_456
 ```
 
 ### Options
 
 ```
-  -h, --help        help for list
-      --limit int   Maximum number of workflows to list (default 30)
+  -h, --help             help for list
+      --limit int        Maximum number of workflows to list (default 30)
+      --project string   Filter workflows by project ID
+      --tag string       Filter workflows by tag ID
 ```
 
 ### Options inherited from parent commands
@@ -30,6 +36,7 @@ kh workflow list [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 

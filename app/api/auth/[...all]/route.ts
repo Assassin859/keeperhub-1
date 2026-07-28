@@ -11,11 +11,13 @@ import {
   buildPendingOauthMfaSetCookie,
   encodePendingOauthMfaCookie,
 } from "@/lib/oauth-mfa-cookie";
+import { issueCliDeviceApiKey } from "@/lib/organization-api-key";
 import {
   buildPendingSignupSetCookie,
   encodePendingSignupCookie,
 } from "@/lib/pending-signup-cookie";
 import { sanitizeNextPath } from "@/lib/sanitize-next-path";
+import { buildAuditMetadata } from "@/lib/security/audit-log";
 
 const handlers = toNextJsHandler(auth);
 
@@ -305,6 +307,108 @@ async function interceptOauthCallback(
 }
 
 /**
+ * Swap the device grant's session token for an organization API key.
+ *
+ * Better Auth's device plugin answers /device/token with a raw session token.
+ * That credential is useless to the CLI: it sends `Authorization: Bearer` on
+ * every request, api-key-auth requires a `kh_` prefix, and session tokens only
+ * authenticate as cookies. Widening bearer auth to accept session tokens is
+ * deliberately closed off - the bearer() plugin was removed to keep the MFA and
+ * IP step-up gates, which key off the session cookie, intact.
+ *
+ * So the grant returns the credential shape the API already accepts. The
+ * session Better Auth minted is left alone; it simply goes unused.
+ *
+ * The plaintext key is returned exactly once, here. Nothing can re-issue it,
+ * which is why the CLI must persist what it receives rather than re-running the
+ * flow and minting a fresh key on every login.
+ */
+async function issueApiKeyForDeviceGrant(
+  req: Request,
+  res: Response
+): Promise<Response> {
+  const url = new URL(req.url);
+  if (!(url.pathname.endsWith("/device/token") && res.ok)) {
+    return res;
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await res.clone().json()) as Record<string, unknown>;
+  } catch {
+    return res;
+  }
+  const accessToken = body.access_token;
+  if (typeof accessToken !== "string") {
+    return res;
+  }
+
+  try {
+    // The session row carries both the approving user and the org the
+    // session.create.after hook resolved for them.
+    const [sessionRow] = await db
+      .select({
+        userId: sessions.userId,
+        activeOrganizationId: sessions.activeOrganizationId,
+      })
+      .from(sessions)
+      .where(eq(sessions.token, hashSessionToken(accessToken)))
+      .limit(1);
+
+    if (!sessionRow?.activeOrganizationId) {
+      // Without an org there is no key to mint. Fail the grant rather than
+      // hand back a session token that authenticates nothing.
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[Device] No active organization for device grant; cannot issue API key",
+        new Error("device_grant_no_active_org"),
+        { endpoint: "/api/auth/device/token" }
+      );
+      return NextResponse.json(
+        {
+          error: "server_error",
+          error_description:
+            "No active organization for this account; cannot complete device login.",
+        },
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
+      );
+    }
+
+    const [user] = await db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, sessionRow.userId))
+      .limit(1);
+
+    const apiKey = await issueCliDeviceApiKey({
+      userId: sessionRow.userId,
+      userEmail: user?.email ?? null,
+      organizationId: sessionRow.activeOrganizationId,
+      auditMetadata: buildAuditMetadata(req),
+    });
+
+    return NextResponse.json(
+      { ...body, access_token: apiKey, token_type: "Bearer" },
+      { status: res.status, headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.AUTH,
+      "[Device] Failed to issue API key for device grant",
+      error,
+      { endpoint: "/api/auth/device/token" }
+    );
+    return NextResponse.json(
+      {
+        error: "server_error",
+        error_description: "Could not issue an API key for this device login.",
+      },
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
+    );
+  }
+}
+
+/**
  * Block Better Auth's standalone /sign-in/email-otp endpoint for any
  * user whose two_factor_enabled flag is true. That endpoint mints a
  * session immediately on email-OTP verification, completely bypassing
@@ -365,7 +469,10 @@ export async function POST(req: Request) {
     if (blocked) {
       return blocked;
     }
-    return normalizeRateLimitRetryAfter(await handlers.POST(req));
+    const res = await handlers.POST(req);
+    return normalizeRateLimitRetryAfter(
+      await issueApiKeyForDeviceGrant(req, res)
+    );
   } catch (error) {
     logSystemError(ErrorCategory.AUTH, "[Auth POST] Handler error:", error, {
       endpoint: "/api/auth",

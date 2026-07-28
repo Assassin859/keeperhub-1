@@ -1,25 +1,25 @@
-## kh protocol list
+## kh plugin get
 
-List blockchain protocols
+Get plugin details and available actions
 
 ```
-kh protocol list [flags]
+kh plugin get <plugin-name> [flags]
 ```
 
 ### Examples
 
 ```
-  # List all protocols (cached)
-  kh pr ls
+  # Get plugin reference card
+  kh plugin g aave
 
-  # Force refresh from API
-  kh pr ls --refresh
+  # Get plugin details as JSON
+  kh plugin g morpho --json
 ```
 
 ### Options
 
 ```
-  -h, --help      help for list
+  -h, --help      help for get
       --refresh   Bypass local cache and fetch fresh data
 ```
 
@@ -30,10 +30,11 @@ kh protocol list [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 
 ### SEE ALSO
 
-* [kh protocol](kh_protocol.md)	 - Browse blockchain protocols
+* [kh plugin](kh_plugin.md)	 - Browse available plugins and integrations
 

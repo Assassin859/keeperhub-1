@@ -3,7 +3,7 @@
 List workflow templates
 
 ```
-kh template list [flags]
+kh template list [query] [flags]
 ```
 
 ### Examples
@@ -12,6 +12,10 @@ kh template list [flags]
   # List featured templates
   kh tp ls
 
+  # Search templates by keyword
+  kh tp ls defi
+  kh tp ls --query monitor
+
   # List templates as JSON
   kh tp ls --json
 ```
@@ -19,7 +23,8 @@ kh template list [flags]
 ### Options
 
 ```
-  -h, --help   help for list
+  -h, --help           help for list
+  -q, --query string   Filter templates by name or description
 ```
 
 ### Options inherited from parent commands
@@ -29,6 +34,7 @@ kh template list [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 
