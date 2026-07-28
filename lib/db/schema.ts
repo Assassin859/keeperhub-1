@@ -244,6 +244,26 @@ export const twoFactor = pgTable(
     // Defaults to true so rows enrolled through our own routes are treated
     // as verified and the plugin skips the write entirely.
     verified: boolean("verified").notNull().default(true),
+    // The same contract as `verified` above, for the plugin's account-lockout
+    // feature. It is enabled by default - resolveAccountLockoutConfig reads
+    // `enabled: lockout?.enabled ?? true` and we pass no accountLockout option -
+    // so resetTwoFactorFailures runs on every successful verification and
+    // updates exactly these two fields. Without the columns the adapter strips
+    // both, leaving an empty SET that Postgres rejects, so a correct TOTP code
+    // 500s after validating.
+    //
+    // They also have to exist for the control to do anything:
+    // assertTwoFactorNotLocked gates on `lockedUntil`, which reads as undefined
+    // when the column is absent, so the cap on consecutive failed verifications
+    // (NIST SP 800-63B 5.2.2) silently never applies.
+    //
+    // Property names must match Better Auth's field names exactly -
+    // failedVerificationCount and lockedUntil - because the drizzle adapter
+    // maps by property, not column.
+    failedVerificationCount: integer("failed_verification_count")
+      .notNull()
+      .default(0),
+    lockedUntil: timestamp("locked_until"),
   },
   (table) => [index("idx_two_factor_user_id").on(table.userId)]
 );
@@ -846,12 +866,6 @@ export {
   type WalletApprovalRequest,
   walletApprovalRequests,
 } from "./schema-agentic-wallets";
-export {
-  type NewTempoHeldPayment,
-  type TempoHeldPayment,
-  tempoHeldPayments,
-  tempoHeldPaymentStatus,
-} from "./schema-tempo-payments";
 // KeeperHub: Organization Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
 // Note: Using relative path instead of @/ alias for drizzle-kit compatibility
 export {
@@ -950,6 +964,12 @@ export {
   type WorkflowPayment,
   workflowPayments,
 } from "./schema-payments";
+export {
+  type NewTempoHeldPayment,
+  type TempoHeldPayment,
+  tempoHeldPaymentStatus,
+  tempoHeldPayments,
+} from "./schema-tempo-payments";
 
 // Better Auth: Device Authorization table (for CLI device flow)
 export const deviceCode = pgTable("device_code", {
