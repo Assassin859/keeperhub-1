@@ -59,9 +59,8 @@ vi.mock("@/lib/db/schema", () => ({
   organizationWallets: { _table: "organization_wallets" },
 }));
 
-const { verifyWorkflowBinding, KNOWN_DATA_CHAIN_IDS } = await import(
-  "@/lib/agentic-wallet/workflow-binding"
-);
+const { verifyWorkflowBinding, KNOWN_DATA_CHAIN_IDS, MULTI_CHAIN_TAGS } =
+  await import("@/lib/agentic-wallet/workflow-binding");
 
 const SLUG = "test-slug";
 const CREATOR = "0xCreATor000000000000000000000000000000001";
@@ -412,6 +411,75 @@ describe("verifyWorkflowBinding", () => {
         ok: false,
         status: 403,
         code: "WORKFLOW_NOT_PAYABLE",
+      });
+    });
+  });
+
+  // Explicit multi-chain tags ("multi-chain", "any", ...) declare no single
+  // payment-chain preference, so both Base x402 and Tempo MPP are accepted --
+  // the same acceptance as a data-chain id. Before this, a listing tagged
+  // "multi-chain" fell through to the defensive-mismatch branch and 403'd
+  // every payment on both rails.
+  describe("multi-chain listings", () => {
+    it("accepts Base payment for a multi-chain listing", async () => {
+      queueWorkflow({ chain: "multi-chain" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r.ok).toBe(true);
+    });
+
+    it("accepts Tempo payment for a multi-chain listing", async () => {
+      queueWorkflow({ chain: "multi-chain" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(r.ok).toBe(true);
+    });
+
+    it("accepts either payment chain for every multi-chain tag", async () => {
+      for (const tag of MULTI_CHAIN_TAGS) {
+        queueWorkflow({ chain: tag });
+        queueWallet({});
+        const rBase = await verifyWorkflowBinding(
+          SLUG,
+          "base",
+          CREATOR,
+          "50000"
+        );
+        expect(rBase.ok).toBe(true);
+
+        queueWorkflow({ chain: tag });
+        queueWallet({});
+        const rTempo = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+        expect(rTempo.ok).toBe(true);
+      }
+    });
+
+    it("normalises case + whitespace on a multi-chain tag", async () => {
+      queueWorkflow({ chain: " Multi-Chain " });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r.ok).toBe(true);
+    });
+
+    it("still enforces payTo equality on the Base path for a multi-chain listing", async () => {
+      queueWorkflow({ chain: "multi-chain" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", ATTACKER, "50000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "PAYTO_MISMATCH",
+      });
+    });
+
+    it("still enforces amount equality on the Base path for a multi-chain listing", async () => {
+      queueWorkflow({ chain: "multi-chain" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "100000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "AMOUNT_MISMATCH",
       });
     });
   });
