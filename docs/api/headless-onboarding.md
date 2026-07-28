@@ -18,12 +18,18 @@ reachable over HTTP with an EOA private key and nothing else.
 
 Two things to know before the first call:
 
-- **Send an `Origin` header.** Better Auth enforces trusted origins, so a request
-  without `Origin: https://app.keeperhub.com` is rejected with `403`
-  `MISSING_OR_NULL_ORIGIN` before it reaches the route. Browsers set this
-  automatically; an HTTP client does not.
 - **Session endpoints use cookies.** Keep the `Set-Cookie` values from the SIWE
   verify response and send them back on every subsequent session call.
+- **Those cookie calls also need an `Origin` header**, and two separate checks
+  enforce it. On `/api/auth/*` it is Better Auth's own trusted-origin check,
+  which rejects a missing header with `403` and `MISSING_OR_NULL_ORIGIN`.
+  Everywhere else it is a CSRF check that only fires on `POST`, `PATCH`, `PUT`
+  and `DELETE`, only when the request carries a session cookie, and answers
+  `403` `{"error":"Invalid origin"}` - a different string, so grep for the one
+  you actually got. It accepts `Referer` when `Origin` is absent. A client
+  authenticating purely with a `kh_` bearer key and no cookies never trips it
+  and needs no `Origin` at all; the script below sends one everywhere because
+  its helper replays cookies on every call.
 
 ## 1. Sign in with a wallet, not a password
 
@@ -116,10 +122,21 @@ Details that otherwise cost debugging time:
 - The extra fields go in the **request body**, not in headers.
 - The nonce is single-use, expires after five minutes, and **a fresh one is
   minted on every `401`**. Sign the challenge from the response you just
-  received. A client that caches the first challenge and retries loops forever
-  on `wallet_signature_invalid`.
-- The signature must come from the login account. Another account of the same
-  wallet also returns `wallet_signature_invalid`.
+  received. A client that caches the first challenge and retries does not fail
+  forever on `wallet_signature_invalid`; it fails about ten times and is then
+  locked out - see the budget below.
+- **The retry budget is ten requests per fifteen minutes**, counted per user and
+  per action on a sliding window. Every request to a gated route consumes one,
+  including the one that only mints the challenge, so the two-step create above
+  costs two. Exceeding it returns `429` with `"code": "rate_limited"` and a
+  `Retry-After` header. A step-up that succeeds resets the counter to zero, so
+  the ten is a budget for consecutive failures, not a daily quota: a client that
+  gets the protocol right never approaches it, and a client that caches the
+  challenge burns it without a single success.
+- The signature must be recoverable to the wallet KeeperHub has on file, which
+  is the user's primary linked wallet. For a wallet-only account that is the
+  address you signed in with; for an account with several linked wallets it is
+  the primary one, which need not be the one this session used.
 - `required` lists every factor the action needs. A wallet account that has
   additionally enrolled TOTP or a step-up email must satisfy all of them in the
   same retry, as `signature`, `code` (TOTP) and `emailOtp`. When only the
@@ -128,9 +145,17 @@ Details that otherwise cost debugging time:
 
 `DELETE /api/keys/{keyId}` is gated by the same `org_api_key_manage` action, so
 a headless client has to answer the challenge to clean up after itself too. The
-same challenge-and-retry protocol guards the other step-up actions: wallet
-withdrawal, private-key export, session revocation, account deactivation, TOTP
-removal and audit-log export.
+same challenge-and-retry protocol guards the other step-up actions, including
+wallet withdrawal, private-key export, session revocation, account
+deactivation, email and password changes, agentic-wallet approvals, TOTP removal
+and audit-log export.
+
+Both `/api/keys` handlers additionally require an organization role of admin or
+owner. The role is checked before the step-up, so a member gets `403` with
+`"code": "not_admin_or_owner"` and never sees a challenge - a signature is not
+the missing piece, and no amount of retrying will produce one. The first user in
+a new organization is its owner, so a first run created by the SIWE flow above
+always clears this.
 
 ## 3. The wallet to fund is not the wallet you signed in with
 
@@ -170,19 +195,36 @@ funds.
 ## 4. Gas on the sponsored chains
 
 The [Hackathon Quickstart](/quickstart) says to fund the wallet with native gas
-first. On the chains Turnkey's Gas Station covers - Ethereum, Polygon, Base and
-Arbitrum, plus Ethereum Sepolia, Polygon Amoy, Base Sepolia and Arbitrum Sepolia
-- that is only true of the value the transaction moves. The transaction is
+first. On the chains Turnkey's Gas Station covers, that is only true of the
+value the transaction moves: Ethereum, Polygon, Base and Arbitrum, plus Ethereum
+Sepolia, Polygon Amoy, Base Sepolia and Arbitrum Sepolia. The transaction is
 signed and sponsored in a single Turnkey call and broadcast by a relayer that
 pays the gas, and the organization wallet is debited only for what it sends.
 Measured on Base: a 0.00001 ETH transfer left the organization wallet exactly
 0.00001 ETH lighter, with the gas paid by the broadcasting relayer, and a
 self-transfer from the same wallet left its balance unchanged to the wei.
+Measured on Base Sepolia: an organization wallet holding zero wei landed the
+zero-value transfer the script below sends, so a first run needs no funding.
 
-Sponsorship is a preflight, not a guarantee. Outside that chain list, or when
-the organization's wallet has no Turnkey sub-organization, the runtime falls
-back to direct signing and the wallet pays its own gas. A small native balance
-is still the safe default.
+Sponsorship is a preflight, not a guarantee. The chain list is one of four
+conditions, and the other three are invisible from the client:
+
+- Sponsorship has to be enabled on the deployment.
+- The organization's wallet needs a Turnkey sub-organization.
+- The organization needs gas credit left for the current billing period. This
+  is a metered USD allowance per plan, not an unlimited one - see
+  [Gas Sponsorship](/wallet-management/gas). Mainnet spends it and testnets do
+  not, but the check is on the balance rather than the chain, so an exhausted
+  budget also stops sponsoring testnet transactions.
+- Turnkey has to accept the activity.
+
+When any of them fails, the runtime falls back to direct signing and the wallet
+pays its own gas. Nothing in the response says so. "The organization wallet does
+not need gas at all" therefore holds only while the allowance does, and on
+Ethereum mainnet an allowance measured in dollars is measured in transactions.
+On the testnets it holds for as long as sponsorship is on, which is why the
+script below defaults to Base Sepolia. A small native balance remains the safe
+default on mainnet.
 
 Two consequences when reading the transaction back:
 
@@ -237,17 +279,21 @@ if (parseEther(amount) > balance) {
 ## Full script
 
 Signs in, creates a key, finds the organization wallet and executes a transfer.
-No browser and no manual step. A runnable version of this path, with the balance
-preflight and an onchain verification step that checks the receipt against a
-public RPC rather than trusting the API's own `"completed"`, is at
-[piiiico/keeperhub-headless-starter](https://github.com/piiiico/keeperhub-headless-starter).
+No browser and no manual step. It defaults to Base Sepolia, where the run costs
+nothing; raise it to a mainnet only once you mean to. Needs Node 20 or newer, or
+Bun - `Headers.getSetCookie()` does not exist before that.
 
 ```ts
 import { privateKeyToAccount } from "viem/accounts";
 
 const BASE = "https://app.keeperhub.com";
+// Base Sepolia. Sponsored exactly like the mainnets, and testnet gas is not
+// metered against the credit allowance, so this run needs no funding at all.
+// Base mainnet is 8453 - switch once the wallet printed below holds something.
+const CHAIN_ID = 84_532;
+
 const account = privateKeyToAccount(process.env.ETH_PRIVATE_KEY as `0x${string}`);
-const cookies: string[] = [];
+const cookies = new Map<string, string>();
 
 async function api(path: string, init: RequestInit = {}) {
   const res = await fetch(BASE + path, {
@@ -255,23 +301,46 @@ async function api(path: string, init: RequestInit = {}) {
     headers: {
       "Content-Type": "application/json",
       Origin: BASE,
-      Cookie: cookies.join("; "),
+      Cookie: Array.from(cookies, ([k, v]) => `${k}=${v}`).join("; "),
       ...(init.headers as Record<string, string>),
     },
   });
-  for (const c of res.headers.getSetCookie?.() ?? []) {
-    cookies.push(c.split(";")[0]);
+  // Keyed, so a rotated session cookie replaces the old one rather than being
+  // sent alongside it.
+  for (const raw of res.headers.getSetCookie()) {
+    const pair = raw.split(";")[0];
+    const eq = pair.indexOf("=");
+    cookies.set(pair.slice(0, eq).trim(), pair.slice(eq + 1));
   }
-  return { status: res.status, body: await res.json() };
+  // Not every response is JSON: a 429 or an edge error can be text or HTML,
+  // and res.json() would throw over the status you actually need to read.
+  const text = await res.text();
+  try {
+    return { status: res.status, body: JSON.parse(text) };
+  } catch {
+    return { status: res.status, body: { error: text.slice(0, 300) } };
+  }
+}
+
+function must<T>(res: { status: number; body: T }, what: string): T {
+  if (res.status >= 400) {
+    throw new Error(`${what}: ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  return res.body;
 }
 
 // 1. Sign in. Creates the account, its organization and the wallet on first use.
-const { body: nonce } = await api("/api/auth/siwe/nonce", {
-  method: "POST",
-  body: JSON.stringify({ walletAddress: account.address, chainId: 1 }),
-});
+const nonce = must(
+  await api("/api/auth/siwe/nonce", {
+    method: "POST",
+    body: JSON.stringify({ walletAddress: account.address, chainId: 1 }),
+  }),
+  "siwe nonce"
+);
 const message = [
-  "app.keeperhub.com wants you to sign in with your Ethereum account:",
+  // Derived, not hardcoded: the signature is verified against the host of the
+  // server's own base URL, so a hardcoded domain breaks the moment BASE moves.
+  `${new URL(BASE).host} wants you to sign in with your Ethereum account:`,
   account.address,
   "",
   "Sign in to KeeperHub",
@@ -282,15 +351,18 @@ const message = [
   `Nonce: ${nonce.nonce}`,
   `Issued At: ${new Date().toISOString()}`,
 ].join("\n");
-await api("/api/auth/siwe/verify", {
-  method: "POST",
-  body: JSON.stringify({
-    message,
-    signature: await account.signMessage({ message }),
-    walletAddress: account.address,
-    chainId: 1,
+must(
+  await api("/api/auth/siwe/verify", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      signature: await account.signMessage({ message }),
+      walletAddress: account.address,
+      chainId: 1,
+    }),
   }),
-});
+  "siwe verify"
+);
 
 // 2. Create an organization API key: the first POST answers with a challenge.
 const create = { name: `headless-${Date.now()}` };
@@ -298,19 +370,30 @@ const first = await api("/api/keys", {
   method: "POST",
   body: JSON.stringify(create),
 });
-const { body: key } = await api("/api/keys", {
-  method: "POST",
-  body: JSON.stringify({
-    ...create,
-    // Sign the challenge from THIS response: the nonce is single-use and a
-    // fresh one is minted on every 401.
-    signature: await account.signMessage({ message: first.body.challenge }),
+if (first.body.code !== "signature_required") {
+  // Most likely 403 not_admin_or_owner, or a 429 from a previous failed loop.
+  throw new Error(`expected a challenge: ${first.status} ${JSON.stringify(first.body)}`);
+}
+const key = must(
+  await api("/api/keys", {
+    method: "POST",
+    body: JSON.stringify({
+      ...create,
+      // Sign the challenge from THIS response: the nonce is single-use and a
+      // fresh one is minted on every 401.
+      signature: await account.signMessage({ message: first.body.challenge }),
+    }),
   }),
-});
+  "create key"
+);
 const auth = { Authorization: `Bearer ${key.key}` };
 
 // 3. The wallet that needs funding is the organization wallet.
-const { body: user } = await api("/api/user");
+const user = must(await api("/api/user"), "user");
+if (!user.walletAddress) {
+  // The route reports a failed wallet lookup as null rather than as an error.
+  throw new Error("no organization wallet on this account yet");
+}
 console.log("fund this address:", user.walletAddress);
 
 // 4. Simulate, then execute once with an idempotency key.
@@ -318,28 +401,34 @@ console.log("fund this address:", user.walletAddress);
 // self-transfer still lands a real, verifiable transaction because the relayer
 // pays the gas. Raise it only after the wallet above is funded (section 6).
 const transfer = {
-  chainId: 8453,
+  chainId: CHAIN_ID,
   recipientAddress: user.walletAddress,
   amount: "0",
 };
-const sim = await api("/api/execute/transfer", {
-  method: "POST",
-  headers: auth,
-  body: JSON.stringify({ ...transfer, simulate: true }),
-});
-if (!sim.body.success || sim.body.wouldRevert) {
-  throw new Error("simulation failed");
+const sim = must(
+  await api("/api/execute/transfer", {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ ...transfer, simulate: true }),
+  }),
+  "simulate"
+);
+if (!sim.success || sim.wouldRevert) {
+  throw new Error(`simulation failed: ${JSON.stringify(sim)}`);
 }
-const exec = await api("/api/execute/transfer", {
-  method: "POST",
-  headers: { ...auth, "Idempotency-Key": crypto.randomUUID() },
-  body: JSON.stringify(transfer),
-});
+const exec = must(
+  await api("/api/execute/transfer", {
+    method: "POST",
+    headers: { ...auth, "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify(transfer),
+  }),
+  "execute"
+);
 
 // 5. The status response carries the authoritative onchain proof.
-const { body: status } = await api(
-  `/api/execute/${exec.body.executionId}/status`,
-  { headers: auth }
+const status = must(
+  await api(`/api/execute/${exec.executionId}/status`, { headers: auth }),
+  "status"
 );
 console.log(status.status, status.transactionLink);
 ```
