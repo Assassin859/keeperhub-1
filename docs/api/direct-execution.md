@@ -302,7 +302,38 @@ When the chain would have rejected the transaction, the endpoint returns HTTP 40
 }
 ```
 
-Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the raw RPC error message is surfaced.
+Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the failure is either attributed to a funding shortfall (see below) or the raw RPC error message is surfaced.
+
+### Response — underfunded sender
+
+A node asked to estimate gas for a transfer the sender cannot pay for rejects it without revert data, and the resulting `CALL_EXCEPTION` names neither the balance nor the address. When the simulator can confirm that is what happened, the failure carries a machine-readable `code` and the numbers a caller needs to fix it:
+
+```json
+{
+  "success": false,
+  "status": "simulated",
+  "from": "0x...orgWallet",
+  "to": "0x...recipient",
+  "value": "1000000000000000000",
+  "wouldRevert": true,
+  "revertReason": "Insufficient ETH balance. Have: 0.25, Need: 1.0. Fund 0x...orgWallet with at least 0.75 ETH on this chain and retry.",
+  "error": "Insufficient ETH balance. Have: 0.25, Need: 1.0. Fund 0x...orgWallet with at least 0.75 ETH on this chain and retry.",
+  "code": "insufficient_balance",
+  "balanceWei": "250000000000000000",
+  "requiredWei": "1000000000000000000",
+  "shortfallWei": "750000000000000000",
+  "nativeSymbol": "ETH",
+  "originalError": "missing revert data (action=\"estimateGas\", ...)"
+}
+```
+
+- `code`: `"insufficient_balance"` — branch on this rather than string-matching `revertReason`. Absent when the simulator could not attribute the failure to anything more specific than "the call reverted"
+- `balanceWei` / `requiredWei` / `shortfallWei`: the sender's native balance, the native value the call would move, and the difference, all in wei
+- `nativeSymbol`: the chain's native currency symbol (`ETH`, `BNB`, `POL`); falls back to `native` if the chain is not seeded
+- `originalError`: the node's own message, kept verbatim. Attribution only ever adds — nothing the chain said is discarded
+- `undecodedRevertData`: present only when the node did return revert data that no ABI on the decode path matched. The first four bytes are the custom-error selector, which you can look up in a selector database. When this field is set, funding the wallet may not be enough on its own — the contract is also rejecting the call
+
+The comparison is against the transfer value only; gas is not included (the gas estimate is what failed, so there is no number to add). A wallet funded with exactly the transfer amount therefore still fails, with the node's own `insufficient funds for gas * price + value` message and no `code`.
 
 ### Token-transfer specifics
 

@@ -6,13 +6,16 @@ import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import {
   describeNativeShortfall,
   getNativeSymbol,
-  type InsufficientBalanceCode,
+  type INSUFFICIENT_BALANCE_CODE,
 } from "@/lib/execute/native-balance";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getErrorMessage } from "@/lib/utils";
-import { decodeRevertReason } from "@/lib/web3/decode-revert-error";
+import {
+  decodeRevertReason,
+  extractRevertData,
+} from "@/lib/web3/decode-revert-error";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
 import { parseTokenAddress } from "@/plugins/web3/steps/transfer-token-core";
 
@@ -32,7 +35,10 @@ import { parseTokenAddress } from "@/plugins/web3/steps/transfer-token-core";
  * When the preflight fails because the funding address cannot cover the
  * native value, the failure carries `code: "insufficient_balance"` with the
  * balance, the requirement and the shortfall — the same answer the broadcast
- * preflight gives — rather than the node's revert-data-less CALL_EXCEPTION.
+ * preflight gives — instead of the node's revert-data-less CALL_EXCEPTION.
+ * Attribution only ever adds: the node's own message stays in
+ * `originalError`, and revert data that failed to decode stays in
+ * `undecodedRevertData`, so no failure is less informative than before.
  *
  * Known limitation: `from` is resolved via getOrganizationWalletAddress
  * (the org's EOA / smart account address). Orgs that route writes
@@ -70,6 +76,15 @@ export type SimulateSuccess = {
   wouldRevert: false;
 };
 
+/**
+ * Machine-readable causes the simulator can attribute a failure to.
+ *
+ * Named for the concept rather than its single current member: adding a
+ * second code widens this union instead of replacing a one-literal alias,
+ * so an exhaustive `switch` on the client keeps compiling.
+ */
+export type SimulateFailureCode = typeof INSUFFICIENT_BALANCE_CODE;
+
 export type SimulateFailure = {
   success: false;
   status: "simulated";
@@ -84,7 +99,7 @@ export type SimulateFailure = {
    * failure to something more specific than "the call reverted". Clients
    * should branch on this rather than string-matching `revertReason`.
    */
-  code?: InsufficientBalanceCode;
+  code?: SimulateFailureCode;
   /** Set with `code: "insufficient_balance"`: `from`'s native balance, in wei. */
   balanceWei?: string;
   /** Set with `code: "insufficient_balance"`: native value needed, in wei. */
@@ -93,6 +108,20 @@ export type SimulateFailure = {
   shortfallWei?: string;
   /** Set with `code: "insufficient_balance"`: e.g. "ETH". */
   nativeSymbol?: string;
+  /**
+   * The node's own error message, kept verbatim whenever the simulator put
+   * an attribution in `revertReason` instead. Attribution augments, never
+   * discards: `revertReason` carries the actionable claim, this carries
+   * what the chain actually said.
+   */
+  originalError?: string;
+  /**
+   * Revert data the node did return but which neither the supplied ABI, the
+   * common-error list, nor `Error(string)` could decode. Look its first four
+   * bytes up in a selector database to identify the custom error. Absent
+   * when the node returned no revert data at all.
+   */
+  undecodedRevertData?: string;
 };
 
 export type SimulateResult = SimulateSuccess | SimulateFailure;
@@ -188,6 +217,12 @@ function failure(
  * be read), so a real revert reason is never masked by a guess. The balance
  * is read for the same `from` the simulation used, inheriting the Safe
  * routing limitation documented at the top of this file.
+ *
+ * The comparison is `balance >= value` and deliberately ignores gas: the
+ * estimate is what just failed, so there is no gas number to add. A wallet
+ * holding exactly `value` therefore still fails on `value + gas * price`,
+ * and this returns null for it — nodes answer that case with a readable
+ * "insufficient funds for gas * price + value" of their own.
  */
 async function nativeShortfallFailure(input: {
   rpc: RpcProviderManager;
@@ -195,6 +230,10 @@ async function nativeShortfallFailure(input: {
   from: string;
   to: string;
   value: bigint;
+  /** The node's own message, carried through so attribution discards nothing. */
+  originalError: string;
+  /** Revert data the node returned that nothing could decode, if any. */
+  undecodedRevertData?: string;
 }): Promise<SimulateFailure | null> {
   // A zero-value call can never be short, so skip the extra round trip.
   if (input.value <= BigInt(0)) {
@@ -215,19 +254,81 @@ async function nativeShortfallFailure(input: {
       required: input.value,
       holder: input.from,
     });
+    // The wallet is genuinely short, but a contract that also returned revert
+    // data may be rejecting the call for an unrelated reason. Say both.
+    const message = input.undecodedRevertData
+      ? `${shortfall.message} The call also returned revert data no ABI here decodes (selector ${revertSelector(input.undecodedRevertData)}), so funding alone may not make it succeed.`
+      : shortfall.message;
     return {
-      ...failure(input.from, input.to, input.value, shortfall.message),
+      ...failure(input.from, input.to, input.value, message),
       code: shortfall.code,
       balanceWei: shortfall.balanceWei,
       requiredWei: shortfall.requiredWei,
       shortfallWei: shortfall.shortfallWei,
       nativeSymbol: shortfall.nativeSymbol,
+      originalError: input.originalError,
+      undecodedRevertData: input.undecodedRevertData,
     };
   } catch {
     // Attribution is best-effort: it runs inside an error path, so it must
     // fall back to the original failure rather than raise one of its own.
     return null;
   }
+}
+
+/** First four bytes of revert data: the selector an integrator can look up. */
+function revertSelector(data: string): string {
+  return ethers.dataLength(data) >= 4 ? ethers.dataSlice(data, 0, 4) : data;
+}
+
+/**
+ * Turn a failed preflight into a SimulateFailure, shared by every path that
+ * calls estimateGas.
+ *
+ * Order of preference: a decoded revert reason is the most specific answer,
+ * so it wins outright. Otherwise the failure may be a funding shortfall —
+ * attribute it, but never at the cost of what the node said. `decodeRevert-
+ * Reason` returns undefined both when there was no revert data and when
+ * there was revert data nothing could decode; the second case keeps its raw
+ * bytes in `undecodedRevertData` and its selector in the message, and both
+ * cases keep the node's message in `originalError`.
+ */
+async function failureFromPreflightError(input: {
+  rpc: RpcProviderManager;
+  chainId: number;
+  from: string;
+  to: string;
+  value: bigint;
+  err: unknown;
+  /** The call's ABI, when there is one. Native sends have none. */
+  iface?: ethers.Interface;
+}): Promise<SimulateFailure> {
+  const reason = decodeRevertReason(input.err, input.iface);
+  if (reason) {
+    return failure(input.from, input.to, input.value, reason);
+  }
+
+  const originalError = getErrorMessage(input.err);
+  const revertData = extractRevertData(input.err);
+  const shortfall = await nativeShortfallFailure({
+    rpc: input.rpc,
+    chainId: input.chainId,
+    from: input.from,
+    to: input.to,
+    value: input.value,
+    originalError,
+    undecodedRevertData:
+      revertData && revertData !== "0x" ? revertData : undefined,
+  });
+  return (
+    shortfall ??
+    failure(
+      input.from,
+      input.to,
+      input.value,
+      `Simulation reverted: ${originalError}`
+    )
+  );
 }
 
 async function getRpcManagerForChain(
@@ -338,24 +439,15 @@ export async function simulateContractCall(
       "preflight"
     );
   } catch (err) {
-    // A decoded revert is the most specific answer available, so it wins.
-    // Only when the node returned no revert data is an empty wallet a
-    // plausible explanation worth spending an extra RPC read on.
-    const reason = decodeRevertReason(err, iface);
-    if (reason) {
-      return failure(from, to, value, reason);
-    }
-    const shortfall = await nativeShortfallFailure({
+    return await failureFromPreflightError({
       rpc,
       chainId,
       from,
       to,
       value,
+      err,
+      iface,
     });
-    return (
-      shortfall ??
-      failure(from, to, value, `Simulation reverted: ${getErrorMessage(err)}`)
-    );
   }
 
   let simulatedReturnValue: unknown = null;
@@ -411,17 +503,17 @@ export async function simulateNativeTransfer(
       "preflight"
     );
   } catch (err) {
-    const shortfall = await nativeShortfallFailure({
+    // No ABI to pass: a native send has none. decodeRevertReason still
+    // tries the common-error list and Error(string), so a reverting
+    // contract recipient gets its reason decoded here too.
+    return await failureFromPreflightError({
       rpc,
       chainId,
       from,
       to,
       value,
+      err,
     });
-    return (
-      shortfall ??
-      failure(from, to, value, `Simulation reverted: ${getErrorMessage(err)}`)
-    );
   }
 
   return {

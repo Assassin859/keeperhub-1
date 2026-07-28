@@ -31,6 +31,7 @@ const RECIPIENT_ADDRESS = "0xcc0000000000000000000000000000000000cc00";
 const rpcSpies = vi.hoisted(() => ({
   executeWithFailover: vi.fn(),
   parseTokenAddress: vi.fn(),
+  chainsLookup: vi.fn(() => Promise.resolve([{ symbol: "ETH" }])),
 }));
 
 vi.mock("@/lib/web3/wallet-helpers", () => ({
@@ -60,18 +61,25 @@ vi.mock("@/lib/logging", () => ({
 
 // getNativeSymbol reads the chain's symbol from the seeded `chains` table.
 // Only the insufficient-balance path touches it, and only for wording.
+// Routed through a spy so a test can make the lookup reject and pin the
+// documented degradation ("native") instead of a thrown error.
 vi.mock("@/lib/db", () => ({
   db: {
     select: () => ({
       from: () => ({
         where: () => ({
-          limit: () => Promise.resolve([{ symbol: "ETH" }]),
+          limit: () => rpcSpies.chainsLookup(),
         }),
       }),
     }),
   },
 }));
 
+// Coupling note: this stub exports only `chains`, which is every table the
+// module graph under test currently reads (wallet-helpers and
+// transfer-token-core are themselves mocked above, so the real schema never
+// loads). If native-balance.ts ever reads a second table, Vitest fails this
+// file with "No X export is defined on the mock" — add the table here.
 vi.mock("@/lib/db/schema", () => ({
   chains: { chainId: "chain_id", symbol: "symbol" },
 }));
@@ -198,6 +206,78 @@ describe("simulateContractCall", () => {
       expect(result.code).toBe("insufficient_balance");
       expect(result.shortfallWei).toBe(ethers.parseEther("0.75").toString());
       expect(result.revertReason).toContain("Have: 0.25, Need: 1.0");
+      // Attribution adds, it does not replace: the node's own message
+      // survives even when the shortfall claim takes over revertReason.
+      expect(result.originalError).toContain("missing revert data");
+      // The node returned no revert data here, so there is none to keep.
+      expect(result.undecodedRevertData).toBeUndefined();
+    }
+  });
+
+  it("keeps undecodable revert data alongside the shortfall claim", async () => {
+    resetSpies();
+    // Revert data the decode path cannot touch: the selector is not in the
+    // supplied ABI, not in the common-errors list, and not Error(string).
+    // The wallet is short too, so both facts are true at once.
+    const undecodable = `0x1234abcd${"00".repeat(32)}`;
+    executeWithFailover.mockRejectedValueOnce({
+      data: undecodable,
+      message: "execution reverted (unknown custom error)",
+    });
+    executeWithFailover.mockResolvedValueOnce(ethers.parseEther("0.25"));
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: JSON.stringify(["1"]),
+      value: "1.0",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The shortfall is real, so it is still reported...
+      expect(result.code).toBe("insufficient_balance");
+      expect(result.shortfallWei).toBe(ethers.parseEther("0.75").toString());
+      // ...but the harder half to rediscover is kept: raw data for a
+      // selector lookup, the selector named in the message, the node's
+      // wording verbatim, and a warning that funding may not be the fix.
+      expect(result.undecodedRevertData).toBe(undecodable);
+      expect(result.revertReason).toContain("0x1234abcd");
+      expect(result.revertReason).toContain("funding alone may not");
+      expect(result.originalError).toBe(
+        "execution reverted (unknown custom error)"
+      );
+    }
+  });
+
+  it("reports a chain-agnostic symbol when the chains lookup fails", async () => {
+    resetSpies();
+    rpcSpies.chainsLookup.mockRejectedValueOnce(new Error("db unavailable"));
+    executeWithFailover.mockRejectedValueOnce(
+      new Error('missing revert data (action="estimateGas")')
+    );
+    executeWithFailover.mockResolvedValueOnce(BigInt(0));
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: JSON.stringify(["1"]),
+      value: "1.0",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // A DB blip degrades the wording; it must not replace the real
+      // failure with a database error of its own.
+      expect(result.code).toBe("insufficient_balance");
+      expect(result.nativeSymbol).toBe("native");
+      expect(result.revertReason).toContain("Insufficient native balance");
     }
   });
 
@@ -394,9 +474,65 @@ describe("simulateNativeTransfer", () => {
       expect(result.revertReason).toContain("Have: 0.0, Need: 0.001");
       expect(result.revertReason).toContain("at least 0.001 ETH");
       expect(result.error).toBe(result.revertReason);
+      // The node's message is kept even though the shortfall claim is the
+      // one surfaced in revertReason.
+      expect(result.originalError).toContain("missing revert data");
     }
     // One estimateGas/call round trip, then exactly one balance read.
     expect(executeWithFailover).toHaveBeenCalledTimes(2);
+  });
+
+  it("decodes a reverting contract recipient without a supplied ABI", async () => {
+    resetSpies();
+    // A native send can hit a contract that reverts with Error(string).
+    // There is no ABI on this path, but the standard selector still decodes.
+    const encodedReason = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["string"],
+      ["recipient rejects ETH"]
+    );
+    executeWithFailover.mockRejectedValueOnce({
+      data: `0x08c379a0${encodedReason.slice(2)}`,
+    });
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "1",
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "0.001",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.revertReason).toContain("recipient rejects ETH");
+      expect(result.code).toBeUndefined();
+    }
+    // A decoded reason is the specific answer: no balance read is spent.
+    expect(executeWithFailover).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a native send's undecodable revert data when the wallet is short", async () => {
+    resetSpies();
+    const undecodable = `0x9abcdef0${"11".repeat(32)}`;
+    executeWithFailover.mockRejectedValueOnce({
+      data: undecodable,
+      message: "execution reverted",
+    });
+    executeWithFailover.mockResolvedValueOnce(BigInt(0));
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "1",
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "0.001",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("insufficient_balance");
+      expect(result.undecodedRevertData).toBe(undecodable);
+      expect(result.revertReason).toContain("0x9abcdef0");
+      expect(result.originalError).toBe("execution reverted");
+    }
   });
 
   it("keeps the original error when the balance read itself fails", async () => {

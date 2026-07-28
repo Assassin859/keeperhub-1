@@ -13,12 +13,14 @@ import { chains } from "@/lib/db/schema";
  * enough native currency for this transfer?" — and both have to phrase the
  * answer for a caller who cannot see the chain. Keeping the wording in one
  * place stops the dry run and the broadcast from drifting apart.
+ *
+ * Scope: the question is about the transfer value only. Neither caller adds
+ * gas to the requirement, so a wallet holding exactly `value` still cannot
+ * pay `value + gas * price` and is not reported as short by either path.
  */
 
 /** Machine-readable `code` for a native-currency shortfall. */
 export const INSUFFICIENT_BALANCE_CODE = "insufficient_balance";
-
-export type InsufficientBalanceCode = typeof INSUFFICIENT_BALANCE_CODE;
 
 /**
  * The chain's native symbol ("ETH", "BNB", "POL"), read from the seeded
@@ -42,7 +44,7 @@ export async function getNativeSymbol(chainId: number): Promise<string> {
 }
 
 export type NativeShortfall = {
-  code: InsufficientBalanceCode;
+  code: typeof INSUFFICIENT_BALANCE_CODE;
   /** Funding address' native balance, in wei. */
   balanceWei: string;
   /** Native value the transfer would move, in wei. */
