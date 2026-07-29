@@ -830,12 +830,6 @@ export {
   type WalletApprovalRequest,
   walletApprovalRequests,
 } from "./schema-agentic-wallets";
-export {
-  type NewTempoHeldPayment,
-  type TempoHeldPayment,
-  tempoHeldPayments,
-  tempoHeldPaymentStatus,
-} from "./schema-tempo-payments";
 // KeeperHub: Organization Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
 // Note: Using relative path instead of @/ alias for drizzle-kit compatibility
 export {
@@ -862,6 +856,8 @@ export {
   type NewOrganizationSubscription,
   type NewOrganizationToken,
   type NewOrganizationWallet,
+  type NewPaygConfig,
+  type NewPaygPayment,
   type NewPublicTag,
   type NewSafeRole,
   type NewSafeRoleAllowance,
@@ -884,8 +880,12 @@ export {
   organizationTokens,
   organizationWallets,
   overageBillingRecords,
+  type PaygConfig,
+  type PaygPayment,
   type PendingTransaction,
   type PublicTag,
+  paygConfig,
+  paygPayments,
   pendingTransactions,
   publicTags,
   type SafeRole,
@@ -934,6 +934,12 @@ export {
   type WorkflowPayment,
   workflowPayments,
 } from "./schema-payments";
+export {
+  type NewTempoHeldPayment,
+  type TempoHeldPayment,
+  tempoHeldPaymentStatus,
+  tempoHeldPayments,
+} from "./schema-tempo-payments";
 
 // Better Auth: Device Authorization table (for CLI device flow)
 export const deviceCode = pgTable("device_code", {
