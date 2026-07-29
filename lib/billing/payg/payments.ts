@@ -1,9 +1,20 @@
 import "server-only";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { type NewPaygPayment, paygPayments } from "@/lib/db/schema-extensions";
 import { PAYG_PAYMENT_STATUS } from "./constants";
+
+export type PaygPaymentRow = {
+  executionId: string;
+  amountRaw: string;
+  txHash: string | null;
+  chainId: number;
+  createdAt: Date;
+  workflowId: string | null;
+  workflowName: string | null;
+};
 
 /** Record a settled per-execution payment. Idempotent on (org, execution_id). */
 export async function recordPaygPayment(
@@ -54,31 +65,41 @@ export async function getPaygSpentRaw(
   return BigInt(rows[0]?.spent ?? "0");
 }
 
-/** Most recent settled payments for an org, newest first -- for the history UI. */
-export async function listPaygPayments(
+/**
+ * One page of an org's PAYG charges, newest first, joined to the workflow
+ * execution that triggered each charge. workflowId/workflowName are null when
+ * the charge's execution id is not a workflow run (direct-API charges). Returns
+ * the slice plus the total row count for server-side pagination.
+ */
+export async function listPaygPaymentsPage(
   organizationId: string,
-  limit = 20
-): Promise<
-  {
-    executionId: string;
-    amountRaw: string;
-    txHash: string | null;
-    chainId: number;
-    createdAt: Date;
-  }[]
-> {
-  return await db
-    .select({
-      executionId: paygPayments.executionId,
-      amountRaw: paygPayments.amountRaw,
-      txHash: paygPayments.txHash,
-      chainId: paygPayments.chainId,
-      createdAt: paygPayments.createdAt,
-    })
-    .from(paygPayments)
-    .where(eq(paygPayments.organizationId, organizationId))
-    .orderBy(desc(paygPayments.createdAt))
-    .limit(limit);
+  opts: { limit: number; offset: number }
+): Promise<{ items: PaygPaymentRow[]; total: number }> {
+  const where = eq(paygPayments.organizationId, organizationId);
+  const [items, totals] = await Promise.all([
+    db
+      .select({
+        executionId: paygPayments.executionId,
+        amountRaw: paygPayments.amountRaw,
+        txHash: paygPayments.txHash,
+        chainId: paygPayments.chainId,
+        createdAt: paygPayments.createdAt,
+        workflowId: workflowExecutions.workflowId,
+        workflowName: workflows.name,
+      })
+      .from(paygPayments)
+      .leftJoin(
+        workflowExecutions,
+        eq(workflowExecutions.id, paygPayments.executionId)
+      )
+      .leftJoin(workflows, eq(workflows.id, workflowExecutions.workflowId))
+      .where(where)
+      .orderBy(desc(paygPayments.createdAt))
+      .limit(opts.limit)
+      .offset(opts.offset),
+    db.select({ total: count() }).from(paygPayments).where(where),
+  ]);
+  return { items, total: totals[0]?.total ?? 0 };
 }
 
 /** Executions charged and total USDC (raw) in [since, until) -- for reporting. */

@@ -1,8 +1,10 @@
 "use client";
 
-import { Info, Loader2, Zap } from "lucide-react";
+import { Copy, ExternalLink, Info, Loader2, Zap } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Pager } from "@/components/activity/pager";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +22,7 @@ import { toChecksumAddress } from "@/lib/address-utils";
 import { BILLING_API } from "@/lib/billing/constants";
 import { PLANS } from "@/lib/billing/plans";
 import { useOrganization } from "@/lib/hooks/use-organization";
+import type { PageMeta } from "@/lib/pagination";
 
 type PaygStatus = {
   enabled: boolean;
@@ -34,13 +37,6 @@ type PaygStatus = {
     periodSpentUsdc: string;
     dailySpentUsdc: string;
   } | null;
-  history: {
-    executionId: string;
-    amountUsdc: string;
-    txHash: string | null;
-    chainId: number;
-    createdAt: string;
-  }[];
 };
 
 const FREE_LIMIT = PLANS.free.features.maxExecutionsPerMonth;
@@ -274,43 +270,7 @@ export function PaygSection(): React.ReactElement | null {
         </div>
       )}
 
-      {status.enabled && status.history.length > 0 && (
-        <>
-          <Separator />
-          <div className="space-y-2">
-            <h4 className="font-medium text-sm">Recent charges</h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-border/60 border-b text-left text-muted-foreground text-xs">
-                    <th className="py-2 pr-4 font-medium">Date</th>
-                    <th className="py-2 pr-4 font-medium">Amount</th>
-                    <th className="py-2 font-medium">Transaction</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {status.history.map((row) => (
-                    <tr
-                      className="border-border/30 border-b last:border-b-0"
-                      key={row.executionId}
-                    >
-                      <td className="py-2 pr-4 text-muted-foreground">
-                        {formatDate(row.createdAt)}
-                      </td>
-                      <td className="py-2 pr-4">
-                        {formatUsdc(row.amountUsdc)}
-                      </td>
-                      <td className="py-2 font-mono text-muted-foreground text-xs">
-                        {row.txHash ? `${row.txHash.slice(0, 10)}...` : "-"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
+      {status.enabled && <PaygChargesTable key={orgId} />}
 
       <PaygCapsDialog
         enabling={!status.enabled}
@@ -584,5 +544,164 @@ function PaygInfoDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type PaygCharge = {
+  executionId: string;
+  workflowId: string | null;
+  workflowName: string | null;
+  amountUsdc: string;
+  txHash: string | null;
+  txUrl: string | null;
+  chainId: number;
+  createdAt: string;
+};
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * Server-side paginated charge history. Re-mounted (via key) on org switch so
+ * paging resets to the first page for the new org.
+ */
+function PaygChargesTable(): React.ReactElement | null {
+  const [page, setPage] = useState(1);
+  const [items, setItems] = useState<PaygCharge[]>([]);
+  const [meta, setMeta] = useState<PageMeta | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    async function load(): Promise<void> {
+      try {
+        const res = await fetch(
+          `${BILLING_API.PAYG}/charges?page=${page}&limit=10`
+        );
+        if (!res.ok) {
+          return;
+        }
+        const data = (await res.json()) as {
+          items: PaygCharge[];
+          meta: PageMeta;
+        };
+        if (!cancelled) {
+          setItems(data.items);
+          setMeta(data.meta);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+    load().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
+
+  if (!meta || meta.total === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <Separator />
+      <div className="space-y-2">
+        <h4 className="font-medium text-sm">Recent charges</h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-border/60 border-b text-left text-muted-foreground text-xs">
+                <th className="py-2 pr-4 font-medium">Date</th>
+                <th className="py-2 pr-4 font-medium">Workflow</th>
+                <th className="py-2 pr-4 font-medium">Amount</th>
+                <th className="py-2 font-medium">Transaction</th>
+              </tr>
+            </thead>
+            <tbody className={loading ? "opacity-60" : undefined}>
+              {items.map((row) => (
+                <tr
+                  className="border-border/30 border-b last:border-b-0"
+                  key={row.executionId}
+                >
+                  <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
+                    {formatDateTime(row.createdAt)}
+                  </td>
+                  <td className="py-2 pr-4">
+                    {row.workflowId && row.workflowName ? (
+                      <Link
+                        className="text-keeperhub-green-dark hover:underline"
+                        href={`/workflows/${row.workflowId}`}
+                      >
+                        {row.workflowName}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-4">{formatUsdc(row.amountUsdc)}</td>
+                  <td className="py-2">
+                    <ChargeTx txHash={row.txHash} txUrl={row.txUrl} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Pager meta={meta} onPage={setPage} unit="charges" />
+      </div>
+    </>
+  );
+}
+
+function ChargeTx({
+  txHash,
+  txUrl,
+}: {
+  txHash: string | null;
+  txUrl: string | null;
+}): React.ReactElement {
+  if (!txHash) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+  const hash = txHash;
+  async function copy(): Promise<void> {
+    await navigator.clipboard.writeText(hash);
+    toast.success("Transaction hash copied");
+  }
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="font-mono text-muted-foreground text-xs">
+        {`${hash.slice(0, 10)}...`}
+      </span>
+      <button
+        aria-label="Copy transaction hash"
+        className="text-muted-foreground/70 transition-colors hover:text-foreground"
+        onClick={() => {
+          copy().catch(() => undefined);
+        }}
+        type="button"
+      >
+        <Copy className="size-3.5" />
+      </button>
+      {txUrl && (
+        <a
+          aria-label="View transaction on block explorer"
+          className="text-muted-foreground/70 transition-colors hover:text-foreground"
+          href={txUrl}
+          rel="noopener"
+          target="_blank"
+        >
+          <ExternalLink className="size-3.5" />
+        </a>
+      )}
+    </div>
   );
 }

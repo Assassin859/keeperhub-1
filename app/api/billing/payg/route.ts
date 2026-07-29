@@ -6,7 +6,6 @@ import {
   upsertPaygConfig,
 } from "@/lib/billing/payg/config-store";
 import { PAYG_DEFAULT_CHAIN_ID } from "@/lib/billing/payg/constants";
-import { listPaygPayments } from "@/lib/billing/payg/payments";
 import { getPaygExecutionPriceRaw } from "@/lib/billing/payg/pricing";
 import { getPaygTreasuryOrNull } from "@/lib/billing/payg/treasury";
 import { getCurrentPaygUsage } from "@/lib/billing/payg/usage";
@@ -33,13 +32,6 @@ type PaygStatus = {
     periodSpentUsdc: string;
     dailySpentUsdc: string;
   } | null;
-  history: {
-    executionId: string;
-    amountUsdc: string;
-    txHash: string | null;
-    chainId: number;
-    createdAt: string;
-  }[];
 };
 
 async function buildPaygStatus(organizationId: string): Promise<PaygStatus> {
@@ -47,10 +39,7 @@ async function buildPaygStatus(organizationId: string): Promise<PaygStatus> {
   const chainId = config?.chainId ?? PAYG_DEFAULT_CHAIN_ID;
   const priceRaw = getPaygExecutionPriceRaw();
 
-  const [usage, history] = await Promise.all([
-    getCurrentPaygUsage(organizationId),
-    listPaygPayments(organizationId),
-  ]);
+  const usage = await getCurrentPaygUsage(organizationId);
 
   return {
     enabled: config !== null,
@@ -70,13 +59,6 @@ async function buildPaygStatus(organizationId: string): Promise<PaygStatus> {
           dailySpentUsdc: usdcRawToDecimal(usage.dailySpentRaw),
         }
       : null,
-    history: history.map((p) => ({
-      executionId: p.executionId,
-      amountUsdc: usdcRawToDecimal(BigInt(p.amountRaw)),
-      txHash: p.txHash,
-      chainId: p.chainId,
-      createdAt: p.createdAt.toISOString(),
-    })),
   };
 }
 
