@@ -60,6 +60,15 @@
  * not platform-enforced. Tighten at the listing API if that ever becomes
  * a policy concern.
  *
+ * An explicit multi-chain tag ("multi-chain", "any", "cross-chain", ...) is
+ * treated like a data-chain listing: the workflow declares no single payment-
+ * chain preference, so both Base x402 and Tempo MPP are accepted. This is the
+ * supported way for a listing to say "payable on either rail" -- previously
+ * the only ways to express it were a null chain or a data-chain id, and a
+ * natural value like "multi-chain" fell through to the defensive-mismatch
+ * branch and 403'd every payment on both rails. Unrecognised tags still stay
+ * defensive so a typo never silently widens access.
+ *
  * Lookup chain mirrors lib/x402/payment-gate.ts:resolveCreatorWallet.
  */
 import { and, eq } from "drizzle-orm";
@@ -121,9 +130,27 @@ export const KNOWN_DATA_CHAIN_IDS = new Set<string>([
   "9745", // Plasma Mainnet
 ]);
 
+/**
+ * Explicit "payable on either rail" tags. A listing carrying one of these
+ * declares no single payment-chain preference, so the binding accepts both
+ * Base x402 and Tempo MPP -- the same acceptance as a data-chain id or a null
+ * chain. Matched case-insensitively after trim (see classifyChainTag).
+ */
+export const MULTI_CHAIN_TAGS = new Set<string>([
+  "multi-chain",
+  "multichain",
+  "multi_chain",
+  "multi",
+  "cross-chain",
+  "crosschain",
+  "any",
+  "all",
+]);
+
 type ChainClassification =
   | { readonly kind: "payment"; readonly chain: BindingChain }
   | { readonly kind: "data" }
+  | { readonly kind: "multi" }
   | { readonly kind: "unrecognised" };
 
 /**
@@ -133,6 +160,8 @@ type ChainClassification =
  * - "data": a recognised data-chain id (Ethereum, OP, Polygon, Arbitrum); the
  *   listing's chain identifies where the contracts live, not which chain
  *   payment must arrive on. Either Base or Tempo payment is accepted.
+ * - "multi": an explicit multi-chain tag (see MULTI_CHAIN_TAGS). The listing
+ *   opts into either payment rail; accepted like a data-chain listing.
  * - "unrecognised": a non-empty value we can't parse. Treated as defensive
  *   mismatch by the binding so a typo or future tag never silently widens
  *   access.
@@ -160,6 +189,9 @@ function classifyChainTag(
   }
   if (KNOWN_DATA_CHAIN_IDS.has(v)) {
     return { kind: "data" };
+  }
+  if (MULTI_CHAIN_TAGS.has(v)) {
+    return { kind: "multi" };
   }
   return { kind: "unrecognised" };
 }
@@ -225,6 +257,7 @@ export async function verifyWorkflowBinding(
   // defence). Data-chain listings (Ethereum, Arbitrum, Polygon, BNB, Avalanche, 0G, Plasma) only
   // describe where the workflow READS contracts from — they have no inherent
   // payment-chain preference, so either Base x402 or Tempo MPP is accepted.
+  // Explicit multi-chain tags opt into the same either-rail acceptance.
   // Unrecognised tags stay defensive (mismatch) so a typo never widens access.
   // A null wf.chain remains permissive for legacy listings that pre-date the
   // workflows.chain column.
@@ -232,6 +265,7 @@ export async function verifyWorkflowBinding(
     const wfClass = classifyChainTag(wf.chain);
     const matched =
       wfClass.kind === "data" ||
+      wfClass.kind === "multi" ||
       (wfClass.kind === "payment" && wfClass.chain === chain);
     if (!matched) {
       return {
