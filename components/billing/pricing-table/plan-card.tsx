@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
+import { BILLING_API } from "@/lib/billing/constants";
 import type {
   BillingInterval,
   PLANS,
@@ -54,10 +55,38 @@ export function PlanCard({
   );
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [paygPriceUsdc, setPaygPriceUsdc] = useState<string | null>(null);
 
   const hasSubscription = currentPlan !== undefined && currentPlan !== "free";
   const isEnterprise = planName === "enterprise";
   const isFree = planName === "free";
+
+  // The free tier is free + pay-as-you-go; pull the per-execution price so the
+  // card can show what overflow beyond the included limit costs.
+  useEffect(() => {
+    if (!isFree) {
+      return;
+    }
+    let cancelled = false;
+    async function loadPaygPrice(): Promise<void> {
+      const res = await fetch(BILLING_API.PAYG);
+      if (!res.ok) {
+        return;
+      }
+      const data = (await res.json()) as { priceUsdc?: string };
+      if (!cancelled && data.priceUsdc && Number(data.priceUsdc) > 0) {
+        setPaygPriceUsdc(data.priceUsdc);
+      }
+    }
+    loadPaygPrice().catch(() => {
+      // PAYG price is optional context on the free card.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isFree]);
+
+  const cardName = isFree ? "Free + PAYG" : plan.name;
 
   const isCurrent = isCurrentPlan(
     planName,
@@ -194,7 +223,7 @@ export function PlanCard({
         <CardContent className="flex flex-1 flex-col gap-0 pt-6">
           <PlanHeader
             isEnterprise={isEnterprise}
-            name={plan.name}
+            name={cardName}
             price={price}
           />
 
@@ -216,6 +245,7 @@ export function PlanCard({
           isCurrent={isCurrent}
           loading={loading}
           onSubscribe={handleSubscribe}
+          paygPriceUsdc={paygPriceUsdc}
           plan={plan}
           planName={planName}
         />

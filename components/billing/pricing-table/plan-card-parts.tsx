@@ -193,6 +193,7 @@ export function PlanCardFooter({
   currentPlan,
   hasSubscription,
   onSubscribe,
+  paygPriceUsdc,
 }: {
   planName: PlanName;
   plan: (typeof PLANS)[PlanName];
@@ -201,6 +202,7 @@ export function PlanCardFooter({
   currentPlan?: PlanName;
   hasSubscription: boolean;
   onSubscribe: () => void;
+  paygPriceUsdc?: string | null;
 }): React.ReactElement {
   const isFree = planName === "free";
   const isEnterprise = planName === "enterprise";
@@ -209,7 +211,11 @@ export function PlanCardFooter({
   if (plan.overage.enabled) {
     overageLabel = `$${plan.overage.ratePerThousand}/1K additional executions`;
   } else if (isFree) {
-    overageLabel = "No overage. Hard cap at limit.";
+    overageLabel = paygPriceUsdc
+      ? `then $${Number(paygPriceUsdc).toLocaleString(undefined, {
+          maximumFractionDigits: 6,
+        })} / extra execution`
+      : "Pay-as-you-go beyond the limit";
   } else if (isEnterprise) {
     overageLabel = "Custom overage terms";
   }
