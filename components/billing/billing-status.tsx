@@ -447,10 +447,12 @@ function ExecutionUsageBar({
   used,
   limit,
   plan,
+  paygEnabled,
 }: {
   used: number;
   limit: number;
   plan: PlanName;
+  paygEnabled: boolean;
 }): React.ReactElement {
   const isUnlimited = limit === -1;
   const percent = isUnlimited ? 0 : Math.min((used / limit) * 100, 100);
@@ -458,9 +460,12 @@ function ExecutionUsageBar({
   const isNearLimit = !isUnlimited && percent >= 80;
   const hasOverage = PLANS[plan].overage.enabled;
   const overageRate = PLANS[plan].overage.ratePerThousand;
+  // Free orgs with PAYG on keep running past the limit (charged per execution),
+  // so treat it like overage: no hard block, no destructive styling.
+  const overflowCovered = hasOverage || paygEnabled;
 
   function resolveBarColor(): string {
-    if (isOverLimit && !hasOverage) {
+    if (isOverLimit && !overflowCovered) {
       return "bg-destructive";
     }
     if (isNearLimit && !isOverLimit) {
@@ -534,8 +539,13 @@ function ExecutionUsageBar({
           will be added to your next invoice.
         </p>
       )}
-      {isOverLimit && !hasOverage && (
-        <p className="text-xs text-destructive">
+      {isOverLimit && !hasOverage && paygEnabled && (
+        <p className="text-muted-foreground text-xs">
+          Beyond your free limit, each execution is charged via pay-as-you-go.
+        </p>
+      )}
+      {isOverLimit && !hasOverage && !paygEnabled && (
+        <p className="text-destructive text-xs">
           You have reached your monthly execution limit. Upgrade your plan to
           continue.
         </p>
@@ -722,6 +732,32 @@ function BillingStatusContent({
 }): React.ReactElement {
   const plan = parsePlanName(sub?.plan);
   const planDef = PLANS[plan];
+
+  // Free orgs can enable pay-as-you-go to keep running past the free limit, so
+  // the over-limit message must not tell them to upgrade when PAYG is on.
+  const [paygEnabled, setPaygEnabled] = useState(false);
+  useEffect(() => {
+    if (plan !== "free") {
+      setPaygEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    async function loadPaygEnabled(): Promise<void> {
+      const res = await fetch(BILLING_API.PAYG);
+      if (!res.ok) {
+        return;
+      }
+      const data = (await res.json()) as { enabled?: boolean };
+      if (!cancelled) {
+        setPaygEnabled(Boolean(data.enabled));
+      }
+    }
+    loadPaygEnabled().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [plan]);
+
   const status = sub?.status ?? "active";
   const statusVariant = STATUS_VARIANT[status] ?? "outline";
   const isTrialing = status === "trialing";
@@ -791,6 +827,7 @@ function BillingStatusContent({
       {usage && (
         <ExecutionUsageBar
           limit={usage.executionLimit}
+          paygEnabled={paygEnabled}
           plan={plan}
           used={usage.executionsUsed}
         />
