@@ -27,6 +27,7 @@ import {
 } from "@/lib/web3/sponsorship-chains-meta";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import { GasSponsorshipHistory } from "./gas-sponsorship-history";
+import { PaygSection } from "./payg-section";
 import { TrialUpsellModal } from "./trial-upsell-modal";
 
 type OverageCharge = {
@@ -799,6 +800,8 @@ function BillingStatusContent({
       )}
 
       <OverageChargesSection charges={overageCharges} />
+
+      {plan === "free" && <PaygSection />}
     </CardContent>
   );
 }

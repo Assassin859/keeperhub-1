@@ -19,7 +19,6 @@ import { useOrganization } from "@/lib/hooks/use-organization";
 import { BillingDetails } from "./billing-details";
 import { BillingHistory } from "./billing-history";
 import { BillingStatus } from "./billing-status";
-import { PaygPanel } from "./payg-panel";
 import { PricingTable } from "./pricing-table";
 import type { GasCreditCapsMap } from "./pricing-table/types";
 
@@ -203,10 +202,6 @@ export function BillingPage(): React.ReactElement {
               key={`${currentPlan}-${currentTier ?? "none"}-${currentInterval ?? "none"}-${String(refreshKey)}`}
               onPlanUpdated={handlePlanUpdated}
             />
-          </div>
-
-          <div className="border-t border-border/50 pt-8">
-            <PaygPanel key={`payg-${String(refreshKey)}`} />
           </div>
 
           <div className="flex justify-center border-t border-border/50 pt-8">
