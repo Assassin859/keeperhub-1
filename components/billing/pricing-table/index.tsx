@@ -1,13 +1,14 @@
 "use client";
 
 import { ChevronDown, Info } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { BILLING_API } from "@/lib/billing/constants";
 import type { BillingInterval, PlanName } from "@/lib/billing/plans";
 import { PLANS } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
@@ -24,11 +25,34 @@ type ComparisonRow = {
     title: string;
     body: React.ReactNode;
   };
-  free: string;
-  pro: string;
-  business: string;
-  enterprise: string;
+  free: React.ReactNode;
+  pro: React.ReactNode;
+  business: React.ReactNode;
+  enterprise: React.ReactNode;
 };
+
+const PLAN_ORDER: readonly PlanName[] = [
+  "free",
+  "pro",
+  "business",
+  "enterprise",
+];
+
+/** Included executions per plan (cheapest tier for the tiered plans). */
+const EXECUTIONS_INCLUDED: Record<PlanName, number> = {
+  free: PLANS.free.features.maxExecutionsPerMonth,
+  pro: PLANS.pro.tiers[0]?.executions ?? 0,
+  business: PLANS.business.tiers[0]?.executions ?? 0,
+  enterprise: PLANS.enterprise.features.maxExecutionsPerMonth,
+};
+
+function formatExecutions(count: number): string {
+  return count === -1 ? "Unlimited" : count.toLocaleString();
+}
+
+function formatPerExecution(value: number): string {
+  return `$${value.toFixed(4)}`;
+}
 
 function formatGasCreditCap(planName: PlanName, capCents: number): string {
   if (planName === "enterprise") {
@@ -37,11 +61,36 @@ function formatGasCreditCap(planName: PlanName, capCents: number): string {
   return `$${(capCents / 100).toFixed(0)}/mo`;
 }
 
+/** Green "+delta" shown next to a plan value that beats the current plan. */
+function gainNode(
+  currentValue: number,
+  planValue: number,
+  format: (delta: number) => string
+): React.ReactNode {
+  if (planValue === -1 || currentValue === -1 || planValue <= currentValue) {
+    return null;
+  }
+  return (
+    <span className="ml-1.5 text-[11px] text-keeperhub-green-dark">
+      +{format(planValue - currentValue)}
+    </span>
+  );
+}
+
 function buildSponsoredGasRow(
+  currentPlan: PlanName,
   gasCreditCaps?: Record<PlanName, number>
 ): ComparisonRow {
   const resolveCents = (planName: PlanName): number =>
     gasCreditCaps?.[planName] ?? PLANS[planName].features.gasCreditsCents;
+  const gasFormat = (delta: number): string =>
+    `$${(delta / 100).toFixed(0)}/mo`;
+  const cell = (planName: PlanName): React.ReactNode => (
+    <>
+      {formatGasCreditCap(planName, resolveCents(planName))}
+      {gainNode(resolveCents(currentPlan), resolveCents(planName), gasFormat)}
+    </>
+  );
   return {
     label: "Sponsored gas",
     tooltip: {
@@ -67,27 +116,20 @@ function buildSponsoredGasRow(
         </>
       ),
     },
-    free: formatGasCreditCap("free", resolveCents("free")),
-    pro: formatGasCreditCap("pro", resolveCents("pro")),
-    business: formatGasCreditCap("business", resolveCents("business")),
+    free: cell("free"),
+    pro: cell("pro"),
+    business: cell("business"),
     enterprise: formatGasCreditCap("enterprise", resolveCents("enterprise")),
   };
 }
 
 const STATIC_COMPARISON_ROWS: readonly ComparisonRow[] = [
   {
-    label: "Workflows",
-    free: "Unlimited",
-    pro: "Unlimited",
-    business: "Unlimited",
-    enterprise: "Unlimited",
-  },
-  {
     label: "Chains",
-    free: "All EVM",
-    pro: "All EVM",
-    business: "All EVM",
-    enterprise: "Custom",
+    free: "All EVM + Solana",
+    pro: "All EVM + Solana",
+    business: "All EVM + Solana",
+    enterprise: "All EVM + Solana",
   },
   {
     label: "Triggers",
@@ -178,16 +220,89 @@ function ComparisonRowLabel({
 }
 
 function ComparisonTable({
+  currentPlan,
   gasCreditCaps,
 }: {
+  currentPlan: PlanName;
   gasCreditCaps?: Record<PlanName, number>;
 }): React.ReactElement {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
+  const [paygPriceUsdc, setPaygPriceUsdc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPrice(): Promise<void> {
+      const res = await fetch(BILLING_API.PAYG);
+      if (!res.ok) {
+        return;
+      }
+      const data = (await res.json()) as { priceUsdc?: string };
+      if (!cancelled && data.priceUsdc && Number(data.priceUsdc) > 0) {
+        setPaygPriceUsdc(data.priceUsdc);
+      }
+    }
+    loadPrice().catch(() => {
+      // PAYG price is optional context for this table; ignore load failures.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const currentIncluded = EXECUTIONS_INCLUDED[currentPlan];
+  const execFormat = (delta: number): string => delta.toLocaleString();
+
+  const executionsRow: ComparisonRow = {
+    label: "Executions / month",
+    free: (
+      <>
+        {formatExecutions(EXECUTIONS_INCLUDED.free)}
+        {gainNode(currentIncluded, EXECUTIONS_INCLUDED.free, execFormat)}
+      </>
+    ),
+    pro: (
+      <>
+        {formatExecutions(EXECUTIONS_INCLUDED.pro)}
+        {gainNode(currentIncluded, EXECUTIONS_INCLUDED.pro, execFormat)}
+      </>
+    ),
+    business: (
+      <>
+        {formatExecutions(EXECUTIONS_INCLUDED.business)}
+        {gainNode(currentIncluded, EXECUTIONS_INCLUDED.business, execFormat)}
+      </>
+    ),
+    enterprise: formatExecutions(EXECUTIONS_INCLUDED.enterprise),
+  };
+
+  const perExecutionRow: ComparisonRow = {
+    label: "Per extra execution",
+    tooltip: {
+      title: "Beyond the included limit",
+      body: (
+        <p>
+          Cost per execution once a plan's monthly limit is reached. Free uses
+          pay-as-you-go, charged in USDC from your organization wallet; paid
+          plans bill overage on the next invoice.
+        </p>
+      ),
+    },
+    free: paygPriceUsdc
+      ? `$${Number(paygPriceUsdc).toLocaleString(undefined, {
+          maximumFractionDigits: 6,
+        })}`
+      : "Pay as you go",
+    pro: formatPerExecution(PLANS.pro.overage.ratePerThousand / 1000),
+    business: formatPerExecution(PLANS.business.overage.ratePerThousand / 1000),
+    enterprise: "Custom",
+  };
 
   const rows: ComparisonRow[] = [
-    ...STATIC_COMPARISON_ROWS.slice(0, 3),
-    buildSponsoredGasRow(gasCreditCaps),
-    ...STATIC_COMPARISON_ROWS.slice(3),
+    executionsRow,
+    perExecutionRow,
+    ...STATIC_COMPARISON_ROWS.slice(0, 2),
+    buildSponsoredGasRow(currentPlan, gasCreditCaps),
+    ...STATIC_COMPARISON_ROWS.slice(2),
   ];
 
   return (
@@ -214,40 +329,46 @@ function ComparisonTable({
                 <th className="w-[20%] px-5 py-3.5 text-left font-medium text-muted-foreground">
                   Feature
                 </th>
-                <th className="w-[20%] px-5 py-3.5 text-center font-medium">
-                  Free
-                </th>
-                <th className="w-[20%] px-5 py-3.5 text-center font-medium">
-                  Pro
-                </th>
-                <th className="w-[20%] px-5 py-3.5 text-center font-medium">
-                  Business
-                </th>
-                <th className="w-[20%] px-5 py-3.5 text-center font-medium text-keeperhub-green-dark">
-                  Enterprise
-                </th>
+                {PLAN_ORDER.map((plan) => (
+                  <th
+                    className={cn(
+                      "w-[20%] px-5 py-3.5 text-center font-medium",
+                      plan === currentPlan && "text-keeperhub-green-dark"
+                    )}
+                    key={plan}
+                  >
+                    {PLANS[plan].name}
+                    {plan === currentPlan && (
+                      <span className="block font-normal text-[10px] text-keeperhub-green-dark/80 uppercase tracking-wide">
+                        Current plan
+                      </span>
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, i) => (
+              {rows.map((row) => (
                 <tr
-                  className={cn(
-                    "border-b border-border/30 last:border-b-0",
-                    i % 2 === 0 && "bg-muted/20"
-                  )}
+                  className="border-b border-border/30 last:border-b-0"
                   key={row.label}
                 >
                   <td className="px-5 py-3 font-medium text-muted-foreground">
                     <ComparisonRowLabel row={row} />
                   </td>
-                  <td className="px-5 py-3 text-center text-muted-foreground">
-                    {row.free}
-                  </td>
-                  <td className="px-5 py-3 text-center">{row.pro}</td>
-                  <td className="px-5 py-3 text-center">{row.business}</td>
-                  <td className="px-5 py-3 text-center text-keeperhub-green-dark/90">
-                    {row.enterprise}
-                  </td>
+                  {PLAN_ORDER.map((plan) => (
+                    <td
+                      className={cn(
+                        "px-5 py-3 text-center",
+                        plan === currentPlan
+                          ? "text-keeperhub-green-dark"
+                          : "text-muted-foreground"
+                      )}
+                      key={plan}
+                    >
+                      {row[plan]}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -344,7 +465,10 @@ export function PricingTable({
         />
       </div>
 
-      <ComparisonTable gasCreditCaps={gasCreditCaps} />
+      <ComparisonTable
+        currentPlan={currentPlan}
+        gasCreditCaps={gasCreditCaps}
+      />
 
       <p className="text-center text-muted-foreground text-xs">
         Paid tiers bill overage at the end of the cycle. Free tier caps at its
