@@ -11,6 +11,7 @@ import {
   EXECUTION_LIMIT_ERROR,
   enforceExecutionLimit,
 } from "@/lib/billing/execution-guard";
+import { chargePaygIfBillable } from "@/lib/billing/payg/charge";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import {
   beginIdempotentFromRequest,
@@ -419,6 +420,47 @@ export async function POST(
     metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
       [LabelKeys.TRIGGER_TYPE]: "webhook",
     });
+
+    // PAYG: enforceExecutionLimit admits a free-tier org past its limit only so
+    // it can be charged here. Settle the per-execution price before the run
+    // starts so webhook-triggered runs bill exactly like every other path. On a
+    // funds, cap, or payment block, resolve the row to a billing error and stop.
+    const paygCharge = await chargePaygIfBillable({
+      organizationId: workflow.organizationId,
+      executionId: execution.id,
+    });
+    if (paygCharge.applicable && !paygCharge.ok) {
+      await db
+        .update(workflowExecutions)
+        .set({
+          status: "error",
+          error: paygCharge.message,
+          errorCategory: "billing",
+          errorType: "user",
+          completedAt: new Date(),
+        })
+        .where(eq(workflowExecutions.id, execution.id));
+      await recordWebhookMetrics({
+        workflowId,
+        executionId: execution.id,
+        durationMs: timer(),
+        statusCode: HttpStatus.PAYMENT_REQUIRED,
+        error: paygCharge.message,
+        organizationId: workflow.organizationId,
+      });
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          {
+            error: paygCharge.message,
+            executionId: execution.id,
+            status: "error",
+          },
+          { status: HttpStatus.PAYMENT_REQUIRED, headers: corsHeaders }
+        ),
+        "failed"
+      );
+    }
 
     // Resolve org slug + plan for log labels (cached per request)
     const { slug: organizationSlug, plan: organizationPlan } =

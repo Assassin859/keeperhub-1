@@ -3,6 +3,7 @@ import "server-only";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { ClientEvmSigner } from "@x402/evm";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
+import { toChecksumAddress } from "@/lib/address-utils";
 import { USDC_BASE_ADDRESS } from "@/lib/agentic-wallet/constants";
 import {
   type EIP712TypedData,
@@ -81,12 +82,12 @@ async function settleViaFacilitator(params: {
       ).then((signature) => signature as `0x${string}`),
   };
 
+  const resource = {
+    url: PAYG_RESOURCE_URL,
+    description: "Pay-as-you-go execution",
+    mimeType: "application/json",
+  };
   const requirements = {
-    resource: {
-      url: PAYG_RESOURCE_URL,
-      description: "Pay-as-you-go execution",
-      mimeType: "application/json",
-    },
     scheme: X402_EXACT_SCHEME,
     network: evmNetworkId(params.chainId),
     amount: params.amountRaw.toString(),
@@ -97,14 +98,24 @@ async function settleViaFacilitator(params: {
   } as PaymentRequirements;
 
   try {
-    // createPaymentPayload signs the EIP-3009 authorization and returns the
-    // payload the facilitator settles. Cast to PaymentPayload for settle; the
-    // exact shape is validated on testnet with facilitator keys.
-    const payload = (await new ExactEvmScheme(
+    // The exact scheme signs the EIP-3009 authorization and returns only
+    // { x402Version, payload }. The facilitator's v2 settle schema needs the
+    // complete payment payload, so wrap it with the accepted requirements and
+    // resource, exactly as the x402 client assembles it.
+    const partial = (await new ExactEvmScheme(
       clientSigner
-    ).createPaymentPayload(2, requirements)) as unknown as PaymentPayload;
+    ).createPaymentPayload(2, requirements)) as unknown as {
+      x402Version: number;
+      payload: Record<string, unknown>;
+    };
+    const paymentPayload = {
+      x402Version: partial.x402Version,
+      payload: partial.payload,
+      resource,
+      accepted: requirements,
+    } as unknown as PaymentPayload;
     const settle = (await facilitatorClient.settle(
-      payload,
+      paymentPayload,
       requirements
     )) as SettleLike;
     if (!(settle.success && settle.transaction)) {
@@ -186,7 +197,9 @@ export async function autopayForExecution(params: {
 
   const settlement = await settleViaFacilitator({
     subOrgId: wallet.turnkeySubOrgId,
-    payerAddress: wallet.walletAddress,
+    // Turnkey's signWith lookup is case-sensitive; the org wallet is stored
+    // lowercase, so checksum it before signing with our own wallet.
+    payerAddress: toChecksumAddress(wallet.walletAddress),
     treasury,
     amountRaw: priceRaw,
     chainId: config.chainId,
