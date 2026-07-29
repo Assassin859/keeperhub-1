@@ -51,6 +51,10 @@ import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import { cn } from "@/lib/utils";
 import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
+import {
+  mapWorkflowValidationIssues,
+  type WorkflowValidationResult,
+} from "@/lib/workflow/editor/run-validation";
 import { ensureSavedBeforeRun } from "@/lib/workflow/run-preflight";
 import {
   addNodeAtom,
@@ -627,21 +631,8 @@ function useWorkflowHandlers({
     await saveWorkflow();
   };
 
-  const executeWorkflow = async () => {
+  const startWorkflowExecution = async () => {
     if (!currentWorkflowId) {
-      toast.error("Please save the workflow before executing");
-      return;
-    }
-
-    // The server executes the stored definition, not the canvas state, so
-    // edits still waiting on the debounced autosave must be flushed first.
-    // saveWorkflow already toasts on failure, so a failed flush aborts quietly.
-    const saved = await ensureSavedBeforeRun({
-      hasUnsavedChanges,
-      isPreviewingVersion: previewVersion !== null,
-      save: saveWorkflow,
-    });
-    if (!saved) {
       return;
     }
 
@@ -665,6 +656,82 @@ function useWorkflowHandlers({
       onExecutionStarted: () => setRunsRefreshTrigger((c) => c + 1),
     });
     // Don't set executing to false here - let polling handle it
+  };
+
+  const executeWorkflow = async () => {
+    if (!currentWorkflowId) {
+      toast.error("Please save the workflow before executing");
+      return;
+    }
+
+    // The server executes the stored definition, not the canvas state, so
+    // edits still waiting on the debounced autosave must be flushed first.
+    // saveWorkflow already toasts on failure, so a failed flush aborts quietly.
+    const saved = await ensureSavedBeforeRun({
+      hasUnsavedChanges,
+      isPreviewingVersion: previewVersion !== null,
+      save: saveWorkflow,
+    });
+    if (!saved) {
+      return;
+    }
+
+    let response: Response;
+
+    try {
+      response = await fetch(
+        `/api/workflows/${currentWorkflowId}/validate`
+      );
+    } catch {
+      toast.error("Could not validate the workflow before running it");
+      return;
+    }
+
+    if (!response.ok) {
+      toast.error("Could not validate the workflow before running it");
+      return;
+    }
+
+    const payload = (await response.json()) as {
+      result?: WorkflowValidationResult;
+    };
+
+    if (!payload.result) {
+      toast.error("Workflow validation returned an unexpected response");
+      return;
+    }
+
+    const validationErrors = mapWorkflowValidationIssues(
+      payload.result.errors,
+      nodes
+    );
+    const validationWarnings = mapWorkflowValidationIssues(
+      payload.result.warnings,
+      nodes
+    );
+
+    if (
+      validationErrors.length > 0 ||
+      validationWarnings.length > 0
+    ) {
+      openOverlay(WorkflowIssuesOverlay, {
+        issues: {
+          brokenReferences: [],
+          missingRequiredFields: [],
+          missingIntegrations: [],
+          validationErrors,
+          validationWarnings,
+        },
+        onGoToStep: handleGoToStep,
+        onRunAnyway:
+          validationErrors.length === 0
+            ? startWorkflowExecution
+            : undefined,
+      });
+      return;
+    }
+
+    await startWorkflowExecution();
   };
 
   const handleCancel = async (): Promise<void> => {
