@@ -18,6 +18,7 @@ import {
   type BillingInterval,
   PLANS,
   type PlanName,
+  parsePlanName,
   parseTierKey,
   type TierKey,
 } from "@/lib/billing/plans";
@@ -719,7 +720,7 @@ function BillingStatusContent({
   portalLoading: boolean;
   onManageBilling: () => void;
 }): React.ReactElement {
-  const plan = (sub?.plan ?? "free") as PlanName;
+  const plan = parsePlanName(sub?.plan);
   const planDef = PLANS[plan];
   const status = sub?.status ?? "active";
   const statusVariant = STATUS_VARIANT[status] ?? "outline";
@@ -830,7 +831,7 @@ export function BillingStatus(): React.ReactElement {
   }
 
   const sub = data?.subscription;
-  const plan = (sub?.plan ?? "free") as PlanName;
+  const plan = parsePlanName(sub?.plan);
   const trialTier = parseTierKey(sub?.tier);
   const trialInterval: BillingInterval =
     sub?.interval === "yearly" ? "yearly" : "monthly";
