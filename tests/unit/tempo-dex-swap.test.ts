@@ -46,8 +46,10 @@ vi.mock("@/plugins/tempo/steps/tempo-step-helpers", () => ({
 const mockSignAndBroadcast = vi.fn();
 const mockBuildSwapCall = vi.fn();
 vi.mock("@/plugins/tempo/steps/tempo-tx-core", () => ({
-  signAndBroadcastTempoTx: (...args: unknown[]) => mockSignAndBroadcast(...args),
-  buildSwapExactAmountInCall: (...args: unknown[]) => mockBuildSwapCall(...args),
+  signAndBroadcastTempoTx: (...args: unknown[]) =>
+    mockSignAndBroadcast(...args),
+  buildSwapExactAmountInCall: (...args: unknown[]) =>
+    mockBuildSwapCall(...args),
 }));
 
 import { type DexSwapInput, dexSwapStep } from "@/plugins/tempo/steps/dex-swap";
@@ -76,10 +78,11 @@ beforeEach(() => {
     userId: "u1",
   });
   mockGetRpcProvider.mockResolvedValue({});
-  mockResolveTempoToken.mockImplementation((config: { supportedTokenId?: string }) =>
-    config?.supportedTokenId === "usdc"
-      ? Promise.resolve({ address: USDC, decimals: 6, symbol: "USDC" })
-      : Promise.resolve({ address: ALPHA, decimals: 6, symbol: "AlphaUSD" })
+  mockResolveTempoToken.mockImplementation(
+    (config: { supportedTokenId?: string }) =>
+      config?.supportedTokenId === "usdc"
+        ? Promise.resolve({ address: USDC, decimals: 6, symbol: "USDC" })
+        : Promise.resolve({ address: ALPHA, decimals: 6, symbol: "AlphaUSD" })
   );
   mockQuoteTempoSwap.mockResolvedValue(BigInt(99_000_000)); // 99 out
   mockBuildSwapCall.mockReturnValue({ to: "0xdec0", data: "0xswap" });

@@ -174,7 +174,10 @@ export function getTempoPaymentOutputFields(): OutputField[] {
       description:
         "The memo decoded to text (e.g. INV-1042), or empty for a non-text memo",
     },
-    { field: "transactionHash", description: "Hash of the payment transaction" },
+    {
+      field: "transactionHash",
+      description: "Hash of the payment transaction",
+    },
     { field: "blockNumber", description: "Block height the payment landed in" },
     {
       field: "address",
