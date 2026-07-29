@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Zap } from "lucide-react";
+import { Info, Loader2, Zap } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { toChecksumAddress } from "@/lib/address-utils";
 import { BILLING_API } from "@/lib/billing/constants";
 import { PLANS } from "@/lib/billing/plans";
 import { useOrganization } from "@/lib/hooks/use-organization";
@@ -80,6 +81,7 @@ export function PaygSection(): React.ReactElement | null {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -182,6 +184,14 @@ export function PaygSection(): React.ReactElement | null {
               Active
             </Badge>
           )}
+          <button
+            aria-label="How pay-as-you-go works and how to fund it"
+            className="inline-flex items-center text-muted-foreground/70 transition-colors hover:text-foreground"
+            onClick={() => setInfoOpen(true)}
+            type="button"
+          >
+            <Info className="size-3.5" />
+          </button>
         </div>
         {status.enabled ? (
           <Button
@@ -311,6 +321,12 @@ export function PaygSection(): React.ReactElement | null {
         open={modalOpen}
         saving={saving}
       />
+
+      <PaygInfoDialog
+        chainId={status.chainId}
+        onOpenChange={setInfoOpen}
+        open={infoOpen}
+      />
     </div>
   );
 }
@@ -424,6 +440,148 @@ function PaygCapsDialog({
             {enabling ? "Enable" : "Save caps"}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PaygInfoDialog({
+  open,
+  onOpenChange,
+  chainId,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  chainId: number;
+}): React.ReactElement {
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let cancelled = false;
+    setLoadingBalance(true);
+    async function loadBalances(): Promise<void> {
+      try {
+        const res = await fetch("/api/user/wallet/balances");
+        if (!res.ok) {
+          return;
+        }
+        const data = (await res.json()) as {
+          walletAddress: string;
+          balances: {
+            chainId: number;
+            supportedTokens: { symbol: string; balance: string }[];
+            tokens: { symbol: string; balance: string }[];
+          }[];
+        };
+        if (cancelled) {
+          return;
+        }
+        setWalletAddress(data.walletAddress);
+        const chain = data.balances.find((b) => b.chainId === chainId);
+        const usdc =
+          chain?.supportedTokens.find((t) => t.symbol === "USDC") ??
+          chain?.tokens.find((t) => t.symbol === "USDC");
+        setUsdcBalance(usdc?.balance ?? "0");
+      } finally {
+        if (!cancelled) {
+          setLoadingBalance(false);
+        }
+      }
+    }
+    loadBalances().catch(() => {
+      // Balance is best-effort context in this dialog.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, chainId]);
+
+  const chainName = chainId === 8453 ? "Base" : `chain ${chainId}`;
+  const checksummedAddress = walletAddress
+    ? toChecksumAddress(walletAddress)
+    : null;
+  const explorerAddress =
+    chainId === 8453 && checksummedAddress
+      ? `https://basescan.org/address/${checksummedAddress}`
+      : null;
+  let balanceLabel = "Unavailable";
+  if (loadingBalance) {
+    balanceLabel = "Loading...";
+  } else if (usdcBalance !== null) {
+    balanceLabel = `${usdcBalance} USDC`;
+  }
+
+  async function copyAddress(): Promise<void> {
+    if (!checksummedAddress) {
+      return;
+    }
+    await navigator.clipboard.writeText(checksummedAddress);
+    toast.success("Address copied");
+  }
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>How pay-as-you-go works</DialogTitle>
+          <DialogDescription>
+            Extra executions are paid in USDC from your organization wallet,
+            settled on-chain and gasless. Fund the wallet below.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+            <p className="text-muted-foreground text-xs">
+              Funding wallet ({chainName})
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded bg-background/60 px-2 py-1 font-mono text-xs">
+                {checksummedAddress ?? "Loading..."}
+              </code>
+              <Button
+                disabled={!checksummedAddress}
+                onClick={() => {
+                  copyAddress().catch(() => undefined);
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Copy
+              </Button>
+            </div>
+            <p className="text-muted-foreground text-xs">
+              USDC balance:{" "}
+              <span className="font-medium text-foreground">
+                {balanceLabel}
+              </span>
+            </p>
+          </div>
+          <div className="space-y-1.5 text-muted-foreground text-xs">
+            <p>
+              To top up, send{" "}
+              <span className="font-medium text-foreground">
+                USDC on {chainName}
+              </span>{" "}
+              to the address above.
+            </p>
+            {explorerAddress && (
+              <a
+                className="text-keeperhub-green-dark hover:underline"
+                href={explorerAddress}
+                rel="noopener"
+                target="_blank"
+              >
+                View wallet on explorer
+              </a>
+            )}
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
