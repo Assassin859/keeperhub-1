@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { type NewPaygPayment, paygPayments } from "@/lib/db/schema-extensions";
@@ -73,9 +73,39 @@ export async function getPaygSpentRaw(
  */
 export async function listPaygPaymentsPage(
   organizationId: string,
-  opts: { limit: number; offset: number }
+  opts: { limit: number; offset: number; search?: string }
 ): Promise<{ items: PaygPaymentRow[]; total: number }> {
-  const where = eq(paygPayments.organizationId, organizationId);
+  const term = opts.search?.trim();
+  const like = term ? `%${term}%` : null;
+  // Free-text search across the charge (execution id, tx hash) and its workflow
+  // (id, name). Case-insensitive substring match.
+  const searchFilter = like
+    ? or(
+        ilike(paygPayments.executionId, like),
+        ilike(paygPayments.txHash, like),
+        ilike(workflowExecutions.workflowId, like),
+        ilike(workflows.name, like)
+      )
+    : undefined;
+  const where = and(
+    eq(paygPayments.organizationId, organizationId),
+    searchFilter
+  );
+
+  // The count only needs the workflow joins when the search filters on them;
+  // without a search it stays an index-only scan on (organization_id, created_at).
+  const countQuery = like
+    ? db
+        .select({ total: count() })
+        .from(paygPayments)
+        .leftJoin(
+          workflowExecutions,
+          eq(workflowExecutions.id, paygPayments.executionId)
+        )
+        .leftJoin(workflows, eq(workflows.id, workflowExecutions.workflowId))
+        .where(where)
+    : db.select({ total: count() }).from(paygPayments).where(where);
+
   const [items, totals] = await Promise.all([
     db
       .select({
@@ -97,7 +127,7 @@ export async function listPaygPaymentsPage(
       .orderBy(desc(paygPayments.createdAt))
       .limit(opts.limit)
       .offset(opts.offset),
-    db.select({ total: count() }).from(paygPayments).where(where),
+    countQuery,
   ]);
   return { items, total: totals[0]?.total ?? 0 };
 }

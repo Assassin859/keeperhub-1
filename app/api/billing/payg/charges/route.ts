@@ -43,9 +43,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const url = new URL(request.url);
     const req = parsePageRequest(url, { fallback: 10, max: 100 });
+    const search = url.searchParams.get("q")?.slice(0, 200) ?? undefined;
     const { items, total } = await listPaygPaymentsPage(
       authContext.organizationId,
-      { limit: req.pageSize, offset: req.offset }
+      { limit: req.pageSize, offset: req.offset, search }
     );
 
     const charges: PaygChargeItem[] = await Promise.all(

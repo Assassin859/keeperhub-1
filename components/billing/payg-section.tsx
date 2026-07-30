@@ -18,9 +18,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { BILLING_API } from "@/lib/billing/constants";
 import { PLANS } from "@/lib/billing/plans";
+import { useDebounce } from "@/lib/hooks/use-debounce";
 import { useOrganization } from "@/lib/hooks/use-organization";
 import type { PageMeta } from "@/lib/pagination";
 
@@ -571,17 +573,26 @@ function formatDateTime(iso: string): string {
  */
 function PaygChargesTable(): React.ReactElement | null {
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
   const [items, setItems] = useState<PaygCharge[]>([]);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    // Abort any in-flight request when the page or search changes, so only the
+    // latest request resolves rather than several piling up as the user types.
+    const controller = new AbortController();
     setLoading(true);
     async function load(): Promise<void> {
+      const params = new URLSearchParams({ page: String(page), limit: "10" });
+      if (debouncedSearch) {
+        params.set("q", debouncedSearch);
+      }
       try {
         const res = await fetch(
-          `${BILLING_API.PAYG}/charges?page=${page}&limit=10`
+          `${BILLING_API.PAYG}/charges?${params.toString()}`,
+          { signal: controller.signal }
         );
         if (!res.ok) {
           return;
@@ -590,74 +601,156 @@ function PaygChargesTable(): React.ReactElement | null {
           items: PaygCharge[];
           meta: PageMeta;
         };
-        if (!cancelled) {
-          setItems(data.items);
-          setMeta(data.meta);
-        }
+        setItems(data.items);
+        setMeta(data.meta);
+      } catch {
+        // Superseded by a newer request (aborted) or a transient network error.
       } finally {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setLoading(false);
         }
       }
     }
     load().catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [page]);
+    return () => controller.abort();
+  }, [page, debouncedSearch]);
 
-  if (!meta || meta.total === 0) {
+  // Hide the section only when the org has no charges and isn't searching.
+  if (!meta || (meta.total === 0 && !debouncedSearch)) {
     return null;
   }
+
+  const skeletonCount = items.length > 0 ? items.length : 5;
 
   return (
     <>
       <Separator />
       <div className="space-y-2">
-        <h4 className="font-medium text-sm">Recent charges</h4>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="font-medium text-sm">Recent charges</h4>
+          <Input
+            className="h-8 w-full max-w-56"
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search workflow, execution, or tx"
+            value={search}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-border/60 border-b text-left text-muted-foreground text-xs">
                 <th className="py-2 pr-4 font-medium">Date</th>
                 <th className="py-2 pr-4 font-medium">Workflow</th>
+                <th className="py-2 pr-4 font-medium">Execution</th>
                 <th className="py-2 pr-4 font-medium">Amount</th>
                 <th className="py-2 font-medium">Transaction</th>
               </tr>
             </thead>
-            <tbody className={loading ? "opacity-60" : undefined}>
-              {items.map((row) => (
-                <tr
-                  className="border-border/30 border-b last:border-b-0"
-                  key={row.executionId}
-                >
-                  <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
-                    {formatDateTime(row.createdAt)}
-                  </td>
-                  <td className="py-2 pr-4">
-                    {row.workflowId && row.workflowName ? (
-                      <Link
-                        className="text-keeperhub-green-dark hover:underline"
-                        href={`/workflows/${row.workflowId}`}
-                      >
-                        {row.workflowName}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4">{formatUsdc(row.amountUsdc)}</td>
-                  <td className="py-2">
-                    <ChargeTx txHash={row.txHash} txUrl={row.txUrl} />
+            <tbody>
+              {loading &&
+                Array.from({ length: skeletonCount }, (_, index) => (
+                  <tr
+                    className="border-border/30 border-b last:border-b-0"
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows
+                    key={`skeleton-${index}`}
+                  >
+                    <td className="py-2 pr-4">
+                      <Skeleton className="h-4 w-28" />
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Skeleton className="h-4 w-20" />
+                    </td>
+                    <td className="py-2 pr-4">
+                      <Skeleton className="h-4 w-10" />
+                    </td>
+                    <td className="py-2">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                  </tr>
+                ))}
+              {!loading && items.length === 0 && (
+                <tr>
+                  <td
+                    className="py-4 text-muted-foreground text-xs"
+                    colSpan={5}
+                  >
+                    No charges match your search.
                   </td>
                 </tr>
-              ))}
+              )}
+              {!loading &&
+                items.map((row) => (
+                  <tr
+                    className="border-border/30 border-b last:border-b-0"
+                    key={row.executionId}
+                  >
+                    <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
+                      {formatDateTime(row.createdAt)}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {row.workflowId && row.workflowName ? (
+                        <Link
+                          className="text-keeperhub-green-dark hover:underline"
+                          href={`/workflows/${row.workflowId}`}
+                        >
+                          {row.workflowName}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <TruncatedCopy
+                        label="Execution ID"
+                        value={row.executionId}
+                      />
+                    </td>
+                    <td className="py-2 pr-4">{formatUsdc(row.amountUsdc)}</td>
+                    <td className="py-2">
+                      <ChargeTx txHash={row.txHash} txUrl={row.txUrl} />
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
         <Pager meta={meta} onPage={setPage} unit="charges" />
       </div>
     </>
+  );
+}
+
+function TruncatedCopy({
+  value,
+  label,
+}: {
+  value: string;
+  label: string;
+}): React.ReactElement {
+  async function copy(): Promise<void> {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
+  }
+  return (
+    <span className="flex items-center gap-1 font-mono text-muted-foreground text-xs">
+      {`${value.slice(0, 10)}...`}
+      <button
+        aria-label={`Copy ${label.toLowerCase()}`}
+        className="text-muted-foreground/70 transition-colors hover:text-foreground"
+        onClick={() => {
+          copy().catch(() => undefined);
+        }}
+        type="button"
+      >
+        <Copy className="size-3.5" />
+      </button>
+    </span>
   );
 }
 
@@ -671,26 +764,9 @@ function ChargeTx({
   if (!txHash) {
     return <span className="text-muted-foreground">-</span>;
   }
-  const hash = txHash;
-  async function copy(): Promise<void> {
-    await navigator.clipboard.writeText(hash);
-    toast.success("Transaction hash copied");
-  }
   return (
     <div className="flex items-center gap-1.5">
-      <span className="font-mono text-muted-foreground text-xs">
-        {`${hash.slice(0, 10)}...`}
-      </span>
-      <button
-        aria-label="Copy transaction hash"
-        className="text-muted-foreground/70 transition-colors hover:text-foreground"
-        onClick={() => {
-          copy().catch(() => undefined);
-        }}
-        type="button"
-      >
-        <Copy className="size-3.5" />
-      </button>
+      <TruncatedCopy label="Transaction hash" value={txHash} />
       {txUrl && (
         <a
           aria-label="View transaction on block explorer"
