@@ -1,6 +1,13 @@
 "use client";
 
-import { Copy, ExternalLink, Info, Loader2, Zap } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  ExternalLink,
+  Info,
+  Loader2,
+  Zap,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -605,6 +612,7 @@ function PaygChargesTable(): React.ReactElement | null {
   const [items, setItems] = useState<PaygCharge[]>([]);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     // Abort any in-flight request when the page or search changes, so only the
@@ -653,101 +661,122 @@ function PaygChargesTable(): React.ReactElement | null {
     <>
       <Separator />
       <div className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          aria-expanded={open}
+          className="flex w-full items-center justify-between gap-2 text-left"
+          onClick={() => setOpen((prev) => !prev)}
+          type="button"
+        >
           <h4 className="font-medium text-sm">Recent charges</h4>
-          <Input
-            className="h-8 w-full max-w-56"
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-            placeholder="Search workflow, execution, or tx"
-            value={search}
-          />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-border/60 border-b text-left text-muted-foreground text-xs">
-                <th className="py-2 pr-4 font-medium">Date</th>
-                <th className="py-2 pr-4 font-medium">Workflow</th>
-                <th className="py-2 pr-4 font-medium">Execution</th>
-                <th className="py-2 pr-4 font-medium">Amount</th>
-                <th className="py-2 font-medium">Transaction</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading &&
-                Array.from({ length: skeletonCount }, (_, index) => (
-                  <tr
-                    className="border-border/30 border-b last:border-b-0"
-                    // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows
-                    key={`skeleton-${index}`}
-                  >
-                    <td className="py-2 pr-4">
-                      <Skeleton className="h-4 w-28" />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Skeleton className="h-4 w-24" />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Skeleton className="h-4 w-20" />
-                    </td>
-                    <td className="py-2 pr-4">
-                      <Skeleton className="h-4 w-10" />
-                    </td>
-                    <td className="py-2">
-                      <Skeleton className="h-4 w-24" />
-                    </td>
+          <span className="flex items-center gap-2 text-muted-foreground text-xs">
+            {meta.total} {meta.total === 1 ? "charge" : "charges"}
+            <ChevronDown
+              className={`size-4 transition-transform duration-200 ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </span>
+        </button>
+        {open && (
+          <>
+            <div className="flex justify-end">
+              <Input
+                className="h-8 w-full max-w-56"
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search workflow, execution, or tx"
+                value={search}
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-border/60 border-b text-left text-muted-foreground text-xs">
+                    <th className="py-2 pr-4 font-medium">Date</th>
+                    <th className="py-2 pr-4 font-medium">Workflow</th>
+                    <th className="py-2 pr-4 font-medium">Execution</th>
+                    <th className="py-2 pr-4 font-medium">Amount</th>
+                    <th className="py-2 font-medium">Transaction</th>
                   </tr>
-                ))}
-              {!loading && items.length === 0 && (
-                <tr>
-                  <td
-                    className="py-4 text-muted-foreground text-xs"
-                    colSpan={5}
-                  >
-                    No charges match your search.
-                  </td>
-                </tr>
-              )}
-              {!loading &&
-                items.map((row) => (
-                  <tr
-                    className="border-border/30 border-b last:border-b-0"
-                    key={row.executionId}
-                  >
-                    <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
-                      {formatDateTime(row.createdAt)}
-                    </td>
-                    <td className="py-2 pr-4">
-                      {row.workflowId && row.workflowName ? (
-                        <Link
-                          className="text-keeperhub-green-dark hover:underline"
-                          href={`/workflows/${row.workflowId}`}
-                        >
-                          {row.workflowName}
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <TruncatedCopy
-                        label="Execution ID"
-                        value={row.executionId}
-                      />
-                    </td>
-                    <td className="py-2 pr-4">{formatUsdc(row.amountUsdc)}</td>
-                    <td className="py-2">
-                      <ChargeTx txHash={row.txHash} txUrl={row.txUrl} />
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-        <Pager meta={meta} onPage={setPage} unit="charges" />
+                </thead>
+                <tbody>
+                  {loading &&
+                    Array.from({ length: skeletonCount }, (_, index) => (
+                      <tr
+                        className="border-border/30 border-b last:border-b-0"
+                        // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows
+                        key={`skeleton-${index}`}
+                      >
+                        <td className="py-2 pr-4">
+                          <Skeleton className="h-4 w-28" />
+                        </td>
+                        <td className="py-2 pr-4">
+                          <Skeleton className="h-4 w-24" />
+                        </td>
+                        <td className="py-2 pr-4">
+                          <Skeleton className="h-4 w-20" />
+                        </td>
+                        <td className="py-2 pr-4">
+                          <Skeleton className="h-4 w-10" />
+                        </td>
+                        <td className="py-2">
+                          <Skeleton className="h-4 w-24" />
+                        </td>
+                      </tr>
+                    ))}
+                  {!loading && items.length === 0 && (
+                    <tr>
+                      <td
+                        className="py-4 text-muted-foreground text-xs"
+                        colSpan={5}
+                      >
+                        No charges match your search.
+                      </td>
+                    </tr>
+                  )}
+                  {!loading &&
+                    items.map((row) => (
+                      <tr
+                        className="border-border/30 border-b last:border-b-0"
+                        key={row.executionId}
+                      >
+                        <td className="whitespace-nowrap py-2 pr-4 text-muted-foreground">
+                          {formatDateTime(row.createdAt)}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {row.workflowId && row.workflowName ? (
+                            <Link
+                              className="text-keeperhub-green-dark hover:underline"
+                              href={`/workflows/${row.workflowId}`}
+                            >
+                              {row.workflowName}
+                            </Link>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-4">
+                          <TruncatedCopy
+                            label="Execution ID"
+                            value={row.executionId}
+                          />
+                        </td>
+                        <td className="py-2 pr-4">
+                          {formatUsdc(row.amountUsdc)}
+                        </td>
+                        <td className="py-2">
+                          <ChargeTx txHash={row.txHash} txUrl={row.txUrl} />
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager meta={meta} onPage={setPage} unit="charges" />
+          </>
+        )}
       </div>
     </>
   );
