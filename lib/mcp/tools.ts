@@ -1,5 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
+import { SUPPORTED_CHAIN_IDS } from "@/lib/rpc/types";
 import { withToolLogging } from "./logging";
 import { getRequiredScopeForTool, isToolAllowed } from "./oauth-scopes";
 
@@ -231,6 +233,35 @@ const IDEMPOTENCY_KEY_ARG = z
   .describe(
     "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Reusing a key with different arguments returns a 409 conflict."
   );
+
+// The direct-execution REST routes support a dry-run path that estimates gas
+// and catches reverts without signing or broadcasting. Expose the same safety
+// control to MCP clients so agents do not have to leave the agent-native
+// surface to preflight a write.
+const SIMULATE_ARG = z
+  .boolean()
+  .optional()
+  .describe(
+    "Set to true to simulate an EVM operation without signing or broadcasting. Solana networks (chain IDs 101/103 and their aliases) are not yet supported. Use the same arguments with simulate omitted or false only after a successful simulation."
+  );
+
+const SOLANA_DIRECT_EXECUTION_CHAIN_IDS = new Set([
+  SUPPORTED_CHAIN_IDS.SOLANA_MAINNET,
+  SUPPORTED_CHAIN_IDS.SOLANA_DEVNET,
+]);
+
+function assertSimulationSupported(chainId: string, simulate?: boolean): void {
+  if (!simulate) {
+    return;
+  }
+
+  const normalizedChainId = getChainIdFromNetwork(chainId);
+  if (SOLANA_DIRECT_EXECUTION_CHAIN_IDS.has(normalizedChainId)) {
+    throw new Error(
+      `Direct-execution simulation is currently EVM-only; Solana chain ${normalizedChainId} cannot be simulated. Do not broadcast unless you can preflight the transaction through a Solana-aware client.`
+    );
+  }
+}
 
 /**
  * #1841: these fields take their values as decimal strings, which is right on
@@ -1152,11 +1183,13 @@ export function registerTools(
         .describe(
           "ERC20 token contract address. Omit for native token transfers."
         ),
+      simulate: SIMULATE_ARG,
       idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Transfer Funds", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("execute_transfer", scope, async (args) =>
       withToolLogging("execute_transfer", undefined, async () => {
+        assertSimulationSupported(args.chain_id, args.simulate);
         const data = await callApi(
           internalApiBaseUrl,
           authHeader,
@@ -1167,6 +1200,7 @@ export function registerTools(
             recipientAddress: args.to_address,
             amount: args.amount,
             tokenAddress: args.token_address,
+            simulate: args.simulate,
           },
           args.idempotency_key
         );
@@ -1201,11 +1235,13 @@ export function registerTools(
       priority_fee_gwei: looseString(
         "Explicit maxPriorityFeePerGas in gwei (e.g., '2'). Bypasses the chain's default min/max priority-fee clamp. Use when the network's mempool requires a tip above the configured floor."
       ).optional(),
+      simulate: SIMULATE_ARG,
       idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Contract Call", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("execute_contract_call", scope, async (args) =>
       withToolLogging("execute_contract_call", undefined, async () => {
+        assertSimulationSupported(args.chain_id, args.simulate);
         const data = await callApi(
           internalApiBaseUrl,
           authHeader,
@@ -1220,6 +1256,7 @@ export function registerTools(
             value: args.value,
             gasLimitMultiplier: args.gas_limit_multiplier,
             priorityFeeGwei: args.priority_fee_gwei,
+            simulate: args.simulate,
           },
           args.idempotency_key
         );
@@ -1268,11 +1305,13 @@ export function registerTools(
           "Gas limit multiplier for the action"
         ).optional(),
       }),
+      simulate: SIMULATE_ARG,
       idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     { title: "Check and Execute", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("execute_check_and_execute", scope, async (args) =>
       withToolLogging("execute_check_and_execute", undefined, async () => {
+        assertSimulationSupported(args.chain_id, args.simulate);
         const data = await callApi(
           internalApiBaseUrl,
           authHeader,
@@ -1292,6 +1331,7 @@ export function registerTools(
               abi: args.action.abi,
               gasLimitMultiplier: args.action.gas_limit_multiplier,
             },
+            simulate: args.simulate,
           },
           args.idempotency_key
         );

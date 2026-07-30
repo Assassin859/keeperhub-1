@@ -165,6 +165,31 @@ The server registers more than 30 tools. Call `tools_documentation` (or `list_ac
 | `execute_check_and_execute` | Read a contract value, evaluate a condition, and execute an action if it is met. |
 | `get_direct_execution_status` | Get the status of a direct execution (transfer or contract call), including the transaction hash and result. |
 
+### Safely preflight direct writes
+
+All three direct execution tools accept an optional `simulate` boolean. Set it
+to `true` first to estimate gas and catch a revert without signing or
+broadcasting. If the result has `success: true` and `wouldRevert: false`, repeat
+the tool call with the same transaction arguments, omit `simulate`, and add a
+unique `idempotency_key`. Then poll `get_direct_execution_status` until it
+returns `completed` or `failed`.
+
+For example, preflight a Base Sepolia transfer:
+
+```json
+{
+  "chain_id": "84532",
+  "to_address": "0xRecipient",
+  "amount": "0.01",
+  "simulate": true
+}
+```
+
+`simulate` must be the JSON boolean `true`, not the string `"true"`. A
+simulation never returns a transaction hash because nothing is broadcast.
+See [Direct Execution](/api/direct-execution) for response shapes, retry
+semantics, and the authoritative safe first-write sequence.
+
 ### Protocol Actions (DeFi)
 
 | Tool | Description |
