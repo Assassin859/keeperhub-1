@@ -1379,12 +1379,13 @@ export function WorkflowRuns({
             {isExpanded && (
               <div className="border-t bg-muted/20">
                 {showRunError && (
-                  <div className="p-4 pb-0">
-                    <Alert className="border-destructive bg-destructive text-white">
+                  <div className={cn("p-4", executionLogs.length > 0 && "pb-0")}>
+                    <Alert
+                      className="border-destructive/30 bg-destructive/10"
+                      variant="destructive"
+                    >
                       <TriangleAlert />
-                      <AlertDescription className="text-white">
-                        {runErrorMessage}
-                      </AlertDescription>
+                      <AlertDescription>{runErrorMessage}</AlertDescription>
                     </Alert>
                   </div>
                 )}

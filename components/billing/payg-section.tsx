@@ -19,6 +19,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { BILLING_API } from "@/lib/billing/constants";
 import { PLANS } from "@/lib/billing/plans";
@@ -252,6 +258,7 @@ export function PaygSection(): React.ReactElement | null {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-wrap gap-x-8 gap-y-2">
             <CapLabel
+              hint="Resets daily at 00:00 UTC"
               label="Daily spend cap"
               value={capDisplay(status.caps.dailyUsdc)}
             />
@@ -311,13 +318,33 @@ function Metric({
 function CapLabel({
   label,
   value,
+  hint,
 }: {
   label: string;
   value: string;
+  hint?: string;
 }): React.ReactElement {
   return (
     <div className="space-y-0.5">
-      <p className="text-muted-foreground text-xs">{label}</p>
+      <div className="flex items-center gap-1">
+        <p className="text-muted-foreground text-xs">{label}</p>
+        {hint && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  aria-label={hint}
+                  className="inline-flex text-muted-foreground/70 transition-colors hover:text-foreground"
+                  type="button"
+                >
+                  <Info className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{hint}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </div>
       <p className="font-medium text-sm">{value}</p>
     </div>
   );
