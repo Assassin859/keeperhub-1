@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { AuthDialog } from "@/components/auth/dialog";
+import { claimAndApproveDevice } from "@/lib/device-authorization-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 
 function SuccessState(): React.JSX.Element {
@@ -115,26 +116,14 @@ function DevicePageContent(): React.JSX.Element {
 
   const handleConfirm = async (): Promise<void> => {
     setStatus("loading");
-    const response = await fetch("/api/auth/device/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ userCode }),
-    });
+    const result = await claimAndApproveDevice(userCode);
 
-    if (response.ok) {
+    if (result.ok) {
       setStatus("success");
       return;
     }
 
-    const data = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      error_description?: string;
-      message?: string;
-    };
-    setErrorMessage(
-      data.error_description ?? data.message ?? "Verification failed."
-    );
+    setErrorMessage(result.message);
     setStatus("error");
   };
 

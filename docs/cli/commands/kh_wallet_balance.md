@@ -30,10 +30,11 @@ kh wallet balance [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 
 ### SEE ALSO
 
-* [kh wallet](kh_wallet.md)	 - Manage wallets
+* [kh wallet](kh_wallet.md)	 - Manage wallets (creator-wallet REST API or agentic-wallet npm package)
 

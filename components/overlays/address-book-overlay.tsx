@@ -10,13 +10,6 @@ import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -149,53 +142,22 @@ export function AddAddressOverlay({
 
 type AddressBookSearchAndControlsProps = {
   searchQuery: string;
-  itemsPerPage: number;
-  shouldRenderItemsPerPageSelector: boolean;
   onSearchChange: (value: string) => void;
-  onItemsPerPageChange: (value: number) => void;
 };
 
 function AddressBookSearchAndControls({
   searchQuery,
-  itemsPerPage,
-  shouldRenderItemsPerPageSelector = true,
   onSearchChange,
-  onItemsPerPageChange,
 }: AddressBookSearchAndControlsProps) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="relative max-w-xs flex-1">
-        <Search className="-translate-y-1/2 absolute top-1/2 left-3 h-4 w-4 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search by name..."
-          value={searchQuery}
-        />
-      </div>
-      {shouldRenderItemsPerPageSelector && (
-        <div className="flex items-center gap-2">
-          <Label className="text-muted-foreground text-sm" htmlFor="page-size">
-            Items per page:
-          </Label>
-          <Select
-            onValueChange={(value) =>
-              onItemsPerPageChange(Number.parseInt(value, 10))
-            }
-            value={itemsPerPage.toString()}
-          >
-            <SelectTrigger className="w-20" id="page-size">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="5">5</SelectItem>
-              <SelectItem value="10">10</SelectItem>
-              <SelectItem value="20">20</SelectItem>
-              <SelectItem value="25">25</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
+    <div className="relative max-w-xs">
+      <Search className="-translate-y-1/2 absolute top-1/2 left-3 h-4 w-4 text-muted-foreground" />
+      <Input
+        className="pl-9"
+        onChange={(e) => onSearchChange(e.target.value)}
+        placeholder="Search by name..."
+        value={searchQuery}
+      />
     </div>
   );
 }
@@ -353,7 +315,6 @@ export function AddressBookOverlay({ overlayId }: AddressBookOverlayProps) {
     paginatedItems: paginatedEntries,
     currentPage,
     itemsPerPage,
-    setItemsPerPage,
     goToNextPage,
     goToPreviousPage,
     goToPage,
@@ -364,10 +325,8 @@ export function AddressBookOverlay({ overlayId }: AddressBookOverlayProps) {
     totalItems,
     pageNumbers,
   } = usePagination<AddressBookEntry>(filteredEntries, {
-    defaultItemsPerPage: 5,
+    defaultItemsPerPage: 25,
   });
-
-  const shouldRenderItemsPerPageSelector = filteredEntries.length > 5; // default items per page is 5;
 
   const loadEntries = useCallback(async () => {
     if (isTemporalAccount) {
@@ -486,13 +445,8 @@ export function AddressBookOverlay({ overlayId }: AddressBookOverlayProps) {
         {!(loading || isTemporalAccount) && entries.length > 0 && (
           <>
             <AddressBookSearchAndControls
-              itemsPerPage={itemsPerPage}
-              onItemsPerPageChange={setItemsPerPage}
               onSearchChange={setSearchQuery}
               searchQuery={searchQuery}
-              shouldRenderItemsPerPageSelector={
-                shouldRenderItemsPerPageSelector
-              }
             />
 
             {filteredEntries.length === 0 ? (

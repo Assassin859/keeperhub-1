@@ -4,8 +4,8 @@ Log in to KeeperHub
 
 ### Synopsis
 
-Authenticate with KeeperHub. By default opens a browser for OAuth.
-Use --no-browser for device code flow on headless or SSH environments.
+Authenticate with KeeperHub using the device code flow.
+Prints a URL and a one-time code; open the URL in a browser to confirm it.
 Use --with-token to read an API key from stdin for non-interactive automation.
 
 See also: kh auth status, kh auth logout
@@ -17,18 +17,18 @@ kh auth login [flags]
 ### Examples
 
 ```
-  # Log in via browser
+  # Log in (device code flow)
   kh auth login
 
-  # Log in on a headless machine
-  kh auth login --no-browser
+  # Log in with an API key (non-interactive)
+  echo "kh_xxx" | kh auth login --with-token
 ```
 
 ### Options
 
 ```
+      --force        Log in again even if a valid credential is stored, creating a new API key
   -h, --help         help for login
-      --no-browser   Do not open a browser window
       --with-token   Read token from stdin
 ```
 
@@ -39,6 +39,7 @@ kh auth login [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 

@@ -16,11 +16,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TruncatedTooltip } from "@/components/ui/truncated-tooltip";
 import { useSession } from "@/lib/auth-client";
 import {
   useOrganization,
@@ -168,14 +164,11 @@ export function OrgSwitcher() {
                         organization.id === org.id ? "opacity-100" : "opacity-0"
                       }`}
                     />
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="min-w-0 flex-1 truncate text-left">
-                          {org.name}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">{org.name}</TooltipContent>
-                    </Tooltip>
+                    <TruncatedTooltip
+                      className="min-w-0 flex-1 text-left"
+                      side="right"
+                      text={org.name}
+                    />
                   </CommandItem>
                 ))}
               </CommandGroup>
