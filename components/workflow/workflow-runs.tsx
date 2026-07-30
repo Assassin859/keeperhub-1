@@ -1385,7 +1385,20 @@ export function WorkflowRuns({
                       variant="destructive"
                     >
                       <TriangleAlert />
-                      <AlertDescription>{runErrorMessage}</AlertDescription>
+                      <AlertDescription className="flex flex-col items-start gap-1.5">
+                        <span>{runErrorMessage}</span>
+                        {execution.errorCategory === "billing" && (
+                          <a
+                            className="inline-flex items-center gap-1 font-medium underline underline-offset-2 hover:opacity-80"
+                            href="/billing"
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            Adjust spending caps
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                      </AlertDescription>
                     </Alert>
                   </div>
                 )}
