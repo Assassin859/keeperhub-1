@@ -464,6 +464,20 @@ Execute state-changing functions on smart contracts using your Turnkey wallet. R
 
 **Note:** The `gasUsed` output represents the total transaction cost in wei (gas units × effective gas price), not just the number of gas units consumed.
 
+### Direct-API field names
+
+If you're building this action via the [Workflows API](/api/workflows) rather than the editor, the UI labels above map to these `config` keys — the strict-mode validator will reject the natural-language versions (`function`, `functionName`, `method`, `contract`):
+
+| UI label | API `config` field | Shape |
+|---|---|---|
+| Function | `abiFunction` | plain function name string (e.g. `"release"`) |
+| Function Arguments | `functionArgs` | **JSON-encoded array string** — e.g. `"[\"0xabc…\"]"`. Templates inside the string are resolved before `JSON.parse`, so wrap template tokens in the array's string quotes. |
+| ABI | `abi` | JSON-encoded string (same convention as `functionArgs`) |
+| Wallet | `integrationId` | web3-integration id from `GET /api/integrations`, not the Turnkey wallet address |
+| Network | `network` | numeric chain id as a string (e.g. `"11155111"`) |
+
+See the [generic web3 example](/api/workflows#generic-web3-example-http-trigger-write-contract) in the Workflows API docs for a full working request body.
+
 ---
 
 ## Transfer Native Token
