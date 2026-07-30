@@ -212,10 +212,13 @@ export function PlanCardFooter({
     overageLabel = `$${plan.overage.ratePerThousand}/1K additional executions`;
   } else if (isFree) {
     overageLabel = paygPriceUsdc
-      ? `then $${Number(paygPriceUsdc).toLocaleString(undefined, {
-          maximumFractionDigits: 6,
-        })} / extra execution`
-      : "Pay-as-you-go beyond the limit";
+      ? `Enable pay-as-you-go: $${Number(paygPriceUsdc).toLocaleString(
+          undefined,
+          {
+            maximumFractionDigits: 6,
+          }
+        )} / extra execution`
+      : "Enable pay-as-you-go beyond the free limit";
   } else if (isEnterprise) {
     overageLabel = "Custom overage terms";
   }
@@ -231,7 +234,7 @@ export function PlanCardFooter({
         {getButtonLabel(planName, isCurrent, loading, hasSubscription)}
       </Button>
       {overageLabel && (
-        <span className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-muted-foreground text-xs">
+        <span className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-center text-muted-foreground text-xs">
           {overageLabel}
         </span>
       )}
