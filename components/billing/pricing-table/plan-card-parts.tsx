@@ -31,28 +31,42 @@ export function PlanHeader({
   name,
   price,
   isEnterprise,
+  isFree = false,
+  freePrice,
 }: {
   name: string;
   price: number | null;
   isEnterprise: boolean;
+  isFree?: boolean;
+  freePrice?: string;
 }): React.ReactElement {
+  let priceNode: React.ReactElement;
+  if (isEnterprise || price === null) {
+    priceNode = (
+      <span className="font-bold text-5xl text-keeperhub-green-dark">
+        Custom
+      </span>
+    );
+  } else if (isFree) {
+    priceNode = (
+      <span className="font-bold text-5xl text-keeperhub-green-dark">
+        {freePrice ?? "$0.01"}
+      </span>
+    );
+  } else {
+    priceNode = (
+      <>
+        <span className="font-bold text-5xl text-keeperhub-green-dark">
+          {formatPrice(price)}
+        </span>
+        <span className="text-muted-foreground text-xl ml-1">/mo</span>
+      </>
+    );
+  }
   return (
     <div className="text-center">
       <h3 className="mb-3 font-bold text-2xl tracking-tight">{name}</h3>
-      <div>
-        {isEnterprise || price === null ? (
-          <span className="font-bold text-5xl text-keeperhub-green-dark">
-            Custom
-          </span>
-        ) : (
-          <>
-            <span className="font-bold text-5xl text-keeperhub-green-dark">
-              {formatPrice(price)}
-            </span>
-            <span className="text-muted-foreground text-xl ml-1">/mo</span>
-          </>
-        )}
-      </div>
+      <div>{priceNode}</div>
     </div>
   );
 }
@@ -66,23 +80,28 @@ export function HeroMetrics({
 }): React.ReactElement {
   const gridCols = gas === null ? "grid-cols-1" : "grid-cols-2";
   return (
-    <div
-      className={`mt-3 mb-3 grid ${gridCols} gap-2 rounded-xl bg-background/60 px-5 py-4`}
-    >
-      <div className="text-center">
-        <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
-          Executions /mo
-        </p>
-        <p className="font-bold text-2xl leading-tight">{executions}</p>
-      </div>
-      {gas !== null && (
+    <div className="mt-3 mb-3">
+      <p className="mb-2 font-medium text-muted-foreground text-xs">
+        Includes per month
+      </p>
+      <div
+        className={`grid ${gridCols} gap-2 rounded-xl border border-border/60 bg-background/60 px-5 py-4`}
+      >
         <div className="text-center">
           <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
-            Gas credits /mo
+            Executions
           </p>
-          <p className="font-bold text-2xl leading-tight">{gas}</p>
+          <p className="font-bold text-2xl leading-tight">{executions}</p>
         </div>
-      )}
+        {gas !== null && (
+          <div className="text-center">
+            <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
+              Gas credits
+            </p>
+            <p className="font-bold text-2xl leading-tight">{gas}</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -193,7 +212,6 @@ export function PlanCardFooter({
   currentPlan,
   hasSubscription,
   onSubscribe,
-  paygPriceUsdc,
 }: {
   planName: PlanName;
   plan: (typeof PLANS)[PlanName];
@@ -202,7 +220,6 @@ export function PlanCardFooter({
   currentPlan?: PlanName;
   hasSubscription: boolean;
   onSubscribe: () => void;
-  paygPriceUsdc?: string | null;
 }): React.ReactElement {
   const isFree = planName === "free";
   const isEnterprise = planName === "enterprise";
@@ -211,14 +228,7 @@ export function PlanCardFooter({
   if (plan.overage.enabled) {
     overageLabel = `$${plan.overage.ratePerThousand}/1K additional executions`;
   } else if (isFree) {
-    overageLabel = paygPriceUsdc
-      ? `Enable pay-as-you-go: $${Number(paygPriceUsdc).toLocaleString(
-          undefined,
-          {
-            maximumFractionDigits: 6,
-          }
-        )} / extra execution`
-      : "Enable pay-as-you-go beyond the free limit";
+    overageLabel = `${plan.features.maxExecutionsPerMonth.toLocaleString()} free / mo, then pay-as-you-go`;
   } else if (isEnterprise) {
     overageLabel = "Custom overage terms";
   }

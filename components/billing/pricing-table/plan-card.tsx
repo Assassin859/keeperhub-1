@@ -86,7 +86,12 @@ export function PlanCard({
     };
   }, [isFree]);
 
-  const cardName = isFree ? "Free + PAYG" : plan.name;
+  const cardName = isFree ? "Pay per execution" : plan.name;
+  const freePriceDisplay = paygPriceUsdc
+    ? `$${Number(paygPriceUsdc).toLocaleString(undefined, {
+        maximumFractionDigits: 6,
+      })}`
+    : "$0.01";
 
   const isCurrent = isCurrentPlan(
     planName,
@@ -222,7 +227,9 @@ export function PlanCard({
 
         <CardContent className="flex flex-1 flex-col gap-0 pt-6">
           <PlanHeader
+            freePrice={freePriceDisplay}
             isEnterprise={isEnterprise}
+            isFree={isFree}
             name={cardName}
             price={price}
           />
@@ -245,7 +252,6 @@ export function PlanCard({
           isCurrent={isCurrent}
           loading={loading}
           onSubscribe={handleSubscribe}
-          paygPriceUsdc={paygPriceUsdc}
           plan={plan}
           planName={planName}
         />
