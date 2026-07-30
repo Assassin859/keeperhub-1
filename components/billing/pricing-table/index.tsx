@@ -337,7 +337,7 @@ function ComparisonTable({
                     )}
                     key={plan}
                   >
-                    {plan === "free" ? "Free + PAYG" : PLANS[plan].name}
+                    {plan === "free" ? "Pay per execution" : PLANS[plan].name}
                     {plan === currentPlan && (
                       <span className="block font-normal text-[10px] text-keeperhub-green-dark/80 uppercase tracking-wide">
                         Current plan
