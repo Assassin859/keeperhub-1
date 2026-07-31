@@ -291,7 +291,7 @@ function ComparisonTable({
       ? `$${Number(paygPriceUsdc).toLocaleString(undefined, {
           maximumFractionDigits: 6,
         })}`
-      : "Pay as you go",
+      : "$0.01",
     pro: formatPerExecution(PLANS.pro.overage.ratePerThousand / 1000),
     business: formatPerExecution(PLANS.business.overage.ratePerThousand / 1000),
     enterprise: "Custom",
