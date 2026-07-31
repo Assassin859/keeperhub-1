@@ -226,4 +226,17 @@ describe("MCP direct execution simulation", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("delegates unknown network identifiers to the REST validator", async () => {
+    const result = await callThroughMcp("execute_transfer", {
+      chain_id: "future-chain",
+      to_address: "0xabc",
+      amount: "0.01",
+      simulate: true,
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(lastBody().chainId).toBe("future-chain");
+  });
 });

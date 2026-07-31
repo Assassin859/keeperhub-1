@@ -255,7 +255,16 @@ function assertSimulationSupported(chainId: string, simulate?: boolean): void {
     return;
   }
 
-  const normalizedChainId = getChainIdFromNetwork(chainId);
+  let normalizedChainId: number;
+  try {
+    normalizedChainId = getChainIdFromNetwork(chainId);
+  } catch {
+    // Keep network validation in the REST layer for identifiers that this
+    // compatibility helper does not know yet. The simulation route remains
+    // fail-closed (it returns before any broadcast), while future chains can
+    // be added there without requiring an MCP-only allowlist update first.
+    return;
+  }
   if (SOLANA_DIRECT_EXECUTION_CHAIN_IDS.has(normalizedChainId)) {
     throw new Error(
       `Direct-execution simulation is currently EVM-only; Solana chain ${normalizedChainId} cannot be simulated. Do not broadcast unless you can preflight the transaction through a Solana-aware client.`
