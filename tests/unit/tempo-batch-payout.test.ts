@@ -44,7 +44,8 @@ vi.mock("@/plugins/tempo/steps/tempo-step-helpers", () => ({
 const mockSignAndBroadcast = vi.fn();
 const mockNormalizeMemo = vi.fn();
 vi.mock("@/plugins/tempo/steps/tempo-tx-core", () => ({
-  signAndBroadcastTempoTx: (...args: unknown[]) => mockSignAndBroadcast(...args),
+  signAndBroadcastTempoTx: (...args: unknown[]) =>
+    mockSignAndBroadcast(...args),
   buildTransferWithMemoCall: (token: string) => ({ to: token, data: "0xdata" }),
   normalizeMemo: (...args: unknown[]) => mockNormalizeMemo(...args),
 }));
@@ -58,7 +59,9 @@ const USDC = "0x20c0000000000000000000000000000000000001";
 const RECIPIENT_A = "0x1111111111111111111111111111111111111111";
 const RECIPIENT_B = "0x2222222222222222222222222222222222222222";
 
-function baseInput(overrides: Partial<BatchPayoutInput> = {}): BatchPayoutInput {
+function baseInput(
+  overrides: Partial<BatchPayoutInput> = {}
+): BatchPayoutInput {
   return {
     network: "tempo-testnet",
     tokenConfig: { supportedTokenId: "tok_usdc" },
@@ -127,7 +130,10 @@ describe("batchPayoutStep", () => {
 
   it("rejects a batch over the per-transaction limit", async () => {
     const many = JSON.stringify(
-      Array.from({ length: 51 }, () => ({ recipient: RECIPIENT_A, amount: "1" }))
+      Array.from({ length: 51 }, () => ({
+        recipient: RECIPIENT_A,
+        amount: "1",
+      }))
     );
     const res = await batchPayoutStep(baseInput({ payouts: many }));
     expect(res.success).toBe(false);

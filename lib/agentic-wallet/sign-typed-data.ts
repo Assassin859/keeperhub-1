@@ -19,6 +19,7 @@
  */
 import { serializeSignature } from "@turnkey/ethers";
 import { getTurnkeyClientForOrg } from "@/lib/turnkey/agentic-wallet";
+import { toJsonSafe } from "@/lib/utils/json-safe";
 
 export class PolicyBlockedError extends Error {
   override readonly name = "PolicyBlockedError";
@@ -62,6 +63,9 @@ export async function signTypedDataWithTurnkey(
   typedData: EIP712TypedData
 ): Promise<string> {
   const client = getTurnkeyClientForOrg(subOrgId).apiClient();
+  // EIP-712 messages carry bigint uint256/deadline fields that JSON.stringify
+  // cannot serialize; normalize them to numeric strings first.
+  const payload = JSON.stringify(toJsonSafe(typedData));
   // Turnkey SDK v5.3.0's `signRawPayload` expects parameters flat (not
   // nested under `parameters`). With PAYLOAD_ENCODING_EIP712 Turnkey hashes
   // the typed-data server-side, but `hashFunction` is still required and
@@ -72,7 +76,7 @@ export async function signTypedDataWithTurnkey(
     }
   ).signRawPayload({
     signWith: walletAddress,
-    payload: JSON.stringify(typedData),
+    payload,
     encoding: "PAYLOAD_ENCODING_EIP712",
     hashFunction: "HASH_FUNCTION_NO_OP",
   })) as TurnkeyActivityResponse;

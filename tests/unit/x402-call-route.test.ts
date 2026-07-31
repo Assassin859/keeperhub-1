@@ -24,6 +24,7 @@ const {
   mockAuthenticateApiKey,
   mockAuthenticateOAuthToken,
   mockBuildCallCompletionResponse,
+  mockChargePaygIfBillable,
 } = vi.hoisted(() => ({
   mockDbSelect: vi.fn(),
   mockDbInsert: vi.fn(),
@@ -44,6 +45,7 @@ const {
   mockAuthenticateApiKey: vi.fn(),
   mockAuthenticateOAuthToken: vi.fn(),
   mockBuildCallCompletionResponse: vi.fn(),
+  mockChargePaygIfBillable: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,12 @@ vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
 vi.mock("@/lib/billing/execution-guard", () => ({
   enforceExecutionLimit: mockEnforceExecutionLimit,
   EXECUTION_LIMIT_ERROR: "Monthly execution limit exceeded",
+}));
+
+// PAYG charge applied between the execution insert and the run start (the owner
+// org, not the caller). Default no-op; the PAYG tests drive it per case.
+vi.mock("@/lib/billing/payg/charge", () => ({
+  chargePaygIfBillable: mockChargePaygIfBillable,
 }));
 
 vi.mock("@/lib/features/route-guard", () => ({
@@ -261,6 +269,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
       limitResult: null,
     });
     mockCheckConcurrencyLimit.mockResolvedValue({ allowed: true });
+    mockChargePaygIfBillable.mockResolvedValue({ applicable: false });
     mockStart.mockResolvedValue({ runId: "run-1" });
     mockRecordPayment.mockResolvedValue(undefined);
     mockHashPaymentSignature.mockReturnValue("hash-abc");
@@ -375,6 +384,54 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(body.status).toBe("running");
     // gatePayment must NOT be called for free workflows
     expect(mockGatePayment).not.toHaveBeenCalled();
+  });
+
+  it("Test 3b: charges the owner org before starting an MCP run (PAYG)", async () => {
+    setupDbSelectWorkflow(FREE_WORKFLOW);
+    setupDbInsertExecution("exec-payg-1");
+    mockChargePaygIfBillable.mockResolvedValue({
+      applicable: true,
+      ok: true,
+      txHash: "0xabc",
+    });
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(makeRequest("test-workflow"), {
+      params: Promise.resolve({ slug: "test-workflow" }),
+    });
+
+    // The owner org (not the caller) is charged for the execution.
+    expect(mockChargePaygIfBillable).toHaveBeenCalledWith({
+      organizationId: "org-1",
+      executionId: "exec-payg-1",
+    });
+    expect(response.status).toBe(200);
+    // The run still starts once the charge settles.
+    expect(mockStart).toHaveBeenCalled();
+  });
+
+  it("Test 3c: blocks the MCP run with 402 when the owner org's PAYG charge is denied", async () => {
+    setupDbSelectWorkflow(FREE_WORKFLOW);
+    setupDbInsertExecution("exec-payg-blocked");
+    mockChargePaygIfBillable.mockResolvedValue({
+      applicable: true,
+      ok: false,
+      reason: "insufficient_funds",
+      message: "Not enough USDC in your wallet to cover this execution.",
+    });
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(makeRequest("test-workflow"), {
+      params: Promise.resolve({ slug: "test-workflow" }),
+    });
+
+    expect(response.status).toBe(402);
+    const body = await response.json();
+    expect(body.status).toBe("error");
+    // The workflow must NOT start when the charge is blocked.
+    expect(mockStart).not.toHaveBeenCalled();
+    // The reserved row is resolved to a billing error.
+    expect(mockDbUpdateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "error", errorCategory: "billing" })
+    );
   });
 
   it("Test 4: free workflow (priceUsdcPerCall=null) executes without payment", async () => {
