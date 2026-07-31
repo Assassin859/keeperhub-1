@@ -1251,9 +1251,13 @@ function DecorativeNodeCard({
 export function PayPerExecutionPreview({
   enabled,
   priceLabel,
+  dailyCap,
+  periodCap,
 }: {
   enabled: boolean;
   priceLabel: string;
+  dailyCap: string;
+  periodCap: string;
 }): React.ReactElement {
   const reducedMotion = useReducedMotion() ?? false;
   const { phase, runIndex, outcome } = useWorkflowRunLoop(reducedMotion);
@@ -1319,6 +1323,17 @@ export function PayPerExecutionPreview({
                   ) : null}
                 </Fragment>
               ))}
+            </div>
+
+            <div className="mt-5 flex items-center justify-center gap-3 border-border/60 border-t pt-4 text-xs">
+              <span className="text-muted-foreground">Default caps</span>
+              <span className="font-medium text-foreground tabular-nums">
+                {dailyCap} / day
+              </span>
+              <span className="text-muted-foreground">&middot;</span>
+              <span className="font-medium text-foreground tabular-nums">
+                {periodCap} / month
+              </span>
             </div>
           </PreviewFrame>
 

@@ -136,7 +136,6 @@ function FundingWalletCard({
 export function PayPerExecutionStep(): React.ReactElement {
   const router = useRouter();
   const [payg, setPayg] = useState<PaygStatus | null>(null);
-  const [paygAvailable, setPaygAvailable] = useState(true);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balances, setBalances] = useState<ChainBalance[]>([]);
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -148,9 +147,6 @@ export function PayPerExecutionStep(): React.ReactElement {
       try {
         const res = await fetch(BILLING_API.PAYG, { cache: "no-store" });
         if (!res.ok) {
-          if (!cancelled) {
-            setPaygAvailable(false);
-          }
           return;
         }
         const data = (await res.json()) as PaygStatus;
@@ -158,9 +154,7 @@ export function PayPerExecutionStep(): React.ReactElement {
           setPayg(data);
         }
       } catch {
-        if (!cancelled) {
-          setPaygAvailable(false);
-        }
+        // PAYG status is optional context on this step.
       }
     };
     loadPayg().catch(() => undefined);
@@ -252,19 +246,19 @@ export function PayPerExecutionStep(): React.ReactElement {
       .finally(() => setEnabling(false));
   };
 
-  const canEnable = paygAvailable && !(payg?.enabled ?? false);
-
   return (
     <WelcomeShell
       busy={enabling}
       description="Every organization gets 5,000 free executions a month. Turn on pay-as-you-go to keep workflows running past the free tier."
-      nextLabel={canEnable ? "Enable pay-as-you-go" : "Continue"}
+      nextLabel="Enable pay-as-you-go"
       onBack={() => router.push(BACK_PATH)}
-      onNext={canEnable ? handleEnableAndContinue : goNext}
+      onNext={handleEnableAndContinue}
       onSkip={goNext}
       preview={
         <PayPerExecutionPreview
+          dailyCap={`$${DEFAULT_DAILY_CAP_USDC}`}
           enabled={payg?.enabled ?? false}
+          periodCap={`$${DEFAULT_PERIOD_CAP_USDC}`}
           priceLabel={priceLabel}
         />
       }
