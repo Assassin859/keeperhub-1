@@ -1,8 +1,8 @@
-# KeeperHub Workflow Schema — The Undocumented Parts
+# KeeperHub Workflow Schema — Reference Guide
 
-This document captures everything we learned about KeeperHub's workflow
-JSON schema that isn't in the official docs. It cost us ~6 hours of
-trial and error. Hopefully it saves you that time.
+This document covers the KeeperHub workflow JSON schema details
+that are not fully covered in the official docs. Written during
+the KeeperHub Agents Onchain Hackathon by the SentinelLP team.
 
 ---
 
@@ -28,106 +28,117 @@ Always `JSON.stringify()` your ABI before putting it in the config.
 
 ---
 
-### `functionArgs` — must be a JSON string of an array of objects with named fields
+### `functionArgs` — a JSON-stringified positional array
+
+`functionArgs` is a JSON-stringified positional array whose elements
+map to the ABI inputs by index.
 
 **Wrong:**
-```json
-{
-  "functionArgs": ["0xRecipient", "1000000"]
-}
-```
-
-**Also wrong:**
-```json
-{
-  "functionArgs": [["0xRecipient", "1000000"]]
-}
-```
-
-**Correct:**
 ```json
 {
   "functionArgs": "[{\"to\":\"0xRecipient\",\"amount\":\"1000000\"}]"
 }
 ```
 
-Use named fields matching the ABI parameter names. Always `JSON.stringify()` the array.
-
----
-
-### `tokenConfig` for `web3/approve-token` — must be a JSON string
-
-**Wrong:**
-```json
-{
-  "tokenConfig": "0xTokenAddress"
-}
-```
-
 **Correct:**
 ```json
 {
-  "tokenConfig": "{\"mode\":\"custom\",\"customToken\":{\"address\":\"0xTokenAddress\",\"symbol\":\"USDC\"}}"
+  "functionArgs": "[\"0xRecipient\",\"1000000\"]"
 }
 ```
 
-Always `JSON.stringify()` the tokenConfig object.
+Note: named-field objects only apply to a single `tuple`/struct
+parameter, not as a wrapper for all args.
 
 ---
 
-### Deadlines — never use template expressions in functionArgs
+### `tokenConfig` for `web3/approve-token`
 
-**Wrong (breaks JSON parsing at execution time):**
+`tokenConfig` accepts either a bare `0x`-prefixed token address
+(treated as the token address directly) or a JSON string with
+the full custom token shape. Both work:
+
+```json
+{ "tokenConfig": "0xTokenAddress" }
+```
+
 ```json
 {
-  "functionArgs": "[{\"deadline\": {{@__system:System.unixTimestamp}} + 3600}]"
+  "tokenConfig": "{\"mode\":\"custom\",\"customToken\":{\"address\":\"0xTokenAddress\"}}"
 }
 ```
 
-**Correct:**
+Note: `symbol` is fetched on-chain; you don't need to provide it.
+
+---
+
+### Deadlines — keep template substitution result valid JSON
+
+Template expressions inside `functionArgs` are supported and
+resolve before `JSON.parse`. The rule is: ensure the substituted
+result is valid JSON. Computing values like deadlines beforehand
+is the safest approach:
+
 ```typescript
 const deadline = Math.floor(Date.now() / 1000) + 600;
-// Then use the number directly:
-functionArgs: JSON.stringify([{ deadline: deadline }])
+functionArgs: JSON.stringify([deadline])
 ```
 
-Template expressions (`{{@__system:...}}`) are resolved BEFORE JSON parsing,
-producing invalid JSON like `1234567890 + 3600` which breaks the parser.
+Avoid arithmetic expressions after substitution
+(e.g. `{{timestamp}} + 3600`) as they produce invalid JSON.
 
 ---
 
-### `network` — chain ID as a string
+### `network` — recommended as a string chain ID
+
+A string chain ID is the recommended form:
 
 ```json
-{
-  "network": "11155111"  // Sepolia
-  "network": "1"         // Ethereum mainnet
-}
+{ "network": "11155111" }
+{ "network": "1" }
 ```
 
-Not a number. Not a network name. A string chain ID.
+The API also accepts raw numbers and legacy names like
+`"sepolia"` or `"base"` at runtime, but string chain IDs
+are the safest and most explicit.
 
 ---
 
-## Endpoint quirks
+### `gasLimitMultiplier` — pass as a string
+
+```json
+{ "gasLimitMultiplier": "1.5" }
+```
+
+Helps avoid out-of-gas errors on complex transactions.
+
+---
+
+## Endpoint reference
 
 ### Create workflow
 ```
 POST /api/workflows/create
 ```
-Note: `/workflows/create` not `/workflows` — the extra `/create` is required.
 
 ### Execute workflow
 ```
 POST /api/workflow/{workflowId}/execute
 ```
-Note: `/workflow/` (singular) not `/workflows/` (plural) — yes, they're different.
+or
+```
+POST /api/workflows/{workflowId}/execute
+```
+Both routes work identically.
 
 ### Get execution status
 ```
 GET /api/workflows/executions/{executionId}/status
 ```
-Back to plural `/workflows/` here.
+
+Returns a `transactionHashes` array in the success payload —
+you can read tx hashes directly from the status response
+without fetching logs separately.
 
 ### Get execution logs
 ```
@@ -138,7 +149,7 @@ GET /api/workflows/executions/{executionId}/logs
 
 ## Node structure
 
-Every node (trigger and action) must follow this exact shape:
+Every node follows this shape (`status` and `description` are optional):
 
 ```typescript
 {
@@ -146,10 +157,9 @@ Every node (trigger and action) must follow this exact shape:
   type: "trigger" | "action",
   data: {
     label: "Human readable name",
-    type: "trigger" | "action",    // repeated from outer type
-    config: { ... },               // action-specific config
-    status: "idle",                // always "idle" when creating
-    description: "",               // optional, can be empty string
+    type: "trigger" | "action",
+    config: { ... },
+    // status and description are optional
   }
 }
 ```
@@ -165,13 +175,13 @@ Every node (trigger and action) must follow this exact shape:
   data: {
     label: "Manual Trigger",
     type: "trigger",
-    config: { triggerType: "manual" },
-    status: "idle",
+    config: { triggerType: "Manual" },
   }
 }
 ```
 
-Always required as the first node. `triggerType` must be lowercase `"manual"`.
+Use the capitalized canonical value: `"Manual"`, `"Schedule"`,
+`"Webhook"`, `"Event"`, `"Block"`, `"Transfer"`.
 
 ---
 
@@ -185,8 +195,6 @@ Always required as the first node. `triggerType` must be lowercase `"manual"`.
 }
 ```
 
-Edges must connect nodes in order. The `id` is arbitrary but must be unique.
-
 ---
 
 ## Finding your wallet integration ID
@@ -195,44 +203,33 @@ Edges must connect nodes in order. The `id` is arbitrary but must be unique.
 const res = await axios.get("https://app.keeperhub.com/api/integrations", {
   headers: { Authorization: `Bearer ${API_KEY}` }
 });
-const walletId = res.data.data[0].id;
+const walletId = res.data[0].id; // bare array, no wrapper
 ```
 
-Or run: `npm run example:read` — it prints all integrations.
-
 ---
 
-## Gas limit multiplier
+## Transaction hash location
 
-Add `gasLimitMultiplier: "1.5"` to write-contract configs to avoid out-of-gas errors on complex transactions.
-
----
-
-## Transaction hash location in logs
-
-KeeperHub doesn't return the tx hash in the execution status. You need to fetch logs:
+The workflow execution status endpoint returns `transactionHashes`
+directly in the success payload. You can read tx hashes from
+the status response without fetching logs:
 
 ```typescript
-const logs = await getExecutionLogs(executionId);
-for (const log of logs) {
-  if (log.output?.transactionHash) return log.output.transactionHash;
-  if (log.output?.transactionLink) {
-    return log.output.transactionLink.match(/0x[a-fA-F0-9]{64}/)?.[0];
-  }
-}
+const status = await getExecutionStatus(executionId);
+const txHashes = status.transactionHashes;
 ```
 
 ---
 
-## What we wish existed in the docs
+## What we found genuinely undocumented
 
-1. A complete node config reference per action type
-2. The `functionArgs` named-fields requirement explicitly documented
-3. The `abi` stringification requirement explicitly documented
-4. The `/workflow/` vs `/workflows/` endpoint inconsistency explained
-5. A note that template expressions break JSON parsing in functionArgs
-6. The `tokenConfig` structure for `web3/approve-token`
+1. `abi` must be `JSON.stringify()`'d — causes a silent 422 if not
+2. `gasLimitMultiplier` must be a string, not a number
+3. The edge shape (`id`, `source`, `target`) is not in the quickstart
+4. The create/status/logs endpoint paths are not in one place in the docs
 
-These are all reasonable improvements to the official docs.
-If you run into more undocumented behavior, open an issue on the
-KeeperHub GitHub repo — they're responsive and this is all open source.
+---
+
+Built during the KeeperHub Agents Onchain Hackathon · July 2026
+Submission: [SentinelLP](https://sentinellp-app.vercel.app)
+Starter template: [keeperhub-starter](https://github.com/semi1390/keeperhub-starter)
