@@ -680,19 +680,16 @@ function PaygChargesTable(): React.ReactElement | null {
       <div className="space-y-2">
         <button
           aria-expanded={open}
-          className="flex w-full items-center justify-between gap-2 text-left"
+          className="mx-auto flex cursor-pointer items-center gap-2 text-keeperhub-green-dark text-sm transition-colors hover:text-keeperhub-green"
           onClick={() => setOpen((prev) => !prev)}
           type="button"
         >
-          <h4 className="font-medium text-sm">Recent charges</h4>
-          <span className="flex items-center gap-2 text-muted-foreground text-xs">
-            {meta.total} {meta.total === 1 ? "charge" : "charges"}
-            <ChevronDown
-              className={`size-4 transition-transform duration-200 ${
-                open ? "rotate-180" : ""
-              }`}
-            />
-          </span>
+          <span>{open ? "Hide recent charges" : "Show recent charges"}</span>
+          <ChevronDown
+            className={`size-4 transition-transform duration-200 ${
+              open ? "rotate-180" : ""
+            }`}
+          />
         </button>
         {open && (
           <>
