@@ -113,6 +113,38 @@ export function WorkflowIssuesOverlay({
     onRunAnyway();
   };
 
+  const renderValidationIssue = (
+    issue: WorkflowValidationIssue,
+    index: number
+  ) => {
+    const nodeId = issue.nodeId;
+
+    return (
+      <div
+        className="flex items-center gap-3 py-1"
+        key={`${issue.code}-${issue.parameterPath}-${index}`}
+      >
+        <div className="min-w-0 flex-1">
+          <p className="text-sm">{issue.message}</p>
+          <p className="break-all font-mono text-muted-foreground text-xs">
+            {issue.parameterPath}
+          </p>
+        </div>
+
+        {nodeId && (
+          <Button
+            className="shrink-0"
+            onClick={() => handleGoToStep(nodeId, issue.fieldKey)}
+            size="sm"
+            variant="outline"
+          >
+            Fix
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Overlay
       actions={[
@@ -149,31 +181,34 @@ export function WorkflowIssuesOverlay({
             <h4 className="font-medium text-destructive text-xs uppercase tracking-wide">
               Blocking Errors
             </h4>
-            {validationErrors.map((issue, index) => (
-              <div
-                className="flex items-center gap-3 py-1"
-                key={`${issue.code}-${issue.parameterPath}-${index}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm">{issue.message}</p>
-                  <p className="break-all font-mono text-muted-foreground text-xs">
-                    {issue.parameterPath}
-                  </p>
+            {validationErrors.map((issue, index) => {
+              const nodeId = issue.nodeId;
+
+              return (
+                <div
+                  className="flex items-center gap-3 py-1"
+                  key={`${issue.code}-${issue.parameterPath}-${index}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm">{issue.message}</p>
+                    <p className="break-all font-mono text-muted-foreground text-xs">
+                      {issue.parameterPath}
+                    </p>
+                  </div>
+
+                  {nodeId && (
+                    <Button
+                      className="shrink-0"
+                      onClick={() => handleGoToStep(nodeId, issue.fieldKey)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Fix
+                    </Button>
+                  )}
                 </div>
-                {issue.nodeId && (
-                  <Button
-                    className="shrink-0"
-                    onClick={() =>
-                      handleGoToStep(issue.nodeId!, issue.fieldKey)
-                    }
-                    size="sm"
-                    variant="outline"
-                  >
-                    Fix
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -183,31 +218,34 @@ export function WorkflowIssuesOverlay({
             <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
               Warnings
             </h4>
-            {validationWarnings.map((issue, index) => (
-              <div
-                className="flex items-center gap-3 py-1"
-                key={`${issue.code}-${issue.parameterPath}-${index}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm">{issue.message}</p>
-                  <p className="break-all font-mono text-muted-foreground text-xs">
-                    {issue.parameterPath}
-                  </p>
+            {validationWarnings.map((issue, index) => {
+              const nodeId = issue.nodeId;
+
+              return (
+                <div
+                  className="flex items-center gap-3 py-1"
+                  key={`${issue.code}-${issue.parameterPath}-${index}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm">{issue.message}</p>
+                    <p className="break-all font-mono text-muted-foreground text-xs">
+                      {issue.parameterPath}
+                    </p>
+                  </div>
+
+                  {nodeId && (
+                    <Button
+                      className="shrink-0"
+                      onClick={() => handleGoToStep(nodeId, issue.fieldKey)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Fix
+                    </Button>
+                  )}
                 </div>
-                {issue.nodeId && (
-                  <Button
-                    className="shrink-0"
-                    onClick={() =>
-                      handleGoToStep(issue.nodeId!, issue.fieldKey)
-                    }
-                    size="sm"
-                    variant="outline"
-                  >
-                    Fix
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

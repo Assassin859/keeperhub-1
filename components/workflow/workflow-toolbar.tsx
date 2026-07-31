@@ -51,10 +51,7 @@ import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import { cn } from "@/lib/utils";
 import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
-import {
-  mapWorkflowValidationIssues,
-  type WorkflowValidationResult,
-} from "@/lib/workflow/editor/run-validation";
+import { runWorkflowValidationPreflight } from "@/lib/workflow/editor/run-validation";
 import { ensureSavedBeforeRun } from "@/lib/workflow/run-preflight";
 import {
   addNodeAtom,
@@ -676,62 +673,29 @@ function useWorkflowHandlers({
       return;
     }
 
-    let response: Response;
-
-    try {
-      response = await fetch(
-        `/api/workflows/${currentWorkflowId}/validate`
-      );
-    } catch {
-      toast.error("Could not validate the workflow before running it");
-      return;
-    }
-
-    if (!response.ok) {
-      toast.error("Could not validate the workflow before running it");
-      return;
-    }
-
-    const payload = (await response.json()) as {
-      result?: WorkflowValidationResult;
-    };
-
-    if (!payload.result) {
-      toast.error("Workflow validation returned an unexpected response");
-      return;
-    }
-
-    const validationErrors = mapWorkflowValidationIssues(
-      payload.result.errors,
-      nodes
-    );
-    const validationWarnings = mapWorkflowValidationIssues(
-      payload.result.warnings,
-      nodes
-    );
-
-    if (
-      validationErrors.length > 0 ||
-      validationWarnings.length > 0
-    ) {
-      openOverlay(WorkflowIssuesOverlay, {
-        issues: {
-          brokenReferences: [],
-          missingRequiredFields: [],
-          missingIntegrations: [],
-          validationErrors,
-          validationWarnings,
-        },
-        onGoToStep: handleGoToStep,
-        onRunAnyway:
-          validationErrors.length === 0
-            ? startWorkflowExecution
-            : undefined,
-      });
-      return;
-    }
-
-    await startWorkflowExecution();
+    await runWorkflowValidationPreflight({
+      workflowId: currentWorkflowId,
+      nodes,
+      onOpenIssues: ({
+        validationErrors,
+        validationWarnings,
+        onRunAnyway,
+      }) => {
+        openOverlay(WorkflowIssuesOverlay, {
+          issues: {
+            brokenReferences: [],
+            missingRequiredFields: [],
+            missingIntegrations: [],
+            validationErrors,
+            validationWarnings,
+          },
+          onGoToStep: handleGoToStep,
+          onRunAnyway,
+        });
+      },
+      onStartWorkflowExecution: startWorkflowExecution,
+      onError: (message) => toast.error(message),
+    });
   };
 
   const handleCancel = async (): Promise<void> => {
