@@ -152,8 +152,11 @@ export async function listPaygPaymentsPage(
         ilike(workflows.name, like)
       )
     : undefined;
+  // Only settled charges: an in-flight or stuck `pending` claim is not a
+  // completed charge and must not surface in the history as a tx-less row.
   const where = and(
     eq(paygPayments.organizationId, organizationId),
+    eq(paygPayments.status, PAYG_PAYMENT_STATUS.settled),
     searchFilter
   );
 
