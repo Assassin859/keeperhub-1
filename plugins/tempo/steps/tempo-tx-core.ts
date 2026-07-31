@@ -29,7 +29,7 @@ import "server-only";
 
 import { ethers } from "ethers";
 import { TxEnvelopeTempo } from "ox/tempo";
-import { encodeFunctionData, type Hex } from "viem";
+import { encodeFunctionData, type Hex, toFunctionSelector } from "viem";
 import { Abis } from "viem/tempo";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -223,12 +223,41 @@ export function normalizeMemo(memo?: string): Hex {
   }
 }
 
+const TRANSFER_WITH_MEMO_SELECTOR = toFunctionSelector(
+  "transferWithMemo(address,uint256,bytes32)"
+);
+
+/**
+ * Floor for a memo transfer's estimate. eth_estimateGas on Tempo reports the
+ * storage cost of the bytes32 memo write too low, so a memo transfer's estimate
+ * (~35k) can land far below its real settlement cost (~272k) and the node
+ * rejects the tx ("call gas cost exceeds the gas limit"). Raising the limit is
+ * free on Tempo (the fee is charged on gas used, not the limit), so flooring is
+ * safe and applies to each memo call.
+ */
+export const TEMPO_MEMO_MIN_GAS = BigInt(300_000);
+
+/** Raise a memo transfer's estimate to the memo floor; other calls unchanged. */
+export function applyTempoMemoGasFloor(
+  call: TempoCall,
+  estimatedGas: bigint
+): bigint {
+  const isMemoTransfer = call.data
+    .toLowerCase()
+    .startsWith(TRANSFER_WITH_MEMO_SELECTOR);
+  if (isMemoTransfer && estimatedGas < TEMPO_MEMO_MIN_GAS) {
+    return TEMPO_MEMO_MIN_GAS;
+  }
+  return estimatedGas;
+}
+
 /**
  * Estimate execution gas for the batch by summing per-call estimates. The
  * atomic 0x76 envelope is not directly estimable via eth_estimateGas, so each
  * call is estimated as a standalone call from the wallet; summing slightly
  * over-counts the shared intrinsic cost, which is safe (on Tempo the fee is
- * charged on gas used, not the limit). The AdaptiveGasStrategy multiplier then
+ * charged on gas used, not the limit). Memo transfers are floored because their
+ * estimate omits the memo storage cost. The AdaptiveGasStrategy multiplier then
  * adds the safety margin on top.
  */
 async function estimateTempoGas(
@@ -243,7 +272,7 @@ async function estimateTempoGas(
         provider.estimateGas({ from, to: call.to, data: call.data }),
       "preflight"
     );
-    total += gas;
+    total += applyTempoMemoGasFloor(call, gas);
   }
   return total;
 }
