@@ -30,6 +30,7 @@ import {
   getAgentFrameworks,
 } from "@/lib/agent-connect-commands";
 import { api } from "@/lib/api-client";
+import { BILLING_API } from "@/lib/billing/constants";
 import { markOnboardingComplete } from "@/lib/welcome-status";
 
 const BACK_PATH = "/welcome/pay-per-execution";
@@ -157,12 +158,46 @@ export function ConnectAgentStep(): React.ReactElement {
       ? `${process.env.NEXT_PUBLIC_APP_URL}/mcp`
       : ""
   );
+  const [paygEnabled, setPaygEnabled] = useState(false);
 
   useEffect(() => {
     if (!mcpUrl) {
       setMcpUrl(`${window.location.origin}/mcp`);
     }
   }, [mcpUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPayg = async (): Promise<void> => {
+      try {
+        const res = await fetch(BILLING_API.PAYG, { cache: "no-store" });
+        if (!res.ok) {
+          return;
+        }
+        const data = (await res.json()) as { enabled?: boolean };
+        if (!cancelled) {
+          setPaygEnabled(Boolean(data.enabled));
+        }
+      } catch {
+        // PAYG status is best-effort here; leave it disabled on failure.
+      }
+    };
+    loadPayg().catch(() => undefined);
+    return (): void => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Enabling pay-as-you-go on the previous step is provisional: going back undoes
+  // it (disable + clear caps) so the user makes a fresh choice.
+  const handleBack = async (): Promise<void> => {
+    if (paygEnabled) {
+      await fetch(BILLING_API.PAYG, { method: "DELETE" }).catch(
+        () => undefined
+      );
+    }
+    router.push(BACK_PATH);
+  };
 
   const frameworks = getAgentFrameworks(mcpUrl || "/mcp");
   const agents = frameworks.filter((f) => f.group === "mcp");
@@ -196,7 +231,7 @@ export function ConnectAgentStep(): React.ReactElement {
       contentClassName="max-w-none"
       description="Point your AI agent at KeeperHub over MCP, then drive workflows and wallets from your editor."
       nextLabel="Finish"
-      onBack={() => router.push(BACK_PATH)}
+      onBack={handleBack}
       onNext={finish}
       preview={<ConnectAgentPreview frameworkId={activeId} />}
       stepIndex={3}

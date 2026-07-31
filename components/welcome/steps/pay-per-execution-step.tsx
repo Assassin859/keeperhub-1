@@ -1,11 +1,9 @@
 "use client";
 
-import { Copy, ExternalLink, Loader2 } from "lucide-react";
+import { Copy, ExternalLink } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { PayPerExecutionPreview } from "@/components/welcome/previews";
 import { WelcomeShell } from "@/components/welcome/welcome-shell";
 import { toChecksumAddress } from "@/lib/address-utils";
@@ -15,6 +13,10 @@ import { PAYG_DEFAULT_CHAIN_ID } from "@/lib/billing/payg/constants";
 const NEXT_PATH = "/welcome/connect-agent";
 const BACK_PATH = "/welcome/invite-members";
 const BASE_CHAIN_ID = 8453;
+// Default spending caps applied when a user enables pay-as-you-go here; both are
+// editable later in Billing.
+const DEFAULT_DAILY_CAP_USDC = "5";
+const DEFAULT_PERIOD_CAP_USDC = "50";
 
 type PaygStatus = {
   enabled: boolean;
@@ -130,51 +132,6 @@ function FundingWalletCard({
   );
 }
 
-/** Enable button, "Enabled" badge, or a muted note, depending on payg status. */
-function EnableAction({
-  available,
-  status,
-  enabling,
-  onEnable,
-}: {
-  available: boolean;
-  status: PaygStatus | null;
-  enabling: boolean;
-  onEnable: () => void;
-}): React.ReactElement | null {
-  if (!available) {
-    return null;
-  }
-  if (status?.enabled) {
-    return (
-      <Badge
-        className="w-fit border-keeperhub-green/30 bg-keeperhub-green/10 text-keeperhub-green"
-        variant="outline"
-      >
-        Enabled
-      </Badge>
-    );
-  }
-  if (!status?.treasuryConfigured) {
-    return (
-      <p className="text-muted-foreground text-xs">Available in production.</p>
-    );
-  }
-  return (
-    <Button
-      className="w-fit"
-      disabled={enabling}
-      onClick={onEnable}
-      size="sm"
-      type="button"
-      variant="outline"
-    >
-      {enabling ? <Loader2 className="size-3.5 animate-spin" /> : null}
-      Enable pay-as-you-go
-    </Button>
-  );
-}
-
 /** Wizard step 3: introduce the free + pay-as-you-go plan and fund the wallet. */
 export function PayPerExecutionStep(): React.ReactElement {
   const router = useRouter();
@@ -264,12 +221,19 @@ export function PayPerExecutionStep(): React.ReactElement {
       .catch(() => undefined);
   };
 
-  const handleEnable = (): void => {
+  const goNext = (): void => router.push(NEXT_PATH);
+
+  // Enable pay-as-you-go with default spending caps, then advance. On failure we
+  // stay on the step so the user can retry or skip.
+  const handleEnableAndContinue = (): void => {
     setEnabling(true);
     fetch(BILLING_API.PAYG, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        dailyCapUsdc: DEFAULT_DAILY_CAP_USDC,
+        periodCapUsdc: DEFAULT_PERIOD_CAP_USDC,
+      }),
     })
       .then(async (res) => {
         if (!res.ok) {
@@ -279,27 +243,25 @@ export function PayPerExecutionStep(): React.ReactElement {
           toast.error(data.error ?? "Could not enable pay-as-you-go");
           return;
         }
-        const data = (await res.json()) as PaygStatus;
-        setPayg(data);
         toast.success("Pay-as-you-go enabled");
+        goNext();
       })
-      .catch((error: unknown) => {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Could not enable pay-as-you-go"
-        );
+      .catch(() => {
+        toast.error("Could not enable pay-as-you-go");
       })
       .finally(() => setEnabling(false));
   };
 
+  const canEnable = paygAvailable && !(payg?.enabled ?? false);
+
   return (
     <WelcomeShell
+      busy={enabling}
       description="Every organization gets 5,000 free executions a month. Turn on pay-as-you-go to keep workflows running past the free tier."
-      nextLabel="Continue"
+      nextLabel={canEnable ? "Enable pay-as-you-go" : "Continue"}
       onBack={() => router.push(BACK_PATH)}
-      onNext={() => router.push(NEXT_PATH)}
-      onSkip={() => router.push(NEXT_PATH)}
+      onNext={canEnable ? handleEnableAndContinue : goNext}
+      onSkip={goNext}
       preview={
         <PayPerExecutionPreview
           enabled={payg?.enabled ?? false}
@@ -315,9 +277,12 @@ export function PayPerExecutionStep(): React.ReactElement {
         <ul className="list-disc space-y-1 pl-4 text-muted-foreground text-sm">
           <li>
             Charges are gasless USDC pulled straight from your organization
-            wallet. No card required.
+            wallet. No credit card required.
           </li>
-          <li>Spending caps and top-ups are always available in Billing.</li>
+          <li>
+            Enabling sets a $5 daily and $50 monthly spending cap. Change or
+            remove them anytime in Billing.
+          </li>
         </ul>
 
         <FundingWalletCard
@@ -328,16 +293,9 @@ export function PayPerExecutionStep(): React.ReactElement {
           usdcBalance={usdcBalance}
         />
 
-        <EnableAction
-          available={paygAvailable}
-          enabling={enabling}
-          onEnable={handleEnable}
-          status={payg}
-        />
-
         <p className="text-muted-foreground text-xs">
-          Optional now. You can enable pay-as-you-go, set spending caps, and top
-          up anytime in Billing.
+          Optional now. If you skip, you can enable pay-as-you-go anytime in
+          Billing.
         </p>
       </div>
     </WelcomeShell>
