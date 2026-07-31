@@ -16,24 +16,81 @@ export type PaygPaymentRow = {
   workflowName: string | null;
 };
 
-/** Record a settled per-execution payment. Idempotent on (org, execution_id). */
-export async function recordPaygPayment(
+/**
+ * Claim an execution for charging by inserting its payment row as `pending`.
+ * Returns true when this call created the row (the caller owns the settlement)
+ * and false when a row for (org, execution) already exists, so a concurrent
+ * caller backs off instead of settling a second on-chain transfer. The pending
+ * row also reserves its amount against the spend caps until it settles or is
+ * released.
+ */
+export async function claimPaygPayment(
   payment: NewPaygPayment
+): Promise<boolean> {
+  const rows = await db
+    .insert(paygPayments)
+    .values(payment)
+    .onConflictDoNothing()
+    .returning({ id: paygPayments.id });
+  return rows.length > 0;
+}
+
+/** Flip a claimed row from `pending` to `settled` with its on-chain tx hash. */
+export async function markPaygPaymentSettled(
+  organizationId: string,
+  executionId: string,
+  txHash: string
 ): Promise<void> {
-  await db.insert(paygPayments).values(payment).onConflictDoNothing();
+  await db
+    .update(paygPayments)
+    .set({ status: PAYG_PAYMENT_STATUS.settled, txHash })
+    .where(
+      and(
+        eq(paygPayments.organizationId, organizationId),
+        eq(paygPayments.executionId, executionId)
+      )
+    );
 }
 
 /**
- * The already-recorded payment for one execution, or null. Used to make
- * charging idempotent: a redelivered run must not settle a second on-chain
- * transfer for an execution that was already paid.
+ * Release a claim whose settlement did not complete, freeing the (org,
+ * execution) idempotency slot and its reserved cap amount for a later retry.
+ * Only deletes a `pending` row, never a settled one.
+ */
+export async function releasePaygClaim(
+  organizationId: string,
+  executionId: string
+): Promise<void> {
+  await db
+    .delete(paygPayments)
+    .where(
+      and(
+        eq(paygPayments.organizationId, organizationId),
+        eq(paygPayments.executionId, executionId),
+        eq(paygPayments.status, PAYG_PAYMENT_STATUS.pending)
+      )
+    );
+}
+
+/**
+ * The recorded payment for one execution, or null, with its status so callers
+ * can tell a settled charge (return its tx) from a pending claim (another
+ * attempt owns it) and keep charging idempotent.
  */
 export async function findPaygPayment(
   organizationId: string,
   executionId: string
-): Promise<{ txHash: string | null; amountRaw: string } | null> {
+): Promise<{
+  txHash: string | null;
+  amountRaw: string;
+  status: string;
+} | null> {
   const rows = await db
-    .select({ txHash: paygPayments.txHash, amountRaw: paygPayments.amountRaw })
+    .select({
+      txHash: paygPayments.txHash,
+      amountRaw: paygPayments.amountRaw,
+      status: paygPayments.status,
+    })
     .from(paygPayments)
     .where(
       and(
@@ -45,20 +102,28 @@ export async function findPaygPayment(
   return rows[0] ?? null;
 }
 
-/** SUM of settled USDC (raw) charged in [since, until) for an org. */
+/**
+ * SUM of USDC (raw) charged in [since, until) for an org. Counts settled rows
+ * only by default; pass includePending to also count in-flight claims, which
+ * the cap checks use so concurrent claims reserve against one another.
+ */
 export async function getPaygSpentRaw(
   organizationId: string,
   since: Date,
-  until?: Date
+  until?: Date,
+  opts?: { includePending?: boolean }
 ): Promise<bigint> {
   const upperBound = until
     ? sql`AND created_at < ${until.toISOString()}`
     : sql``;
+  const statusFilter = opts?.includePending
+    ? sql`AND status IN (${PAYG_PAYMENT_STATUS.settled}, ${PAYG_PAYMENT_STATUS.pending})`
+    : sql`AND status = ${PAYG_PAYMENT_STATUS.settled}`;
   const rows = await db.execute<{ spent: string }>(sql`
     SELECT COALESCE(SUM(amount_raw::numeric), 0)::text AS spent
     FROM payg_payments
     WHERE organization_id = ${organizationId}
-      AND status = ${PAYG_PAYMENT_STATUS.settled}
+      ${statusFilter}
       AND created_at >= ${since.toISOString()}
       ${upperBound}
   `);

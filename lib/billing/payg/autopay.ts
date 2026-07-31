@@ -22,9 +22,11 @@ import {
 } from "./constants";
 import type { PaygBlockReason } from "./errors";
 import {
+  claimPaygPayment,
   findPaygPayment,
   getPaygSpentRaw,
-  recordPaygPayment,
+  markPaygPaymentSettled,
+  releasePaygClaim,
 } from "./payments";
 import { getPaygPeriod, startOfUtcDay } from "./period";
 import { getPaygExecutionPriceRaw } from "./pricing";
@@ -152,15 +154,14 @@ export async function autopayForExecution(params: {
     return { ok: false, reason: "not_eligible" };
   }
 
-  // Idempotency: a redelivered run must not settle a second on-chain transfer.
-  // If this execution was already paid, return the recorded tx unchanged.
+  // Idempotency: never settle a second on-chain transfer for one execution.
+  // A settled row returns its recorded tx; a pending row means another attempt
+  // is mid-settle (or a prior attempt crashed after settling), so refuse rather
+  // than risk a duplicate transfer -- x402 mints a fresh EIP-3009 nonce per
+  // call, so a re-settle is not idempotent on-chain.
   const existing = await findPaygPayment(organizationId, executionId);
-  if (existing?.txHash) {
-    return {
-      ok: true,
-      txHash: existing.txHash,
-      amountRaw: BigInt(existing.amountRaw),
-    };
+  if (existing) {
+    return settledOrRefuse(existing);
   }
 
   const priceRaw = getPaygExecutionPriceRaw();
@@ -169,30 +170,38 @@ export async function autopayForExecution(params: {
     return { ok: false, reason: "not_eligible" };
   }
 
-  const dailyCapRaw = BigInt(config.dailyCapRaw);
-  if (dailyCapRaw > BigInt(0)) {
-    const spentToday = await getPaygSpentRaw(organizationId, startOfUtcDay());
-    if (spentToday + priceRaw > dailyCapRaw) {
-      return { ok: false, reason: "daily_cap" };
-    }
-  }
-
-  const periodCapRaw = BigInt(config.periodCapRaw);
-  if (periodCapRaw > BigInt(0)) {
-    const period = getPaygPeriod(config.startedAt);
-    const spentPeriod = await getPaygSpentRaw(
-      organizationId,
-      period.start,
-      period.end
-    );
-    if (spentPeriod + priceRaw > periodCapRaw) {
-      return { ok: false, reason: "period_cap" };
-    }
-  }
-
   const wallet = await getOrganizationWallet(organizationId).catch(() => null);
   if (!wallet?.turnkeySubOrgId) {
     return { ok: false, reason: "not_eligible" };
+  }
+
+  // Claim the (org, execution) slot with a pending row before settling. The
+  // unique constraint makes this the idempotency latch: exactly one caller wins
+  // the insert and settles; a concurrent caller loses and backs off. The
+  // pending row also reserves its amount against the spend caps below.
+  const claimed = await claimPaygPayment({
+    organizationId,
+    executionId,
+    amountRaw: priceRaw.toString(),
+    chainId: config.chainId,
+    payerAddress: wallet.walletAddress,
+    treasuryAddress: treasury,
+    status: PAYG_PAYMENT_STATUS.pending,
+  });
+  if (!claimed) {
+    const owner = await findPaygPayment(organizationId, executionId);
+    return owner
+      ? settledOrRefuse(owner)
+      : { ok: false, reason: "payment_failed" };
+  }
+
+  // Enforce the spend caps against the reserved total (settled + pending, which
+  // now includes this claim). Release the claim on a breach so it holds neither
+  // the idempotency slot nor its reserved cap amount.
+  const capBlock = await checkCapsReserved(organizationId, config);
+  if (capBlock) {
+    await releasePaygClaim(organizationId, executionId);
+    return { ok: false, reason: capBlock };
   }
 
   const settlement = await settleViaFacilitator({
@@ -205,19 +214,63 @@ export async function autopayForExecution(params: {
     chainId: config.chainId,
   });
   if (!settlement.ok) {
+    await releasePaygClaim(organizationId, executionId);
     return { ok: false, reason: settlement.reason };
   }
 
-  await recordPaygPayment({
-    organizationId,
-    executionId,
-    amountRaw: priceRaw.toString(),
-    txHash: settlement.txHash,
-    chainId: config.chainId,
-    payerAddress: wallet.walletAddress,
-    treasuryAddress: treasury,
-    status: PAYG_PAYMENT_STATUS.settled,
-  });
-
+  await markPaygPaymentSettled(organizationId, executionId, settlement.txHash);
   return { ok: true, txHash: settlement.txHash, amountRaw: priceRaw };
+}
+
+/** Resolve an existing payment row into a result: its tx when settled,
+ * otherwise refuse so a pending or unfinished charge is never re-settled. */
+function settledOrRefuse(existing: {
+  txHash: string | null;
+  amountRaw: string;
+  status: string;
+}): AutopayResult {
+  if (existing.status === PAYG_PAYMENT_STATUS.settled && existing.txHash) {
+    return {
+      ok: true,
+      txHash: existing.txHash,
+      amountRaw: BigInt(existing.amountRaw),
+    };
+  }
+  return { ok: false, reason: "payment_failed" };
+}
+
+/** The daily/period cap breached by the reserved total (settled + pending),
+ * or null when both are within their configured caps. */
+async function checkCapsReserved(
+  organizationId: string,
+  config: { dailyCapRaw: string; periodCapRaw: string; startedAt: Date }
+): Promise<PaygBlockReason | null> {
+  const dailyCapRaw = BigInt(config.dailyCapRaw);
+  if (dailyCapRaw > BigInt(0)) {
+    const reservedToday = await getPaygSpentRaw(
+      organizationId,
+      startOfUtcDay(),
+      undefined,
+      { includePending: true }
+    );
+    if (reservedToday > dailyCapRaw) {
+      return "daily_cap";
+    }
+  }
+
+  const periodCapRaw = BigInt(config.periodCapRaw);
+  if (periodCapRaw > BigInt(0)) {
+    const period = getPaygPeriod(config.startedAt);
+    const reservedPeriod = await getPaygSpentRaw(
+      organizationId,
+      period.start,
+      period.end,
+      { includePending: true }
+    );
+    if (reservedPeriod > periodCapRaw) {
+      return "period_cap";
+    }
+  }
+
+  return null;
 }
