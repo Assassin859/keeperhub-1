@@ -1,14 +1,12 @@
 import { and, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { NextResponse } from "next/server";
-import { chargePaygIfBillable } from "@/lib/billing/payg/charge";
 import { db } from "@/lib/db";
-import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { workflowExecutions } from "@/lib/db/schema";
 import { type ErrorCode, getErrorCodeEntry } from "@/lib/errors/error-codes";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { isErrorStatus } from "@/lib/errors/execution-status";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
-import { HttpStatus } from "@/lib/http-status";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory } from "@/lib/logging";
 import { recordWorkflowExecutionFinished } from "@/lib/metrics/collectors/prometheus";
@@ -67,7 +65,7 @@ export async function PATCH(
   // Check execution exists and is not already cancelled
   const existing = await db.query.workflowExecutions.findFirst({
     where: eq(workflowExecutions.id, executionId),
-    columns: { id: true, status: true, workflowId: true },
+    columns: { id: true, status: true },
   });
 
   if (!existing) {
@@ -77,43 +75,6 @@ export async function PATCH(
   // Don't overwrite cancelled status (user already stopped this execution)
   if (existing.status === "cancelled") {
     return NextResponse.json({ success: true });
-  }
-
-  // PAYG: the phantom -> running upgrade is the point a scheduled, event, or
-  // queued run actually starts, the same as the inline routes charge before a
-  // manual/webhook/direct run. Settle the per-execution price here so every
-  // trigger bills exactly once (the charge is idempotent per (org, execution),
-  // so an executor retry of this upgrade does not double-settle). On a funds,
-  // cap, or payment block, resolve the row to a billing error and refuse the
-  // upgrade so the run does not proceed unpaid; non-PAYG orgs and in-bucket
-  // runs return applicable:false and upgrade untouched.
-  if (existing.status === "phantom" && typedStatus === "running") {
-    const workflow = await db.query.workflows.findFirst({
-      where: eq(workflows.id, existing.workflowId),
-      columns: { organizationId: true },
-    });
-    if (workflow) {
-      const paygCharge = await chargePaygIfBillable({
-        organizationId: workflow.organizationId,
-        executionId,
-      });
-      if (paygCharge.applicable && !paygCharge.ok) {
-        await db
-          .update(workflowExecutions)
-          .set({
-            status: "error",
-            error: paygCharge.message,
-            errorCategory: "billing",
-            errorType: "user",
-            completedAt: new Date(),
-          })
-          .where(eq(workflowExecutions.id, executionId));
-        return NextResponse.json(
-          { error: paygCharge.message, executionId, status: "error" },
-          { status: HttpStatus.PAYMENT_REQUIRED }
-        );
-      }
-    }
   }
 
   // Build update payload
