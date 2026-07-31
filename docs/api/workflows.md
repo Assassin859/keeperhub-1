@@ -131,7 +131,7 @@ POST /api/workflows/create
 
 `name`, `nodes`, and `edges` are required. `description`, `projectId`, `tagId`, and `enabled` are optional. `projectId` assigns the workflow to a [project](/api/projects); `tagId` assigns it to an organization tag for categorization; `enabled` (boolean) controls whether the workflow is active on creation.
 
-### Generic web3 example (HTTP trigger → write-contract)
+### Generic web3 write-contract example (HTTP trigger)
 
 Named-protocol actions (`aave-v3/supply`, etc.) hide most of the plumbing behind protocol-aware config keys. When you want to call an arbitrary contract that isn't in the [plugin catalog](/plugins/web3), use the generic `web3/write-contract` action. The trap is that the UI labels ("Function", "Function Arguments") don't line up 1:1 with the API field names, and `functionArgs` is a **JSON-encoded array string**, not a raw array. The full config shape:
 
@@ -155,7 +155,7 @@ Named-protocol actions (`aave-v3/supply`, etc.) hide most of the plumbing behind
         "config": {
           "actionType": "web3/write-contract",
           "network": "11155111",
-          "integrationId": "xv7x4qalziyodoir6wyu4",
+          "web3Connection": "default",
           "contractAddress": "0x599869cef2e4c52e2c9074caaf8f9fb0cb191776",
           "abi": "[{\"type\":\"function\",\"name\":\"release\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"depositId\",\"type\":\"bytes32\"}],\"outputs\":[]}]",
           "abiFunction": "release",
@@ -174,10 +174,10 @@ Field-name gotchas the strict validator will reject:
 
 | UI label | API field name | Notes |
 |---|---|---|
-| Function | `abiFunction` | Not `function`, `functionName`, or `method`. |
+| Function | `abiFunction` | Not `function` or `method` (`functionName` also works, as a legacy alias for `abiFunction`). |
 | Function Arguments | `functionArgs` | A JSON-encoded array **string** (`"[\"0x…\"]"`), not a raw array. Templates inside the string are resolved before `JSON.parse`. |
-| Wallet | `integrationId` | The web3-integration id from `GET /api/integrations`, not the Turnkey wallet address. |
-| ABI | `abi` | JSON-encoded string, not a raw array — same shape convention as `functionArgs`. |
+| Web3 Connection | `web3Connection` | Sender routing: `"default"` (org policy), `"eoa"` (force the Turnkey EOA), or `"safe:<safeWalletId>"`. The signing wallet is your org's Turnkey wallet, resolved automatically. |
+| Contract ABI | `abi` | JSON-encoded string, not a raw array — same shape convention as `functionArgs`. |
 
 Trigger data reference from a downstream action uses the [stored templating format](/workflows/templating): `{{@<nodeId>:<Label>.<field>}}`. For an HTTP trigger, top-level fields on the request body are spread into the trigger's output, so `{"input": {"depositId": "0x…"}}` sent to [`POST /api/workflows/{id}/execute`](#execute-workflow) is reachable at `{{@trigger-1:HTTP.depositId}}`.
 

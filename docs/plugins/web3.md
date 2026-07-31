@@ -466,17 +466,17 @@ Execute state-changing functions on smart contracts using your Turnkey wallet. R
 
 ### Direct-API field names
 
-If you're building this action via the [Workflows API](/api/workflows) rather than the editor, the UI labels above map to these `config` keys — the strict-mode validator will reject the natural-language versions (`function`, `functionName`, `method`, `contract`):
+If you're building this action via the [Workflows API](/api/workflows) rather than the editor, the UI labels above map to these `config` keys — the strict-mode validator will reject the natural-language versions (`function`, `method`, `contract`). `functionName` is an accepted legacy alias for `abiFunction`; the canonical key is `abiFunction`.
 
 | UI label | API `config` field | Shape |
 |---|---|---|
-| Function | `abiFunction` | plain function name string (e.g. `"release"`) |
+| Function | `abiFunction` | plain function name string (e.g. `"release"`). `functionName` also works as a legacy alias. |
 | Function Arguments | `functionArgs` | **JSON-encoded array string** — e.g. `"[\"0xabc…\"]"`. Templates inside the string are resolved before `JSON.parse`, so wrap template tokens in the array's string quotes. |
-| ABI | `abi` | JSON-encoded string (same convention as `functionArgs`) |
-| Wallet | `integrationId` | web3-integration id from `GET /api/integrations`, not the Turnkey wallet address |
+| Contract ABI | `abi` | JSON-encoded string (same convention as `functionArgs`) |
+| Web3 Connection | `web3Connection` | Sender routing: `"default"` (org policy), `"eoa"` (force the Turnkey EOA), or `"safe:<safeWalletId>"`. The signing wallet is your org's Turnkey wallet, resolved automatically. |
 | Network | `network` | numeric chain id as a string (e.g. `"11155111"`) |
 
-See the [generic web3 example](/api/workflows#generic-web3-example-http-trigger-write-contract) in the Workflows API docs for a full working request body.
+See the [generic web3 write-contract example](/api/workflows#generic-web3-write-contract-example-http-trigger) in the Workflows API docs for a full working request body.
 
 ---
 
