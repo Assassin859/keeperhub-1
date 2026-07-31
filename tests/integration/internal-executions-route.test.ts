@@ -22,6 +22,19 @@ vi.mock("@/lib/billing/execution-guard", () => ({
   enforceExecutionLimit: (...args: unknown[]) => enforceExecutionLimit(...args),
 }));
 
+// PAYG charge applied at the phantom -> running upgrade. Defaults to a no-op
+// (applicable: false); the charge tests drive it per case.
+type PaygChargeResult =
+  | { applicable: false }
+  | { applicable: true; ok: true; txHash: string }
+  | { applicable: true; ok: false; reason: string; message: string };
+const chargePaygIfBillable = vi.fn(
+  async (..._args: unknown[]) => ({ applicable: false }) as PaygChargeResult
+);
+vi.mock("@/lib/billing/payg/charge", () => ({
+  chargePaygIfBillable: (...args: unknown[]) => chargePaygIfBillable(...args),
+}));
+
 const enforceWorkflowFeatures = vi.fn(
   async (..._args: unknown[]) => ({ blocked: false }) as { blocked: boolean }
 );
@@ -57,7 +70,11 @@ let mockWorkflow: {
   nodes: unknown[];
   userId: string;
 } | null;
-let mockExistingExecution: { id: string; status: string } | null;
+let mockExistingExecution: {
+  id: string;
+  status: string;
+  workflowId: string;
+} | null;
 let insertedValues: Record<string, unknown> | null;
 let updatedSet: Record<string, unknown> | null;
 // Rows the create INSERT's .onConflictDoNothing().returning() resolves to.
@@ -100,12 +117,14 @@ vi.mock("@/lib/db", () => ({
         }),
       }),
     })),
-    // PATCH chains .set().from(prevExecution).where().returning() for the
-    // pre-update-status self-join.
+    // The terminal write chains .set().from(prevExecution).where().returning()
+    // for the pre-update-status self-join; the PAYG billing-block write chains
+    // .set().where(). Support both from the same set() result.
     update: vi.fn(() => ({
       set: (values: Record<string, unknown>) => {
         updatedSet = values;
         return {
+          where: () => Promise.resolve(undefined),
           from: () => ({
             where: () => ({
               returning: () => Promise.resolve(mockUpdateReturning),
@@ -344,9 +363,20 @@ describe("PATCH /api/internal/executions/[executionId]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthResult.authenticated = true;
-    mockExistingExecution = { id: "exec_1", status: "phantom" };
+    mockExistingExecution = {
+      id: "exec_1",
+      status: "phantom",
+      workflowId: "wf_1",
+    };
+    mockWorkflow = {
+      organizationId: "org_1",
+      deletedAt: null,
+      nodes: [],
+      userId: "wf_owner",
+    };
     updatedSet = null;
     mockUpdateReturning = [];
+    chargePaygIfBillable.mockResolvedValue({ applicable: false });
   });
 
   it("writes a valid error code and derives type/category from the registry", async () => {
@@ -456,5 +486,95 @@ describe("PATCH /api/internal/executions/[executionId]", () => {
     expect(
       prometheusMod.recordWorkflowExecutionFinished
     ).not.toHaveBeenCalled();
+  });
+
+  it("charges the org when a phantom upgrades to running and lets it proceed", async () => {
+    mockExistingExecution = {
+      id: "exec_1",
+      status: "phantom",
+      workflowId: "wf_1",
+    };
+    chargePaygIfBillable.mockResolvedValue({
+      applicable: true,
+      ok: true,
+      txHash: "0xabc",
+    });
+    mockUpdateReturning = [{ workflowId: "wf_1", previousStatus: "phantom" }];
+
+    const response = await PATCH(
+      patchRequest({ status: "running" }),
+      patchContext
+    );
+
+    expect(chargePaygIfBillable).toHaveBeenCalledWith({
+      organizationId: "org_1",
+      executionId: "exec_1",
+    });
+    expect(response.status).toBe(200);
+    // The upgrade to running still went through (no billing block).
+    expect(updatedSet?.status).toBe("running");
+  });
+
+  it("blocks the upgrade and marks a billing error when the charge is denied", async () => {
+    mockExistingExecution = {
+      id: "exec_1",
+      status: "phantom",
+      workflowId: "wf_1",
+    };
+    chargePaygIfBillable.mockResolvedValue({
+      applicable: true,
+      ok: false,
+      reason: "insufficient_funds",
+      message: "Not enough USDC in your wallet to cover this execution.",
+    });
+
+    const response = await PATCH(
+      patchRequest({ status: "running" }),
+      patchContext
+    );
+
+    expect(response.status).toBe(402);
+    const body = await response.json();
+    expect(body.status).toBe("error");
+    // The row is resolved to a billing error instead of running.
+    expect(updatedSet?.status).toBe("error");
+    expect(updatedSet?.errorCategory).toBe("billing");
+    expect(updatedSet?.errorType).toBe("user");
+  });
+
+  it("does not charge when a non-phantom row transitions (e.g. running -> success)", async () => {
+    mockExistingExecution = {
+      id: "exec_1",
+      status: "running",
+      workflowId: "wf_1",
+    };
+    mockUpdateReturning = [{ workflowId: "wf_1", previousStatus: "running" }];
+
+    const response = await PATCH(
+      patchRequest({ status: "success" }),
+      patchContext
+    );
+
+    expect(chargePaygIfBillable).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+  });
+
+  it("upgrades a non-PAYG org untouched (charge not applicable)", async () => {
+    mockExistingExecution = {
+      id: "exec_1",
+      status: "phantom",
+      workflowId: "wf_1",
+    };
+    chargePaygIfBillable.mockResolvedValue({ applicable: false });
+    mockUpdateReturning = [{ workflowId: "wf_1", previousStatus: "phantom" }];
+
+    const response = await PATCH(
+      patchRequest({ status: "running" }),
+      patchContext
+    );
+
+    expect(chargePaygIfBillable).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(200);
+    expect(updatedSet?.status).toBe("running");
   });
 });
