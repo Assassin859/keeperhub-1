@@ -558,7 +558,7 @@ function buildPerExecutionRow(paygPriceUsdc: string | null): PkgComparisonRow {
     ? `$${Number(paygPriceUsdc).toLocaleString(undefined, {
         maximumFractionDigits: 6,
       })}`
-    : "Pay as you go";
+    : "$0.01";
   return {
     label: "Per extra execution",
     hint: PER_EXECUTION_HINT,
