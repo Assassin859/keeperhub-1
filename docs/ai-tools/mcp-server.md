@@ -169,10 +169,11 @@ The server registers more than 30 tools. Call `tools_documentation` (or `list_ac
 
 All three direct execution tools accept an optional `simulate` boolean. Set it
 to `true` first to estimate gas and catch a revert without signing or
-broadcasting. If the result has `success: true` and `wouldRevert: false`, repeat
-the tool call with the same transaction arguments, omit `simulate`, and add a
-unique `idempotency_key`. Then poll `get_direct_execution_status` until it
-returns `completed` or `failed`.
+broadcasting. If the successful tool result has `success: true` and
+`wouldRevert: false`, repeat the tool call with the same transaction arguments,
+omit `simulate`, and add a unique `idempotency_key`. Then poll
+`get_direct_execution_status` with bounded backoff until it returns `completed`
+or `failed`.
 
 For example, preflight a Base Sepolia transfer:
 
@@ -186,9 +187,17 @@ For example, preflight a Base Sepolia transfer:
 ```
 
 `simulate` must be the JSON boolean `true`, not the string `"true"`. A
-simulation never returns a transaction hash because nothing is broadcast.
-See [Direct Execution](/api/direct-execution) for response shapes, retry
-semantics, and the authoritative safe first-write sequence.
+simulation never returns a transaction hash because nothing is broadcast. A
+revert or invalid simulation is surfaced as an MCP tool error; the error text
+includes the REST error JSON when available. Treat any tool error as a hard
+stop. View/pure calls and a check whose condition is false return their normal
+read/no-action result instead of a simulation envelope.
+
+Simulation is currently EVM-only. Solana transfers on chain IDs `101` and
+`103` can still broadcast through `execute_transfer`, but the MCP tool rejects
+`simulate: true` for those IDs and their aliases before making an API call. See
+[Direct Execution](/api/direct-execution) for response shapes, retry semantics,
+and the authoritative safe first-write sequence.
 
 ### Protocol Actions (DeFi)
 

@@ -245,7 +245,7 @@ const SIMULATE_ARG = z
     "Set to true to simulate an EVM operation without signing or broadcasting. Solana networks (chain IDs 101/103 and their aliases) are not yet supported. Use the same arguments with simulate omitted or false only after a successful simulation."
   );
 
-const SOLANA_DIRECT_EXECUTION_CHAIN_IDS = new Set([
+const SOLANA_DIRECT_EXECUTION_CHAIN_IDS = new Set<number>([
   SUPPORTED_CHAIN_IDS.SOLANA_MAINNET,
   SUPPORTED_CHAIN_IDS.SOLANA_DEVNET,
 ]);
@@ -1103,7 +1103,7 @@ export function registerTools(
 
   server.tool(
     "tools_documentation",
-    "Get documentation on how to use the KeeperHub MCP tools, including examples and best practices for workflow creation.",
+    "Get documentation on how to use the KeeperHub MCP tools, including workflow creation and safe direct execution.",
     {},
     {
       title: "Tools Documentation",
@@ -1144,6 +1144,16 @@ export function registerTools(
           "- get_template: Inspect a template's structure",
           "- deploy_template: Clone a template into your org",
           "",
+          "DIRECT EXECUTION (EVM WRITES)",
+          "1. Call execute_transfer, execute_contract_call, or execute_check_and_execute with simulate=true",
+          "2. Continue only after success=true and wouldRevert=false; any tool error is a hard stop",
+          "3. Repeat the same arguments with simulate omitted and a unique idempotency_key",
+          "4. Poll get_direct_execution_status with bounded backoff until completed or failed",
+          "5. Save the terminal transactionLink as the onchain proof",
+          "- simulate must be a JSON boolean, not a string",
+          "- simulation is EVM-only; Solana chain IDs 101/103 and their aliases are rejected before the API call",
+          "- view/pure calls and unmet conditions return their normal read/no-action result",
+          "",
           "TEMPLATE SYNTAX",
           "Reference outputs from previous nodes using: {{@nodeId:Label.field}}",
           "Example: {{@check-balance:Check Balance.balance}}",
@@ -1151,6 +1161,7 @@ export function registerTools(
           "CHAIN IDs",
           "- Ethereum Mainnet: 1",
           "- Base: 8453",
+          "- Base Sepolia Testnet: 84532",
           "- Sepolia Testnet: 11155111",
           "- Use list_action_schemas (with includeChains: true) for the full list",
         ].join("\n");
@@ -1171,9 +1182,11 @@ export function registerTools(
     "Transfer native tokens (ETH, MATIC) or ERC20 tokens from your wallet to a recipient address. Requires a wallet integration.",
     {
       chain_id: looseString(
-        "Chain ID (e.g., '1' for Ethereum, '8453' for Base)"
+        "Chain ID (e.g., '1' for Ethereum, '8453' for Base, or '103' for Solana Devnet). Solana transfers can broadcast, but simulate is currently EVM-only."
       ),
-      to_address: z.string().describe("Recipient wallet address (0x...)"),
+      to_address: z
+        .string()
+        .describe("Recipient wallet address (EVM 0x or Solana base58)"),
       amount: looseString(
         "Amount to transfer in human-readable units (e.g., '0.1')"
       ),
@@ -1238,7 +1251,7 @@ export function registerTools(
       simulate: SIMULATE_ARG,
       idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
-    { title: "Contract Call", readOnlyHint: false, destructiveHint: false },
+    { title: "Contract Call", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("execute_contract_call", scope, async (args) =>
       withToolLogging("execute_contract_call", undefined, async () => {
         assertSimulationSupported(args.chain_id, args.simulate);

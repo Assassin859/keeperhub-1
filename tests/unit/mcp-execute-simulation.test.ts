@@ -8,6 +8,7 @@ import { registerTools } from "@/lib/mcp/tools";
 type RegisteredTool = {
   name: string;
   schema: Record<string, unknown>;
+  annotations: { destructiveHint?: boolean };
   handler: (...args: unknown[]) => unknown;
 };
 
@@ -57,10 +58,10 @@ function getTool(name: string): RegisteredTool {
         toolName: string,
         _description: string,
         schema: Record<string, unknown>,
-        _annotations: unknown,
+        annotations: { destructiveHint?: boolean },
         handler: (...args: unknown[]) => unknown
       ) => {
-        registeredTools.push({ name: toolName, schema, handler });
+        registeredTools.push({ name: toolName, schema, annotations, handler });
       }
     ),
   } as unknown as McpServer;
@@ -71,6 +72,32 @@ function getTool(name: string): RegisteredTool {
     throw new Error(`tool ${name} not registered`);
   }
   return tool;
+}
+
+async function callThroughMcp(
+  name: string,
+  args: Record<string, unknown>
+): Promise<Awaited<ReturnType<Client["callTool"]>>> {
+  const server = new McpServer({ name: "simulate-test", version: "0.0.0" });
+  registerTools(server, "http://internal", "Bearer test", SCOPE_MCP_WRITE);
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const client = new Client({
+    name: "simulate-test-client",
+    version: "0.0.0",
+  });
+
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+
+  try {
+    return await client.callTool({ name, arguments: args });
+  } finally {
+    await client.close();
+    await server.close();
+  }
 }
 
 describe("MCP direct execution simulation", () => {
@@ -85,29 +112,31 @@ describe("MCP direct execution simulation", () => {
   });
 
   it("forwards simulate to transfer requests", async () => {
-    await getTool("execute_transfer").handler({
+    const result = await callThroughMcp("execute_transfer", {
       chain_id: "84532",
       to_address: "0xabc",
       amount: "0.01",
       simulate: true,
     });
 
+    expect(result.isError).not.toBe(true);
     expect(lastBody().simulate).toBe(true);
   });
 
   it("forwards simulate to contract-call requests", async () => {
-    await getTool("execute_contract_call").handler({
+    const result = await callThroughMcp("execute_contract_call", {
       contract_address: "0xcontract",
       chain_id: "84532",
       function_name: "transfer",
       simulate: true,
     });
 
+    expect(result.isError).not.toBe(true);
     expect(lastBody().simulate).toBe(true);
   });
 
   it("forwards simulate to check-and-execute requests", async () => {
-    await getTool("execute_check_and_execute").handler({
+    const result = await callThroughMcp("execute_check_and_execute", {
       contract_address: "0xcheck",
       chain_id: "84532",
       function_name: "balanceOf",
@@ -119,7 +148,14 @@ describe("MCP direct execution simulation", () => {
       simulate: true,
     });
 
+    expect(result.isError).not.toBe(true);
     expect(lastBody().simulate).toBe(true);
+  });
+
+  it("marks contract calls as potentially destructive", () => {
+    expect(getTool("execute_contract_call").annotations.destructiveHint).toBe(
+      true
+    );
   });
 
   it("keeps existing broadcast requests unchanged when simulate is omitted", async () => {
@@ -133,36 +169,61 @@ describe("MCP direct execution simulation", () => {
   });
 
   it("rejects truthy strings before they can reach the REST route", async () => {
-    const server = new McpServer({ name: "simulate-test", version: "0.0.0" });
-    registerTools(server, "http://internal", "Bearer test", SCOPE_MCP_WRITE);
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    const client = new Client({
-      name: "simulate-test-client",
-      version: "0.0.0",
+    const result = await callThroughMcp("execute_transfer", {
+      chain_id: "84532",
+      to_address: "0xabc",
+      amount: "0.01",
+      simulate: "true",
     });
 
-    await Promise.all([
-      server.connect(serverTransport),
-      client.connect(clientTransport),
-    ]);
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
-    try {
-      const result = await client.callTool({
-        name: "execute_transfer",
-        arguments: {
-          chain_id: "84532",
-          to_address: "0xabc",
+  it("rejects Solana IDs and aliases before making an API call", async () => {
+    const chainIds = [
+      "101",
+      "103",
+      "solana",
+      "solana-mainnet",
+      "solana-devnet",
+      "solana-testnet",
+      "103abc",
+    ];
+
+    for (const chain_id of chainIds) {
+      const results = await Promise.all([
+        callThroughMcp("execute_transfer", {
+          chain_id,
+          to_address: "11111111111111111111111111111111",
           amount: "0.01",
-          simulate: "true",
-        },
-      });
+          simulate: true,
+        }),
+        callThroughMcp("execute_contract_call", {
+          contract_address: "0xcontract",
+          chain_id,
+          function_name: "transfer",
+          simulate: true,
+        }),
+        callThroughMcp("execute_check_and_execute", {
+          contract_address: "0xcheck",
+          chain_id,
+          function_name: "balanceOf",
+          condition: { operator: "gt", value: "0" },
+          action: {
+            contract_address: "0xaction",
+            function_name: "transfer",
+          },
+          simulate: true,
+        }),
+      ]);
 
-      expect(result.isError).toBe(true);
-      expect(fetchMock).not.toHaveBeenCalled();
-    } finally {
-      await client.close();
-      await server.close();
+      for (const result of results) {
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain("EVM-only");
+      }
     }
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

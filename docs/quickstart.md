@@ -128,6 +128,10 @@ Example simulation on Base Sepolia:
 
 For an ERC-20 transfer, also pass the token's contract address as
 `token_address`. The Base Sepolia USDC address is listed in the table above.
+Any MCP tool error is a failed preflight and must stop the flow; revert details
+include the REST error JSON when available. Simulation is currently EVM-only,
+so `execute_transfer` rejects `simulate: true` for Solana chain IDs `101` and
+`103` and their aliases before making an API call.
 See [MCP Server](/ai-tools/mcp-server#safely-preflight-direct-writes) for the
 tool flow and [Direct Execution](/api/direct-execution) for complete response
 and error handling details.
