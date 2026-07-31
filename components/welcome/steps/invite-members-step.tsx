@@ -28,7 +28,7 @@ import {
 } from "@/lib/onboarding/invite-validation";
 import { cn } from "@/lib/utils";
 
-const NEXT_PATH = "/welcome/connect-agent";
+const NEXT_PATH = "/welcome/pay-per-execution";
 const BACK_PATH = "/welcome/create-org";
 
 type InviteRole = "member" | "admin";
