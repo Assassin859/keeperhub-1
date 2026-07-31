@@ -4,7 +4,11 @@ vi.mock("server-only", () => ({}));
 
 import { paygBlockMessage } from "@/lib/billing/payg/errors";
 import { getPaygPeriod, startOfUtcDay } from "@/lib/billing/payg/period";
-import { usdcDecimalToRaw, usdcRawToDecimal } from "@/lib/billing/payg/usdc";
+import {
+  isValidUsdcDecimal,
+  usdcDecimalToRaw,
+  usdcRawToDecimal,
+} from "@/lib/billing/payg/usdc";
 import { isFeatureEnabled } from "@/lib/features/check";
 import type { FeatureId } from "@/lib/features/types";
 
@@ -38,6 +42,20 @@ describe("USDC 6-decimal raw conversion", () => {
 
   it("formats raw back to a decimal string", () => {
     expect(usdcRawToDecimal(BigInt(7500))).toBe("0.007500");
+  });
+});
+
+describe("USDC decimal validation (spend caps)", () => {
+  it("accepts well-formed non-negative decimals", () => {
+    for (const value of ["0", "1", "1.5", "0.01", "1000.000000"]) {
+      expect(isValidUsdcDecimal(value)).toBe(true);
+    }
+  });
+
+  it("rejects malformed values so a bad cap is not silently unlimited", () => {
+    for (const value of ["abc", "-5", "1.2.3", "1e6", "", "  "]) {
+      expect(isValidUsdcDecimal(value)).toBe(false);
+    }
   });
 });
 

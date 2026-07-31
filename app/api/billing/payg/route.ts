@@ -9,7 +9,11 @@ import { PAYG_DEFAULT_CHAIN_ID } from "@/lib/billing/payg/constants";
 import { getPaygExecutionPriceRaw } from "@/lib/billing/payg/pricing";
 import { getPaygTreasuryOrNull } from "@/lib/billing/payg/treasury";
 import { getCurrentPaygUsage } from "@/lib/billing/payg/usage";
-import { usdcDecimalToRaw, usdcRawToDecimal } from "@/lib/billing/payg/usdc";
+import {
+  isValidUsdcDecimal,
+  usdcDecimalToRaw,
+  usdcRawToDecimal,
+} from "@/lib/billing/payg/usdc";
 import { getOrgPlan } from "@/lib/billing/plans-server";
 import { requireOrgOwner } from "@/lib/billing/require-org-owner";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -89,13 +93,17 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 }
 
-/** Parse a decimal USDC cap into a 6-dp raw string; "" / undefined -> "0" (no cap). */
+/**
+ * Parse a decimal USDC cap into a 6-dp raw string; "" / undefined -> "0" (no
+ * cap). Throws on a malformed value so the caller returns 400 rather than
+ * silently treating garbage as "0" (which would disable the spend cap).
+ */
 function parseCap(value: unknown): string {
   if (value === undefined || value === null || value === "") {
     return "0";
   }
-  if (typeof value !== "string") {
-    throw new Error("Cap must be a decimal string");
+  if (typeof value !== "string" || !isValidUsdcDecimal(value)) {
+    throw new Error("Cap must be a decimal USDC string");
   }
   return usdcDecimalToRaw(value).toString();
 }

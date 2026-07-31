@@ -5,6 +5,15 @@ export const USDC_DECIMALS = 6;
 
 const DECIMAL_RE = /^\d+(\.\d+)?$/;
 
+/**
+ * True if `value` is a well-formed non-negative USDC decimal (e.g. "0", "1.5").
+ * Callers that must distinguish "0" (a valid zero) from garbage validate with
+ * this before calling usdcDecimalToRaw, which returns 0n for both.
+ */
+export function isValidUsdcDecimal(value: string): boolean {
+  return DECIMAL_RE.test(value.trim());
+}
+
 /** "0.0075" -> 7500n. Returns 0n for a malformed input. */
 export function usdcDecimalToRaw(decimal: string): bigint {
   const trimmed = decimal.trim();
