@@ -211,6 +211,9 @@ importers:
       jotai:
         specifier: ^2.19.0
         version: 2.19.0(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@19.2.14)(react@19.2.4)
+      keeperhub-pricing-ui:
+        specifier: ^0.1.1
+        version: 0.1.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.4)
@@ -370,7 +373,7 @@ importers:
         version: 5.9.3
       ultracite:
         specifier: 6.5.1
-        version: 6.5.1(effect@3.21.2)(typescript@5.9.3)
+        version: 6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.4.2(typescript@5.9.3))
       vite:
         specifier: ^7.3.5
         version: 7.3.5(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.8.3)
@@ -7166,6 +7169,13 @@ packages:
   jwt-decode@4.0.0:
     resolution: {integrity: sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA==}
     engines: {node: '>=18'}
+
+  keeperhub-pricing-ui@0.1.1:
+    resolution: {integrity: sha512-E9PKIv23V8CUoUVxcVqoWKwpVwCqq2/r0RttE3MbZa5SHOjCcPNAt/gfLiaTn1BiPC5+CeRCZiM8vuqM5UlDOA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
@@ -17371,6 +17381,11 @@ snapshots:
 
   jwt-decode@4.0.0: {}
 
+  keeperhub-pricing-ui@0.1.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+    dependencies:
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
@@ -19145,12 +19160,13 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(zod@4.3.6):
+  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.4.2(typescript@5.9.3))(zod@4.3.6):
     dependencies:
       commander: 14.0.3
     optionalDependencies:
       '@trpc/server': 11.15.0(typescript@5.9.3)
       effect: 3.21.2
+      valibot: 1.4.2(typescript@5.9.3)
       zod: 4.3.6
 
   ts-command-line-args@2.5.1:
@@ -19246,7 +19262,7 @@ snapshots:
 
   ulid@3.0.2: {}
 
-  ultracite@6.5.1(effect@3.21.2)(typescript@5.9.3):
+  ultracite@6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.4.2(typescript@5.9.3)):
     dependencies:
       '@clack/prompts': 0.11.0
       '@trpc/server': 11.15.0(typescript@5.9.3)
@@ -19255,7 +19271,7 @@ snapshots:
       jsonc-parser: 3.3.1
       nypm: 0.6.5
       picocolors: 1.1.1
-      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(zod@4.3.6)
+      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.4.2(typescript@5.9.3))(zod@4.3.6)
       zod: 4.3.6
     transitivePeerDependencies:
       - '@orpc/server'
