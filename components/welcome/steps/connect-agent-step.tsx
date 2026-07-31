@@ -32,7 +32,7 @@ import {
 import { api } from "@/lib/api-client";
 import { markOnboardingComplete } from "@/lib/welcome-status";
 
-const BACK_PATH = "/welcome/invite-members";
+const BACK_PATH = "/welcome/pay-per-execution";
 
 const TAB_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   "claude-code": ClaudeCodeIcon,
@@ -199,7 +199,7 @@ export function ConnectAgentStep(): React.ReactElement {
       onBack={() => router.push(BACK_PATH)}
       onNext={finish}
       preview={<ConnectAgentPreview frameworkId={activeId} />}
-      stepIndex={2}
+      stepIndex={3}
       title="Connect your AI agent"
     >
       <div className="flex flex-col gap-6">

@@ -2,18 +2,24 @@
 
 import {
   Activity,
+  ArrowLeftRight,
   ArrowUp,
   AudioLines,
+  Banknote,
   BarChart3,
   Bookmark,
   Boxes,
   Check,
   ChevronDown,
+  Clock,
+  Coins,
   Copy,
   DollarSign,
+  FileCode,
   Globe,
   History,
   Info,
+  LineChart,
   Loader2,
   Mic,
   Plus,
@@ -21,8 +27,9 @@ import {
   Sparkles,
   Users,
   Workflow,
+  Zap,
 } from "lucide-react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   type ComponentType,
   Fragment,
@@ -863,6 +870,466 @@ export function ConnectAgentPreview({
             )}
           </div>
         </motion.div>
+      </div>
+    </div>
+  );
+}
+
+// Step 3 preview (pay-per-execution): a large auto-executing 3-node workflow
+// graph (Onchain Event -> Health Factor -> Supply to Aave) set on a dotted
+// canvas with dimmed decorative nodes scattered around it. Every run starts
+// with an upfront payment/cap check (shown as a chip at the top of the
+// card); only a paid run lights the nodes left to right with a pulse
+// traveling each connector, while a blocked run stays idle and resets.
+type GraphPhase =
+  | "gate"
+  | "trigger"
+  | "toCondition"
+  | "condition"
+  | "toAction"
+  | "action"
+  | "hold";
+
+type RunOutcome = "paid" | "blocked";
+
+const PAID_PHASE_ORDER: GraphPhase[] = [
+  "gate",
+  "trigger",
+  "toCondition",
+  "condition",
+  "toAction",
+  "action",
+  "hold",
+];
+
+const BLOCKED_PHASE_ORDER: GraphPhase[] = ["gate", "hold"];
+
+const GRAPH_PHASE_DURATION_MS: Record<GraphPhase, number> = {
+  gate: 900,
+  trigger: 700,
+  toCondition: 500,
+  condition: 700,
+  toAction: 500,
+  action: 700,
+  hold: 900,
+};
+
+// The blocked run's "hold" dwells longer than the paid run's so the rejection
+// message has time to read even though its run is otherwise much shorter.
+const HOLD_DURATION_MS: Record<RunOutcome, number> = {
+  paid: 900,
+  blocked: 1600,
+};
+
+const REDUCED_MOTION_MULTIPLIER = 1.8;
+const BLOCKED_EVERY_N_RUNS = 4;
+
+type NodeStatus = "idle" | "active" | "done";
+
+type GraphNodeMeta = {
+  id: string;
+  title: string;
+  kind: string;
+  icon: ComponentType<{ className?: string }>;
+  accentClass: string;
+};
+
+const GRAPH_NODES: GraphNodeMeta[] = [
+  {
+    id: "trigger",
+    title: "Onchain Event",
+    kind: "Trigger",
+    icon: Boxes,
+    accentClass: "text-emerald-400",
+  },
+  {
+    id: "condition",
+    title: "Health Factor",
+    kind: "Condition",
+    icon: Activity,
+    accentClass: "text-amber-400",
+  },
+  {
+    id: "action",
+    title: "Supply to Aave",
+    kind: "Action",
+    icon: Banknote,
+    accentClass: "text-blue-400",
+  },
+];
+
+// Static, low-opacity node cards scattered around the main card to fill out
+// the panel like a real, sprawling workflow canvas. Purely decorative.
+type DecorativeNodeMeta = {
+  id: string;
+  title: string;
+  icon: ComponentType<{ className?: string }>;
+  style: React.CSSProperties;
+};
+
+const DECORATIVE_NODES: DecorativeNodeMeta[] = [
+  {
+    id: "schedule",
+    title: "Schedule",
+    icon: Clock,
+    style: { top: "10%", left: "6%" },
+  },
+  {
+    id: "read-contract",
+    title: "Read Contract",
+    icon: FileCode,
+    style: { top: "16%", right: "8%" },
+  },
+  {
+    id: "uniswap-swap",
+    title: "Uniswap Swap",
+    icon: ArrowLeftRight,
+    style: { bottom: "14%", left: "11%" },
+  },
+  {
+    id: "transfer-erc20",
+    title: "Transfer ERC20",
+    icon: Coins,
+    style: { bottom: "10%", right: "13%" },
+  },
+  {
+    id: "price-feed",
+    title: "Price Feed",
+    icon: LineChart,
+    style: { top: "46%", right: "3%" },
+  },
+];
+
+function outcomeForRun(run: number): RunOutcome {
+  return (run + 1) % BLOCKED_EVERY_N_RUNS === 0 ? "blocked" : "paid";
+}
+
+function scaledDuration(
+  phase: GraphPhase,
+  reducedMotion: boolean,
+  outcome: RunOutcome = "paid"
+): number {
+  const base =
+    phase === "hold"
+      ? HOLD_DURATION_MS[outcome]
+      : GRAPH_PHASE_DURATION_MS[phase];
+  return base * (reducedMotion ? REDUCED_MOTION_MULTIPLIER : 1);
+}
+
+// Drives the loop on a self-scheduling timeout chain (not React state), so
+// the effect only depends on the reduced-motion flag and never re-fires on
+// every phase change. Each run resolves its payment outcome first ("gate")
+// and only walks the paid phase sequence when the charge succeeds; a
+// blocked run skips straight to a longer "hold" before resetting.
+function useWorkflowRunLoop(reducedMotion: boolean): {
+  phase: GraphPhase;
+  runIndex: number;
+  outcome: RunOutcome;
+} {
+  const [phase, setPhase] = useState<GraphPhase>("gate");
+  const [runIndex, setRunIndex] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let run = 0;
+    let outcome = outcomeForRun(run);
+    let phaseOrder =
+      outcome === "blocked" ? BLOCKED_PHASE_ORDER : PAID_PHASE_ORDER;
+    let phaseIndex = 0;
+
+    const scheduleNext = (): void => {
+      const current = phaseOrder[phaseIndex];
+      timeoutId = setTimeout(
+        () => {
+          if (cancelled) {
+            return;
+          }
+          phaseIndex += 1;
+          if (phaseIndex >= phaseOrder.length) {
+            run += 1;
+            outcome = outcomeForRun(run);
+            phaseOrder =
+              outcome === "blocked" ? BLOCKED_PHASE_ORDER : PAID_PHASE_ORDER;
+            phaseIndex = 0;
+            setRunIndex(run);
+          }
+          setPhase(phaseOrder[phaseIndex]);
+          scheduleNext();
+        },
+        scaledDuration(current, reducedMotion, outcome)
+      );
+    };
+
+    scheduleNext();
+    return (): void => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [reducedMotion]);
+
+  return { phase, runIndex, outcome: outcomeForRun(runIndex) };
+}
+
+// Node statuses only ever leave "idle" on a paid run: a blocked run resolves
+// at the gate and never reaches the execution phases, so the graph stays
+// dimmed to make the upfront rejection visible.
+function triggerNodeStatus(phase: GraphPhase, outcome: RunOutcome): NodeStatus {
+  if (outcome === "blocked" || phase === "gate") {
+    return "idle";
+  }
+  return phase === "trigger" ? "active" : "done";
+}
+
+function conditionNodeStatus(
+  phase: GraphPhase,
+  outcome: RunOutcome
+): NodeStatus {
+  if (
+    outcome === "blocked" ||
+    phase === "gate" ||
+    phase === "trigger" ||
+    phase === "toCondition"
+  ) {
+    return "idle";
+  }
+  return phase === "condition" ? "active" : "done";
+}
+
+function actionNodeStatus(phase: GraphPhase, outcome: RunOutcome): NodeStatus {
+  if (outcome === "blocked") {
+    return "idle";
+  }
+  if (phase === "action") {
+    return "active";
+  }
+  return phase === "hold" ? "done" : "idle";
+}
+
+/** Atom: a workflow node card that lights up as the run reaches it. */
+function GraphNodeCard({
+  node,
+  status,
+}: {
+  node: GraphNodeMeta;
+  status: NodeStatus;
+}): React.ReactElement {
+  const Icon = node.icon;
+  return (
+    <motion.div
+      animate={{ scale: status === "active" ? 1.05 : 1 }}
+      className={cn(
+        "flex w-40 flex-none flex-col items-center gap-2 rounded-2xl border bg-background/60 px-4 py-5 text-center",
+        status === "idle" && "border-border",
+        status === "active" &&
+          "border-keeperhub-green/60 shadow-keeperhub-green/20 shadow-lg ring-2 ring-keeperhub-green/60",
+        status === "done" && "border-keeperhub-green/30 bg-keeperhub-green/5"
+      )}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+    >
+      <Icon
+        className={cn(
+          "size-7",
+          status === "idle" ? "text-muted-foreground" : node.accentClass
+        )}
+      />
+      <p className="font-semibold text-foreground text-sm">{node.title}</p>
+      <p className="text-muted-foreground text-xs uppercase tracking-wide">
+        {node.kind}
+      </p>
+    </motion.div>
+  );
+}
+
+/** Atom: a dashed connector between two nodes, with a pulse dot on activation. */
+function GraphConnector({
+  active,
+  durationMs,
+}: {
+  active: boolean;
+  durationMs: number;
+}): React.ReactElement {
+  return (
+    <div className="relative h-px w-10 flex-none self-center">
+      <div
+        className={cn(
+          "absolute inset-0 border-t border-dashed transition-colors duration-300",
+          active ? "border-keeperhub-green/50" : "border-border"
+        )}
+      />
+      <AnimatePresence>
+        {active ? (
+          <motion.span
+            animate={{ left: "100%", opacity: [0, 1, 1, 0] }}
+            className="-translate-y-1/2 absolute top-1/2 size-1.5 rounded-full bg-keeperhub-green shadow-keeperhub-green/60 shadow-md"
+            exit={{ opacity: 0 }}
+            initial={{ left: "0%", opacity: 0 }}
+            key="pulse"
+            transition={{ duration: durationMs / 1000, ease: "easeInOut" }}
+          />
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Atom: the upfront paid/blocked gate chip shown at the top of the card. */
+function GateChip({
+  outcome,
+  priceLabel,
+}: {
+  outcome: RunOutcome;
+  priceLabel: string;
+}): React.ReactElement {
+  return (
+    <motion.div
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4 }}
+      initial={{ opacity: 0, y: -4 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+    >
+      {outcome === "blocked" ? (
+        <Badge
+          className="gap-1 whitespace-nowrap border-destructive/30 bg-destructive/10 text-destructive"
+          variant="outline"
+        >
+          Blocked &middot; daily cap reached
+        </Badge>
+      ) : (
+        <Badge
+          className="gap-1 whitespace-nowrap border-keeperhub-green/30 bg-keeperhub-green/10 text-keeperhub-green"
+          variant="outline"
+        >
+          <Zap className="size-3" />
+          Paid {priceLabel} USDC
+        </Badge>
+      )}
+    </motion.div>
+  );
+}
+
+const DOT_GRID_STYLE: React.CSSProperties = {
+  backgroundImage:
+    "radial-gradient(circle, currentColor 1px, transparent 1.2px)",
+  backgroundSize: "24px 24px",
+  maskImage:
+    "radial-gradient(ellipse 60% 70% at center, black 40%, transparent 100%)",
+  WebkitMaskImage:
+    "radial-gradient(ellipse 60% 70% at center, black 40%, transparent 100%)",
+};
+
+/** Atom: full-bleed dot-grid canvas backdrop, faded to transparent at the edges. */
+function DotGridBackground(): React.ReactElement {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 text-muted-foreground/25"
+      style={DOT_GRID_STYLE}
+    />
+  );
+}
+
+/** Atom: a dimmed, static node card that fills out the surrounding canvas. */
+function DecorativeNodeCard({
+  node,
+}: {
+  node: DecorativeNodeMeta;
+}): React.ReactElement {
+  const Icon = node.icon;
+  return (
+    <div
+      aria-hidden="true"
+      className="absolute flex w-28 flex-col items-center gap-1.5 rounded-xl border border-border/50 bg-card/40 px-3 py-3 text-center opacity-40"
+      style={node.style}
+    >
+      <Icon className="size-4 text-muted-foreground" />
+      <p className="text-muted-foreground text-xs">{node.title}</p>
+    </div>
+  );
+}
+
+export function PayPerExecutionPreview({
+  enabled,
+  priceLabel,
+}: {
+  enabled: boolean;
+  priceLabel: string;
+}): React.ReactElement {
+  const reducedMotion = useReducedMotion() ?? false;
+  const { phase, runIndex, outcome } = useWorkflowRunLoop(reducedMotion);
+
+  const statuses: NodeStatus[] = [
+    triggerNodeStatus(phase, outcome),
+    conditionNodeStatus(phase, outcome),
+    actionNodeStatus(phase, outcome),
+  ];
+
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      <DotGridBackground />
+      {DECORATIVE_NODES.map((node) => (
+        <DecorativeNodeCard key={node.id} node={node} />
+      ))}
+
+      <div className="absolute inset-0 flex items-center justify-center p-10">
+        <div className="flex w-full flex-col items-center gap-4">
+          <PreviewFrame className="w-full max-w-2xl bg-card p-6">
+            <div className="mb-5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Workflow className="size-5 text-keeperhub-green" />
+                <h3 className="font-semibold text-lg">Aave collateral guard</h3>
+              </div>
+              <Badge
+                className={cn(
+                  "gap-1 border-keeperhub-green/30 text-keeperhub-green",
+                  enabled ? "bg-keeperhub-green/10" : "bg-muted"
+                )}
+                variant="outline"
+              >
+                {enabled ? "Live" : "Preview"}
+              </Badge>
+            </div>
+
+            <div className="mb-5 flex min-h-8 items-center justify-center">
+              <AnimatePresence mode="wait">
+                <GateChip
+                  key={runIndex}
+                  outcome={outcome}
+                  priceLabel={priceLabel}
+                />
+              </AnimatePresence>
+            </div>
+
+            <div className="flex items-center justify-center gap-1">
+              {GRAPH_NODES.map((node, index) => (
+                <Fragment key={node.id}>
+                  <GraphNodeCard node={node} status={statuses[index]} />
+                  {index < GRAPH_NODES.length - 1 ? (
+                    <GraphConnector
+                      active={
+                        index === 0
+                          ? phase === "toCondition"
+                          : phase === "toAction"
+                      }
+                      durationMs={scaledDuration(
+                        index === 0 ? "toCondition" : "toAction",
+                        reducedMotion
+                      )}
+                    />
+                  ) : null}
+                </Fragment>
+              ))}
+            </div>
+          </PreviewFrame>
+
+          <Badge
+            className="gap-1.5 border-keeperhub-green/30 bg-keeperhub-green/10 text-keeperhub-green"
+            variant="outline"
+          >
+            <Zap className="size-3" />
+            Powered by x402 &middot; gasless USDC on Base
+          </Badge>
+        </div>
       </div>
     </div>
   );
