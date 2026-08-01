@@ -35,6 +35,13 @@ describe("USDC 6-decimal raw conversion", () => {
     expect(usdcDecimalToRaw("10")).toBe(BigInt(10_000_000));
   });
 
+  it("parses a cap typed with a leading or trailing dot", () => {
+    // The billing modal lets a user type ".5" or "5."; both are valid amounts.
+    expect(usdcDecimalToRaw(".5")).toBe(BigInt(500_000));
+    expect(usdcDecimalToRaw("0.5")).toBe(BigInt(500_000));
+    expect(usdcDecimalToRaw("5.")).toBe(BigInt(5_000_000));
+  });
+
   it("returns 0 for malformed input", () => {
     expect(usdcDecimalToRaw("")).toBe(BigInt(0));
     expect(usdcDecimalToRaw("abc")).toBe(BigInt(0));
@@ -46,8 +53,17 @@ describe("USDC 6-decimal raw conversion", () => {
 });
 
 describe("USDC decimal validation (spend caps)", () => {
-  it("accepts well-formed non-negative decimals", () => {
-    for (const value of ["0", "1", "1.5", "0.01", "1000.000000"]) {
+  it("accepts well-formed non-negative decimals, incl. a leading/trailing dot", () => {
+    for (const value of [
+      "0",
+      "1",
+      "1.5",
+      "0.01",
+      "1000.000000",
+      ".5",
+      "0.5",
+      "5.",
+    ]) {
       expect(isValidUsdcDecimal(value)).toBe(true);
     }
   });
