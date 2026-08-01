@@ -3,12 +3,15 @@
 
 export const USDC_DECIMALS = 6;
 
-const DECIMAL_RE = /^\d+(\.\d+)?$/;
+// Non-negative decimal with an optional integer and/or fractional part, so the
+// common ways to type a USDC amount all parse: "5", "0.5", ".5", "5.", "5.50".
+// Rejects negatives, letters, and multiple dots.
+const DECIMAL_RE = /^(\d+\.?\d*|\.\d+)$/;
 
 /**
- * True if `value` is a well-formed non-negative USDC decimal (e.g. "0", "1.5").
- * Callers that must distinguish "0" (a valid zero) from garbage validate with
- * this before calling usdcDecimalToRaw, which returns 0n for both.
+ * True if `value` is a well-formed non-negative USDC decimal (e.g. "0", "1.5",
+ * ".5"). Callers that must distinguish "0" (a valid zero) from garbage validate
+ * with this before calling usdcDecimalToRaw, which returns 0n for both.
  */
 export function isValidUsdcDecimal(value: string): boolean {
   return DECIMAL_RE.test(value.trim());
