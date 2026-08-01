@@ -1318,3 +1318,75 @@ export const workflowHistory = pgTable(
 
 export type WorkflowHistory = typeof workflowHistory.$inferSelect;
 export type NewWorkflowHistory = typeof workflowHistory.$inferInsert;
+
+/**
+ * Pay As You Go config table
+ *
+ * One row per org on the PAYG plan. Holds the user-set spend caps and the
+ * enable anchor. The current billing period is the monthly window anchored to
+ * `startedAt` that contains now (computed, not stored) and bounds the per-period
+ * cap + usage reporting. Amounts are USDC 6-decimal raw units stored as text.
+ */
+export const paygConfig = pgTable(
+  "payg_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .unique()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    dailyCapRaw: text("daily_cap_raw").notNull().default("0"),
+    periodCapRaw: text("period_cap_raw").notNull().default("0"),
+    chainId: integer("chain_id").notNull().default(8453),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [index("idx_payg_config_org").on(table.organizationId)]
+);
+
+export type PaygConfig = typeof paygConfig.$inferSelect;
+export type NewPaygConfig = typeof paygConfig.$inferInsert;
+
+/**
+ * Pay As You Go payments table
+ *
+ * One row per charged execution (settled USDC to the treasury). The source of
+ * truth for guard-rail spend sums (day/period) and the UI usage/history view.
+ * Idempotent on (organization_id, execution_id) so a retried finalization does
+ * not double-charge. `amountRaw` is USDC 6-decimal raw units stored as text.
+ */
+export const paygPayments = pgTable(
+  "payg_payments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    executionId: text("execution_id").notNull(),
+    amountRaw: text("amount_raw").notNull(),
+    txHash: text("tx_hash"),
+    chainId: integer("chain_id").notNull(),
+    payerAddress: text("payer_address").notNull(),
+    treasuryAddress: text("treasury_address").notNull(),
+    status: text("status").notNull().default("settled"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("payg_payments_org_execution").on(
+      table.organizationId,
+      table.executionId
+    ),
+    index("idx_payg_payments_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
+  ]
+);
+
+export type PaygPayment = typeof paygPayments.$inferSelect;
+export type NewPaygPayment = typeof paygPayments.$inferInsert;

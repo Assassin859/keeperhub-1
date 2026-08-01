@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 export const WELCOME_STEPS = [
   { path: "/welcome/create-org", label: "Organization" },
   { path: "/welcome/invite-members", label: "Invite team" },
+  { path: "/welcome/pay-per-execution", label: "Funding" },
   { path: "/welcome/connect-agent", label: "Connect agent" },
 ] as const;
 

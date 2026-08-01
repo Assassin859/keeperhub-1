@@ -9,6 +9,7 @@ import {
   decideExecutionLimit,
   effectiveExecutionLimit,
 } from "./execution-limit-core";
+import { getPaygConfig } from "./payg/config-store";
 import {
   type BillingInterval,
   getPlanLimits,
@@ -281,8 +282,27 @@ export async function checkExecutionLimit(
         debtExecutions,
         effectiveLimit,
       };
-    // blocked_debt (unpaid overage past grace) and blocked_limit (free plan or
-    // inactive subscription at the cap) both reject.
+    // Free plan at its included limit: if PAYG is enabled, allow the run so it
+    // can be charged per-execution via x402 downstream (the charge is the real
+    // gate); otherwise block. PAYG is a free-tier feature only.
+    case "blocked_limit":
+      if (plan === "free" && (await getPaygConfig(organizationId)) !== null) {
+        return {
+          allowed: true,
+          isOverage: false,
+          debtExecutions,
+          effectiveLimit,
+        };
+      }
+      return {
+        allowed: false,
+        limit: limits.maxExecutionsPerMonth,
+        used,
+        plan,
+        debtExecutions,
+        effectiveLimit,
+      };
+    // blocked_debt (unpaid overage past grace) rejects.
     default:
       return {
         allowed: false,

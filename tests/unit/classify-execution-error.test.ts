@@ -65,6 +65,28 @@ describe("classifyExecutionError", () => {
     expect(classifyExecutionError("   ").errorType).toBe("system");
   });
 
+  it("classifies an unconfigured condition node as a user config error", () => {
+    const result = classifyExecutionError(
+      "Condition node has no expression configured. Please add a condition expression."
+    );
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.CONFIGURATION,
+      errorType: "user",
+      code: null,
+    });
+  });
+
+  it("classifies an invalid condition expression as a user validation error", () => {
+    const result = classifyExecutionError(
+      'Condition expression is invalid: unexpected token. Expression: "foo &&"'
+    );
+    expect(result).toEqual({
+      errorCategory: ErrorCategory.VALIDATION,
+      errorType: "user",
+      code: null,
+    });
+  });
+
   it("still classifies RPC failover errors after URL redaction", () => {
     // Error messages have provider URLs fully redacted before
     // classification; the redaction must not disturb the prose the patterns
