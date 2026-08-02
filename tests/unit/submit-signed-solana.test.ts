@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 
-import { Keypair, SystemProgram, Transaction } from "@solana/web3.js";
+import {
+  Keypair,
+  SystemProgram,
+  Transaction,
+  TransactionMessage,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import { submitSignedSolanaTransactionWithFailover } from "@/lib/web3/submit-signed-solana";
 
 const _MOCK_SIGNATURE =
@@ -154,5 +160,54 @@ describe("submitSignedSolanaTransactionWithFailover", () => {
     await expect(
       submitSignedSolanaTransactionWithFailover(txBytes, mockManager)
     ).rejects.toThrow("already been processed");
+  });
+
+  it("rethrows the original error when signed bytes cannot be parsed", async () => {
+    mockConnection.sendRawTransaction.mockRejectedValue(
+      new Error("broadcast failed")
+    );
+
+    await expect(
+      submitSignedSolanaTransactionWithFailover(
+        new Uint8Array([0xff, 0x00, 0x01]),
+        mockManager
+      )
+    ).rejects.toThrow("broadcast failed");
+
+    expect(mockConnection.getSignatureStatuses).not.toHaveBeenCalled();
+  });
+
+  it("reconciles versioned transaction broadcast errors by signature", async () => {
+    const payer = Keypair.generate();
+    const recipient = Keypair.generate();
+    const message = new TransactionMessage({
+      payerKey: payer.publicKey,
+      recentBlockhash: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      instructions: [
+        SystemProgram.transfer({
+          fromPubkey: payer.publicKey,
+          toPubkey: recipient.publicKey,
+          lamports: BigInt(1000),
+        }),
+      ],
+    }).compileToV0Message();
+    const versionedTx = new VersionedTransaction(message);
+    versionedTx.sign([payer]);
+    const versionedBytes = versionedTx.serialize();
+
+    mockConnection.sendRawTransaction.mockRejectedValue(
+      new Error("already been processed")
+    );
+    mockConnection.getSignatureStatuses.mockResolvedValue({
+      value: [{ confirmationStatus: "confirmed", err: null }],
+    });
+
+    const result = await submitSignedSolanaTransactionWithFailover(
+      versionedBytes,
+      mockManager
+    );
+
+    expect(result.signature).toBeDefined();
+    expect(mockConnection.getSignatureStatuses).toHaveBeenCalledTimes(1);
   });
 });

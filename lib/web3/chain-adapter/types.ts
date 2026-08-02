@@ -95,4 +95,6 @@ export type TransactionOptions = {
   workflowId?: string;
   rpcManager?: RpcProviderManager;
   solanaSigner?: SolanaTransactionSigner;
+  /** Declared max native SOL outflow (lamports) for arbitrary instruction txs. */
+  maxSolLamports?: bigint;
 };

@@ -11,6 +11,7 @@ import type { RpcOperationType } from "@/lib/rpc/providers/index";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
 import { getErrorMessage } from "@/lib/utils";
 import type { NonceSession } from "../nonce-manager";
+import { assertMaxSolLamportsOutflow } from "../solana-max-sol-guard";
 import {
   normalizeSolanaTransaction,
   parseComputeUnitPrice,
@@ -108,6 +109,11 @@ export class SolanaChainAdapter implements ChainAdapter {
       : Transaction.from(signedBytes);
 
     await this.executeWithSolanaFailover(async (connection) => {
+      const enforceMaxSol = options.maxSolLamports !== undefined;
+      const preBalance = enforceMaxSol
+        ? BigInt(await connection.getBalance(signerPublicKey))
+        : BigInt(0);
+
       const simResult = isVersioned
         ? await connection.simulateTransaction(
             signedTx as VersionedTransaction,
@@ -119,13 +125,41 @@ export class SolanaChainAdapter implements ChainAdapter {
         : await connection.simulateTransaction(
             signedTx as Transaction,
             undefined,
-            false
+            enforceMaxSol
           );
 
       if (simResult.value.err) {
         throw new Error(
           `[SolanaChainAdapter] Simulation failed: ${JSON.stringify(simResult.value.err)}`
         );
+      }
+
+      if (enforceMaxSol && options.maxSolLamports !== undefined) {
+        const accountKeys = isVersioned
+          ? (signedTx as VersionedTransaction).message.staticAccountKeys
+          : (signedTx as Transaction).compileMessage().accountKeys;
+        const payerIndex = accountKeys.findIndex((key) =>
+          key.equals(signerPublicKey)
+        );
+        if (payerIndex === -1) {
+          throw new Error(
+            "[SolanaChainAdapter] Fee payer not found in transaction account keys"
+          );
+        }
+        const postLamports = simResult.value.accounts?.[payerIndex]?.lamports;
+        if (postLamports === undefined) {
+          throw new Error(
+            "[SolanaChainAdapter] Simulation did not return fee payer account state for maxSol check"
+          );
+        }
+        const outflow =
+          preBalance > BigInt(postLamports)
+            ? preBalance - BigInt(postLamports)
+            : BigInt(0);
+        assertMaxSolLamportsOutflow({
+          outflowLamports: outflow,
+          maxSolLamports: options.maxSolLamports,
+        });
       }
     }, "preflight");
 

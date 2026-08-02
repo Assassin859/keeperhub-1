@@ -1,7 +1,26 @@
 import "server-only";
-import { VersionedTransaction } from "@solana/web3.js";
+import { Transaction, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
+
+function extractFirstSignature(signedBytes: Uint8Array): Uint8Array | null {
+  try {
+    const sig = VersionedTransaction.deserialize(signedBytes).signatures[0];
+    return sig ?? null;
+  } catch {
+    try {
+      const legacySig = Transaction.from(signedBytes).signatures[0]?.signature;
+      if (!legacySig) {
+        return null;
+      }
+      return legacySig instanceof Buffer
+        ? new Uint8Array(legacySig)
+        : legacySig;
+    } catch {
+      return null;
+    }
+  }
+}
 
 export async function submitSignedSolanaTransactionWithFailover(
   signedBytes: Uint8Array,
@@ -27,8 +46,7 @@ export async function submitSignedSolanaTransactionWithFailover(
     // its on-chain status. Only report success for a confirmed/finalized tx
     // with NO execution error; otherwise rethrow the original error so a
     // genuinely-failed or never-landed broadcast surfaces to the caller.
-    const firstSig =
-      VersionedTransaction.deserialize(signedBytes).signatures[0];
+    const firstSig = extractFirstSignature(signedBytes);
     if (!firstSig) {
       throw err;
     }
