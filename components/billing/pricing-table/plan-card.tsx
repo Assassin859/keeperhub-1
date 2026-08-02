@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
+import { BILLING_API } from "@/lib/billing/constants";
 import type {
   BillingInterval,
   PLANS,
@@ -54,10 +55,43 @@ export function PlanCard({
   );
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [paygPriceUsdc, setPaygPriceUsdc] = useState<string | null>(null);
 
   const hasSubscription = currentPlan !== undefined && currentPlan !== "free";
   const isEnterprise = planName === "enterprise";
   const isFree = planName === "free";
+
+  // The free tier is free + pay-as-you-go; pull the per-execution price so the
+  // card can show what overflow beyond the included limit costs.
+  useEffect(() => {
+    if (!isFree) {
+      return;
+    }
+    let cancelled = false;
+    async function loadPaygPrice(): Promise<void> {
+      const res = await fetch(BILLING_API.PAYG);
+      if (!res.ok) {
+        return;
+      }
+      const data = (await res.json()) as { priceUsdc?: string };
+      if (!cancelled && data.priceUsdc && Number(data.priceUsdc) > 0) {
+        setPaygPriceUsdc(data.priceUsdc);
+      }
+    }
+    loadPaygPrice().catch(() => {
+      // PAYG price is optional context on the free card.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isFree]);
+
+  const cardName = isFree ? "Pay per execution" : plan.name;
+  const freePriceDisplay = paygPriceUsdc
+    ? `$${Number(paygPriceUsdc).toLocaleString(undefined, {
+        maximumFractionDigits: 6,
+      })}`
+    : "$0.01";
 
   const isCurrent = isCurrentPlan(
     planName,
@@ -193,8 +227,10 @@ export function PlanCard({
 
         <CardContent className="flex flex-1 flex-col gap-0 pt-6">
           <PlanHeader
+            freePrice={freePriceDisplay}
             isEnterprise={isEnterprise}
-            name={plan.name}
+            isFree={isFree}
+            name={cardName}
             price={price}
           />
 

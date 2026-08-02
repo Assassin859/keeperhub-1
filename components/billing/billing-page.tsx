@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/auth-client";
-import { BILLING_API } from "@/lib/billing/constants";
+import { BILLING_API, PAID_PLANS } from "@/lib/billing/constants";
 import {
   type BillingInterval,
   type PlanName,
@@ -182,10 +182,15 @@ export function BillingPage(): React.ReactElement {
 
           <BillingStatus key={`status-${String(refreshKey)}`} />
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
-            <BillingHistory key={`history-${String(refreshKey)}`} />
-            <BillingDetails key={`details-${String(refreshKey)}`} />
-          </div>
+          {/* Stripe billing history and payment method only apply to paid
+              plans. Free orgs (including free + pay-as-you-go, whose charges
+              show in the pay-as-you-go panel) have neither. */}
+          {PAID_PLANS.has(currentPlan) && (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
+              <BillingHistory key={`history-${String(refreshKey)}`} />
+              <BillingDetails key={`details-${String(refreshKey)}`} />
+            </div>
+          )}
 
           <div className="border-t border-border/50 pt-8" id="plans-section">
             <h2 className="text-xl font-semibold mb-4">Plans</h2>

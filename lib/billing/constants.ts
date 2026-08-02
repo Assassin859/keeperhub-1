@@ -8,6 +8,7 @@ export const BILLING_API = {
   USAGE_SUGGESTION: "/api/billing/usage-suggestion",
   BILLING_DETAILS: "/api/billing/billing-details",
   GAS_SPONSORSHIP: "/api/billing/gas-sponsorship",
+  PAYG: "/api/billing/payg",
 } as const;
 
 export const BILLING_ALERTS = {

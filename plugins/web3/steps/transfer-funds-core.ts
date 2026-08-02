@@ -47,6 +47,10 @@ import {
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
 
+// Tempo (4217 mainnet, 42431 testnet) has no native gas token: value moves via
+// TIP-20 transfers, so a native send has no valid form and reverts at preflight.
+const TEMPO_CHAIN_IDS = new Set([4217, 42_431]);
+
 export type TransferFundsCoreInput = {
   network: string;
   amount: string;
@@ -123,6 +127,16 @@ export async function transferFundsCore(
       gasLimitMultiplier,
       _context,
     });
+  }
+
+  // Tempo has no native token to move; fail with a clear message instead of the
+  // opaque CALL_EXCEPTION an empty data preflight would otherwise return.
+  if (TEMPO_CHAIN_IDS.has(chainId)) {
+    return {
+      success: false,
+      error:
+        "Tempo has no native token to transfer. Send a TIP-20 stablecoin instead by providing a token address.",
+    };
   }
 
   // Validate recipient address

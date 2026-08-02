@@ -185,6 +185,18 @@ const RULES: readonly Rule[] = [
     code: null,
   },
   {
+    pattern: /^Condition node has no expression configured/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  {
+    pattern: /^Condition expression is invalid/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  {
     pattern: /^No token selected/i,
     errorCategory: ErrorCategory.CONFIGURATION,
     errorType: ExecutionErrorType.USER,
