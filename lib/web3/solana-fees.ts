@@ -13,3 +13,14 @@ import "server-only";
  * multi-signer path must multiply by the signature count.
  */
 export const SOLANA_BASE_FEE_LAMPORTS = BigInt(5000);
+
+/**
+ * Conservative rent-exempt minimum for a new associated token account.
+ * Covers TOKEN_PROGRAM (~2,039,280 lamports) and TOKEN-2022 ImmutableOwner
+ * overhead. Used for org spend-cap reservation before an SPL transfer runs.
+ */
+export const SOLANA_ATA_RENT_LAMPORTS = BigInt(2_100_000);
+
+/** Worst-case SOL cost for an SPL transfer: base fee plus new ATA rent. */
+export const SOLANA_SPL_MAX_FEE_LAMPORTS =
+  SOLANA_BASE_FEE_LAMPORTS + SOLANA_ATA_RENT_LAMPORTS;

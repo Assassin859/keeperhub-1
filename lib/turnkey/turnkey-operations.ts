@@ -65,7 +65,7 @@ const EVM_ONLY_ACCOUNTS = [
 
 // Single-element array reused by both EVM_AND_SOLANA_ACCOUNTS and the B5
 // reconciliation path — one source of truth for the ED25519 derivation shape.
-const SOLANA_ONLY_ACCOUNT = [
+export const SOLANA_ONLY_ACCOUNT = [
   {
     curve: "CURVE_ED25519" as const,
     pathFormat: "PATH_FORMAT_BIP32" as const,
@@ -256,12 +256,11 @@ export async function createTurnkeyWallet(
       let solanaAddress: string | null = null;
       if (solanaEnabled) {
         try {
-          const result = await client.createWalletAccounts({
-            organizationId: existingSubOrgId,
-            walletId: existingWalletId,
-            accounts: SOLANA_ONLY_ACCOUNT,
-          });
-          solanaAddress = result.addresses?.[0] ?? null;
+          solanaAddress = await fetchOrCreateSolanaWalletAddress(
+            client,
+            existingSubOrgId,
+            existingWalletId
+          );
         } catch (solanaError) {
           logSystemError(
             ErrorCategory.EXTERNAL_SERVICE,
@@ -285,10 +284,7 @@ export async function createTurnkeyWallet(
       }
 
       if (solanaEnabled && !solanaAddress) {
-        const solanaAccount = walletAccounts.accounts?.find(
-          (a) => a.addressFormat === "ADDRESS_FORMAT_SOLANA"
-        );
-        solanaAddress = solanaAccount?.address ?? null;
+        solanaAddress = findSolanaWalletAddress(walletAccounts.accounts);
       }
 
       return {
@@ -331,12 +327,11 @@ export async function createTurnkeyWallet(
       let solanaAddress: string | null = null;
       if (solanaEnabled) {
         try {
-          const solanaAccountResult = await client.createWalletAccounts({
-            organizationId: subOrgId,
-            walletId,
-            accounts: SOLANA_ONLY_ACCOUNT,
-          });
-          solanaAddress = solanaAccountResult.addresses?.[0] ?? null;
+          solanaAddress = await fetchOrCreateSolanaWalletAddress(
+            client,
+            subOrgId,
+            walletId
+          );
         } catch (solanaError) {
           logSystemError(
             ErrorCategory.EXTERNAL_SERVICE,
@@ -435,4 +430,55 @@ export function getTurnkeySignerConfig(
     organizationId: subOrgId,
     signWith: walletAddress,
   };
+}
+
+type TurnkeyWalletAccount = {
+  address?: string;
+  addressFormat?: string;
+};
+
+export function findSolanaWalletAddress(
+  accounts: TurnkeyWalletAccount[] | undefined
+): string | null {
+  return (
+    accounts?.find((a) => a.addressFormat === "ADDRESS_FORMAT_SOLANA")
+      ?.address ?? null
+  );
+}
+
+export function getTurnkeyApiClient(): ReturnType<Turnkey["apiClient"]> {
+  return getTurnkeyClient().apiClient();
+}
+
+export async function fetchOrCreateSolanaWalletAddress(
+  client: ReturnType<Turnkey["apiClient"]>,
+  subOrgId: string,
+  walletId: string
+): Promise<string> {
+  const existing = await client.getWalletAccounts({
+    organizationId: subOrgId,
+    walletId,
+  });
+  const found = findSolanaWalletAddress(existing.accounts);
+  if (found) {
+    return found;
+  }
+
+  await client.createWalletAccounts({
+    organizationId: subOrgId,
+    walletId,
+    accounts: SOLANA_ONLY_ACCOUNT,
+  });
+
+  const refreshed = await client.getWalletAccounts({
+    organizationId: subOrgId,
+    walletId,
+  });
+  const created = findSolanaWalletAddress(refreshed.accounts);
+  if (!created) {
+    throw new Error(
+      "No Solana address available from Turnkey (create/getWalletAccounts)"
+    );
+  }
+  return created;
 }

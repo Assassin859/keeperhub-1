@@ -6,6 +6,7 @@ import {
 } from "@/lib/execute/native-value";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { isSolanaChain } from "@/lib/rpc/provider-factory";
+import { SOLANA_SPL_MAX_FEE_LAMPORTS } from "@/lib/web3/solana-fees";
 
 export {
   parseNativeValueLamports,
@@ -82,6 +83,17 @@ export function parseNodeNativeValueWei(
   // Solana path on a Solana chainId - so the amount's unit depends on the
   // configured network, not on the step name. Without this a native SOL
   // transfer would be parsed at 18 decimals and charged to the wei cap.
+  if (stepFunction === "transferSplTokenStep") {
+    if (!isSolanaNetwork(config.network)) {
+      return { ok: false, error: "transfer-spl-token is Solana-only" };
+    }
+    return {
+      ok: true,
+      kind: "solana",
+      valueLamports: SOLANA_SPL_MAX_FEE_LAMPORTS.toString(),
+    };
+  }
+
   if (stepFunction === "transferFundsStep") {
     const amount =
       typeof config.amount === "string" ? config.amount : undefined;

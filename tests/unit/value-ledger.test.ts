@@ -400,6 +400,32 @@ describe("withStepValueCap", () => {
     });
   });
 
+  it("charges transferSplTokenStep against the lamports cap using worst-case fee", async () => {
+    state.reserveKind = "solana";
+    state.caps = [
+      { dailyValueCapWei: null, dailySolanaValueCapLamports: "5000000" },
+    ];
+    const run = vi.fn().mockResolvedValue({ success: true });
+
+    const result = await withStepValueCap(
+      {
+        organizationId: "org_1",
+        stepFunction: "transferSplTokenStep",
+        config: { network: "103" },
+        executionId: "exec_spl",
+      },
+      run
+    );
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(result).toEqual({ success: true });
+    expect(state.inserted[0]).toMatchObject({
+      valueLamports: "2105000",
+      source: "workflow",
+      ref: "exec_spl",
+    });
+  });
+
   it("denies Solana sendRawSolanaInstructionStep when maxSol is missing", async () => {
     const run = vi.fn().mockResolvedValue({ success: true });
 
