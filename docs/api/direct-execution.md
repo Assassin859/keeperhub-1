@@ -82,12 +82,28 @@ Transfer native tokens (ETH, MATIC, etc.) or ERC-20 tokens directly.
 ```json
 {
   "chainId": 11155111,
-  "recipientAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+  "recipientAddress": "0x742D35Cc6634C0532925a3b844bC9e7595f0bEB",
   "amount": "0.1",
   "tokenAddress": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   "gasLimitMultiplier": "1.2"
 }
 ```
+
+### Recipient validation
+
+`recipientAddress` is validated with a strict **EIP-55 checksum** before the
+request is accepted. Pass either:
+
+- the exact checksummed form (mixed-case), or
+- an **all-lowercase** address (e.g. `0x742d35cc6634c0532925a3b844bc9e7595f0beb`).
+
+A mixed-case address with an invalid checksum is rejected with
+`Invalid recipient address` — even if the lowercase hex is correct. Note that
+many widely-copied example addresses (including some in older docs) do not
+carry a valid checksum, so prefer copying from the address book or a tool that
+computes EIP-55. Add frequently-used recipients to the
+[address book](/wallet-management/address-book) first; address book entries are
+stored lowercase and displayed in checksummed form.
 
 **Parameters:**
 
