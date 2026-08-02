@@ -33,6 +33,15 @@ All addresses are stored in lowercase for consistency and displayed in **EIP-55 
 
 When you copy an address from the address book, the checksummed form is copied to your clipboard.
 
+## Address Book Entries in the API
+
+The direct-execution API (`POST /api/execute/transfer`) validates
+`recipientAddress` with a strict EIP-55 checksum before accepting a request.
+Add recipients to the address book first and copy the checksummed form from
+here — or pass an all-lowercase address. A mixed-case address with an invalid
+checksum is rejected with `Invalid recipient address`. See
+[Direct Execution](/api/direct-execution) for details.
+
 ## Using Addresses in Workflow Nodes
 
 When you focus an address-type input field in the workflow builder, a **popover** appears showing your saved addresses. You can search by label or address, then select an entry to populate the field.
