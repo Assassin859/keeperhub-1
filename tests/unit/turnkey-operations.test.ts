@@ -32,13 +32,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 describe("turnkey-operations - createTurnkeyWallet", () => {
-  let mockApiClient: {
-    createSubOrganization: ReturnType<typeof vi.fn>;
-    getWalletAccounts: ReturnType<typeof vi.fn>;
-    createWalletAccounts: ReturnType<typeof vi.fn>;
-    getSubOrgIds: ReturnType<typeof vi.fn>;
-    getWallets: ReturnType<typeof vi.fn>;
-  };
+  let mockApiClient: typeof mockApiClientInstance;
   beforeEach(() => {
     vi.clearAllMocks();
     mockApiClientInstance.createSubOrganization.mockReset();
@@ -52,8 +46,7 @@ describe("turnkey-operations - createTurnkeyWallet", () => {
     process.env.TURNKEY_ORGANIZATION_ID = "mock-org-id";
     process.env.SOLANA_WALLET_PROVISIONING_ENABLED = "true";
 
-    const turnkeyInstance = new Turnkey({} as never);
-    mockApiClient = turnkeyInstance.apiClient();
+    mockApiClient = mockApiClientInstance;
   });
 
   it("successfully extracts EVM and Solana addresses when multi-account succeeds", async () => {
