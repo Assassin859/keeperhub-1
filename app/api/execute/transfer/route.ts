@@ -36,6 +36,7 @@ import {
 } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
+import type { ExecuteResponse } from "../_lib/types";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -297,18 +298,26 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 10. Return. A failed broadcast/verification is finalized (not released)
-  // so a retry replays the failure instead of re-sending the tx.
+  // so a retry replays the failure instead of re-sending the tx. status/error
+  // come from the verified `outcome` (KEEP-966), not the self-reported
+  // result.success -- transactionHash/transactionLink are included whenever a
+  // tx was actually broadcast (result.success), regardless of final outcome,
+  // so a reconciliation-failed response still surfaces the hash to look up.
+  const responseBody: ExecuteResponse = {
+    executionId,
+    status: outcome.status,
+    ...(result.success
+      ? {
+          transactionHash: result.transactionHash,
+          transactionLink: result.transactionLink,
+        }
+      : {}),
+    ...(outcome.error ? { error: outcome.error } : {}),
+  };
   return applyRateLimitHeaders(
     await recordIdempotentResponse(
       idem,
-      NextResponse.json(
-        {
-          executionId,
-          status: outcome.status,
-          ...(outcome.error ? { error: outcome.error } : {}),
-        },
-        { status: HttpStatus.ACCEPTED }
-      ),
+      NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
       outcome.status === "completed" ? "success" : "failed"
     ),
     rateLimit
