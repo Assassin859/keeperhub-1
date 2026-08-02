@@ -277,11 +277,18 @@ export async function POST(request: Request): Promise<NextResponse> {
         })
   );
 
-  // 9. Handle result
+  // 9. Handle result. completeExecution independently re-verifies the claimed
+  // transaction against the chain (KEEP-966) -- its returned outcome, not
+  // result.success, is authoritative for the response and idempotency cache.
+  let outcome: { status: "completed" | "failed"; error?: string } = {
+    status: "failed",
+    error: result.success ? undefined : result.error,
+  };
   if (result.success) {
-    await completeExecution(executionId, {
+    outcome = await completeExecution(executionId, {
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink,
+      chainId: result.chainId,
       gasUsedWei: result.gasUsed,
       gasPriceWei: result.effectiveGasPrice,
       output: result as unknown as Record<string, unknown>,
@@ -290,23 +297,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     await failExecution(executionId, result.error);
   }
 
-  // 10. Return. A failed broadcast is finalized (not released) so a retry
-  // replays the failure instead of re-sending the tx.
+  // 10. Return. A failed broadcast/verification is finalized (not released)
+  // so a retry replays the failure instead of re-sending the tx. status/error
+  // come from the verified `outcome` (KEEP-966), not the self-reported
+  // result.success -- transactionHash/transactionLink are included whenever a
+  // tx was actually broadcast (result.success), regardless of final outcome,
+  // so a reconciliation-failed response still surfaces the hash to look up.
   const responseBody: ExecuteResponse = {
     executionId,
-    status: result.success ? "completed" : "failed",
+    status: outcome.status,
     ...(result.success
       ? {
           transactionHash: result.transactionHash,
           transactionLink: result.transactionLink,
         }
       : {}),
+    ...(outcome.error ? { error: outcome.error } : {}),
   };
   return applyRateLimitHeaders(
     await recordIdempotentResponse(
       idem,
       NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
-      result.success ? "success" : "failed"
+      outcome.status === "completed" ? "success" : "failed"
     ),
     rateLimit
   );
