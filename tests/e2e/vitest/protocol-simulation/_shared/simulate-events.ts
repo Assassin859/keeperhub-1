@@ -542,10 +542,11 @@ const AERO_WEEK = BigInt(7 * 24 * 3600);
 const AERO_HOUR = BigInt(3600);
 
 // Mirrors VelodromeTimeLibrary.epochStart: epochs run Thu 00:00 UTC to Thu
-// 00:00 UTC. Voter.onlyNewEpoch additionally reverts with DistributeWindow
-// during the first hour of a new epoch (Voter.sol:105) and NotWhitelistedNFT
-// past the last hour of the old one (Voter.sol:266), so a vote is only valid
-// strictly between those two bounds.
+// 00:00 UTC. Voter.onlyNewEpoch reverts with DistributeWindow for
+// timestamp <= epochVoteStart (the first hour of a new epoch, Voter.sol:105)
+// and with NotWhitelistedNFT for timestamp > epochVoteEnd (the last hour of
+// the old one, Voter.sol:266), so a vote is only valid in the half-open
+// range (epochVoteStart, epochVoteEnd].
 function aeroEpochStart(timestamp: bigint): bigint {
   return timestamp - (timestamp % AERO_WEEK);
 }
@@ -553,7 +554,7 @@ function aeroEpochStart(timestamp: bigint): bigint {
 function isInAeroVoteWindow(timestamp: bigint): boolean {
   const start = aeroEpochStart(timestamp);
   return (
-    timestamp > start + AERO_HOUR && timestamp < start + AERO_WEEK - AERO_HOUR
+    timestamp > start + AERO_HOUR && timestamp <= start + AERO_WEEK - AERO_HOUR
   );
 }
 
@@ -629,8 +630,8 @@ async function emitAerodrome(provider: JsonRpcProvider): Promise<Log[]> {
   // voter-voted: warp to a fixed offset into the *next* epoch rather than a
   // fixed +2d delta from "now" - the old delta drifted in and out of the
   // epoch's voting window depending on when CI ran. Target epochStart(now) +
-  // WEEK + 12h, which is always a fresh epoch (comfortably clears the 1h
-  // DistributeWindow at its start) with an 11h margin either side.
+  // WEEK + 12h: always a fresh epoch, 11h clear of the opening
+  // DistributeWindow and far clear (~155h) of the closing epochVoteEnd cutoff.
   const preVoteBlock = await provider.getBlock("latest");
   if (!preVoteBlock) {
     throw new Error("aerodrome fork: no latest block before vote warp");
