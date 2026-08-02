@@ -13,6 +13,13 @@ The KeeperHub API allows you to programmatically manage workflows, integrations,
 https://app.keeperhub.com/api
 ```
 
+Endpoint paths in this reference already include the `/api` prefix, and every
+example shows a full absolute URL (e.g. `https://app.keeperhub.com/api/workflows/...`).
+When configuring a client or SDK, set the base to `https://app.keeperhub.com` and
+append the documented paths exactly as shown — do **not** combine the base above
+with paths that already start with `/api` (that produces a doubled `/api/api` path
+and a 404).
+
 ## Authentication
 
 API requests require authentication. Two methods are supported, but their accepted scope differs:
