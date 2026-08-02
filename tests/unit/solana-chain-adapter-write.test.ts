@@ -42,6 +42,7 @@ function createMockManager() {
         fee: 5000,
       },
     }),
+    getSignatureStatuses: vi.fn().mockResolvedValue({ value: [null] }),
   };
 
   const mockManager = {
@@ -399,6 +400,47 @@ describe("SolanaChainAdapter - sendTransaction", () => {
 
       // Verify that it preserves original priority fee (10)
       expect(receipt.effectiveGasPrice).toBe(BigInt(10));
+    });
+
+    it("retries once with a fresh blockhash when submit fails with blockhash expiry", async () => {
+      const { mockManager, mockConnection } = createMockManager();
+      let sendRawCallCount = 0;
+      mockConnection.sendRawTransaction = vi.fn().mockImplementation(() => {
+        sendRawCallCount++;
+        if (sendRawCallCount === 1) {
+          return Promise.reject(new Error("BlockhashNotFound"));
+        }
+        return Promise.resolve("signature123");
+      });
+
+      const originalSignTransaction =
+        solanaSigner.signTransaction.bind(solanaSigner);
+      const signTransactionSpy = vi
+        .fn()
+        .mockImplementation(originalSignTransaction);
+      solanaSigner.signTransaction = signTransactionSpy;
+
+      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, () =>
+        Promise.resolve(mockManager as any)
+      );
+
+      const receipt = await adapter.sendTransaction(
+        null as any,
+        {
+          to: recipientKeypair.publicKey.toBase58(),
+          value: BigInt(5000),
+        },
+        null as any,
+        {
+          solanaSigner,
+          gasOverrides: {},
+        } as any
+      );
+
+      expect(receipt.hash).toBe("signature123");
+      expect(signTransactionSpy).toHaveBeenCalledTimes(2);
+      expect(mockConnection.getLatestBlockhash).toHaveBeenCalledTimes(2);
+      expect(sendRawCallCount).toBe(2);
     });
 
     it("prevents double-spend by signing and broadcasting exactly once even when confirmation retries", async () => {

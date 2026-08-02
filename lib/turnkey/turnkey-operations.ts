@@ -363,7 +363,8 @@ export async function createTurnkeyWallet(
 
 export async function exportTurnkeyPrivateKey(
   subOrgId: string,
-  walletAddress: string
+  address: string,
+  keyType: "evm" | "solana" = "evm"
 ): Promise<string> {
   const turnkey = getTurnkeyClient();
   const client = turnkey.apiClient();
@@ -373,7 +374,7 @@ export async function exportTurnkeyPrivateKey(
 
     const exportResult = await client.exportWalletAccount({
       organizationId: subOrgId,
-      address: walletAddress,
+      address,
       targetPublicKey: keyPair.publicKeyUncompressed,
     });
 
@@ -389,13 +390,17 @@ export async function exportTurnkeyPrivateKey(
       returnMnemonic: false,
     });
 
+    if (keyType === "solana") {
+      return privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+    }
+
     return privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`;
   } catch (error) {
     logSystemError(
       ErrorCategory.EXTERNAL_SERVICE,
       "[Turnkey] Failed to export private key",
       error,
-      { service: "turnkey" }
+      { service: "turnkey", key_type: keyType }
     );
     throw error;
   }

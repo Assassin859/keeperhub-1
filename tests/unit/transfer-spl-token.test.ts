@@ -230,7 +230,7 @@ describe("transferSplTokenCore", () => {
       decimals: 6,
       recipient: RECIPIENT.toBase58(),
       createdRecipientAccount: false,
-      gasUsed: "0",
+      gasUsed: "5000",
       gasUsedUnits: "4521",
       effectiveGasPrice: "10",
     });

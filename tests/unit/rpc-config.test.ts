@@ -332,44 +332,46 @@ describe("RPC Config Resolution", () => {
       { json: "tempo-testnet", public: PUBLIC_RPCS.TEMPO_TESTNET },
       { json: "tempo-mainnet", public: PUBLIC_RPCS.TEMPO_MAINNET },
       { json: "solana-mainnet", public: PUBLIC_RPCS.SOLANA_MAINNET },
-      { json: "solana-testnet", public: PUBLIC_RPCS.SOLANA_DEVNET },
+      { json: "solana-devnet", public: PUBLIC_RPCS.SOLANA_DEVNET },
     ];
 
-    it.each(chainKeys)(
-      "should resolve $json from JSON config",
-      ({ json, public: publicDefault }) => {
-        const rpcConfig: RpcConfig = {
-          [json]: { primaryRpcUrl: `https://${json}.json.example.com` },
-        };
+    it.each(chainKeys)("should resolve $json from JSON config", ({
+      json,
+      public: publicDefault,
+    }) => {
+      const rpcConfig: RpcConfig = {
+        [json]: { primaryRpcUrl: `https://${json}.json.example.com` },
+      };
 
-        const result = getRpcUrl({
-          rpcConfig,
-          jsonKey: json,
-          envValue: undefined,
-          publicDefault,
-          type: "primary",
-        });
+      const result = getRpcUrl({
+        rpcConfig,
+        jsonKey: json,
+        envValue: undefined,
+        publicDefault,
+        type: "primary",
+      });
 
-        expect(result).toBe(`https://${json}.json.example.com`);
-      }
-    );
+      expect(result).toBe(`https://${json}.json.example.com`);
+    });
 
-    it.each(chainKeys)(
-      "should fall back to public default for $json when no config",
-      ({ json, public: publicDefault }) => {
-        const rpcConfig: RpcConfig = {};
+    it.each(
+      chainKeys
+    )("should fall back to public default for $json when no config", ({
+      json,
+      public: publicDefault,
+    }) => {
+      const rpcConfig: RpcConfig = {};
 
-        const result = getRpcUrl({
-          rpcConfig,
-          jsonKey: json,
-          envValue: undefined,
-          publicDefault,
-          type: "primary",
-        });
+      const result = getRpcUrl({
+        rpcConfig,
+        jsonKey: json,
+        envValue: undefined,
+        publicDefault,
+        type: "primary",
+      });
 
-        expect(result).toBe(publicDefault);
-      }
-    );
+      expect(result).toBe(publicDefault);
+    });
   });
 
   describe("edge cases", () => {
@@ -489,6 +491,42 @@ describe("RPC Config Resolution", () => {
           type: "primary",
         })
       ).toBe("https://tempo-test.primary.com");
+    });
+
+    it("resolves legacy solana-testnet jsonKey alias to solana-devnet config", () => {
+      const rpcConfig: RpcConfig = {
+        "solana-devnet": {
+          primaryRpcUrl: "https://solana-dev.canonical.example.com",
+        },
+      };
+
+      expect(
+        getRpcUrl({
+          rpcConfig,
+          jsonKey: "solana-testnet",
+          envValue: undefined,
+          publicDefault: PUBLIC_RPCS.SOLANA_DEVNET,
+          type: "primary",
+        })
+      ).toBe("https://solana-dev.canonical.example.com");
+    });
+
+    it("resolves operator configs still keyed by solana-testnet", () => {
+      const rpcConfig: RpcConfig = {
+        "solana-testnet": {
+          primaryRpcUrl: "https://solana-dev.legacy.example.com",
+        },
+      };
+
+      expect(
+        getRpcUrl({
+          rpcConfig,
+          jsonKey: "solana-devnet",
+          envValue: undefined,
+          publicDefault: PUBLIC_RPCS.SOLANA_DEVNET,
+          type: "primary",
+        })
+      ).toBe("https://solana-dev.legacy.example.com");
     });
 
     it("should work with realistic JSON string parsing", () => {

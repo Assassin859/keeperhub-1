@@ -24,3 +24,20 @@ export const SOLANA_ATA_RENT_LAMPORTS = BigInt(2_100_000);
 /** Worst-case SOL cost for an SPL transfer: base fee plus new ATA rent. */
 export const SOLANA_SPL_MAX_FEE_LAMPORTS =
   SOLANA_BASE_FEE_LAMPORTS + SOLANA_ATA_RENT_LAMPORTS;
+
+const MICRO_LAMPORTS_PER_LAMPORT = BigInt(1_000_000);
+
+/**
+ * Total lamport fee for a confirmed Solana transaction: base signature fee
+ * plus the priority fee (compute units consumed x micro-lamports per CU).
+ */
+export function computeSolanaLamportFee(
+  computeUnits: bigint,
+  priorityFeeMicroLamports: bigint
+): bigint {
+  const priorityLamports =
+    computeUnits > BigInt(0) && priorityFeeMicroLamports > BigInt(0)
+      ? (computeUnits * priorityFeeMicroLamports) / MICRO_LAMPORTS_PER_LAMPORT
+      : BigInt(0);
+  return SOLANA_BASE_FEE_LAMPORTS + priorityLamports;
+}

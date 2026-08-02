@@ -13,6 +13,7 @@ import { getErrorMessage } from "@/lib/utils";
 import type { NonceSession } from "../nonce-manager";
 import { assertMaxSolLamportsOutflow } from "../solana-max-sol-guard";
 import {
+  type NormalizedTxResult,
   normalizeSolanaTransaction,
   parseComputeUnitPrice,
 } from "../solana-tx-normalize";
@@ -28,6 +29,26 @@ import type {
 } from "./types";
 
 type SolanaProviderFactory = () => Promise<SolanaProviderManager>;
+
+type SolanaBlockhashRefs = {
+  blockhash: string;
+  lastValidBlockHeight: number;
+};
+
+type SolanaSignedAttempt = {
+  signedBytes: Uint8Array;
+  signedTx: Transaction | VersionedTransaction;
+  isVersioned: boolean;
+  normalized: NormalizedTxResult;
+  blockhashRefs: SolanaBlockhashRefs;
+};
+
+const BLOCKHASH_EXPIRY_PATTERN =
+  /blockhashnotfound|block height exceeded|blockhash expired|transaction expired/i;
+
+function isSolanaBlockhashExpiryError(error: unknown): boolean {
+  return BLOCKHASH_EXPIRY_PATTERN.test(getErrorMessage(error));
+}
 
 export class SolanaChainAdapter implements ChainAdapter {
   readonly chainFamily = "solana";
@@ -49,33 +70,13 @@ export class SolanaChainAdapter implements ChainAdapter {
     return this.managerPromise;
   }
 
-  async sendTransaction(
-    _signer: ethers.Signer, // Unused: Solana uses options.solanaSigner
+  private async buildSignAndSimulate(
     request: SendTransactionRequest,
-    _session: NonceSession, // Unused: Solana has no EVM nonce concept
-    options: TransactionOptions
-  ): Promise<TransactionReceipt> {
-    if (!options.solanaSigner) {
-      throw new Error("[SolanaChainAdapter] Missing options.solanaSigner");
-    }
-
-    // Capture in a non-nullable local so TypeScript can narrow it inside
-    // the executeWithFailover async closure (the outer guard doesn't flow in).
-    const solanaSigner = options.solanaSigner;
-
-    // Construct a real PublicKey from the duck-typed return of getPublicKey().
-    // The SolanaTransactionSigner interface returns { toBase58(): string }
-    // but normalizeSolanaTransaction requires the full @solana/web3.js PublicKey.
-    const signerPublicKey = new PublicKey(
-      (await solanaSigner.getPublicKey()).toBase58()
-    );
-
-    const { blockhash, lastValidBlockHeight } =
-      await this.executeWithSolanaFailover(
-        (connection) => connection.getLatestBlockhash("confirmed"),
-        "read"
-      );
-
+    options: TransactionOptions,
+    solanaSigner: NonNullable<TransactionOptions["solanaSigner"]>,
+    signerPublicKey: PublicKey,
+    blockhashRefs: SolanaBlockhashRefs
+  ): Promise<SolanaSignedAttempt> {
     const normalized = normalizeSolanaTransaction(
       request.data,
       request.to,
@@ -90,9 +91,10 @@ export class SolanaChainAdapter implements ChainAdapter {
 
     if (isVersioned) {
       (normalized.transaction as VersionedTransaction).message.recentBlockhash =
-        blockhash;
+        blockhashRefs.blockhash;
     } else {
-      (normalized.transaction as Transaction).recentBlockhash = blockhash;
+      (normalized.transaction as Transaction).recentBlockhash =
+        blockhashRefs.blockhash;
     }
 
     const txToSign = normalized.transaction;
@@ -163,19 +165,79 @@ export class SolanaChainAdapter implements ChainAdapter {
       }
     }, "preflight");
 
-    const manager = await this.getManager();
-    const { signature } = await submitSignedSolanaTransactionWithFailover(
+    return {
       signedBytes,
-      manager
+      signedTx,
+      isVersioned,
+      normalized,
+      blockhashRefs,
+    };
+  }
+
+  async sendTransaction(
+    _signer: ethers.Signer, // Unused: Solana uses options.solanaSigner
+    request: SendTransactionRequest,
+    _session: NonceSession, // Unused: Solana has no EVM nonce concept
+    options: TransactionOptions
+  ): Promise<TransactionReceipt> {
+    if (!options.solanaSigner) {
+      throw new Error("[SolanaChainAdapter] Missing options.solanaSigner");
+    }
+
+    const solanaSigner = options.solanaSigner;
+
+    const signerPublicKey = new PublicKey(
+      (await solanaSigner.getPublicKey()).toBase58()
     );
+
+    const manager = await this.getManager();
+    let signedAttempt: SolanaSignedAttempt | null = null;
+    let signature: string | null = null;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const blockhashRefs = await this.executeWithSolanaFailover(
+        (connection) => connection.getLatestBlockhash("confirmed"),
+        "read"
+      );
+
+      signedAttempt = await this.buildSignAndSimulate(
+        request,
+        options,
+        solanaSigner,
+        signerPublicKey,
+        blockhashRefs
+      );
+
+      try {
+        const submitResult = await submitSignedSolanaTransactionWithFailover(
+          signedAttempt.signedBytes,
+          manager
+        );
+        signature = submitResult.signature;
+        break;
+      } catch (error) {
+        if (attempt === 0 && isSolanaBlockhashExpiryError(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (!(signedAttempt && signature)) {
+      throw new Error(
+        "[SolanaChainAdapter] Failed to submit transaction after blockhash retry"
+      );
+    }
+
+    const { blockhashRefs, normalized, isVersioned } = signedAttempt;
 
     const { confirmationErr, txResult } = await this.executeWithSolanaFailover(
       async (connection) => {
         const confirmation = await connection.confirmTransaction(
           {
             signature,
-            blockhash, // Original blockhash used for signing
-            lastValidBlockHeight,
+            blockhash: blockhashRefs.blockhash,
+            lastValidBlockHeight: blockhashRefs.lastValidBlockHeight,
           },
           "confirmed"
         );
@@ -189,13 +251,6 @@ export class SolanaChainAdapter implements ChainAdapter {
       "read"
     );
 
-    // A Solana transaction that fails execution still "confirms" - it lands
-    // on-chain with an error set. confirmation.value.err is authoritative:
-    // never report a failed tx as a successful receipt (mirrors the EVM
-    // adapter's receipt.status === 0 guard). These checks run outside the
-    // failover closure so a genuinely-failed tx is not retried. getTransaction
-    // may still be null from propagation lag after a successful confirm (an
-    // accounting gap, not a failure), but if present with meta.err it reverted.
     if (confirmationErr) {
       throw new Error(
         `[SolanaChainAdapter] Transaction ${signature} failed on-chain: ${JSON.stringify(confirmationErr)}`

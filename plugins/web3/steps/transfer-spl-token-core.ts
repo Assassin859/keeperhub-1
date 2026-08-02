@@ -30,7 +30,10 @@ import type { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
 import type { SolanaTransactionSigner } from "@/lib/web3/chain-adapter/types";
 import type { NonceSession } from "@/lib/web3/nonce-manager";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
-import { SOLANA_BASE_FEE_LAMPORTS } from "@/lib/web3/solana-fees";
+import {
+  computeSolanaLamportFee,
+  SOLANA_BASE_FEE_LAMPORTS,
+} from "@/lib/web3/solana-fees";
 import { initializeSolanaWallet } from "@/lib/web3/wallet-helpers";
 
 /**
@@ -498,13 +501,16 @@ async function executeTransfer(
 
     const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
+    const lamportFee = computeSolanaLamportFee(
+      receipt.gasUsed,
+      receipt.effectiveGasPrice
+    );
+
     return {
       success: true,
       transactionHash: receipt.hash,
       transactionLink,
-      // Mirrors the native Solana path: the lamport fee is not computed, and the
-      // raw compute-unit fields are returned instead.
-      gasUsed: "0",
+      gasUsed: lamportFee.toString(),
       gasUsedUnits: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice.toString(),
       amount,
