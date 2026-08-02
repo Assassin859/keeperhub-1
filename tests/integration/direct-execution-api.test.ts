@@ -189,7 +189,7 @@ function setupPassingGuards(): void {
     (input: Record<string, unknown>) => input
   );
   mocks.markRunning.mockResolvedValue(undefined);
-  mocks.completeExecution.mockResolvedValue(undefined);
+  mocks.completeExecution.mockResolvedValue({ status: "completed" });
   mocks.failExecution.mockResolvedValue(undefined);
 }
 
