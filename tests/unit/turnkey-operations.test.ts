@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { Turnkey } from "@turnkey/sdk-server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-operations";
 
