@@ -36,6 +36,7 @@ import {
 } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
+import type { ExecuteResponse } from "../_lib/types";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -291,13 +292,20 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 10. Return. A failed broadcast is finalized (not released) so a retry
   // replays the failure instead of re-sending the tx.
+  const responseBody: ExecuteResponse = {
+    executionId,
+    status: result.success ? "completed" : "failed",
+    ...(result.success
+      ? {
+          transactionHash: result.transactionHash,
+          transactionLink: result.transactionLink,
+        }
+      : {}),
+  };
   return applyRateLimitHeaders(
     await recordIdempotentResponse(
       idem,
-      NextResponse.json(
-        { executionId, status: result.success ? "completed" : "failed" },
-        { status: HttpStatus.ACCEPTED }
-      ),
+      NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
       result.success ? "success" : "failed"
     ),
     rateLimit

@@ -3,6 +3,8 @@ export type ExecutionStatus = "pending" | "running" | "completed" | "failed";
 export type ExecuteResponse = {
   executionId: string;
   status: ExecutionStatus;
+  transactionHash?: string | null;
+  transactionLink?: string | null;
 };
 
 export type ExecutionStatusResponse = {
@@ -11,6 +13,7 @@ export type ExecutionStatusResponse = {
   type: string;
   transactionHash: string | null;
   transactionLink: string | null;
+  sponsored: boolean;
   result: unknown;
   error: string | null;
   gasUsedWei: string | null;
