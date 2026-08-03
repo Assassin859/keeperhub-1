@@ -42,6 +42,7 @@ import {
   computeSolanaLamportFee,
   SOLANA_BASE_FEE_LAMPORTS,
 } from "@/lib/web3/solana-fees";
+import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -87,7 +88,19 @@ export type TransferFundsResult =
       effectiveGasPrice: string;
       sponsored?: boolean;
     }
-  | { success: false; error: string; rejection?: RevertKind };
+  | {
+      success: false;
+      error: string;
+      rejection?: RevertKind;
+      // Set only when a transaction reached the chain and failed
+      // there, so the finalizer can persist a receipt for the failure. Absent
+      // on pre-broadcast failures, where no transaction exists.
+      transactionHash?: string;
+      chainId?: number;
+      // True when the terminal failure came from the gas-sponsored path, so
+      // the finalizer can report the route accurately on a failed execution.
+      sponsored?: boolean;
+    };
 
 /**
  * Core transfer funds logic
@@ -314,7 +327,14 @@ export async function transferFundsCore(
         chainId,
       });
       if (!decision.fallback) {
-        return { success: false, error: decision.error };
+        return {
+          success: false,
+          error: decision.error,
+          sponsored: true,
+          ...(decision.transactionHash
+            ? { transactionHash: decision.transactionHash, chainId }
+            : {}),
+        };
       }
     }
   }
@@ -449,6 +469,9 @@ export async function transferFundsCore(
         success: false,
         error: formatContractError(error, undefined, "Transaction failed"),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
+        ...(revertedTransactionHash(error)
+          ? { transactionHash: revertedTransactionHash(error), chainId }
+          : {}),
       };
     }
   });

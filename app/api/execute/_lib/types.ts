@@ -20,8 +20,9 @@ export type ExecutionStatusResponse = {
   transactionHash: string | null;
   transactionLink: string | null;
   sponsored: boolean;
-  // KEEP-1084: per-hash on-chain verification evidence behind `status`.
-  // completeExecution() has persisted this since KEEP-966; without it on the
+  // Per-hash on-chain verification evidence behind `status`.
+  // completeExecution() has persisted this since the reconciliation gate
+  // landed; without it on the
   // response a caller can see that an execution was gated but not what the
   // gate observed. Empty for executions that claimed no transaction hash.
   receipts: DirectExecutionReceiptEntry[];

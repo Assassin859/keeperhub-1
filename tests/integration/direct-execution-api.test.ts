@@ -419,9 +419,41 @@ describe("Direct Execution API", () => {
       expect(data.status).toBe("failed");
       expect(data.transactionHash).toBeUndefined();
       expect(data.transactionLink).toBeUndefined();
+      // A pre-broadcast failure has no transaction to reconcile, so the
+      // finalizer is told there is no hash rather than being handed one.
       expect(mocks.failExecution).toHaveBeenCalledWith(
         "exec_1",
-        "Insufficient funds"
+        "Insufficient funds",
+        {
+          transactionHash: undefined,
+          chainId: undefined,
+          sponsored: undefined,
+        }
+      );
+    });
+
+    it("records the hash and route when a broadcast transaction reverts", async () => {
+      mocks.validateApiKey.mockResolvedValue(AUTH_CONTEXT);
+      mocks.checkRateLimit.mockReturnValue({ allowed: true });
+      mocks.transferFundsCore.mockResolvedValue({
+        success: false,
+        error: "Transaction reverted: execution reverted (tx 0xdead)",
+        transactionHash: "0xdead",
+        chainId: 11_155_111,
+        sponsored: true,
+      });
+
+      const response = await transferPOST(postRequest("/transfer", validBody));
+
+      expect(response.status).toBe(202);
+      expect(mocks.failExecution).toHaveBeenCalledWith(
+        "exec_1",
+        "Transaction reverted: execution reverted (tx 0xdead)",
+        {
+          transactionHash: "0xdead",
+          chainId: 11_155_111,
+          sponsored: true,
+        }
       );
     });
 
