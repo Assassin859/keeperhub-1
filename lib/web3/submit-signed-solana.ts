@@ -27,6 +27,16 @@ function extractFirstSignature(signedBytes: Uint8Array): Uint8Array | null {
 }
 
 /**
+ * The base58 signature a set of signed bytes will carry on chain, or null when
+ * the bytes cannot be parsed. Deterministic: the signature is fixed at signing,
+ * so it identifies the transaction before it is ever broadcast.
+ */
+export function deriveSolanaSignature(signedBytes: Uint8Array): string | null {
+  const firstSig = extractFirstSignature(signedBytes);
+  return firstSig ? bs58.encode(firstSig) : null;
+}
+
+/**
  * Attempts before giving up on a signature that has not surfaced yet. A
  * transaction the RPC accepted needs a slot or two to become queryable, so a
  * single immediate lookup cannot tell "still propagating" from "never landed"

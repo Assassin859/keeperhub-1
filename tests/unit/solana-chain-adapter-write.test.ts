@@ -413,6 +413,15 @@ describe("SolanaChainAdapter - sendTransaction", () => {
         }
         return Promise.resolve("signature123");
       });
+      // The first attempt never landed and the chain has moved past the block
+      // height its blockhash was valid for, so it can never land: re-signing is
+      // safe only once that is established.
+      mockConnection.getSignatureStatuses = vi
+        .fn()
+        .mockResolvedValue({ value: [null] });
+      (mockConnection as any).getBlockHeight = vi
+        .fn()
+        .mockResolvedValue(200_000);
 
       const originalSignTransaction =
         solanaSigner.signTransaction.bind(solanaSigner);
@@ -421,8 +430,10 @@ describe("SolanaChainAdapter - sendTransaction", () => {
         .mockImplementation(originalSignTransaction);
       solanaSigner.signTransaction = signTransactionSpy;
 
-      const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, () =>
-        Promise.resolve(mockManager as any)
+      const adapter = new SolanaChainAdapter(
+        DEVNET_CHAIN_ID,
+        () => Promise.resolve(mockManager as any),
+        { timeoutMs: 500, pollMs: 10, reconcileDelayMs: 0 }
       );
 
       const receipt = await adapter.sendTransaction(
@@ -442,6 +453,94 @@ describe("SolanaChainAdapter - sendTransaction", () => {
       expect(signTransactionSpy).toHaveBeenCalledTimes(2);
       expect(mockConnection.getLatestBlockhash).toHaveBeenCalledTimes(2);
       expect(sendRawCallCount).toBe(2);
+    });
+
+    it("adopts the first transaction rather than re-signing when it confirms", async () => {
+      // The broadcast reported a blockhash error but the transaction was live
+      // and confirmed. Re-signing here would put a second transaction on chain
+      // with its own signature - Solana dedupes by signature, so both would
+      // execute and the transfer would happen twice.
+      const { mockManager, mockConnection } = createMockManager();
+      let sendRawCallCount = 0;
+      mockConnection.sendRawTransaction = vi.fn().mockImplementation(() => {
+        sendRawCallCount++;
+        return Promise.reject(new Error("BlockhashNotFound"));
+      });
+      // Invisible while submit reconciles, surfacing only once the expiry
+      // proof is waiting on it - the window in which the old code had already
+      // given up and re-signed.
+      let statusCalls = 0;
+      mockConnection.getSignatureStatuses = vi.fn().mockImplementation(() => {
+        statusCalls++;
+        return Promise.resolve({
+          value: [statusCalls > 5 ? { confirmationStatus: "confirmed" } : null],
+        });
+      });
+      // Still inside the blockhash's valid window, so nothing has expired.
+      (mockConnection as any).getBlockHeight = vi.fn().mockResolvedValue(1);
+
+      const signTransactionSpy = vi
+        .fn()
+        .mockImplementation(solanaSigner.signTransaction.bind(solanaSigner));
+      solanaSigner.signTransaction = signTransactionSpy;
+
+      const adapter = new SolanaChainAdapter(
+        DEVNET_CHAIN_ID,
+        () => Promise.resolve(mockManager as any),
+        { timeoutMs: 500, pollMs: 10, reconcileDelayMs: 0 }
+      );
+
+      const receipt = await adapter.sendTransaction(
+        null as any,
+        { to: recipientKeypair.publicKey.toBase58(), value: BigInt(5000) },
+        null as any,
+        { solanaSigner, gasOverrides: {} } as any
+      );
+
+      // Signed and broadcast exactly once; the confirmed signature is adopted.
+      expect(signTransactionSpy).toHaveBeenCalledTimes(1);
+      expect(sendRawCallCount).toBe(1);
+      expect(receipt.hash).toBeDefined();
+    });
+
+    it("refuses to re-sign while the first transaction may still land", async () => {
+      // Neither confirmed nor provably dead: the blockhash is still within its
+      // valid window, so the transaction could yet be included. Failing the
+      // execution is the conservative outcome - re-signing is the one that can
+      // spend twice.
+      const { mockManager, mockConnection } = createMockManager();
+      let sendRawCallCount = 0;
+      mockConnection.sendRawTransaction = vi.fn().mockImplementation(() => {
+        sendRawCallCount++;
+        return Promise.reject(new Error("BlockhashNotFound"));
+      });
+      mockConnection.getSignatureStatuses = vi
+        .fn()
+        .mockResolvedValue({ value: [null] });
+      (mockConnection as any).getBlockHeight = vi.fn().mockResolvedValue(1);
+
+      const signTransactionSpy = vi
+        .fn()
+        .mockImplementation(solanaSigner.signTransaction.bind(solanaSigner));
+      solanaSigner.signTransaction = signTransactionSpy;
+
+      const adapter = new SolanaChainAdapter(
+        DEVNET_CHAIN_ID,
+        () => Promise.resolve(mockManager as any),
+        { timeoutMs: 50, pollMs: 10, reconcileDelayMs: 0 }
+      );
+
+      await expect(
+        adapter.sendTransaction(
+          null as any,
+          { to: recipientKeypair.publicKey.toBase58(), value: BigInt(5000) },
+          null as any,
+          { solanaSigner, gasOverrides: {} } as any
+        )
+      ).rejects.toThrow(/refusing to re-sign/);
+
+      expect(signTransactionSpy).toHaveBeenCalledTimes(1);
+      expect(sendRawCallCount).toBe(1);
     });
 
     it("prevents double-spend by signing and broadcasting exactly once even when confirmation retries", async () => {

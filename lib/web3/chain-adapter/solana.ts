@@ -17,7 +17,10 @@ import {
   normalizeSolanaTransaction,
   parseComputeUnitPrice,
 } from "../solana-tx-normalize";
-import { submitSignedSolanaTransactionWithFailover } from "../submit-signed-solana";
+import {
+  deriveSolanaSignature,
+  submitSignedSolanaTransactionWithFailover,
+} from "../submit-signed-solana";
 import { buildChainAddressUrl, buildChainTransactionUrl } from "./explorer";
 import type {
   ChainAdapter,
@@ -50,15 +53,45 @@ function isSolanaBlockhashExpiryError(error: unknown): boolean {
   return BLOCKHASH_EXPIRY_PATTERN.test(getErrorMessage(error));
 }
 
+/**
+ * How long to wait for an expired-looking broadcast to resolve one way or the
+ * other. A blockhash stays valid for 150 slots, so a genuinely dead transaction
+ * proves itself well inside this; the bound exists so a stalled RPC cannot hang
+ * an execution indefinitely.
+ */
+const EXPIRY_PROOF_TIMEOUT_MS = 90_000;
+const EXPIRY_PROOF_POLL_MS = 2000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Overrides for the waits on the broadcast-failure path: proving an expired
+ * transaction's fate, and the signature reconcile inside submit. Exists so
+ * tests need not sleep.
+ */
+export type SolanaExpiryProofTimings = {
+  timeoutMs?: number;
+  pollMs?: number;
+  reconcileDelayMs?: number;
+};
+
 export class SolanaChainAdapter implements ChainAdapter {
   readonly chainFamily = "solana";
   private readonly chainId: number;
   private readonly providerFactory: SolanaProviderFactory;
+  private readonly timings: SolanaExpiryProofTimings;
   private managerPromise: Promise<SolanaProviderManager> | null = null;
 
-  constructor(chainId: number, providerFactory: SolanaProviderFactory) {
+  constructor(
+    chainId: number,
+    providerFactory: SolanaProviderFactory,
+    timings: SolanaExpiryProofTimings = {}
+  ) {
     this.chainId = chainId;
     this.providerFactory = providerFactory;
+    this.timings = timings;
   }
 
   private getManager(): Promise<SolanaProviderManager> {
@@ -192,6 +225,68 @@ export class SolanaChainAdapter implements ChainAdapter {
     };
   }
 
+  /**
+   * Settles the fate of a broadcast that failed with a blockhash-expiry error,
+   * before its bytes are abandoned for a re-signed replacement.
+   *
+   * Returns the signature when the transaction did land, so the caller adopts
+   * it instead of sending a second one - the post-confirmation checks then
+   * report an on-chain failure normally. Returns null only once inclusion has
+   * become impossible, which is the single condition that makes re-signing
+   * safe: past lastValidBlockHeight the network will no longer accept that
+   * blockhash, so the transaction can never appear afterwards.
+   *
+   * Throws if neither is established within the wait. Failing the execution is
+   * the conservative outcome; re-signing on an unresolved transaction is the
+   * one that can spend twice.
+   */
+  private async settlePriorAttempt(
+    attempt: SolanaSignedAttempt,
+    blockhashRefs: SolanaBlockhashRefs
+  ): Promise<string | null> {
+    const signature = deriveSolanaSignature(attempt.signedBytes);
+    if (!signature) {
+      // Unparseable bytes cannot be looked up, so nothing can be proven.
+      throw new Error(
+        "[SolanaChainAdapter] Cannot verify the expired transaction's fate: signature is underivable"
+      );
+    }
+
+    const deadline =
+      Date.now() + (this.timings.timeoutMs ?? EXPIRY_PROOF_TIMEOUT_MS);
+    while (Date.now() < deadline) {
+      const { status, blockHeight } = await this.executeWithSolanaFailover(
+        async (connection) => {
+          const statuses = await connection.getSignatureStatuses([signature]);
+          return {
+            status: statuses.value[0],
+            blockHeight: await connection.getBlockHeight("confirmed"),
+          };
+        },
+        "read"
+      );
+
+      if (
+        status?.confirmationStatus === "confirmed" ||
+        status?.confirmationStatus === "finalized"
+      ) {
+        return signature;
+      }
+
+      // Only conclusive once the chain has moved past the point where this
+      // blockhash could still be accepted.
+      if (blockHeight > blockhashRefs.lastValidBlockHeight) {
+        return null;
+      }
+
+      await sleep(this.timings.pollMs ?? EXPIRY_PROOF_POLL_MS);
+    }
+
+    throw new Error(
+      `[SolanaChainAdapter] Transaction ${signature} did not confirm and its blockhash has not expired; refusing to re-sign while it may still land`
+    );
+  }
+
   async sendTransaction(
     _signer: ethers.Signer, // Unused: Solana uses options.solanaSigner
     request: SendTransactionRequest,
@@ -229,12 +324,27 @@ export class SolanaChainAdapter implements ChainAdapter {
       try {
         const submitResult = await submitSignedSolanaTransactionWithFailover(
           signedAttempt.signedBytes,
-          manager
+          manager,
+          this.timings.reconcileDelayMs === undefined
+            ? {}
+            : { delayMs: this.timings.reconcileDelayMs }
         );
         signature = submitResult.signature;
         break;
       } catch (error) {
         if (attempt === 0 && isSolanaBlockhashExpiryError(error)) {
+          // Retrying means re-signing against a fresh blockhash, which produces
+          // a second transaction with its own signature. Solana will not dedupe
+          // the two, so if the first one is still live both can land and the
+          // transfer happens twice. Only retry once the first is provably dead.
+          const settled = await this.settlePriorAttempt(
+            signedAttempt,
+            blockhashRefs
+          );
+          if (settled) {
+            signature = settled;
+            break;
+          }
           continue;
         }
         throw error;
