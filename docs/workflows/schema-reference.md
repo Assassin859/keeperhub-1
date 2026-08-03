@@ -1,8 +1,9 @@
-# KeeperHub Workflow Schema — Reference Guide
+# Workflow Schema Reference
 
-This document covers the KeeperHub workflow JSON schema details
-that are not fully covered in the official docs. Written during
-the KeeperHub Agents Onchain Hackathon by the SentinelLP team.
+Details of the workflow JSON schema that the rest of the docs do not
+spell out: which `config` fields are JSON-encoded strings rather than
+raw arrays, how `functionArgs` maps onto ABI inputs, and the exact
+shapes the strict validator accepts.
 
 ---
 
@@ -228,8 +229,3 @@ const txHashes = status.transactionHashes;
 3. The edge shape (`id`, `source`, `target`) is not in the quickstart
 4. The create/status/logs endpoint paths are not in one place in the docs
 
----
-
-Built during the KeeperHub Agents Onchain Hackathon · July 2026
-Submission: [SentinelLP](https://sentinellp-app.vercel.app)
-Starter template: [keeperhub-starter](https://github.com/semi1390/keeperhub-starter)
