@@ -469,21 +469,34 @@ export async function fetchOrCreateSolanaWalletAddress(
     return found;
   }
 
-  await client.createWalletAccounts({
-    organizationId: subOrgId,
-    walletId,
-    accounts: SOLANA_ONLY_ACCOUNT,
-  });
+  // Nothing serialises provisioning, so two steps for the same organization can
+  // reach this point together and both try to create. The account derives from
+  // a fixed path, so whoever wins produces the same address: treat a create
+  // failure as "another caller got there first" and settle it by re-reading,
+  // rather than failing a step for which a usable address now exists.
+  let createError: unknown;
+  try {
+    await client.createWalletAccounts({
+      organizationId: subOrgId,
+      walletId,
+      accounts: SOLANA_ONLY_ACCOUNT,
+    });
+  } catch (error) {
+    createError = error;
+  }
 
   const refreshed = await client.getWalletAccounts({
     organizationId: subOrgId,
     walletId,
   });
   const created = findSolanaWalletAddress(refreshed.accounts);
-  if (!created) {
-    throw new Error(
-      "No Solana address available from Turnkey (create/getWalletAccounts)"
-    );
+  if (created) {
+    return created;
   }
-  return created;
+  if (createError) {
+    throw createError;
+  }
+  throw new Error(
+    "No Solana address available from Turnkey (create/getWalletAccounts)"
+  );
 }

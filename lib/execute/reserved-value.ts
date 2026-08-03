@@ -79,10 +79,11 @@ export function parseNodeNativeValueWei(
       : parsed;
   }
 
-  // transferFundsStep is chain-agnostic - transfer-funds-core branches to a
-  // Solana path on a Solana chainId - so the amount's unit depends on the
-  // configured network, not on the step name. Without this a native SOL
-  // transfer would be parsed at 18 decimals and charged to the wei cap.
+  // An SPL transfer moves no native SOL of its own, so what is charged is its
+  // SOL cost: the signature fee plus rent for a token account the recipient may
+  // not have yet. The reservation runs without a chain read, so it charges a
+  // fixed worst case; transfer-spl-token-core reads the mint's real rent and
+  // refuses to exceed this figure.
   if (stepFunction === "transferSplTokenStep") {
     if (!isSolanaNetwork(config.network)) {
       return { ok: false, error: "transfer-spl-token is Solana-only" };
@@ -94,6 +95,10 @@ export function parseNodeNativeValueWei(
     };
   }
 
+  // transferFundsStep is chain-agnostic - transfer-funds-core branches to a
+  // Solana path on a Solana chainId - so the amount's unit depends on the
+  // configured network, not on the step name. Without this a native SOL
+  // transfer would be parsed at 18 decimals and charged to the wei cap.
   if (stepFunction === "transferFundsStep") {
     const amount =
       typeof config.amount === "string" ? config.amount : undefined;

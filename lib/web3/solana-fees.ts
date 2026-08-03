@@ -15,9 +15,15 @@ import "server-only";
 export const SOLANA_BASE_FEE_LAMPORTS = BigInt(5000);
 
 /**
- * Conservative rent-exempt minimum for a new associated token account.
+ * Rent-exempt minimum reserved for a new associated token account.
  * Covers TOKEN_PROGRAM (~2,039,280 lamports) and TOKEN-2022 ImmutableOwner
  * overhead. Used for org spend-cap reservation before an SPL transfer runs.
+ *
+ * The reservation is made without a chain read, so this is a fixed figure
+ * rather than the mint's true rent, and a Token-2022 mint carrying enough
+ * extensions can need more. transfer-spl-token-core reads the real rent once it
+ * has the mint and refuses the transfer when it exceeds what was reserved, so
+ * this is an enforced ceiling rather than an estimate that can be overspent.
  */
 export const SOLANA_ATA_RENT_LAMPORTS = BigInt(2_100_000);
 
