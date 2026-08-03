@@ -555,7 +555,8 @@ export type GetPrivateMempoolOptions = {
 export function getPrivateRpcUrl(
   options: GetPrivateMempoolOptions
 ): string | undefined {
-  return options.rpcConfig[options.jsonKey]?.privateMempoolRpcUrl;
+  return findRpcConfigEntry(options.rpcConfig, options.jsonKey)
+    ?.privateMempoolRpcUrl;
 }
 
 /**
@@ -567,7 +568,8 @@ export function getUsePrivateMempoolRpc(
   options: GetPrivateMempoolOptions
 ): boolean {
   return (
-    options.rpcConfig[options.jsonKey]?.isPrivateMempoolRpcEnabled ?? false
+    findRpcConfigEntry(options.rpcConfig, options.jsonKey)
+      ?.isPrivateMempoolRpcEnabled ?? false
   );
 }
 
@@ -586,7 +588,7 @@ export function getConfigValue<T>(
   field: keyof RpcConfigEntry,
   defaultValue: T
 ): T {
-  const entry = rpcConfig[jsonKey];
+  const entry = findRpcConfigEntry(rpcConfig, jsonKey);
   if (entry && field in entry && entry[field] !== undefined) {
     return entry[field] as T;
   }

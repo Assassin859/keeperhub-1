@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logSystemError } from "@/lib/logging";
 import {
   getConfigValue,
+  getPrivateRpcUrl,
   getRpcUrl,
+  getUsePrivateMempoolRpc,
   getWssUrl,
   PUBLIC_RPCS,
   parseRpcConfig,
@@ -509,6 +511,47 @@ describe("RPC Config Resolution", () => {
           type: "primary",
         })
       ).toBe("https://solana-dev.canonical.example.com");
+    });
+
+    it("resolves the alias for private-mempool and generic config reads too", () => {
+      // The alias has to hold everywhere a jsonKey is looked up, not just for
+      // RPC and WSS URLs. A getter reading the raw key silently loses the
+      // chain's config the moment operator JSON moves to the canonical name.
+      const legacyConfig: RpcConfig = {
+        "solana-testnet": {
+          privateMempoolRpcUrl: "https://solana-private.legacy.example.com",
+          isPrivateMempoolRpcEnabled: true,
+          symbol: "SOL",
+        },
+      };
+      const canonicalConfig: RpcConfig = {
+        "solana-devnet": {
+          privateMempoolRpcUrl: "https://solana-private.canonical.example.com",
+          isPrivateMempoolRpcEnabled: true,
+          symbol: "SOL",
+        },
+      };
+
+      expect(
+        getPrivateRpcUrl({ rpcConfig: legacyConfig, jsonKey: "solana-devnet" })
+      ).toBe("https://solana-private.legacy.example.com");
+      expect(
+        getPrivateRpcUrl({
+          rpcConfig: canonicalConfig,
+          jsonKey: "solana-testnet",
+        })
+      ).toBe("https://solana-private.canonical.example.com");
+
+      expect(
+        getUsePrivateMempoolRpc({
+          rpcConfig: canonicalConfig,
+          jsonKey: "solana-testnet",
+        })
+      ).toBe(true);
+
+      expect(
+        getConfigValue(canonicalConfig, "solana-testnet", "symbol", "UNKNOWN")
+      ).toBe("SOL");
     });
 
     it("resolves operator configs still keyed by solana-testnet", () => {
