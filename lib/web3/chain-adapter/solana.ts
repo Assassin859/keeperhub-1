@@ -405,6 +405,12 @@ export class SolanaChainAdapter implements ChainAdapter {
       gasUsed: computeUnitsConsumed,
       effectiveGasPrice,
       blockNumber: txResult?.slot ?? 0,
+      // What the chain charged, rather than a figure reconstructed from the
+      // compute budget. Reconstruction assumes exactly one signature, which
+      // holds for every transaction this adapter signs today but is not a
+      // property of the transaction the caller gets back.
+      feeLamports:
+        txResult?.meta?.fee == null ? undefined : BigInt(txResult.meta.fee),
     };
   }
 

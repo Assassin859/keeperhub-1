@@ -7,6 +7,12 @@ export type TransactionReceipt = {
   gasUsed: bigint;
   effectiveGasPrice: bigint;
   blockNumber: number;
+  /**
+   * The fee the chain actually charged, in native base units. Solana reports
+   * this on the confirmed transaction; an EVM fee is exactly
+   * gasUsed x effectiveGasPrice, so adapters there leave it unset.
+   */
+  feeLamports?: bigint;
 };
 
 export type GasOverrides = {

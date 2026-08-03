@@ -577,10 +577,11 @@ async function transferFundsSolana(args: {
 
     const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
-    const lamportFee = computeSolanaLamportFee(
-      receipt.gasUsed,
-      receipt.effectiveGasPrice
-    );
+    // Prefer the fee the chain reported; the compute-budget reconstruction is
+    // only a fallback for a receipt that carries no fee.
+    const lamportFee =
+      receipt.feeLamports ??
+      computeSolanaLamportFee(receipt.gasUsed, receipt.effectiveGasPrice);
 
     return {
       success: true,
