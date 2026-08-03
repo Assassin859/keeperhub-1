@@ -64,6 +64,26 @@ export function isBrowserExtensionError(event: ErrorEvent): boolean {
   });
 }
 
+// Our own JavaScript is only ever served from `/_next/static/`. Wallet
+// providers and browser shims run either from an extension origin or from a
+// script injected into the document, and Sentry's normalizer rewrites both to
+// `app:///...`, which marks them in-app and slips them past `hasNoInAppFrames`.
+// Judge the frame the error actually threw from, the last one, so any injected
+// third party is dropped without enumerating provider names.
+const APP_BUNDLE_PATTERN = /\/_next\/static\//;
+
+export function throwsOutsideAppBundle(event: ErrorEvent): boolean {
+  const frames = event.exception?.values?.[0]?.stacktrace?.frames;
+  if (!frames || frames.length === 0) {
+    return false;
+  }
+  const filename = frames.at(-1)?.filename;
+  if (typeof filename !== "string") {
+    return false;
+  }
+  return !APP_BUNDLE_PATTERN.test(filename);
+}
+
 // `@monaco-editor/react` rejects with a `CancellationError` ("Canceled") when
 // its loader/dispose chain unwinds before the editor finishes mounting — for
 // example when the user navigates away from `/workflows/:workflowId` quickly.
