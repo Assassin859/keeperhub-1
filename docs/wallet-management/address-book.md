@@ -38,23 +38,16 @@ When you copy an address from the address book, the checksummed form is copied t
 The direct-execution API (`POST /api/execute/transfer`) validates
 `recipientAddress` with a strict EIP-55 checksum before accepting a request.
 Add recipients to the address book first and copy the checksummed form from
-here — or pass an all-lowercase address. A mixed-case address with an invalid
-checksum is rejected with `Invalid recipient address`. See
+here — or pass an all-lowercase address. A mixed-case address whose checksum
+does not match is rejected with `Invalid recipient address: <address>`. See
 [Direct Execution](/api/direct-execution) for details.
 
-## Address Book API
-
-The address book also has a REST API (Bearer `kh_` key, org-scoped):
-
-- `GET /api/address-book` — list saved addresses.
-- `POST /api/address-book` — add an address. Body:
-  ```json
-  { "label": "Treasury Wallet", "address": "0x742d35cc6634c0532925a3b844bc9e7595f0beb" }
-  ```
-  Addresses are stored lowercase and validated as Ethereum addresses.
-
-This lets agents and integrations maintain recipient allowlists programmatically
-instead of requiring a human in the dashboard.
+The address book is also reachable over REST, so agents and integrations can
+maintain recipient allowlists without a human in the dashboard. The endpoints
+(`GET`/`POST /api/address-book`, `PATCH`/`DELETE /api/address-book/{entryId}`)
+are documented under [User](/api/user). Note that writes require the
+`mcp:write` scope: an unscoped `kh_` key is accepted, but a scoped key without
+that permission returns 403.
 
 ## Using Addresses in Workflow Nodes
 
