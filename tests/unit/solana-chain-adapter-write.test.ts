@@ -12,6 +12,7 @@ vi.mock("@/lib/logging", () => ({
 import {
   ComputeBudgetProgram,
   Keypair,
+  PublicKey,
   SystemProgram,
   Transaction,
   VersionedTransaction,
@@ -465,5 +466,155 @@ describe("SolanaChainAdapter - sendTransaction", () => {
       // sendRawTransaction must be called exactly once (no retry on broadcast side)
       expect(mockConnection.sendRawTransaction).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("SolanaChainAdapter - maxSol enforcement", () => {
+  let signerKeypair: Keypair;
+  let solanaSigner: SolanaKeypairSigner;
+  let recipientKeypair: Keypair;
+
+  const PRE_BALANCE = 10_000_000;
+
+  /**
+   * Mirrors buildSerializedSolanaInstructionTx: the instruction-based Solana
+   * actions that require maxSol hand the adapter a serialized LEGACY
+   * transaction. Legacy bytes still deserialize into a VersionedTransaction
+   * (wrapping a legacy Message) rather than throwing, so these reach the
+   * adapter's versioned branch - which is why that branch has to be the one
+   * that requests the fee payer's simulated state.
+   */
+  function buildLegacySerializedTx(): string {
+    const transaction = new Transaction();
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey: signerKeypair.publicKey,
+        toPubkey: recipientKeypair.publicKey,
+        lamports: 1000,
+      })
+    );
+    transaction.feePayer = signerKeypair.publicKey;
+    transaction.recentBlockhash = PublicKey.default.toBase58();
+    return transaction
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString("base64");
+  }
+
+  /**
+   * Models the RPC contract rather than returning account state
+   * unconditionally: simulateTransaction reports accounts only when the caller
+   * asked for them, and reports them in the order requested. A mock that hands
+   * back accounts regardless cannot distinguish a correct request from an
+   * omitted one, which is precisely the defect under test.
+   */
+  function createMaxSolManager(postLamports: number | null) {
+    const { mockManager, mockConnection } = createMockManager();
+    (mockConnection as any).getBalance = vi.fn().mockResolvedValue(PRE_BALANCE);
+    mockConnection.simulateTransaction = vi
+      .fn()
+      .mockImplementation(
+        (_tx: unknown, configOrSigners: any, includeAccounts?: unknown) => {
+          let requested: string[] | undefined;
+          if (configOrSigners?.accounts?.addresses) {
+            requested = configOrSigners.accounts.addresses;
+          } else if (Array.isArray(includeAccounts)) {
+            requested = (includeAccounts as PublicKey[]).map((key) =>
+              key.toBase58()
+            );
+          }
+
+          const accounts = requested?.map((address) =>
+            address === signerKeypair.publicKey.toBase58() &&
+            postLamports !== null
+              ? { lamports: postLamports }
+              : null
+          );
+
+          return Promise.resolve({ value: { err: null, logs: [], accounts } });
+        }
+      );
+    return { mockManager, mockConnection };
+  }
+
+  function send(mockManager: unknown, maxSolLamports: bigint) {
+    const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, () =>
+      Promise.resolve(mockManager as any)
+    );
+    return adapter.sendTransaction(
+      null as any,
+      {
+        to: signerKeypair.publicKey.toBase58(),
+        data: buildLegacySerializedTx(),
+      },
+      null as any,
+      { solanaSigner, gasOverrides: {}, maxSolLamports } as any
+    );
+  }
+
+  beforeEach(() => {
+    signerKeypair = Keypair.generate();
+    solanaSigner = new SolanaKeypairSigner(signerKeypair);
+    recipientKeypair = Keypair.generate();
+    vi.clearAllMocks();
+  });
+
+  it("requests the fee payer's simulated state by address", async () => {
+    const { mockManager, mockConnection } = createMaxSolManager(
+      PRE_BALANCE - 500_000
+    );
+
+    await send(mockManager, BigInt(1_000_000));
+
+    // Without an explicit accounts request the simulation returns no account
+    // state at all and the check below can never run.
+    const config = mockConnection.simulateTransaction.mock.calls[0][1];
+    expect(config.accounts.addresses).toEqual([
+      signerKeypair.publicKey.toBase58(),
+    ]);
+  });
+
+  it("allows an outflow within the declared ceiling", async () => {
+    const { mockManager } = createMaxSolManager(PRE_BALANCE - 500_000);
+
+    const receipt = await send(mockManager, BigInt(1_000_000));
+
+    expect(receipt.hash).toBe("signature123");
+  });
+
+  it("rejects an outflow above the declared ceiling", async () => {
+    const { mockManager } = createMaxSolManager(PRE_BALANCE - 2_000_000);
+
+    await expect(send(mockManager, BigInt(1_000_000))).rejects.toThrow(
+      /exceeding declared maxSol ceiling/
+    );
+  });
+
+  it("fails closed when the simulation returns no fee payer state", async () => {
+    const { mockManager } = createMaxSolManager(null);
+
+    await expect(send(mockManager, BigInt(1_000_000))).rejects.toThrow(
+      /did not return fee payer account state/
+    );
+  });
+
+  it("does not request account state when no ceiling is declared", async () => {
+    const { mockManager, mockConnection } = createMaxSolManager(null);
+    const adapter = new SolanaChainAdapter(DEVNET_CHAIN_ID, () =>
+      Promise.resolve(mockManager as any)
+    );
+
+    await adapter.sendTransaction(
+      null as any,
+      {
+        to: signerKeypair.publicKey.toBase58(),
+        data: buildLegacySerializedTx(),
+      },
+      null as any,
+      { solanaSigner, gasOverrides: {} } as any
+    );
+
+    const config = mockConnection.simulateTransaction.mock.calls[0][1];
+    expect(config.accounts).toBeUndefined();
+    expect((mockConnection as any).getBalance).not.toHaveBeenCalled();
   });
 });
