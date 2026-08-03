@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-operations";
+import {
+  createTurnkeyWallet,
+  fetchOrCreateSolanaWalletAddress,
+} from "@/lib/turnkey/turnkey-operations";
 
 const mockApiClientInstance = {
   createSubOrganization: vi.fn(),
@@ -288,5 +291,83 @@ describe("turnkey-operations - createTurnkeyWallet", () => {
       "ADDRESS_FORMAT_ETHEREUM"
     );
     expect(mockApiClient.createWalletAccounts).not.toHaveBeenCalled();
+  });
+});
+
+describe("turnkey-operations - fetchOrCreateSolanaWalletAddress", () => {
+  const SOLANA_ACCOUNT = {
+    address: "sol-address",
+    addressFormat: "ADDRESS_FORMAT_SOLANA",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApiClientInstance.getWalletAccounts.mockReset();
+    mockApiClientInstance.createWalletAccounts.mockReset();
+  });
+
+  it("returns an existing account without creating one", async () => {
+    mockApiClientInstance.getWalletAccounts.mockResolvedValue({
+      accounts: [SOLANA_ACCOUNT],
+    });
+
+    const address = await fetchOrCreateSolanaWalletAddress(
+      mockApiClientInstance as never,
+      "sub-org",
+      "wallet"
+    );
+
+    expect(address).toBe("sol-address");
+    expect(mockApiClientInstance.createWalletAccounts).not.toHaveBeenCalled();
+  });
+
+  it("recovers when a concurrent caller created the account first", async () => {
+    // Nothing serialises provisioning, so the loser of the race sees an empty
+    // read, then a create that fails because the account already exists. The
+    // derivation path is fixed, so the winner's address is the same one this
+    // caller would have produced - failing here would fail a step that has a
+    // perfectly usable address.
+    mockApiClientInstance.getWalletAccounts
+      .mockResolvedValueOnce({ accounts: [] })
+      .mockResolvedValueOnce({ accounts: [SOLANA_ACCOUNT] });
+    mockApiClientInstance.createWalletAccounts.mockRejectedValue(
+      new Error("wallet account already exists at path m/44'/501'/0'/0'")
+    );
+
+    const address = await fetchOrCreateSolanaWalletAddress(
+      mockApiClientInstance as never,
+      "sub-org",
+      "wallet"
+    );
+
+    expect(address).toBe("sol-address");
+  });
+
+  it("surfaces the create failure when no account exists afterwards", async () => {
+    mockApiClientInstance.getWalletAccounts.mockResolvedValue({ accounts: [] });
+    mockApiClientInstance.createWalletAccounts.mockRejectedValue(
+      new Error("turnkey rejected the request")
+    );
+
+    await expect(
+      fetchOrCreateSolanaWalletAddress(
+        mockApiClientInstance as never,
+        "sub-org",
+        "wallet"
+      )
+    ).rejects.toThrow("turnkey rejected the request");
+  });
+
+  it("throws when create succeeds but no account comes back", async () => {
+    mockApiClientInstance.getWalletAccounts.mockResolvedValue({ accounts: [] });
+    mockApiClientInstance.createWalletAccounts.mockResolvedValue({});
+
+    await expect(
+      fetchOrCreateSolanaWalletAddress(
+        mockApiClientInstance as never,
+        "sub-org",
+        "wallet"
+      )
+    ).rejects.toThrow("No Solana address available");
   });
 });

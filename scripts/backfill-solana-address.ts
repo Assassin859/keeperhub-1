@@ -113,7 +113,15 @@ async function main(): Promise<void> {
   await client.end();
 }
 
-main().catch((error) => {
-  console.error("Backfill script execution failed:", error);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    // ensureOrganizationSolanaAddress pulls in @/lib/db, whose connection pools
+    // are module-scoped and never closed by this script - only the local client
+    // above is. Those pools hold open sockets with no idle timeout, so the
+    // process would otherwise sit there after the summary prints.
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error("Backfill script execution failed:", error);
+    process.exit(1);
+  });
