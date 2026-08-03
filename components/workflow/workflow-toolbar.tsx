@@ -134,6 +134,40 @@ function updateNodesStatus(
   }
 }
 
+const CONFIG_FIELD_HIGHLIGHT_CLASSES = [
+  "ring-2",
+  "ring-primary",
+  "ring-offset-2",
+] as const;
+
+function focusConfigFieldWhenReady(
+  fieldKey: string,
+  attempt = 0
+): void {
+  const element = document.getElementById(fieldKey);
+
+  if (!element) {
+    if (attempt < 20) {
+      window.setTimeout(
+        () => focusConfigFieldWhenReady(fieldKey, attempt + 1),
+        50
+      );
+    }
+    return;
+  }
+
+  element.scrollIntoView({
+    behavior: "smooth",
+    block: "center",
+  });
+  element.focus({ preventScroll: true });
+  element.classList.add(...CONFIG_FIELD_HIGHLIGHT_CLASSES);
+
+  window.setTimeout(() => {
+    element.classList.remove(...CONFIG_FIELD_HIGHLIGHT_CLASSES);
+  }, 1600);
+}
+
 type MissingIntegrationInfo = {
   integrationType: IntegrationType;
   integrationLabel: string;
@@ -740,18 +774,14 @@ function useWorkflowHandlers({
   };
 
   const handleGoToStep = (nodeId: string, fieldKey?: string) => {
-    setSelectedNodeId(nodeId);
     setActiveTab("properties");
+    setSelectedNodeId(nodeId);
 
-    // Focus on the specific field after a short delay to allow the panel to render
+    // The issues overlay closes immediately after this callback. Wait for the
+    // selected node's Properties panel to render, then focus and highlight the
+    // affected field.
     if (fieldKey) {
-      setTimeout(() => {
-        const element = document.getElementById(fieldKey);
-        if (element) {
-          element.focus();
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-      }, 100);
+      window.setTimeout(() => focusConfigFieldWhenReady(fieldKey), 0);
     }
   };
 
