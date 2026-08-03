@@ -36,6 +36,7 @@ export type ActionConfigFieldBase = {
     | "template-textarea" // TemplateBadgeTextarea - supports {{variable}}
     | "text" // Regular text input
     | "number" // Number input
+    | "switch" // Boolean on/off toggle (e.g. "Fail workflow on error")
     | "datetime" // Native date + time picker (stores an ISO 8601 string)
     | "select" // Dropdown select
     | "chain-select" // Dynamic chain selector that fetches from /api/chains

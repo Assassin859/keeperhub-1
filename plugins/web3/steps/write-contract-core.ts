@@ -23,7 +23,7 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { findAbiFunction } from "@/lib/abi/utils";
-import { getErrorMessage } from "@/lib/utils";
+import { getErrorMessage, resolveFailOnError } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { generateId } from "@/lib/utils/id";
 import {
@@ -83,14 +83,20 @@ export type WriteContractCoreInput = {
 export type WriteContractResult =
   | {
       success: true;
-      transactionHash: string;
+      transactionHash?: string;
       // KEEP-966: chain the transaction was broadcast on, required for
       // independent on-chain receipt verification at execution finalize time.
-      chainId: number;
-      transactionLink: string;
-      gasUsed: string;
-      gasUsedUnits: string;
-      effectiveGasPrice: string;
+      // Absent when failOnError=false (see applyFailOnError) softened an
+      // execution failure into success -- no transaction was ever broadcast,
+      // so there is nothing to verify. The KEEP-966 reconciliation gate in
+      // lib/workflow/executor/logging.ts only collects entries that have a
+      // real `transactionHash`, so this is safe: a softened result is simply
+      // never picked up by that gate.
+      chainId?: number;
+      transactionLink?: string;
+      gasUsed?: string;
+      gasUsedUnits?: string;
+      effectiveGasPrice?: string;
       result?: unknown;
       sponsored?: boolean;
       // Normalized view of the call that actually executed against the target
@@ -99,6 +105,12 @@ export type WriteContractResult =
       // to report "what ran" identically to a direct send. Omitted when the RPC
       // cannot trace the transaction.
       executedCall?: ExecutedCall;
+      // Present only when failOnError=false (see applyFailOnError) softened an
+      // execution failure into a success value so the workflow continues.
+      // Absent on a genuine successful write -- transactionHash is absent here.
+      error?: string;
+      rejection?: RevertKind;
+      errorClass?: ExecutionErrorType;
     }
   | {
       success: false;
@@ -106,6 +118,39 @@ export type WriteContractResult =
       rejection?: RevertKind;
       errorClass?: ExecutionErrorType;
     };
+
+/**
+ * Soften an execution failure into a success value when failOnError=false, so
+ * the workflow continues past a revert/RPC failure instead of aborting -- the
+ * write-contract counterpart to HTTP Request's failOnError.
+ *
+ * Only failures with no `errorClass` are eligible: those are the ones raised
+ * by the actual attempt to send the transaction (signer init, broadcast,
+ * on-chain revert). Failures classified USER (bad ABI/args/address) or SYSTEM
+ * (org context, wallet, RPC/Web3 Connection resolution) are configuration
+ * problems that would recur on every execution, so -- mirroring HTTP
+ * Request's SSRF/malformed-URL carve-out -- they always hard-fail regardless
+ * of this flag; softening them would let a broken node config run forever
+ * without the author noticing.
+ *
+ * Must be applied to the result AFTER withStepValueCap resolves, never
+ * inside writeContractCore: the value-cap settle/release decision is keyed
+ * on the true success/failure of the on-chain call.
+ */
+export function applyFailOnError(
+  result: WriteContractResult,
+  failOnError: unknown
+): WriteContractResult {
+  if (result.success || result.errorClass || resolveFailOnError(failOnError)) {
+    return result;
+  }
+  return {
+    success: true,
+    error: result.error,
+    rejection: result.rejection,
+    errorClass: result.errorClass,
+  };
+}
 
 /**
  * Core write contract logic
