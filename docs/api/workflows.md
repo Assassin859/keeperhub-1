@@ -174,10 +174,12 @@ Field-name gotchas the strict validator will reject:
 
 | UI label | API field name | Notes |
 |---|---|---|
-| Function | `abiFunction` | Not `function` or `method` (`functionName` also works, as a legacy alias for `abiFunction`). |
+| Function | `abiFunction` | Not `function`, `method`, or `functionName`. See the note below on `functionName`. |
 | Function Arguments | `functionArgs` | A JSON-encoded array **string** (`"[\"0x…\"]"`), not a raw array. Templates inside the string are resolved before `JSON.parse`. |
 | Web3 Connection | `web3Connection` | Sender routing: `"default"` (org policy), `"eoa"` (force the Turnkey EOA), or `"safe:<safeWalletId>"`. The signing wallet is your org's Turnkey wallet, resolved automatically. |
 | Contract ABI | `abi` | JSON-encoded string, not a raw array — same shape convention as `functionArgs`. |
+
+A warning on `functionName` and `args`: the save-time validator accepts them, because workflows persisted before a field rename still carry that shape and have to stay re-savable. The runtime does not translate them. A workflow that uses `functionName` will therefore save without complaint and then fail at execution with ``Missing `abiFunction` in the step config``. Always send `abiFunction` and `functionArgs`.
 
 Trigger data reference from a downstream action uses the [stored templating format](/workflows/templating): `{{@<nodeId>:<Label>.<field>}}`. For an HTTP trigger, top-level fields on the request body are spread into the trigger's output, so `{"input": {"depositId": "0x…"}}` sent to [`POST /api/workflows/{id}/execute`](#execute-workflow) is reachable at `{{@trigger-1:HTTP.depositId}}`.
 
