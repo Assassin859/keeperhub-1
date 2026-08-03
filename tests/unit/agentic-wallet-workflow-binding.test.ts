@@ -59,8 +59,12 @@ vi.mock("@/lib/db/schema", () => ({
   organizationWallets: { _table: "organization_wallets" },
 }));
 
-const { verifyWorkflowBinding, KNOWN_DATA_CHAIN_IDS, MULTI_CHAIN_TAGS } =
-  await import("@/lib/agentic-wallet/workflow-binding");
+const {
+  verifyWorkflowBinding,
+  KNOWN_DATA_CHAIN_IDS,
+  MULTI_CHAIN_TAGS,
+  isPaymentRailCompatible,
+} = await import("@/lib/agentic-wallet/workflow-binding");
 
 const SLUG = "test-slug";
 const CREATOR = "0xCreATor000000000000000000000000000000001";
@@ -289,12 +293,33 @@ describe("verifyWorkflowBinding", () => {
       });
     });
 
+    it("accepts data-chain slug aliases (ethereum, polygon, arbitrum, bsc)", async () => {
+      for (const chainSlug of [
+        "ethereum",
+        "polygon",
+        "arbitrum",
+        "bsc",
+      ] as const) {
+        queueWorkflow({ chain: chainSlug });
+        queueWallet({});
+        const rBase = await verifyWorkflowBinding(
+          SLUG,
+          "base",
+          CREATOR,
+          "50000"
+        );
+        expect(rBase.ok).toBe(true);
+
+        queueWorkflow({ chain: chainSlug });
+        queueWallet({});
+        const rTempo = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+        expect(rTempo.ok).toBe(true);
+      }
+    });
+
     it("rejects an unrecognised wf.chain tag (defensive — no silent widening)", async () => {
-      // wf.chain is a non-null string we cannot classify (slug form, not in
-      // the data-chain whitelist, not a payment chain). Treat as mismatch
-      // rather than falling through to permissive null branch, so a typo or
-      // future chain stored as "ethereum" / "9999" can never pass through.
-      queueWorkflow({ chain: "ethereum" });
+      // Unknown slug that is not in the data-chain whitelist or slug map.
+      queueWorkflow({ chain: "9999" });
       const rBase = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
       expect(rBase).toMatchObject({
         ok: false,
@@ -580,5 +605,30 @@ describe("verifyWorkflowBinding", () => {
         code: "CHAIN_MISMATCH",
       });
     });
+  });
+});
+
+describe("isPaymentRailCompatible", () => {
+  it("returns true for null/undefined workflow chain (legacy permissive)", () => {
+    expect(isPaymentRailCompatible(null, "base")).toBe(true);
+    expect(isPaymentRailCompatible(undefined, "tempo")).toBe(true);
+  });
+
+  it("returns true for data-chain slug and numeric id on either rail", () => {
+    expect(isPaymentRailCompatible("ethereum", "base")).toBe(true);
+    expect(isPaymentRailCompatible("ethereum", "tempo")).toBe(true);
+    expect(isPaymentRailCompatible("1", "base")).toBe(true);
+    expect(isPaymentRailCompatible("polygon", "tempo")).toBe(true);
+  });
+
+  it("returns false when payment-chain pin differs from caller", () => {
+    expect(isPaymentRailCompatible("base", "tempo")).toBe(false);
+    expect(isPaymentRailCompatible("tempo", "base")).toBe(false);
+    expect(isPaymentRailCompatible("8453", "tempo")).toBe(false);
+  });
+
+  it("returns false for unrecognised tags", () => {
+    expect(isPaymentRailCompatible("9999", "base")).toBe(false);
+    expect(isPaymentRailCompatible("   ", "base")).toBe(false);
   });
 });

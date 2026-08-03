@@ -147,6 +147,29 @@ export const MULTI_CHAIN_TAGS = new Set<string>([
   "all",
 ]);
 
+/**
+ * Human-readable slug aliases for data-chain ids. Creators often store
+ * "ethereum" instead of "1" on marketplace listings; map to the canonical
+ * numeric id before classifying so Base/Tempo payment is accepted.
+ */
+export const DATA_CHAIN_SLUG_TO_ID: Readonly<Record<string, string>> = {
+  ethereum: "1",
+  eth: "1",
+  arbitrum: "42161",
+  "arbitrum-one": "42161",
+  avalanche: "43114",
+  avax: "43114",
+  bnb: "56",
+  bsc: "56",
+  binance: "56",
+  polygon: "137",
+  matic: "137",
+  "0g": "16661",
+  og: "16661",
+  aristotle: "16661",
+  plasma: "9745",
+};
+
 type ChainClassification =
   | { readonly kind: "payment"; readonly chain: BindingChain }
   | { readonly kind: "data" }
@@ -190,10 +213,40 @@ function classifyChainTag(
   if (KNOWN_DATA_CHAIN_IDS.has(v)) {
     return { kind: "data" };
   }
+  const slugMappedId = DATA_CHAIN_SLUG_TO_ID[v];
+  if (slugMappedId !== undefined && KNOWN_DATA_CHAIN_IDS.has(slugMappedId)) {
+    return { kind: "data" };
+  }
   if (MULTI_CHAIN_TAGS.has(v)) {
     return { kind: "multi" };
   }
   return { kind: "unrecognised" };
+}
+
+function isChainTagCompatibleWithCaller(
+  wfClass: ChainClassification,
+  callerChain: BindingChain
+): boolean {
+  return (
+    wfClass.kind === "data" ||
+    wfClass.kind === "multi" ||
+    (wfClass.kind === "payment" && wfClass.chain === callerChain)
+  );
+}
+
+/**
+ * Returns whether a caller payment rail is compatible with a workflow's
+ * registered chain tag. Null/undefined workflow chain is permissive (legacy).
+ */
+export function isPaymentRailCompatible(
+  workflowChainTag: string | null | undefined,
+  callerChain: BindingChain
+): boolean {
+  if (!workflowChainTag) {
+    return true;
+  }
+  const wfClass = classifyChainTag(workflowChainTag);
+  return isChainTagCompatibleWithCaller(wfClass, callerChain);
 }
 
 function priceToMicro(
@@ -263,11 +316,7 @@ export async function verifyWorkflowBinding(
   // workflows.chain column.
   if (wf.chain) {
     const wfClass = classifyChainTag(wf.chain);
-    const matched =
-      wfClass.kind === "data" ||
-      wfClass.kind === "multi" ||
-      (wfClass.kind === "payment" && wfClass.chain === chain);
-    if (!matched) {
+    if (!isChainTagCompatibleWithCaller(wfClass, chain)) {
       return {
         ok: false,
         status: 403,
