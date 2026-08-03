@@ -73,6 +73,7 @@ const {
   mockValidateIntegrations,
   mockEnforceExecutionLimit,
   mockCheckConcurrency,
+  mockChargePaygIfBillable,
 } = vi.hoisted(() => ({
   mockWorkflowsFindFirst: vi.fn(),
   mockApiKeysFindFirst: vi.fn(),
@@ -82,6 +83,7 @@ const {
   mockValidateIntegrations: vi.fn(),
   mockEnforceExecutionLimit: vi.fn(),
   mockCheckConcurrency: vi.fn(),
+  mockChargePaygIfBillable: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -134,6 +136,10 @@ vi.mock("@/lib/db/integrations", () => ({
 vi.mock("@/lib/billing/execution-guard", () => ({
   EXECUTION_LIMIT_ERROR: "Execution limit reached",
   enforceExecutionLimit: mockEnforceExecutionLimit,
+}));
+
+vi.mock("@/lib/billing/payg/charge", () => ({
+  chargePaygIfBillable: mockChargePaygIfBillable,
 }));
 
 vi.mock("@/lib/features/route-guard", () => ({
@@ -236,6 +242,8 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       },
     ]);
     mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
+    // Default: org is not PAYG-billable, so the charge is a no-op pass-through.
+    mockChargePaygIfBillable.mockResolvedValue({ applicable: false });
   });
 
   describe("workflow lookup", () => {
@@ -544,6 +552,30 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(response.headers.get("Access-Control-Allow-Methods")).toContain(
         "POST"
       );
+    });
+  });
+
+  describe("pay-as-you-go charge", () => {
+    it("returns 402 and marks the run errored when the PAYG charge is blocked", async () => {
+      setupHappyPath();
+      const message =
+        "Daily pay-as-you-go spend limit reached. Raise your daily limit or wait until tomorrow.";
+      mockChargePaygIfBillable.mockResolvedValue({
+        applicable: true,
+        ok: false,
+        reason: "daily_cap",
+        message,
+      });
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY, { event: "test" }),
+        createContext(WORKFLOW_ID)
+      );
+
+      expect(response.status).toBe(402);
+      const data = await response.json();
+      expect(data.error).toBe(message);
+      expect(data.status).toBe("error");
     });
   });
 

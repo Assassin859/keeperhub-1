@@ -4,6 +4,7 @@ import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
+import { chargePaygIfBillable } from "@/lib/billing/payg/charge";
 import { db } from "@/lib/db";
 import { resolveExecutionOrgMetadata } from "@/lib/db/org-helpers";
 import {
@@ -172,6 +173,41 @@ async function prepareExecution(
         })
         .returning()
   );
+
+  // PAYG: a free-tier owner org past its included limit is admitted by
+  // enforceExecutionLimit only so it can be charged here. Settle the
+  // per-execution price before the run starts, so MCP-triggered runs bill
+  // exactly like every other path. On a funds, cap, or payment block, resolve
+  // the row to a billing error and stop; non-PAYG orgs pass through untouched.
+  // The lookup inner-joins the org, so organizationId is always set here.
+  if (workflow.organizationId) {
+    const paygCharge = await chargePaygIfBillable({
+      organizationId: workflow.organizationId,
+      executionId: execution.id,
+    });
+    if (paygCharge.applicable && !paygCharge.ok) {
+      await db
+        .update(workflowExecutions)
+        .set({
+          status: "error",
+          error: paygCharge.message,
+          errorCategory: "billing",
+          errorType: "user",
+          completedAt: new Date(),
+        })
+        .where(eq(workflowExecutions.id, execution.id));
+      return {
+        error: NextResponse.json(
+          {
+            error: paygCharge.message,
+            executionId: execution.id,
+            status: "error",
+          },
+          { status: HttpStatus.PAYMENT_REQUIRED, headers: corsHeaders }
+        ),
+      };
+    }
+  }
 
   return { executionId: execution.id };
 }
