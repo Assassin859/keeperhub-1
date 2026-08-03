@@ -157,8 +157,8 @@ describe("runWorkflowSimulation", () => {
     expect(result.errors[0]).toMatchObject({
       code: "SIMULATION_WOULD_REVERT",
       nodeId: "transfer-1",
-      fieldKey: "recipientAddress",
-      parameterPath: "nodes[0].data.config.recipientAddress",
+      fieldKey: "amount",
+      parameterPath: "nodes[0].data.config.amount",
     });
     expect(result.errors[0]?.message).toBe(
       "Pay supplier would revert: InsufficientBalance()"
@@ -258,6 +258,8 @@ describe("runWorkflowSimulation", () => {
     expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_UNAVAILABLE",
       nodeId: "transfer-1",
+      fieldKey: "network",
+      parameterPath: "nodes[0].data.config.network",
       message:
         "Transfer Native Token could not be simulated because the RPC service was unavailable. You can still run the workflow.",
     });
@@ -388,6 +390,36 @@ describe("runWorkflowSimulation", () => {
       functionArgs: JSON.stringify(["123"]),
       value: "0",
     });
+  });
+
+  it("supports the legacy functionName field on write-contract nodes", async () => {
+    const abi = [
+      {
+        type: "function",
+        name: "setValue",
+        stateMutability: "nonpayable",
+        inputs: [{ name: "value", type: "uint256" }],
+        outputs: [],
+      },
+    ];
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("write-legacy", "web3/write-contract", {
+          contractAddress: "0xbb0000000000000000000000000000000000bb00",
+          abi,
+          functionName: "setValue",
+          functionArgs: ["123"],
+        }),
+      ],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.simulatedNodeCount).toBe(1);
+    expect(spies.simulateContractCall).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "setValue" })
+    );
   });
 
   it("maps a token-transfer node to simulateTokenTransfer", async () => {

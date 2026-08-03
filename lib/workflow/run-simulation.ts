@@ -17,16 +17,17 @@ import { hasTemplateVariables } from "@/lib/utils/template";
 
 const NON_NEGATIVE_INTEGER_PATTERN = /^\d+$/;
 
-const SUPPORTED_ACTION_TYPES = new Set([
+const SUPPORTED_ACTION_TYPES = [
   "web3/transfer-funds",
   "web3/transfer-token",
   "web3/write-contract",
-]);
+] as const;
 
-type SupportedActionType =
-  | "web3/transfer-funds"
-  | "web3/transfer-token"
-  | "web3/write-contract";
+const SUPPORTED_ACTION_TYPE_SET: ReadonlySet<string> = new Set(
+  SUPPORTED_ACTION_TYPES
+);
+
+type SupportedActionType = (typeof SUPPORTED_ACTION_TYPES)[number];
 
 export type WorkflowSimulationNode = {
   id: string;
@@ -95,15 +96,16 @@ const ACTION_DYNAMIC_FIELDS: Record<SupportedActionType, readonly string[]> = {
     "contractAddress",
     "abi",
     "abiFunction",
+    "functionName",
     "functionArgs",
     "ethValue",
     "web3Connection",
   ],
 };
 
-const ACTION_DEFAULT_FIELD: Record<SupportedActionType, string> = {
-  "web3/transfer-funds": "recipientAddress",
-  "web3/transfer-token": "recipientAddress",
+const ACTION_FAILURE_FIELD: Record<SupportedActionType, string> = {
+  "web3/transfer-funds": "amount",
+  "web3/transfer-token": "amount",
   "web3/write-contract": "abiFunction",
 };
 
@@ -117,7 +119,7 @@ function isSupportedActionType(
   actionType: unknown
 ): actionType is SupportedActionType {
   return (
-    typeof actionType === "string" && SUPPORTED_ACTION_TYPES.has(actionType)
+    typeof actionType === "string" && SUPPORTED_ACTION_TYPE_SET.has(actionType)
   );
 }
 
@@ -275,6 +277,16 @@ function optionalDecimals(value: unknown): number | undefined {
   return;
 }
 
+function failureField(context: NodeSimulationContext): string {
+  if (context.actionType !== "web3/write-contract") {
+    return ACTION_FAILURE_FIELD[context.actionType];
+  }
+
+  return optionalStringValue(context.config.abiFunction)
+    ? "abiFunction"
+    : "functionName";
+}
+
 async function resolveEoaEligibility(
   context: NodeSimulationContext,
   chainId: number
@@ -387,7 +399,9 @@ function runSimulator(context: NodeSimulationContext): Promise<SimulateResult> {
     network: stringValue(config.network),
     contractAddress: stringValue(config.contractAddress),
     abi: jsonStringValue(config.abi),
-    functionName: stringValue(config.abiFunction),
+    functionName:
+      optionalStringValue(config.abiFunction) ??
+      stringValue(config.functionName),
     functionArgs: optionalJsonStringValue(config.functionArgs),
     value: optionalStringValue(config.ethValue),
   });
@@ -468,7 +482,7 @@ async function simulateNode(
       status: "skipped",
       warning: makeIssue(context, {
         code: "SIMULATION_UNAVAILABLE",
-        fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
+        fieldKey: "network",
         message: `${nodeLabel(
           context.node,
           context.actionType
@@ -488,7 +502,7 @@ async function simulateNode(
       status: "skipped",
       warning: makeIssue(context, {
         code: "SIMULATION_UNAVAILABLE",
-        fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
+        fieldKey: "network",
         message: `${label} could not be simulated because the RPC service was unavailable. You can still run the workflow.`,
       }),
     };
@@ -501,7 +515,7 @@ async function simulateNode(
       status: "failed",
       issue: makeIssue(context, {
         code: "SIMULATION_WOULD_REVERT",
-        fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
+        fieldKey: failureField(context),
         message: reason
           ? `${label} would revert: ${reason}`
           : `${label} would revert. ${revertGuidance(context.actionType)}`,
@@ -513,7 +527,7 @@ async function simulateNode(
     status: "failed",
     issue: makeIssue(context, {
       code: "SIMULATION_INVALID_TRANSACTION",
-      fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
+      fieldKey: failureField(context),
       message: `${label} has invalid transaction inputs. Check the configured network, addresses, amount, and function parameters.`,
     }),
   };

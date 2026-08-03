@@ -458,10 +458,11 @@ describe("validateWorkflow — missing-write-action-for-write-workflow (VALID-04
   });
 });
 
-describe("validateWorkflow — transfer actions are writes (VALID-04)", () => {
+describe("validateWorkflow — credentialed actions are writes (VALID-04)", () => {
   it.each([
     "web3/transfer-funds",
     "web3/transfer-token",
+    "web3/approve-token",
   ])("accepts %s when workflowType=write", (actionType) => {
     const result = validateWorkflow(
       makeWorkflow({
@@ -481,6 +482,7 @@ describe("validateWorkflow — transfer actions are writes (VALID-04)", () => {
   it.each([
     "web3/transfer-funds",
     "web3/transfer-token",
+    "web3/approve-token",
   ])("warns when %s is placed on workflowType=read", (actionType) => {
     const result = validateWorkflow(
       makeWorkflow({

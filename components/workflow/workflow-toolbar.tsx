@@ -774,14 +774,15 @@ function useWorkflowHandlers({
   };
 
   const handleGoToStep = (nodeId: string, fieldKey?: string) => {
-    setActiveTab("properties");
     setSelectedNodeId(nodeId);
+    setActiveTab("properties");
 
-    // The issues overlay closes immediately after this callback. Wait for the
-    // selected node's Properties panel to render, then focus and highlight the
-    // affected field.
+    // The issues overlay closes immediately after this callback. Give the
+    // selected node's Properties panel one render turn before polling for the
+    // affected field; otherwise a same-id field from the previous node can be
+    // focused before the panel updates.
     if (fieldKey) {
-      window.setTimeout(() => focusConfigFieldWhenReady(fieldKey), 0);
+      window.setTimeout(() => focusConfigFieldWhenReady(fieldKey), 100);
     }
   };
 
@@ -1065,24 +1066,24 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     validateAndProceed,
     isPreflighting,
   } = useWorkflowHandlers({
-      currentWorkflowId,
-      nodes,
-      edges,
-      updateNodeData,
-      isExecuting,
-      setIsExecuting,
-      setIsSaving,
-      hasUnsavedChanges,
-      setHasUnsavedChanges,
-      setActiveTab,
-      setNodes,
-      setEdges,
-      setSelectedNodeId,
-      setSelectedExecutionId,
-      currentExecutionId,
-      setCurrentExecutionId,
-      userIntegrations,
-    });
+    currentWorkflowId,
+    nodes,
+    edges,
+    updateNodeData,
+    isExecuting,
+    setIsExecuting,
+    setIsSaving,
+    hasUnsavedChanges,
+    setHasUnsavedChanges,
+    setActiveTab,
+    setNodes,
+    setEdges,
+    setSelectedNodeId,
+    setSelectedExecutionId,
+    currentExecutionId,
+    setCurrentExecutionId,
+    userIntegrations,
+  });
 
   // Listen for execute trigger from keyboard shortcut
   useEffect(() => {

@@ -17,6 +17,7 @@ import {
   chainExists,
   tokenAddressFormat,
 } from "@/lib/mcp/validate-workflow-web3";
+import { findActionById } from "@/plugins/registry";
 
 export type ValidationIssue = {
   code: ValidationErrorCode | ValidationWarningCode;
@@ -278,11 +279,6 @@ function extractNodeIdReference(value: unknown): string | null {
   return null;
 }
 
-const ADDITIONAL_WORKFLOW_WRITE_ACTION_TYPES = new Set([
-  "web3/transfer-funds",
-  "web3/transfer-token",
-]);
-
 function getWorkflowActionType(node: unknown): string | undefined {
   if (node === null || typeof node !== "object" || !("data" in node)) {
     return undefined;
@@ -317,7 +313,7 @@ function hasWorkflowWriteAction(nodes: unknown[]): boolean {
 
     return (
       actionType !== undefined &&
-      ADDITIONAL_WORKFLOW_WRITE_ACTION_TYPES.has(actionType)
+      findActionById(actionType)?.requiresCredentials === true
     );
   });
 }

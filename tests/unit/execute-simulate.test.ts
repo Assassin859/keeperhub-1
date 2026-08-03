@@ -30,24 +30,25 @@ const RECIPIENT_ADDRESS = "0xcc0000000000000000000000000000000000cc00";
 // Hoisted spies so the vi.mock factories below can reference them.
 const rpcSpies = vi.hoisted(() => ({
   executeWithFailover: vi.fn(),
+  getChainIdFromNetwork: vi.fn(),
+  getOrganizationWalletAddress: vi.fn(),
+  getRpcProvider: vi.fn(),
+  isSolanaChain: vi.fn(),
   parseTokenAddress: vi.fn(),
   chainsLookup: vi.fn(() => Promise.resolve([{ symbol: "ETH" }])),
 }));
 
 vi.mock("@/lib/web3/wallet-helpers", () => ({
-  getOrganizationWalletAddress: vi.fn(() => Promise.resolve(FROM_ADDRESS)),
+  getOrganizationWalletAddress: rpcSpies.getOrganizationWalletAddress,
 }));
 
 vi.mock("@/lib/rpc/network-utils", () => ({
-  getChainIdFromNetwork: vi.fn(() => 1),
+  getChainIdFromNetwork: rpcSpies.getChainIdFromNetwork,
 }));
 
 vi.mock("@/lib/rpc/provider-factory", () => ({
-  getRpcProvider: vi.fn(() =>
-    Promise.resolve({
-      executeWithFailover: rpcSpies.executeWithFailover,
-    })
-  ),
+  getRpcProvider: rpcSpies.getRpcProvider,
+  isSolanaChain: rpcSpies.isSolanaChain,
 }));
 
 vi.mock("@/plugins/web3/steps/transfer-token-core", () => ({
@@ -91,7 +92,14 @@ import {
   simulateTokenTransfer,
 } from "@/lib/execute/simulate";
 
-const { executeWithFailover, parseTokenAddress } = rpcSpies;
+const {
+  executeWithFailover,
+  getChainIdFromNetwork,
+  getOrganizationWalletAddress,
+  getRpcProvider,
+  isSolanaChain,
+  parseTokenAddress,
+} = rpcSpies;
 
 // Minimal ABI for a read with one address arg returning uint256.
 const READ_ABI = JSON.stringify([
@@ -116,8 +124,11 @@ const WRITE_ABI = JSON.stringify([
 ]);
 
 function resetSpies(): void {
-  executeWithFailover.mockReset();
-  parseTokenAddress.mockReset();
+  vi.resetAllMocks();
+  getChainIdFromNetwork.mockReturnValue(1);
+  getOrganizationWalletAddress.mockResolvedValue(FROM_ADDRESS);
+  getRpcProvider.mockResolvedValue({ executeWithFailover });
+  isSolanaChain.mockReturnValue(false);
 }
 
 describe("simulateContractCall", () => {
@@ -391,6 +402,74 @@ describe("simulateContractCall", () => {
       expect(result.revertReason).toContain("Invalid value");
     }
   });
+
+  it("returns validation when the selected network is invalid", async () => {
+    resetSpies();
+    getChainIdFromNetwork.mockImplementationOnce(() => {
+      throw new Error("Unknown network: invalid-chain");
+    });
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "invalid-chain",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: '["1"]',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("validation");
+      expect(result.error).toContain("Unknown network");
+    }
+    expect(getRpcProvider).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable instead of rejecting when wallet resolution fails", async () => {
+    resetSpies();
+    getOrganizationWalletAddress.mockRejectedValueOnce(
+      new Error("wallet database unavailable")
+    );
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: '["1"]',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("organization wallet");
+    }
+    expect(getRpcProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns unavailable instead of rejecting when provider setup fails", async () => {
+    resetSpies();
+    getRpcProvider.mockRejectedValueOnce(new Error("provider config missing"));
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: '["1"]',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("provider initialization");
+    }
+  });
 });
 
 describe("simulateNativeTransfer", () => {
@@ -610,6 +689,27 @@ describe("simulateNativeTransfer", () => {
     expect(executeWithFailover).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects Solana as unsupported instead of attempting an EVM simulation", async () => {
+    resetSpies();
+    getChainIdFromNetwork.mockReturnValueOnce(101);
+    isSolanaChain.mockReturnValueOnce(true);
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "101",
+      recipientAddress: "11111111111111111111111111111111",
+      amount: "1",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("validation");
+      expect(result.error).toContain("EVM networks only");
+    }
+    expect(getOrganizationWalletAddress).not.toHaveBeenCalled();
+    expect(getRpcProvider).not.toHaveBeenCalled();
+  });
+
   it("rejects a malformed amount before touching the network", async () => {
     resetSpies();
     const result = await simulateNativeTransfer({
@@ -698,6 +798,72 @@ describe("simulateTokenTransfer", () => {
       expect(result.revertReason).toContain("resolvable");
     }
     // No RPC calls fire on a token-resolve failure.
+    expect(executeWithFailover).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable instead of rejecting when token resolution fails", async () => {
+    resetSpies();
+    parseTokenAddress.mockRejectedValueOnce(
+      new Error("token database unavailable")
+    );
+
+    const result = await simulateTokenTransfer({
+      organizationId: "org_test",
+      network: "1",
+      tokenConfig: JSON.stringify({ supportedTokenId: "usdc-mainnet" }),
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "100",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("token configuration");
+    }
+    expect(getOrganizationWalletAddress).not.toHaveBeenCalled();
+    expect(getRpcProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns unavailable when the decimals RPC is unavailable", async () => {
+    resetSpies();
+    parseTokenAddress.mockResolvedValueOnce(CONTRACT_ADDRESS);
+    executeWithFailover.mockRejectedValueOnce(new Error("RPC timeout"));
+
+    const result = await simulateTokenTransfer({
+      organizationId: "org_test",
+      network: "1",
+      tokenAddress: CONTRACT_ADDRESS,
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "100",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("Simulation unavailable");
+    }
+  });
+
+  it("rejects invalid explicit token decimals before simulating", async () => {
+    resetSpies();
+    parseTokenAddress.mockResolvedValueOnce(CONTRACT_ADDRESS);
+
+    const result = await simulateTokenTransfer({
+      organizationId: "org_test",
+      network: "1",
+      tokenAddress: CONTRACT_ADDRESS,
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "100",
+      decimals: 256,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("validation");
+      expect(result.error).toContain("Invalid token decimals");
+    }
     expect(executeWithFailover).not.toHaveBeenCalled();
   });
 
