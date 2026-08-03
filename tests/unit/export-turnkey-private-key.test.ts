@@ -60,9 +60,13 @@ describe("exportTurnkeyPrivateKey", () => {
     });
   });
 
-  it("exports Solana keys as hex without a 0x prefix", async () => {
+  it("exports Solana keys in the base58 format wallets import", async () => {
+    // Hex is an EVM convention. Phantom and Solflare import base58, so asking
+    // Turnkey for its SOLANA format is what makes the export usable at all.
     const { decryptExportBundle } = await import("@turnkey/crypto");
-    vi.mocked(decryptExportBundle).mockResolvedValue("0xdeadbeef");
+    vi.mocked(decryptExportBundle).mockResolvedValue(
+      "5MaiiCavjCmn9Hs1o3eznqDEhRwxo7pXiAYez7keQUviUkr"
+    );
     mockExportWalletAccount.mockResolvedValue({
       exportBundle: "bundle",
     });
@@ -77,7 +81,10 @@ describe("exportTurnkeyPrivateKey", () => {
       "solana"
     );
 
-    expect(result).toBe("deadbeef");
+    expect(result).toBe("5MaiiCavjCmn9Hs1o3eznqDEhRwxo7pXiAYez7keQUviUkr");
+    expect(vi.mocked(decryptExportBundle)).toHaveBeenCalledWith(
+      expect.objectContaining({ keyFormat: "SOLANA" })
+    );
     expect(mockExportWalletAccount).toHaveBeenCalledWith({
       organizationId: "sub-org",
       address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",

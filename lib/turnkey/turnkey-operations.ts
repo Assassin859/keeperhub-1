@@ -382,16 +382,20 @@ export async function exportTurnkeyPrivateKey(
       throw new Error("Turnkey returned empty export bundle");
     }
 
+    // Solana wallets import base58 in the ed25519 layout Turnkey's SOLANA
+    // format produces. Hex is what an EVM wallet wants, and handing it to
+    // Phantom or Solflare gives the user a key none of them will accept -
+    // which defeats the point of an export.
     const privateKey = await decryptExportBundle({
       exportBundle: exportResult.exportBundle,
       embeddedKey: keyPair.privateKey,
       organizationId: subOrgId,
-      keyFormat: "HEXADECIMAL",
+      keyFormat: keyType === "solana" ? "SOLANA" : "HEXADECIMAL",
       returnMnemonic: false,
     });
 
     if (keyType === "solana") {
-      return privateKey.startsWith("0x") ? privateKey.slice(2) : privateKey;
+      return privateKey;
     }
 
     return privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`;
