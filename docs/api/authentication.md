@@ -51,7 +51,11 @@ Session authentication is accepted everywhere. API keys (`kh_`) are accepted onl
 
 Endpoints whose semantics are organization-scoped accept `kh_` keys:
 
-- Workflow CRUD and execution: `/api/workflows`, `/api/executions`, `/api/execute`
+- Workflow CRUD: `/api/workflows`
+- Execution history and status: `/api/workflows/{workflowId}/executions`,
+  `/api/workflows/executions/{executionId}/status`
+- Direct execution: `/api/execute/transfer`, `/api/execute/contract-call`,
+  `/api/execute/check-and-execute`, `/api/execute/{executionId}/status`
 - Integrations: `/api/integrations`
 - Projects, tags, public tags, supported chains
 - Organization-scoped billing and analytics
