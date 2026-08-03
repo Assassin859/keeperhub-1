@@ -143,11 +143,20 @@ The server registers more than 30 tools. Call `tools_documentation` (or `list_ac
 |------|-------------|
 | `list_workflows` | List all workflows for the organization. Optionally filter by `projectId` or `tagId`. |
 | `get_workflow` | Get a single workflow by ID, including nodes, edges, and configuration. |
-| `create_workflow` | Create a workflow with nodes and edges. Created disabled by default; pass `enabled=true` to make schedule, event, block, or webhook triggers fire immediately. |
+| `create_workflow` | Create a workflow with nodes and edges. Created disabled by default; pass `enabled=true` to make schedule, event, block, or webhook triggers fire immediately. Pass `idempotency_key` so cold-start retries are safe. |
 | `update_workflow` | Update a workflow's name, description, nodes, edges, project/tag assignment, or enabled state. Set `enabled=false` to stop triggers without deleting the workflow. |
 | `delete_workflow` | Permanently delete a workflow. This action is irreversible. |
 | `validate_workflow` | Check a workflow's structural and Web3-specific correctness before creating or executing it. |
 | `prepare_test_pin_data` | Return the JSON Schema each node expects as pin data, so an agent can construct valid test inputs. |
+| `validate_cron` | Validate a cron expression or interval schedule before wiring a schedule trigger. |
+
+#### Cold start and retries
+
+`create_workflow` and `ai_generate_workflow` may return a structured cold-start
+error (`code: upstream_cold_start`) when the app is waking from idle. The error
+includes `retryAfterSeconds` and a hint to retry with the same
+`idempotency_key`. Wait the suggested interval, then retry once or twice with
+bounded backoff.
 
 ### Execution
 
@@ -155,6 +164,19 @@ The server registers more than 30 tools. Call `tools_documentation` (or `list_ac
 |------|-------------|
 | `execute_workflow` | Trigger a manual execution. Returns an execution ID for status polling. |
 | `get_execution` | Get combined status and step-by-step logs for an execution in one response. Replaces the earlier `get_execution_status` + `get_execution_logs` pair. |
+| `get_execution_status` | **Deprecated (v1.13)** — status only. Use `get_execution`. |
+| `get_execution_logs` | **Deprecated (v1.13)** — logs only. Use `get_execution`. |
+| `list_executions` | List workflow and direct executions with cursor pagination. |
+
+### Agent utilities
+
+| Tool | Description |
+|------|-------------|
+| `get_spending_limits` | Read org daily direct-execution spending caps and usage. |
+| `test_notification` | Test an integration (Discord, Slack, etc.) without saving credentials. May send a real test message. |
+| `tempo_sign_and_hold` | Sign a Tempo transfer and hold for later broadcast (org owner). |
+| `tempo_cancel_hold` | Cancel a pending held payment. |
+| `tempo_release_hold` | Broadcast a held payment. Requires interactive session step-up MFA; OAuth tokens get a structured error. |
 
 ### Direct On-Chain Execution
 
