@@ -169,7 +169,6 @@ describe("idempotencyEarlyResponse", () => {
     ).toEqual({
       status: 202,
       body: { executionId: "e1", idempotentReplay: true },
-      replayed: true,
     });
   });
 
@@ -186,7 +185,6 @@ describe("idempotencyEarlyResponse", () => {
       },
     });
     const body = early?.body as Record<string, unknown>;
-    expect(early?.replayed).toBe(true);
     expect(body.idempotentReplay).toBe(true);
     // The original payload is preserved untouched alongside the marker.
     expect(body.error).toBe("Contract call failed: Error(LK: not yet due)");
@@ -201,18 +199,17 @@ describe("idempotencyEarlyResponse", () => {
         responseBody: stored,
       });
       expect(early?.body).toEqual(stored);
-      expect(early?.replayed).toBe(true);
     }
   });
 
   it("does not mark a fresh conflict or in_progress response as a replay", () => {
-    expect(
-      idempotencyEarlyResponse({ kind: "conflict", originalResourceId: "e1" })
-        ?.replayed
-    ).toBeUndefined();
-    expect(
-      idempotencyEarlyResponse({ kind: "in_progress" })?.replayed
-    ).toBeUndefined();
+    const conflict = idempotencyEarlyResponse({
+      kind: "conflict",
+      originalResourceId: "e1",
+    });
+    const inProgress = idempotencyEarlyResponse({ kind: "in_progress" });
+    expect(conflict?.body).not.toHaveProperty("idempotentReplay");
+    expect(inProgress?.body).not.toHaveProperty("idempotentReplay");
   });
 
   it("maps conflict to 409 with the original execution id", () => {

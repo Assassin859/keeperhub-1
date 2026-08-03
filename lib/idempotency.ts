@@ -341,7 +341,6 @@ export async function beginIdempotentFromRequest(args: {
 export type IdempotencyEarlyResponse = {
   status: number;
   body: unknown;
-  replayed?: boolean;
 };
 
 // Marks a replayed body so the caller can tell a cached prior outcome apart
@@ -369,7 +368,6 @@ export function idempotencyEarlyResponse(
       return {
         status: outcome.responseStatus,
         body: annotateReplay(outcome.responseBody),
-        replayed: true,
       };
     case "conflict":
       return {
