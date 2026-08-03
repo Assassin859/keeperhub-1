@@ -244,6 +244,26 @@ export const twoFactor = pgTable(
     // Defaults to true so rows enrolled through our own routes are treated
     // as verified and the plugin skips the write entirely.
     verified: boolean("verified").notNull().default(true),
+    // The same contract as `verified` above, for the plugin's account-lockout
+    // feature. It is enabled by default - resolveAccountLockoutConfig reads
+    // `enabled: lockout?.enabled ?? true` and we pass no accountLockout option -
+    // so resetTwoFactorFailures runs on every successful verification and
+    // updates exactly these two fields. Without the columns the adapter strips
+    // both, leaving an empty SET that Postgres rejects, so a correct TOTP code
+    // 500s after validating.
+    //
+    // They also have to exist for the control to do anything:
+    // assertTwoFactorNotLocked gates on `lockedUntil`, which reads as undefined
+    // when the column is absent, so the cap on consecutive failed verifications
+    // (NIST SP 800-63B 5.2.2) silently never applies.
+    //
+    // Property names must match Better Auth's field names exactly -
+    // failedVerificationCount and lockedUntil - because the drizzle adapter
+    // maps by property, not column.
+    failedVerificationCount: integer("failed_verification_count")
+      .notNull()
+      .default(0),
+    lockedUntil: timestamp("locked_until"),
   },
   (table) => [index("idx_two_factor_user_id").on(table.userId)]
 );
@@ -541,6 +561,22 @@ export const integrations = pgTable(
     // here so any future web3 write hits the same guard. Closes the race
     // in ensureWalletIntegration where two concurrent /api/integrations
     // GETs could both pass the existence check and both insert.
+    //
+    // "Cosmetic" is load-bearing, and the indirection it implies is the part
+    // that reads like a bug until you know it: this row holds no key. A web3
+    // action node references `integrations.id`, but the signing material sits
+    // in the org's `organizationWallets` row (lib/db/schema-extensions.ts),
+    // which carries both `wallet_address` (EVM) and `solana_address` against
+    // one set of Turnkey identifiers.
+    //
+    // Because the org has exactly one web3 integration and one active wallet,
+    // a single integrationId legitimately serves EVM and Solana actions across
+    // every chain. Seeing the same integrationId on an Ethereum transfer and a
+    // Solana balance check is correct, not copy-paste: the chain is selected by
+    // the node's own `network` config, never by the integration.
+    //
+    // Corollary for anyone hunting a "wrong wallet" bug: changing integrationId
+    // cannot change which address signs. Look at organizationWallets instead.
     uniqueIndex("idx_integrations_org_web3")
       .on(table.organizationId)
       .where(
@@ -588,6 +624,20 @@ export type TransactionHashEntry = {
   chainId?: number;
   network?: string;
   iterationIndex?: number;
+  // KEEP-966: independent on-chain verification result for this hash,
+  // populated by logWorkflowCompleteDb/selfHealWorkflowAfterLateStepCommit at
+  // finalize time. Named receiptStatus (not `status`) to avoid colliding with
+  // the execution's own top-level `status` column in any flattened read.
+  verified?: boolean;
+  receiptStatus?:
+    | "success"
+    | "reverted"
+    | "not_found"
+    | "timeout"
+    | "safe_inner_failure";
+  blockNumber?: number;
+  gasUsed?: string;
+  verifiedAt?: string;
 };
 
 export const workflowExecutions = pgTable(
@@ -830,18 +880,13 @@ export {
   type WalletApprovalRequest,
   walletApprovalRequests,
 } from "./schema-agentic-wallets";
-export {
-  type NewTempoHeldPayment,
-  type TempoHeldPayment,
-  tempoHeldPayments,
-  tempoHeldPaymentStatus,
-} from "./schema-tempo-payments";
 // KeeperHub: Organization Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
 // Note: Using relative path instead of @/ alias for drizzle-kit compatibility
 export {
   type BillingEvent,
   billingEvents,
   type DirectExecution,
+  type DirectExecutionReceiptEntry,
   directExecutions,
   type ExecutionDebt,
   executionDebt,
@@ -862,6 +907,8 @@ export {
   type NewOrganizationSubscription,
   type NewOrganizationToken,
   type NewOrganizationWallet,
+  type NewPaygConfig,
+  type NewPaygPayment,
   type NewPublicTag,
   type NewSafeRole,
   type NewSafeRoleAllowance,
@@ -884,8 +931,12 @@ export {
   organizationTokens,
   organizationWallets,
   overageBillingRecords,
+  type PaygConfig,
+  type PaygPayment,
   type PendingTransaction,
   type PublicTag,
+  paygConfig,
+  paygPayments,
   pendingTransactions,
   publicTags,
   type SafeRole,
@@ -934,6 +985,12 @@ export {
   type WorkflowPayment,
   workflowPayments,
 } from "./schema-payments";
+export {
+  type NewTempoHeldPayment,
+  type TempoHeldPayment,
+  tempoHeldPaymentStatus,
+  tempoHeldPayments,
+} from "./schema-tempo-payments";
 
 // Better Auth: Device Authorization table (for CLI device flow)
 export const deviceCode = pgTable("device_code", {

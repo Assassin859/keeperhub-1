@@ -51,6 +51,8 @@ import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
 import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { WorkflowNode } from "../lib/workflow/store";
+import { chargePaygExecution } from "../lib/billing/payg/charge";
+import { PAYG_OVERFLOW_REASON } from "../lib/billing/payg/constants";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
 import { CONFIG } from "./config";
@@ -112,6 +114,56 @@ const queryClient = postgres(CONFIG.databaseUrl, {
 const db = drizzle(queryClient, {
   schema: { workflows, workflowExecutions, workflowSchedules },
 });
+
+/**
+ * Settle the PAYG per-execution charge for a free-tier org that has passed its
+ * included limit. Called AFTER the pending/phantom row is claimed, so the same
+ * atomic claim that dedupes duplicate SQS deliveries also single-flights the
+ * charge (no concurrent double-settle). Returns true to proceed, or false after
+ * resolving the claimed row to a user-facing billing error so the run stops.
+ */
+async function settlePaygOverflow(params: {
+  workflowId: string;
+  triggerType: string;
+  organizationId: string;
+  executionId: string;
+  claimedStatus: "pending" | "running";
+}): Promise<boolean> {
+  const charge = await chargePaygExecution({
+    organizationId: params.organizationId,
+    executionId: params.executionId,
+  });
+  if (charge.ok) {
+    return true;
+  }
+  console.warn(
+    `[Executor] PAYG charge blocked ${params.triggerType} trigger for workflow ${params.workflowId}: org=${params.organizationId} reason=${charge.reason}`
+  );
+  if (params.claimedStatus === "running") {
+    await db
+      .update(workflowExecutions)
+      .set({
+        status: "error",
+        error: charge.message,
+        errorCategory: "billing",
+        errorType: "user",
+        completedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(workflowExecutions.id, params.executionId),
+          eq(workflowExecutions.status, "running")
+        )
+      );
+  } else {
+    await resolvePhantomToError(db, params.executionId, {
+      error: charge.message,
+      errorCategory: "billing",
+      errorType: "user",
+    });
+  }
+  return false;
+}
 
 // SQS
 const sqsConfig: ConstructorParameters<typeof SQSClient>[0] = {
@@ -472,6 +524,22 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     }
     recordConsumeClaim("claimed", triggerType);
 
+    // PAYG: free-tier org past its limit. Charge after the claim so the same
+    // single-flight that dedupes deliveries also single-flights the settlement.
+    if (
+      billingResult.reason === PAYG_OVERFLOW_REASON &&
+      message.executionId &&
+      !(await settlePaygOverflow({
+        workflowId,
+        triggerType,
+        organizationId: workflow.organizationId,
+        executionId: message.executionId,
+        claimedStatus: "running",
+      }))
+    ) {
+      return;
+    }
+
     console.log(
       `[Executor] Manual trigger dispatch target: ${target} (mode: ${CONFIG.executionMode})`
     );
@@ -567,6 +635,21 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   }
 
   console.log(`[Executor] Created execution record: ${executionId}`);
+
+  // PAYG: free-tier org past its limit. Charge after the claim so the same
+  // single-flight that dedupes deliveries also single-flights the settlement.
+  if (
+    billingResult.reason === PAYG_OVERFLOW_REASON &&
+    !(await settlePaygOverflow({
+      workflowId,
+      triggerType,
+      organizationId: workflow.organizationId,
+      executionId,
+      claimedStatus: "pending",
+    }))
+  ) {
+    return;
+  }
 
   // Counter for the "zero executions in N min" alert family (KEEP-556).
   // Increments here for every SQS-triggered run regardless of dispatch target

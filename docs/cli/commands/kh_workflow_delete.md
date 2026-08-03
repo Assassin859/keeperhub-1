@@ -34,8 +34,10 @@ kh workflow delete <workflow-id> [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
 ```
 
 ### SEE ALSO
 
 * [kh workflow](kh_workflow.md)	 - Manage workflows
+

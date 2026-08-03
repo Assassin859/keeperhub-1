@@ -41,6 +41,17 @@ import { generateId } from "@/lib/utils/id";
  *
  * NOTE: userId tracks who created the wallet, but the wallet belongs to the organization.
  * Only organization admins and owners can create/manage wallets.
+ *
+ * This row is where the signing key actually lives. Workflow node configs do
+ * not reference it directly - they carry an `integrationId` pointing at the
+ * org's single `web3` row in `integrations` (lib/db/schema.ts), which holds no
+ * key and exists mainly so the builder has something to show. Resolving a
+ * signer means going integration -> org -> this table.
+ *
+ * One row covers both chain families: `walletAddress` is the EVM address and
+ * `solanaAddress` the Solana one, derived from the same Turnkey sub-org. That
+ * is why a single integrationId is valid for EVM and Solana actions alike; the
+ * chain comes from the node's own `network` config, not from the integration.
  */
 export const organizationWallets = pgTable(
   "organization_wallets",
@@ -608,6 +619,30 @@ export type NewWorkflowPublicTag = typeof workflowPublicTags.$inferInsert;
  * NOTE: apiKeyId has no FK -- the key may be revoked/deleted later but the audit record must persist.
  * Wei amounts stored as text to avoid PostgreSQL bigint overflow.
  */
+
+/**
+ * KEEP-966: per-transaction on-chain verification result, persisted on
+ * directExecutions.receipts. Field names/vocabulary intentionally match
+ * lib/db/schema.ts's TransactionHashEntry (the workflow-execution
+ * equivalent) so lib/web3/verify-receipt.ts's results map to either shape.
+ * No nodeId/nodeName here -- direct-execute has no node concept.
+ */
+export type DirectExecutionReceiptEntry = {
+  hash: string;
+  chainId?: number;
+  network?: string;
+  verified: boolean;
+  receiptStatus:
+    | "success"
+    | "reverted"
+    | "not_found"
+    | "timeout"
+    | "safe_inner_failure";
+  blockNumber?: number;
+  gasUsed?: string;
+  verifiedAt: string;
+};
+
 export const directExecutions = pgTable(
   "direct_executions",
   {
@@ -625,6 +660,13 @@ export const directExecutions = pgTable(
     output: jsonb("output").$type<any>(),
     status: text("status").notNull().default("pending"), // pending | running | completed | failed
     transactionHash: text("transaction_hash"),
+    // KEEP-966: on-chain verification results for every transaction hash this
+    // execution claims. Populated by completeExecution() regardless of
+    // outcome, so a failed reconciliation stays auditable (which hash, why).
+    receipts: jsonb("receipts")
+      .$type<DirectExecutionReceiptEntry[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     network: text("network"),
     error: text("error"),
     gasUsedWei: text("gas_used_wei"),
@@ -1307,3 +1349,75 @@ export const workflowHistory = pgTable(
 
 export type WorkflowHistory = typeof workflowHistory.$inferSelect;
 export type NewWorkflowHistory = typeof workflowHistory.$inferInsert;
+
+/**
+ * Pay As You Go config table
+ *
+ * One row per org on the PAYG plan. Holds the user-set spend caps and the
+ * enable anchor. The current billing period is the monthly window anchored to
+ * `startedAt` that contains now (computed, not stored) and bounds the per-period
+ * cap + usage reporting. Amounts are USDC 6-decimal raw units stored as text.
+ */
+export const paygConfig = pgTable(
+  "payg_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .unique()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    dailyCapRaw: text("daily_cap_raw").notNull().default("0"),
+    periodCapRaw: text("period_cap_raw").notNull().default("0"),
+    chainId: integer("chain_id").notNull().default(8453),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [index("idx_payg_config_org").on(table.organizationId)]
+);
+
+export type PaygConfig = typeof paygConfig.$inferSelect;
+export type NewPaygConfig = typeof paygConfig.$inferInsert;
+
+/**
+ * Pay As You Go payments table
+ *
+ * One row per charged execution (settled USDC to the treasury). The source of
+ * truth for guard-rail spend sums (day/period) and the UI usage/history view.
+ * Idempotent on (organization_id, execution_id) so a retried finalization does
+ * not double-charge. `amountRaw` is USDC 6-decimal raw units stored as text.
+ */
+export const paygPayments = pgTable(
+  "payg_payments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    executionId: text("execution_id").notNull(),
+    amountRaw: text("amount_raw").notNull(),
+    txHash: text("tx_hash"),
+    chainId: integer("chain_id").notNull(),
+    payerAddress: text("payer_address").notNull(),
+    treasuryAddress: text("treasury_address").notNull(),
+    status: text("status").notNull().default("settled"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("payg_payments_org_execution").on(
+      table.organizationId,
+      table.executionId
+    ),
+    index("idx_payg_payments_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
+  ]
+);
+
+export type PaygPayment = typeof paygPayments.$inferSelect;
+export type NewPaygPayment = typeof paygPayments.$inferInsert;

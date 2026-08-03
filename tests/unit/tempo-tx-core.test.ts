@@ -25,10 +25,13 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import {
+  applyTempoMemoGasFloor,
+  buildSwapExactAmountInCall,
   buildTransferWithMemoCall,
   deriveTempoNonceKey,
   isTempoChain,
   normalizeMemo,
+  TEMPO_MEMO_MIN_GAS,
 } from "@/plugins/tempo/steps/tempo-tx-core";
 
 const ZERO_MEMO = `0x${"0".repeat(64)}`;
@@ -118,5 +121,39 @@ describe("buildTransferWithMemoCall", () => {
     const decoded = decodeFunctionData({ abi: Abis.tip20, data: call.data });
     expect(decoded.functionName).toBe("transferWithMemo");
     expect(decoded.args).toEqual([RECIPIENT, BigInt(1_500_000), memo]);
+  });
+});
+
+describe("applyTempoMemoGasFloor", () => {
+  const memoCall = buildTransferWithMemoCall(
+    USDC,
+    RECIPIENT,
+    BigInt(1_500_000),
+    normalizeMemo("benchmark")
+  );
+  // A memo transfer's real settlement cost observed on Tempo testnet.
+  const REAL_MEMO_GAS = BigInt(272_108);
+  // What eth_estimateGas returns for it, below even a plain transfer.
+  const UNDERESTIMATE = BigInt(35_770);
+
+  it("raises a memo transfer's underestimate to a floor that covers real cost", () => {
+    const floored = applyTempoMemoGasFloor(memoCall, UNDERESTIMATE);
+    expect(floored).toBe(TEMPO_MEMO_MIN_GAS);
+    expect(TEMPO_MEMO_MIN_GAS).toBeGreaterThan(REAL_MEMO_GAS);
+  });
+
+  it("keeps a memo estimate that already exceeds the floor", () => {
+    const high = TEMPO_MEMO_MIN_GAS + BigInt(50_000);
+    expect(applyTempoMemoGasFloor(memoCall, high)).toBe(high);
+  });
+
+  it("leaves a call that is not a memo transfer (DEX swap) untouched", () => {
+    const swapCall = buildSwapExactAmountInCall(
+      USDC,
+      RECIPIENT,
+      BigInt(1_000_000),
+      BigInt(990_000)
+    );
+    expect(applyTempoMemoGasFloor(swapCall, UNDERESTIMATE)).toBe(UNDERESTIMATE);
   });
 });

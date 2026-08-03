@@ -61,7 +61,8 @@ const mockSignAndBroadcast = vi.fn();
 const mockBuildCall = vi.fn();
 const mockNormalizeMemo = vi.fn();
 vi.mock("@/plugins/tempo/steps/tempo-tx-core", () => ({
-  signAndBroadcastTempoTx: (...args: unknown[]) => mockSignAndBroadcast(...args),
+  signAndBroadcastTempoTx: (...args: unknown[]) =>
+    mockSignAndBroadcast(...args),
   buildTransferWithMemoCall: (...args: unknown[]) => mockBuildCall(...args),
   normalizeMemo: (...args: unknown[]) => mockNormalizeMemo(...args),
 }));

@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
 import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
@@ -10,18 +9,15 @@ import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { authorizeAction } from "@/lib/middleware/authorize-action";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { generateOrganizationApiKey } from "@/lib/organization-api-key";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
-// Generate a secure API key with KeeperHub prefix
-function generateApiKey(): { key: string; hash: string; prefix: string } {
-  const randomPart = randomBytes(24).toString("base64url");
-  const key = `kh_${randomPart}`;
-  const hash = createHash("sha256").update(key).digest("hex");
-  const prefix = key.slice(0, 8); // "kh_" + first 5 chars
-  return { key, hash, prefix };
-}
+// Key generation lives in lib/organization-api-key.ts so the device-login
+// path mints byte-identical credentials; api-key-auth validates the shared
+// `kh_` prefix and SHA-256 hash, which a second implementation could drift from.
+const generateApiKey = generateOrganizationApiKey;
 
 // GET - List all API keys for the current organization
 export async function GET(request: Request) {

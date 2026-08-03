@@ -518,6 +518,24 @@ export async function PATCH(
     const updateData = buildUpdateData(body);
 
     if (Array.isArray(updateData.nodes)) {
+      // What these two gates do NOT do: prove the workflow will run.
+      //
+      // validateWorkflowIntegrations is an AUTHORIZATION check, not an
+      // existence check - filterUnauthorizedIntegrationIds deliberately treats
+      // ids with no matching row as authorized so stale references to deleted
+      // integrations stay savable. A syntactically valid but wholly fictional
+      // integrationId therefore passes and is persisted verbatim.
+      //
+      // Config values outside integrationId get less than that: `network` and
+      // `actionType` are not checked against the chain registry or the action
+      // catalogue on this path at all. Everything in data.config is stored as
+      // opaque JSONB.
+      //
+      // So a 200 here means "you were allowed to save this", never "this
+      // works". Misconfigured nodes surface only at execution time. Callers
+      // driving the API directly (kh, MCP) should not read a successful
+      // create or update as evidence that a workflow is functional.
+      //
       // Validate the exact shape that will be persisted. The sanitizer moves
       // misplaced root fields into data.config, including integrationId.
       // Org principal: the workflow may only reference its owning org's

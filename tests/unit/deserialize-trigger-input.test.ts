@@ -59,9 +59,7 @@ describe("deserializeTriggerInput", () => {
 
     it("keeps non-arg scalar fields untouched", () => {
       const result = deserializeTriggerInput("Transfer", tempoTransferInput());
-      expect(result.address).toBe(
-        "0x20c0000000000000000000000000000000000000"
-      );
+      expect(result.address).toBe("0x20c0000000000000000000000000000000000000");
       expect(result.blockHash).toBe("0x8e7caf0937e3f67bd93f22486c302");
     });
 

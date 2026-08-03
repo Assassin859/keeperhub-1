@@ -20,6 +20,7 @@ kh workflow get <workflow-id> [flags]
 
 ```
   -h, --help   help for get
+      --web    Open the workflow in the browser
 ```
 
 ### Options inherited from parent commands
@@ -29,6 +30,7 @@ kh workflow get <workflow-id> [flags]
       --jq string     Filter JSON output with a jq expression
       --json          Output as JSON
       --no-color      Disable color output
+      --org string    Organization ID to use (overrides default from auth)
   -y, --yes           Skip confirmation prompts
 ```
 

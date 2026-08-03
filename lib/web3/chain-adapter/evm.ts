@@ -15,6 +15,22 @@ import type {
   TransactionReceipt,
 } from "./types";
 
+// Tempo (4217 mainnet, 42431 Moderato testnet) settles native 0x76
+// transactions whose RPC shape carries a null top level `value` and a `calls`
+// array. ethers v6 `tx.wait()` arms replacement scanning that reads full
+// transactions and blocks; its `formatTransactionResponse` throws BAD_DATA on
+// that null `value`, so a mined Tempo tx is reported as failed. A receipt has
+// no `value` or `calls` fields, so confirm by polling the receipt on Tempo.
+const TEMPO_CHAIN_IDS = new Set<number>([4217, 42_431]);
+const TEMPO_RECEIPT_TIMEOUT_MS = 60_000;
+const TEMPO_RECEIPT_POLL_INTERVAL_MS = 1500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export class EvmChainAdapter implements ChainAdapter {
   readonly chainFamily = "evm";
   private readonly chainId: number;
@@ -295,6 +311,43 @@ export class EvmChainAdapter implements ChainAdapter {
     }
   }
 
+  // Confirm by polling the receipt directly by hash instead of ethers
+  // `tx.wait()`. Used on Tempo, where wait()'s replacement scan parses full
+  // 0x76 transactions and throws BAD_DATA on their null `value`, failing an
+  // already mined tx. Prefers the rpcManager (failover) and falls back to the
+  // response's own provider for legacy callers.
+  private async waitForReceiptByHash(
+    tx: ethers.TransactionResponse,
+    options: TransactionOptions
+  ): Promise<ethers.TransactionReceipt> {
+    const { rpcManager } = options;
+    const provider = tx.provider;
+    const fetchReceipt = (): Promise<ethers.TransactionReceipt | null> => {
+      if (rpcManager) {
+        return rpcManager.executeWithFailover(
+          (p) => p.getTransactionReceipt(tx.hash),
+          "read"
+        );
+      }
+      if (!provider) {
+        throw new Error("Transaction has no provider to poll for a receipt");
+      }
+      return provider.getTransactionReceipt(tx.hash);
+    };
+
+    const deadline = Date.now() + TEMPO_RECEIPT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const receipt = await fetchReceipt();
+      if (receipt) {
+        return receipt;
+      }
+      await delay(TEMPO_RECEIPT_POLL_INTERVAL_MS);
+    }
+    throw new Error(
+      `Timed out waiting for Tempo transaction receipt (${tx.hash})`
+    );
+  }
+
   private async confirmTransaction(
     tx: ethers.TransactionResponse,
     session: NonceSession,
@@ -310,7 +363,9 @@ export class EvmChainAdapter implements ChainAdapter {
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt = TEMPO_CHAIN_IDS.has(this.chainId)
+      ? await this.waitForReceiptByHash(tx, options)
+      : await tx.wait();
     if (!receipt) {
       throw new Error("Transaction sent but receipt not available");
     }

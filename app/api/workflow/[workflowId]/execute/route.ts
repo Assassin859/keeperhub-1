@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { logAnonymousExecutionBlock } from "@/lib/auth-anonymous-guard";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
+import { chargePaygIfBillable } from "@/lib/billing/payg/charge";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
@@ -307,6 +308,38 @@ export async function POST(
       metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
         [LabelKeys.TRIGGER_TYPE]: triggerType,
       });
+    }
+
+    // PAYG: a free-tier org past its included limit is admitted by
+    // enforceExecutionLimit only so it can be charged here. Settle the
+    // per-execution price before the run starts, the same charge the queue
+    // executor and direct-execute API apply, so every execution path bills
+    // once. On a funds, cap, or payment block, resolve the row to a billing
+    // error and stop; the run must not proceed unpaid. Non-PAYG orgs and
+    // in-bucket runs return applicable:false and pass through untouched.
+    const paygCharge = await chargePaygIfBillable({
+      organizationId: workflow.organizationId,
+      executionId,
+    });
+    if (paygCharge.applicable && !paygCharge.ok) {
+      await db
+        .update(workflowExecutions)
+        .set({
+          status: "error",
+          error: paygCharge.message,
+          errorCategory: "billing",
+          errorType: "user",
+          completedAt: new Date(),
+        })
+        .where(eq(workflowExecutions.id, executionId));
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: paygCharge.message, executionId, status: "error" },
+          { status: HttpStatus.PAYMENT_REQUIRED }
+        ),
+        "failed"
+      );
     }
 
     // Resolve org slug + plan for log labels (cached per request)

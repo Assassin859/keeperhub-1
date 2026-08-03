@@ -47,6 +47,10 @@ import {
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
 
+// Tempo (4217 mainnet, 42431 testnet) has no native gas token: value moves via
+// TIP-20 transfers, so a native send has no valid form and reverts at preflight.
+const TEMPO_CHAIN_IDS = new Set([4217, 42_431]);
+
 export type TransferFundsCoreInput = {
   network: string;
   amount: string;
@@ -71,6 +75,9 @@ export type TransferFundsResult =
   | {
       success: true;
       transactionHash: string;
+      // KEEP-966: chain the transaction was broadcast on, required for
+      // independent on-chain receipt verification at execution finalize time.
+      chainId: number;
       transactionLink: string;
       gasUsed: string;
       gasUsedUnits: string;
@@ -120,6 +127,16 @@ export async function transferFundsCore(
       gasLimitMultiplier,
       _context,
     });
+  }
+
+  // Tempo has no native token to move; fail with a clear message instead of the
+  // opaque CALL_EXCEPTION an empty data preflight would otherwise return.
+  if (TEMPO_CHAIN_IDS.has(chainId)) {
+    return {
+      success: false,
+      error:
+        "Tempo has no native token to transfer. Send a TIP-20 stablecoin instead by providing a token address.",
+    };
   }
 
   // Validate recipient address
@@ -269,6 +286,7 @@ export async function transferFundsCore(
           success: true,
           sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
+          chainId,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,
           gasUsedUnits: sponsoredResult.gasUsedUnits,
@@ -406,6 +424,7 @@ export async function transferFundsCore(
       return {
         success: true,
         transactionHash: receipt.hash,
+        chainId,
         transactionLink,
         gasUsed: gasCostWei,
         gasUsedUnits,
@@ -559,6 +578,7 @@ async function transferFundsSolana(args: {
     return {
       success: true,
       transactionHash: receipt.hash,
+      chainId,
       transactionLink,
       gasUsed: "0",
       gasUsedUnits: receipt.gasUsed.toString(),

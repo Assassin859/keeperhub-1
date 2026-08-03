@@ -1,6 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
+import { CLI_VERSION_HEADER_RULE } from "./lib/cli-version";
 
 const nextConfig = {
   output: "standalone",
@@ -293,6 +294,12 @@ const nextConfig = {
           },
         ],
       },
+      // The kh CLI already checks this header on every response and warns when
+      // its own build is older (internal/http/version.go). The client half
+      // shipped long ago; nothing was ever sending the header, so the check was
+      // inert. Updates are manual (`kh update`) with no prompt, so this warning
+      // is the only signal an out-of-date CLI ever gets.
+      CLI_VERSION_HEADER_RULE,
     ];
   },
   async redirects() {
