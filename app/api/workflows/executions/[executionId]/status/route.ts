@@ -6,12 +6,50 @@ import { isErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
-import { resolveAuthorizedExecution } from "@/lib/workflow/execution-access";
+import {
+  type AuthorizedExecution,
+  type ExecutionStatusPayload,
+  redactExecutionStatusForPublicView,
+  resolveExecutionViewAccess,
+} from "@/lib/workflow/execution-access";
 
 type NodeStatus = {
   nodeId: string;
   status: "pending" | "running" | "success" | "error" | "cancelled";
 };
+
+function buildStatusPayload(
+  execution: AuthorizedExecution,
+  nodeStatuses: NodeStatus[]
+): ExecutionStatusPayload {
+  const runningCount = nodeStatuses.filter((n) => n.status === "running").length;
+  const totalSteps = Number.parseInt(execution.totalSteps || "0", 10);
+  const completedSteps = Number.parseInt(execution.completedSteps || "0", 10);
+
+  return {
+    status: execution.status,
+    nodeStatuses,
+    progress: {
+      totalSteps,
+      completedSteps,
+      runningSteps: runningCount,
+      currentNodeId: execution.currentNodeId,
+      currentNodeName: execution.currentNodeName,
+      percentage:
+        totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0,
+    },
+    errorContext: isErrorStatus(execution.status)
+      ? {
+          failedNodeId: execution.currentNodeId,
+          lastSuccessfulNodeId: execution.lastSuccessfulNodeId,
+          lastSuccessfulNodeName: execution.lastSuccessfulNodeName,
+          executionTrace: execution.executionTrace,
+          error: execution.error,
+        }
+      : null,
+    transactionHashes: execution.transactionHashes,
+  };
+}
 
 export async function GET(
   request: Request,
@@ -22,59 +60,45 @@ export async function GET(
   try {
     const { executionId } = await context.params;
 
-    const resolved = await resolveAuthorizedExecution(request, executionId);
-    if (!resolved.ok) {
+    const viewAccess = await resolveExecutionViewAccess(request, executionId);
+    if (viewAccess.mode === "notFound") {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),
-        statusCode: resolved.status,
+        statusCode: 404,
       });
       return NextResponse.json(
-        { error: resolved.error },
-        { status: resolved.status }
+        { error: "Execution not found" },
+        { status: 404 }
       );
     }
-    const { execution } = resolved;
+    if (viewAccess.mode === "signInRequired") {
+      recordStatusPollMetrics({
+        executionId,
+        durationMs: timer(),
+        statusCode: 401,
+      });
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
 
-    // Get logs for all nodes
+    const { execution } = viewAccess;
+
     const logs = await db.query.workflowExecutionLogs.findMany({
       where: eq(workflowExecutionLogs.executionId, executionId),
     });
 
-    // Map logs to node statuses
     const nodeStatuses: NodeStatus[] = logs.map((log) => ({
       nodeId: log.nodeId,
       status: log.status,
     }));
 
-    // Calculate running count for parallel execution visibility
-    const runningCount = nodeStatuses.filter(
-      (n) => n.status === "running"
-    ).length;
-    const totalSteps = Number.parseInt(execution.totalSteps || "0", 10);
-    const completedSteps = Number.parseInt(execution.completedSteps || "0", 10);
-
-    // Build progress data
-    const progress = {
-      totalSteps,
-      completedSteps,
-      runningSteps: runningCount,
-      currentNodeId: execution.currentNodeId,
-      currentNodeName: execution.currentNodeName,
-      percentage:
-        totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0,
-    };
-
-    // Build error context (only when failed)
-    const errorContext = isErrorStatus(execution.status)
-      ? {
-          failedNodeId: execution.currentNodeId,
-          lastSuccessfulNodeId: execution.lastSuccessfulNodeId,
-          lastSuccessfulNodeName: execution.lastSuccessfulNodeName,
-          executionTrace: execution.executionTrace,
-          error: execution.error,
-        }
-      : null;
+    let payload = buildStatusPayload(execution, nodeStatuses);
+    if (viewAccess.mode === "publicReadOnly") {
+      payload = redactExecutionStatusForPublicView(payload);
+    }
 
     recordStatusPollMetrics({
       executionId,
@@ -83,13 +107,7 @@ export async function GET(
       executionStatus: execution.status,
     });
 
-    return NextResponse.json({
-      status: execution.status,
-      nodeStatuses,
-      progress,
-      errorContext,
-      transactionHashes: execution.transactionHashes,
-    });
+    return NextResponse.json(payload);
   } catch (error) {
     const { executionId } = await context.params;
     logSystemError(

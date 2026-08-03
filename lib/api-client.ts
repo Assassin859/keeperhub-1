@@ -835,6 +835,21 @@ export const workflowApi = {
         nodeId: string;
         status: "pending" | "running" | "success" | "error" | "cancelled";
       }>;
+      progress?: {
+        totalSteps: number;
+        completedSteps: number;
+        runningSteps: number;
+        currentNodeId: string | null;
+        currentNodeName: string | null;
+        percentage: number;
+      };
+      transactionHashes?: Array<{
+        hash: string;
+        nodeId: string;
+        nodeName: string;
+        chainId?: number;
+        network?: string;
+      }>;
     }>(`/api/workflows/executions/${executionId}/status`),
 
   // Export workflow as a versioned JSON document
