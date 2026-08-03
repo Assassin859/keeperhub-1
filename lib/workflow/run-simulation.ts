@@ -72,6 +72,8 @@ type NodeSimulationOutcome =
   | { status: "skipped"; warning?: WorkflowSimulationIssue }
   | { status: "failed"; issue: WorkflowSimulationIssue };
 
+type SimulationFailure = Extract<SimulateResult, { success: false }>;
+
 const ACTION_DYNAMIC_FIELDS: Record<SupportedActionType, readonly string[]> = {
   "web3/transfer-funds": [
     "network",
@@ -105,6 +107,12 @@ const ACTION_DEFAULT_FIELD: Record<SupportedActionType, string> = {
   "web3/write-contract": "abiFunction",
 };
 
+const ACTION_DISPLAY_NAME: Record<SupportedActionType, string> = {
+  "web3/transfer-funds": "Transfer Native Token",
+  "web3/transfer-token": "Transfer ERC20 Token",
+  "web3/write-contract": "Write Contract",
+};
+
 function isSupportedActionType(
   actionType: unknown
 ): actionType is SupportedActionType {
@@ -122,7 +130,48 @@ function nodeLabel(
   node: WorkflowSimulationNode,
   actionType: SupportedActionType
 ): string {
-  return node.data?.label?.trim() || actionType;
+  const configuredLabel = node.data?.label?.trim();
+
+  if (configuredLabel && configuredLabel !== actionType) {
+    return configuredLabel;
+  }
+
+  return ACTION_DISPLAY_NAME[actionType];
+}
+
+function usefulRevertReason(result: SimulationFailure): string | null {
+  if (result.failureKind !== "revert") {
+    return null;
+  }
+
+  const reason = result.revertReason.trim();
+
+  if (
+    !reason ||
+    reason.startsWith("Simulation failed:") ||
+    reason.startsWith("Simulation unavailable:") ||
+    reason.includes("missing revert data") ||
+    reason.includes("CALL_EXCEPTION") ||
+    reason.includes('action="') ||
+    reason.includes("transaction={")
+  ) {
+    return null;
+  }
+
+  return reason;
+}
+
+function revertGuidance(actionType: SupportedActionType): string {
+  switch (actionType) {
+    case "web3/transfer-funds":
+      return "Check the wallet balance, amount, recipient, and gas requirements.";
+    case "web3/transfer-token":
+      return "Check the token balance, amount, recipient, and contract state.";
+    case "web3/write-contract":
+      return "Check the contract address, function arguments, value, permissions, and contract state.";
+    default:
+      return "Check the configured inputs and current on-chain state.";
+  }
 }
 
 function makeIssue(
@@ -432,16 +481,30 @@ async function simulateNode(
     return { status: "simulated" };
   }
 
+  const label = nodeLabel(context.node, context.actionType);
+
   if (result.failureKind === "unavailable") {
     return {
       status: "skipped",
       warning: makeIssue(context, {
         code: "SIMULATION_UNAVAILABLE",
         fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
-        message: `${nodeLabel(
-          context.node,
-          context.actionType
-        )} could not be simulated: ${result.error}`,
+        message: `${label} could not be simulated because the RPC service was unavailable. You can still run the workflow.`,
+      }),
+    };
+  }
+
+  if (result.failureKind === "revert") {
+    const reason = usefulRevertReason(result);
+
+    return {
+      status: "failed",
+      issue: makeIssue(context, {
+        code: "SIMULATION_WOULD_REVERT",
+        fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
+        message: reason
+          ? `${label} would revert: ${reason}`
+          : `${label} would revert. ${revertGuidance(context.actionType)}`,
       }),
     };
   }
@@ -449,21 +512,9 @@ async function simulateNode(
   return {
     status: "failed",
     issue: makeIssue(context, {
-      code:
-        result.failureKind === "revert"
-          ? "SIMULATION_WOULD_REVERT"
-          : "SIMULATION_INVALID_TRANSACTION",
+      code: "SIMULATION_INVALID_TRANSACTION",
       fieldKey: ACTION_DEFAULT_FIELD[context.actionType],
-      message:
-        result.failureKind === "revert"
-          ? `${nodeLabel(
-              context.node,
-              context.actionType
-            )} would revert: ${result.error}`
-          : `${nodeLabel(
-              context.node,
-              context.actionType
-            )} has invalid transaction inputs: ${result.error}`,
+      message: `${label} has invalid transaction inputs. Check the configured network, addresses, amount, and function parameters.`,
     }),
   };
 }

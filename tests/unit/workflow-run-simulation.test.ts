@@ -160,8 +160,75 @@ describe("runWorkflowSimulation", () => {
       fieldKey: "recipientAddress",
       parameterPath: "nodes[0].data.config.recipientAddress",
     });
-    expect(result.errors[0]?.message).toContain("Pay supplier would revert");
+    expect(result.errors[0]?.message).toBe(
+      "Pay supplier would revert: InsufficientBalance()"
+    );
+    expect(result.errors[0]?.message).not.toContain("CALL_EXCEPTION");
+    expect(result.errors[0]?.message).not.toContain("transaction={");
     expect(result.warnings).toEqual([]);
+  });
+
+  it("preserves a useful decoded revert reason and uses a readable action name", async () => {
+    spies.simulateNativeTransfer.mockResolvedValueOnce({
+      success: false,
+      status: "simulated",
+      from: "0xaa0000000000000000000000000000000000aa00",
+      to: "0xbb0000000000000000000000000000000000bb00",
+      value: "100",
+      failureKind: "revert",
+      wouldRevert: true,
+      revertReason: "InsufficientBalance()",
+      error: "InsufficientBalance()",
+    });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          amount: "100",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toBe(
+      "Transfer Native Token would revert: InsufficientBalance()"
+    );
+  });
+
+  it("replaces raw ethers revert details with actionable guidance", async () => {
+    spies.simulateNativeTransfer.mockResolvedValueOnce({
+      success: false,
+      status: "simulated",
+      from: "0xaa0000000000000000000000000000000000aa00",
+      to: "0xbb0000000000000000000000000000000000bb00",
+      value: "100",
+      failureKind: "revert",
+      wouldRevert: true,
+      revertReason:
+        'Simulation failed: missing revert data (action="estimateGas", transaction={"from":"0xaa"}, code=CALL_EXCEPTION)',
+      error:
+        'Simulation failed: missing revert data (action="estimateGas", transaction={"from":"0xaa"}, code=CALL_EXCEPTION)',
+    });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          amount: "100",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.message).toBe(
+      "Transfer Native Token would revert. Check the wallet balance, amount, recipient, and gas requirements."
+    );
+    expect(result.errors[0]?.message).not.toContain("missing revert data");
+    expect(result.errors[0]?.message).not.toContain("CALL_EXCEPTION");
+    expect(result.errors[0]?.message).not.toContain("transaction=");
   });
 
   it("turns RPC unavailability into a non-blocking warning", async () => {
@@ -191,7 +258,12 @@ describe("runWorkflowSimulation", () => {
     expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_UNAVAILABLE",
       nodeId: "transfer-1",
+      message:
+        "Transfer Native Token could not be simulated because the RPC service was unavailable. You can still run the workflow.",
     });
+    expect(result.warnings[0]?.message).not.toContain(
+      "All RPC providers failed"
+    );
     expect(result.skippedNodeCount).toBe(1);
   });
 
