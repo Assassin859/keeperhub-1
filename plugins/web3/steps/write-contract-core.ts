@@ -314,6 +314,7 @@ export async function writeContractCore(
     return {
       success: false,
       error: getErrorMessage(error),
+      errorClass: ExecutionErrorType.SYSTEM,
     };
   }
 
