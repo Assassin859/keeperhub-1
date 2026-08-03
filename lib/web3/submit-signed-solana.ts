@@ -1,5 +1,9 @@
 import "server-only";
-import { Transaction, VersionedTransaction } from "@solana/web3.js";
+import {
+  type SignatureStatus,
+  Transaction,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import bs58 from "bs58";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
 
@@ -22,9 +26,77 @@ function extractFirstSignature(signedBytes: Uint8Array): Uint8Array | null {
   }
 }
 
+/**
+ * Attempts before giving up on a signature that has not surfaced yet. A
+ * transaction the RPC accepted needs a slot or two to become queryable, so a
+ * single immediate lookup cannot tell "still propagating" from "never landed"
+ * and would report a live transaction as failed.
+ */
+export const RECONCILE_ATTEMPTS = 5;
+export const RECONCILE_DELAY_MS = 1500;
+
+/** Overrides for the reconcile poll. Exists so tests need not sleep. */
+export type ReconcileOptions = {
+  attempts?: number;
+  delayMs?: number;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Polls a signature's on-chain status, tolerating the indexing lag that follows
+ * a broadcast. Returns true only for a confirmed/finalized transaction with no
+ * execution error; an explicit on-chain error short-circuits to false, and an
+ * unknown signature stays unknown until the attempts run out.
+ */
+async function isSignatureConfirmed(
+  signature: string,
+  manager: SolanaProviderManager,
+  options: ReconcileOptions
+): Promise<boolean> {
+  const attempts = options.attempts ?? RECONCILE_ATTEMPTS;
+  const delayMs = options.delayMs ?? RECONCILE_DELAY_MS;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      await sleep(delayMs);
+    }
+
+    let statusResult: SignatureStatus | null = null;
+    try {
+      statusResult = await manager.executeWithFailover(async (connection) => {
+        const res = await connection.getSignatureStatuses([signature]);
+        return res.value[0];
+      }, "read");
+    } catch {
+      // A read that fails on every endpoint says nothing about the
+      // transaction; keep polling rather than concluding it never landed.
+      continue;
+    }
+
+    if (!statusResult) {
+      continue;
+    }
+    if (statusResult.err) {
+      return false;
+    }
+    if (
+      statusResult.confirmationStatus === "confirmed" ||
+      statusResult.confirmationStatus === "finalized"
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export async function submitSignedSolanaTransactionWithFailover(
   signedBytes: Uint8Array,
-  manager: SolanaProviderManager
+  manager: SolanaProviderManager,
+  reconcileOptions: ReconcileOptions = {}
 ): Promise<{ signature: string }> {
   try {
     // sendRawTransaction returns the transaction signature as a base58 string —
@@ -52,20 +124,7 @@ export async function submitSignedSolanaTransactionWithFailover(
     }
     const signature = bs58.encode(firstSig);
 
-    const statusResult = await manager.executeWithFailover(
-      async (connection) => {
-        const res = await connection.getSignatureStatuses([signature]);
-        return res.value[0];
-      },
-      "read"
-    );
-
-    if (
-      statusResult &&
-      !statusResult.err &&
-      (statusResult.confirmationStatus === "confirmed" ||
-        statusResult.confirmationStatus === "finalized")
-    ) {
+    if (await isSignatureConfirmed(signature, manager, reconcileOptions)) {
       return { signature };
     }
     throw err;

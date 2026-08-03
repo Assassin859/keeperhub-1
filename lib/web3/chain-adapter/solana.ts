@@ -110,22 +110,49 @@ export class SolanaChainAdapter implements ChainAdapter {
 
     await this.executeWithSolanaFailover(async (connection) => {
       const enforceMaxSol = options.maxSolLamports !== undefined;
+      // Read before simulating, so a deposit landing between the two reads
+      // shrinks the apparent outflow. The gap cannot be closed from here: the
+      // simulation exposes only post-state, and no RPC pins a balance read to
+      // the exact slot the simulation was evaluated against. It fails in the
+      // permissive direction, so this ceiling is a preflight guard rather than
+      // a settlement figure; the true delta is only knowable after
+      // confirmation.
       const preBalance = enforceMaxSol
         ? BigInt(await connection.getBalance(signerPublicKey))
         : BigInt(0);
 
+      // Ask for the fee payer's simulated post-state by address on both
+      // branches, so the account of interest is always at index 0.
+      //
+      // Requesting it is not optional on the versioned branch: a legacy
+      // transaction deserializes into a VersionedTransaction wrapping a legacy
+      // Message rather than throwing, so every prebuilt transaction reaches
+      // this branch and an omitted `accounts` config leaves the maxSol check
+      // with nothing to read.
+      //
+      // Addressing by key also avoids indexing into the response by the
+      // transaction's own account-key position, which does not line up: the
+      // legacy RPC returns only nonProgramIds, not the full key list.
       const simResult = isVersioned
         ? await connection.simulateTransaction(
             signedTx as VersionedTransaction,
             {
               sigVerify: false,
               replaceRecentBlockhash: false,
+              ...(enforceMaxSol
+                ? {
+                    accounts: {
+                      encoding: "base64" as const,
+                      addresses: [signerPublicKey.toBase58()],
+                    },
+                  }
+                : {}),
             }
           )
         : await connection.simulateTransaction(
             signedTx as Transaction,
             undefined,
-            enforceMaxSol
+            enforceMaxSol ? [signerPublicKey] : undefined
           );
 
       if (simResult.value.err) {
@@ -135,18 +162,9 @@ export class SolanaChainAdapter implements ChainAdapter {
       }
 
       if (enforceMaxSol && options.maxSolLamports !== undefined) {
-        const accountKeys = isVersioned
-          ? (signedTx as VersionedTransaction).message.staticAccountKeys
-          : (signedTx as Transaction).compileMessage().accountKeys;
-        const payerIndex = accountKeys.findIndex((key) =>
-          key.equals(signerPublicKey)
-        );
-        if (payerIndex === -1) {
-          throw new Error(
-            "[SolanaChainAdapter] Fee payer not found in transaction account keys"
-          );
-        }
-        const postLamports = simResult.value.accounts?.[payerIndex]?.lamports;
+        // A fee payer absent from the transaction simulates to a null entry
+        // here, which lands in the same branch as a missing account state.
+        const postLamports = simResult.value.accounts?.[0]?.lamports;
         if (postLamports === undefined) {
           throw new Error(
             "[SolanaChainAdapter] Simulation did not return fee payer account state for maxSol check"
