@@ -70,6 +70,8 @@ export type SavedWorkflow = WorkflowData & {
   userVote?: VoteDirection | null;
   canVote?: boolean;
   duplicateCount?: number;
+  /** True when the workflow uses Pro-gated actions on a free plan. */
+  requiresProPlan?: boolean;
   // Present when loaded via getById(id, { version }).
   isHistoricalVersion?: boolean;
   version?: number;
