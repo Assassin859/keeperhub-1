@@ -588,6 +588,8 @@ function useWorkflowHandlers({
 }: WorkflowHandlerParams) {
   const { open: openOverlay } = useOverlay();
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isPreflightingRef = useRef(false);
+  const [isPreflighting, setIsPreflighting] = useState(false);
   const setRunsRefreshTrigger = useSetAtom(runsRefreshTriggerAtom);
   const previewVersion = useAtomValue(previewVersionAtom);
 
@@ -661,41 +663,55 @@ function useWorkflowHandlers({
       return;
     }
 
-    // The server executes the stored definition, not the canvas state, so
-    // edits still waiting on the debounced autosave must be flushed first.
-    // saveWorkflow already toasts on failure, so a failed flush aborts quietly.
-    const saved = await ensureSavedBeforeRun({
-      hasUnsavedChanges,
-      isPreviewingVersion: previewVersion !== null,
-      save: saveWorkflow,
-    });
-    if (!saved) {
+    // Prevent duplicate save, validation and simulation requests while the
+    // first preflight is still running.
+    if (isPreflightingRef.current) {
       return;
     }
 
-    await runWorkflowValidationPreflight({
-      workflowId: currentWorkflowId,
-      nodes,
-      onOpenIssues: ({
-        validationErrors,
-        validationWarnings,
-        onRunAnyway,
-      }) => {
-        openOverlay(WorkflowIssuesOverlay, {
-          issues: {
-            brokenReferences: [],
-            missingRequiredFields: [],
-            missingIntegrations: [],
-            validationErrors,
-            validationWarnings,
-          },
-          onGoToStep: handleGoToStep,
+    isPreflightingRef.current = true;
+    setIsPreflighting(true);
+
+    try {
+      // The server executes the stored definition, not the canvas state, so
+      // edits still waiting on the debounced autosave must be flushed first.
+      // saveWorkflow already toasts on failure, so a failed flush aborts quietly.
+      const saved = await ensureSavedBeforeRun({
+        hasUnsavedChanges,
+        isPreviewingVersion: previewVersion !== null,
+        save: saveWorkflow,
+      });
+      if (!saved) {
+        return;
+      }
+
+      await runWorkflowValidationPreflight({
+        workflowId: currentWorkflowId,
+        nodes,
+        onOpenIssues: ({
+          validationErrors,
+          validationWarnings,
           onRunAnyway,
-        });
-      },
-      onStartWorkflowExecution: startWorkflowExecution,
-      onError: (message) => toast.error(message),
-    });
+        }) => {
+          openOverlay(WorkflowIssuesOverlay, {
+            issues: {
+              brokenReferences: [],
+              missingRequiredFields: [],
+              missingIntegrations: [],
+              validationErrors,
+              validationWarnings,
+            },
+            onGoToStep: handleGoToStep,
+            onRunAnyway,
+          });
+        },
+        onStartWorkflowExecution: startWorkflowExecution,
+        onError: (message) => toast.error(message),
+      });
+    } finally {
+      isPreflightingRef.current = false;
+      setIsPreflighting(false);
+    }
   };
 
   const handleCancel = async (): Promise<void> => {
@@ -788,8 +804,8 @@ function useWorkflowHandlers({
   };
 
   const handleExecute = async () => {
-    // Guard against concurrent executions
-    if (isExecuting) {
+    // Guard against concurrent executions and duplicate preflight requests.
+    if (isExecuting || isPreflightingRef.current) {
       return;
     }
 
@@ -804,6 +820,7 @@ function useWorkflowHandlers({
     handleCancel,
     validateAndProceed,
     handleGoToStep,
+    isPreflighting,
   };
 }
 
@@ -1011,8 +1028,13 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     setPriceUsdc,
   } = state;
 
-  const { handleSave, handleExecute, handleCancel, validateAndProceed } =
-    useWorkflowHandlers({
+  const {
+    handleSave,
+    handleExecute,
+    handleCancel,
+    validateAndProceed,
+    isPreflighting,
+  } = useWorkflowHandlers({
       currentWorkflowId,
       nodes,
       edges,
@@ -1318,6 +1340,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     handleSave,
     handleExecute,
     handleCancel,
+    isPreflighting,
     handleClearWorkflow,
     handleDeleteWorkflow,
     handleDownload,
@@ -1743,6 +1766,7 @@ function RunButtonGroup({
 
   const disabled =
     state.isExecuting ||
+    actions.isPreflighting ||
     state.nodes.length === 0 ||
     state.isGenerating ||
     isNonManualTrigger;
@@ -1768,10 +1792,20 @@ function RunButtonGroup({
       data-tour="workflow-run"
       disabled={disabled}
       onClick={() => actions.handleExecute()}
-      title="Run Workflow"
+      title={actions.isPreflighting ? "Checking Workflow" : "Run Workflow"}
     >
       <div className="flex items-center gap-2">
-        <Play className="size-4" /> Run
+        {actions.isPreflighting ? (
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            Checking...
+          </>
+        ) : (
+          <>
+            <Play className="size-4" />
+            Run
+          </>
+        )}
       </div>
     </Button>
   );
