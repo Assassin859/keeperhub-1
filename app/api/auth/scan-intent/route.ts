@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { recordScanIntent } from "@/lib/metrics/collectors/prometheus";
 
 const COOKIE_NAME = "pending_scan";
@@ -18,7 +19,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "Invalid JSON body",
+      requestHeaders: request.headers,
+    });
   }
 
   const intent =
@@ -27,20 +33,32 @@ export async function POST(request: Request): Promise<NextResponse> {
       : undefined;
 
   if (typeof intent !== "string" || intent.length === 0) {
-    return NextResponse.json({ error: "intent is required" }, { status: 400 });
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "intent is required",
+      requestHeaders: request.headers,
+    });
   }
 
   if (intent.length > MAX_SCAN_INTENT_LENGTH) {
-    return NextResponse.json({ error: "intent too long" }, { status: 400 });
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "intent too long",
+      requestHeaders: request.headers,
+    });
   }
 
   try {
     JSON.parse(intent);
   } catch {
-    return NextResponse.json(
-      { error: "intent must be valid JSON" },
-      { status: 400 }
-    );
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "intent must be valid JSON",
+      requestHeaders: request.headers,
+    });
   }
 
   const cookieStore = await cookies();
