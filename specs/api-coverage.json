@@ -5,14 +5,14 @@
       "path": "/api/address-book/{entryId}",
       "route_file": "app/api/address-book/[entryId]/route.ts",
       "source": "docs/api/user.md",
-      "line": 250
+      "line": 255
     },
     {
       "method": "DELETE",
       "path": "/api/api-keys/{keyId}",
       "route_file": "app/api/api-keys/[keyId]/route.ts",
       "source": "docs/api/api-keys.md",
-      "line": 145
+      "line": 152
     },
     {
       "method": "DELETE",
@@ -26,7 +26,7 @@
       "path": "/api/keys/{keyId}",
       "route_file": "app/api/keys/[keyId]/route.ts",
       "source": "docs/api/api-keys.md",
-      "line": 101
+      "line": 105
     },
     {
       "method": "DELETE",
@@ -47,7 +47,7 @@
       "path": "/api/user/rpc-preferences/{chainId}",
       "route_file": "app/api/user/rpc-preferences/[chainId]/route.ts",
       "source": "docs/api/user.md",
-      "line": 143
+      "line": 148
     },
     {
       "method": "DELETE",
@@ -68,7 +68,7 @@
       "path": "/api/address-book",
       "route_file": "app/api/address-book/route.ts",
       "source": "docs/api/user.md",
-      "line": 217
+      "line": 222
     },
     {
       "method": "GET",
@@ -125,7 +125,7 @@
       "path": "/api/api-keys",
       "route_file": "app/api/api-keys/route.ts",
       "source": "docs/api/api-keys.md",
-      "line": 121
+      "line": 128
     },
     {
       "method": "GET",
@@ -209,21 +209,21 @@
       "path": "/api/user/rpc-preferences",
       "route_file": "app/api/user/rpc-preferences/route.ts",
       "source": "docs/api/user.md",
-      "line": 84
+      "line": 89
     },
     {
       "method": "GET",
       "path": "/api/user/rpc-preferences/{chainId}",
       "route_file": "app/api/user/rpc-preferences/[chainId]/route.ts",
       "source": "docs/api/user.md",
-      "line": 120
+      "line": 125
     },
     {
       "method": "GET",
       "path": "/api/user/wallet",
       "route_file": "app/api/user/wallet/route.ts",
       "source": "docs/api/user.md",
-      "line": 51
+      "line": 56
     },
     {
       "method": "GET",
@@ -293,7 +293,7 @@
       "path": "/api/address-book/{entryId}",
       "route_file": "app/api/address-book/[entryId]/route.ts",
       "source": "docs/api/user.md",
-      "line": 242
+      "line": 247
     },
     {
       "method": "PATCH",
@@ -314,7 +314,7 @@
       "path": "/api/user",
       "route_file": "app/api/user/route.ts",
       "source": "docs/api/user.md",
-      "line": 35
+      "line": 40
     },
     {
       "method": "PATCH",
@@ -328,14 +328,14 @@
       "path": "/api/address-book",
       "route_file": "app/api/address-book/route.ts",
       "source": "docs/api/user.md",
-      "line": 225
+      "line": 230
     },
     {
       "method": "POST",
       "path": "/api/api-keys",
       "route_file": "app/api/api-keys/route.ts",
       "source": "docs/api/api-keys.md",
-      "line": 129
+      "line": 136
     },
     {
       "method": "POST",
@@ -419,21 +419,21 @@
       "path": "/api/user/delete",
       "route_file": "app/api/user/delete/route.ts",
       "source": "docs/api/user.md",
-      "line": 197
+      "line": 202
     },
     {
       "method": "POST",
       "path": "/api/user/forgot-password",
       "route_file": "app/api/user/forgot-password/route.ts",
       "source": "docs/api/user.md",
-      "line": 168
+      "line": 173
     },
     {
       "method": "POST",
       "path": "/api/user/password",
       "route_file": "app/api/user/password/route.ts",
       "source": "docs/api/user.md",
-      "line": 151
+      "line": 156
     },
     {
       "method": "POST",
@@ -482,7 +482,7 @@
       "path": "/api/user/rpc-preferences/{chainId}",
       "route_file": "app/api/user/rpc-preferences/[chainId]/route.ts",
       "source": "docs/api/user.md",
-      "line": 126
+      "line": 131
     },
     {
       "method": "PUT",
