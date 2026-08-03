@@ -13,6 +13,13 @@ export type WorkflowValidationResult = {
   warnings?: WorkflowValidationIssue[];
 };
 
+export type WorkflowSimulationResult = {
+  simulatedNodeCount: number;
+  skippedNodeCount: number;
+  errors?: WorkflowValidationIssue[];
+  warnings?: WorkflowValidationIssue[];
+};
+
 export type WorkflowValidationNode = {
   id?: unknown;
 };
@@ -23,7 +30,10 @@ export type WorkflowValidationOverlayIssues = {
   onRunAnyway?: () => void | Promise<void>;
 };
 
-type WorkflowValidationFetcher = (url: string) => Promise<Response>;
+type WorkflowValidationFetcher = (
+  url: string,
+  init?: RequestInit
+) => Promise<Response>;
 
 type RunWorkflowValidationPreflightParams = {
   workflowId: string;
@@ -38,8 +48,8 @@ const NODE_PARAMETER_PATH =
   /^nodes\[(\d+)\](?:\.data)?(?:\.config(?:\.([^.[\]]+))?)?/;
 
 /**
- * Adds editor navigation targets to server validation issues when their
- * parameter paths identify a specific workflow node.
+ * Adds editor navigation targets to server issues when their parameter paths
+ * identify a specific workflow node.
  */
 export function mapWorkflowValidationIssues(
   issues: WorkflowValidationIssue[] | undefined,
@@ -70,9 +80,75 @@ export function mapWorkflowValidationIssues(
   });
 }
 
+async function fetchValidationResult(
+  workflowId: string,
+  fetcher: WorkflowValidationFetcher,
+  onError: (message: string) => void
+): Promise<WorkflowValidationResult | null> {
+  let response: Response;
+
+  try {
+    response = await fetcher(`/api/workflows/${workflowId}/validate`);
+  } catch {
+    onError("Could not validate the workflow before running it");
+    return null;
+  }
+
+  if (!response.ok) {
+    onError("Could not validate the workflow before running it");
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => null)) as {
+    result?: WorkflowValidationResult;
+  } | null;
+
+  if (!payload?.result) {
+    onError("Workflow validation returned an unexpected response");
+    return null;
+  }
+
+  return payload.result;
+}
+
+async function fetchSimulationResult(
+  workflowId: string,
+  fetcher: WorkflowValidationFetcher,
+  onError: (message: string) => void
+): Promise<WorkflowSimulationResult | null> {
+  let response: Response;
+
+  try {
+    response = await fetcher(`/api/workflows/${workflowId}/simulate`, {
+      method: "POST",
+    });
+  } catch {
+    onError("Could not simulate workflow writes before running it");
+    return null;
+  }
+
+  if (!response.ok) {
+    onError("Could not simulate workflow writes before running it");
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => null)) as {
+    result?: WorkflowSimulationResult;
+  } | null;
+
+  if (!payload?.result) {
+    onError("Workflow simulation returned an unexpected response");
+    return null;
+  }
+
+  return payload.result;
+}
+
 /**
- * Runs server validation and decides whether execution is blocked, can be
- * overridden, or should start immediately.
+ * Runs structural validation followed by read-only EVM write simulation.
+ *
+ * Confirmed validation or simulation failures block execution. Warnings can be
+ * overridden through Run Anyway.
  */
 export async function runWorkflowValidationPreflight({
   workflowId,
@@ -82,44 +158,56 @@ export async function runWorkflowValidationPreflight({
   onStartWorkflowExecution,
   onError,
 }: RunWorkflowValidationPreflightParams): Promise<void> {
-  let response: Response;
+  const validation = await fetchValidationResult(workflowId, fetcher, onError);
 
-  try {
-    response = await fetcher(`/api/workflows/${workflowId}/validate`);
-  } catch {
-    onError("Could not validate the workflow before running it");
-    return;
-  }
-
-  if (!response.ok) {
-    onError("Could not validate the workflow before running it");
-    return;
-  }
-
-  const payload = (await response.json().catch(() => null)) as {
-    result?: WorkflowValidationResult;
-  } | null;
-
-  if (!payload?.result) {
-    onError("Workflow validation returned an unexpected response");
+  if (!validation) {
     return;
   }
 
   const validationErrors = mapWorkflowValidationIssues(
-    payload.result.errors,
+    validation.errors,
     nodes
   );
   const validationWarnings = mapWorkflowValidationIssues(
-    payload.result.warnings,
+    validation.warnings,
     nodes
   );
 
-  if (validationErrors.length > 0 || validationWarnings.length > 0) {
+  // Avoid RPC work when structural validation already proves that the saved
+  // workflow cannot run.
+  if (validationErrors.length > 0) {
     onOpenIssues({
       validationErrors,
       validationWarnings,
+      onRunAnyway: undefined,
+    });
+    return;
+  }
+
+  const simulation = await fetchSimulationResult(workflowId, fetcher, onError);
+
+  if (!simulation) {
+    return;
+  }
+
+  const simulationErrors = mapWorkflowValidationIssues(
+    simulation.errors,
+    nodes
+  );
+  const simulationWarnings = mapWorkflowValidationIssues(
+    simulation.warnings,
+    nodes
+  );
+
+  const combinedErrors = [...validationErrors, ...simulationErrors];
+  const combinedWarnings = [...validationWarnings, ...simulationWarnings];
+
+  if (combinedErrors.length > 0 || combinedWarnings.length > 0) {
+    onOpenIssues({
+      validationErrors: combinedErrors,
+      validationWarnings: combinedWarnings,
       onRunAnyway:
-        validationErrors.length === 0 ? onStartWorkflowExecution : undefined,
+        combinedErrors.length === 0 ? onStartWorkflowExecution : undefined,
     });
     return;
   }
