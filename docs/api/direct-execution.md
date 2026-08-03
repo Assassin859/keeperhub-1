@@ -69,6 +69,16 @@ curl -X POST https://app.keeperhub.com/api/execute/transfer \
 
 Workflow webhooks (`POST /api/workflows/{workflowId}/webhook`) accept the same header, scoped per workflow.
 
+## Sponsored Executions
+
+Writes may be gas-sponsored and broadcast through a relayer or smart-account
+(EIP-7702) path instead of your org's EOA wallet. A sponsored execution does
+not change your EOA's nonce or native balance, and it will not appear in a
+block explorer's `txlist` for that address — checks against the EOA will
+conclude nothing happened even though the transaction succeeded. Check the
+`sponsored` field on the status response and treat `transactionHash` /
+`transactionLink` as the authoritative proof, not EOA-level state.
+
 ## Transfer Funds
 
 ```http
@@ -82,12 +92,28 @@ Transfer native tokens (ETH, MATIC, etc.) or ERC-20 tokens directly.
 ```json
 {
   "chainId": 11155111,
-  "recipientAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+  "recipientAddress": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
   "amount": "0.1",
   "tokenAddress": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   "gasLimitMultiplier": "1.2"
 }
 ```
+
+### Recipient validation
+
+`recipientAddress` is validated with a strict **EIP-55 checksum** before the
+request is accepted. Pass either:
+
+- the exact checksummed form (mixed-case), or
+- an **all-lowercase** address (e.g. `0x742d35cc6634c0532925a3b844bc454e4438f44e`).
+
+A mixed-case address whose checksum does not match is rejected with
+`Invalid recipient address: <address>` — even if the lowercase hex is correct.
+Widely-copied example addresses often carry a mangled checksum or the wrong
+number of hex digits, so prefer copying from the address book or from a tool
+that computes EIP-55 rather than retyping. Add frequently-used recipients to the
+[address book](/wallet-management/address-book) first; address book entries are
+stored lowercase and displayed in checksummed form.
 
 **Parameters:**
 
@@ -107,11 +133,13 @@ Successful broadcast requests return HTTP `202 Accepted`:
 ```json
 {
   "executionId": "direct_123",
-  "status": "completed"
+  "status": "completed",
+  "transactionHash": "0x...",
+  "transactionLink": "https://etherscan.io/tx/0x..."
 }
 ```
 
-The execution runs synchronously. Status will be `completed` or `failed` when the request returns.
+The execution runs synchronously. Status will be `completed` or `failed` when the request returns. `transactionHash` and `transactionLink` are present only when `status` is `completed`.
 
 ## Call Smart Contract
 
@@ -128,7 +156,7 @@ Call any smart contract function. Automatically detects read vs write operations
   "contractAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
   "chainId": 1,
   "functionName": "balanceOf",
-  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
+  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\"]",
   "abi": "[{...}]",
   "value": "0.1",
   "gasLimitMultiplier": "1.2"
@@ -184,7 +212,7 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
   "contractAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
   "chainId": 1,
   "functionName": "balanceOf",
-  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
+  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\"]",
   "abi": "[{...}]",
   "condition": {
     "operator": "gt",
@@ -349,6 +377,7 @@ Check the status of a direct execution.
   "type": "transfer",
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
+  "sponsored": false,
   "gasUsedWei": "21000000000000",
   "result": {...},
   "error": null,
@@ -363,6 +392,10 @@ Check the status of a direct execution.
 - `running`: Currently executing
 - `completed`: Successfully completed
 - `failed`: Execution failed
+
+`sponsored` is `true` when the write was gas-sponsored and broadcast through
+a relayer or smart-account path rather than your org's EOA wallet — see
+[Sponsored Executions](#sponsored-executions).
 
 When polling this endpoint, honour the `X-Poll-Interval-Hint` response header instead of polling on a fixed timer: it gives the recommended number of seconds to wait before the next poll. A value of `0` means the execution has reached a terminal state (`completed` or `failed`) and you can stop polling.
 

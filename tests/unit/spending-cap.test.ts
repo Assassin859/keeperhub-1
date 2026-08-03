@@ -12,6 +12,11 @@ const state = vi.hoisted(() => ({
   sumRows: [] as Array<{ totalWei?: string; totalLamports?: string }>,
   ledgerRows: [] as Array<{ totalWei?: string; totalLamports?: string }>,
   inserted: [] as Record<string, unknown>[],
+  updated: [] as Record<string, unknown>[],
+  paygCharge: { applicable: false } as
+    | { applicable: false }
+    | { applicable: true; ok: true; txHash: string }
+    | { applicable: true; ok: false; reason: string; message: string },
 }));
 
 // Fake db.transaction whose tx supports what the reservation uses: the cap
@@ -53,7 +58,22 @@ vi.mock("@/lib/db", () => ({
       };
       return cb(tx);
     },
+    // The reserved row is marked failed here when a PAYG charge is blocked.
+    update: () => ({
+      set: (v: Record<string, unknown>) => ({
+        where: () => {
+          state.updated.push(v);
+          return Promise.resolve(undefined);
+        },
+      }),
+    }),
   },
+}));
+
+// PAYG charge runs after a successful reservation. Value-cap tests keep it a
+// no-op (applicable: false); the PAYG-charge tests drive it via state.paygCharge.
+vi.mock("@/lib/billing/payg/charge", () => ({
+  chargePaygIfBillable: () => Promise.resolve(state.paygCharge),
 }));
 
 import { checkAndReserveExecution } from "@/app/api/execute/_lib/spending-cap";
@@ -71,6 +91,8 @@ beforeEach(() => {
   state.sumRows = [{ totalWei: "0" }];
   state.ledgerRows = [{ totalWei: "0" }];
   state.inserted = [];
+  state.updated = [];
+  state.paygCharge = { applicable: false };
 });
 
 describe("checkAndReserveExecution value cap", () => {
@@ -239,5 +261,55 @@ describe("checkAndReserveExecution Solana cap", () => {
     });
 
     expect(result.allowed).toBe(true);
+  });
+});
+
+describe("checkAndReserveExecution PAYG charge", () => {
+  it("keeps the reservation when a billable execution charges successfully", async () => {
+    state.paygCharge = { applicable: true, ok: true, txHash: "0xabc" };
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "0" },
+    });
+
+    expect(result).toEqual({ allowed: true, executionId: "exec_test" });
+    expect(state.inserted).toHaveLength(1);
+    expect(state.updated).toHaveLength(0);
+  });
+
+  it("denies and marks the reserved row failed when the PAYG charge is blocked", async () => {
+    const message =
+      "Daily pay-as-you-go spend limit reached. Raise your daily limit or wait until tomorrow.";
+    state.paygCharge = {
+      applicable: true,
+      ok: false,
+      reason: "daily_cap",
+      message,
+    };
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "0" },
+    });
+
+    expect(result).toEqual({ allowed: false, reason: message });
+    expect(state.updated).toHaveLength(1);
+    expect(state.updated[0]).toMatchObject({
+      status: "failed",
+      error: message,
+    });
+  });
+
+  it("passes non-PAYG orgs through without charging or denying", async () => {
+    state.paygCharge = { applicable: false };
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "0" },
+    });
+
+    expect(result).toEqual({ allowed: true, executionId: "exec_test" });
+    expect(state.updated).toHaveLength(0);
   });
 });

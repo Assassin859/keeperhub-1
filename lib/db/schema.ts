@@ -624,6 +624,20 @@ export type TransactionHashEntry = {
   chainId?: number;
   network?: string;
   iterationIndex?: number;
+  // KEEP-966: independent on-chain verification result for this hash,
+  // populated by logWorkflowCompleteDb/selfHealWorkflowAfterLateStepCommit at
+  // finalize time. Named receiptStatus (not `status`) to avoid colliding with
+  // the execution's own top-level `status` column in any flattened read.
+  verified?: boolean;
+  receiptStatus?:
+    | "success"
+    | "reverted"
+    | "not_found"
+    | "timeout"
+    | "safe_inner_failure";
+  blockNumber?: number;
+  gasUsed?: string;
+  verifiedAt?: string;
 };
 
 export const workflowExecutions = pgTable(
@@ -872,6 +886,7 @@ export {
   type BillingEvent,
   billingEvents,
   type DirectExecution,
+  type DirectExecutionReceiptEntry,
   directExecutions,
   type ExecutionDebt,
   executionDebt,
@@ -892,6 +907,8 @@ export {
   type NewOrganizationSubscription,
   type NewOrganizationToken,
   type NewOrganizationWallet,
+  type NewPaygConfig,
+  type NewPaygPayment,
   type NewPublicTag,
   type NewSafeRole,
   type NewSafeRoleAllowance,
@@ -914,8 +931,12 @@ export {
   organizationTokens,
   organizationWallets,
   overageBillingRecords,
+  type PaygConfig,
+  type PaygPayment,
   type PendingTransaction,
   type PublicTag,
+  paygConfig,
+  paygPayments,
   pendingTransactions,
   publicTags,
   type SafeRole,

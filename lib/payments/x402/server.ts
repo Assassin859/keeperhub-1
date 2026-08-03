@@ -17,7 +17,7 @@ function buildFacilitatorClient(): HTTPFacilitatorClient {
   });
 }
 
-const facilitatorClient = buildFacilitatorClient();
+export const facilitatorClient = buildFacilitatorClient();
 
 export const server = new x402ResourceServer(facilitatorClient);
 server.register("eip155:8453", new ExactEvmScheme());
