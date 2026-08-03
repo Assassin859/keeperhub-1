@@ -464,6 +464,22 @@ Execute state-changing functions on smart contracts using your Turnkey wallet. R
 
 **Note:** The `gasUsed` output represents the total transaction cost in wei (gas units × effective gas price), not just the number of gas units consumed.
 
+### Direct-API field names
+
+If you're building this action via the [Workflows API](/api/workflows) rather than the editor, the UI labels above map to these `config` keys — the strict-mode validator will reject the natural-language versions (`function`, `method`, `contract`).
+
+`functionName` and `args` are a trap. The save-time validator accepts them so that workflows persisted before a field rename stay re-savable, but the runtime never translates them to `abiFunction` / `functionArgs`. A workflow built with them saves cleanly and then fails at execution with ``Missing `abiFunction` in the step config``. Send the canonical keys.
+
+| UI label | API `config` field | Shape |
+|---|---|---|
+| Function | `abiFunction` | plain function name string (e.g. `"release"`). Not `functionName` — see the note above. |
+| Function Arguments | `functionArgs` | **JSON-encoded array string** — e.g. `"[\"0xabc…\"]"`. Templates inside the string are resolved before `JSON.parse`, so wrap template tokens in the array's string quotes. |
+| Contract ABI | `abi` | JSON-encoded string (same convention as `functionArgs`) |
+| Web3 Connection | `web3Connection` | Sender routing: `"default"` (org policy), `"eoa"` (force the Turnkey EOA), or `"safe:<safeWalletId>"`. The signing wallet is your org's Turnkey wallet, resolved automatically. |
+| Network | `network` | numeric chain id as a string (e.g. `"11155111"`) |
+
+See the [generic web3 write-contract example](/api/workflows#generic-web3-write-contract-example-http-trigger) in the Workflows API docs for a full working request body.
+
 ---
 
 ## Transfer Native Token
