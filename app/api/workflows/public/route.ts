@@ -16,6 +16,7 @@ import {
   projectEdgesForPublicFeed,
   projectNodesForPublicFeed,
 } from "@/lib/workflow/public-feed-projection";
+import { workflowRequiresProPlan } from "@/lib/features/template-plan-gate";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 type TagInfo = { id: string; name: string; slug: string };
 
@@ -282,6 +283,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       userVote: VoteDirection | null;
       canVote: boolean;
       duplicateCount: number;
+      requiresProPlan: boolean;
     };
 
     const mappedWorkflows = publicWorkflows.map(
@@ -296,6 +298,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         userVote: userVotes[workflow.id] ?? null,
         canVote: userDuplications.has(workflow.id),
         duplicateCount: duplicateCounts[workflow.id] ?? 0,
+        requiresProPlan: workflowRequiresProPlan(workflow.nodes),
         createdAt: workflow.createdAt.toISOString(),
         updatedAt: workflow.updatedAt.toISOString(),
       })
