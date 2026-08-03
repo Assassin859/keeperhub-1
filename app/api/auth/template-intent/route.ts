@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 
 const COOKIE_NAME = "pending_template";
 const MAX_WORKFLOW_ID_LENGTH = 128;
@@ -17,7 +18,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "Invalid JSON body",
+      requestHeaders: request.headers,
+    });
   }
 
   const workflowId =
@@ -26,13 +32,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       : undefined;
 
   if (typeof workflowId !== "string" || workflowId.length === 0) {
-    return NextResponse.json(
-      { error: "workflowId is required" },
-      { status: 400 }
-    );
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "workflowId is required",
+      requestHeaders: request.headers,
+    });
   }
   if (workflowId.length > MAX_WORKFLOW_ID_LENGTH) {
-    return NextResponse.json({ error: "workflowId too long" }, { status: 400 });
+    return apiError({
+      status: 400,
+      code: ApiErrorCodes.INVALID_INPUT,
+      detail: "workflowId too long",
+      requestHeaders: request.headers,
+    });
   }
 
   const cookieStore = await cookies();
