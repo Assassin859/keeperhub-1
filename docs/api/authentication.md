@@ -54,8 +54,10 @@ Endpoints whose semantics are organization-scoped accept `kh_` keys:
 - Workflow CRUD and execution: `/api/workflows`, including
   `POST /api/workflows/{workflowId}/execute` and execution history and status
   (`GET /api/workflows/{workflowId}/executions` and
-  `GET /api/workflows/executions/{executionId}/{status,logs,wait}`).
+  `GET /api/workflows/executions/{executionId}/{status,logs,wait}`), and
+  listing (`PUT /api/workflows/{workflowId}/go-live`).
   A few sub-paths are session-only; see [Session-only](#session-only) below
+- Execution cancellation: `POST /api/executions/{executionId}/cancel`
 - Direct execution: everything under `/api/execute` - `/transfer`,
   `/contract-call`, `/check-and-execute`, `/swap`, `/node`, protocol actions
   (`/api/execute/{protocol}/{action}`), and
@@ -77,7 +79,6 @@ Endpoints that act on a user account, hold credential material, or sit on a huma
 - **Authentication primitives**: creating organization API keys (`POST /api/keys`), creating/listing/deleting personal webhook keys (`/api/api-keys/*`), AI Gateway OAuth flows
 - **Human-in-the-loop wallet approvals**: agentic-wallet linking and approve/reject endpoints
 - **Per-user state**: workflow drafts, workflow ratings, leaving an organization
-- **Organization-scoped but session-gated**: `POST /api/executions/{executionId}/cancel` and `POST /api/workflows/{workflowId}/go-live`. These two do not follow the rationale above - their semantics are organization-scoped, but the routes resolve auth from the session only. Treat them as current implementation limits rather than deliberate boundaries.
 
 If you have a use case for session-only behavior over an API key, open an issue describing it. The boundary is deliberate: it keeps a leaked API key from escalating into account control or wallet drainage.
 
