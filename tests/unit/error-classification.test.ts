@@ -22,6 +22,15 @@ describe("isNonRetryableError", () => {
     }
   });
 
+  it("treats INSUFFICIENT_FUNDS as non-retryable", () => {
+    expect(
+      isNonRetryableError({
+        code: "INSUFFICIENT_FUNDS",
+        message: "insufficient funds for gas * price + value",
+      })
+    ).toBe(true);
+  });
+
   it("returns false for retryable error codes", () => {
     expect(isNonRetryableError({ code: "NETWORK_ERROR" })).toBe(false);
     expect(isNonRetryableError({ code: "SERVER_ERROR" })).toBe(false);

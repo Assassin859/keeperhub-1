@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ethers } from "ethers";
+import { ethers, isError } from "ethers";
 import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import {
@@ -11,6 +11,7 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { isNonRetryableError } from "@/lib/rpc/providers/error-classification";
 import { getErrorMessage } from "@/lib/utils";
 import {
   decodeRevertReason,
@@ -93,14 +94,14 @@ export type SimulateSuccess = {
  */
 export type SimulateFailureCode = typeof INSUFFICIENT_BALANCE_CODE;
 
-export type SimulateFailure = {
+export type SimulationFailureKind = "validation" | "revert" | "unavailable";
+
+type SimulateFailureBase = {
   success: false;
   status: "simulated";
   from: string;
   to: string;
   value: string;
-  wouldRevert: true;
-  revertReason: string;
   error: string;
   /**
    * Machine-readable cause, set only when the simulator could attribute the
@@ -131,6 +132,18 @@ export type SimulateFailure = {
    */
   undecodedRevertData?: string;
 };
+
+export type SimulateFailure =
+  | (SimulateFailureBase & {
+      failureKind: "validation" | "revert";
+      wouldRevert: true;
+      revertReason: string;
+    })
+  | (SimulateFailureBase & {
+      failureKind: "unavailable";
+      wouldRevert: false;
+      revertReason?: never;
+    });
 
 export type SimulateResult = SimulateSuccess | SimulateFailure;
 
@@ -195,6 +208,26 @@ function failure(
   from: string,
   to: string,
   value: bigint,
+  message: string,
+  failureKind: "validation" | "revert" = "validation"
+): SimulateFailure {
+  return {
+    success: false,
+    status: "simulated",
+    from,
+    to,
+    value: value.toString(),
+    failureKind,
+    wouldRevert: true,
+    revertReason: message,
+    error: message,
+  };
+}
+
+function unavailable(
+  from: string,
+  to: string,
+  value: bigint,
   message: string
 ): SimulateFailure {
   return {
@@ -203,10 +236,29 @@ function failure(
     from,
     to,
     value: value.toString(),
-    wouldRevert: true,
-    revertReason: message,
+    failureKind: "unavailable",
+    wouldRevert: false,
     error: message,
   };
+}
+
+function classifySimulationError(error: unknown): SimulationFailureKind {
+  if (isError(error, "CALL_EXCEPTION")) {
+    return "revert";
+  }
+
+  if (
+    isError(error, "INVALID_ARGUMENT") ||
+    isError(error, "MISSING_ARGUMENT") ||
+    isError(error, "UNEXPECTED_ARGUMENT") ||
+    isError(error, "NUMERIC_FAULT") ||
+    isError(error, "INSUFFICIENT_FUNDS") ||
+    isNonRetryableError(error)
+  ) {
+    return "validation";
+  }
+
+  return "unavailable";
 }
 
 /**
@@ -317,13 +369,15 @@ async function failureFromPreflightError(input: {
     // as the whole revertReason, so dropping it once decoding succeeded would
     // make this one branch less informative than before.
     return {
-      ...failure(input.from, input.to, input.value, reason),
+      ...failure(input.from, input.to, input.value, reason, "revert"),
       originalError: getErrorMessage(input.err),
     };
   }
 
   const originalError = getErrorMessage(input.err);
   const revertData = extractRevertData(input.err);
+  const undecodedRevertData =
+    revertData && revertData !== "0x" ? revertData : undefined;
   const shortfall = await nativeShortfallFailure({
     rpc: input.rpc,
     chainId: input.chainId,
@@ -331,18 +385,33 @@ async function failureFromPreflightError(input: {
     to: input.to,
     value: input.value,
     originalError,
-    undecodedRevertData:
-      revertData && revertData !== "0x" ? revertData : undefined,
+    undecodedRevertData,
   });
-  return (
-    shortfall ??
-    failure(
+
+  if (shortfall) {
+    return shortfall;
+  }
+
+  const failureKind = classifySimulationError(input.err);
+  if (failureKind === "unavailable") {
+    return unavailable(
       input.from,
       input.to,
       input.value,
-      `Simulation reverted: ${originalError}`
-    )
-  );
+      `Simulation unavailable: ${originalError}`
+    );
+  }
+
+  const message =
+    failureKind === "revert"
+      ? `Simulation reverted: ${originalError}`
+      : `Simulation failed: ${originalError}`;
+
+  return {
+    ...failure(input.from, input.to, input.value, message, failureKind),
+    originalError,
+    undecodedRevertData,
+  };
 }
 
 async function getRpcManagerForChain(

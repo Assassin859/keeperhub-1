@@ -177,9 +177,36 @@ describe("simulateContractCall", () => {
 
     expect(result.success).toBe(false);
     expect(result.wouldRevert).toBe(true);
-    if (!result.success) {
+    if (!result.success && result.failureKind !== "unavailable") {
+      expect(result.failureKind).toBe("revert");
       expect(result.revertReason).toContain("Insufficient balance");
       expect(result.error).toBe(result.revertReason);
+    }
+  });
+
+  it("returns unavailable instead of claiming an RPC outage would revert", async () => {
+    resetSpies();
+    executeWithFailover.mockRejectedValueOnce(
+      new Error(
+        "RPC failed on both endpoints. Primary: timeout. Fallback: timeout"
+      )
+    );
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: WRITE_ABI,
+      functionName: "setValue",
+      functionArgs: JSON.stringify(["1"]),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("Simulation unavailable");
+      expect("revertReason" in result).toBe(false);
     }
   });
 
@@ -436,7 +463,9 @@ describe("simulateNativeTransfer", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.revertReason).toContain("insufficient funds");
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("insufficient funds");
       expect(result.code).toBeUndefined();
     }
   });
@@ -553,7 +582,9 @@ describe("simulateNativeTransfer", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.revertReason).toContain("node exploded");
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
+      expect(result.error).toContain("node exploded");
       expect(result.code).toBeUndefined();
     }
   });
@@ -571,6 +602,8 @@ describe("simulateNativeTransfer", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
+      expect(result.failureKind).toBe("unavailable");
+      expect(result.wouldRevert).toBe(false);
       expect(result.code).toBeUndefined();
     }
     // A zero-value call cannot be short of funds: no extra round trip.
