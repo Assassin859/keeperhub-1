@@ -36,11 +36,7 @@ import {
 } from "@/components/ui/tooltip";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { BILLING_API } from "@/lib/billing/constants";
-import {
-  PAYG_PLAN_NAME,
-  PLANS,
-  type PlanName,
-} from "@/lib/billing/plans";
+import { PAYG_PLAN_NAME, PLANS, type PlanName } from "@/lib/billing/plans";
 import { useDebounce } from "@/lib/hooks/use-debounce";
 import { useOrganization } from "@/lib/hooks/use-organization";
 import type { PageMeta } from "@/lib/pagination";
