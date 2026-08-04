@@ -81,10 +81,14 @@ difference in those fields changes the hash, so the retry is not recognised as o
 This is a common failure for callers that reconstruct a request from a summary or a log
 rather than replaying the original bytes.
 
-Instead derive the key from a canonical form of the fields that determine the onchain
-effect:
+Instead derive the key from a canonical form of the caller's own stable identifier for
+the piece of work, joined with the fields that determine the onchain effect:
 
-    chainId | recipientAddress | amount | tokenAddress
+    taskId | chainId | recipientAddress | amount | tokenAddress
+
+`taskId` is whatever the caller already uses to name the work: an invoice number, a
+payroll period, a job id. It must be stable across a retry of the same work and
+different for different work.
 
 Canonicalize each part before joining:
 
@@ -105,16 +109,23 @@ Canonicalize each part before joining:
 
 Hash the joined string with SHA-256 and send the hex digest as the `Idempotency-Key`.
 
-**Include a discriminator when the same transfer legitimately repeats.** Two runs of an
-identical monthly payout produce the same canonical form, so within the 24 hour window
-the second returns the first response and no second transfer is made. Nothing errors,
-so the missing payment is silent. Add a period or task identifier:
+**Omit `taskId` only when repeating the transfer would genuinely be a mistake.** Hashing
+the effect fields alone makes every identical transfer the same request, so an agent
+that legitimately pays the same recipient the same amount twice inside the 24 hour
+window gets the second call answered from the first one's cached response: the original
+`executionId`, `status: completed`, no error, and no second transfer. A payment goes
+missing with nothing to alert on, which is harder to notice than a duplicate, since a
+duplicate at least leaves two transactions onchain.
 
-    chainId | recipientAddress | amount | tokenAddress | 2026-08
+A stable key makes a **repeated** submission of the same work safe. It does not help
+with three other cases:
 
-A stable key makes a *repeated* intent safe. It does not help when the caller submits a
-genuinely different action, or when the state that justified the request has changed by
-the time the transaction lands. Those need a check before submission, not deduplication.
+- the caller submits genuinely different work, which needs a different key rather than
+  deduplication
+- the state that justified the request has changed by the time the transaction lands,
+  which needs a check before submission
+- the same work is legitimately repeated but the key cannot tell, which is the failure
+  above and is why `taskId` belongs in the key by default
 
 ## Transfer Funds
 
