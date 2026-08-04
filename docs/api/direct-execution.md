@@ -49,7 +49,7 @@ a transaction.
 
 ## Idempotency
 
-Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID).
+Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID). Every guarantee below depends on the retry sending the **same** key, so a caller that reconstructs a request rather than replaying a buffered one must derive its key deterministically: see [Choosing a stable key](#choosing-a-stable-key).
 
 - **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again.
 - **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for a different request.
@@ -58,39 +58,6 @@ Send an `Idempotency-Key` header to safely retry a request without risking a dou
 - **Window**: stored responses are replayable for 24 hours. After that the key is free to reuse.
 
 Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
-
-### Choosing a key when the caller is an AI agent
-
-The guidance above assumes the retry sends the same key. That assumption breaks when an LLM agent loses context and regenerates its request, which is the common case after a crash, a restart, or a compacted conversation.
-
-Two derivations that look reasonable and are not:
-
-**A fresh UUID per attempt.** The regenerated request gets a new key, so it reads as a new request and executes again. A UUID only works if the agent persists it *before* the first attempt and can recover it afterwards.
-
-**A hash of the request body.** This is the textbook derivation, and it is safe only while the body is byte-stable. If the body carries any model-authored text (a `reason`, `memo`, `description` or `note`), the model rewords it on regeneration, the hash changes, and the duplicate is not caught. This was measured on two model families at temperature 0, where sampling nondeterminism is off: the same transaction was emitted with reworded prose, producing different keys and two onchain transfers for one intended payment.
-
-**Derive the key from the fields that determine the onchain effect**, and normalize them first:
-
-```python
-def idempotency_key(req: dict) -> str:
-    parts = {
-        "chainId": str(req["chainId"]),
-        "recipientAddress": req["recipientAddress"].lower(),
-        "amount": f"{float(req['amount']):.18f}".rstrip("0").rstrip("."),
-        "tokenAddress": (req.get("tokenAddress") or "").lower(),
-    }
-    return sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()
-```
-
-Normalization matters on its own: `"0.001"` and `"0.0010"` are the same transfer and hash differently, as do a checksummed and a lowercase address.
-
-Add a task or period identifier to the hashed fields when the same transfer is legitimately repeated, for example a monthly payroll run:
-
-```python
-parts["period"] = "2026-08"
-```
-
-Note the limit of any idempotency key: it makes a *repeated* intent safe. It does not help when the agent regenerates a genuinely *different* action, or when the state that justified the transaction has changed by the time it lands. Those need a re-check before submission, not deduplication.
 
 ```bash
 curl -X POST https://app.keeperhub.com/api/execute/transfer \
@@ -101,6 +68,45 @@ curl -X POST https://app.keeperhub.com/api/execute/transfer \
 ```
 
 Workflow webhooks (`POST /api/workflows/{workflowId}/webhook`) accept the same header, scoped per workflow.
+
+### Choosing a stable key
+
+A UUID generated per attempt does not survive a retry: the second attempt generates a
+different UUID, so the request is treated as new and executes again. A UUID works only
+when it is persisted before the first attempt and recovered afterwards.
+
+Hashing the raw request body is also unreliable when the body carries fields that vary
+without changing the effect, such as a free-text `reason`, `memo` or `note`. Any
+difference in those fields changes the hash, so the retry is not recognised as one.
+This is a common failure for callers that reconstruct a request from a summary or a log
+rather than replaying the original bytes.
+
+Instead derive the key from a canonical form of the fields that determine the onchain
+effect:
+
+    chainId | recipientAddress | amount | tokenAddress
+
+Canonicalize each part before joining:
+
+- `chainId` as its decimal integer form, so `8453` and `"8453"` agree
+- addresses lowercased, so a checksummed and an unchecksummed address agree
+- `amount` as an exact decimal string with trailing zeros removed, so `"0.001"` and
+  `"0.0010"` agree. Compare and normalize it with a decimal type, not a binary float:
+  at 18 decimals a float silently collapses distinct amounts to the same value
+- omitted optional fields as an empty string
+
+Hash the joined string with SHA-256 and send the hex digest as the `Idempotency-Key`.
+
+**Include a discriminator when the same transfer legitimately repeats.** Two runs of an
+identical monthly payout produce the same canonical form, so within the 24 hour window
+the second returns the first response and no second transfer is made. Nothing errors,
+so the missing payment is silent. Add a period or task identifier:
+
+    chainId | recipientAddress | amount | tokenAddress | 2026-08
+
+A stable key makes a *repeated* intent safe. It does not help when the caller submits a
+genuinely different action, or when the state that justified the request has changed by
+the time the transaction lands. Those need a check before submission, not deduplication.
 
 ## Transfer Funds
 
