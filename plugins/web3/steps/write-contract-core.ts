@@ -46,6 +46,7 @@ import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import type { ExecutedCall } from "@/lib/web3/trace-decode";
 import { traceExecutedCallWithFailover } from "@/lib/web3/trace-executed-call";
+import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
@@ -88,15 +89,16 @@ export type WriteContractResult =
       // KEEP-966: chain the transaction was broadcast on, required for
       // independent on-chain receipt verification at execution finalize time.
       // Absent when failOnError=false (see applyFailOnError) softened an
-      // execution failure into success. A signer/RPC failure means nothing
-      // was broadcast, so there is no hash at all. A reverted transaction did
-      // land on-chain and does have a hash (see revertedTransactionHash
-      // below), but it is deliberately kept out of this field: the KEEP-966
-      // reconciliation gate in lib/workflow/executor/logging.ts collects
-      // every entry with a real `transactionHash` and re-verifies it against
-      // an expected successful receipt, which a known revert would always
-      // fail. Putting a reverted hash here would fail the whole workflow's
-      // finalization over a failure the author already chose to soften.
+      // execution failure into success. The failure variant below carries its
+      // own transactionHash/chainId (KEEP-1084, for the direct-execution
+      // finalizer to persist a receipt on a genuine, non-softened failure),
+      // but applyFailOnError deliberately does not forward those fields into
+      // its softened success object: the KEEP-966 reconciliation gate in
+      // lib/workflow/executor/logging.ts collects every success entry with a
+      // real `transactionHash` and re-verifies it against an expected
+      // successful receipt, which a known revert would always fail. Carrying
+      // a reverted hash here would fail the whole workflow's finalization
+      // over a failure the author already chose to soften.
       chainId?: number;
       transactionLink?: string;
       gasUsed?: string;
@@ -115,17 +117,20 @@ export type WriteContractResult =
       // Absent on a genuine successful write; transactionHash is absent here.
       error?: string;
       rejection?: RevertKind;
-      // Present only for a sponsored transaction that reverted on-chain:
-      // Turnkey confirms the tx mined, so the hash is real, but it is kept
-      // out of `transactionHash` for the reason documented above.
-      revertedTransactionHash?: string;
     }
   | {
       success: false;
       error: string;
       rejection?: RevertKind;
       errorClass?: ExecutionErrorType;
-      revertedTransactionHash?: string;
+      // Set only when a transaction reached the chain and failed
+      // there, so the finalizer can persist a receipt for the failure. Absent
+      // on pre-broadcast failures, where no transaction exists.
+      transactionHash?: string;
+      chainId?: number;
+      // True when the terminal failure came from the gas-sponsored path, so
+      // the finalizer can report the route accurately on a failed execution.
+      sponsored?: boolean;
     };
 
 /**
@@ -156,6 +161,14 @@ export type WriteContractResult =
  * the `success: false` branch, and this function returns `success: true`,
  * so the caller gets no redaction safety net downstream; it has to happen
  * here.
+ *
+ * The failure variant's transactionHash/chainId/sponsored (KEEP-1084) are
+ * deliberately not carried into the softened object below. Those exist so
+ * the direct-execution finalizer can persist a receipt for a genuine,
+ * non-softened failure; forwarding them into a `success: true` result would
+ * feed a known-reverted hash into the KEEP-966 reconciliation gate, which
+ * expects every success-side transactionHash to verify as a successful
+ * receipt.
  */
 export function applyFailOnError(
   result: WriteContractResult,
@@ -168,7 +181,6 @@ export function applyFailOnError(
     success: true,
     error: redactAllUrls(result.error),
     rejection: result.rejection,
-    revertedTransactionHash: result.revertedTransactionHash,
   };
 }
 
@@ -498,7 +510,10 @@ export async function writeContractCore(
           success: false,
           error: decision.error,
           errorClass: decision.errorClass,
-          revertedTransactionHash: decision.transactionHash,
+          sponsored: true,
+          ...(decision.transactionHash
+            ? { transactionHash: decision.transactionHash, chainId }
+            : {}),
         };
       }
     }
@@ -626,10 +641,14 @@ export async function writeContractCore(
         }
       );
       const rejection = classifyRevert(error, contractInterface);
+      const revertedHash = revertedTransactionHash(error);
       return {
         success: false,
         error: formatContractError(error, contractInterface),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
+        ...(revertedHash
+          ? { transactionHash: revertedHash, chainId }
+          : {}),
       };
     }
   });

@@ -268,21 +268,27 @@ describe("applyFailOnError", () => {
     }
   });
 
-  it("preserves a sponsored revert's transaction hash under revertedTransactionHash on a softened result", () => {
+  it("never forwards a reverted transaction's hash into a softened result", () => {
     const failure: WriteContractResult = {
       success: false,
       error: "Transaction reverted: Guard/not-allowed (tx 0xabc)",
-      revertedTransactionHash: "0xabc",
+      transactionHash: "0xabc",
+      chainId: 1,
+      sponsored: true,
     };
 
     const result = applyFailOnError(failure, false);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.revertedTransactionHash).toBe("0xabc");
-      // Never surfaced as transactionHash: that field feeds the KEEP-966
-      // reconciliation gate, which would fail the whole workflow trying to
-      // re-verify a transaction already known to have reverted.
+      // KEEP-1084 put transactionHash/chainId/sponsored on the failure
+      // variant so the direct-execution finalizer can persist a receipt for
+      // a genuine, non-softened failure. Carrying them into a softened
+      // success would feed a known-reverted hash into the KEEP-966
+      // reconciliation gate, which expects every success-side
+      // transactionHash to verify as a successful receipt.
       expect(result.transactionHash).toBeUndefined();
+      expect(result.chainId).toBeUndefined();
+      expect(result.sponsored).toBeUndefined();
     }
   });
 

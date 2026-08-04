@@ -174,6 +174,11 @@ const web3Plugin: IntegrationPlugin = {
           description: "The transaction hash of the successful transfer",
         },
         {
+          field: "chainId",
+          description:
+            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
+        },
+        {
           field: "error",
           description: "Error message if the transfer failed",
         },
@@ -238,6 +243,11 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "transactionHash",
           description: "The transaction hash of the successful transfer",
+        },
+        {
+          field: "chainId",
+          description:
+            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
         },
         {
           field: "transactionLink",
@@ -1281,6 +1291,11 @@ const web3Plugin: IntegrationPlugin = {
           description: "The transaction hash of the approval",
         },
         {
+          field: "chainId",
+          description:
+            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
+        },
+        {
           field: "transactionLink",
           description: "Explorer link to view the transaction",
         },
@@ -1459,7 +1474,12 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "transactionHash",
           description:
-            "The transaction hash of the successful write. Absent on a soft-failed (failOnError=false) call.",
+            "The transaction hash of the write. Present on a successful write, and also on a genuine (non-softened) on-chain revert, since the transaction still reached the chain. Absent on a soft-failed (failOnError=false) call and on a pre-broadcast failure (signer/RPC/config error).",
+        },
+        {
+          field: "chainId",
+          description:
+            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
         },
         {
           field: "result",
@@ -1491,11 +1511,6 @@ const web3Plugin: IntegrationPlugin = {
           field: "error",
           description:
             "Error message if the call failed. Also set when failOnError is off and an execution failure was softened into success=true, e.g. 'Contract call failed: Error(Splitter/kicked-too-soon)'. Match this string in a downstream Condition node (contains/matchesRegex) to filter known errors from ones that should alert.",
-        },
-        {
-          field: "revertedTransactionHash",
-          description:
-            "Set only when a sponsored transaction reverted on-chain. The transaction did land and this hash is confirmed, but it is a separate field from transactionHash so a known revert never gets re-verified as a claimed success.",
         },
       ],
       configFields: [

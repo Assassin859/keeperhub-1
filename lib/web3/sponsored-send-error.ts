@@ -11,9 +11,10 @@ export type SponsoredSendDecision =
   | {
       fallback: false;
       error: string;
-      // Set only for the revert case: Turnkey confirms the tx mined, so the
-      // hash is real and safe to surface. Absent for the pending case, since
-      // there is no confirmed hash yet, only a Turnkey status id.
+      // Set only when the sponsored transaction reached the chain and
+      // reverted there, so a caller can tell "this hash exists and reverted"
+      // (reconcilable) from "nothing was broadcast" (nothing to reconcile).
+      // Absent for the accepted-but-unconfirmed case, where no hash is known.
       transactionHash?: string;
       // Set only for the pending/unconfirmed case, so a failOnError=false
       // caller can never soften it into success: the transaction may still
