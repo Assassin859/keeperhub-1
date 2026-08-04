@@ -448,7 +448,7 @@ function Metric({
   );
 }
 
-/** A spend cap, edited in place. Empty means no limit. */
+/** A spend cap, edited in place. Left blank it saves as 0, which spends nothing. */
 function CapField({
   id,
   label,
