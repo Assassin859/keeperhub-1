@@ -360,6 +360,24 @@ function annotateReplay(body: unknown): unknown {
 
 // Maps a non-proceed outcome to the response the caller should return as-is.
 // Returns null for `proceed` (the caller does the work, then calls finalize).
+//
+// `conflict` and `in_progress` both answer 409 but mean opposite things, and
+// only the `code` separates them. A client that classifies on status alone --
+// which is the normal shape, since every other 4xx on these routes is terminal
+// -- reads `in_progress` as a permanent failure. For a fund-moving call that is
+// the worst available reading: the original request still holds its processing
+// lock and is very likely to land on chain, so the caller reports a payment
+// failed while it is in fact succeeding.
+//
+// `retryable` states the disposition directly, so a client can branch on one
+// field instead of maintaining a list of which codes are transient. It rides in
+// the body for the same reason `idempotentReplay` does: the common consumer is
+// an agent reading a tool result, where response headers are not surfaced.
+//
+// The advice differs too, and only one is safe. On `in_progress` the caller
+// must retry with the SAME key -- rotating it (a reasonable habit, since a
+// reused key otherwise replays a cached failure) escapes the in-flight guard
+// and can broadcast a second transaction for the same action.
 export function idempotencyEarlyResponse(
   outcome: IdempotencyOutcome
 ): IdempotencyEarlyResponse | null {
@@ -377,6 +395,7 @@ export function idempotencyEarlyResponse(
             "Idempotency-Key was reused with a different request payload. Use a new key for a different request.",
           code: "idempotency_conflict",
           originalExecutionId: outcome.originalResourceId,
+          retryable: false,
         },
       };
     case "in_progress":
@@ -384,8 +403,9 @@ export function idempotencyEarlyResponse(
         status: 409,
         body: {
           error:
-            "A request with this Idempotency-Key is already being processed. Retry shortly.",
+            "A request with this Idempotency-Key is already being processed. Retry the same key shortly; do not rotate it.",
           code: "idempotency_in_progress",
+          retryable: true,
         },
       };
     default:

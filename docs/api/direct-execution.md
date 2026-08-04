@@ -55,8 +55,8 @@ a transaction.
 Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID).
 
 - **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again, plus an `idempotentReplay` marker described below.
-- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for a different request.
-- **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress`; retry shortly.
+- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict`, `retryable: false`, and the `originalExecutionId` the key first produced. Use a new key for a different request.
+- **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress` and `retryable: true`; retry shortly with the same key.
 - **Scope**: keys are scoped per organization, so the same key is shared across an org's API keys.
 - **Window**: stored responses are replayable for 24 hours. After that the key is free to reuse.
 
@@ -79,6 +79,34 @@ A replayed response is otherwise indistinguishable from a fresh one, which matte
 - The marker rides in the body rather than a response header because the common consumer is an agent reading a tool result, where headers are not surfaced.
 
 Conflict and in-progress responses are not replays and never carry the field.
+
+### When to reuse a key, and when to rotate it
+
+The two `409` codes mean opposite things, so branch on `retryable` rather than on
+the status. Every other `4xx` on these routes is terminal, which makes status-only
+classification read an in-flight request as a permanent failure.
+
+```json
+{
+  "error": "A request with this Idempotency-Key is already being processed. Retry the same key shortly; do not rotate it.",
+  "code": "idempotency_in_progress",
+  "retryable": true
+}
+```
+
+**Reuse the same key** whenever you do not hold a definite outcome for the previous
+attempt. A timeout, a dropped connection or a `5xx` tells you nothing about whether
+the request was received, so a retry must be able to match the original. Reusing the
+key is what makes that retry safe: it returns the in-progress guard while the first
+request is still running, and the real outcome as a replay once it finishes.
+
+**Rotate to a new key** only once the previous attempt returned a definite result and
+you intend a genuinely new action. A stored failure is replayable for 24 hours, so a
+key that has already failed will keep returning that failure rather than retrying.
+
+Rotating a key while a request may still be in flight is the case to avoid. It escapes
+the in-progress guard, and for a fund-moving call the second request can broadcast a
+transaction for an action the first one is already completing.
 
 Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
 

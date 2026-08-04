@@ -227,11 +227,16 @@ function buildPaymentRequiredHint(
 // Optional idempotency key shared by the mutating tools. Forwarded to the REST
 // layer as the `Idempotency-Key` header so a retry with the same key and
 // arguments replays the original result instead of executing again.
+//
+// The description spells out which 409 to retry because an agent cannot tell
+// from the status: conflict and in-progress share it and mean opposite things,
+// and rotating the key on the in-progress one can broadcast a second
+// transaction for an action the first request is still completing.
 const IDEMPOTENCY_KEY_ARG = z
   .string()
   .optional()
   .describe(
-    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Reusing a key with different arguments returns a 409 conflict."
+    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Two 409s are possible and the body's `retryable` field separates them: `idempotency_conflict` (retryable false) means the key was reused with different arguments, so pick a new key; `idempotency_in_progress` (retryable true) means the first request is still running, so retry shortly with the SAME key. Keep the same key whenever the previous attempt's outcome is unknown, such as after a timeout - rotating it then escapes the in-flight guard."
   );
 
 // The direct-execution REST routes support a dry-run path that estimates gas

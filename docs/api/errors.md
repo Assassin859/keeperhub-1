@@ -57,10 +57,27 @@ The API uses a short set of stable, lowercase codes in the `error` field. Some r
 
 ### Idempotency Errors
 
-| Code | Description | Resolution |
-|------|-------------|------------|
-| `idempotency_conflict` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Use a new key for a different request |
-| `idempotency_in_progress` | A request with this `Idempotency-Key` is still being processed | Retry shortly |
+Both codes answer `409`, and they mean opposite things. Branch on the `retryable`
+field rather than the status: every other `4xx` on these routes is terminal, so a
+client that classifies on status alone treats an in-flight request as a permanent
+failure while the original is still on its way to the chain.
+
+| Code | `retryable` | Description | Resolution |
+|------|-------------|-------------|------------|
+| `idempotency_conflict` | `false` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Use a new key for a different request |
+| `idempotency_in_progress` | `true` | A request with this `Idempotency-Key` is still being processed | Retry shortly with the same key |
+
+```json
+{
+  "error": "A request with this Idempotency-Key is already being processed. Retry the same key shortly; do not rotate it.",
+  "code": "idempotency_in_progress",
+  "retryable": true
+}
+```
+
+Keep the same key when retrying an `idempotency_in_progress`. Rotating it escapes
+the in-flight guard and can broadcast a second transaction for the same action.
+Rotate only once you hold a definite outcome for the previous attempt.
 
 See [Direct Execution](/api/direct-execution#idempotency) for the full idempotency policy.
 
