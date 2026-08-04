@@ -8,14 +8,15 @@ import { PayPerExecutionPreview } from "@/components/welcome/previews";
 import { WelcomeShell } from "@/components/welcome/welcome-shell";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { BILLING_API } from "@/lib/billing/constants";
-import { PAYG_DEFAULT_CHAIN_ID } from "@/lib/billing/payg/constants";
+import {
+  PAYG_DEFAULT_CHAIN_ID,
+  PAYG_DEFAULT_DAILY_CAP_USDC,
+  PAYG_DEFAULT_PERIOD_CAP_USDC,
+} from "@/lib/billing/payg/constants";
 
 const NEXT_PATH = "/welcome/connect-agent";
 const BACK_PATH = "/welcome/invite-members";
 const BASE_CHAIN_ID = 8453;
-// Default spending caps seeded from this step; both are editable in Billing.
-const DEFAULT_DAILY_CAP_USDC = "5";
-const DEFAULT_PERIOD_CAP_USDC = "50";
 
 type PaygStatus = {
   priceUsdc: string;
@@ -137,7 +138,6 @@ export function PayPerExecutionStep(): React.ReactElement {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balances, setBalances] = useState<ChainBalance[]>([]);
   const [balanceLoading, setBalanceLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,48 +213,16 @@ export function PayPerExecutionStep(): React.ReactElement {
       .catch(() => undefined);
   };
 
-  const goNext = (): void => router.push(NEXT_PATH);
-
-  // Seed the default spending caps, then advance. The caps are a convenience,
-  // not a gate, so a failure surfaces a toast and still moves the user on.
-  const handleContinue = (): void => {
-    setSaving(true);
-    fetch(BILLING_API.PAYG, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        dailyCapUsdc: DEFAULT_DAILY_CAP_USDC,
-        periodCapUsdc: DEFAULT_PERIOD_CAP_USDC,
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          toast.error(data.error ?? "Could not save your spending caps");
-        }
-      })
-      .catch(() => {
-        toast.error("Could not save your spending caps");
-      })
-      .finally(() => {
-        setSaving(false);
-        goNext();
-      });
-  };
-
   return (
     <WelcomeShell
-      busy={saving}
       description="Every organization gets 5,000 free executions a month. Pay-as-you-go keeps your workflows running past the free tier."
       nextLabel="Continue"
       onBack={() => router.push(BACK_PATH)}
-      onNext={handleContinue}
+      onNext={() => router.push(NEXT_PATH)}
       preview={
         <PayPerExecutionPreview
-          dailyCap={`$${DEFAULT_DAILY_CAP_USDC}`}
-          periodCap={`$${DEFAULT_PERIOD_CAP_USDC}`}
+          dailyCap={`$${PAYG_DEFAULT_DAILY_CAP_USDC}`}
+          periodCap={`$${PAYG_DEFAULT_PERIOD_CAP_USDC}`}
           priceLabel={priceLabel}
         />
       }

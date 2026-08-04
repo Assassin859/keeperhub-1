@@ -26,11 +26,11 @@ vi.mock("@/lib/address-utils", () => ({
 
 // --- Config / wallet / pricing / treasury, driven per test via state. ---
 const state = vi.hoisted(() => ({
-  config: null as null | {
-    chainId: number;
-    dailyCapRaw: string;
-    periodCapRaw: string;
-    startedAt: Date;
+  config: {
+    chainId: 8453,
+    dailyCapRaw: "0",
+    periodCapRaw: "0",
+    startedAt: new Date("2026-01-01T00:00:00Z"),
   },
   wallet: null as null | {
     turnkeySubOrgId: string | null;
@@ -40,7 +40,7 @@ const state = vi.hoisted(() => ({
   treasury: null as string | null,
 }));
 vi.mock("@/lib/billing/payg/config-store", () => ({
-  getPaygConfig: vi.fn(async () => state.config),
+  getPaygSettings: vi.fn(async () => state.config),
 }));
 vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWallet: vi.fn(async () => state.wallet),

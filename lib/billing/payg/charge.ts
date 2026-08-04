@@ -10,7 +10,6 @@ import {
 import { getOrgSubscription } from "@/lib/billing/plans-server";
 import { db } from "@/lib/db";
 import { autopayForExecution } from "./autopay";
-import { getPaygConfig } from "./config-store";
 import { type PaygBlockReason, paygBlockMessage } from "./errors";
 
 export type PaygChargeResult =
@@ -23,19 +22,15 @@ export type PaygChargeMaybe =
 
 /**
  * Charge an execution only if it is billable under PAYG: the org is on the free
- * plan, has PAYG enabled, and has already used its included monthly executions.
- * For the inline direct-execute routes, which do not know the billing state at
- * the charge point. Executions within the free bucket, non-free plans, and
- * PAYG-disabled orgs return `applicable: false` and are not charged.
+ * plan and has already used its included monthly executions. For the inline
+ * direct-execute routes, which do not know the billing state at the charge
+ * point. Executions within the free bucket and non-free plans return
+ * `applicable: false` and are not charged.
  */
 export async function chargePaygIfBillable(params: {
   organizationId: string;
   executionId: string;
 }): Promise<PaygChargeMaybe> {
-  const config = await getPaygConfig(params.organizationId);
-  if (!config) {
-    return { applicable: false };
-  }
   const sub = await getOrgSubscription(params.organizationId);
   const plan = parsePlanName(sub?.plan);
   if (plan !== "free") {

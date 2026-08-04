@@ -11,7 +11,7 @@ import {
 } from "@/lib/agentic-wallet/sign-typed-data";
 import { facilitatorClient } from "@/lib/payments/x402/server";
 import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
-import { getPaygConfig } from "./config-store";
+import { getPaygSettings } from "./config-store";
 import {
   evmNetworkId,
   PAYG_PAYMENT_STATUS,
@@ -149,10 +149,7 @@ export async function autopayForExecution(params: {
 }): Promise<AutopayResult> {
   const { organizationId, executionId } = params;
 
-  const config = await getPaygConfig(organizationId);
-  if (!config) {
-    return { ok: false, reason: "not_eligible" };
-  }
+  const config = await getPaygSettings(organizationId);
 
   // Idempotency: never settle a second on-chain transfer for one execution.
   // A settled row returns its recorded tx; a pending row means another attempt
