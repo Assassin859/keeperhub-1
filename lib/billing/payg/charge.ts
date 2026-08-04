@@ -1,6 +1,7 @@
 import "server-only";
 
 import { countMonthlyExecutionsForAdmission } from "@/lib/billing/execution-limit-core";
+import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
   getPlanLimits,
   PLANS,
@@ -21,16 +22,21 @@ export type PaygChargeMaybe =
   | ({ applicable: true } & PaygChargeResult);
 
 /**
- * Charge an execution only if it is billable under PAYG: the org is on the free
- * plan and has already used its included monthly executions. For the inline
- * direct-execute routes, which do not know the billing state at the charge
- * point. Executions within the free bucket and non-free plans return
+ * Charge an execution only if it is billable under PAYG: billing is on, the org
+ * is on the free plan, and it has already used its included monthly executions.
+ * For the inline direct-execute routes, which do not know the billing state at
+ * the charge point. Executions within the free bucket and non-free plans return
  * `applicable: false` and are not charged.
  */
 export async function chargePaygIfBillable(params: {
   organizationId: string;
   executionId: string;
 }): Promise<PaygChargeMaybe> {
+  // With billing off there is no UI to read or set spend caps, so never move
+  // money: the run proceeds unbilled rather than being blocked.
+  if (!isBillingEnabled()) {
+    return { applicable: false };
+  }
   const sub = await getOrgSubscription(params.organizationId);
   const plan = parsePlanName(sub?.plan);
   if (plan !== "free") {

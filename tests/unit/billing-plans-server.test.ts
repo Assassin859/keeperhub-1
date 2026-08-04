@@ -198,6 +198,29 @@ describe("checkExecutionLimit", () => {
     });
   });
 
+  // Nothing downstream can charge with billing off, so the included limit has
+  // to block again rather than letting free executions run without end.
+  it("blocks free plan over limit when billing is disabled", async () => {
+    const original = process.env.NEXT_PUBLIC_BILLING_ENABLED;
+    process.env.NEXT_PUBLIC_BILLING_ENABLED = "false";
+    mockSelectReturning([]);
+    mockExecuteReturning([{ count: 6000 }]);
+
+    try {
+      const result = await checkExecutionLimit("org_1");
+      expect(result).toEqual({
+        allowed: false,
+        limit: 5000,
+        used: 6000,
+        plan: "free",
+        debtExecutions: 0,
+        effectiveLimit: 5000,
+      });
+    } finally {
+      process.env.NEXT_PUBLIC_BILLING_ENABLED = original;
+    }
+  });
+
   it("blocks paid plan when canceled (overage disabled)", async () => {
     mockSelectReturning([{ plan: "pro", tier: "25k", status: "canceled" }]);
     mockExecuteReturning([{ count: 30_000 }]);
