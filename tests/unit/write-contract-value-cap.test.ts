@@ -34,18 +34,28 @@ vi.mock("@/lib/rpc/network-utils", () => ({
   getChainIdFromNetwork: vi.fn().mockReturnValue(1),
 }));
 
-const mockWithStepValueCap = vi.fn();
+const { mockWithStepValueCap, mockApplyFailOnError, mockWriteContractCore } =
+  vi.hoisted(() => {
+    const mockWithStepValueCap = vi.fn();
+    const mockApplyFailOnError = vi.fn(
+      (result: unknown, _failOnError: unknown) => ({
+        ...(result as object),
+        softened: true,
+      })
+    );
+    const mockWriteContractCore = vi.fn();
+
+    return {
+      mockWithStepValueCap,
+      mockApplyFailOnError,
+      mockWriteContractCore,
+    };
+  });
+
 vi.mock("@/lib/execute/value-ledger", () => ({
   withStepValueCap: (...args: unknown[]) => mockWithStepValueCap(...args),
 }));
 
-const mockApplyFailOnError = vi.fn(
-  (result: unknown, _failOnError: unknown) => ({
-    ...(result as object),
-    softened: true,
-  })
-);
-const mockWriteContractCore = vi.fn();
 vi.mock("@/plugins/web3/steps/write-contract-core", () => ({
   writeContractCore: (input: unknown) => mockWriteContractCore(input),
   applyFailOnError: (result: unknown, failOnError: unknown) =>
