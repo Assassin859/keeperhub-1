@@ -106,7 +106,7 @@ export function ExecutionShareView({
   useEffect(() => {
     let cancelled = false;
 
-    void fetch("/api/chains")
+    fetch("/api/chains")
       .then((response) => response.json())
       .then((chains: ChainExplorerRow[]) => {
         if (cancelled) {
@@ -149,7 +149,9 @@ export function ExecutionShareView({
         POLL_INTERVALS_MS[Math.min(attempt, POLL_INTERVALS_MS.length - 1)];
       attempt += 1;
       timeoutId = setTimeout(() => {
-        void poll();
+        poll().catch(() => {
+          // poll() already sets loadError on failure
+        });
       }, delay);
     };
 
@@ -169,7 +171,9 @@ export function ExecutionShareView({
       }
     };
 
-    void poll();
+    poll().catch(() => {
+      // poll() already sets loadError on failure
+    });
 
     return () => {
       cancelled = true;
@@ -177,7 +181,7 @@ export function ExecutionShareView({
         clearTimeout(timeoutId);
       }
     };
-  }, [executionId, initialStatus]);
+  }, [executionId]);
 
   const percentage = statusData.progress?.percentage ?? 0;
   const txHashes = statusData.transactionHashes ?? [];
