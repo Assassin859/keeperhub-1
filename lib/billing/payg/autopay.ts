@@ -172,6 +172,16 @@ export async function autopayForExecution(params: {
     return { ok: false, reason: "not_eligible" };
   }
 
+  // A cap of 0 can never accommodate a charge, so refuse before claiming. This
+  // keeps "spend nothing" independent of the window arithmetic below (a claim
+  // made just before UTC midnight falls outside the new day's window, which
+  // would otherwise let a single charge through) and saves an insert/delete on
+  // every execution.
+  const zeroCap = zeroCapBlock(config);
+  if (zeroCap) {
+    return { ok: false, reason: zeroCap };
+  }
+
   // Claim the (org, execution) slot with a pending row before settling. The
   // unique constraint makes this the idempotency latch: exactly one caller wins
   // the insert and settles; a concurrent caller loses and backs off. The
@@ -236,11 +246,24 @@ function settledOrRefuse(existing: {
   return { ok: false, reason: "payment_failed" };
 }
 
+/** The cap set to 0, which no charge can ever fit under, or null. */
+function zeroCapBlock(config: {
+  dailyCapRaw: string;
+  periodCapRaw: string;
+}): PaygBlockReason | null {
+  if (BigInt(config.dailyCapRaw) === BigInt(0)) {
+    return "daily_cap";
+  }
+  if (BigInt(config.periodCapRaw) === BigInt(0)) {
+    return "period_cap";
+  }
+  return null;
+}
+
 /**
  * The daily/period cap breached by the reserved total (settled + pending), or
- * null when both are within their configured caps. Every cap is enforced,
- * including 0: the amount reserved for this execution alone breaches a zero
- * cap, so an org that set 0 is never charged.
+ * null when both are within their configured caps. Every cap is enforced; a
+ * cap of 0 is refused earlier, before the claim.
  */
 async function checkCapsReserved(
   organizationId: string,

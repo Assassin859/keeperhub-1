@@ -223,38 +223,38 @@ describe("autopayForExecution claim-before-settle", () => {
     expect(result).toEqual({ ok: false, reason: "period_cap" });
   });
 
-  // A zero cap means spend nothing, so it is enforced like any other cap
-  // rather than read as "unset" and skipped.
-  it("blocks on a daily cap of 0 even with no prior spend", async () => {
+  // A cap of 0 means spend nothing. It is refused before the claim, so it holds
+  // even when the reserved total reads as 0 (an empty window), which is what a
+  // "reserved > cap" comparison alone would let through.
+  it("blocks on a daily cap of 0 without claiming, even with zero reserved", async () => {
     state.config = {
       chainId: 8453,
       dailyCapRaw: "0",
       periodCapRaw: "1000000",
       startedAt: new Date("2026-01-01T00:00:00Z"),
     };
-    // Only this execution's own claim is reserved.
-    getPaygSpentRaw.mockResolvedValue(BigInt(10_000));
+    getPaygSpentRaw.mockResolvedValue(BigInt(0));
 
     const result = await autopayForExecution(PARAMS);
 
-    expect(releasePaygClaim).toHaveBeenCalledWith("org_1", "exec_1");
+    expect(claimPaygPayment).not.toHaveBeenCalled();
     expect(facilitatorSettle).not.toHaveBeenCalled();
     expect(markPaygPaymentSettled).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, reason: "daily_cap" });
   });
 
-  it("blocks on a period cap of 0 even with no prior spend", async () => {
+  it("blocks on a period cap of 0 without claiming, even with zero reserved", async () => {
     state.config = {
       chainId: 8453,
       dailyCapRaw: "1000000",
       periodCapRaw: "0",
       startedAt: new Date("2026-01-01T00:00:00Z"),
     };
-    getPaygSpentRaw.mockResolvedValue(BigInt(10_000));
+    getPaygSpentRaw.mockResolvedValue(BigInt(0));
 
     const result = await autopayForExecution(PARAMS);
 
-    expect(releasePaygClaim).toHaveBeenCalledWith("org_1", "exec_1");
+    expect(claimPaygPayment).not.toHaveBeenCalled();
     expect(facilitatorSettle).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, reason: "period_cap" });
   });
