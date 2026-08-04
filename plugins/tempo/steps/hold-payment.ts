@@ -28,14 +28,13 @@ export type HoldPaymentResult = HoldPaymentCoreResult;
 async function stepHandler(
   input: HoldPaymentInput
 ): Promise<HoldPaymentResult> {
-  if (
-    !(
-      input.network &&
-      input.tokenConfig &&
-      input.amount &&
-      input.recipientAddress
-    )
-  ) {
+  const missingRequiredField =
+    !input.network ||
+    input.tokenConfig == null ||
+    input.recipientAddress == null ||
+    input.amount == null;
+
+  if (missingRequiredField) {
     return {
       success: false,
       error:

@@ -121,9 +121,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (
-    !(body.network && body.tokenConfig && body.amount && body.recipientAddress)
-  ) {
+  const {
+    network,
+    tokenConfig,
+    amount,
+    recipientAddress,
+    memo,
+    broadcastMode,
+    broadcastAt,
+    validBefore,
+  } = body;
+
+  const missingRequiredField =
+    !network ||
+    tokenConfig == null ||
+    recipientAddress == null ||
+    amount == null;
+
+  if (missingRequiredField) {
     return NextResponse.json(
       {
         error:
@@ -136,14 +151,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   const result = await executeHoldPayment({
     organizationId: resolved.organizationId,
     userId: resolved.userId,
-    network: body.network,
-    tokenConfig: body.tokenConfig,
-    amount: body.amount,
-    recipientAddress: body.recipientAddress,
-    memo: body.memo,
-    broadcastMode: body.broadcastMode,
-    broadcastAt: body.broadcastAt,
-    validBefore: body.validBefore,
+    network,
+    tokenConfig,
+    amount,
+    recipientAddress,
+    memo,
+    broadcastMode,
+    broadcastAt,
+    validBefore,
   });
 
   if (!result.success) {
