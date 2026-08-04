@@ -1,15 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useSession } from "@/lib/auth-client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import {
   type BranchKey,
+  type ChipContext,
   getBranches,
+  resolveTestnetWorkspace,
   type SignalId,
   type Step,
+  type WalletBalanceEntry,
 } from "@/lib/onboarding/getting-started-config";
 import { gettingStartedSuppressed } from "@/lib/onboarding/tours-disabled";
+import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 
 /**
  * Persisted UI state + completion for the getting-started launcher (KEEP-878).
@@ -185,13 +189,16 @@ export type GettingStarted = {
    * workflow instead of falling back to the AI prompt.
    */
   recommendedIds: Record<string, string>;
+  chipContext: ChipContext;
 };
 
 export function useGettingStarted(): GettingStarted {
   const { data: session } = useSession();
+  const { data: activeOrg } = authClient.useActiveOrganization();
   const userId = session?.user?.id;
   const isAuthenticated =
     Boolean(session?.user) && !isAnonymousUser(session?.user);
+  const activeOrgId = activeOrg?.id ?? null;
   const [persisted, setPersisted] = useState<Persisted>(() =>
     readPersisted(undefined)
   );
@@ -199,6 +206,19 @@ export function useGettingStarted(): GettingStarted {
   const [recommendedIds, setRecommendedIds] = useState<Record<string, string>>(
     {}
   );
+  const [testnetWorkspace, setTestnetWorkspace] = useState(
+    resolveTestnetWorkspace(undefined)
+  );
+  const { walletAddress } = useWalletInfo();
+
+  const chipContext = useMemo((): ChipContext => {
+    return {
+      walletAddress,
+      isTestnetWorkspace: testnetWorkspace.isTestnetWorkspace,
+      chainId: testnetWorkspace.chainId,
+      resolvedIds: recommendedIds,
+    };
+  }, [walletAddress, testnetWorkspace, recommendedIds]);
 
   // Re-hydrate persisted state once the user id is known (the key is per-user).
   useEffect(() => {
@@ -254,9 +274,11 @@ export function useGettingStarted(): GettingStarted {
     return () => window.removeEventListener("focus", fetchStatus);
   }, [fetchStatus]);
 
-  // Fetch hub workflow ids for onboarding chips once on mount. These change
-  // only when workflows are reseeded, so a single fetch per session is enough.
+  // Fetch hub workflow ids for onboarding chips once per session.
   useEffect(() => {
+    if (!isAuthenticated || persisted.state === "dismissed") {
+      return;
+    }
     fetch("/api/onboarding/recommendations")
       .then((r) =>
         r.ok ? (r.json() as Promise<Record<string, string>>) : null
@@ -267,7 +289,24 @@ export function useGettingStarted(): GettingStarted {
         }
       })
       .catch(() => undefined);
-  }, []);
+  }, [isAuthenticated, persisted.state]);
+
+  // Derive testnet workspace from org wallet balances when the launcher is visible.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeOrgId is the refetch trigger on org switch; balances are scoped server-side
+  useEffect(() => {
+    if (!isAuthenticated || persisted.state === "dismissed") {
+      setTestnetWorkspace(resolveTestnetWorkspace(undefined));
+      return;
+    }
+    fetch("/api/user/wallet/balances")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { balances?: WalletBalanceEntry[] } | null) => {
+        if (data) {
+          setTestnetWorkspace(resolveTestnetWorkspace(data.balances));
+        }
+      })
+      .catch(() => undefined);
+  }, [isAuthenticated, persisted.state, activeOrgId]);
 
   // While the checklist is open, poll so an outcome completed elsewhere (an
   // in-app overlay, or running the draft in the builder) is reflected without
@@ -347,8 +386,10 @@ export function useGettingStarted(): GettingStarted {
       if (step.signal === "always") {
         return true;
       }
+      if (persisted.done.includes(step.key)) {
+        return true;
+      }
       // Chip steps complete on a LIVE starter clone (or once one has run).
-      // Derived, not latched, so deleting the clone cleanly un-completes it.
       if (step.chips && step.chips.length > 0) {
         const hasLiveClone = step.chips.some((chip) =>
           isWorkflowLive(persisted.workflows[`${step.key}:${chip.id}`])
@@ -356,9 +397,6 @@ export function useGettingStarted(): GettingStarted {
         return (
           hasLiveClone || resolveRealSignal(step, status, persisted.workflows)
         );
-      }
-      if (persisted.done.includes(step.key)) {
-        return true;
       }
       if (CLICK_DRIVEN.has(step.signal)) {
         return false;
@@ -393,5 +431,6 @@ export function useGettingStarted(): GettingStarted {
     refetch: fetchStatus,
     isAuthenticated,
     recommendedIds,
+    chipContext,
   };
 }

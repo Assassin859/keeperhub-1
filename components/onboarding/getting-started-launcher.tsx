@@ -301,7 +301,7 @@ function ExpandedCard({
   onTour: (step: Step) => void;
 }): React.ReactElement {
   const [infoStep, setInfoStep] = useState<Step | null>(null);
-  const branches = getBranches({ resolvedIds: gs.recommendedIds });
+  const branches = getBranches(gs.chipContext);
   // Single linear checklist: the agent branch (Wallet ready -> Connect your
   // agent -> Run your first workflow). Monitor / Yield are no longer surfaced.
   const steps = (branches.find((b) => b.key === "agent") ?? branches[0]).steps;
@@ -660,16 +660,12 @@ export function GettingStartedLauncher({
 }
 
 function launcherTotal(gs: GettingStarted): number {
-  const branch = getBranches({ resolvedIds: gs.recommendedIds }).find(
-    (b) => b.key === "agent"
-  );
+  const branch = getBranches(gs.chipContext).find((b) => b.key === "agent");
   return branch?.steps.length ?? 0;
 }
 
 function launcherDone(gs: GettingStarted): number {
-  const branch = getBranches({ resolvedIds: gs.recommendedIds }).find(
-    (b) => b.key === "agent"
-  );
+  const branch = getBranches(gs.chipContext).find((b) => b.key === "agent");
   if (!branch) {
     return 0;
   }
