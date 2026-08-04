@@ -52,13 +52,17 @@ const nonce = await post("/api/auth/siwe/nonce", {
   chainId: 1,
 });
 
+// The domain is verified against the host of the server's base URL, so derive
+// both from the same constant rather than hardcoding them.
+const BASE = "https://app.keeperhub.com";
+
 const message = [
-  "app.keeperhub.com wants you to sign in with your Ethereum account:",
+  `${new URL(BASE).host} wants you to sign in with your Ethereum account:`,
   address,
   "",
   "Sign in to KeeperHub",
   "",
-  "URI: https://app.keeperhub.com",
+  `URI: ${BASE}`,
   "Version: 1",
   "Chain ID: 1",
   `Nonce: ${nonce.nonce}`,
@@ -121,10 +125,14 @@ Details that otherwise cost debugging time:
 
 - The extra fields go in the **request body**, not in headers.
 - The nonce is single-use, expires after five minutes, and **a fresh one is
-  minted on every `401`**. Sign the challenge from the response you just
-  received. A client that caches the first challenge and retries does not fail
-  forever on `wallet_signature_invalid`; it fails about ten times and is then
-  locked out - see the budget below.
+  minted whenever a factor is missing** - that is, on a `401` carrying
+  `signature_required` or `factors_required`. Sign the challenge from that
+  response. A `401` carrying `wallet_signature_invalid` means the signature you
+  sent did not verify: it mints nothing and carries no `challenge`, so a client
+  that blindly reads `challenge` off every `401` will sign `undefined`. Retry by
+  re-requesting the challenge, not by reusing the old one. A client that caches
+  the first challenge does not fail forever on `wallet_signature_invalid`; it
+  fails about ten times and is then locked out - see the budget below.
 - **The retry budget is ten requests per fifteen minutes**, counted per user and
   per action on a sliding window. Every request to a gated route consumes one,
   including the one that only mints the challenge, so the two-step create above
@@ -150,8 +158,8 @@ wallet withdrawal, private-key export, session revocation, account
 deactivation, email and password changes, agentic-wallet approvals, TOTP removal
 and audit-log export.
 
-Both `/api/keys` handlers additionally require an organization role of admin or
-owner. The role is checked before the step-up, so a member gets `403` with
+Key creation and revocation additionally require an organization role of admin
+or owner. The role is checked before the step-up, so a member gets `403` with
 `"code": "not_admin_or_owner"` and never sees a challenge - a signature is not
 the missing piece, and no amount of retrying will produce one. The first user in
 a new organization is its owner, so a first run created by the SIWE flow above
@@ -206,21 +214,21 @@ self-transfer from the same wallet left its balance unchanged to the wei.
 Measured on Base Sepolia: an organization wallet holding zero wei landed the
 zero-value transfer the script below sends, so a first run needs no funding.
 
-Sponsorship is a preflight, not a guarantee. The chain list is one of four
-conditions, and the other three are invisible from the client:
+Sponsorship is a preflight, not a guarantee. Being on the chain list is
+necessary but not sufficient - several further conditions are checked, none of
+them visible from the client, among them whether sponsorship is enabled on the
+deployment, whether the organization's wallet has a Turnkey sub-organization,
+whether gas credit remains for the billing period, whether the write is routed
+through a Safe or a private mempool, and whether Turnkey accepts the activity.
+[Gas Sponsorship](/wallet-management/gas) owns that list and the plan
+allowances; treat it as the source of truth rather than this page.
 
-- Sponsorship has to be enabled on the deployment.
-- The organization's wallet needs a Turnkey sub-organization.
-- The organization needs gas credit left for the current billing period. This
-  is a metered USD allowance per plan, not an unlimited one - see
-  [Gas Sponsorship](/wallet-management/gas). Mainnet spends it and testnets do
-  not, but the check is on the balance rather than the chain, so an exhausted
-  budget also stops sponsoring testnet transactions.
-- Turnkey has to accept the activity.
-
-When any of them fails, the runtime falls back to direct signing and the wallet
-pays its own gas. Nothing in the response says so. "The organization wallet does
-not need gas at all" therefore holds only while the allowance does, and on
+When any condition fails, the runtime falls back to direct signing and the
+wallet pays its own gas. The immediate execute response does not report which
+path was taken, but the status response does - check the `sponsored` field, as
+described in
+[Direct Execution](/api/direct-execution). "The organization wallet does not
+need gas at all" therefore holds only while every condition does, and on
 Ethereum mainnet an allowance measured in dollars is measured in transactions.
 On the testnets it holds for as long as sponsorship is on, which is why the
 script below defaults to Base Sepolia. A small native balance remains the safe
@@ -379,8 +387,8 @@ const key = must(
     method: "POST",
     body: JSON.stringify({
       ...create,
-      // Sign the challenge from THIS response: the nonce is single-use and a
-      // fresh one is minted on every 401.
+      // Sign the challenge from THIS response: the nonce is single-use, and a
+      // fresh one is minted only on the 401 that reports a missing factor.
       signature: await account.signMessage({ message: first.body.challenge }),
     }),
   }),
@@ -389,9 +397,20 @@ const key = must(
 const auth = { Authorization: `Bearer ${key.key}` };
 
 // 3. The wallet that needs funding is the organization wallet.
-const user = must(await api("/api/user"), "user");
+// Provisioning is fire-and-forget on first sign-in, so walletAddress can still
+// be null moments after the account exists. The route reports a failed lookup
+// as null rather than as an error, so poll briefly before giving up.
+let user = must(await api("/api/user"), "user");
+for (let i = 0; !user.walletAddress && i < 10; i++) {
+  await new Promise((r) => setTimeout(r, 1500));
+  user = must(await api("/api/user"), "user");
+}
 if (!user.walletAddress) {
-  // The route reports a failed wallet lookup as null rather than as an error.
+  // Still nothing: ask for it explicitly rather than waiting longer.
+  must(await api("/api/user/wallet", { method: "POST" }), "provision wallet");
+  user = must(await api("/api/user"), "user");
+}
+if (!user.walletAddress) {
   throw new Error("no organization wallet on this account yet");
 }
 console.log("fund this address:", user.walletAddress);
@@ -405,16 +424,15 @@ const transfer = {
   recipientAddress: user.walletAddress,
   amount: "0",
 };
-const sim = must(
-  await api("/api/execute/transfer", {
-    method: "POST",
-    headers: auth,
-    body: JSON.stringify({ ...transfer, simulate: true }),
-  }),
-  "simulate"
-);
-if (!sim.success || sim.wouldRevert) {
-  throw new Error(`simulation failed: ${JSON.stringify(sim)}`);
+// Not wrapped in must(): a would-revert simulation is reported as HTTP 400, so
+// must() would throw the raw response before this check could read it.
+const sim = await api("/api/execute/transfer", {
+  method: "POST",
+  headers: auth,
+  body: JSON.stringify({ ...transfer, simulate: true }),
+});
+if (sim.status >= 400 || !sim.body.success || sim.body.wouldRevert) {
+  throw new Error(`simulation says this would fail: ${JSON.stringify(sim.body)}`);
 }
 const exec = must(
   await api("/api/execute/transfer", {
