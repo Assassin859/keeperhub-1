@@ -90,7 +90,16 @@ describe("POST /api/billing/payg (spend caps)", () => {
     );
   });
 
-  it("treats an empty cap as no limit (raw 0)", async () => {
+  it("persists an explicit 0 cap as 0 rather than dropping it", async () => {
+    const res = await POST(postCaps({ dailyCapUsdc: "0", periodCapUsdc: "0" }));
+
+    expect(res.status).toBe(200);
+    expect(upsertPaygConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ dailyCapRaw: "0", periodCapRaw: "0" })
+    );
+  });
+
+  it("treats a cap left blank as 0", async () => {
     const res = await POST(postCaps({ dailyCapUsdc: "", periodCapUsdc: "" }));
 
     expect(res.status).toBe(200);

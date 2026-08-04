@@ -236,37 +236,37 @@ function settledOrRefuse(existing: {
   return { ok: false, reason: "payment_failed" };
 }
 
-/** The daily/period cap breached by the reserved total (settled + pending),
- * or null when both are within their configured caps. */
+/**
+ * The daily/period cap breached by the reserved total (settled + pending), or
+ * null when both are within their configured caps. Every cap is enforced,
+ * including 0: the amount reserved for this execution alone breaches a zero
+ * cap, so an org that set 0 is never charged.
+ */
 async function checkCapsReserved(
   organizationId: string,
   config: { dailyCapRaw: string; periodCapRaw: string; startedAt: Date }
 ): Promise<PaygBlockReason | null> {
   const dailyCapRaw = BigInt(config.dailyCapRaw);
-  if (dailyCapRaw > BigInt(0)) {
-    const reservedToday = await getPaygSpentRaw(
-      organizationId,
-      startOfUtcDay(),
-      undefined,
-      { includePending: true }
-    );
-    if (reservedToday > dailyCapRaw) {
-      return "daily_cap";
-    }
+  const reservedToday = await getPaygSpentRaw(
+    organizationId,
+    startOfUtcDay(),
+    undefined,
+    { includePending: true }
+  );
+  if (reservedToday > dailyCapRaw) {
+    return "daily_cap";
   }
 
   const periodCapRaw = BigInt(config.periodCapRaw);
-  if (periodCapRaw > BigInt(0)) {
-    const period = getPaygPeriod(config.startedAt);
-    const reservedPeriod = await getPaygSpentRaw(
-      organizationId,
-      period.start,
-      period.end,
-      { includePending: true }
-    );
-    if (reservedPeriod > periodCapRaw) {
-      return "period_cap";
-    }
+  const period = getPaygPeriod(config.startedAt);
+  const reservedPeriod = await getPaygSpentRaw(
+    organizationId,
+    period.start,
+    period.end,
+    { includePending: true }
+  );
+  if (reservedPeriod > periodCapRaw) {
+    return "period_cap";
   }
 
   return null;

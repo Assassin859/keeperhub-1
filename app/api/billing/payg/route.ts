@@ -27,6 +27,7 @@ type PaygStatus = {
   priceUsdc: string;
   treasuryConfigured: boolean;
   chainId: number;
+  /** Decimal USDC. "0" blocks all spend rather than meaning "no cap". */
   caps: { dailyUsdc: string; periodUsdc: string };
   usage: {
     periodStart: string;
@@ -89,9 +90,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 /**
- * Parse a decimal USDC cap into a 6-dp raw string; "" / undefined -> "0" (no
- * cap). Throws on a malformed value so the caller returns 400 rather than
- * silently treating garbage as "0" (which would disable the spend cap).
+ * Parse a decimal USDC cap into a 6-dp raw string. A cap left blank is "0", and
+ * "0" blocks all spend, so an omitted cap is never read as unlimited. Throws on
+ * a malformed value so the caller returns 400 rather than silently treating
+ * garbage as a cap.
  */
 function parseCap(value: unknown): string {
   if (value === undefined || value === null || value === "") {
@@ -121,8 +123,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       chainId?: number;
     };
 
-    let dailyCapRaw: string;
-    let periodCapRaw: string;
+    let dailyCapRaw: string | null;
+    let periodCapRaw: string | null;
     try {
       dailyCapRaw = parseCap(body.dailyCapUsdc);
       periodCapRaw = parseCap(body.periodCapUsdc);

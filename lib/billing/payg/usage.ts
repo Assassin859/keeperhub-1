@@ -11,6 +11,7 @@ export type PaygCurrentUsage = {
   periodExecutions: number;
   periodSpentRaw: bigint;
   dailySpentRaw: bigint;
+  /** 0n blocks all spend rather than meaning "unset". */
   dailyCapRaw: bigint;
   periodCapRaw: bigint;
   chainId: number;

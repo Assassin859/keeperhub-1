@@ -58,13 +58,11 @@ const TRAILING_ZEROS_RE = /0+$/;
 const TRAILING_DOT_RE = /\.$/;
 
 /**
- * Blank a "0" cap for the input, and drop the API's zero padding so a cap reads
- * as the amount the user typed: "5.000000" -> "5", "0.500000" -> "0.5".
+ * A cap as the user typed it, dropping the API's zero padding: "5.000000" ->
+ * "5", "0.500000" -> "0.5", "0.000000" -> "0". A zero cap shows as 0 rather
+ * than an empty field, because it means spend nothing, not "unset".
  */
 function capToInput(decimal: string): string {
-  if (Number(decimal) === 0) {
-    return "";
-  }
   return decimal.includes(".")
     ? decimal.replace(TRAILING_ZEROS_RE, "").replace(TRAILING_DOT_RE, "")
     : decimal;
@@ -425,9 +423,9 @@ export function PaygSection({
       </div>
 
       <p className="text-muted-foreground text-xs">
-        Amounts in USDC. Leave a cap empty for no limit. Executions that would
-        exceed a cap are blocked with a clear reason and recorded as a billing
-        error on the run.
+        Amounts in USDC. A cap of 0 spends nothing. Executions that would exceed
+        a cap are blocked with a clear reason and recorded as a billing error on
+        the run.
       </p>
 
       <PaygChargesTable key={orgId} />
@@ -490,7 +488,7 @@ function CapField({
         id={id}
         inputMode="decimal"
         onChange={(e) => onChange(e.target.value)}
-        placeholder="No limit"
+        placeholder="0"
         value={value}
       />
     </div>

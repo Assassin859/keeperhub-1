@@ -11,7 +11,10 @@ import {
 } from "./constants";
 import { usdcDecimalToRaw } from "./usdc";
 
-/** The spend caps and billing-period anchor in force for an org. */
+/**
+ * The spend caps and billing-period anchor in force for an org. Caps always
+ * carry a value: "0" blocks all spend rather than meaning "unset".
+ */
 export type PaygSettings = {
   dailyCapRaw: string;
   periodCapRaw: string;
@@ -74,6 +77,7 @@ export async function getPaygSettings(
  */
 export async function upsertPaygConfig(params: {
   organizationId: string;
+  /** "0" blocks all spend; there is no "unset" cap. */
   dailyCapRaw: string;
   periodCapRaw: string;
   chainId: number;
