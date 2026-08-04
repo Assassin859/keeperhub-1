@@ -44,8 +44,16 @@ import { parseTokenAddress } from "@/plugins/web3/steps/transfer-token-core";
  * (the org's EOA / smart account address). Orgs that route writes
  * through a Safe will produce a simulation that reflects the EOA
  * sending the call, not the Safe. This still catches most config bugs
- * (bad ABI, bad args, insufficient balance, allowance mismatches) but
- * does not perfectly mirror Safe-routed msg.sender semantics.
+ * (bad ABI, bad args, allowance mismatches) but does not perfectly mirror
+ * Safe-routed msg.sender semantics.
+ *
+ * That limitation extends to the balance attribution: the shortfall is read
+ * from `from`, while a Safe-routed org funds the transfer from
+ * signerMode.safeAddress (see transfer-funds-core). So for those orgs
+ * `code: "insufficient_balance"`, `balanceWei` and the "Fund <address>"
+ * sentence describe the EOA and are not the address the broadcast spends
+ * from. Do not treat them as authoritative without first resolving the
+ * org's signer mode.
  */
 
 const ERC20_TRANSFER_ABI_JSON = JSON.stringify([
@@ -305,7 +313,13 @@ async function failureFromPreflightError(input: {
 }): Promise<SimulateFailure> {
   const reason = decodeRevertReason(input.err, input.iface);
   if (reason) {
-    return failure(input.from, input.to, input.value, reason);
+    // Keep the node's message here too. Native sends previously returned it
+    // as the whole revertReason, so dropping it once decoding succeeded would
+    // make this one branch less informative than before.
+    return {
+      ...failure(input.from, input.to, input.value, reason),
+      originalError: getErrorMessage(input.err),
+    };
   }
 
   const originalError = getErrorMessage(input.err);

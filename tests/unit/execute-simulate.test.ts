@@ -505,6 +505,10 @@ describe("simulateNativeTransfer", () => {
     if (!result.success) {
       expect(result.revertReason).toContain("recipient rejects ETH");
       expect(result.code).toBeUndefined();
+      // Decoding wins the revertReason, but the node's message is still kept.
+      // Before the shared helper, this path returned the raw message as the
+      // whole reason, so discarding it here would lose information.
+      expect(result.originalError).toBeDefined();
     }
     // A decoded reason is the specific answer: no balance read is spent.
     expect(executeWithFailover).toHaveBeenCalledTimes(1);
