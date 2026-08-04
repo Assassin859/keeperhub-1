@@ -397,21 +397,17 @@ const key = must(
 const auth = { Authorization: `Bearer ${key.key}` };
 
 // 3. The wallet that needs funding is the organization wallet.
-// Provisioning is fire-and-forget on first sign-in, so walletAddress can still
-// be null moments after the account exists. The route reports a failed lookup
-// as null rather than as an error, so poll briefly before giving up.
+// Provisioning is kicked off in the background on first sign-in, so
+// walletAddress can still be null for a few seconds after the account exists.
+// The route reports a pending or failed lookup as null rather than as an
+// error, so poll rather than treating the first null as fatal.
 let user = must(await api("/api/user"), "user");
-for (let i = 0; !user.walletAddress && i < 10; i++) {
+for (let i = 0; !user.walletAddress && i < 20; i++) {
   await new Promise((r) => setTimeout(r, 1500));
   user = must(await api("/api/user"), "user");
 }
 if (!user.walletAddress) {
-  // Still nothing: ask for it explicitly rather than waiting longer.
-  must(await api("/api/user/wallet", { method: "POST" }), "provision wallet");
-  user = must(await api("/api/user"), "user");
-}
-if (!user.walletAddress) {
-  throw new Error("no organization wallet on this account yet");
+  throw new Error("no organization wallet on this account yet - retry shortly");
 }
 console.log("fund this address:", user.walletAddress);
 
