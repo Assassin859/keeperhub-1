@@ -8,17 +8,124 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockCheckIpRateLimit } = vi.hoisted(() => ({
-  mockCheckIpRateLimit: vi.fn(),
-}));
+const { mockCheckIpRateLimit, mockDbSelectLimit, mockVerifyPassword } =
+  vi.hoisted(() => ({
+    mockCheckIpRateLimit: vi.fn(),
+    mockDbSelectLimit: vi.fn(),
+    mockVerifyPassword: vi.fn(),
+  }));
 
 vi.mock("@/lib/mcp/rate-limit", () => ({
   checkIpRateLimit: mockCheckIpRateLimit,
   getClientIp: () => "127.0.0.1",
 }));
 
+vi.mock("@/lib/db", () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: mockDbSelectLimit,
+          orderBy: () => ({
+            limit: mockDbSelectLimit,
+          }),
+        }),
+      }),
+    }),
+  },
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  accounts: {
+    userId: "userId",
+    providerId: "providerId",
+    password: "password",
+  },
+  users: {
+    id: "id",
+    email: "email",
+    emailVerified: "emailVerified",
+    twoFactorEnabled: "twoFactorEnabled",
+    deactivatedAt: "deactivatedAt",
+  },
+  twoFactor: { userId: "userId", secret: "secret" },
+  verifications: {
+    identifier: "identifier",
+    value: "value",
+    expiresAt: "expiresAt",
+  },
+  sessions: { token: "token" },
+}));
+
+vi.mock("drizzle-orm", () => ({
+  eq: () => ({}),
+  and: () => ({}),
+  gt: () => ({}),
+  desc: () => ({}),
+}));
+
+vi.mock("@/lib/password", () => ({
+  verifyPassword: mockVerifyPassword,
+}));
+
+vi.mock("@/lib/mfa/dual-factor-rate-limit", () => ({
+  checkDualFactorRateLimit: () => ({ allowed: true }),
+  resetDualFactor: vi.fn(),
+}));
+
+vi.mock("@/lib/security/totp-verify", () => ({
+  verifyUserTotp: vi.fn(),
+}));
+
+vi.mock("@/lib/security/login-risk", () => ({
+  assessCountryTrust: vi.fn(() => Promise.resolve({ trusted: true })),
+  resolveClientIpFromHeaders: () => "127.0.0.1",
+}));
+
+vi.mock("@/lib/security/device-trust", () => ({
+  resolveSigninDevice: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({
+  auth: { api: { signInEmail: vi.fn(), verifyTOTP: vi.fn() } },
+}));
+
+vi.mock("@/lib/auth-cookie-chain", () => ({
+  readAllSetCookies: () => [],
+  setCookiesToCookieHeader: () => "",
+}));
+
+vi.mock("@/lib/auth-session-token-hash", () => ({
+  hashSessionToken: (token: string) => token,
+}));
+
+vi.mock("@/lib/pending-ip-cookie", () => ({
+  buildPendingIpSetCookie: () => "",
+  encodePendingIpCookie: () => "",
+}));
+
+vi.mock("@/app/api/auth/_lib/credential-attempt-rate-limit", () => ({
+  checkCredentialAttemptRateLimit: () => ({ allowed: true }),
+}));
+
+vi.mock("@/lib/admin-auth", () => ({
+  testEndpointsEnabled: () => false,
+}));
+
+vi.mock("better-auth/crypto", () => ({
+  symmetricDecrypt: vi.fn(() => Promise.resolve("123456")),
+}));
+
 vi.mock("@/lib/rate-limit-headers", () => ({
-  applyRateLimitHeaders: <T extends Response>(response: T): T => response,
+  applyRateLimitHeaders: <T extends Response>(
+    response: T,
+    info: { retryAfter?: number }
+  ): T => {
+    if (info.retryAfter !== undefined) {
+      response.headers.set("Retry-After", String(info.retryAfter));
+    }
+    return response;
+  },
 }));
 
 vi.mock("@/lib/metrics/collectors/prometheus", () => ({
@@ -35,6 +142,7 @@ vi.mock("next/headers", () => ({
 }));
 
 import { POST as scanIntentPost } from "@/app/api/auth/scan-intent/route";
+import { POST as strictSigninPost } from "@/app/api/auth/strict-signin/route";
 import { POST as strictSigninStartPost } from "@/app/api/auth/strict-signin/start/route";
 import { POST as oauthTokenPost } from "@/app/api/oauth/token/route";
 
@@ -72,6 +180,9 @@ describe("auth route error envelopes (FRICTION-08)", () => {
       remaining: 29,
       reset: Math.floor(Date.now() / 1000) + 60,
     });
+    mockDbSelectLimit.mockResolvedValue([]);
+    mockVerifyPassword.mockResolvedValue(false);
+    process.env.BETTER_AUTH_SECRET = "test-secret-at-least-32-chars-long!!";
   });
 
   it("POST /api/auth/scan-intent returns invalid_input envelope for empty body", async () => {
@@ -129,6 +240,127 @@ describe("auth route error envelopes (FRICTION-08)", () => {
     const body = (await response.json()) as EnvelopeBody;
     expect(body.error).toBe("rate_limited");
     expect(body.detail).toBe("Too many requests");
+    expect(typeof body.request_id).toBe("string");
+  });
+
+  it("POST /api/auth/strict-signin/start returns invalid_signin envelope for unknown user", async () => {
+    mockDbSelectLimit.mockResolvedValueOnce([]);
+
+    const response = await strictSigninStartPost(
+      buildRequest("http://localhost/api/auth/strict-signin/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "nobody@example.com",
+          password: "secret",
+        }),
+      })
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as EnvelopeBody;
+    expect(body.error).toBe("invalid_signin");
+    expect(body.detail).toBe("Invalid sign-in");
+    expect(typeof body.request_id).toBe("string");
+  });
+
+  it("POST /api/auth/strict-signin returns invalid_signin envelope for unknown user", async () => {
+    mockDbSelectLimit.mockResolvedValueOnce([]);
+
+    const response = await strictSigninPost(
+      buildRequest("http://localhost/api/auth/strict-signin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "nobody@example.com",
+          password: "secret",
+          emailOtp: "123456",
+          totpCode: "654321",
+        }),
+      })
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as EnvelopeBody;
+    expect(body.error).toBe("invalid_signin");
+    expect(body.detail).toBe("Invalid sign-in");
+  });
+
+  it("POST /api/auth/strict-signin returns invalid_email_otp envelope when OTP fails", async () => {
+    mockDbSelectLimit
+      .mockResolvedValueOnce([{ id: "user-1", email: "user@example.com" }])
+      .mockResolvedValueOnce([{ password: "hashed" }])
+      .mockResolvedValueOnce([]);
+    mockVerifyPassword.mockResolvedValueOnce(true);
+
+    const response = await strictSigninPost(
+      buildRequest("http://localhost/api/auth/strict-signin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "user@example.com",
+          password: "secret",
+          emailOtp: "123456",
+          totpCode: "654321",
+        }),
+      })
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as EnvelopeBody;
+    expect(body.error).toBe("invalid_email_otp");
+    expect(body.detail).toBe("Invalid email code");
+  });
+
+  it("POST /api/auth/strict-signin returns invalid_totp envelope when TOTP fails", async () => {
+    const { verifyUserTotp } = await import("@/lib/security/totp-verify");
+    vi.mocked(verifyUserTotp).mockResolvedValueOnce(false);
+
+    mockDbSelectLimit
+      .mockResolvedValueOnce([{ id: "user-1", email: "user@example.com" }])
+      .mockResolvedValueOnce([{ password: "hashed" }])
+      .mockResolvedValueOnce([
+        {
+          id: "otp-row",
+          value: "encrypted-otp",
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      ])
+      .mockResolvedValueOnce([{ secret: "totp-secret" }]);
+    mockVerifyPassword.mockResolvedValueOnce(true);
+
+    const response = await strictSigninPost(
+      buildRequest("http://localhost/api/auth/strict-signin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "user@example.com",
+          password: "secret",
+          emailOtp: "123456",
+          totpCode: "654321",
+        }),
+      })
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as EnvelopeBody;
+    expect(body.error).toBe("invalid_totp");
+    expect(body.detail).toBe("Invalid authenticator code");
+  });
+
+  it("POST /api/oauth/token returns invalid_request envelope for missing code_verifier", async () => {
+    const response = await oauthTokenPost(
+      buildRequest("http://localhost/api/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code: "auth-code",
+          client_id: "client-1",
+          redirect_uri: "https://example.com/callback",
+        }).toString(),
+      })
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as EnvelopeBody;
+    expect(body.error).toBe("invalid_request");
+    expect(body.detail).toContain("code_verifier");
     expect(typeof body.request_id).toBe("string");
   });
 });

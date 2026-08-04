@@ -1,4 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { type ZodError, z } from "zod";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { HttpStatus } from "@/lib/http-status";
@@ -19,7 +20,6 @@ import {
   oauthAuthorizationCodeSchema,
   oauthRefreshTokenSchema,
 } from "@/lib/schemas/oauth";
-import { validateData } from "@/lib/validate-request";
 import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +33,28 @@ function routeError(
   return apiError({
     status,
     code,
+    detail,
+    requestHeaders: request.headers,
+  });
+}
+
+function oauthValidationError(request: Request, zodError: ZodError): Response {
+  const flattened = z.flattenError(zodError);
+  const fieldMessages = Object.entries(flattened.fieldErrors).flatMap(
+    ([field, messages]) => {
+      if (!Array.isArray(messages)) {
+        return [];
+      }
+      return messages.map((message) => `${field}: ${message}`);
+    }
+  );
+  const formMessages = flattened.formErrors;
+  const detail =
+    [...fieldMessages, ...formMessages].join("; ") || "Validation failed";
+
+  return apiError({
+    status: HttpStatus.BAD_REQUEST,
+    code: "invalid_request",
     detail,
     requestHeaders: request.headers,
   });
@@ -126,12 +148,11 @@ async function handleAuthorizationCode(
   request: Request,
   params: URLSearchParams
 ): Promise<Response> {
-  const parsed = validateData(
-    Object.fromEntries(params),
-    oauthAuthorizationCodeSchema
+  const parsed = oauthAuthorizationCodeSchema.safeParse(
+    Object.fromEntries(params)
   );
   if (!parsed.success) {
-    return parsed.response;
+    return oauthValidationError(request, parsed.error);
   }
   const {
     code,
@@ -245,12 +266,9 @@ async function handleRefreshToken(
   request: Request,
   params: URLSearchParams
 ): Promise<Response> {
-  const parsed = validateData(
-    Object.fromEntries(params),
-    oauthRefreshTokenSchema
-  );
+  const parsed = oauthRefreshTokenSchema.safeParse(Object.fromEntries(params));
   if (!parsed.success) {
-    return parsed.response;
+    return oauthValidationError(request, parsed.error);
   }
   const { refresh_token: refreshTokenValue, client_id: clientId } = parsed.data;
 
@@ -352,9 +370,6 @@ export async function POST(request: Request): Promise<Response> {
         code: ApiErrorCodes.RATE_LIMITED,
         detail: "Too many requests",
         requestHeaders: request.headers,
-        headers: rateLimit.retryAfter
-          ? { "Retry-After": String(rateLimit.retryAfter) }
-          : undefined,
       }),
       rateLimit
     );
