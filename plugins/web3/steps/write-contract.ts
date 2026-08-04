@@ -69,6 +69,13 @@ export async function writeContractStep(
         // success/failure of writeContractCore, so softening the result
         // inside withStepValueCap's run() would settle a reservation for a
         // transaction that actually reverted.
+        //
+        // withStepValueCap can itself deny the call (e.g. daily cap
+        // exceeded) before writeContractCore ever runs, and that denial
+        // carries no errorClass. coreResult tracks whether writeContractCore
+        // actually produced the returned value, so a cap denial is never
+        // passed to applyFailOnError and always hard-fails.
+        let coreResult: WriteContractResult | undefined;
         const result = await withStepValueCap(
           {
             organizationId: input._context?.organizationId,
@@ -77,9 +84,14 @@ export async function writeContractStep(
             executionId: input._context?.executionId,
             valueCapReserved: input._context?.valueCapReserved,
           },
-          () => writeContractCore(input)
+          async () => {
+            coreResult = await writeContractCore(input);
+            return coreResult;
+          }
         );
-        return applyFailOnError(result, input.failOnError);
+        return result === coreResult
+          ? applyFailOnError(result, input.failOnError)
+          : result;
       })
   );
 }
