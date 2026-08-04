@@ -134,6 +134,13 @@ describe("isTrialEligible", () => {
     expect(isTrialEligible(makeSub(), "pro", "25k")).toBe(true);
   });
 
+  // The plan column is free text and unknown values read as free everywhere
+  // else, so eligibility must not disagree with what the org is shown as.
+  it("is eligible for a row whose plan parses to free", () => {
+    expect(isTrialEligible(makeSub({ plan: "payg" }), "pro", "25k")).toBe(true);
+    expect(isTrialEligible(makeSub({ plan: "" }), "pro", "25k")).toBe(true);
+  });
+
   it("is not eligible for non-Pro plans", () => {
     expect(isTrialEligible(undefined, "business", "250k")).toBe(false);
     expect(isTrialEligible(undefined, "enterprise", null)).toBe(false);
