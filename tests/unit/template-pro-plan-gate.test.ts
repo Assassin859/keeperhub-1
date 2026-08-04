@@ -30,5 +30,21 @@ describe("workflowRequiresProPlan", () => {
     expect(workflowRequiresProPlan([{ id: "n1", data: { config: {} } }])).toBe(
       false
     );
+    expect(workflowRequiresProPlan({} as unknown as readonly unknown[])).toBe(
+      false
+    );
+    expect(workflowRequiresProPlan(null as unknown as readonly unknown[])).toBe(
+      false
+    );
+  });
+
+  it("returns true for legacy colon actionType on Pro-gated code action", () => {
+    const nodes = [{ id: "n1", data: { actionType: "code:run-code" } }];
+    expect(workflowRequiresProPlan(nodes)).toBe(true);
+  });
+
+  it("returns true for top-level data.actionType without config", () => {
+    const nodes = [{ id: "n1", data: { actionType: "code/run-code" } }];
+    expect(workflowRequiresProPlan(nodes)).toBe(true);
   });
 });
