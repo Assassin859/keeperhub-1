@@ -56,6 +56,12 @@ Every wallet signing call is gated by a `PreToolUse` hook that reads thresholds 
 
 The hook reads only the payment-challenge fields `amount`, `unit`, and the asset contract address from the tool payload. Forged fields like `trust-level hint` or `admin-override` are ignored by design.
 
+> **The allowlist covers which token is spent, not who receives it.**
+>
+> `allowlisted_contracts` and the [server-side contract allowlist](#server-side-hard-limits) both constrain the ERC-20 being transferred. Neither reads the challenge's `payTo` — the transfer recipient — so **any** address is a valid destination for a payment that clears the amount tiers. The hook is also stateless: it sees one payment at a time, so repeated payments each under `auto_approve_max_usd` all pass, bounded only by the [daily spend cap](#server-side-hard-limits).
+>
+> This is deliberate — `payTo` is the facilitator or service operator, not the contract being invoked, so it is not what a *contract* allowlist should match on. But it means "allowlist" here answers *what may be spent*, not *who may be paid*. If your agent should only ever pay a known set of services, enforce that in your own `PreToolUse` hook or in a wrapper around `paymentSigner`; the tiers above will not do it for you.
+
 ### Server-side hard limits
 
 Beyond the client-side hook, a set of Turnkey-enforced policies apply to every wallet and cannot be bypassed by editing `safety.json` or changing the agent's hook. They are created per sub-organisation at provision time and enforced by Turnkey itself on every signing activity:
