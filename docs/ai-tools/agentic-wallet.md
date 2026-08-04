@@ -75,6 +75,7 @@ When `~/.keeperhub/safety.json` is absent the hook applies these defaults:
 ```json
 {
   "auto_approve_max_usd": 5,
+  "ask_threshold_usd": 50,
   "block_threshold_usd": 100,
   "allowlisted_contracts": [
     "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -82,6 +83,10 @@ When `~/.keeperhub/safety.json` is absent the hook applies these defaults:
   ]
 }
 ```
+
+> **`ask_threshold_usd` is inert.** It is part of `DEFAULT_SAFETY_CONFIG` and is still parsed and range-checked — it must be `>= auto_approve_max_usd`, and `block_threshold_usd` must be `>= ask_threshold_usd` — but the hook does not consult it when deciding. The ask tier is bounded by `auto_approve_max_usd` and `block_threshold_usd` alone, as the table above describes. The field is retained for backward compatibility with existing configs (`KEEP-307`).
+>
+> Practically: setting it changes nothing, and setting it *inconsistently* fails config validation for a value that has no effect. Tune `auto_approve_max_usd` and `block_threshold_usd` instead.
 
 The two allowlisted addresses are the only tokens the client-side hook will authorise out of the box:
 
