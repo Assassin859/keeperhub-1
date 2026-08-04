@@ -574,13 +574,16 @@ registerFieldRenderer(
 );
 
 /**
- * Switch Field
- * Boolean on/off toggle, e.g. Write Contract's "Fail workflow on error".
- * Shares FailOnErrorSwitchField with the HTTP Request node's hardcoded
- * failOnError toggle so both nodes render and resolve it identically.
+ * Fail-On-Error Switch Field
+ * Write Contract's declarative "Fail workflow on error" toggle. Shares
+ * FailOnErrorSwitchField with the HTTP Request node's hardcoded failOnError
+ * toggle so both nodes render and resolve it identically. This renderer is
+ * specific to that field: it resolves default-on through resolveFailOnError
+ * rather than reading field.defaultValue, so it is not a general-purpose
+ * boolean switch renderer.
  */
 registerFieldRenderer(
-  "switch",
+  "fail-on-error-switch",
   ({ field, config, onUpdateConfig, disabled }) => (
     <FailOnErrorSwitchField
       description={field.helpTip}

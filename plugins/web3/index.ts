@@ -1554,7 +1554,7 @@ const web3Plugin: IntegrationPlugin = {
         {
           key: "failOnError",
           label: "Fail workflow on error",
-          type: "switch",
+          type: "fail-on-error-switch",
           defaultValue: "true",
           helpTip:
             "When off, a failed send (signer/RPC error or an on-chain revert) passes a soft error to the next node instead of failing the run. Config/validation problems (bad ABI, missing function, unresolved RPC) always fail the run regardless of this setting.",
