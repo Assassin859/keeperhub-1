@@ -88,12 +88,20 @@ effect:
 
 Canonicalize each part before joining:
 
-- `chainId` as its decimal integer form, so `8453` and `"8453"` agree
-- addresses lowercased, so a checksummed and an unchecksummed address agree
-- `amount` as an exact decimal string with trailing zeros removed, so `"0.001"` and
-  `"0.0010"` agree. Compare and normalize it with a decimal type, not a binary float:
-  at 18 decimals a float silently collapses distinct amounts to the same value
-- omitted optional fields as an empty string
+- **Resolve the chain to one spelling.** These endpoints accept `chainId` and also the
+  deprecated `network` alias, so `{"network": "base"}` and `{"chainId": 8453}` are the
+  same transfer. Resolve the alias to a numeric chain id first, then use its decimal
+  integer form, so `8453`, `"8453"` and `"base"` all agree.
+- **Lowercase addresses**, so a checksummed and an unchecksummed address agree.
+- **Canonicalize `amount` as a decimal string**, not a binary float. Strip a leading
+  `+`, strip insignificant trailing zeros after the decimal point, and use no exponent
+  notation, so `"0.001"` and `"0.0010"` agree. Specifying the string form rather than a
+  numeric type is deliberate: a caller parsing `"0.1"` as a 64-bit float gets
+  `0.100000000000000006`, and two callers implementing this in different languages
+  would otherwise disagree on the key. Binary floats also collapse distinct 18-decimal
+  amounts onto the same value.
+- **Represent omitted optional fields as an empty string**, so the separator positions
+  stay fixed.
 
 Hash the joined string with SHA-256 and send the hex digest as the `Idempotency-Key`.
 
