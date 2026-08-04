@@ -14,7 +14,7 @@ type FailOnErrorSwitchFieldProps = {
 };
 
 /**
- * Shared "Fail workflow on error" toggle -- used by both the HTTP Request
+ * Shared "Fail workflow on error" toggle, used by both the HTTP Request
  * node (hardcoded system action) and the Write Contract node (declarative
  * plugin "switch" field) so the layout and default-on resolution logic
  * (resolveFailOnError) live in exactly one place.

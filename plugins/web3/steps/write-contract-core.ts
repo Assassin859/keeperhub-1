@@ -87,7 +87,7 @@ export type WriteContractResult =
       // KEEP-966: chain the transaction was broadcast on, required for
       // independent on-chain receipt verification at execution finalize time.
       // Absent when failOnError=false (see applyFailOnError) softened an
-      // execution failure into success -- no transaction was ever broadcast,
+      // execution failure into success, since no transaction was ever broadcast,
       // so there is nothing to verify. The KEEP-966 reconciliation gate in
       // lib/workflow/executor/logging.ts only collects entries that have a
       // real `transactionHash`, so this is safe: a softened result is simply
@@ -107,7 +107,7 @@ export type WriteContractResult =
       executedCall?: ExecutedCall;
       // Present only when failOnError=false (see applyFailOnError) softened an
       // execution failure into a success value so the workflow continues.
-      // Absent on a genuine successful write -- transactionHash is absent here.
+      // Absent on a genuine successful write; transactionHash is absent here.
       error?: string;
       rejection?: RevertKind;
       errorClass?: ExecutionErrorType;
@@ -121,15 +121,15 @@ export type WriteContractResult =
 
 /**
  * Soften an execution failure into a success value when failOnError=false, so
- * the workflow continues past a revert/RPC failure instead of aborting -- the
+ * the workflow continues past a revert/RPC failure instead of aborting. This is the
  * write-contract counterpart to HTTP Request's failOnError.
  *
  * Only failures with no `errorClass` are eligible: those are the ones raised
  * by the actual attempt to send the transaction (signer init, broadcast,
  * on-chain revert). Failures classified USER (bad ABI/args/address) or SYSTEM
  * (org context, wallet, RPC/Web3 Connection resolution) are configuration
- * problems that would recur on every execution, so -- mirroring HTTP
- * Request's SSRF/malformed-URL carve-out -- they always hard-fail regardless
+ * problems that would recur on every execution, so, mirroring HTTP
+ * Request's SSRF/malformed-URL carve-out, they always hard-fail regardless
  * of this flag; softening them would let a broken node config run forever
  * without the author noticing.
  *

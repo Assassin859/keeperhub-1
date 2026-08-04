@@ -20,7 +20,7 @@ export type WriteContractInput = StepInput &
     // Mirrors HTTP Request's failOnError. Defaults to true. When false, a
     // failure encountered while attempting the on-chain send (signer init,
     // broadcast, revert) is softened into a success carrying `error` instead
-    // of failing the step, so the workflow continues -- see
+    // of failing the step, so the workflow continues. See
     // applyFailOnError in write-contract-core.ts for exactly which failures
     // qualify.
     failOnError?: boolean;
@@ -64,8 +64,8 @@ export async function writeContractStep(
     },
     () =>
       withStepLogging(enrichedInput, async () => {
-        // applyFailOnError must run here, after withStepValueCap resolves --
-        // the value-cap settle/release decision is keyed on the true
+        // applyFailOnError must run here, after withStepValueCap resolves.
+        // The value-cap settle/release decision is keyed on the true
         // success/failure of writeContractCore, so softening the result
         // inside withStepValueCap's run() would settle a reservation for a
         // transaction that actually reverted.

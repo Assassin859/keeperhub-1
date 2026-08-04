@@ -1454,7 +1454,7 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "success",
           description:
-            "Whether the step completed. True for a real successful write. Also true when failOnError is off and an execution failure (signer/RPC/revert) was softened -- check `error` to tell the two apart.",
+            "Whether the step completed. True for a real successful write. Also true when failOnError is off and an execution failure (signer/RPC/revert) was softened; check `error` to tell the two apart.",
         },
         {
           field: "transactionHash",
@@ -1490,7 +1490,7 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "error",
           description:
-            "Error message if the call failed. Also set when failOnError is off and an execution failure was softened into success=true -- e.g. 'Contract call failed: Error(Splitter/kicked-too-soon)'. Match this string in a downstream Condition node (contains/matchesRegex) to filter known errors from ones that should alert.",
+            "Error message if the call failed. Also set when failOnError is off and an execution failure was softened into success=true, e.g. 'Contract call failed: Error(Splitter/kicked-too-soon)'. Match this string in a downstream Condition node (contains/matchesRegex) to filter known errors from ones that should alert.",
         },
       ],
       configFields: [
