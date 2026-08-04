@@ -99,6 +99,12 @@ pnpm dev
 
 Visit [http://localhost:3000](http://localhost:3000) to get started. The first request triggers a Next.js dev compile that can take 30-60 seconds; subsequent requests are fast.
 
+### Local development troubleshooting
+
+- **`pnpm dev:login` fails after `pnpm db:push`:** Your schema is ahead of the Drizzle migration journal. Run `pnpm tsx scripts/backfill-drizzle-migrations.ts`, then retry. `dev:bootstrap` (invoked by `dev:login`) detects this drift automatically, runs the backfill script, and retries migrate once.
+- **`db:push` vs `db:migrate`:** Use `pnpm db:push` only for fast local schema iteration. Staging and production apply file-based migrations via `pnpm db:migrate` on deploy.
+- **Local Postgres required:** `dev:login` and `dev:bootstrap` refuse to run unless `DATABASE_URL` points at a local host (for example `postgresql://postgres:postgres@localhost:5433/keeperhub` when using Docker Compose).
+
 ## Running Modes
 
 ### Local Development (Simplest)

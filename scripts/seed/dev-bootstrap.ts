@@ -30,6 +30,9 @@ import "dotenv/config";
 
 import { createHash, randomBytes, scrypt } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import {
+  runMigrateWithRecovery,
+} from "../lib/migration-drift";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -177,13 +180,20 @@ function runChildScript(script: string, label: string): void {
 
 function runMigrate(): void {
   console.log("> pnpm db:migrate");
-  const result = spawnSync("pnpm", ["db:migrate"], {
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.status !== 0) {
-    throw new Error(`pnpm db:migrate exited with status ${result.status ?? "null"}`);
+  const result = runMigrateWithRecovery(process.env);
+  if (result.ok) {
+    return;
   }
+
+  if (result.output) {
+    process.stderr.write(result.output);
+    if (!result.output.endsWith("\n")) {
+      process.stderr.write("\n");
+    }
+  }
+  throw new Error(
+    `pnpm db:migrate exited with status ${result.status ?? "null"}`
+  );
 }
 
 // ---------------------------------------------------------------------------
