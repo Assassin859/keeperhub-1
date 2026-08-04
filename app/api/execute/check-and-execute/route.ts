@@ -175,16 +175,31 @@ async function executeConditionalWrite(
     })
   );
 
+  // completeExecution independently re-verifies the claimed transaction
+  // against the chain (KEEP-966) -- its returned outcome, not result.success,
+  // is authoritative for the response and idempotency cache.
+  let outcome: { status: "completed" | "failed"; error?: string } = {
+    status: "failed",
+    error: result.success ? undefined : result.error,
+  };
   if (result.success) {
-    await completeExecution(executionId, {
+    outcome = await completeExecution(executionId, {
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink,
+      chainId: result.chainId,
       gasUsedWei: result.gasUsed,
       gasPriceWei: result.effectiveGasPrice,
       output: result as unknown as Record<string, unknown>,
     });
   } else {
-    await failExecution(executionId, result.error);
+    // A failure that already reached the chain carries its hash,
+    // so the execution records which transaction failed and what the chain
+    // said about it, rather than leaving the hash only inside the message.
+    await failExecution(executionId, result.error, {
+      transactionHash: result.transactionHash,
+      chainId: result.chainId,
+      sponsored: result.sponsored,
+    });
   }
 
   return recordIdempotentResponse(
@@ -192,13 +207,14 @@ async function executeConditionalWrite(
     NextResponse.json(
       {
         executionId,
-        status: result.success ? "completed" : "failed",
+        status: outcome.status,
+        ...(outcome.error ? { error: outcome.error } : {}),
         executed: true,
         conditionResult,
       },
       { status: HttpStatus.ACCEPTED }
     ),
-    result.success ? "success" : "failed"
+    outcome.status === "completed" ? "success" : "failed"
   );
 }
 

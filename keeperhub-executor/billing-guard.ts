@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
-  countMonthlyExecutionsCached,
+  countMonthlyExecutionsForAdmission,
   decideExecutionLimit,
   effectiveExecutionLimit,
 } from "../lib/billing/execution-limit-core";
@@ -12,9 +12,11 @@ import {
   parsePlanName,
   parseTierKey,
 } from "../lib/billing/plans";
+import { PAYG_OVERFLOW_REASON } from "../lib/billing/payg/constants";
 import {
   executionDebt,
   organizationSubscriptions,
+  paygConfig,
 } from "../lib/db/schema";
 
 export type BillingGuardResult =
@@ -25,7 +27,8 @@ export type BillingGuardResult =
         | "no_org"
         | "unlimited"
         | "within_limit"
-        | "overage_billed";
+        | "overage_billed"
+        | typeof PAYG_OVERFLOW_REASON;
     }
   | {
       allowed: false;
@@ -94,7 +97,10 @@ export async function checkExecutionLimitForExecutor(
     debtExecutions
   );
 
-  const used = await countMonthlyExecutionsCached(db, organizationId);
+  const used = await countMonthlyExecutionsForAdmission(db, organizationId, {
+    maxExecutionsPerMonth: limits.maxExecutionsPerMonth,
+    overageEnabled: planDef.overage.enabled,
+  });
 
   const outcome = decideExecutionLimit({
     maxExecutionsPerMonth: limits.maxExecutionsPerMonth,
@@ -119,7 +125,20 @@ export async function checkExecutionLimitForExecutor(
         debtExecutions,
         effectiveLimit,
       };
-    default:
+    default: {
+      // Free plan at its included limit: if PAYG is enabled, admit and let the
+      // executor charge the per-execution price before the run (the charge is
+      // the real gate). PAYG is a free-tier feature only.
+      if (plan === "free") {
+        const [cfg] = await db
+          .select({ id: paygConfig.id })
+          .from(paygConfig)
+          .where(eq(paygConfig.organizationId, organizationId))
+          .limit(1);
+        if (cfg) {
+          return { allowed: true, reason: PAYG_OVERFLOW_REASON };
+        }
+      }
       return {
         allowed: false,
         reason: "free_limit_exceeded",
@@ -129,5 +148,6 @@ export async function checkExecutionLimitForExecutor(
         debtExecutions,
         effectiveLimit,
       };
+    }
   }
 }

@@ -42,7 +42,11 @@ import {
 } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
-import { SOLANA_BASE_FEE_LAMPORTS } from "@/lib/web3/solana-fees";
+import {
+  computeSolanaLamportFee,
+  SOLANA_BASE_FEE_LAMPORTS,
+} from "@/lib/web3/solana-fees";
+import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -50,6 +54,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+
+// Tempo (4217 mainnet, 42431 testnet) has no native gas token: value moves via
+// TIP-20 transfers, so a native send has no valid form and reverts at preflight.
+const TEMPO_CHAIN_IDS = new Set([4217, 42_431]);
 
 export type TransferFundsCoreInput = {
   network: string;
@@ -75,13 +83,28 @@ export type TransferFundsResult =
   | {
       success: true;
       transactionHash: string;
+      // KEEP-966: chain the transaction was broadcast on, required for
+      // independent on-chain receipt verification at execution finalize time.
+      chainId: number;
       transactionLink: string;
       gasUsed: string;
       gasUsedUnits: string;
       effectiveGasPrice: string;
       sponsored?: boolean;
     }
-  | { success: false; error: string; rejection?: RevertKind };
+  | {
+      success: false;
+      error: string;
+      rejection?: RevertKind;
+      // Set only when a transaction reached the chain and failed
+      // there, so the finalizer can persist a receipt for the failure. Absent
+      // on pre-broadcast failures, where no transaction exists.
+      transactionHash?: string;
+      chainId?: number;
+      // True when the terminal failure came from the gas-sponsored path, so
+      // the finalizer can report the route accurately on a failed execution.
+      sponsored?: boolean;
+    };
 
 /**
  * Core transfer funds logic
@@ -124,6 +147,16 @@ export async function transferFundsCore(
       gasLimitMultiplier,
       _context,
     });
+  }
+
+  // Tempo has no native token to move; fail with a clear message instead of the
+  // opaque CALL_EXCEPTION an empty data preflight would otherwise return.
+  if (TEMPO_CHAIN_IDS.has(chainId)) {
+    return {
+      success: false,
+      error:
+        "Tempo has no native token to transfer. Send a TIP-20 stablecoin instead by providing a token address.",
+    };
   }
 
   // Validate recipient address
@@ -273,6 +306,7 @@ export async function transferFundsCore(
           success: true,
           sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
+          chainId,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,
           gasUsedUnits: sponsoredResult.gasUsedUnits,
@@ -297,7 +331,14 @@ export async function transferFundsCore(
         chainId,
       });
       if (!decision.fallback) {
-        return { success: false, error: decision.error };
+        return {
+          success: false,
+          error: decision.error,
+          sponsored: true,
+          ...(decision.transactionHash
+            ? { transactionHash: decision.transactionHash, chainId }
+            : {}),
+        };
       }
     }
   }
@@ -408,6 +449,7 @@ export async function transferFundsCore(
       return {
         success: true,
         transactionHash: receipt.hash,
+        chainId,
         transactionLink,
         gasUsed: gasCostWei,
         gasUsedUnits,
@@ -429,6 +471,9 @@ export async function transferFundsCore(
         success: false,
         error: formatContractError(error, undefined, "Transaction failed"),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
+        ...(revertedTransactionHash(error)
+          ? { transactionHash: revertedTransactionHash(error), chainId }
+          : {}),
       };
     }
   });
@@ -474,7 +519,13 @@ async function transferFundsSolana(args: {
   let lamports: bigint;
   try {
     lamports = ethers.parseUnits(amount.trim(), 9); // 9 decimals = lamports
-    if (lamports < BigInt(0)) {
+    if (lamports <= BigInt(0)) {
+      if (lamports === BigInt(0)) {
+        return {
+          success: false,
+          error: "SOL amount must be greater than zero",
+        };
+      }
       throw new Error("Negative amount");
     }
   } catch {
@@ -556,13 +607,18 @@ async function transferFundsSolana(args: {
 
     const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
-    // 10. Map receipt to TransferFundsResult. 
-    // gasUsed = "0" as lamport fee is not computed in v1, but we return raw fields.
+    // Prefer the fee the chain reported; the compute-budget reconstruction is
+    // only a fallback for a receipt that carries no fee.
+    const lamportFee =
+      receipt.feeLamports ??
+      computeSolanaLamportFee(receipt.gasUsed, receipt.effectiveGasPrice);
+
     return {
       success: true,
       transactionHash: receipt.hash,
+      chainId,
       transactionLink,
-      gasUsed: "0",
+      gasUsed: lamportFee.toString(),
       gasUsedUnits: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice.toString(),
     };

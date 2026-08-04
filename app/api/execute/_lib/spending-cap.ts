@@ -1,6 +1,7 @@
 import "server-only";
 
 import { eq } from "drizzle-orm";
+import { chargePaygIfBillable } from "@/lib/billing/payg/charge";
 import { db } from "@/lib/db";
 import { directExecutions, organizationSpendCaps } from "@/lib/db/schema";
 import {
@@ -64,7 +65,7 @@ type ReserveResult =
 export async function checkAndReserveExecution(
   params: ReserveExecutionParams
 ): Promise<ReserveResult> {
-  return await db.transaction(async (tx) => {
+  const reserve = await db.transaction(async (tx) => {
     const caps = await tx
       .select({
         dailyValueCapWei: organizationSpendCaps.dailyValueCapWei,
@@ -139,4 +140,27 @@ export async function checkAndReserveExecution(
 
     return { allowed: true, executionId: id } as const;
   });
+
+  if (!reserve.allowed) {
+    return reserve;
+  }
+
+  // PAYG: settle the per-execution price now that the row is reserved, outside
+  // the cap transaction so no DB lock is held across the on-chain settlement.
+  // The charge is idempotent per (org, executionId). On a cap/funds/payment
+  // block, mark the reserved row failed and deny so the route surfaces the
+  // reason; non-PAYG orgs pass through untouched.
+  const charge = await chargePaygIfBillable({
+    organizationId: params.organizationId,
+    executionId: reserve.executionId,
+  });
+  if (charge.applicable && !charge.ok) {
+    await db
+      .update(directExecutions)
+      .set({ status: "failed", error: charge.message, completedAt: new Date() })
+      .where(eq(directExecutions.id, reserve.executionId));
+    return { allowed: false, reason: charge.message };
+  }
+
+  return reserve;
 }

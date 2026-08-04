@@ -931,6 +931,12 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     EXECUTION_LIMIT_ERROR: "Monthly execution limit exceeded",
   }));
 
+  // The call route charges PAYG between insert and start; mock it (its module
+  // pulls in `server-only`) so importing the route in these tests stays a no-op.
+  vi.mock("@/lib/billing/payg/charge", () => ({
+    chargePaygIfBillable: vi.fn().mockResolvedValue({ applicable: false }),
+  }));
+
   vi.mock("@/lib/features/route-guard", () => ({
     enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
     FEATURE_UPGRADE_REQUIRED_ERROR:

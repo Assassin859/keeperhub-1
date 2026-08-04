@@ -153,6 +153,15 @@ export async function POST(request: Request) {
     nodes = sanitized.nodes;
     edges = sanitized.edges;
 
+    // A 201 from this endpoint does not mean the workflow will run. The gate
+    // below is an AUTHORIZATION check on integrationId, not an existence
+    // check: filterUnauthorizedIntegrationIds treats ids with no matching row
+    // as authorized so stale references stay savable, so a fictional
+    // integrationId is accepted and persisted verbatim. `network` and
+    // `actionType` are not validated against the chain registry or action
+    // catalogue here at all. See the fuller note on the PATCH handler in
+    // app/api/workflows/[workflowId]/route.ts.
+    //
     // Validate the exact shape that will be persisted. The sanitizer moves
     // misplaced root fields into data.config, including integrationId.
     // Org principal: the new workflow is org-owned, so it may only reference

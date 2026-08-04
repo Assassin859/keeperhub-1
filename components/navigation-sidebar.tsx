@@ -29,6 +29,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TruncatedTooltip } from "@/components/ui/truncated-tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Project, SavedWorkflow, Tag } from "@/lib/api-client";
 import { api } from "@/lib/api-client";
@@ -116,14 +117,13 @@ function WorkflowItem({
       onClick={() => router.push(`/workflows/${workflow.id}`)}
       type="button"
     >
-      <span
+      <TruncatedTooltip
         className={cn(
-          "truncate",
           (isDeactivated || showDisabled) && "text-muted-foreground"
         )}
-      >
-        {workflow.name}
-      </span>
+        side="right"
+        text={workflow.name}
+      />
       {isDeactivated && (
         <span className="ml-2 shrink-0 text-muted-foreground text-xs">
           Deactivated
@@ -231,7 +231,7 @@ function ProjectsPanel({
                 backgroundColor: project.color ?? "var(--color-text-muted)",
               }}
             />
-            <span className="truncate">{project.name}</span>
+            <TruncatedTooltip side="right" text={project.name} />
             <span className="ml-auto flex items-center gap-1 text-muted-foreground text-xs">
               {projectWorkflows.length}
               <ChevronRight className="size-3.5" />
@@ -338,7 +338,7 @@ function TagsPanel({
                 className="inline-block size-2 shrink-0 rounded-full"
                 style={{ backgroundColor: tag.color }}
               />
-              <span className="truncate">{tag.name}</span>
+              <TruncatedTooltip side="right" text={tag.name} />
               <span className="ml-auto normal-case tracking-normal">
                 {tag.workflowCount}
               </span>
@@ -680,6 +680,8 @@ export function NavigationSidebar(): React.ReactNode {
 
   const workflowId =
     typeof params.workflowId === "string" ? params.workflowId : undefined;
+  const isWorkflowsPage =
+    pathname === "/workflows" || pathname.startsWith("/workflows/");
   const isHubPage = pathname === "/hub";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
@@ -810,8 +812,9 @@ export function NavigationSidebar(): React.ReactNode {
   const offsets = computePanelOffsets(currentWidth, navState.state.panels);
 
   function isActive(id: string): boolean {
+    // Route-based like every other item; the flyout state is not "you are here".
     if (id === "workflows") {
-      return navState.state.panels.projects !== "closed";
+      return isWorkflowsPage;
     }
     if (id === "hub") {
       return isHubPage;
@@ -897,11 +900,11 @@ export function NavigationSidebar(): React.ReactNode {
       return;
     }
     if (item.id === "address-book") {
-      navState.closeAll();
       openOverlay(AddressBookOverlay);
       return;
     }
-    navState.closeAll();
+    // Keep the workflows flyout open when moving between pages so the picker
+    // stays available instead of collapsing on every navigation.
     if (item.href) {
       router.push(item.href);
     }
@@ -1092,7 +1095,7 @@ export function NavigationSidebar(): React.ReactNode {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              className="pointer-events-auto fixed top-[62px] z-40 rounded-md p-1.5 text-muted-foreground transition-[left,colors] duration-200 ease-out hover:bg-muted hover:text-foreground"
+              className="pointer-events-auto fixed top-[calc(62px+var(--app-banner-height,0px))] z-40 rounded-md p-1.5 text-muted-foreground transition-[left,colors] duration-200 ease-out hover:bg-muted hover:text-foreground"
               data-flyout
               onClick={anyPanelExpanded ? navState.foldAll : navState.closeAll}
               style={{ left: offsets.rightEdge + 4 }}

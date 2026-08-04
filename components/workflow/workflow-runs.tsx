@@ -1379,11 +1379,25 @@ export function WorkflowRuns({
             {isExpanded && (
               <div className="border-t bg-muted/20">
                 {showRunError && (
-                  <div className="p-4 pb-0">
-                    <Alert className="border-destructive bg-destructive text-white">
+                  <div className={cn("p-4", executionLogs.length > 0 && "pb-0")}>
+                    <Alert
+                      className="border-destructive/30 bg-destructive/10"
+                      variant="destructive"
+                    >
                       <TriangleAlert />
-                      <AlertDescription className="text-white">
-                        {runErrorMessage}
+                      <AlertDescription className="flex flex-col items-start gap-1.5">
+                        <span>{runErrorMessage}</span>
+                        {execution.errorCategory === "billing" && (
+                          <a
+                            className="inline-flex items-center gap-1 font-medium underline underline-offset-2 hover:opacity-80"
+                            href="/billing"
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            Adjust spending caps
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
                       </AlertDescription>
                     </Alert>
                   </div>
