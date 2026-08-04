@@ -487,6 +487,10 @@ export const workflows = pgTable(
     isListed: boolean("is_listed").default(false).notNull(),
     listedSlug: text("listed_slug"),
     listedAt: timestamp("listed_at"),
+    /** When true, execution status is shareable via deep link for public/unlisted workflows. Opt-in; default false. */
+    shareExecutionStatus: boolean("share_execution_status")
+      .default(false)
+      .notNull(),
     inputSchema: jsonb("input_schema").$type<Record<string, unknown>>(),
     outputMapping: jsonb("output_mapping").$type<Record<string, unknown>>(),
     priceUsdcPerCall: numeric("price_usdc_per_call"),

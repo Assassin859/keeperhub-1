@@ -234,21 +234,6 @@ function isChainTagCompatibleWithCaller(
   );
 }
 
-/**
- * Returns whether a caller payment rail is compatible with a workflow's
- * registered chain tag. Null/undefined workflow chain is permissive (legacy).
- */
-export function isPaymentRailCompatible(
-  workflowChainTag: string | null | undefined,
-  callerChain: BindingChain
-): boolean {
-  if (!workflowChainTag) {
-    return true;
-  }
-  const wfClass = classifyChainTag(workflowChainTag);
-  return isChainTagCompatibleWithCaller(wfClass, callerChain);
-}
-
 function priceToMicro(
   priceUsdcPerCall: string | null | undefined
 ): bigint | null {

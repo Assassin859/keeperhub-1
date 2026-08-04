@@ -11,10 +11,14 @@ const { mockResolveExecutionViewAccess, mockFindMany } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
 }));
 
-vi.mock("@/lib/workflow/execution-access", () => ({
-  resolveExecutionViewAccess: mockResolveExecutionViewAccess,
-  redactExecutionStatusForPublicView: (payload: unknown) => payload,
-}));
+vi.mock("@/lib/workflow/execution-access", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/workflow/execution-access")>();
+  return {
+    ...actual,
+    resolveExecutionViewAccess: mockResolveExecutionViewAccess,
+  };
+});
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -46,15 +50,15 @@ const EXECUTION_ID = "exec_public_1";
 function makeExecution(visibility: "public" | "private") {
   return {
     id: EXECUTION_ID,
-    status: "success",
+    status: "error",
     totalSteps: "1",
-    completedSteps: "1",
-    currentNodeId: null,
-    currentNodeName: null,
+    completedSteps: "0",
+    currentNodeId: "n1",
+    currentNodeName: "Step",
     lastSuccessfulNodeId: null,
     lastSuccessfulNodeName: null,
     executionTrace: ["trace-line"],
-    error: null,
+    error: "internal failure",
     transactionHashes: [
       {
         hash: "0xabc",
@@ -79,7 +83,7 @@ function createRequest(): Request {
 describe("GET /api/workflows/executions/[executionId]/status public access", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFindMany.mockResolvedValue([{ nodeId: "n1", status: "success" }]);
+    mockFindMany.mockResolvedValue([{ nodeId: "n1", status: "error" }]);
   });
 
   it("returns 200 for publicReadOnly execution without auth", async () => {
@@ -95,13 +99,37 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
-    expect(body.status).toBe("success");
+    expect(body.status).toBe("error");
     expect(body.transactionHashes).toEqual(execution.transactionHashes);
   });
 
-  it("returns 401 for signInRequired without leaking execution payload", async () => {
+  it("redacts executionTrace and error from publicReadOnly errorContext", async () => {
+    const execution = makeExecution("public");
     mockResolveExecutionViewAccess.mockResolvedValue({
-      mode: "signInRequired",
+      mode: "publicReadOnly",
+      execution,
+    });
+
+    const response = await GET(createRequest(), {
+      params: Promise.resolve({ executionId: EXECUTION_ID }),
+    });
+    const body = (await response.json()) as {
+      errorContext: {
+        failedNodeId: string | null;
+        executionTrace?: string[];
+        error?: string;
+      } | null;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.errorContext?.failedNodeId).toBe("n1");
+    expect(body.errorContext?.executionTrace).toBeUndefined();
+    expect(body.errorContext?.error).toBeUndefined();
+  });
+
+  it("returns 403 for accessDenied without leaking execution payload", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "accessDenied",
     });
 
     const response = await GET(createRequest(), {
@@ -109,8 +137,8 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
     });
     const body = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(401);
-    expect(body.error).toBe("Authentication required");
+    expect(response.status).toBe(403);
+    expect(body.error).toBe("Access denied");
   });
 
   it("returns 404 for notFound", async () => {

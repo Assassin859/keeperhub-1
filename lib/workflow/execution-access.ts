@@ -30,7 +30,7 @@ export type ExecutionAccessResult =
 export type ExecutionViewAccess =
   | { mode: "full"; execution: AuthorizedExecution }
   | { mode: "publicReadOnly"; execution: AuthorizedExecution }
-  | { mode: "signInRequired" }
+  | { mode: "accessDenied" }
   | { mode: "notFound" };
 
 type NodeStatus = {
@@ -59,9 +59,31 @@ export type ExecutionStatusPayload = {
   transactionHashes: TransactionHashEntry[];
 };
 
+function isAuthenticatedCaller(
+  authContext: DualAuthContext
+): authContext is AuthenticatedContext {
+  if ("error" in authContext) {
+    return false;
+  }
+  return Boolean(authContext.userId || authContext.organizationId);
+}
+
+function isPubliclyShareableWorkflow(
+  workflow: AuthorizedExecution["workflow"]
+): boolean {
+  if (workflow.deletedAt) {
+    return false;
+  }
+  if (!workflow.shareExecutionStatus) {
+    return false;
+  }
+  const visibility = workflow.visibility;
+  return visibility === "public" || visibility === "unlisted";
+}
+
 /**
  * Strip verbose internals from status payloads served to unauthenticated
- * viewers of public/unlisted workflows.
+ * viewers of opted-in public/unlisted workflow executions.
  */
 export function redactExecutionStatusForPublicView(
   payload: ExecutionStatusPayload
@@ -82,7 +104,8 @@ export function redactExecutionStatusForPublicView(
 
 /**
  * Resolve how a caller may view an execution: full org access, public read-only
- * (public/unlisted workflow), sign-in required (private), or not found.
+ * (opted-in public/unlisted workflow), access denied (authenticated but no
+ * access), or not found (unknown id or unauthenticated private — anti-enumeration).
  */
 export async function resolveExecutionViewAccess(
   request: Request,
@@ -94,37 +117,33 @@ export async function resolveExecutionViewAccess(
   }
 
   const authContext = await getDualAuthContext(request, { required: false });
-  if (!("error" in authContext)) {
-    const { userId, organizationId } = authContext;
-    if (userId || organizationId) {
-      const access = await getWorkflowAccess(execution.workflow, {
-        userId,
-        organizationId,
-        authMethod: authContext.authMethod,
-      });
-      if (access.hasFullAccess && !access.isDeleted) {
-        return { mode: "full", execution };
-      }
+  if (isAuthenticatedCaller(authContext)) {
+    const access = await getWorkflowAccess(execution.workflow, {
+      userId: authContext.userId,
+      organizationId: authContext.organizationId,
+      authMethod: authContext.authMethod,
+    });
+    if (access.hasFullAccess && !access.isDeleted) {
+      return { mode: "full", execution };
     }
   }
 
-  if (execution.workflow.deletedAt) {
-    return { mode: "notFound" };
-  }
-
-  const visibility = execution.workflow.visibility;
-  if (visibility === "public" || visibility === "unlisted") {
+  if (isPubliclyShareableWorkflow(execution.workflow)) {
     return { mode: "publicReadOnly", execution };
   }
 
-  return { mode: "signInRequired" };
+  if (isAuthenticatedCaller(authContext)) {
+    return { mode: "accessDenied" };
+  }
+
+  return { mode: "notFound" };
 }
 
 /**
  * Authenticate the request, load the execution, and verify the caller may see
- * it. Shared by the status, logs, and wait endpoints so they apply identical
- * auth and soft-delete rules. A soft-deleted workflow hides its executions, so
- * those collapse to 404 rather than leaking existence.
+ * it. Shared by the logs and wait endpoints so they apply identical auth and
+ * soft-delete rules. A soft-deleted workflow hides its executions, so those
+ * collapse to 404 rather than leaking existence.
  */
 export async function resolveAuthorizedExecution(
   request: Request,

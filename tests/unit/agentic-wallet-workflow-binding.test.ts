@@ -59,12 +59,8 @@ vi.mock("@/lib/db/schema", () => ({
   organizationWallets: { _table: "organization_wallets" },
 }));
 
-const {
-  verifyWorkflowBinding,
-  KNOWN_DATA_CHAIN_IDS,
-  MULTI_CHAIN_TAGS,
-  isPaymentRailCompatible,
-} = await import("@/lib/agentic-wallet/workflow-binding");
+const { verifyWorkflowBinding, KNOWN_DATA_CHAIN_IDS, MULTI_CHAIN_TAGS } =
+  await import("@/lib/agentic-wallet/workflow-binding");
 
 const SLUG = "test-slug";
 const CREATOR = "0xCreATor000000000000000000000000000000001";
@@ -293,6 +289,8 @@ describe("verifyWorkflowBinding", () => {
       });
     });
 
+    // chain: "ethereum" resolves as a data-chain slug (not payment-chain rejection).
+    // "9999" remains the unrecognised-chain case in the test below.
     it("accepts data-chain slug aliases (ethereum, polygon, arbitrum, bsc)", async () => {
       for (const chainSlug of [
         "ethereum",
@@ -605,30 +603,5 @@ describe("verifyWorkflowBinding", () => {
         code: "CHAIN_MISMATCH",
       });
     });
-  });
-});
-
-describe("isPaymentRailCompatible", () => {
-  it("returns true for null/undefined workflow chain (legacy permissive)", () => {
-    expect(isPaymentRailCompatible(null, "base")).toBe(true);
-    expect(isPaymentRailCompatible(undefined, "tempo")).toBe(true);
-  });
-
-  it("returns true for data-chain slug and numeric id on either rail", () => {
-    expect(isPaymentRailCompatible("ethereum", "base")).toBe(true);
-    expect(isPaymentRailCompatible("ethereum", "tempo")).toBe(true);
-    expect(isPaymentRailCompatible("1", "base")).toBe(true);
-    expect(isPaymentRailCompatible("polygon", "tempo")).toBe(true);
-  });
-
-  it("returns false when payment-chain pin differs from caller", () => {
-    expect(isPaymentRailCompatible("base", "tempo")).toBe(false);
-    expect(isPaymentRailCompatible("tempo", "base")).toBe(false);
-    expect(isPaymentRailCompatible("8453", "tempo")).toBe(false);
-  });
-
-  it("returns false for unrecognised tags", () => {
-    expect(isPaymentRailCompatible("9999", "base")).toBe(false);
-    expect(isPaymentRailCompatible("   ", "base")).toBe(false);
   });
 });

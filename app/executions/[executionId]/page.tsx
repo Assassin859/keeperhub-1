@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { ExecutionAccessDenied } from "@/components/executions/execution-access-denied";
 import { ExecutionShareView } from "@/components/executions/execution-share-view";
-import { ExecutionSignInGate } from "@/components/executions/execution-sign-in-gate";
 import { resolveExecutionViewAccess } from "@/lib/workflow/execution-access";
 
 type ExecutionPageProps = {
@@ -23,8 +23,8 @@ export default async function ExecutionPage({
     notFound();
   }
 
-  if (access.mode === "signInRequired") {
-    return <ExecutionSignInGate />;
+  if (access.mode === "accessDenied") {
+    return <ExecutionAccessDenied />;
   }
 
   const { execution } = access;

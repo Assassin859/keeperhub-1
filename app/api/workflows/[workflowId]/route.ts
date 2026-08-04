@@ -603,6 +603,9 @@ export async function PATCH(
       body.isListed === false && existingWorkflow.isListed === true;
     const isTransitioningToListed =
       body.isListed === true && existingWorkflow.isListed !== true;
+    if (isTransitioningToListed) {
+      updateData.shareExecutionStatus = true;
+    }
     const willBeListed =
       !isTransitioningToUnlisted &&
       (isTransitioningToListed || existingWorkflow.isListed === true);

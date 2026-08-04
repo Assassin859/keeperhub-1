@@ -16,15 +16,13 @@ const TERMINAL_STATUSES = new Set([
   "cancelled",
 ]);
 
-const EXPLORER_BASE_BY_CHAIN_ID: Readonly<Record<number, string>> = {
-  1: "https://etherscan.io",
-  8453: "https://basescan.org",
-  42161: "https://arbiscan.io",
-  137: "https://polygonscan.com",
-  43114: "https://snowtrace.io",
-  56: "https://bscscan.com",
-  101: "https://solscan.io",
-  103: "https://solscan.io/?cluster=devnet",
+const MAX_POLL_MS = 30 * 60 * 1000;
+const MAX_POLL_ATTEMPTS = 120;
+const POLL_INTERVALS_MS = [2000, 4000, 8000, 16_000, 30_000];
+
+type ChainExplorerRow = {
+  chainId: number;
+  explorerUrl: string | null;
 };
 
 type ExecutionShareViewProps = {
@@ -76,11 +74,14 @@ function StatusIcon({ status }: { status: string }): React.ReactElement {
   }
 }
 
-function buildTxExplorerUrl(entry: TransactionHashEntry): string | null {
+function buildTxExplorerUrl(
+  entry: TransactionHashEntry,
+  explorerByChainId: Map<number, string>
+): string | null {
   if (!entry.chainId) {
     return null;
   }
-  const base = EXPLORER_BASE_BY_CHAIN_ID[entry.chainId];
+  const base = explorerByChainId.get(entry.chainId);
   if (!base) {
     return null;
   }
@@ -98,10 +99,59 @@ export function ExecutionShareView({
     status: initialStatus,
   });
   const [loadError, setLoadError] = useState(false);
+  const [explorerByChainId, setExplorerByChainId] = useState<
+    Map<number, string>
+  >(new Map());
 
   useEffect(() => {
     let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
+
+    void fetch("/api/chains")
+      .then((response) => response.json())
+      .then((chains: ChainExplorerRow[]) => {
+        if (cancelled) {
+          return;
+        }
+        const map = new Map<number, string>();
+        for (const chain of chains) {
+          if (chain.explorerUrl) {
+            map.set(chain.chainId, chain.explorerUrl);
+          }
+        }
+        setExplorerByChainId(map);
+      })
+      .catch(() => {
+        // Explorer links are optional; status polling still works.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const startedAt = Date.now();
+
+    const scheduleNext = (status: string): void => {
+      if (TERMINAL_STATUSES.has(status)) {
+        return;
+      }
+      if (Date.now() - startedAt >= MAX_POLL_MS) {
+        return;
+      }
+      if (attempt >= MAX_POLL_ATTEMPTS) {
+        return;
+      }
+      const delay =
+        POLL_INTERVALS_MS[Math.min(attempt, POLL_INTERVALS_MS.length - 1)];
+      attempt += 1;
+      timeoutId = setTimeout(() => {
+        void poll();
+      }, delay);
+    };
 
     const poll = async (): Promise<void> => {
       try {
@@ -111,10 +161,7 @@ export function ExecutionShareView({
         }
         setStatusData(data as StatusResponse);
         setLoadError(false);
-        if (TERMINAL_STATUSES.has(data.status) && intervalId) {
-          clearInterval(intervalId);
-          intervalId = undefined;
-        }
+        scheduleNext(data.status);
       } catch {
         if (!cancelled) {
           setLoadError(true);
@@ -122,18 +169,12 @@ export function ExecutionShareView({
       }
     };
 
-    if (!TERMINAL_STATUSES.has(initialStatus)) {
-      intervalId = setInterval(() => {
-        poll();
-      }, 2000);
-    }
-
-    poll();
+    void poll();
 
     return () => {
       cancelled = true;
-      if (intervalId) {
-        clearInterval(intervalId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     };
   }, [executionId, initialStatus]);
@@ -210,7 +251,10 @@ export function ExecutionShareView({
             <h2 className="font-medium text-sm">Transactions</h2>
             <ul className="space-y-2">
               {txHashes.map((entry) => {
-                const explorerUrl = buildTxExplorerUrl(entry);
+                const explorerUrl = buildTxExplorerUrl(
+                  entry,
+                  explorerByChainId
+                );
                 return (
                   <li
                     className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"

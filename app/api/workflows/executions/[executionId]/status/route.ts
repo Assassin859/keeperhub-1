@@ -72,16 +72,13 @@ export async function GET(
         { status: 404 }
       );
     }
-    if (viewAccess.mode === "signInRequired") {
+    if (viewAccess.mode === "accessDenied") {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),
-        statusCode: 401,
+        statusCode: 403,
       });
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
     const { execution } = viewAccess;
