@@ -13,13 +13,11 @@ import { PAYG_DEFAULT_CHAIN_ID } from "@/lib/billing/payg/constants";
 const NEXT_PATH = "/welcome/connect-agent";
 const BACK_PATH = "/welcome/invite-members";
 const BASE_CHAIN_ID = 8453;
-// Default spending caps applied when a user enables pay-as-you-go here; both are
-// editable later in Billing.
+// Default spending caps seeded from this step; both are editable in Billing.
 const DEFAULT_DAILY_CAP_USDC = "5";
 const DEFAULT_PERIOD_CAP_USDC = "50";
 
 type PaygStatus = {
-  enabled: boolean;
   priceUsdc: string;
   treasuryConfigured: boolean;
   chainId: number;
@@ -139,7 +137,7 @@ export function PayPerExecutionStep(): React.ReactElement {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balances, setBalances] = useState<ChainBalance[]>([]);
   const [balanceLoading, setBalanceLoading] = useState(true);
-  const [enabling, setEnabling] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -217,10 +215,10 @@ export function PayPerExecutionStep(): React.ReactElement {
 
   const goNext = (): void => router.push(NEXT_PATH);
 
-  // Enable pay-as-you-go with default spending caps, then advance. On failure we
-  // stay on the step so the user can retry or skip.
-  const handleEnableAndContinue = (): void => {
-    setEnabling(true);
+  // Seed the default spending caps, then advance. The caps are a convenience,
+  // not a gate, so a failure surfaces a toast and still moves the user on.
+  const handleContinue = (): void => {
+    setSaving(true);
     fetch(BILLING_API.PAYG, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -234,30 +232,28 @@ export function PayPerExecutionStep(): React.ReactElement {
           const data = (await res.json().catch(() => ({}))) as {
             error?: string;
           };
-          toast.error(data.error ?? "Could not enable pay-as-you-go");
-          return;
+          toast.error(data.error ?? "Could not save your spending caps");
         }
-        toast.success("Pay-as-you-go enabled");
-        goNext();
       })
       .catch(() => {
-        toast.error("Could not enable pay-as-you-go");
+        toast.error("Could not save your spending caps");
       })
-      .finally(() => setEnabling(false));
+      .finally(() => {
+        setSaving(false);
+        goNext();
+      });
   };
 
   return (
     <WelcomeShell
-      busy={enabling}
-      description="Every organization gets 5,000 free executions a month. Turn on pay-as-you-go to keep workflows running past the free tier."
-      nextLabel="Enable pay-as-you-go"
+      busy={saving}
+      description="Every organization gets 5,000 free executions a month. Pay-as-you-go keeps your workflows running past the free tier."
+      nextLabel="Continue"
       onBack={() => router.push(BACK_PATH)}
-      onNext={handleEnableAndContinue}
-      onSkip={goNext}
+      onNext={handleContinue}
       preview={
         <PayPerExecutionPreview
           dailyCap={`$${DEFAULT_DAILY_CAP_USDC}`}
-          enabled={payg?.enabled ?? false}
           periodCap={`$${DEFAULT_PERIOD_CAP_USDC}`}
           priceLabel={priceLabel}
         />
@@ -274,7 +270,7 @@ export function PayPerExecutionStep(): React.ReactElement {
             wallet. No credit card required.
           </li>
           <li>
-            Enabling sets a $5 daily and $50 monthly spending cap. Change or
+            You start with a $5 daily and $50 monthly spending cap. Change or
             remove them anytime in Billing.
           </li>
         </ul>
@@ -288,8 +284,8 @@ export function PayPerExecutionStep(): React.ReactElement {
         />
 
         <p className="text-muted-foreground text-xs">
-          Optional now. If you skip, you can enable pay-as-you-go anytime in
-          Billing.
+          You can fund the wallet later. Workflows run on the free tier until
+          you do.
         </p>
       </div>
     </WelcomeShell>
