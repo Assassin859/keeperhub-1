@@ -220,7 +220,9 @@ function buildFreeCard(params: {
     cta: {
       label: getButtonLabel("free", isCurrent, loading, hasSubscription),
       onClick: onSelect,
-      variant: "primary",
+      // Downgrading is not something to lead with: on a paid plan this button
+      // cancels, so it stays quiet while the plans being sold are filled.
+      variant: hasSubscription ? "secondary" : "primary",
       disabled: isCurrent || loading,
     },
     footnote: `${plan.features.maxExecutionsPerMonth.toLocaleString()} free / mo, then pay-as-you-go`,

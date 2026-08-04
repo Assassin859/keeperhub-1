@@ -291,10 +291,12 @@ function ManageTrialButton({
   currentTier,
   currentInterval,
   days,
+  trialEndsAt,
 }: {
   currentTier: TierKey;
   currentInterval: BillingInterval;
   days: number;
+  trialEndsAt: string | null;
 }): React.ReactElement {
   const { open } = useOverlay();
   return (
@@ -302,7 +304,13 @@ function ManageTrialButton({
       onClick={() =>
         open(
           TrialUpsellModal,
-          { days, tier: currentTier, isUpdate: true, currentInterval },
+          {
+            days,
+            tier: currentTier,
+            isUpdate: true,
+            currentInterval,
+            trialEndsAt: trialEndsAt ?? undefined,
+          },
           { size: "2xl" }
         )
       }
@@ -849,6 +857,7 @@ export function BillingStatus(): React.ReactElement {
                 currentInterval={trialInterval}
                 currentTier={trialTier}
                 days={data?.trial?.days ?? 14}
+                trialEndsAt={sub?.currentPeriodEnd ?? null}
               />
             )}
             {plan !== "free" && (
