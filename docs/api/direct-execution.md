@@ -39,8 +39,11 @@ you inspected is the transaction you send:
 4. Save the returned `executionId`, then poll
    `GET /api/execute/{executionId}/status`. Honor the
    `X-Poll-Interval-Hint` response header between polls.
-5. Treat the status response's `transactionHash` and `transactionLink` as the
-   authoritative onchain proof.
+5. Treat the status response's `receipts` as the authoritative onchain proof:
+   each entry is a receipt re-fetched from the chain, so `verified` and
+   `receiptStatus` say what actually happened. `transactionHash` and
+   `transactionLink` identify the transaction but are self-reported by the
+   write path.
 
 This sequence catches bad addresses, ABI mistakes, insufficient balances, and
 reverts before broadcast, while idempotency makes an interrupted client safe to
@@ -398,6 +401,17 @@ Check the status of a direct execution.
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
   "sponsored": false,
+  "receipts": [
+    {
+      "hash": "0x...",
+      "chainId": 11155111,
+      "verified": true,
+      "receiptStatus": "success",
+      "blockNumber": 11413447,
+      "gasUsed": "68115",
+      "verifiedAt": "2024-01-01T00:00:15Z"
+    }
+  ],
   "gasUsedWei": "21000000000000",
   "result": {...},
   "error": null,
@@ -405,6 +419,26 @@ Check the status of a direct execution.
   "completedAt": "2024-01-01T00:00:15Z"
 }
 ```
+
+**Receipts:**
+
+`receipts` carries one entry per transaction hash this execution claimed, each
+independently re-fetched from the chain before the execution was allowed to
+settle. It is the evidence behind `status`, not a restatement of it:
+
+- `verified`: whether this hash positively confirmed on-chain. An execution
+  settles as `completed` only when every entry is `true`.
+- `receiptStatus`: `success`, `reverted`, `safe_inner_failure` (the outer
+  transaction succeeded but a wrapped inner call failed), `not_found`, or
+  `timeout`. The last two mean verification could not reach a definitive
+  answer within its budget; they fail the execution closed rather than
+  optimistically settling it, so a `failed` execution carrying `timeout` may
+  describe a transaction that later lands.
+- `blockNumber` / `gasUsed`: read from the fetched receipt, not self-reported
+  by the write path.
+
+The array is empty for executions that claimed no transaction hash, such as
+read calls and simulations.
 
 **Status Values:**
 
