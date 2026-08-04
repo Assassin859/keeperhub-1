@@ -16,6 +16,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
+import { redactAllUrls } from "@/lib/rpc/scrub-rpc-urls";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
@@ -87,9 +88,12 @@ export type WriteContractResult =
       // KEEP-966: chain the transaction was broadcast on, required for
       // independent on-chain receipt verification at execution finalize time.
       // Absent when failOnError=false (see applyFailOnError) softened an
-      // execution failure into success, since no transaction was ever broadcast,
-      // so there is nothing to verify. The KEEP-966 reconciliation gate in
-      // lib/workflow/executor/logging.ts only collects entries that have a
+      // execution failure into success. The failure result that gets softened
+      // never carries a transactionHash itself; a signer/RPC failure means
+      // nothing was broadcast, and the on-chain revert catch path does not
+      // thread the hash through even though a transaction did land. Either
+      // way there is no hash to verify here. The KEEP-966 reconciliation gate
+      // in lib/workflow/executor/logging.ts only collects entries that have a
       // real `transactionHash`, so this is safe: a softened result is simply
       // never picked up by that gate.
       chainId?: number;
@@ -110,7 +114,6 @@ export type WriteContractResult =
       // Absent on a genuine successful write; transactionHash is absent here.
       error?: string;
       rejection?: RevertKind;
-      errorClass?: ExecutionErrorType;
     }
   | {
       success: false;
@@ -133,9 +136,20 @@ export type WriteContractResult =
  * of this flag; softening them would let a broken node config run forever
  * without the author noticing.
  *
- * Must be applied to the result AFTER withStepValueCap resolves, never
- * inside writeContractCore: the value-cap settle/release decision is keyed
- * on the true success/failure of the on-chain call.
+ * Must be applied to the writeContractCore result only, AFTER
+ * withStepValueCap resolves it, never inside writeContractCore: the
+ * value-cap settle/release decision is keyed on the true success/failure of
+ * the on-chain call. A value-cap denial (e.g. daily cap exceeded) carries no
+ * `errorClass` either, but it is not a writeContractCore result and must
+ * never reach this function, since a cap denial always has to hard-fail
+ * regardless of the toggle.
+ *
+ * Every web3 URL is an RPC provider endpoint, so the error string is
+ * redacted the same way withStepLogging redacts a hard failure
+ * (see redactStepError in step-handler.ts). withStepLogging only redacts
+ * the `success: false` branch, and this function returns `success: true`,
+ * so the caller gets no redaction safety net downstream; it has to happen
+ * here.
  */
 export function applyFailOnError(
   result: WriteContractResult,
@@ -146,9 +160,8 @@ export function applyFailOnError(
   }
   return {
     success: true,
-    error: result.error,
+    error: redactAllUrls(result.error),
     rejection: result.rejection,
-    errorClass: result.errorClass,
   };
 }
 

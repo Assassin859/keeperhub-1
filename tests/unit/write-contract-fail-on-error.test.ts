@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Write Contract's failOnError toggle: when off, a failure encountered while
 // attempting the on-chain send (signer/RPC/revert) is softened into
-// { success: true, error, rejection?, errorClass? } so the workflow
-// continues, mirroring HTTP Request's failOnError. Config/validation
-// failures (errorClass USER/SYSTEM) always hard-fail regardless.
+// { success: true, error, rejection? } so the workflow continues, mirroring
+// HTTP Request's failOnError. Config/validation failures (errorClass
+// USER/SYSTEM) always hard-fail regardless, and the error is redacted the
+// same way withStepLogging redacts a hard failure.
 
 vi.mock("server-only", () => ({}));
 
@@ -216,8 +217,24 @@ describe("applyFailOnError", () => {
       success: true,
       error: "Contract call failed: Error(Splitter/kicked-too-soon)",
       rejection: undefined,
-      errorClass: undefined,
     });
+  });
+
+  it("redacts provider URLs out of the softened error before returning", () => {
+    const failure: WriteContractResult = {
+      success: false,
+      error:
+        'Contract call failed: could not coalesce error (info={ "requestUrl": "https://lb.drpc.live/ethereum/FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAAAAAAAAAAAA" }, code=UNKNOWN_ERROR)',
+    };
+
+    const result = applyFailOnError(failure, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.error).not.toContain("lb.drpc.live");
+      expect(result.error).not.toContain("FAKE_TEST_KEY_DO_NOT_USE");
+      expect(result.error).toContain("[REDACTED-URL]");
+      expect(result.error).toContain("could not coalesce error");
+    }
   });
 
   it("softens the string 'false' the same as boolean false", () => {
