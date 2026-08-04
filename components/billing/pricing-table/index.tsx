@@ -46,6 +46,8 @@ const PLAN_ORDER: readonly PlanName[] = [
   "enterprise",
 ];
 
+const MONTHS_PER_YEAR = 12;
+
 type ConfirmTarget = {
   planName: PlanName;
   tierKey: TierKey | null;
@@ -296,7 +298,7 @@ function buildTieredCard(params: {
       variant: trialDays === null ? "secondary" : "primary",
       disabled: isCurrent || loading,
     },
-    footnote: buildTieredFootnote(plan, trialDays, trialPrice),
+    footnote: buildTieredFootnote(plan, trialDays, trialPrice, interval),
   };
 }
 
@@ -313,11 +315,16 @@ function buildTieredBadgeText(
 function buildTieredFootnote(
   plan: (typeof PLANS)[TieredPlanName],
   trialDays: number | null,
-  trialPrice: number | null
+  trialPrice: number | null,
+  interval: BillingInterval
 ): string | undefined {
   // Keep this to one line: the footnote pill wraps and unbalances the card.
+  // An annual trial converts to a year charged up front, so quote that total
+  // rather than the per-month rate the headline shows.
   if (trialDays !== null && trialPrice !== null) {
-    return `$0 today, then $${trialPrice}/mo`;
+    return interval === "yearly"
+      ? `$0 today, then $${(trialPrice * MONTHS_PER_YEAR).toLocaleString()}/yr`
+      : `$0 today, then $${trialPrice}/mo`;
   }
   return plan.overage.enabled
     ? `$${plan.overage.ratePerThousand}/1K additional executions`
