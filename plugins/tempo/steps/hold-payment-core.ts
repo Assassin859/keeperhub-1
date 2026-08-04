@@ -41,6 +41,8 @@ export type HoldPaymentCoreInput = {
   executionId?: string;
 };
 
+export type HoldPaymentFailureKind = "validation" | "infrastructure";
+
 export type HoldPaymentCoreResult =
   | {
       success: true;
@@ -56,11 +58,23 @@ export type HoldPaymentCoreResult =
       status: "pending";
       chainId: number;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      failureKind: HoldPaymentFailureKind;
+    };
 
 type ResolvedWindow =
   | { ok: true; broadcastAt: Date | null; validBeforeSec: number }
   | { ok: false; error: string };
+
+function validationFailure(error: string): HoldPaymentCoreResult {
+  return { success: false, error, failureKind: "validation" };
+}
+
+function infrastructureFailure(error: string): HoldPaymentCoreResult {
+  return { success: false, error, failureKind: "infrastructure" };
+}
 
 function resolveWindow(
   mode: BroadcastMode,
@@ -125,17 +139,16 @@ export async function executeHoldPayment(
     chainId = getChainIdFromNetwork(input.network);
     assertTempoChain(chainId);
   } catch (error) {
-    return { success: false, error: getErrorMessage(error) };
+    return validationFailure(getErrorMessage(error));
   }
 
   if (!ethers.isAddress(input.recipientAddress)) {
-    return {
-      success: false,
-      error: `Invalid recipient address: ${input.recipientAddress}`,
-    };
+    return validationFailure(
+      `Invalid recipient address: ${input.recipientAddress}`
+    );
   }
   if (!input.amount || input.amount.trim() === "") {
-    return { success: false, error: "Amount is required" };
+    return validationFailure("Amount is required");
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -146,7 +159,7 @@ export async function executeHoldPayment(
     nowSec
   );
   if (!window.ok) {
-    return { success: false, error: window.error };
+    return validationFailure(window.error);
   }
 
   try {
@@ -224,6 +237,6 @@ export async function executeHoldPayment(
       error,
       { plugin_name: "tempo", action_name: "hold-payment" }
     );
-    return { success: false, error: getErrorMessage(error) };
+    return infrastructureFailure(getErrorMessage(error));
   }
 }

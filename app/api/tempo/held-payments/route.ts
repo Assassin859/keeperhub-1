@@ -12,6 +12,11 @@ import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { resolveCreatorContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
+import {
+  buildActor,
+  buildAuditMetadata,
+  recordAuditEvent,
+} from "@/lib/security/audit-log";
 import { getOrgRole } from "@/lib/security/org-role";
 import {
   countHeldPayments,
@@ -117,12 +122,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   if (
-    !(
-      body.network &&
-      body.tokenConfig !== undefined &&
-      body.amount &&
-      body.recipientAddress
-    )
+    !(body.network && body.tokenConfig && body.amount && body.recipientAddress)
   ) {
     return NextResponse.json(
       {
@@ -147,8 +147,30 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 
   if (!result.success) {
+    if (result.failureKind === "infrastructure") {
+      logSystemError(
+        ErrorCategory.TRANSACTION,
+        "[Tempo Held] Failed to create held payment",
+        new Error(result.error),
+        { endpoint: "/api/tempo/held-payments", operation: "create" }
+      );
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
+
+  await recordAuditEvent({
+    actor: buildActor({
+      userId: resolved.userId,
+      organizationId: resolved.organizationId,
+      authMethod: resolved.authMethod,
+      apiKeyId: resolved.apiKeyId,
+    }),
+    action: "tempo_held_payment.created",
+    resourceType: "tempo_held_payment",
+    resourceId: result.paymentId,
+    metadata: buildAuditMetadata(request),
+  });
 
   return NextResponse.json(result, { status: 201 });
 }

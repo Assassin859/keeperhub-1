@@ -153,10 +153,16 @@ The server registers more than 30 tools. Call `tools_documentation` (or `list_ac
 #### Cold start and retries
 
 `create_workflow` and `ai_generate_workflow` may return a structured cold-start
-error (`code: upstream_cold_start`) when the app is waking from idle. The error
-includes `retryAfterSeconds` and a hint to retry with the same
-`idempotency_key`. Wait the suggested interval, then retry once or twice with
-bounded backoff.
+error (`code: upstream_cold_start`) when the app is waking from idle (HTTP 502,
+503, or 504). The error includes `retryAfterSeconds` and a hint to retry with the
+same `idempotency_key`. Wait the suggested interval, then retry once or twice with
+bounded backoff. Connection errors and DNS failures are **not** cold-start signals.
+
+Most MCP tool calls use a 55-second client-side fetch timeout. Long-running
+execute tools (`execute_workflow`, `execute_transfer`, `execute_contract_call`,
+`execute_check_and_execute`, `execute_protocol_action`, `call_workflow`,
+`get_direct_execution_status`) disable that cap so on-chain work is not aborted
+mid-flight.
 
 ### Execution
 
@@ -174,7 +180,7 @@ bounded backoff.
 |------|-------------|
 | `get_spending_limits` | Read org daily direct-execution spending caps and usage. |
 | `test_notification` | Test an integration (Discord, Slack, etc.) without saving credentials. May send a real test message. |
-| `tempo_sign_and_hold` | Sign a Tempo transfer and hold for later broadcast (org owner). |
+| `tempo_sign_and_hold` | Sign a Tempo transfer and hold for later broadcast (org owner). Scheduled broadcast (`broadcastMode: schedule`) is allowed via OAuth for agent automation; immediate release still requires session step-up. |
 | `tempo_cancel_hold` | Cancel a pending held payment. |
 | `tempo_release_hold` | Broadcast a held payment. Requires interactive session step-up MFA; OAuth tokens get a structured error. |
 

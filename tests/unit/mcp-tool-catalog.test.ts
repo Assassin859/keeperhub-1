@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { describe, expect, it, vi } from "vitest";
 import {
   AUTHENTICATED_MCP_TOOLS,
   DEPRECATED_TOOL_ALIASES,
   getAuthenticatedToolsForDiscovery,
 } from "@/lib/mcp/mcp-tool-catalog";
+
+vi.mock("server-only", () => ({}));
 
 describe("mcp-tool-catalog", () => {
   it("includes get_execution and deprecated execution aliases", () => {
@@ -27,9 +30,56 @@ describe("mcp-tool-catalog", () => {
     }
   });
 
-  it("getAuthenticatedToolsForDiscovery returns stable sorted copy", () => {
+  it("AUTHENTICATED_MCP_TOOLS is alphabetically sorted with no duplicates", () => {
+    expect(AUTHENTICATED_MCP_TOOLS).toEqual(
+      [...AUTHENTICATED_MCP_TOOLS].sort()
+    );
+    expect(new Set(AUTHENTICATED_MCP_TOOLS).size).toBe(
+      AUTHENTICATED_MCP_TOOLS.length
+    );
+  });
+
+  it("getAuthenticatedToolsForDiscovery returns a copy of the catalog", () => {
     const tools = getAuthenticatedToolsForDiscovery();
-    expect(tools.length).toBe(AUTHENTICATED_MCP_TOOLS.length);
-    expect([...tools].sort()).toEqual([...AUTHENTICATED_MCP_TOOLS].sort());
+    expect(tools).toEqual([...AUTHENTICATED_MCP_TOOLS]);
+    expect(tools).not.toBe(AUTHENTICATED_MCP_TOOLS);
+  });
+
+  it("registered tool names match AUTHENTICATED_MCP_TOOLS", async () => {
+    const { server, tools } = makeMockServer();
+    const { registerTools, registerMetaTools } = await import(
+      "@/lib/mcp/tools"
+    );
+    registerTools(
+      server as unknown as McpServer,
+      "http://localhost:3000",
+      "Bearer test-token"
+    );
+    registerMetaTools(
+      server as unknown as McpServer,
+      "http://localhost:3000",
+      "Bearer test-token"
+    );
+
+    const registered = new Set(tools.map((t) => t.name));
+    const catalog = new Set(AUTHENTICATED_MCP_TOOLS);
+    expect(registered).toEqual(catalog);
   });
 });
+
+type CapturedTool = {
+  name: string;
+};
+
+function makeMockServer(): {
+  server: { tool: ReturnType<typeof vi.fn> };
+  tools: CapturedTool[];
+} {
+  const tools: CapturedTool[] = [];
+  const server = {
+    tool: vi.fn((name: string) => {
+      tools.push({ name });
+    }),
+  };
+  return { server, tools };
+}

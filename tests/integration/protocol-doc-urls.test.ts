@@ -21,7 +21,6 @@
  * - Per-host serialization with a short gap between successive requests to
  *   the same hostname, keeping cross-host requests parallel-friendly
  * - One retry on HTTP 429 (Too Many Requests) after a fixed backoff
- * - Up to three attempts on transient network errors (ETIMEDOUT, fetch failed)
  */
 
 import { describe, expect, it } from "vitest";
@@ -35,8 +34,6 @@ type FetchOpts = { method: "HEAD" | "GET"; redirect: "follow" };
 const REQUEST_TIMEOUT_MS = 15_000;
 const SAME_HOST_GAP_MS = 250;
 const RATE_LIMIT_BACKOFF_MS = 2000;
-const NETWORK_RETRY_ATTEMPTS = 3;
-const NETWORK_RETRY_BACKOFF_MS = 3000;
 const USER_AGENT =
   "KeeperHub-docs-link-check/1.0 (+https://github.com/KeeperHub/keeperhub)";
 
@@ -109,33 +106,7 @@ async function checkOnce(
   return { status: head.status, via: "HEAD" };
 }
 
-function isTransientFetchError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return true;
-  }
-  if (error.name === "AbortError") {
-    return true;
-  }
-  const message = error.message.toLowerCase();
-  if (
-    message.includes("fetch failed") ||
-    message.includes("etimedout") ||
-    message.includes("enetunreach") ||
-    message.includes("econnreset") ||
-    message.includes("econnrefused")
-  ) {
-    return true;
-  }
-  // Node fetch wraps ETIMEDOUT/ENETUNREACH in AggregateError on error.cause
-  if ("cause" in error && error.cause !== undefined) {
-    return isTransientFetchError(error.cause);
-  }
-  return false;
-}
-
-async function checkUrlWithRateLimitRetry(
-  url: string
-): Promise<{ status: number; via: string }> {
+async function checkUrl(url: string): Promise<{ status: number; via: string }> {
   await throttlePerHost(url);
   const first = await checkOnce(url);
   if (first.status !== 429) {
@@ -146,25 +117,6 @@ async function checkUrlWithRateLimitRetry(
   await sleep(RATE_LIMIT_BACKOFF_MS);
   await throttlePerHost(url);
   return checkOnce(url);
-}
-
-async function checkUrl(url: string): Promise<{ status: number; via: string }> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < NETWORK_RETRY_ATTEMPTS; attempt++) {
-    if (attempt > 0) {
-      await sleep(NETWORK_RETRY_BACKOFF_MS * attempt);
-    }
-    try {
-      return await checkUrlWithRateLimitRetry(url);
-    } catch (error) {
-      lastError = error;
-      const isLastAttempt = attempt === NETWORK_RETRY_ATTEMPTS - 1;
-      if (isLastAttempt || !isTransientFetchError(error)) {
-        throw error;
-      }
-    }
-  }
-  throw lastError;
 }
 
 describe("Protocol docUrl reachability", () => {
@@ -187,10 +139,7 @@ describe("Protocol docUrl reachability", () => {
         ).toBeGreaterThanOrEqual(200);
         expect(status).toBeLessThan(300);
       },
-      REQUEST_TIMEOUT_MS * 2 * NETWORK_RETRY_ATTEMPTS +
-        RATE_LIMIT_BACKOFF_MS +
-        NETWORK_RETRY_BACKOFF_MS * NETWORK_RETRY_ATTEMPTS +
-        5000
+      REQUEST_TIMEOUT_MS * 2 + RATE_LIMIT_BACKOFF_MS + 5000
     );
   }
 });

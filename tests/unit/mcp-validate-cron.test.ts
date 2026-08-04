@@ -82,6 +82,7 @@ describe("validate_cron MCP tool handler", () => {
     };
     expect(parsed.valid).toBe(false);
     expect(parsed.error).toContain("60");
+    expect(parsed).not.toHaveProperty("description");
   });
 });
 

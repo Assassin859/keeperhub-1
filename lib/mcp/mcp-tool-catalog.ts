@@ -71,3 +71,19 @@ export function getAuthenticatedToolsForDiscovery(): string[] {
 
 export const DEPRECATED_PREFIX_EXECUTION =
   "[DEPRECATED — will be removed in v1.13. Use get_execution instead.]";
+
+const DEPRECATED_PREFIX =
+  "[DEPRECATED — will be removed in v1.13. Use {{replacement}} instead.]";
+
+/** Build the v1.13 deprecation prefix for a registered alias tool. */
+export function deprecatedToolDescription(
+  toolName: string,
+  body: string
+): string {
+  const replacement = DEPRECATED_TOOL_ALIASES[toolName];
+  if (!replacement) {
+    return body;
+  }
+  const prefix = DEPRECATED_PREFIX.replace("{{replacement}}", replacement);
+  return `${prefix} ${body}`;
+}

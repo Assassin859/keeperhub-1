@@ -9,7 +9,7 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { SUPPORTED_CHAIN_IDS } from "@/lib/rpc/types";
 import { withToolLogging } from "./logging";
-import { DEPRECATED_PREFIX_EXECUTION } from "./mcp-tool-catalog";
+import { deprecatedToolDescription } from "./mcp-tool-catalog";
 import { getRequiredScopeForTool, isToolAllowed } from "./oauth-scopes";
 
 type ScopeDeniedContent = {
@@ -401,12 +401,23 @@ function looseJsonString(description: string) {
 }
 
 const DEFAULT_COLD_START_RETRY_SECONDS = 30;
-const COLD_START_HTTP_STATUSES = new Set([502, 504]);
+const COLD_START_HTTP_STATUSES = new Set([502, 503, 504]);
 const MCP_FETCH_TIMEOUT_MS = 55_000;
 
 type CallApiOptions = {
   coldStartAware?: boolean;
+  /** Default 55s. Pass null to disable the MCP client abort (long-running execute tools). */
+  timeoutMs?: number | null;
 };
+
+const NO_MCP_FETCH_TIMEOUT: CallApiOptions = { timeoutMs: null };
+
+function isMcpFetchTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.name === "TimeoutError" || error.name === "AbortError";
+}
 
 function parseRetryAfterSeconds(header: string | null): number {
   if (!header) {
@@ -459,14 +470,21 @@ async function callApi(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    const timeoutMs =
+      options?.timeoutMs === undefined
+        ? MCP_FETCH_TIMEOUT_MS
+        : options.timeoutMs;
+    const fetchInit: RequestInit = {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(MCP_FETCH_TIMEOUT_MS),
-    });
+    };
+    if (timeoutMs !== null) {
+      fetchInit.signal = AbortSignal.timeout(timeoutMs);
+    }
+    response = await fetch(url, fetchInit);
   } catch (error) {
-    if (options?.coldStartAware) {
+    if (options?.coldStartAware && isMcpFetchTimeoutError(error)) {
       throw buildColdStartError(
         DEFAULT_COLD_START_RETRY_SECONDS,
         idempotencyKey
@@ -893,7 +911,8 @@ export function registerTools(
           `/api/workflow/${args.workflowId}/execute`,
           "POST",
           { input: args.input ?? {} },
-          args.idempotency_key
+          args.idempotency_key,
+          NO_MCP_FETCH_TIMEOUT
         );
         // KEEP-966: `data` already carries status: "running", not "completed"
         // -- restate that explicitly at the MCP content layer so a calling
@@ -936,7 +955,10 @@ export function registerTools(
 
   server.tool(
     "get_execution_status",
-    `${DEPRECATED_PREFIX_EXECUTION} Get workflow execution status only (status sub-object). Prefer get_execution for combined status and logs.`,
+    deprecatedToolDescription(
+      "get_execution_status",
+      "Get workflow execution status only (status sub-object). Prefer get_execution for combined status and logs."
+    ),
     {
       executionId: GET_EXECUTION_SCHEMA.executionId,
     },
@@ -965,7 +987,10 @@ export function registerTools(
 
   server.tool(
     "get_execution_logs",
-    `${DEPRECATED_PREFIX_EXECUTION} Get workflow execution step logs only (logs sub-object). Prefer get_execution for combined status and logs.`,
+    deprecatedToolDescription(
+      "get_execution_logs",
+      "Get workflow execution step logs only (logs sub-object). Prefer get_execution for combined status and logs."
+    ),
     GET_EXECUTION_SCHEMA,
     {
       title: "Get Execution Logs (deprecated)",
@@ -1079,7 +1104,10 @@ export function registerTools(
 
   server.tool(
     "search_plugins",
-    "[DEPRECATED — will be removed in v1.13. Use list_action_schemas instead.] List available action schemas filtered by category (e.g., 'web3', 'discord', 'system').",
+    deprecatedToolDescription(
+      "search_plugins",
+      "List available action schemas filtered by category (e.g., 'web3', 'discord', 'system')."
+    ),
     {
       category: z
         .string()
@@ -1213,7 +1241,10 @@ export function registerTools(
 
   server.tool(
     "get_template",
-    "[DEPRECATED — will be removed in v1.13. Use get_workflow instead.] Get details of a specific workflow template by ID.",
+    deprecatedToolDescription(
+      "get_template",
+      "Get details of a specific workflow template by ID."
+    ),
     {
       templateId: z.string().describe("The template workflow ID"),
     },
@@ -1378,7 +1409,8 @@ export function registerTools(
             tokenAddress: args.token_address,
             simulate: args.simulate,
           },
-          args.idempotency_key
+          args.idempotency_key,
+          NO_MCP_FETCH_TIMEOUT
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1434,7 +1466,8 @@ export function registerTools(
             priorityFeeGwei: args.priority_fee_gwei,
             simulate: args.simulate,
           },
-          args.idempotency_key
+          args.idempotency_key,
+          NO_MCP_FETCH_TIMEOUT
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1509,7 +1542,8 @@ export function registerTools(
             },
             simulate: args.simulate,
           },
-          args.idempotency_key
+          args.idempotency_key,
+          NO_MCP_FETCH_TIMEOUT
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1539,7 +1573,10 @@ export function registerTools(
           internalApiBaseUrl,
           authHeader,
           `/api/execute/${args.execution_id}/status`,
-          "GET"
+          "GET",
+          undefined,
+          undefined,
+          NO_MCP_FETCH_TIMEOUT
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1587,19 +1624,22 @@ export function registerTools(
           }
         }
         const valid = cronResult.valid && intervalError === undefined;
+        const payload: {
+          valid: boolean;
+          error?: string;
+          description?: string;
+        } = {
+          valid,
+          error: cronResult.error ?? intervalError,
+        };
+        if (valid) {
+          payload.description = description;
+        }
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(
-                {
-                  valid,
-                  error: cronResult.error ?? intervalError,
-                  description,
-                },
-                null,
-                2
-              ),
+              text: JSON.stringify(payload, null, 2),
             },
           ],
         };
@@ -1999,7 +2039,9 @@ export function registerMetaTools(
           authHeader,
           `/api/execute/${integration}/${slug}`,
           "POST",
-          args.params as Record<string, unknown>
+          args.params as Record<string, unknown>,
+          undefined,
+          NO_MCP_FETCH_TIMEOUT
         );
 
         return {
@@ -2088,7 +2130,9 @@ export function registerMetaTools(
             authHeader,
             `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
             "POST",
-            args.inputs
+            args.inputs,
+            undefined,
+            NO_MCP_FETCH_TIMEOUT
           );
           return {
             content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

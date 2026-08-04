@@ -1,6 +1,7 @@
 import "server-only";
 
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
+import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import {
   type StepInput,
   withStepLogging,
@@ -27,12 +28,29 @@ export type HoldPaymentResult = HoldPaymentCoreResult;
 async function stepHandler(
   input: HoldPaymentInput
 ): Promise<HoldPaymentResult> {
+  if (
+    !(
+      input.network &&
+      input.tokenConfig &&
+      input.amount &&
+      input.recipientAddress
+    )
+  ) {
+    return {
+      success: false,
+      error:
+        "network, tokenConfig, amount, and recipientAddress are required",
+      failureKind: "validation",
+    };
+  }
+
   const { _context } = input;
 
   if (!(_context?.executionId || _context?.organizationId)) {
     return {
       success: false,
       error: "Execution ID or organization ID is required",
+      failureKind: "validation",
     };
   }
   const orgCtx = await resolveOrganizationContext(
@@ -41,7 +59,11 @@ async function stepHandler(
     "hold-payment"
   );
   if (!orgCtx.success) {
-    return orgCtx;
+    return {
+      success: false,
+      error: orgCtx.error,
+      failureKind: "validation",
+    };
   }
 
   return executeHoldPayment({

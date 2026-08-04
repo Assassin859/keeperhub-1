@@ -3,13 +3,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-// requireOrganization is a pass-through HOC here: it just invokes the handler
-// with a fixed org context so we exercise the route's own param parsing.
-vi.mock("@/lib/middleware/require-org", () => ({
-  requireOrganization:
-    (handler: (req: NextRequest, context: unknown) => Promise<Response>) =>
-    (req: NextRequest) =>
-      handler(req, { organization: { id: "org_1" } }),
+const resolveOrganizationIdMock = vi.fn();
+
+vi.mock("@/lib/middleware/auth-helpers", () => ({
+  resolveOrganizationId: (...args: unknown[]) =>
+    resolveOrganizationIdMock(...args),
+}));
+
+vi.mock("@/lib/middleware/require-scope", () => ({
+  requireScope: (grantedScope: string | undefined, required: string) => {
+    if (grantedScope === "mcp:read" || grantedScope === undefined) {
+      return null;
+    }
+    return new Response(
+      JSON.stringify({ error: "insufficient_scope", required_scope: required }),
+      { status: 403 }
+    );
+  },
 }));
 
 vi.mock("@/lib/analytics/queries", () => ({
@@ -35,6 +45,12 @@ function requestForStatus(status: string): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resolveOrganizationIdMock.mockResolvedValue({
+    organizationId: "org_1",
+    scope: "mcp:read",
+    authMethod: "oauth",
+    apiKeyId: null,
+  });
 });
 
 describe("GET /api/analytics/runs status filter", () => {
@@ -83,5 +99,23 @@ describe("GET /api/analytics/runs status filter", () => {
       expect.anything(),
       expect.objectContaining({ status: undefined })
     );
+  });
+});
+
+describe("GET /api/analytics/runs auth", () => {
+  it("returns 401 when OAuth token cannot resolve org", async () => {
+    resolveOrganizationIdMock.mockResolvedValueOnce({
+      error: "Unauthorized",
+      status: 401,
+    });
+
+    const res = await GET(requestForStatus("success"));
+    expect(res.status).toBe(401);
+    expect(getUnifiedRuns).not.toHaveBeenCalled();
+  });
+
+  it("accepts mcp:read OAuth scope", async () => {
+    const res = await GET(requestForStatus("success"));
+    expect(res.status).toBe(200);
   });
 });
