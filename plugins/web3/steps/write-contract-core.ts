@@ -88,14 +88,15 @@ export type WriteContractResult =
       // KEEP-966: chain the transaction was broadcast on, required for
       // independent on-chain receipt verification at execution finalize time.
       // Absent when failOnError=false (see applyFailOnError) softened an
-      // execution failure into success. The failure result that gets softened
-      // never carries a transactionHash itself; a signer/RPC failure means
-      // nothing was broadcast, and the on-chain revert catch path does not
-      // thread the hash through even though a transaction did land. Either
-      // way there is no hash to verify here. The KEEP-966 reconciliation gate
-      // in lib/workflow/executor/logging.ts only collects entries that have a
-      // real `transactionHash`, so this is safe: a softened result is simply
-      // never picked up by that gate.
+      // execution failure into success. A signer/RPC failure means nothing
+      // was broadcast, so there is no hash at all. A reverted transaction did
+      // land on-chain and does have a hash (see revertedTransactionHash
+      // below), but it is deliberately kept out of this field: the KEEP-966
+      // reconciliation gate in lib/workflow/executor/logging.ts collects
+      // every entry with a real `transactionHash` and re-verifies it against
+      // an expected successful receipt, which a known revert would always
+      // fail. Putting a reverted hash here would fail the whole workflow's
+      // finalization over a failure the author already chose to soften.
       chainId?: number;
       transactionLink?: string;
       gasUsed?: string;
@@ -114,12 +115,17 @@ export type WriteContractResult =
       // Absent on a genuine successful write; transactionHash is absent here.
       error?: string;
       rejection?: RevertKind;
+      // Present only for a sponsored transaction that reverted on-chain:
+      // Turnkey confirms the tx mined, so the hash is real, but it is kept
+      // out of `transactionHash` for the reason documented above.
+      revertedTransactionHash?: string;
     }
   | {
       success: false;
       error: string;
       rejection?: RevertKind;
       errorClass?: ExecutionErrorType;
+      revertedTransactionHash?: string;
     };
 
 /**
@@ -162,6 +168,7 @@ export function applyFailOnError(
     success: true,
     error: redactAllUrls(result.error),
     rejection: result.rejection,
+    revertedTransactionHash: result.revertedTransactionHash,
   };
 }
 
@@ -487,7 +494,12 @@ export async function writeContractCore(
         chainId,
       });
       if (!decision.fallback) {
-        return { success: false, error: decision.error };
+        return {
+          success: false,
+          error: decision.error,
+          errorClass: decision.errorClass,
+          revertedTransactionHash: decision.transactionHash,
+        };
       }
     }
   }

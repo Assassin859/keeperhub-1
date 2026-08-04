@@ -1492,6 +1492,11 @@ const web3Plugin: IntegrationPlugin = {
           description:
             "Error message if the call failed. Also set when failOnError is off and an execution failure was softened into success=true, e.g. 'Contract call failed: Error(Splitter/kicked-too-soon)'. Match this string in a downstream Condition node (contains/matchesRegex) to filter known errors from ones that should alert.",
         },
+        {
+          field: "revertedTransactionHash",
+          description:
+            "Set only when a sponsored transaction reverted on-chain. The transaction did land and this hash is confirmed, but it is a separate field from transactionHash so a known revert never gets re-verified as a claimed success.",
+        },
       ],
       configFields: [
         {

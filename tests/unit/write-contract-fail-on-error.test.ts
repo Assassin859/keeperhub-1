@@ -52,11 +52,15 @@ vi.mock("@/lib/utils/id", () => ({
   generateId: () => "test-unique-id",
 }));
 
-vi.mock("@/lib/utils", () => ({
-  getErrorMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
-  resolveFailOnError: (failOnError: unknown) =>
-    failOnError !== false && failOnError !== "false",
-}));
+vi.mock("@/lib/utils", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils");
+  return {
+    ...actual,
+    getErrorMessage: (e: unknown) =>
+      e instanceof Error ? e.message : String(e),
+  };
+});
 
 vi.mock("@/lib/rpc/network-utils", () => ({
   getChainIdFromNetwork: vi.fn().mockReturnValue(1),
@@ -261,6 +265,24 @@ describe("applyFailOnError", () => {
         kind: "custom-error",
         name: "KickedTooSoon",
       });
+    }
+  });
+
+  it("preserves a sponsored revert's transaction hash under revertedTransactionHash on a softened result", () => {
+    const failure: WriteContractResult = {
+      success: false,
+      error: "Transaction reverted: Guard/not-allowed (tx 0xabc)",
+      revertedTransactionHash: "0xabc",
+    };
+
+    const result = applyFailOnError(failure, false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.revertedTransactionHash).toBe("0xabc");
+      // Never surfaced as transactionHash: that field feeds the KEEP-966
+      // reconciliation gate, which would fail the whole workflow trying to
+      // re-verify a transaction already known to have reverted.
+      expect(result.transactionHash).toBeUndefined();
     }
   });
 
