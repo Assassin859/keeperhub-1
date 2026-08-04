@@ -1,6 +1,6 @@
 "use client";
 
-import { Info, Sparkles } from "lucide-react";
+import { Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -285,42 +285,18 @@ function UpgradeSuggestionBanner({
   );
 }
 
-// Compact "Start free trial" trigger shown beside the plan title for eligible
-// free orgs. Opens the trial offer modal (plan options + benefits).
-function StartTrialButton({
-  days,
-  tier,
-  usage,
-}: {
-  days: number;
-  tier: TierKey;
-  usage: SubscriptionData["usage"] | undefined;
-}): React.ReactElement {
-  const { open } = useOverlay();
-  return (
-    <button
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-keeperhub-green-dark/30 bg-keeperhub-green-dark/10 px-3 py-1.5 font-medium text-keeperhub-green-dark text-xs transition-colors hover:bg-keeperhub-green-dark/20"
-      onClick={() =>
-        open(TrialUpsellModal, { days, tier, usage }, { size: "2xl" })
-      }
-      type="button"
-    >
-      <Sparkles className="size-3.5" />
-      Start free trial
-    </button>
-  );
-}
-
 // Shown in the Current Plan header while trialing. Opens the trial modal in
 // update mode so the user can change the interval without losing the trial.
 function ManageTrialButton({
   currentTier,
   currentInterval,
   days,
+  trialEndsAt,
 }: {
   currentTier: TierKey;
   currentInterval: BillingInterval;
   days: number;
+  trialEndsAt: string | null;
 }): React.ReactElement {
   const { open } = useOverlay();
   return (
@@ -328,7 +304,13 @@ function ManageTrialButton({
       onClick={() =>
         open(
           TrialUpsellModal,
-          { days, tier: currentTier, isUpdate: true, currentInterval },
+          {
+            days,
+            tier: currentTier,
+            isUpdate: true,
+            currentInterval,
+            trialEndsAt: trialEndsAt ?? undefined,
+          },
           { size: "2xl" }
         )
       }
@@ -718,7 +700,6 @@ function BillingStatusContent({
   gasCredits,
   overageCharges,
   suggestion,
-  trial,
   portalLoading,
   onManageBilling,
 }: {
@@ -727,7 +708,6 @@ function BillingStatusContent({
   gasCredits: GasCreditsData | undefined;
   overageCharges: OverageCharge[];
   suggestion: SuggestionData | null;
-  trial: SubscriptionData["trial"] | undefined;
   portalLoading: boolean;
   onManageBilling: () => void;
 }): React.ReactElement {
@@ -778,14 +758,6 @@ function BillingStatusContent({
       "border-keeperhub-green-dark/40 bg-keeperhub-green-dark/10 text-keeperhub-green-dark";
   }
   const badgeVariant = isCanceling ? "outline" : statusVariant;
-  // Only offer the trial to engaged free orgs (>= 50% of the free cap used),
-  // matching the global upsell modal's threshold.
-  const usedRatio =
-    usage && usage.executionLimit > 0
-      ? usage.executionsUsed / usage.executionLimit
-      : 0;
-  const canStartTrial =
-    plan === "free" && trial?.eligible === true && usedRatio >= 0.5;
 
   const renewalMessage = getRenewalMessage(
     sub?.status ?? "active",
@@ -820,9 +792,6 @@ function BillingStatusContent({
             </p>
           )}
         </div>
-        {canStartTrial && trial && (
-          <StartTrialButton days={trial.days} tier={trial.tier} usage={usage} />
-        )}
       </div>
 
       {usage && (
@@ -888,6 +857,7 @@ export function BillingStatus(): React.ReactElement {
                 currentInterval={trialInterval}
                 currentTier={trialTier}
                 days={data?.trial?.days ?? 14}
+                trialEndsAt={sub?.currentPeriodEnd ?? null}
               />
             )}
             {plan !== "free" && (
@@ -910,7 +880,6 @@ export function BillingStatus(): React.ReactElement {
         portalLoading={portalLoading}
         sub={sub}
         suggestion={suggestion}
-        trial={data?.trial}
         usage={data?.usage}
       />
     </Card>

@@ -25,12 +25,14 @@ import {
   SPONSORSHIP_TESTNET_NAMES,
 } from "@/lib/web3/sponsorship-chains-meta";
 import { ConfirmPlanChangeDialog } from "../confirm-plan-change-dialog";
-import type { GasCreditCapsMap, PricingTableProps } from "./types";
+import type { GasCreditCapsMap, PricingTableProps, TrialInfo } from "./types";
 import {
   cancelSubscription,
   computeDisplayPrice,
   getButtonLabel,
+  getTierPrice,
   isCurrentPlan,
+  isTrialSelection,
   resolveExecutions,
   startCheckout,
 } from "./utils";
@@ -48,6 +50,9 @@ type ConfirmTarget = {
   planName: PlanName;
   tierKey: TierKey | null;
   appInterval: BillingInterval;
+  // Opt-in to the free trial. Set only for the trial offer (Pro at the resolved
+  // trial tier); every other selection pays now. The server re-checks it.
+  trial: boolean;
 };
 
 type CheckoutHandlers = {
@@ -85,14 +90,13 @@ function formatCardGas(capCents: number): string {
 // -- Checkout orchestration (mirrors the previous per-card PlanCard logic) --
 
 async function executeCheckout(
-  planName: PlanName,
-  tierKey: TierKey | null,
-  appInterval: BillingInterval,
+  target: ConfirmTarget,
   handlers: Pick<
     CheckoutHandlers,
     "onPlanUpdated" | "setLoadingCardId" | "setConfirmOpen"
   >
 ): Promise<void> {
+  const { planName, tierKey, appInterval, trial } = target;
   handlers.setLoadingCardId(planName);
   try {
     if (planName === "free") {
@@ -116,7 +120,9 @@ async function executeCheckout(
       await handlers.onPlanUpdated?.();
       return;
     }
-    const updated = await startCheckout(planName, tierKey, appInterval);
+    const updated = await startCheckout(planName, tierKey, appInterval, {
+      trial,
+    });
     if (updated) {
       handlers.setConfirmOpen(false);
       await handlers.onPlanUpdated?.();
@@ -129,11 +135,10 @@ async function executeCheckout(
 }
 
 function handleSubscribe(
-  planName: PlanName,
-  tierKey: TierKey | null,
-  appInterval: BillingInterval,
+  target: ConfirmTarget,
   handlers: CheckoutHandlers
 ): void {
+  const { planName, tierKey, appInterval } = target;
   if (planName === "enterprise") {
     window.open(
       "mailto:human@keeperhub.com?subject=Enterprise%20Plan",
@@ -154,7 +159,7 @@ function handleSubscribe(
     return;
   }
   if (planName === "free" && handlers.hasSubscription) {
-    handlers.setConfirmTarget({ planName, tierKey, appInterval });
+    handlers.setConfirmTarget(target);
     handlers.setConfirmOpen(true);
     return;
   }
@@ -162,11 +167,11 @@ function handleSubscribe(
     return;
   }
   if (handlers.hasSubscription) {
-    handlers.setConfirmTarget({ planName, tierKey, appInterval });
+    handlers.setConfirmTarget(target);
     handlers.setConfirmOpen(true);
     return;
   }
-  executeCheckout(planName, tierKey, appInterval, handlers).catch(() => {
+  executeCheckout(target, handlers).catch(() => {
     // handled inside executeCheckout
   });
 }
@@ -179,6 +184,7 @@ function buildFreeCard(params: {
   gasCreditCaps?: GasCreditCapsMap;
   hasSubscription: boolean;
   loading: boolean;
+  trialOffered: boolean;
   onSelect: (context: PricingCtaContext) => void;
 }): PkgPricingCard {
   const {
@@ -187,6 +193,7 @@ function buildFreeCard(params: {
     gasCreditCaps,
     hasSubscription,
     loading,
+    trialOffered,
     onSelect,
   } = params;
   const plan = PLANS.free;
@@ -196,7 +203,9 @@ function buildFreeCard(params: {
   return {
     id: "free",
     name: "Pay per execution",
-    highlight: isCurrent,
+    // While the trial is on offer the green border marks it, not the plan the
+    // org is already on. The CURRENT badge still says where they stand.
+    highlight: isCurrent && !trialOffered,
     badgeText: isCurrent ? "CURRENT" : undefined,
     metricsLabel: "Includes per month",
     fixedPrice: freePriceDisplay,
@@ -211,7 +220,9 @@ function buildFreeCard(params: {
     cta: {
       label: getButtonLabel("free", isCurrent, loading, hasSubscription),
       onClick: onSelect,
-      variant: "primary",
+      // Downgrading is not something to lead with: on a paid plan this button
+      // cancels, so it stays quiet while the plans being sold are filled.
+      variant: hasSubscription ? "secondary" : "primary",
       disabled: isCurrent || loading,
     },
     footnote: `${plan.features.maxExecutionsPerMonth.toLocaleString()} free / mo, then pay-as-you-go`,
@@ -228,6 +239,7 @@ function buildTieredCard(params: {
   gasCreditCaps?: GasCreditCapsMap;
   hasSubscription: boolean;
   loading: boolean;
+  trialDays: number | null;
   onSelect: (context: PricingCtaContext) => void;
 }): PkgPricingCard {
   const {
@@ -240,6 +252,7 @@ function buildTieredCard(params: {
     gasCreditCaps,
     hasSubscription,
     loading,
+    trialDays,
     onSelect,
   } = params;
   const plan = PLANS[planName];
@@ -253,13 +266,15 @@ function buildTieredCard(params: {
   );
   const capCents = gasCreditCaps?.[planName] ?? plan.features.gasCreditsCents;
   const gas = formatCardGas(capCents);
-  const isHighlighted = currentPlan === planName;
+  const isHighlighted = currentPlan === planName || trialDays !== null;
+  const activeTier = plan.tiers.find((tier) => tier.key === selectedTier);
+  const trialPrice = activeTier ? getTierPrice(activeTier, interval) : null;
 
   return {
     id: planName,
     name: plan.name,
     highlight: isHighlighted,
-    badgeText: isHighlighted ? "CURRENT" : undefined,
+    badgeText: buildTieredBadgeText(currentPlan === planName, trialDays),
     metricsLabel: "Includes per month",
     tiers: plan.tiers.map((tier) => ({
       key: tier.key,
@@ -270,15 +285,43 @@ function buildTieredCard(params: {
     })),
     tierKey: selectedTier ?? undefined,
     cta: {
-      label: getButtonLabel(planName, isCurrent, loading, hasSubscription),
+      label: getButtonLabel(
+        planName,
+        isCurrent,
+        loading,
+        hasSubscription,
+        trialDays
+      ),
       onClick: onSelect,
-      variant: "secondary",
+      variant: trialDays === null ? "secondary" : "primary",
       disabled: isCurrent || loading,
     },
-    footnote: plan.overage.enabled
-      ? `$${plan.overage.ratePerThousand}/1K additional executions`
-      : undefined,
+    footnote: buildTieredFootnote(plan, trialDays, trialPrice),
   };
+}
+
+function buildTieredBadgeText(
+  isCurrentPlanCard: boolean,
+  trialDays: number | null
+): string | undefined {
+  if (isCurrentPlanCard) {
+    return "CURRENT";
+  }
+  return trialDays === null ? undefined : `${trialDays}-DAY FREE TRIAL`;
+}
+
+function buildTieredFootnote(
+  plan: (typeof PLANS)[TieredPlanName],
+  trialDays: number | null,
+  trialPrice: number | null
+): string | undefined {
+  // Keep this to one line: the footnote pill wraps and unbalances the card.
+  if (trialDays !== null && trialPrice !== null) {
+    return `$0 today, then $${trialPrice}/mo`;
+  }
+  return plan.overage.enabled
+    ? `$${plan.overage.ratePerThousand}/1K additional executions`
+    : undefined;
 }
 
 function buildEnterpriseCard(params: {
@@ -342,6 +385,7 @@ function buildCards(params: {
   hasSubscription: boolean;
   loadingCardId: PlanName | null;
   freePriceDisplay: string;
+  proTrialDays: number | null;
   onSelect: (planName: PlanName, context: PricingCtaContext) => void;
 }): PkgPricingCard[] {
   const {
@@ -354,6 +398,7 @@ function buildCards(params: {
     hasSubscription,
     loadingCardId,
     freePriceDisplay,
+    proTrialDays,
     onSelect,
   } = params;
 
@@ -364,6 +409,7 @@ function buildCards(params: {
       gasCreditCaps,
       hasSubscription,
       loading: loadingCardId === "free",
+      trialOffered: proTrialDays !== null,
       onSelect: (context) => onSelect("free", context),
     }),
     buildTieredCard({
@@ -376,6 +422,7 @@ function buildCards(params: {
       gasCreditCaps,
       hasSubscription,
       loading: loadingCardId === "pro",
+      trialDays: proTrialDays,
       onSelect: (context) => onSelect("pro", context),
     }),
     buildTieredCard({
@@ -388,6 +435,7 @@ function buildCards(params: {
       gasCreditCaps,
       hasSubscription,
       loading: loadingCardId === "business",
+      trialDays: null,
       onSelect: (context) => onSelect("business", context),
     }),
     buildEnterpriseCard({
@@ -623,10 +671,7 @@ function buildComparisonColumns(): PkgComparisonColumn[] {
 
 // -- Confirm dialog derived data --
 
-type DialogData = {
-  planName: PlanName;
-  tierKey: TierKey | null;
-  appInterval: BillingInterval;
+type DialogData = ConfirmTarget & {
   price: number;
   tierLabel: string | null;
   currentExecutions: number;
@@ -638,10 +683,11 @@ function buildDialogData(
   currentPlan: PlanName,
   currentTier: TierKey | null | undefined
 ): DialogData {
-  const resolved = target ?? {
-    planName: "free" as PlanName,
+  const resolved: ConfirmTarget = target ?? {
+    planName: "free",
     tierKey: null,
-    appInterval: "monthly" as BillingInterval,
+    appInterval: "monthly",
+    trial: false,
   };
   const activeTier = PLANS[resolved.planName].tiers.find(
     (tier) => tier.key === resolved.tierKey
@@ -650,6 +696,7 @@ function buildDialogData(
     planName: resolved.planName,
     tierKey: resolved.tierKey,
     appInterval: resolved.appInterval,
+    trial: resolved.trial,
     price:
       computeDisplayPrice(
         resolved.planName,
@@ -664,21 +711,35 @@ function buildDialogData(
   };
 }
 
+// The trial tier the Pro card opens on when the offer is live, so the trial is
+// the default selection rather than something the user has to find.
+function resolveDefaultProTier(
+  currentPlan: PlanName,
+  currentTier: TierKey | null | undefined,
+  trial: TrialInfo | undefined
+): TierKey | null {
+  if (currentPlan === "pro" && currentTier) {
+    return currentTier;
+  }
+  if (trial?.eligible === true) {
+    return trial.tier;
+  }
+  return PLANS.pro.tiers[0]?.key ?? null;
+}
+
 export function PricingTable({
   currentPlan = "free",
   currentTier,
   currentInterval,
   gasCreditCaps,
+  trial,
   onPlanUpdated,
 }: PricingTableProps): React.ReactElement {
   const [interval, setInterval] = useState<BillingInterval>("monthly");
   const [selectedTierByCard, setSelectedTierByCard] = useState<
     Record<TieredPlanName, TierKey | null>
   >({
-    pro:
-      currentPlan === "pro" && currentTier
-        ? currentTier
-        : (PLANS.pro.tiers[0]?.key ?? null),
+    pro: resolveDefaultProTier(currentPlan, currentTier, trial),
     business:
       currentPlan === "business" && currentTier
         ? currentTier
@@ -726,9 +787,12 @@ export function PricingTable({
   function onCardCta(planName: PlanName, context: PricingCtaContext): void {
     const tierKey = (context.tierKey as TierKey | undefined) ?? null;
     handleSubscribe(
-      planName,
-      tierKey,
-      pkgIntervalToApp(context.interval),
+      {
+        planName,
+        tierKey,
+        appInterval: pkgIntervalToApp(context.interval),
+        trial: isTrialSelection(trial, planName, tierKey),
+      },
       handlers
     );
   }
@@ -743,6 +807,11 @@ export function PricingTable({
   }
 
   const freePriceDisplay = formatFreePrice(paygPriceUsdc);
+  // Only the trial tier selection carries the offer; picking another Pro tier
+  // turns the card back into a pay-now card.
+  const proTrialDays = isTrialSelection(trial, "pro", selectedTierByCard.pro)
+    ? (trial?.days ?? null)
+    : null;
   const cards = buildCards({
     currentPlan,
     currentTier,
@@ -753,6 +822,7 @@ export function PricingTable({
     hasSubscription,
     loadingCardId,
     freePriceDisplay,
+    proTrialDays,
     onSelect: onCardCta,
   });
 
@@ -791,9 +861,12 @@ export function PricingTable({
         newTier={dialogData.tierKey}
         onConfirm={() =>
           executeCheckout(
-            dialogData.planName,
-            dialogData.tierKey,
-            dialogData.appInterval,
+            {
+              planName: dialogData.planName,
+              tierKey: dialogData.tierKey,
+              appInterval: dialogData.appInterval,
+              trial: dialogData.trial,
+            },
             handlers
           )
         }
