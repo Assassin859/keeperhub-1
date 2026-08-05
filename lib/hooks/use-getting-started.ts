@@ -12,7 +12,10 @@ import {
   type Step,
   type WalletBalanceEntry,
 } from "@/lib/onboarding/getting-started-config";
-import { isChipAwareStepComplete } from "@/lib/onboarding/getting-started-step-complete";
+import {
+  isChipAwareStepComplete,
+  type StepCompleteStatus,
+} from "@/lib/onboarding/getting-started-step-complete";
 import { gettingStartedSuppressed } from "@/lib/onboarding/tours-disabled";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 
@@ -134,7 +137,7 @@ function stepWorkflowRan(
 
 function resolveRealSignal(
   step: Step,
-  status: OnboardingStatus | null,
+  status: StepCompleteStatus | null,
   workflows: Record<string, string>
 ): boolean {
   if (!status) {
