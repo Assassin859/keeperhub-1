@@ -101,7 +101,7 @@ Visit [http://localhost:3000](http://localhost:3000) to get started. The first r
 
 ### Local development troubleshooting
 
-- **`pnpm dev:login` fails after `pnpm db:push`:** Your schema is ahead of the Drizzle migration journal. Run `pnpm tsx scripts/backfill-drizzle-migrations.ts`, then retry. `dev:bootstrap` (invoked by `dev:login`) detects this drift automatically, runs the backfill script, and retries migrate once.
+- **`pnpm dev:login` fails after `pnpm db:push`:** Your schema is ahead of the Drizzle migration journal. `dev:bootstrap` (invoked by `dev:login`) backfills the journal before migrate when the `users` table exists and the journal is empty. If migrate then fails with a public-schema `already exists` collision while the journal still lags the schema, bootstrap backfills again (bounded with `--through` when the journal is partial) and retries migrate once. Manual fallback: `pnpm tsx scripts/backfill-drizzle-migrations.ts`, then retry.
 - **`db:push` vs `db:migrate`:** Use `pnpm db:push` only for fast local schema iteration. Staging and production apply file-based migrations via `pnpm db:migrate` on deploy.
 - **Local Postgres required:** `dev:login` and `dev:bootstrap` refuse to run unless `DATABASE_URL` points at a local host (for example `postgresql://postgres:postgres@localhost:5433/keeperhub` when using Docker Compose).
 

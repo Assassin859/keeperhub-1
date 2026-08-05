@@ -40,7 +40,6 @@ import * as http from "node:http";
 import * as path from "node:path";
 
 import { getDatabaseUrl } from "../lib/db/connection-utils";
-import { isMigrationDriftOutput } from "./lib/migration-drift";
 
 const ALLOWED_HOSTS = new Set([
   "localhost",
@@ -100,58 +99,13 @@ function runStep(
 ): void {
   console.log(`> ${label}`);
   const env = { ...process.env, ...extraEnv } as NodeJS.ProcessEnv;
-  const isBootstrap = script.includes("dev-bootstrap");
-
   const result = spawnSync("pnpm", ["tsx", script, ...args], {
-    stdio: isBootstrap ? ["ignore", "pipe", "pipe"] : "inherit",
+    stdio: "inherit",
     env,
-    encoding: isBootstrap ? "utf8" : undefined,
   });
-
-  if (result.status === 0) {
-    if (isBootstrap) {
-      const stdout =
-        typeof result.stdout === "string"
-          ? result.stdout
-          : (result.stdout?.toString() ?? "");
-      const stderr =
-        typeof result.stderr === "string"
-          ? result.stderr
-          : (result.stderr?.toString() ?? "");
-      const output = [stdout, stderr].filter(Boolean).join("\n");
-      if (output) {
-        process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
-      }
-    }
-    return;
+  if (result.status !== 0) {
+    throw new Error(`${label} exited with status ${result.status ?? "null"}`);
   }
-
-  if (isBootstrap) {
-    const stdout =
-      typeof result.stdout === "string"
-        ? result.stdout
-        : (result.stdout?.toString() ?? "");
-    const stderr =
-      typeof result.stderr === "string"
-        ? result.stderr
-        : (result.stderr?.toString() ?? "");
-    const output = [stdout, stderr].filter(Boolean).join("\n");
-
-    if (output) {
-      process.stderr.write(output);
-    }
-
-    if (isMigrationDriftOutput(output)) {
-      console.error(
-        "dev-login: bootstrap failed after migration drift recovery attempt"
-      );
-      console.error(
-        "dev-login: try manually: pnpm tsx scripts/backfill-drizzle-migrations.ts"
-      );
-    }
-  }
-
-  throw new Error(`${label} exited with status ${result.status ?? "null"}`);
 }
 
 function sleep(ms: number): Promise<void> {

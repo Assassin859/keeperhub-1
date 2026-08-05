@@ -178,9 +178,9 @@ function runChildScript(script: string, label: string): void {
   }
 }
 
-function runMigrate(): void {
+async function runMigrate(databaseUrl: string): Promise<void> {
   console.log("> pnpm db:migrate");
-  const result = runMigrateWithRecovery(process.env);
+  const result = await runMigrateWithRecovery(databaseUrl, process.env);
   if (result.ok) {
     return;
   }
@@ -191,9 +191,8 @@ function runMigrate(): void {
       process.stderr.write("\n");
     }
   }
-  throw new Error(
-    `pnpm db:migrate exited with status ${result.status ?? "null"}`
-  );
+  const command = result.failedCommand ?? "pnpm db:migrate";
+  throw new Error(`${command} exited with status ${result.status ?? "null"}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +523,7 @@ async function main(): Promise<void> {
     await client.end();
   }
 
-  runMigrate();
+  await runMigrate(url);
 
   console.log("> seedPersistentTestUsers()");
   await seedPersistentTestUsers();
