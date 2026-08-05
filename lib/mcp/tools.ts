@@ -1442,6 +1442,30 @@ export function registerTools(
 // Protocol meta-tools (replaces individual per-action tool registration)
 // =============================================================================
 
+const QUERY_TERM_SPLIT_RE = /\s+/;
+
+// An empty result reads as "the platform cannot do this", so name the
+// filters that can hide an action the caller asked for.
+function buildNoActionMatchHint(args: {
+  query?: string;
+  protocol?: string;
+}): string {
+  const parts = [
+    "No action matched this search, which does not mean the capability is missing.",
+  ];
+  if (args.query) {
+    parts.push(
+      `Every word in query "${args.query}" must appear in an action's label, description, or actionType. Retry with a single keyword such as "swap", "balance", or "borrow".`
+    );
+  }
+  if (args.protocol) {
+    parts.push(
+      `The protocol filter "${args.protocol}" must match a protocol slug exactly (e.g. "uniswap", not "uniswap-v3"). Drop it to search every protocol.`
+    );
+  }
+  return parts.join(" ");
+}
+
 export function registerMetaTools(
   server: McpServer,
   internalApiBaseUrl: string,
@@ -1457,7 +1481,7 @@ export function registerMetaTools(
         .string()
         .optional()
         .describe(
-          "Keyword search across action names and descriptions (e.g., 'ETH balance', 'borrow', 'swap')"
+          "Keyword search across action names, descriptions, and action types. Every word must match, so fewer words match more actions (e.g., 'ETH balance', 'borrow', 'swap'). Omit to list every action."
         ),
       protocol: z
         .string()
@@ -1500,15 +1524,19 @@ export function registerMetaTools(
 
         let results = Object.values(actions);
 
-        // Client-side keyword filtering
+        // Every term must appear somewhere in the action's searchable
+        // text, so a phrase like "token swap" matches instead of being
+        // treated as one literal substring that never occurs.
         if (args.query) {
-          const q = args.query.toLowerCase();
-          results = results.filter(
-            (a) =>
-              a.label?.toLowerCase().includes(q) ||
-              a.description?.toLowerCase().includes(q) ||
-              a.actionType?.toLowerCase().includes(q)
-          );
+          const terms = args.query
+            .toLowerCase()
+            .split(QUERY_TERM_SPLIT_RE)
+            .filter(Boolean);
+          results = results.filter((a) => {
+            const haystack =
+              `${a.label ?? ""} ${a.description ?? ""} ${a.actionType ?? ""}`.toLowerCase();
+            return terms.every((term) => haystack.includes(term));
+          });
         }
 
         // Return compact results
@@ -1526,7 +1554,13 @@ export function registerMetaTools(
             {
               type: "text",
               text: JSON.stringify(
-                { count: compact.length, actions: compact },
+                {
+                  count: compact.length,
+                  actions: compact,
+                  ...(compact.length === 0
+                    ? { hint: buildNoActionMatchHint(args) }
+                    : {}),
+                },
                 null,
                 2
               ),
