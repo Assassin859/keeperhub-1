@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEPRECATED_PREFIX_EXECUTION } from "@/lib/mcp/mcp-tool-catalog";
 
 vi.mock("server-only", () => ({}));
 
@@ -8,8 +9,6 @@ const STATUS_PATH_RE = /\/api\/workflows\/executions\/exec-1\/status$/;
 const LOGS_PATH_RE = /\/api\/workflows\/executions\/exec-1\/logs(\?|$)/;
 const STATUS_PATH_EXEC2_RE = /\/api\/workflows\/executions\/exec-2\/status$/;
 const LOGS_QUERY_EXEC2_RE = /\/api\/workflows\/executions\/exec-2\/logs\?/;
-const DEPRECATED_PREFIX_EXECUTION =
-  "[DEPRECATED — will be removed in v1.13. Use get_execution instead.]";
 const DEPRECATED_PREFIX_TEMPLATE =
   "[DEPRECATED — will be removed in v1.13. Use get_workflow instead.]";
 const DEPRECATED_PREFIX_PLUGINS =

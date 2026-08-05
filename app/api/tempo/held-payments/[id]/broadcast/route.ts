@@ -8,6 +8,11 @@
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { STEP_UP_ACTIONS } from "@/lib/mfa/step-up-policy";
@@ -47,6 +52,7 @@ export async function POST(
       {
         error:
           "Releasing a held payment requires an interactive session with step-up verification.",
+        code: "session_required",
       },
       { status: 403 }
     );
@@ -91,6 +97,20 @@ export async function POST(
       },
       { status: 410 }
     );
+  }
+
+  const idemBody = { paymentId: id };
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: resolved.organizationId,
+    scope: "tempo-held-payment-broadcast",
+    requestBody: idemBody,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return NextResponse.json(early.body, { status: early.status });
+    }
   }
 
   const session = await auth.api.getSession({ headers: request.headers });
@@ -138,11 +158,14 @@ export async function POST(
       resourceId: id,
       metadata: buildAuditMetadata(request),
     });
-    return NextResponse.json({
-      ok: true,
-      status: "confirmed",
-      transactionHash: result.transactionHash,
-    });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({
+        ok: true,
+        status: "confirmed",
+        transactionHash: result.transactionHash,
+      })
+    );
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,

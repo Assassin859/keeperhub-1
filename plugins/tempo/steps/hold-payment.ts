@@ -1,7 +1,11 @@
 import "server-only";
 
+import { ethers } from "ethers";
+import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { getErrorMessage } from "@/lib/utils";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
+import { assertTempoChain } from "./tempo-step-helpers";
 import {
   type StepInput,
   withStepLogging,
@@ -39,6 +43,33 @@ async function stepHandler(
       success: false,
       error:
         "network, tokenConfig, amount, and recipientAddress are required",
+      failureKind: "validation",
+    };
+  }
+
+  try {
+    const chainId = getChainIdFromNetwork(input.network);
+    assertTempoChain(chainId);
+  } catch (error) {
+    return {
+      success: false,
+      error: getErrorMessage(error),
+      failureKind: "validation",
+    };
+  }
+
+  if (!ethers.isAddress(input.recipientAddress)) {
+    return {
+      success: false,
+      error: `Invalid recipient address: ${input.recipientAddress}`,
+      failureKind: "validation",
+    };
+  }
+
+  if (!input.amount || input.amount.trim() === "") {
+    return {
+      success: false,
+      error: "Amount is required",
       failureKind: "validation",
     };
   }

@@ -411,13 +411,57 @@ type CallApiOptions = {
 };
 
 const NO_MCP_FETCH_TIMEOUT: CallApiOptions = { timeoutMs: null };
+const COLD_START_NO_TIMEOUT: CallApiOptions = {
+  coldStartAware: true,
+  timeoutMs: null,
+};
 
 function isMcpFetchTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
-  return error.name === "TimeoutError" || error.name === "AbortError";
+  return error.name === "TimeoutError";
 }
+
+type ParsedApiCallError = {
+  status: number;
+  code?: string;
+  error?: string;
+};
+
+const API_CALL_FAILED_RE = /^API call failed: (\d+) [^-]+ - ([\s\S]*)$/;
+
+function parseApiCallError(error: unknown): ParsedApiCallError | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  const prefix = "API call failed: ";
+  if (!error.message.startsWith(prefix)) {
+    return null;
+  }
+  const match = API_CALL_FAILED_RE.exec(error.message);
+  if (!match) {
+    return null;
+  }
+  const status = Number(match[1]);
+  try {
+    const body = JSON.parse(match[2]) as { code?: string; error?: string };
+    return {
+      status,
+      code: body.code,
+      error: body.error,
+    };
+  } catch {
+    return { status };
+  }
+}
+
+const TEMPO_RELEASE_SESSION_CODES = new Set([
+  "session_required",
+  "mfa_pending",
+  "mfa_not_enrolled",
+  "org_mfa_enrollment_required",
+]);
 
 function parseRetryAfterSeconds(header: string | null): number {
   if (!header) {
@@ -1048,7 +1092,7 @@ export function registerTools(
           "POST",
           { prompt: args.prompt, context: args.context },
           undefined,
-          { coldStartAware: true }
+          COLD_START_NO_TIMEOUT
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1573,10 +1617,7 @@ export function registerTools(
           internalApiBaseUrl,
           authHeader,
           `/api/execute/${args.execution_id}/status`,
-          "GET",
-          undefined,
-          undefined,
-          NO_MCP_FETCH_TIMEOUT
+          "GET"
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1785,6 +1826,7 @@ export function registerTools(
         .string()
         .optional()
         .describe("Optional on-chain expiry override"),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     {
       title: "Tempo Sign and Hold",
@@ -1793,12 +1835,34 @@ export function registerTools(
     },
     withScopeCheck("tempo_sign_and_hold", scope, async (args) =>
       withToolLogging("tempo_sign_and_hold", undefined, async () => {
+        const {
+          idempotency_key: idempotencyKey,
+          network,
+          tokenConfig,
+          amount,
+          recipientAddress,
+          memo,
+          broadcastMode,
+          broadcastAt,
+          validBefore,
+        } = args;
         const data = await callApi(
           internalApiBaseUrl,
           authHeader,
           "/api/tempo/held-payments",
           "POST",
-          args
+          {
+            network,
+            tokenConfig,
+            amount,
+            recipientAddress,
+            memo,
+            broadcastMode,
+            broadcastAt,
+            validBefore,
+          },
+          idempotencyKey,
+          NO_MCP_FETCH_TIMEOUT
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -1843,6 +1907,7 @@ export function registerTools(
       paymentId: z
         .string()
         .describe("Held payment ID from tempo_sign_and_hold"),
+      idempotency_key: IDEMPOTENCY_KEY_ARG,
     },
     {
       title: "Tempo Release Hold",
@@ -1857,15 +1922,20 @@ export function registerTools(
             authHeader,
             `/api/tempo/held-payments/${encodeURIComponent(args.paymentId)}/broadcast`,
             "POST",
-            {}
+            {},
+            args.idempotency_key,
+            NO_MCP_FETCH_TIMEOUT
           );
           return {
             content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           };
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          if (message.includes("403") && message.includes("session")) {
+          const parsed = parseApiCallError(error);
+          if (
+            parsed?.status === 403 &&
+            parsed.code &&
+            TEMPO_RELEASE_SESSION_CODES.has(parsed.code)
+          ) {
             return {
               content: [
                 {
@@ -1873,6 +1943,7 @@ export function registerTools(
                   text: JSON.stringify(
                     {
                       error: "session_step_up_required",
+                      code: parsed.code,
                       message:
                         "Releasing a held payment requires an interactive browser session with step-up MFA. Use tempo_cancel_hold to abort, or release from the Held Payments UI.",
                       paymentId: args.paymentId,

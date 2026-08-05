@@ -46,6 +46,13 @@ vi.mock("@/lib/tempo/held-payments", () => ({
 vi.mock("@/lib/tempo/release-held-payment", () => ({
   releaseHeldPaymentNow: mockReleaseHeldPaymentNow,
 }));
+vi.mock("@/lib/idempotency", () => ({
+  beginIdempotentFromRequest: vi.fn().mockResolvedValue(null),
+  idempotencyEarlyResponse: vi.fn(),
+  recordIdempotentResponse: vi.fn(
+    (_idem: unknown, response: Response) => response
+  ),
+}));
 vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: mockGetSession } },
 }));
@@ -110,8 +117,9 @@ describe("POST /api/tempo/held-payments/[id]/broadcast authorization", () => {
 
     const res = await post();
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; code?: string };
     expect(body.error).toMatch(/interactive session/i);
+    expect(body.code).toBe("session_required");
     expect(mockReleaseHeldPaymentNow).not.toHaveBeenCalled();
   });
 

@@ -162,19 +162,33 @@ export async function executeHoldPayment(
     return validationFailure(window.error);
   }
 
+  let rpcManager: Awaited<ReturnType<typeof getRpcProvider>>;
+  let token: Awaited<ReturnType<typeof resolveTempoToken>>;
+  let amountRaw: bigint;
   try {
-    const rpcManager = await getRpcProvider({
+    rpcManager = await getRpcProvider({
       chainId,
       userId: input.userId,
     });
-    const token = await resolveTempoToken(
+    token = await resolveTempoToken(
       input.tokenConfig,
       chainId,
       rpcManager
     );
-    const amountRaw = ethers.parseUnits(input.amount, token.decimals);
-    const recipient = ethers.getAddress(input.recipientAddress) as Hex;
-    const memoBytes = normalizeMemo(input.memo);
+    amountRaw = ethers.parseUnits(input.amount, token.decimals);
+  } catch (error) {
+    return validationFailure(getErrorMessage(error));
+  }
+
+  const recipient = ethers.getAddress(input.recipientAddress) as Hex;
+  let memoBytes: ReturnType<typeof normalizeMemo>;
+  try {
+    memoBytes = normalizeMemo(input.memo);
+  } catch (error) {
+    return validationFailure(getErrorMessage(error));
+  }
+
+  try {
 
     const call = buildTransferWithMemoCall(
       token.address,
