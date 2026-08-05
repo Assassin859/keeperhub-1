@@ -227,6 +227,13 @@
     },
     {
       "method": "GET",
+      "path": "/api/user/wallet/balances",
+      "route_file": "app/api/user/wallet/balances/route.ts",
+      "source": "docs/api/user.md",
+      "line": 75
+    },
+    {
+      "method": "GET",
       "path": "/api/workflows",
       "route_file": "app/api/workflows/route.ts",
       "source": "docs/api/workflows.md",
@@ -360,6 +367,13 @@
     },
     {
       "method": "POST",
+      "path": "/api/executions/{executionId}/cancel",
+      "route_file": "app/api/executions/[executionId]/cancel/route.ts",
+      "source": "docs/api/authentication.md",
+      "line": 60
+    },
+    {
+      "method": "POST",
       "path": "/api/hub/featured",
       "route_file": "app/api/hub/featured/route.ts",
       "source": "docs/api/workflows.md",
@@ -437,10 +451,24 @@
     },
     {
       "method": "POST",
+      "path": "/api/workflow/{workflowId}/execute",
+      "route_file": "app/api/workflow/[workflowId]/execute/route.ts",
+      "source": "docs/api/workflows.md",
+      "line": 230
+    },
+    {
+      "method": "POST",
       "path": "/api/workflows/create",
       "route_file": "app/api/workflows/create/route.ts",
       "source": "docs/api/workflows.md",
       "line": 84
+    },
+    {
+      "method": "POST",
+      "path": "/api/workflows/{id}/execute",
+      "route_file": "app/api/workflows/[workflowId]/execute/route.ts",
+      "source": "docs/api/workflows.md",
+      "line": 184
     },
     {
       "method": "POST",
