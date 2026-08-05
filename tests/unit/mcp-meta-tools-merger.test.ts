@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+const { mockResolveExecutionViewAccess } = vi.hoisted(() => ({
+  mockResolveExecutionViewAccess: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/execution-access", () => ({
+  resolveExecutionViewAccess: mockResolveExecutionViewAccess,
+}));
+
 // Top-level regex constants per Biome useTopLevelRegex rule.
 const STATUS_PATH_RE = /\/api\/workflows\/executions\/exec-1\/status$/;
 const LOGS_PATH_RE = /\/api\/workflows\/executions\/exec-1\/logs(\?|$)/;
@@ -95,9 +103,14 @@ describe("Phase 50 — get_execution merger registration (METATOOL-01, METATOOL-
 describe("Phase 50 — get_execution handler combines /status + /logs in one envelope", () => {
   beforeEach(() => {
     vi.resetModules();
+    mockResolveExecutionViewAccess.mockReset();
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "full",
+      execution: { id: "exec-1", workflow: { id: "wf_1" } },
+    });
   });
 
-  it("Test 5: no-params invocation calls /status + /logs in parallel and returns { status, logs }", async () => {
+  it("Test 5: no-params invocation calls /status then /logs sequentially and returns { status, logs }", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/status")) {
@@ -132,6 +145,9 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => STATUS_PATH_RE.test(u))).toBe(true);
     expect(urls.some((u) => LOGS_PATH_RE.test(u))).toBe(true);
+    expect(urls.findIndex((u) => STATUS_PATH_RE.test(u))).toBeLessThan(
+      urls.findIndex((u) => LOGS_PATH_RE.test(u))
+    );
 
     const parsed = JSON.parse(result.content[0].text) as Record<
       string,
@@ -144,6 +160,11 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
   });
 
   it("Test 6: Phase 46 params forwarded to /logs query string; /status URL has no query", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "full",
+      execution: { id: "exec-2", workflow: { id: "wf_2" } },
+    });
+
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/status")) {
