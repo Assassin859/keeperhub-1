@@ -57,15 +57,14 @@ The API uses a short set of stable, lowercase codes in the `error` field. Some r
 
 ### Idempotency Errors
 
-Both codes answer `409`, and they mean opposite things. Branch on the `retryable`
-field rather than the status: every other `4xx` on these routes is terminal, so a
-client that classifies on status alone treats an in-flight request as a permanent
-failure while the original is still on its way to the chain.
+Both codes answer `409` and mean opposite things, so the status does not separate
+them. These two responses carry `retryable`, which answers one narrow question:
+**is it safe to send this request again under the same `Idempotency-Key`?**
 
 | Code | `retryable` | Description | Resolution |
 |------|-------------|-------------|------------|
-| `idempotency_conflict` | `false` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Use a new key for a different request |
-| `idempotency_in_progress` | `true` | A request with this `Idempotency-Key` is still being processed | Retry shortly with the same key |
+| `idempotency_conflict` | `false` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Retry under a **new** key. The same key will always conflict. |
+| `idempotency_in_progress` | `true` | A request with this `Idempotency-Key` is still being processed | Retry shortly under the **same** key |
 
 ```json
 {
@@ -75,9 +74,13 @@ failure while the original is still on its way to the chain.
 }
 ```
 
-Keep the same key when retrying an `idempotency_in_progress`. Rotating it escapes
-the in-flight guard and can broadcast a second transaction for the same action.
-Rotate only once you hold a definite outcome for the previous attempt.
+`retryable: false` on a conflict does not mean give up. It means the key is
+spent: the call still needs to be made, under a key that has not already been
+used for a different body.
+
+The field appears on these two codes only. Every other status on these routes
+keeps the semantics documented above, whether or not `retryable` is present: a
+`429` is still back-off-and-retry, and a `500` is still worth another attempt.
 
 See [Direct Execution](/api/direct-execution#idempotency) for the full idempotency policy.
 

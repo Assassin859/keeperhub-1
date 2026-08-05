@@ -362,22 +362,30 @@ function annotateReplay(body: unknown): unknown {
 // Returns null for `proceed` (the caller does the work, then calls finalize).
 //
 // `conflict` and `in_progress` both answer 409 but mean opposite things, and
-// only the `code` separates them. A client that classifies on status alone --
-// which is the normal shape, since every other 4xx on these routes is terminal
-// -- reads `in_progress` as a permanent failure. For a fund-moving call that is
-// the worst available reading: the original request still holds its processing
-// lock and is very likely to land on chain, so the caller reports a payment
-// failed while it is in fact succeeding.
+// only the `code` separates them. A client that classifies on status alone
+// reads `in_progress` as a permanent failure, and for a fund-moving call that
+// is the worst available reading: the original request still holds its
+// processing lock and is very likely to land on chain, so the caller reports a
+// payment failed while it is in fact succeeding.
 //
-// `retryable` states the disposition directly, so a client can branch on one
-// field instead of maintaining a list of which codes are transient. It rides in
-// the body for the same reason `idempotentReplay` does: the common consumer is
-// an agent reading a tool result, where response headers are not surfaced.
+// `retryable` answers exactly one question, and it is narrower than the name
+// suggests: IS IT SAFE TO SEND THIS AGAIN UNDER THE SAME KEY?
 //
-// The advice differs too, and only one is safe. On `in_progress` the caller
-// must retry with the SAME key -- rotating it (a reasonable habit, since a
-// reused key otherwise replays a cached failure) escapes the in-flight guard
-// and can broadcast a second transaction for the same action.
+//   in_progress -> true.  The first request holds the lock; the same key is the
+//                         only safe way to retry, and it returns the guard now
+//                         and the real outcome as a replay once that finishes.
+//   conflict    -> false. The key is bound to a different body and always will
+//                         be, so reusing it can never succeed.
+//
+// `false` therefore does not mean abandon the call. A conflict still needs the
+// request sent, under a key that has not been used for a different body, and
+// the docs say so alongside the table. Do not read this field as a general
+// "is this error retryable": a 429 on these routes is retryable and carries no
+// `retryable` field at all, because the field exists only on these two codes.
+//
+// It rides in the body for the same reason `idempotentReplay` does: the common
+// consumer is an agent reading a tool result, where response headers are not
+// surfaced.
 export function idempotencyEarlyResponse(
   outcome: IdempotencyOutcome
 ): IdempotencyEarlyResponse | null {

@@ -82,9 +82,11 @@ Conflict and in-progress responses are not replays and never carry the field.
 
 ### When to reuse a key, and when to rotate it
 
-The two `409` codes mean opposite things, so branch on `retryable` rather than on
-the status. Every other `4xx` on these routes is terminal, which makes status-only
-classification read an in-flight request as a permanent failure.
+The two `409` codes mean opposite things, so the status does not separate them.
+Both carry `retryable`, which answers one narrow question: is it safe to send this
+request again under the same key? The field is on these two codes only, and every
+other status keeps the semantics documented in [Errors](/api/errors) whether or
+not it is present.
 
 ```json
 {
@@ -100,9 +102,11 @@ the request was received, so a retry must be able to match the original. Reusing
 key is what makes that retry safe: it returns the in-progress guard while the first
 request is still running, and the real outcome as a replay once it finishes.
 
-**Rotate to a new key** only once the previous attempt returned a definite result and
-you intend a genuinely new action. A stored failure is replayable for 24 hours, so a
-key that has already failed will keep returning that failure rather than retrying.
+**Rotate to a new key** once the previous attempt returned a definite result, and
+on an `idempotency_conflict`. A stored failure is replayable for 24 hours, so a key
+that has already failed keeps returning that failure rather than retrying. Note that
+`retryable: false` on a conflict does not mean abandon the call: it means that key
+is spent, and the request still needs to go out under a fresh one.
 
 Rotating a key while a request may still be in flight is the case to avoid. It escapes
 the in-progress guard, and for a fund-moving call the second request can broadcast a

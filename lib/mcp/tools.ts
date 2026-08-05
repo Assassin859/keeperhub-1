@@ -231,12 +231,14 @@ function buildPaymentRequiredHint(
 // The description spells out which 409 to retry because an agent cannot tell
 // from the status: conflict and in-progress share it and mean opposite things,
 // and rotating the key on the in-progress one can broadcast a second
-// transaction for an action the first request is still completing.
+// transaction for an action the first request is still completing. It also has
+// to say what `retryable` does NOT mean, since `false` on a conflict is an
+// instruction to change the key rather than to stop.
 const IDEMPOTENCY_KEY_ARG = z
   .string()
   .optional()
   .describe(
-    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Two 409s are possible and the body's `retryable` field separates them: `idempotency_conflict` (retryable false) means the key was reused with different arguments, so pick a new key; `idempotency_in_progress` (retryable true) means the first request is still running, so retry shortly with the SAME key. Keep the same key whenever the previous attempt's outcome is unknown, such as after a timeout - rotating it then escapes the in-flight guard."
+    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Two 409s are possible, and the body's `retryable` field says only whether it is safe to send the request again under the SAME key. `idempotency_in_progress` (retryable true): the first request is still running, so retry shortly with the same key. `idempotency_conflict` (retryable false): the key is already bound to a different body, so send the request again under a NEW key - false does not mean give up. Keep the same key whenever the previous attempt's outcome is unknown, such as after a timeout, because rotating it then escapes the in-flight guard. The field appears on these two codes only; other statuses keep their usual meaning, so a 429 is still worth retrying after a back-off even though it carries no `retryable`."
   );
 
 // The direct-execution REST routes support a dry-run path that estimates gas
