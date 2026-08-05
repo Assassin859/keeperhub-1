@@ -9,6 +9,7 @@ import {
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
+import { isBlockedHost, isBlockedIp } from "@/lib/safe-fetch";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -51,6 +52,24 @@ type SponsoredContractTxParams = {
 };
 
 /**
+ * A sponsored write against a loopback or private-range RPC can never land --
+ * Turnkey's Gas Station broadcasts from its own infrastructure, not from the
+ * caller's network. Skipping here (rather than attempting sponsorship and
+ * falling back after failure) also avoids a no-fallback hang: a sponsored
+ * activity Turnkey accepts but can never confirm raises without returning
+ * null.
+ */
+function isSponsorshipBlockedRpc(rpcUrl: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(rpcUrl).hostname;
+  } catch {
+    return false;
+  }
+  return isBlockedHost(hostname).blocked || isBlockedIp(hostname).blocked;
+}
+
+/**
  * Attempt to execute a transaction via Turnkey Gas Station sponsorship.
  *
  * Returns the result if sponsorship succeeds, or null if sponsorship is
@@ -62,6 +81,10 @@ export async function executeSponsoredTransaction(
   params: SponsoredTxParams
 ): Promise<SponsoredTransactionResult> {
   if (!isGasSponsorshipEnabled()) {
+    return null;
+  }
+
+  if (isSponsorshipBlockedRpc(params.rpcUrl)) {
     return null;
   }
 
@@ -116,6 +139,10 @@ export async function executeSponsoredContractTransaction(
   params: SponsoredContractTxParams
 ): Promise<SponsoredTransactionResult> {
   if (!isGasSponsorshipEnabled()) {
+    return null;
+  }
+
+  if (isSponsorshipBlockedRpc(params.rpcUrl)) {
     return null;
   }
 

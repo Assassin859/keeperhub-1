@@ -299,6 +299,37 @@ describe("executeSponsoredTransaction", () => {
       expect.anything()
     );
   });
+
+  it.each([
+    ["loopback hostname", "http://localhost:8548"],
+    ["loopback IP literal", "http://127.0.0.1:8548"],
+    ["RFC1918 private range", "http://10.0.0.5:8545"],
+  ])(
+    "returns null without attempting sponsorship for a %s rpcUrl",
+    async (_label, rpcUrl) => {
+      setupSuccessfulSponsorship();
+
+      const result = await executeSponsoredTransaction({
+        ...baseTxParams,
+        rpcUrl,
+      });
+
+      expect(result).toBeNull();
+      expect(mockIsSponsorshipSupported).not.toHaveBeenCalled();
+      expect(mockCheckGasCredits).not.toHaveBeenCalled();
+      expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
+      expect(mockSubmitTurnkeySponsoredTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it("still attempts sponsorship for a public rpcUrl", async () => {
+    setupSuccessfulSponsorship();
+
+    const result = await executeSponsoredTransaction(baseTxParams);
+
+    expect(result).not.toBeNull();
+    expect(mockCreateSponsoredClient).toHaveBeenCalled();
+  });
 });
 
 describe("executeSponsoredContractTransaction", () => {
@@ -338,5 +369,20 @@ describe("executeSponsoredContractTransaction", () => {
         data: "0xencoded",
       })
     );
+  });
+
+  it("returns null without attempting sponsorship for a loopback rpcUrl", async () => {
+    setupSuccessfulSponsorship();
+
+    const result = await executeSponsoredContractTransaction({
+      ...baseContractParams,
+      rpcUrl: "http://localhost:8548",
+    });
+
+    expect(result).toBeNull();
+    expect(mockIsSponsorshipSupported).not.toHaveBeenCalled();
+    expect(mockCheckGasCredits).not.toHaveBeenCalled();
+    expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
+    expect(mockSubmitTurnkeySponsoredTransaction).not.toHaveBeenCalled();
   });
 });
