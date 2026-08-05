@@ -12,20 +12,25 @@ import {
   type Step,
   type WalletBalanceEntry,
 } from "@/lib/onboarding/getting-started-config";
+import { isChipAwareStepComplete } from "@/lib/onboarding/getting-started-step-complete";
 import { gettingStartedSuppressed } from "@/lib/onboarding/tours-disabled";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 
 /**
  * Persisted UI state + completion for the getting-started launcher (KEEP-878).
  *
- * Completion is hybrid and latched:
+ * Completion is hybrid:
  *  - Outcome steps are detected from real state (`GET /api/onboarding/status`):
  *    a step turns green once the user has actually created an API key,
  *    connected an alert channel, or run a workflow. Opening the surface does
  *    not complete them.
- *  - Once a signal is first observed satisfied it is latched into persisted
- *    `done`, so the step stays complete even if the underlying workflow / key
- *    is later deleted (real state would otherwise flip it back to incomplete).
+ *  - Once a non-chip signal is first observed satisfied it is latched into
+ *    persisted `done`, so the step stays complete even if the underlying
+ *    workflow / key is later deleted.
+ *  - Chip-bearing steps derive from a LIVE starter clone when any chip was
+ *    ever cloned (deleting the clone un-completes). If no chip was ever
+ *    cloned, `done` is honored so adding chips does not regress users who
+ *    already finished the step.
  *  - Informational steps ("open your wallet") have no measurable outcome and
  *    complete the first time the user opens them.
  *
@@ -382,27 +387,16 @@ export function useGettingStarted(): GettingStarted {
     [isWorkflowLive, persisted.workflows]
   );
   const isStepComplete = useCallback(
-    (step: Step): boolean => {
-      if (step.signal === "always") {
-        return true;
-      }
-      if (persisted.done.includes(step.key)) {
-        return true;
-      }
-      // Chip steps complete on a LIVE starter clone (or once one has run).
-      if (step.chips && step.chips.length > 0) {
-        const hasLiveClone = step.chips.some((chip) =>
-          isWorkflowLive(persisted.workflows[`${step.key}:${chip.id}`])
-        );
-        return (
-          hasLiveClone || resolveRealSignal(step, status, persisted.workflows)
-        );
-      }
-      if (CLICK_DRIVEN.has(step.signal)) {
-        return false;
-      }
-      return resolveRealSignal(step, status, persisted.workflows);
-    },
+    (step: Step): boolean =>
+      isChipAwareStepComplete({
+        step,
+        done: persisted.done,
+        workflows: persisted.workflows,
+        status,
+        isWorkflowLive,
+        resolveRealSignal,
+        isClickDriven: (signal) => CLICK_DRIVEN.has(signal),
+      }),
     [persisted.done, persisted.workflows, status, isWorkflowLive]
   );
   const getStepWorkflowId = useCallback(

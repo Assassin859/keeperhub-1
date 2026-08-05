@@ -186,6 +186,9 @@ function StepRow({
               >
                 {cloned && <Check aria-hidden="true" className="size-3" />}
                 {chip.label}
+                {chip.badge ? (
+                  <span className="template-badge px-1">{chip.badge}</span>
+                ) : null}
               </button>
             );
           })}
