@@ -6,7 +6,10 @@ export type AuthErrorBody = {
 
 /** Machine-readable auth error code (KEEP-489 envelope or legacy `code`). */
 export function authErrorCode(body: AuthErrorBody): string | undefined {
-  return body.error ?? body.code;
+  // Prefer legacy `code` when present: staging bodies carry both fields with
+  // `error` as prose and `code` as the slug. New envelopes have no `code`, so
+  // this falls through to `error` (the slug).
+  return body.code ?? body.error;
 }
 
 /** Human-facing message from an auth error response body. */

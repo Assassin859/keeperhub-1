@@ -1,7 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { NextResponse } from "next/server";
 import { type ZodError, z } from "zod";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
-import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
+import {
+  ApiErrorCodes,
+  apiError,
+  resolveRequestId,
+  sanitizeDetailForEnv,
+} from "@/lib/errors/api-envelope";
 import { HttpStatus } from "@/lib/http-status";
 import { createAccessToken } from "@/lib/mcp/oauth-auth";
 import {
@@ -24,18 +30,32 @@ import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Token-endpoint errors use the KEEP-489 envelope plus RFC 6749 §5.2's
+ * `error_description` alias for `detail`. Codes below are the registered
+ * OAuth set (invalid_request, invalid_client, invalid_grant,
+ * unsupported_grant_type) rather than ApiErrorCodes generics.
+ */
 function routeError(
   request: Request,
   detail: string,
   status: number,
   code: string
 ): Response {
-  return apiError({
-    status,
-    code,
-    detail,
-    requestHeaders: request.headers,
-  });
+  const requestId = resolveRequestId(request.headers);
+  const sanitized = sanitizeDetailForEnv(detail) ?? detail;
+  return NextResponse.json(
+    {
+      error: code,
+      detail: sanitized,
+      error_description: sanitized,
+      request_id: requestId,
+    },
+    {
+      status,
+      headers: { "x-request-id": requestId },
+    }
+  );
 }
 
 function oauthValidationError(request: Request, zodError: ZodError): Response {
@@ -52,12 +72,7 @@ function oauthValidationError(request: Request, zodError: ZodError): Response {
   const detail =
     [...fieldMessages, ...formMessages].join("; ") || "Validation failed";
 
-  return apiError({
-    status: HttpStatus.BAD_REQUEST,
-    code: "invalid_request",
-    detail,
-    requestHeaders: request.headers,
-  });
+  return routeError(request, detail, HttpStatus.BAD_REQUEST, "invalid_request");
 }
 
 function verifyPkceS256(verifier: string, challenge: string): boolean {
@@ -130,7 +145,7 @@ function verifyClientAuthentication(
       request,
       "client_secret is required for this client",
       HttpStatus.UNAUTHORIZED,
-      ApiErrorCodes.UNAUTHORIZED
+      "invalid_client"
     );
   }
   if (!secretMatches(secret, client.clientSecretHash)) {
@@ -138,7 +153,7 @@ function verifyClientAuthentication(
       request,
       "Invalid client_secret",
       HttpStatus.UNAUTHORIZED,
-      ApiErrorCodes.UNAUTHORIZED
+      "invalid_client"
     );
   }
   return null;
@@ -191,7 +206,7 @@ async function handleAuthorizationCode(
       request,
       "client_id mismatch",
       HttpStatus.BAD_REQUEST,
-      ApiErrorCodes.INVALID_INPUT
+      "invalid_grant"
     );
   }
 
@@ -200,7 +215,7 @@ async function handleAuthorizationCode(
       request,
       "redirect_uri mismatch",
       HttpStatus.BAD_REQUEST,
-      ApiErrorCodes.INVALID_INPUT
+      "invalid_grant"
     );
   }
 
@@ -209,7 +224,7 @@ async function handleAuthorizationCode(
       request,
       "Unsupported code_challenge_method",
       HttpStatus.BAD_REQUEST,
-      ApiErrorCodes.INVALID_INPUT
+      "invalid_grant"
     );
   }
 
@@ -218,7 +233,7 @@ async function handleAuthorizationCode(
       request,
       "Invalid code_verifier",
       HttpStatus.BAD_REQUEST,
-      ApiErrorCodes.INVALID_INPUT
+      "invalid_grant"
     );
   }
 
@@ -302,7 +317,7 @@ async function handleRefreshToken(
       request,
       "client_id mismatch",
       HttpStatus.BAD_REQUEST,
-      ApiErrorCodes.INVALID_INPUT
+      "invalid_grant"
     );
   }
 
@@ -416,7 +431,7 @@ export async function POST(request: Request): Promise<Response> {
       request,
       "Unsupported grant_type. Supported: authorization_code, refresh_token",
       HttpStatus.BAD_REQUEST,
-      ApiErrorCodes.INVALID_INPUT
+      "unsupported_grant_type"
     ),
     rateLimit
   );

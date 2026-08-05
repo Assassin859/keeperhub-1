@@ -55,12 +55,29 @@ vi.mock("@/lib/db/schema", () => ({
     expiresAt: "expiresAt",
   },
   sessions: { token: "token" },
+  // oauth-store transitively imports these; present so cases that reach
+  // getOAuthClient fail on assertions rather than missing exports.
+  mcpOauthAuthCodes: {
+    code: "code",
+    expiresAt: "expiresAt",
+    clientId: "clientId",
+  },
+  mcpOauthClients: {
+    clientId: "clientId",
+    clientSecretHash: "clientSecretHash",
+  },
+  mcpOauthRefreshTokens: {
+    tokenHash: "tokenHash",
+    userId: "userId",
+    organizationId: "organizationId",
+  },
 }));
 
 vi.mock("drizzle-orm", () => ({
   eq: () => ({}),
   and: () => ({}),
   gt: () => ({}),
+  lt: () => ({}),
   desc: () => ({}),
 }));
 
@@ -153,6 +170,7 @@ type EnvelopeBody = {
   error: string;
   detail: string;
   request_id: string;
+  error_description?: string;
   hint?: string;
   docs?: string;
   code?: unknown;
@@ -361,6 +379,24 @@ describe("auth route error envelopes (FRICTION-08)", () => {
     const body = (await response.json()) as EnvelopeBody;
     expect(body.error).toBe("invalid_request");
     expect(body.detail).toContain("code_verifier");
+    expect(body.error_description).toBe(body.detail);
     expect(typeof body.request_id).toBe("string");
+  });
+
+  it("POST /api/oauth/token returns unsupported_grant_type for client_credentials", async () => {
+    const response = await oauthTokenPost(
+      buildRequest("http://localhost/api/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "client_credentials",
+          client_id: "client-1",
+        }).toString(),
+      })
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as EnvelopeBody;
+    expect(body.error).toBe("unsupported_grant_type");
+    expect(body.error_description).toBe(body.detail);
   });
 });
