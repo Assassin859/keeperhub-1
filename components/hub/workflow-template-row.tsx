@@ -9,6 +9,7 @@ import {
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { SavedWorkflow } from "@/lib/api-client";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
+import { PlanRequiredBadge } from "./plan-required-badge";
 
 type WorkflowTemplateRowProps = {
   workflow: SavedWorkflow;
@@ -153,11 +154,21 @@ export function WorkflowTemplateRow({
         </span>
       )}
 
-      {isFeatured ? (
-        <span className="pointer-events-none relative z-[2] hidden items-center justify-center justify-self-end gap-1 rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)] md:inline-flex">
-          <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
-          Featured
-        </span>
+      {workflow.requiredPlan || isFeatured ? (
+        <div className="pointer-events-none relative z-[2] hidden items-center justify-end justify-self-end gap-1.5 md:flex">
+          {workflow.requiredPlan ? (
+            <PlanRequiredBadge
+              className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold"
+              plan={workflow.requiredPlan}
+            />
+          ) : null}
+          {isFeatured ? (
+            <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)]">
+              <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
+              Featured
+            </span>
+          ) : null}
+        </div>
       ) : (
         <span className="hidden md:inline" />
       )}

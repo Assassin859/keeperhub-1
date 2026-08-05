@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowBigDown, ArrowBigUp, Gem, Star } from "lucide-react";
+import { ArrowBigDown, ArrowBigUp, Star } from "lucide-react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { SavedWorkflow } from "@/lib/api-client";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
+import { PlanRequiredBadge } from "./plan-required-badge";
 import { WorkflowMiniMap } from "./workflow-mini-map";
 
 type WorkflowTemplateCardProps = {
@@ -166,7 +167,7 @@ export function WorkflowTemplateCard({
         )}
 
         {/* Bottom row: vote cluster (LEFT) + badges (RIGHT) */}
-        {(onVote || isFeatured || workflow.requiresProPlan) && (
+        {(onVote || isFeatured || workflow.requiredPlan) && (
           <div
             className={`pointer-events-auto mt-2 flex shrink-0 items-center gap-2 ${onVote ? "justify-between" : "justify-end"}`}
           >
@@ -174,17 +175,9 @@ export function WorkflowTemplateCard({
               <VoteCluster onVote={onVote} score={score} userVote={userVote} />
             )}
             <div className="flex shrink-0 items-center gap-1.5">
-              {workflow.requiresProPlan && (
-                <span
-                  className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2"
-                  title="Requires Pro plan on free tier"
-                >
-                  <Gem className="size-2.5 text-[var(--color-text-accent)]" />
-                  <span className="font-normal text-[0.625rem] text-[var(--color-text-accent)]">
-                    Pro
-                  </span>
-                </span>
-              )}
+              {workflow.requiredPlan ? (
+                <PlanRequiredBadge plan={workflow.requiredPlan} />
+              ) : null}
               {isFeatured && (
                 <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
                   <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />

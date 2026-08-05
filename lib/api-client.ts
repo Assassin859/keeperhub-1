@@ -3,6 +3,7 @@
  * Replaces server actions with API endpoints
  */
 
+import type { PlanName } from "@/lib/billing/plans";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import type { Page } from "@/lib/pagination";
 import type { HeldPaymentView } from "@/lib/tempo/held-payment-view";
@@ -70,8 +71,8 @@ export type SavedWorkflow = WorkflowData & {
   userVote?: VoteDirection | null;
   canVote?: boolean;
   duplicateCount?: number;
-  /** True when the workflow uses Pro-gated actions on a free plan. */
-  requiresProPlan?: boolean;
+  /** Minimum plan required on free tier (marketplace feed only). */
+  requiredPlan?: PlanName | null;
   // Present when loaded via getById(id, { version }).
   isHistoricalVersion?: boolean;
   version?: number;

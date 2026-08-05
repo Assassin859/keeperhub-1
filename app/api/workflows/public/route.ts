@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import type { PlanName } from "@/lib/billing/plans";
 import { db } from "@/lib/db";
 import {
   publicTags,
@@ -16,7 +17,7 @@ import {
   projectEdgesForPublicFeed,
   projectNodesForPublicFeed,
 } from "@/lib/workflow/public-feed-projection";
-import { workflowRequiresProPlan } from "@/lib/features/template-plan-gate";
+import { workflowRequiredPlan } from "@/lib/features/template-plan-gate";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 type TagInfo = { id: string; name: string; slug: string };
 
@@ -283,7 +284,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       userVote: VoteDirection | null;
       canVote: boolean;
       duplicateCount: number;
-      requiresProPlan: boolean;
+      requiredPlan: PlanName | null;
     };
 
     const mappedWorkflows = publicWorkflows.map(
@@ -298,7 +299,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         userVote: userVotes[workflow.id] ?? null,
         canVote: userDuplications.has(workflow.id),
         duplicateCount: duplicateCounts[workflow.id] ?? 0,
-        requiresProPlan: workflowRequiresProPlan(workflow.nodes),
+        requiredPlan: workflowRequiredPlan(workflow.nodes),
         createdAt: workflow.createdAt.toISOString(),
         updatedAt: workflow.updatedAt.toISOString(),
       })

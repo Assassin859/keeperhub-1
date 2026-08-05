@@ -1,50 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { workflowRequiresProPlan } from "@/lib/features/template-plan-gate";
+import { workflowRequiredPlan } from "@/lib/features/template-plan-gate";
 
-describe("workflowRequiresProPlan", () => {
-  it("returns false for trigger + ungated actions only", () => {
+describe("workflowRequiredPlan", () => {
+  it("returns null for trigger + ungated actions only", () => {
     const nodes = [
       { id: "t1", data: { config: { triggerType: "Manual" } } },
       { id: "n1", data: { config: { actionType: "Condition" } } },
     ];
-    expect(workflowRequiresProPlan(nodes)).toBe(false);
+    expect(workflowRequiredPlan(nodes)).toBeNull();
   });
 
-  it("returns true for webhook/send-webhook", () => {
+  it("returns pro for webhook/send-webhook", () => {
     const nodes = [
       { id: "n1", data: { config: { actionType: "webhook/send-webhook" } } },
     ];
-    expect(workflowRequiresProPlan(nodes)).toBe(true);
+    expect(workflowRequiredPlan(nodes)).toBe("pro");
   });
 
-  it("returns true for Database Query", () => {
+  it("returns pro for Database Query", () => {
     const nodes = [
       { id: "n1", data: { config: { actionType: "Database Query" } } },
     ];
-    expect(workflowRequiresProPlan(nodes)).toBe(true);
+    expect(workflowRequiredPlan(nodes)).toBe("pro");
   });
 
-  it("returns false for empty or malformed nodes", () => {
-    expect(workflowRequiresProPlan([])).toBe(false);
-    expect(workflowRequiresProPlan([null, 42, "bad"])).toBe(false);
-    expect(workflowRequiresProPlan([{ id: "n1", data: { config: {} } }])).toBe(
-      false
-    );
-    expect(workflowRequiresProPlan({} as unknown as readonly unknown[])).toBe(
-      false
-    );
-    expect(workflowRequiresProPlan(null as unknown as readonly unknown[])).toBe(
-      false
-    );
+  it("returns null for empty or malformed nodes", () => {
+    expect(workflowRequiredPlan([])).toBeNull();
+    expect(workflowRequiredPlan([null, 42, "bad"])).toBeNull();
+    expect(
+      workflowRequiredPlan([{ id: "n1", data: { config: {} } }])
+    ).toBeNull();
+    expect(
+      workflowRequiredPlan({} as unknown as readonly unknown[])
+    ).toBeNull();
+    expect(
+      workflowRequiredPlan(null as unknown as readonly unknown[])
+    ).toBeNull();
   });
 
-  it("returns true for legacy colon actionType on Pro-gated code action", () => {
+  it("returns pro for legacy colon actionType on Pro-gated code action", () => {
     const nodes = [{ id: "n1", data: { actionType: "code:run-code" } }];
-    expect(workflowRequiresProPlan(nodes)).toBe(true);
+    expect(workflowRequiredPlan(nodes)).toBe("pro");
   });
 
-  it("returns true for top-level data.actionType without config", () => {
+  it("returns pro for top-level data.actionType without config", () => {
     const nodes = [{ id: "n1", data: { actionType: "code/run-code" } }];
-    expect(workflowRequiresProPlan(nodes)).toBe(true);
+    expect(workflowRequiredPlan(nodes)).toBe("pro");
   });
 });

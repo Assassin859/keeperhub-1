@@ -1,15 +1,24 @@
+import type { PlanName } from "@/lib/billing/plans";
+import { highestRequiredPlan } from "./check";
 import {
   extractActionTypeNodes,
   validateWorkflowFeatures,
 } from "./workflow-validator";
 
 /**
- * Returns true when a workflow uses features gated behind Pro (or higher) on
- * the free plan. Used by the public marketplace feed to surface plan badges
- * before a user duplicates a template.
+ * Returns the minimum plan required to run a workflow on the free tier, or
+ * null when no feature violations exist. Used by the public marketplace feed
+ * to surface plan badges before a user duplicates a template.
  */
-export function workflowRequiresProPlan(nodes: readonly unknown[]): boolean {
-  return (
-    validateWorkflowFeatures(extractActionTypeNodes(nodes), "free").length > 0
+export function workflowRequiredPlan(
+  nodes: readonly unknown[]
+): PlanName | null {
+  const violations = validateWorkflowFeatures(
+    extractActionTypeNodes(nodes),
+    "free"
   );
+  if (violations.length === 0) {
+    return null;
+  }
+  return highestRequiredPlan(violations.map((v) => v.feature.requiredPlan));
 }
