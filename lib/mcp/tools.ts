@@ -429,7 +429,7 @@ type ParsedApiCallError = {
   error?: string;
 };
 
-const API_CALL_FAILED_RE = /^API call failed: (\d+) [^-]+ - ([\s\S]*)$/;
+const API_CALL_FAILED_RE = /^API call failed: (\d+)(?: [^-]+)? - ([\s\S]*)$/;
 
 function parseApiCallError(error: unknown): ParsedApiCallError | null {
   if (!(error instanceof Error)) {
@@ -548,9 +548,10 @@ async function callApi(
       );
     }
     const errorText = await response.text();
-    throw new Error(
-      `API call failed: ${response.status} ${response.statusText} - ${errorText}`
-    );
+    const statusLabel = response.statusText
+      ? `${response.status} ${response.statusText}`
+      : String(response.status);
+    throw new Error(`API call failed: ${statusLabel} - ${errorText}`);
   }
 
   const contentType = response.headers.get("content-type") ?? "";

@@ -111,6 +111,7 @@ describe("MCP agent utility tool handlers", () => {
           new Response(
             JSON.stringify({
               error: "Interactive session with step-up MFA required",
+              code: "session_required",
             }),
             { status: 403 }
           )
@@ -134,9 +135,11 @@ describe("MCP agent utility tool handlers", () => {
     };
     const parsed = JSON.parse(result.content[0].text) as {
       error: string;
+      code: string;
       paymentId: string;
     };
     expect(parsed.error).toBe("session_step_up_required");
+    expect(parsed.code).toBe("session_required");
     expect(parsed.paymentId).toBe("pay-1");
   });
 
