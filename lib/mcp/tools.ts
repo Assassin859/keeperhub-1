@@ -255,7 +255,7 @@ export function buildSimulationUnsupportedChainError(chainId: number): Error {
     JSON.stringify({
       code: "simulation_unsupported_chain",
       chainId,
-      hint: "Direct-execution simulation is EVM-only. Omit simulate for Solana or preflight with a Solana-aware client.",
+      hint: "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting.",
     })
   );
 }

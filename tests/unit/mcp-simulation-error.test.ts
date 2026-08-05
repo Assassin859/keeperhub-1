@@ -11,7 +11,10 @@ describe("buildSimulationUnsupportedChainError", () => {
     };
     expect(parsed.code).toBe("simulation_unsupported_chain");
     expect(parsed.chainId).toBe(101);
-    expect(parsed.hint).toContain("EVM-only");
+    expect(parsed.hint).toBe(
+      "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting."
+    );
+    expect(parsed.hint).not.toContain("Omit simulate");
   });
 
   it("includes chain id for Solana devnet", () => {
