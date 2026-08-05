@@ -2,13 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockGetDualAuthContext, mockFindFirst } = vi.hoisted(() => ({
-  mockGetDualAuthContext: vi.fn(),
-  mockFindFirst: vi.fn(),
-}));
+const { mockGetDualAuthContext, mockFindFirst, mockAuthenticateApiKey } =
+  vi.hoisted(() => ({
+    mockGetDualAuthContext: vi.fn(),
+    mockFindFirst: vi.fn(),
+    mockAuthenticateApiKey: vi.fn(),
+  }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
   getDualAuthContext: mockGetDualAuthContext,
+}));
+
+vi.mock("@/lib/api-key-auth", () => ({
+  authenticateApiKey: mockAuthenticateApiKey,
 }));
 
 vi.mock("@/lib/workflow/access", () => ({
@@ -90,6 +96,90 @@ const crossOrgContext = {
 describe("resolveExecutionViewAccess", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
+  });
+
+  it("returns notFound for anonymous session on private workflow", async () => {
+    const execution = makeExecution({ visibility: "private" });
+    mockFindFirst.mockResolvedValue(execution);
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "anon_user",
+      organizationId: "org_anon",
+      authMethod: "session",
+      apiKeyId: null,
+      isAnonymous: true,
+    });
+
+    const result = await resolveExecutionViewAccess(
+      makeRequest(),
+      EXECUTION_ID
+    );
+
+    expect(result).toEqual({ mode: "notFound" });
+  });
+
+  it("returns invalidAuth for malformed API key header", async () => {
+    mockFindFirst.mockResolvedValue(makeExecution());
+    mockAuthenticateApiKey.mockResolvedValue({
+      authenticated: false,
+      error: "Invalid API key format. Expected key starting with kh_",
+      statusCode: 401,
+    });
+
+    const result = await resolveExecutionViewAccess(
+      new Request(`http://localhost/executions/${EXECUTION_ID}`, {
+        headers: { Authorization: "Bearer kh_bad" },
+      }),
+      EXECUTION_ID
+    );
+
+    expect(result).toEqual({
+      mode: "invalidAuth",
+      error: "Invalid API key format. Expected key starting with kh_",
+    });
+  });
+
+  it("returns notFound when auth context returns an error", async () => {
+    mockFindFirst.mockResolvedValue(makeExecution({ visibility: "private" }));
+    mockGetDualAuthContext.mockResolvedValue({
+      error: "Unauthorized",
+      status: 401,
+    });
+
+    const result = await resolveExecutionViewAccess(
+      makeRequest(),
+      EXECUTION_ID
+    );
+
+    expect(result).toEqual({ mode: "notFound" });
+  });
+
+  it("returns accessDenied for authenticated member on deleted workflow", async () => {
+    const execution = makeExecution({
+      visibility: "private",
+      deletedAt: new Date(),
+    });
+    mockFindFirst.mockResolvedValue(execution);
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "user_1",
+      organizationId: "org_1",
+      authMethod: "session",
+      apiKeyId: null,
+      isAnonymous: false,
+    });
+    mockGetWorkflowAccess.mockResolvedValue({
+      isCreatorWithCurrentAccess: true,
+      isSameOrg: true,
+      hasFullAccess: true,
+      isDeleted: true,
+    });
+
+    const result = await resolveExecutionViewAccess(
+      makeRequest(),
+      EXECUTION_ID
+    );
+
+    expect(result).toEqual({ mode: "accessDenied" });
   });
 
   it("returns notFound when execution is missing", async () => {
@@ -305,10 +395,10 @@ describe("resolveExecutionViewAccess", () => {
 });
 
 describe("redactExecutionStatusForPublicView", () => {
-  it("strips executionTrace and error from errorContext", () => {
+  it("strips node-identifying fields from public payloads", () => {
     const payload = {
       status: "error",
-      nodeStatuses: [],
+      nodeStatuses: [{ nodeId: "n1", status: "error" as const }],
       progress: {
         totalSteps: 1,
         completedSteps: 0,
@@ -324,17 +414,26 @@ describe("redactExecutionStatusForPublicView", () => {
         executionTrace: ["secret trace"],
         error: "internal error detail",
       },
-      transactionHashes: [],
+      transactionHashes: [
+        {
+          nodeId: "n1",
+          nodeName: "Transfer",
+          hash: "0xabc",
+          chainId: 1,
+        },
+      ],
     };
 
     const redacted = redactExecutionStatusForPublicView(payload);
 
+    expect(redacted.nodeStatuses).toEqual([{ nodeId: "", status: "error" }]);
+    expect(redacted.progress.currentNodeId).toBeNull();
+    expect(redacted.progress.currentNodeName).toBeNull();
     expect(redacted.errorContext).toEqual({
-      failedNodeId: "n1",
+      failedNodeId: null,
       lastSuccessfulNodeId: null,
       lastSuccessfulNodeName: null,
     });
-    expect(redacted.errorContext?.executionTrace).toBeUndefined();
-    expect(redacted.errorContext?.error).toBeUndefined();
+    expect(redacted.transactionHashes[0]?.nodeName).toBe("");
   });
 });

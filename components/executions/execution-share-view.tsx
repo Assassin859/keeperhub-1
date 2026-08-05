@@ -30,6 +30,7 @@ type ExecutionShareViewProps = {
   workflowId: string;
   workflowName: string;
   initialStatus: string;
+  hasSession: boolean;
 };
 
 type StatusResponse = {
@@ -94,6 +95,7 @@ export function ExecutionShareView({
   workflowId,
   workflowName,
   initialStatus,
+  hasSession,
 }: ExecutionShareViewProps): React.ReactElement {
   const [statusData, setStatusData] = useState<StatusResponse>({
     status: initialStatus,
@@ -181,7 +183,7 @@ export function ExecutionShareView({
         clearTimeout(timeoutId);
       }
     };
-  }, [executionId]);
+  }, [executionId, initialStatus]);
 
   const percentage = statusData.progress?.percentage ?? 0;
   const txHashes = statusData.transactionHashes ?? [];
@@ -192,12 +194,14 @@ export function ExecutionShareView({
         <div className="space-y-1">
           <p className="text-muted-foreground text-sm">Workflow execution</p>
           <h1 className="font-semibold text-2xl">{workflowName}</h1>
-          <Link
-            className="text-primary text-sm hover:underline"
-            href={`/workflows/${workflowId}`}
-          >
-            View workflow
-          </Link>
+          {hasSession && (
+            <Link
+              className="text-primary text-sm hover:underline"
+              href={`/workflows/${workflowId}`}
+            >
+              View workflow
+            </Link>
+          )}
         </div>
 
         <div className="space-y-3 rounded-lg border border-border bg-card p-4">
@@ -264,11 +268,17 @@ export function ExecutionShareView({
                     className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
                     key={`${entry.nodeId}-${entry.hash}`}
                   >
-                    <span className="truncate text-muted-foreground">
-                      {entry.nodeName}
-                    </span>
+                    {entry.nodeName ? (
+                      <span className="truncate text-muted-foreground">
+                        {entry.nodeName}
+                      </span>
+                    ) : (
+                      <span className="truncate font-mono text-muted-foreground text-xs">
+                        {entry.hash.slice(0, 10)}...
+                      </span>
+                    )}
                     <span className="flex shrink-0 items-center gap-1 font-mono text-xs">
-                      {entry.hash.slice(0, 10)}...
+                      {entry.nodeName ? `${entry.hash.slice(0, 10)}...` : null}
                       {explorerUrl && (
                         <a
                           className="text-primary hover:text-primary/80"
@@ -291,9 +301,15 @@ export function ExecutionShareView({
           </div>
         )}
 
-        <Button asChild variant="outline">
-          <Link href="/hub">Back to Hub</Link>
-        </Button>
+        {hasSession ? (
+          <Button asChild variant="outline">
+            <Link href="/hub">Back to Hub</Link>
+          </Button>
+        ) : (
+          <Button asChild variant="outline">
+            <Link href="/">Sign in to KeeperHub</Link>
+          </Button>
+        )}
       </div>
     </main>
   );

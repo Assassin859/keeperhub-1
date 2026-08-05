@@ -39,6 +39,7 @@ export interface ListWorkflowMetadata {
   inputSchema?: Record<string, unknown>;
   outputMapping?: Record<string, unknown>;
   workflowType?: string;
+  shareExecutionStatus?: boolean;
 }
 
 export interface UpdateWorkflowPatch {
@@ -175,6 +176,12 @@ export async function listWorkflow(
   if (metadata.inputSchema !== undefined) {
     updateSet.inputSchema = metadata.inputSchema;
   }
+  if (metadata.shareExecutionStatus !== undefined) {
+    Object.assign(
+      updateSet,
+      shareExecutionStatusUpdate(metadata.shareExecutionStatus)
+    );
+  }
   if (metadata.outputMapping !== undefined) {
     updateSet.outputMapping = metadata.outputMapping;
   }
@@ -279,7 +286,11 @@ export async function unlistWorkflow(
 
   const [result] = await db
     .update(workflows)
-    .set({ isListed: false, updatedAt: new Date() })
+    .set({
+      ...clearShareExecutionStatus(),
+      isListed: false,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(workflows.id, workflowId),

@@ -218,6 +218,9 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     currentWorkflowOutputMappingAtom
   );
   const setCurrentWorkflowPriceUsdc = useSetAtom(currentWorkflowPriceUsdcAtom);
+  const setCurrentWorkflowShareExecutionStatus = useSetAtom(
+    currentWorkflowShareExecutionStatusAtom
+  );
   const setSelectedNode = useSetAtom(selectedNodeAtom);
   const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
   const setNewlyCreatedNodeId = useSetAtom(newlyCreatedNodeIdAtom);
@@ -446,6 +449,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       inputSchema?: Record<string, unknown> | null;
       outputMapping?: Record<string, unknown> | null;
       priceUsdcPerCall?: string | null;
+      shareExecutionStatus?: boolean;
     }) => {
       setCurrentWorkflowIsListed(workflow.isListed ?? false);
       setCurrentWorkflowListedSlug(workflow.listedSlug ?? null);
@@ -453,6 +457,9 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       setCurrentWorkflowInputSchema(workflow.inputSchema ?? null);
       setCurrentWorkflowOutputMapping(workflow.outputMapping ?? null);
       setCurrentWorkflowPriceUsdc(workflow.priceUsdcPerCall ?? null);
+      setCurrentWorkflowShareExecutionStatus(
+        workflow.shareExecutionStatus ?? false
+      );
     },
     [
       setCurrentWorkflowIsListed,
@@ -461,6 +468,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       setCurrentWorkflowInputSchema,
       setCurrentWorkflowOutputMapping,
       setCurrentWorkflowPriceUsdc,
+      setCurrentWorkflowShareExecutionStatus,
     ]
   );
 

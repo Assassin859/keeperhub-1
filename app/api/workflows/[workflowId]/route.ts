@@ -25,6 +25,7 @@ import {
 } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { clearShareExecutionStatus } from "@/lib/workflow/share-execution-status";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
@@ -243,6 +244,7 @@ function buildUpdateData(
     "inputSchema", // v1.7 listing fields //
     "outputMapping", // v1.7 listing fields //
     "priceUsdcPerCall", // v1.7 listing fields //
+    "shareExecutionStatus",
   ];
   for (const field of fields) {
     if (body[field] !== undefined) {
@@ -603,8 +605,8 @@ export async function PATCH(
       body.isListed === false && existingWorkflow.isListed === true;
     const isTransitioningToListed =
       body.isListed === true && existingWorkflow.isListed !== true;
-    if (isTransitioningToListed) {
-      updateData.shareExecutionStatus = true;
+    if (isTransitioningToUnlisted) {
+      Object.assign(updateData, clearShareExecutionStatus());
     }
     const willBeListed =
       !isTransitioningToUnlisted &&

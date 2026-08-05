@@ -1,6 +1,7 @@
 import "server-only";
 
 import { eq } from "drizzle-orm";
+import { authenticateApiKey } from "@/lib/api-key-auth";
 import { db } from "@/lib/db";
 import type { TransactionHashEntry } from "@/lib/db/schema";
 import { workflowExecutions } from "@/lib/db/schema";
@@ -31,6 +32,7 @@ export type ExecutionViewAccess =
   | { mode: "full"; execution: AuthorizedExecution }
   | { mode: "publicReadOnly"; execution: AuthorizedExecution }
   | { mode: "accessDenied" }
+  | { mode: "invalidAuth"; error: string }
   | { mode: "notFound" };
 
 type NodeStatus = {
@@ -59,10 +61,13 @@ export type ExecutionStatusPayload = {
   transactionHashes: TransactionHashEntry[];
 };
 
-function isAuthenticatedCaller(
+function isRealAuthenticatedCaller(
   authContext: DualAuthContext
 ): authContext is AuthenticatedContext {
   if ("error" in authContext) {
+    return false;
+  }
+  if (authContext.isAnonymous) {
     return false;
   }
   return Boolean(authContext.userId || authContext.organizationId);
@@ -81,6 +86,23 @@ function isPubliclyShareableWorkflow(
   return visibility === "public" || visibility === "unlisted";
 }
 
+async function resolveInvalidApiKeyAuth(
+  request: Request
+): Promise<{ mode: "invalidAuth"; error: string } | null> {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer kh_")) {
+    return null;
+  }
+  const apiKeyAuth = await authenticateApiKey(request);
+  if (apiKeyAuth.authenticated) {
+    return null;
+  }
+  return {
+    mode: "invalidAuth",
+    error: apiKeyAuth.error ?? "Unauthorized",
+  };
+}
+
 /**
  * Strip verbose internals from status payloads served to unauthenticated
  * viewers of opted-in public/unlisted workflow executions.
@@ -88,36 +110,59 @@ function isPubliclyShareableWorkflow(
 export function redactExecutionStatusForPublicView(
   payload: ExecutionStatusPayload
 ): ExecutionStatusPayload {
-  if (!payload.errorContext) {
-    return payload;
-  }
+  const redactedNodeStatuses = payload.nodeStatuses.map((node) => ({
+    status: node.status,
+    nodeId: "",
+  }));
 
   return {
     ...payload,
-    errorContext: {
-      failedNodeId: payload.errorContext.failedNodeId,
-      lastSuccessfulNodeId: payload.errorContext.lastSuccessfulNodeId,
-      lastSuccessfulNodeName: payload.errorContext.lastSuccessfulNodeName,
+    nodeStatuses: redactedNodeStatuses,
+    progress: {
+      ...payload.progress,
+      currentNodeId: null,
+      currentNodeName: null,
     },
+    errorContext: payload.errorContext
+      ? {
+          failedNodeId: null,
+          lastSuccessfulNodeId: null,
+          lastSuccessfulNodeName: null,
+        }
+      : null,
+    transactionHashes: payload.transactionHashes.map((entry) => ({
+      ...entry,
+      nodeName: "",
+    })),
   };
 }
 
 /**
  * Resolve how a caller may view an execution: full org access, public read-only
  * (opted-in public/unlisted workflow), access denied (authenticated but no
- * access), or not found (unknown id or unauthenticated private — anti-enumeration).
+ * access), invalid auth (malformed API key), or not found (unknown id or
+ * unauthenticated private — anti-enumeration).
  */
 export async function resolveExecutionViewAccess(
   request: Request,
   executionId: string
 ): Promise<ExecutionViewAccess> {
+  const invalidApiKey = await resolveInvalidApiKeyAuth(request);
+  if (invalidApiKey) {
+    return invalidApiKey;
+  }
+
   const execution = await loadExecutionWithWorkflow(executionId);
   if (!execution) {
     return { mode: "notFound" };
   }
 
   const authContext = await getDualAuthContext(request, { required: false });
-  if (isAuthenticatedCaller(authContext)) {
+  if ("error" in authContext) {
+    return { mode: "notFound" };
+  }
+
+  if (isRealAuthenticatedCaller(authContext)) {
     const access = await getWorkflowAccess(execution.workflow, {
       userId: authContext.userId,
       organizationId: authContext.organizationId,
@@ -132,7 +177,7 @@ export async function resolveExecutionViewAccess(
     return { mode: "publicReadOnly", execution };
   }
 
-  if (isAuthenticatedCaller(authContext)) {
+  if (isRealAuthenticatedCaller(authContext)) {
     return { mode: "accessDenied" };
   }
 

@@ -100,10 +100,12 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
 
     expect(response.status).toBe(200);
     expect(body.status).toBe("error");
-    expect(body.transactionHashes).toEqual(execution.transactionHashes);
+    expect(body.transactionHashes).toEqual([
+      expect.objectContaining({ hash: "0xabc", nodeName: "" }),
+    ]);
   });
 
-  it("redacts executionTrace and error from publicReadOnly errorContext", async () => {
+  it("redacts node-identifying fields from publicReadOnly payloads", async () => {
     const execution = makeExecution("public");
     mockResolveExecutionViewAccess.mockResolvedValue({
       mode: "publicReadOnly",
@@ -119,12 +121,29 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
         executionTrace?: string[];
         error?: string;
       } | null;
+      progress: { currentNodeName: string | null };
     };
 
     expect(response.status).toBe(200);
-    expect(body.errorContext?.failedNodeId).toBe("n1");
+    expect(body.errorContext?.failedNodeId).toBeNull();
     expect(body.errorContext?.executionTrace).toBeUndefined();
     expect(body.errorContext?.error).toBeUndefined();
+    expect(body.progress.currentNodeName).toBeNull();
+  });
+
+  it("returns 401 for invalidAuth", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "invalidAuth",
+      error: "Invalid API key format. Expected key starting with kh_",
+    });
+
+    const response = await GET(createRequest(), {
+      params: Promise.resolve({ executionId: EXECUTION_ID }),
+    });
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(401);
+    expect(body.error).toContain("Invalid API key");
   });
 
   it("returns 403 for accessDenied without leaking execution payload", async () => {

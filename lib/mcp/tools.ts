@@ -810,6 +810,27 @@ export function registerTools(
     { title: "Get Execution", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_execution", scope, async (args) =>
       withToolLogging("get_execution", undefined, async () => {
+        const accessRequest = new Request(`${internalApiBaseUrl}/mcp`, {
+          headers: { Authorization: authHeader },
+        });
+        const viewAccess = await resolveExecutionViewAccess(
+          accessRequest,
+          args.executionId
+        );
+        if (viewAccess.mode === "invalidAuth") {
+          throw new Error(viewAccess.error);
+        }
+        if (viewAccess.mode === "notFound") {
+          throw new Error(
+            `API call failed: 404 Not Found - ${JSON.stringify({ error: "Execution not found" })}`
+          );
+        }
+        if (viewAccess.mode === "accessDenied") {
+          throw new Error(
+            `API call failed: 403 Forbidden - ${JSON.stringify({ error: "Access denied" })}`
+          );
+        }
+
         const params = new URLSearchParams();
         if (args.includeData !== undefined) {
           params.set("includeData", String(args.includeData));
@@ -827,10 +848,28 @@ export function registerTools(
           ? `/api/workflows/executions/${args.executionId}/logs?${query}`
           : `/api/workflows/executions/${args.executionId}/logs`;
         const statusPath = `/api/workflows/executions/${args.executionId}/status`;
-        const [statusData, logsData] = await Promise.all([
-          callApi(internalApiBaseUrl, authHeader, statusPath, "GET"),
-          callApi(internalApiBaseUrl, authHeader, logsPath, "GET"),
-        ]);
+        const statusData = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          statusPath,
+          "GET"
+        );
+        if (viewAccess.mode === "publicReadOnly") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ status: statusData }, null, 2),
+              },
+            ],
+          };
+        }
+        const logsData = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          logsPath,
+          "GET"
+        );
         return {
           content: [
             {

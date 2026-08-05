@@ -203,6 +203,7 @@ function hasChanges(
     price: string;
     inputSchema: SchemaField[];
     outputMapping: { nodeId: string; field: string } | null;
+    shareExecutionStatus: boolean;
   },
   existing: {
     existingIsListed: boolean;
@@ -210,6 +211,7 @@ function hasChanges(
     existingPrice: string | null;
     existingInputSchema: Record<string, unknown> | null;
     existingOutputMapping: Record<string, unknown> | null;
+    existingShareExecutionStatus: boolean;
   },
   workflowName: string
 ): boolean {
@@ -230,6 +232,10 @@ function hasChanges(
     ? parseOutputMapping(existing.existingOutputMapping)
     : null;
   if (JSON.stringify(local.outputMapping) !== JSON.stringify(existingMapping)) {
+    return true;
+  }
+
+  if (local.shareExecutionStatus !== existing.existingShareExecutionStatus) {
     return true;
   }
 
@@ -284,12 +290,14 @@ type ListingOverlayProps = OverlayComponentProps<{
   existingInputSchema: Record<string, unknown> | null;
   existingOutputMapping: Record<string, unknown> | null;
   existingPrice: string | null;
+  existingShareExecutionStatus: boolean;
   onSave: (data: {
     isListed: boolean;
     listedSlug: string | null;
     inputSchema: Record<string, unknown> | null;
     outputMapping: Record<string, unknown> | null;
     priceUsdcPerCall: string | null;
+    shareExecutionStatus: boolean;
   }) => void;
 }>;
 
@@ -304,6 +312,7 @@ export function ListingOverlay({
   existingInputSchema,
   existingOutputMapping,
   existingPrice,
+  existingShareExecutionStatus,
   onSave,
 }: ListingOverlayProps) {
   const { closeAll, push } = useOverlay();
@@ -324,6 +333,9 @@ export function ListingOverlay({
   } | null>(
     existingOutputMapping ? parseOutputMapping(existingOutputMapping) : null
   );
+  const [localShareExecutionStatus, setLocalShareExecutionStatus] = useState(
+    existingShareExecutionStatus
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   const slugError = validateSlug(localSlug, localIsListed);
@@ -337,6 +349,7 @@ export function ListingOverlay({
       price: localPrice,
       inputSchema: localInputSchema,
       outputMapping: localOutputMapping,
+      shareExecutionStatus: localShareExecutionStatus,
     },
     {
       existingIsListed,
@@ -344,6 +357,7 @@ export function ListingOverlay({
       existingPrice,
       existingInputSchema,
       existingOutputMapping,
+      existingShareExecutionStatus,
     },
     workflowName
   );
@@ -394,6 +408,7 @@ export function ListingOverlay({
         inputSchema: schema,
         outputMapping: mapping,
         priceUsdcPerCall: localPrice || null,
+        shareExecutionStatus: localShareExecutionStatus,
       });
 
       closeAll();
@@ -404,6 +419,7 @@ export function ListingOverlay({
           inputSchema: schema,
           outputMapping: mapping,
           priceUsdcPerCall: localPrice || null,
+          shareExecutionStatus: localShareExecutionStatus,
         });
       }, 250);
 
@@ -517,6 +533,25 @@ export function ListingOverlay({
               checked={localIsListed}
               id="list-toggle"
               onCheckedChange={handleToggleListed}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="share-execution-status">
+                Share execution status publicly
+              </Label>
+              <p className="text-muted-foreground text-xs">
+                Allow anyone with the link to view run progress for public or
+                unlisted workflows
+              </p>
+            </div>
+            <Switch
+              aria-label="Share execution status publicly"
+              checked={localShareExecutionStatus}
+              disabled={!localIsListed}
+              id="share-execution-status"
+              onCheckedChange={setLocalShareExecutionStatus}
             />
           </div>
 
