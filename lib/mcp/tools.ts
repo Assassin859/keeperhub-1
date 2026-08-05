@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { SUPPORTED_CHAIN_IDS } from "@/lib/rpc/types";
+import { resolveExecutionViewAccess } from "@/lib/workflow/execution-access";
 import { withToolLogging } from "./logging";
 import { getRequiredScopeForTool, isToolAllowed } from "./oauth-scopes";
 

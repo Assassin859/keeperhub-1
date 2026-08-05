@@ -29,6 +29,7 @@ export type WorkflowData = {
   inputSchema?: Record<string, unknown> | null;
   outputMapping?: Record<string, unknown> | null;
   priceUsdcPerCall?: string | null;
+  shareExecutionStatus?: boolean;
 };
 
 export type PublicTag = {
@@ -70,8 +71,6 @@ export type SavedWorkflow = WorkflowData & {
   userVote?: VoteDirection | null;
   canVote?: boolean;
   duplicateCount?: number;
-  /** When true, execution status is shareable via deep link for public/unlisted workflows. */
-  shareExecutionStatus?: boolean;
   // Present when loaded via getById(id, { version }).
   isHistoricalVersion?: boolean;
   version?: number;

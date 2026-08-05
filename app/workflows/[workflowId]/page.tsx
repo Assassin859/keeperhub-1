@@ -42,6 +42,7 @@ import {
   currentWorkflowPriceUsdcAtom,
   currentWorkflowProjectIdAtom,
   currentWorkflowPublicTagsAtom,
+  currentWorkflowShareExecutionStatusAtom,
   currentWorkflowTagIdAtom,
   currentWorkflowVisibilityAtom,
   edgesAtom,

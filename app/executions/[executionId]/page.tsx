@@ -29,6 +29,10 @@ export default async function ExecutionPage({
     return <ExecutionAccessDenied />;
   }
 
+  if (access.mode === "invalidAuth") {
+    notFound();
+  }
+
   const session = await auth.api.getSession({ headers: headerList });
   const hasSession = Boolean(
     session?.user && !isAnonymousUserShape(session.user)

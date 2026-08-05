@@ -960,6 +960,8 @@ function useWorkflowState() {
     setOutputMapping,
     priceUsdc,
     setPriceUsdc,
+    shareExecutionStatus,
+    setShareExecutionStatus,
   };
 }
 
@@ -1013,6 +1015,8 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     setOutputMapping,
     priceUsdc,
     setPriceUsdc,
+    shareExecutionStatus,
+    setShareExecutionStatus,
   } = state;
 
   const { handleSave, handleExecute, handleCancel, validateAndProceed } =

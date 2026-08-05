@@ -183,7 +183,7 @@ export function ExecutionShareView({
         clearTimeout(timeoutId);
       }
     };
-  }, [executionId, initialStatus]);
+  }, [executionId]);
 
   const percentage = statusData.progress?.percentage ?? 0;
   const txHashes = statusData.transactionHashes ?? [];
