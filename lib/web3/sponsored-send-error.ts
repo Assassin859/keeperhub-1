@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ErrorCategory, logSystemWarn, logUserError } from "@/lib/logging";
 import {
   isSponsoredTxPendingError,
@@ -7,7 +8,21 @@ import {
 } from "@/lib/web3/turnkey-revert";
 
 export type SponsoredSendDecision =
-  | { fallback: false; error: string }
+  | {
+      fallback: false;
+      error: string;
+      // Set only when the sponsored transaction reached the chain and
+      // reverted there, so a caller can tell "this hash exists and reverted"
+      // (reconcilable) from "nothing was broadcast" (nothing to reconcile).
+      // Absent for the accepted-but-unconfirmed case, where no hash is known.
+      transactionHash?: string;
+      // Set only for the pending/unconfirmed case, so a failOnError=false
+      // caller can never soften it into success: the transaction may still
+      // land, and treating an unresolved in-flight send as a known, ignorable
+      // failure would hide that from the operator. The revert case is a
+      // clean, terminal outcome and stays eligible for softening.
+      errorClass?: ExecutionErrorType;
+    }
   | { fallback: true };
 
 /**
@@ -48,6 +63,7 @@ export function resolveSponsoredSendError(
     return {
       fallback: false,
       error: `Transaction reverted: ${error.message} (tx ${error.txHash})`,
+      transactionHash: error.txHash,
     };
   }
 
@@ -67,6 +83,7 @@ export function resolveSponsoredSendError(
       fallback: false,
       error:
         "Sponsored transaction was submitted but not confirmed in time. It may still complete; not retrying to avoid a duplicate transaction.",
+      errorClass: ExecutionErrorType.SYSTEM,
     };
   }
 

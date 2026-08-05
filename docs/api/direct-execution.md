@@ -34,13 +34,17 @@ you inspected is the transaction you send:
    are both `true`.
 2. Send the intended request with `"simulate": true`. Continue only when the
    response has `success: true` and `wouldRevert: false`.
-3. Remove `simulate`, add a unique `Idempotency-Key` header, and send the
-   request once.
+3. Remove `simulate`, add an `Idempotency-Key` header, and send the request
+   once. The key must identify the work rather than the attempt, so that a
+   retry sends the same one: see [Choosing a stable key](#choosing-a-stable-key).
 4. Save the returned `executionId`, then poll
    `GET /api/execute/{executionId}/status`. Honor the
    `X-Poll-Interval-Hint` response header between polls.
-5. Treat the status response's `transactionHash` and `transactionLink` as the
-   authoritative onchain proof.
+5. Treat the status response's `receipts` as the authoritative onchain proof:
+   each entry is a receipt re-fetched from the chain, so `verified` and
+   `receiptStatus` say what actually happened. `transactionHash` and
+   `transactionLink` identify the transaction but are self-reported by the
+   write path.
 
 This sequence catches bad addresses, ABI mistakes, insufficient balances, and
 reverts before broadcast, while idempotency makes an interrupted client safe to
@@ -51,11 +55,31 @@ a transaction.
 
 Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID). Every guarantee below depends on the retry sending the **same** key, so a caller that reconstructs a request rather than replaying a buffered one must derive its key deterministically: see [Choosing a stable key](#choosing-a-stable-key).
 
-- **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again.
-- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for a different request.
+- **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again, plus an `idempotentReplay` marker described below.
+- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for genuinely different work, not for a retry of the same work whose body was reconstructed: see [Choosing a stable key](#choosing-a-stable-key).
 - **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress`; retry shortly.
-- **Scope**: keys are scoped per organization, so the same key is shared across an org's API keys.
+- **Scope**: keys are scoped per organization and per endpoint, so the same key is shared across an org's API keys but does not collide between `/transfer`, `/contract-call`, `/check-and-execute`, and a workflow webhook.
 - **Window**: stored responses are replayable for 24 hours. After that the key is free to reuse.
+
+### Recognising a replay
+
+A replayed response is otherwise indistinguishable from a fresh one, which matters most when the stored outcome was a failure: the body carries the original error and nothing else, so a retry loop reads "still reverting" when in fact no transaction was sent. To make the difference visible, a replayed JSON-object body carries an extra top-level field:
+
+```json
+{
+  "success": false,
+  "error": "Contract call failed: Error(LK: not yet due)",
+  "idempotentReplay": true
+}
+```
+
+- `idempotentReplay` is present **only** on a replay, and is always `true`. A fresh response never carries it, so treat its absence as "this outcome just happened".
+- It is added to **every** replayed object body, successes as well as failures. A replayed `202` carries it alongside the original `executionId`.
+- It is added at read time only. The stored response is never modified, so replaying twice returns the same body both times.
+- Bodies that are not JSON objects (arrays, strings, `null`) are returned untouched, so a client that already parses those shapes is unaffected.
+- The marker rides in the body rather than a response header because the common consumer is an agent reading a tool result, where headers are not surfaced.
+
+Conflict and in-progress responses are not replays and never carry the field.
 
 Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
 
@@ -75,18 +99,15 @@ A UUID generated per attempt does not survive a retry: the second attempt genera
 different UUID, so the request is treated as new and executes again. A UUID works only
 when it is persisted before the first attempt and recovered afterwards.
 
-Hashing the raw request body is also unreliable when the body carries fields that vary
-without changing the effect, such as a free-text `reason`, `memo` or `note`. Any
-difference in those fields changes the hash, so the retry is not recognised as one.
-This is a common failure for callers that reconstruct a request from a summary or a log
-rather than replaying the original bytes, and for callers whose request bodies are
-generated by a language model, whose output is not guaranteed byte-identical between
-calls even at temperature 0.
+A caller that cannot persist a key must derive one that is reproducible from the work
+itself. Derive it from a canonical form of the caller's own stable identifier for the
+piece of work, joined with the fields that determine the onchain effect:
 
-Instead derive the key from a canonical form of the caller's own stable identifier for
-the piece of work, joined with the fields that determine the onchain effect:
+```text
+taskId|chainId|recipientAddress|amount|tokenAddress
+```
 
-    taskId | chainId | recipientAddress | amount | tokenAddress
+The separator is a single ASCII vertical bar, `U+007C`, with no surrounding whitespace.
 
 `taskId` is whatever the caller already uses to name the work: an invoice number, a
 payroll period, a job id. It must be stable across a retry of the same work and
@@ -94,30 +115,62 @@ different for different work.
 
 Canonicalize each part before joining:
 
+- **`taskId`**: trim surrounding whitespace, and percent-encode any `%` as `%25` and any
+  `|` as `%7C`. Without this a `taskId` of `8453|0xabc` on chain `1` joins to the same
+  string as a different intent on chain `8453`. Do not case-fold it; task identifiers
+  are opaque to this endpoint.
 - **Resolve the chain to one spelling.** These endpoints accept `chainId` and also the
   deprecated `network` alias, so `{"network": "base"}` and `{"chainId": 8453}` are the
   same transfer. Resolve the alias to a numeric chain id first, then use its decimal
-  integer form, so `8453`, `"8453"` and `"base"` all agree.
+  integer form with no leading zeros, so `8453`, `"8453"` and `"base"` all agree.
 - **Lowercase addresses**, so a checksummed and an unchecksummed address agree.
-- **Canonicalize `amount` as a decimal string**, not a binary float. Strip a leading
-  `+`, strip insignificant trailing zeros after the decimal point, and use no exponent
-  notation, so `"0.001"` and `"0.0010"` agree. Specifying the string form rather than a
-  numeric type is deliberate: a caller parsing `"0.1"` as a 64-bit float gets
-  `0.100000000000000006`, and two callers implementing this in different languages
-  would otherwise disagree on the key. Binary floats also collapse distinct 18-decimal
-  amounts onto the same value.
+- **Canonicalize `amount` as a decimal string**, not a binary float, under all of the
+  following rules, so that two conforming implementations cannot disagree:
+  - trim surrounding whitespace, and reject a leading `+` or `-`
+  - use no exponent notation
+  - require at least one digit before the decimal point, so `.5` becomes `0.5`
+  - strip leading zeros, except the single `0` before a decimal point, so `01.5`
+    becomes `1.5` and `007` becomes `7`
+  - strip trailing zeros after the decimal point, then strip a trailing decimal point,
+    so `0.0010` becomes `0.001` and `1.000` becomes `1`
+
+  Specifying the string form rather than a numeric type is deliberate: a caller parsing
+  `"0.1"` as a 64-bit float gets `0.100000000000000006`, and binary floats also collapse
+  distinct 18-decimal amounts onto the same value.
 - **Represent omitted optional fields as an empty string**, so the separator positions
   stay fixed.
 
-Hash the joined string with SHA-256 and send the hex digest as the `Idempotency-Key`.
+Hash the joined string's UTF-8 bytes with SHA-256 and send the digest as lowercase hex
+in the `Idempotency-Key` header.
 
-**Omit `taskId` only when repeating the transfer would genuinely be a mistake.** Hashing
-the effect fields alone makes every identical transfer the same request, so an agent
-that legitimately pays the same recipient the same amount twice inside the 24 hour
-window gets the second call answered from the first one's cached response: the original
-`executionId`, `status: completed`, no error, and no second transfer. A payment goes
-missing with nothing to alert on, which is harder to notice than a duplicate, since a
-duplicate at least leaves two transactions onchain.
+#### A stable key does not by itself produce a replay
+
+Deriving a stable key is necessary but not sufficient, and it is worth being precise
+about what it buys, because the difference decides how a caller should handle the
+response.
+
+The stored record is keyed on `(organization, scope, key)`, but the **request body is
+hashed too**, and only a byte-equal body replays. Body hashing normalizes JSON key order
+and nothing else, so values that differ in spelling are different bodies even when the
+derived key agrees. `{"network": "base"}` and `{"chainId": 8453}` are different bodies,
+as are `"0.001"` and `"0.0010"`, and so is a `reason`, `memo` or `note` field that the
+caller reworded between attempts.
+
+So a retry that reuses a stable key with a reconstructed, byte-different body returns
+`409 idempotency_conflict`, not a replay. **That is the outcome to design for**, and it
+is the safe one: the fail-closed `409` is precisely what stops the reconstructed retry
+from executing a second time. A caller that expects a replay will read it as a bug in
+its key derivation and reach for a fresh key, which is the one response that does cause
+a double-execution.
+
+Handle it as an answer rather than an error. The `409` body carries
+`originalExecutionId`, the execution the key first produced; poll
+`GET /api/execute/{executionId}/status` with it to learn the outcome of the work you
+were retrying. Do not retry with a new key.
+
+To get an actual replay instead, the retry must reproduce the body byte-for-byte after
+JSON key ordering. Canonicalize the body with the same rules used for the key, and omit
+free-text fields whose wording is not reproducible, rather than regenerating them.
 
 A stable key makes a **repeated** submission of the same work safe. It does not help
 with three other cases:
@@ -126,8 +179,26 @@ with three other cases:
   deduplication
 - the state that justified the request has changed by the time the transaction lands,
   which needs a check before submission
-- the same work is legitimately repeated but the key cannot tell, which is the failure
-  above and is why `taskId` belongs in the key by default
+- the same work is legitimately repeated but the key cannot tell it apart from a retry
+
+The last case is why `taskId` belongs in the key by default. **Omit it only when
+repeating the transfer would genuinely be a mistake.** Hashing the effect fields alone
+makes every identical transfer the same request, so an agent that legitimately pays the
+same recipient the same amount twice inside the 24 hour window gets the second call
+answered from the first one's cached response: the original `executionId`,
+`status: completed`, and no second transfer. That outcome is flagged only by
+`idempotentReplay: true` in the body, which is easy to miss if the caller does not check
+that field, so the second payment can go missing while the response reads as success.
+
+## Sponsored Executions
+
+Writes may be gas-sponsored and broadcast through a relayer or smart-account
+(EIP-7702) path instead of your org's EOA wallet. A sponsored execution does
+not change your EOA's nonce or native balance, and it will not appear in a
+block explorer's `txlist` for that address — checks against the EOA will
+conclude nothing happened even though the transaction succeeded. Check the
+`sponsored` field on the status response and treat `transactionHash` /
+`transactionLink` as the authoritative proof, not EOA-level state.
 
 ## Transfer Funds
 
@@ -142,12 +213,28 @@ Transfer native tokens (ETH, MATIC, etc.) or ERC-20 tokens directly.
 ```json
 {
   "chainId": 11155111,
-  "recipientAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+  "recipientAddress": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
   "amount": "0.1",
   "tokenAddress": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   "gasLimitMultiplier": "1.2"
 }
 ```
+
+### Recipient validation
+
+`recipientAddress` is validated with a strict **EIP-55 checksum** before the
+request is accepted. Pass either:
+
+- the exact checksummed form (mixed-case), or
+- an **all-lowercase** address (e.g. `0x742d35cc6634c0532925a3b844bc454e4438f44e`).
+
+A mixed-case address whose checksum does not match is rejected with
+`Invalid recipient address: <address>` — even if the lowercase hex is correct.
+Widely-copied example addresses often carry a mangled checksum or the wrong
+number of hex digits, so prefer copying from the address book or from a tool
+that computes EIP-55 rather than retyping. Add frequently-used recipients to the
+[address book](/wallet-management/address-book) first; address book entries are
+stored lowercase and displayed in checksummed form.
 
 **Parameters:**
 
@@ -167,11 +254,13 @@ Successful broadcast requests return HTTP `202 Accepted`:
 ```json
 {
   "executionId": "direct_123",
-  "status": "completed"
+  "status": "completed",
+  "transactionHash": "0x...",
+  "transactionLink": "https://etherscan.io/tx/0x..."
 }
 ```
 
-The execution runs synchronously. Status will be `completed` or `failed` when the request returns.
+The execution runs synchronously. Status will be `completed` or `failed` when the request returns. `transactionHash` and `transactionLink` are present only when `status` is `completed`.
 
 ## Call Smart Contract
 
@@ -188,7 +277,7 @@ Call any smart contract function. Automatically detects read vs write operations
   "contractAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
   "chainId": 1,
   "functionName": "balanceOf",
-  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
+  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\"]",
   "abi": "[{...}]",
   "value": "0.1",
   "gasLimitMultiplier": "1.2"
@@ -244,7 +333,7 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
   "contractAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
   "chainId": 1,
   "functionName": "balanceOf",
-  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
+  "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\"]",
   "abi": "[{...}]",
   "condition": {
     "operator": "gt",
@@ -362,7 +451,40 @@ When the chain would have rejected the transaction, the endpoint returns HTTP 40
 }
 ```
 
-Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the raw RPC error message is surfaced.
+Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the failure is either attributed to a funding shortfall (see below) or the raw RPC error message is surfaced.
+
+### Response — underfunded sender
+
+A node asked to estimate gas for a transfer the sender cannot pay for rejects it without revert data, and the resulting `CALL_EXCEPTION` names neither the balance nor the address. When the simulator can confirm that is what happened, the failure carries a machine-readable `code` and the numbers a caller needs to fix it:
+
+```json
+{
+  "success": false,
+  "status": "simulated",
+  "from": "0x...orgWallet",
+  "to": "0x...recipient",
+  "value": "1000000000000000000",
+  "wouldRevert": true,
+  "revertReason": "Insufficient ETH balance. Have: 0.25, Need: 1.0. Fund 0x...orgWallet with at least 0.75 ETH on this chain and retry.",
+  "error": "Insufficient ETH balance. Have: 0.25, Need: 1.0. Fund 0x...orgWallet with at least 0.75 ETH on this chain and retry.",
+  "code": "insufficient_balance",
+  "balanceWei": "250000000000000000",
+  "requiredWei": "1000000000000000000",
+  "shortfallWei": "750000000000000000",
+  "nativeSymbol": "ETH",
+  "originalError": "missing revert data (action=\"estimateGas\", ...)"
+}
+```
+
+- `code`: `"insufficient_balance"` — branch on this rather than string-matching `revertReason`. Absent when the simulator could not attribute the failure to anything more specific than "the call reverted"
+- `balanceWei` / `requiredWei` / `shortfallWei`: the sender's native balance, the native value the call would move, and the difference, all in wei
+- `nativeSymbol`: the chain's native currency symbol (`ETH`, `BNB`, `POL`); falls back to `native` if the chain is not seeded
+- `originalError`: the node's own message, kept verbatim. Attribution only ever adds — nothing the chain said is discarded
+- `undecodedRevertData`: present only when the node did return revert data that no ABI on the decode path matched. The first four bytes are the custom-error selector, which you can look up in a selector database. When this field is set, funding the wallet may not be enough on its own — the contract is also rejecting the call
+
+The comparison is against the transfer value only; gas is not included (the gas estimate is what failed, so there is no number to add). A wallet funded with exactly the transfer amount therefore still fails, carrying the node's own `insufficient funds for gas * price + value` message and no `code`.
+
+**Safe-routed organizations:** the balance is read from `from`, which is the org's EOA. If your organization routes writes through a Safe, the transfer is funded from the Safe instead, so these fields describe the wrong address — see [Known limitation](#known-limitation) below.
 
 ### Token-transfer specifics
 
@@ -390,7 +512,9 @@ For ERC-20 transfers, `decimals` is optional — when omitted, the simulator loo
 
 ### Known limitation
 
-The `from` address used during simulation is the org's wallet (`getOrganizationWalletAddress`). Organizations that route writes through a Safe will see a simulation that reflects the EOA sending the call, not the Safe. Most config-bug categories (bad ABI, bad args, insufficient balance, allowance mismatches) still surface; Safe-routed `msg.sender` semantics do not.
+The `from` address used during simulation is the org's wallet (`getOrganizationWalletAddress`). Organizations that route writes through a Safe will see a simulation that reflects the EOA sending the call, not the Safe. Most config-bug categories (bad ABI, bad args, allowance mismatches) still surface; Safe-routed `msg.sender` semantics do not.
+
+This also applies to the underfunded-sender response above. The balance is read from `from`, but a Safe-routed org funds the transfer from the Safe, so `code`, `balanceWei`, `shortfallWei` and the "Fund `<address>`" sentence describe the EOA rather than the address the broadcast actually spends from. If your organization routes writes through a Safe, do not act on those fields without resolving the signer mode first.
 
 ## Get Execution Status
 
@@ -409,6 +533,18 @@ Check the status of a direct execution.
   "type": "transfer",
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
+  "sponsored": false,
+  "receipts": [
+    {
+      "hash": "0x...",
+      "chainId": 11155111,
+      "verified": true,
+      "receiptStatus": "success",
+      "blockNumber": 11413447,
+      "gasUsed": "68115",
+      "verifiedAt": "2024-01-01T00:00:15Z"
+    }
+  ],
   "gasUsedWei": "21000000000000",
   "result": {...},
   "error": null,
@@ -417,12 +553,36 @@ Check the status of a direct execution.
 }
 ```
 
+**Receipts:**
+
+`receipts` carries one entry per transaction hash this execution claimed, each
+independently re-fetched from the chain before the execution was allowed to
+settle. It is the evidence behind `status`, not a restatement of it:
+
+- `verified`: whether this hash positively confirmed on-chain. An execution
+  settles as `completed` only when every entry is `true`.
+- `receiptStatus`: `success`, `reverted`, `safe_inner_failure` (the outer
+  transaction succeeded but a wrapped inner call failed), `not_found`, or
+  `timeout`. The last two mean verification could not reach a definitive
+  answer within its budget; they fail the execution closed rather than
+  optimistically settling it, so a `failed` execution carrying `timeout` may
+  describe a transaction that later lands.
+- `blockNumber` / `gasUsed`: read from the fetched receipt, not self-reported
+  by the write path.
+
+The array is empty for executions that claimed no transaction hash, such as
+read calls and simulations.
+
 **Status Values:**
 
 - `pending`: Queued for execution
 - `running`: Currently executing
 - `completed`: Successfully completed
 - `failed`: Execution failed
+
+`sponsored` is `true` when the write was gas-sponsored and broadcast through
+a relayer or smart-account path rather than your org's EOA wallet — see
+[Sponsored Executions](#sponsored-executions).
 
 When polling this endpoint, honour the `X-Poll-Interval-Hint` response header instead of polling on a fixed timer: it gives the recommended number of seconds to wait before the next poll. A value of `0` means the execution has reached a terminal state (`completed` or `failed`) and you can stop polling.
 

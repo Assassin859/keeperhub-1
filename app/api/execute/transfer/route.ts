@@ -36,6 +36,7 @@ import {
 } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
+import type { ExecuteResponse } from "../_lib/types";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -276,29 +277,55 @@ export async function POST(request: Request): Promise<NextResponse> {
         })
   );
 
-  // 9. Handle result
+  // 9. Handle result. completeExecution independently re-verifies the claimed
+  // transaction against the chain (KEEP-966) -- its returned outcome, not
+  // result.success, is authoritative for the response and idempotency cache.
+  let outcome: { status: "completed" | "failed"; error?: string } = {
+    status: "failed",
+    error: result.success ? undefined : result.error,
+  };
   if (result.success) {
-    await completeExecution(executionId, {
+    outcome = await completeExecution(executionId, {
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink,
+      chainId: result.chainId,
       gasUsedWei: result.gasUsed,
       gasPriceWei: result.effectiveGasPrice,
       output: result as unknown as Record<string, unknown>,
     });
   } else {
-    await failExecution(executionId, result.error);
+    // A failure that already reached the chain carries its hash,
+    // so the execution records which transaction failed and what the chain
+    // said about it, rather than leaving the hash only inside the message.
+    await failExecution(executionId, result.error, {
+      transactionHash: result.transactionHash,
+      chainId: result.chainId,
+      sponsored: result.sponsored,
+    });
   }
 
-  // 10. Return. A failed broadcast is finalized (not released) so a retry
-  // replays the failure instead of re-sending the tx.
+  // 10. Return. A failed broadcast/verification is finalized (not released)
+  // so a retry replays the failure instead of re-sending the tx. status/error
+  // come from the verified `outcome` (KEEP-966), not the self-reported
+  // result.success -- transactionHash/transactionLink are included whenever a
+  // tx was actually broadcast (result.success), regardless of final outcome,
+  // so a reconciliation-failed response still surfaces the hash to look up.
+  const responseBody: ExecuteResponse = {
+    executionId,
+    status: outcome.status,
+    ...(result.success
+      ? {
+          transactionHash: result.transactionHash,
+          transactionLink: result.transactionLink,
+        }
+      : {}),
+    ...(outcome.error ? { error: outcome.error } : {}),
+  };
   return applyRateLimitHeaders(
     await recordIdempotentResponse(
       idem,
-      NextResponse.json(
-        { executionId, status: result.success ? "completed" : "failed" },
-        { status: HttpStatus.ACCEPTED }
-      ),
-      result.success ? "success" : "failed"
+      NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
+      outcome.status === "completed" ? "success" : "failed"
     ),
     rateLimit
   );

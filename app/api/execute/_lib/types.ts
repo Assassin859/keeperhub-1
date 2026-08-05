@@ -1,8 +1,16 @@
+import type { DirectExecutionReceiptEntry } from "@/lib/db/schema";
+
 export type ExecutionStatus = "pending" | "running" | "completed" | "failed";
 
 export type ExecuteResponse = {
   executionId: string;
   status: ExecutionStatus;
+  transactionHash?: string | null;
+  transactionLink?: string | null;
+  // KEEP-966: present when status is "failed" -- includes the on-chain
+  // reconciliation failure message (e.g. reverted, receipt not found) when
+  // that's what failed the execution, not just a self-reported broadcast error.
+  error?: string;
 };
 
 export type ExecutionStatusResponse = {
@@ -11,6 +19,13 @@ export type ExecutionStatusResponse = {
   type: string;
   transactionHash: string | null;
   transactionLink: string | null;
+  sponsored: boolean;
+  // Per-hash on-chain verification evidence behind `status`.
+  // completeExecution() has persisted this since the reconciliation gate
+  // landed; without it on the
+  // response a caller can see that an execution was gated but not what the
+  // gate observed. Empty for executions that claimed no transaction hash.
+  receipts: DirectExecutionReceiptEntry[];
   result: unknown;
   error: string | null;
   gasUsedWei: string | null;
