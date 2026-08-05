@@ -78,15 +78,25 @@ When `~/.keeperhub/safety.json` is absent the hook applies these defaults:
   "ask_threshold_usd": 50,
   "block_threshold_usd": 100,
   "allowlisted_contracts": [
-    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    "0x20C000000000000000000000B9537D11c60E8b50"
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "0x20c000000000000000000000b9537d11c60e8b50"
   ]
 }
 ```
 
-> **`ask_threshold_usd` is inert.** It is part of `DEFAULT_SAFETY_CONFIG` and is still parsed and range-checked — it must be `>= auto_approve_max_usd`, and `block_threshold_usd` must be `>= ask_threshold_usd` — but the hook does not consult it when deciding. The ask tier is bounded by `auto_approve_max_usd` and `block_threshold_usd` alone, as the table above describes. The field is retained for backward compatibility with existing configs (`KEEP-307`).
+> **`ask_threshold_usd` is inert, but it is not inconsequential.**
 >
-> Practically: setting it changes nothing, and setting it *inconsistently* fails config validation for a value that has no effect. Tune `auto_approve_max_usd` and `block_threshold_usd` instead.
+> It is part of `DEFAULT_SAFETY_CONFIG` and is still parsed and range-checked — it must be `>= auto_approve_max_usd`, and `block_threshold_usd` must be `>= ask_threshold_usd` — but the hook does not consult it when deciding. The ask tier is bounded by `auto_approve_max_usd` and `block_threshold_usd` alone, as the table above describes. The field is retained for backward compatibility with existing configs (`KEEP-307`).
+>
+> **If you lower `block_threshold_usd` below 50, you must lower `ask_threshold_usd` to match.** A partial config is merged over the defaults, so writing only:
+>
+> ```json
+> { "auto_approve_max_usd": 1, "block_threshold_usd": 20 }
+> ```
+>
+> leaves `ask_threshold_usd` at its default of 50, which trips `block_threshold_usd must be >= ask_threshold_usd`. That error is thrown while the hook is being constructed, before any input is read, so the hook process exits non-zero — **and because it is registered against every tool call, the failure blocks the whole session rather than just wallet calls.** The only explanation is a single line on stderr.
+>
+> Write all three together, or leave `block_threshold_usd` at or above 50.
 
 The two allowlisted addresses are the only tokens the client-side hook will authorise out of the box:
 
@@ -203,6 +213,8 @@ Passkey-backed sub-orgs are a more secure option Turnkey supports natively, and 
 ### Can I change the safety thresholds or the allowed contracts?
 
 You can edit `~/.keeperhub/safety.json` (mode `0644`) to raise or lower `auto_approve_max_usd` and `block_threshold_usd`, or to narrow `allowlisted_contracts` (for example, drop Tempo USDC.e if your agent only pays on Base). The hook picks up changes on its next invocation.
+
+The file also carries `ask_threshold_usd`, which the hook does not consult but does validate. If you are lowering `block_threshold_usd` below 50, read [the note under Default safety config](#default-safety-config) first — a partial edit there fails validation in a way that blocks every tool call, not only wallet ones.
 
 Raising thresholds raises your exposure. Widening the contract allowlist past the server-side default (Base USDC + Tempo USDC.e) has no effect on its own — the [server-side hard limits](#server-side-hard-limits) still block signatures against any other contract. If you need access to a different contract, contact KeeperHub support.
 
