@@ -73,15 +73,21 @@ export function isBrowserExtensionError(event: ErrorEvent): boolean {
 const APP_BUNDLE_PATTERN = /\/_next\/static\//;
 
 export function throwsOutsideAppBundle(event: ErrorEvent): boolean {
-  const frames = event.exception?.values?.[0]?.stacktrace?.frames;
-  if (!frames || frames.length === 0) {
+  const values = event.exception?.values;
+  if (!values || values.length === 0) {
     return false;
   }
-  const filename = frames.at(-1)?.filename;
-  if (typeof filename !== "string") {
-    return false;
-  }
-  return !APP_BUNDLE_PATTERN.test(filename);
+  // Linked errors carry the cause and the thrown error as separate values, so
+  // require every one of them to be third party. An error of ours that merely
+  // has a third-party cause stays reportable.
+  return values.every((value) => {
+    const frames = value.stacktrace?.frames;
+    if (!frames || frames.length === 0) {
+      return false;
+    }
+    const filename = frames.at(-1)?.filename;
+    return typeof filename === "string" && !APP_BUNDLE_PATTERN.test(filename);
+  });
 }
 
 // `@monaco-editor/react` rejects with a `CancellationError` ("Canceled") when

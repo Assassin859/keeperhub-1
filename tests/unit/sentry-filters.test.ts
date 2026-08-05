@@ -287,6 +287,55 @@ describe("throwsOutsideAppBundle", () => {
     const event = makeEvent({ exception: { values: [{}] } });
     expect(throwsOutsideAppBundle(event)).toBe(false);
   });
+
+  // Linked errors, as produced by auto.core.linked_errors, split the thrown
+  // error and its cause across separate exception values.
+  it("drops linked errors when every value is third party", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [{ in_app: true, filename: "app:///scripts/inpage.js" }],
+            },
+          },
+          {
+            stacktrace: {
+              frames: [
+                { in_app: true, filename: "app:///scripts/inpage.js:4:41709" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(throwsOutsideAppBundle(event)).toBe(true);
+  });
+
+  it("keeps linked errors when one value is ours", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [{ in_app: true, filename: "app:///scripts/inpage.js" }],
+            },
+          },
+          {
+            stacktrace: {
+              frames: [
+                {
+                  in_app: true,
+                  filename: "app:///_next/static/chunks/page-0000.js",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(throwsOutsideAppBundle(event)).toBe(false);
+  });
 });
 
 describe("isMonacoCancellation", () => {
