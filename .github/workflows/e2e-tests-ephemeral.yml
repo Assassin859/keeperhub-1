@@ -401,6 +401,7 @@ jobs:
   # chains.test.ts executes exactly that chain and the executed-test floor is
   # per-chain. See specs/protocol-coverage-methodology.md.
   tier1-simulations-l2:
+    name: tier1-simulations-l2 (${{ matrix.name }})
     needs: should-run
     if: needs.should-run.outputs.run-e2e == 'true'
     runs-on: ubuntu-latest
@@ -818,6 +819,7 @@ jobs:
   # chain 1 since the chronicle/superfluid re-homing; ajna runs against
   # live Base, reads only).
   protocol-coverage-ephemeral:
+    name: protocol-coverage-ephemeral (shard ${{ matrix.shard }})
     needs: [should-run, build-app]
     # Same gate as e2e-vitest-ephemeral: build-app skipped (Docker path)
     # or succeeded admits this job; failed or cancelled blocks it.
