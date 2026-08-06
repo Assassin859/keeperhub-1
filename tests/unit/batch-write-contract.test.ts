@@ -1,0 +1,577 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
+  withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
+}));
+
+vi.mock("@/lib/metrics/instrumentation/plugin", () => ({
+  withPluginMetrics: (_opts: unknown, fn: () => unknown) => fn(),
+}));
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([]),
+        }),
+      }),
+    }),
+  },
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  workflowExecutions: { id: "id", userId: "userId", workflowId: "workflowId" },
+}));
+
+vi.mock("drizzle-orm", () => ({
+  eq: () => ({}),
+  sql: () => ({}),
+}));
+
+vi.mock("@/lib/utils", () => ({
+  getErrorMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  resolveFailOnError: (failOnError: unknown) =>
+    failOnError !== false && failOnError !== "false",
+}));
+
+vi.mock("@/lib/utils/id", () => ({
+  generateId: () => "test-unique-id",
+}));
+
+vi.mock("@/lib/rpc/scrub-rpc-urls", () => ({
+  redactAllUrls: (text: string) => text,
+}));
+
+const mockGetChainIdFromNetwork = vi.fn();
+vi.mock("@/lib/rpc/network-utils", () => ({
+  getChainIdFromNetwork: (...args: unknown[]) =>
+    mockGetChainIdFromNetwork(...args),
+}));
+
+const mockGetRpcProvider = vi.fn();
+vi.mock("@/lib/rpc/provider-factory", () => ({
+  getRpcProvider: (...args: unknown[]) => mockGetRpcProvider(...args),
+}));
+
+vi.mock("@/lib/contracts/multicall3", () => ({
+  MULTICALL3_ADDRESS: "0xcA11bde05977b3631167028862bE2a173976CA11",
+  MULTICALL3_ABI: [
+    { name: "aggregate3", type: "function", inputs: [], outputs: [] },
+  ],
+}));
+
+vi.mock("@/lib/web3/resolve-org-context", () => ({
+  resolveOrganizationContext: vi.fn().mockResolvedValue({
+    success: true,
+    organizationId: "org-1",
+    userId: "user-1",
+  }),
+}));
+
+vi.mock("@/lib/web3/wallet-helpers", () => ({
+  getOrganizationWalletAddress: vi
+    .fn()
+    .mockResolvedValue("0xwalletaddress1234567890123456789012345678"),
+  initializeWalletSigner: vi.fn().mockResolvedValue({
+    getAddress: vi
+      .fn()
+      .mockResolvedValue("0xwalletaddress1234567890123456789012345678"),
+  }),
+}));
+
+const mockResolveSignerForNode = vi.fn();
+vi.mock("@/lib/safe/signer-resolver", () => ({
+  SIGNER_MODE: { EOA: "eoa", SAFE: "safe", SAFE_ROLE: "safe-role" },
+  resolveSignerForNode: (...args: unknown[]) =>
+    mockResolveSignerForNode(...args),
+}));
+
+const { mockExecuteContractCall } = vi.hoisted(() => ({
+  mockExecuteContractCall: vi.fn(),
+}));
+vi.mock("@/lib/web3/chain-adapter", () => ({
+  getChainAdapter: vi.fn().mockReturnValue({
+    executeContractCall: mockExecuteContractCall,
+    getTransactionUrl: vi
+      .fn()
+      .mockResolvedValue("https://etherscan.io/tx/0xhash"),
+  }),
+}));
+
+vi.mock("@/lib/web3/decode-revert-error", () => ({
+  classifyRevert: vi.fn().mockReturnValue({ kind: "unknown" }),
+  formatContractError: vi.fn((error: unknown) =>
+    error instanceof Error ? error.message : String(error)
+  ),
+}));
+
+const mockResolveGasLimitOverrides = vi.fn();
+const mockParsePriorityFeeGwei = vi.fn();
+vi.mock("@/lib/web3/gas-defaults", () => ({
+  resolveGasLimitOverrides: (...args: unknown[]) =>
+    mockResolveGasLimitOverrides(...args),
+  parsePriorityFeeGwei: (...args: unknown[]) =>
+    mockParsePriorityFeeGwei(...args),
+}));
+
+vi.mock("@/lib/web3/transaction-manager", () => ({
+  withNonceSession: (
+    _txContext: unknown,
+    _walletAddress: unknown,
+    fn: (session: unknown) => unknown
+  ) => fn({ walletAddress: "0xwalletaddress", chainId: 1 }),
+}));
+
+const mockStaticCall = vi.fn();
+vi.mock("ethers", async () => {
+  const actual = await vi.importActual<typeof import("ethers")>("ethers");
+  return {
+    ...actual,
+    ethers: {
+      ...actual.ethers,
+      JsonRpcProvider: class MockProvider {},
+      Contract: class MockContract {
+        aggregate3 = { staticCall: mockStaticCall };
+      },
+    },
+  };
+});
+
+import { ethers } from "ethers";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import {
+  applyBatchFailOnError,
+  type BatchWriteContractCoreInput,
+  batchWriteContractCore,
+} from "@/plugins/web3/steps/batch-write-contract-core";
+
+const WORK_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "work",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "network", type: "bytes32" },
+      { name: "args", type: "bytes" },
+    ],
+    outputs: [],
+  },
+]);
+
+const JOB_1 = "0x1111111111111111111111111111111111111111";
+const JOB_2 = "0x2222222222222222222222222222222222222222";
+const NETWORK_BYTES32 = `0x${"11".repeat(32)}`;
+const ARGS_BYTES = "0xabcd1234";
+
+function makeCall(contractAddress: string) {
+  return { contractAddress, args: [NETWORK_BYTES32, ARGS_BYTES] };
+}
+
+function baseInput(
+  overrides: Partial<BatchWriteContractCoreInput>
+): BatchWriteContractCoreInput {
+  return {
+    network: "1",
+    abi: WORK_ABI,
+    abiFunction: "work",
+    calls: JSON.stringify([makeCall(JOB_1), makeCall(JOB_2)]),
+    _context: { organizationId: "org-1" },
+    ...overrides,
+  };
+}
+
+const RECEIPT = {
+  hash: "0xhash",
+  gasUsed: BigInt(100_000),
+  effectiveGasPrice: BigInt(1_000_000_000),
+};
+
+const SUCCESS_RETURN: [boolean, string] = [true, "0x"];
+
+function revertReturn(): [boolean, string] {
+  return [false, "0x"];
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetChainIdFromNetwork.mockReturnValue(1);
+  mockGetRpcProvider.mockResolvedValue({
+    resolveActiveRpcUrl: () => Promise.resolve("https://rpc.example.com"),
+    executeWithFailover: (fn: (provider: unknown) => unknown) => fn({}),
+  });
+  mockResolveSignerForNode.mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  });
+  mockResolveGasLimitOverrides.mockReturnValue({
+    multiplierOverride: undefined,
+    gasLimitOverride: undefined,
+  });
+  mockParsePriorityFeeGwei.mockReturnValue(undefined);
+  mockExecuteContractCall.mockResolvedValue(RECEIPT);
+});
+
+describe("batch-write-contract - happy path", () => {
+  it("broadcasts one atomic transaction for N calls, all succeed", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.transactionHash).toBe("0xhash");
+    expect(result.chainId).toBe(1);
+    expect(result.transactionLink).toBe("https://etherscan.io/tx/0xhash");
+    expect(result.totalCalls).toBe(2);
+    expect(result.results).toHaveLength(2);
+    expect(result.results?.[0].success).toBe(true);
+    expect(result.results?.[1].success).toBe(true);
+
+    expect(mockExecuteContractCall).toHaveBeenCalledTimes(1);
+    const call3Arg = mockExecuteContractCall.mock.calls[0][1] as {
+      args: [{ target: string; allowFailure: boolean; callData: string }[]];
+    };
+    expect(call3Arg.args[0]).toHaveLength(2);
+    expect(call3Arg.args[0][0].target).toBe(JOB_1);
+    expect(call3Arg.args[0][0].allowFailure).toBe(true);
+    expect(call3Arg.args[0][1].target).toBe(JOB_2);
+  });
+});
+
+describe("batch-write-contract - per-call failure isolation", () => {
+  it("isolateCallFailures true: one call fails, batch still broadcasts", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, revertReturn()]);
+
+    const result = await batchWriteContractCore(
+      baseInput({ isolateCallFailures: "true" })
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.results?.[0].success).toBe(true);
+    expect(result.results?.[1].success).toBe(false);
+    expect(result.results?.[1].error).toContain("reverted");
+
+    const call3Arg = mockExecuteContractCall.mock.calls[0][1] as {
+      args: [{ allowFailure: boolean }[]];
+    };
+    expect(call3Arg.args[0][0].allowFailure).toBe(true);
+    expect(call3Arg.args[0][1].allowFailure).toBe(true);
+  });
+
+  it("isolateCallFailures false: encodes allowFailure=false for every call", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    await batchWriteContractCore(baseInput({ isolateCallFailures: "false" }));
+
+    const call3Arg = mockExecuteContractCall.mock.calls[0][1] as {
+      args: [{ allowFailure: boolean }[]];
+    };
+    expect(call3Arg.args[0][0].allowFailure).toBe(false);
+    expect(call3Arg.args[0][1].allowFailure).toBe(false);
+  });
+
+  it("whole batch revert: pre-broadcast staticCall itself rejects, no errorClass so softenable", async () => {
+    mockStaticCall.mockRejectedValueOnce(new Error("execution reverted"));
+
+    const result = await batchWriteContractCore(
+      baseInput({ isolateCallFailures: "false" })
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.errorClass).toBeUndefined();
+    expect(mockExecuteContractCall).not.toHaveBeenCalled();
+
+    const softened = applyBatchFailOnError(result, false);
+    expect(softened.success).toBe(true);
+    if (!softened.success) {
+      throw new Error("expected softened success");
+    }
+    expect(softened.error).toContain("execution reverted");
+    expect(softened.results).toBeUndefined();
+    expect(softened.transactionHash).toBeUndefined();
+  });
+});
+
+describe("batch-write-contract - EOA-only gate", () => {
+  it("rejects SAFE signer mode before any RPC/broadcast work", async () => {
+    mockResolveSignerForNode.mockResolvedValue({
+      kind: "safe",
+      safeAddress: "0xsafe",
+    });
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.errorClass).toBe(ExecutionErrorType.USER);
+    expect(result.error).toContain("EOA");
+    expect(mockStaticCall).not.toHaveBeenCalled();
+    expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+
+  it("rejects SAFE_ROLE signer mode before any RPC/broadcast work", async () => {
+    mockResolveSignerForNode.mockResolvedValue({
+      kind: "safe-role",
+      safeAddress: "0xsafe",
+    });
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.errorClass).toBe(ExecutionErrorType.USER);
+    expect(mockStaticCall).not.toHaveBeenCalled();
+    expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("batch-write-contract - MAX_TOTAL_CALLS", () => {
+  it("rejects a batch of 201 calls", async () => {
+    const calls = Array.from({ length: 201 }, () => makeCall(JOB_1));
+
+    const result = await batchWriteContractCore(
+      baseInput({ calls: JSON.stringify(calls) })
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.error).toContain("Too many calls");
+    expect(result.errorClass).toBe(ExecutionErrorType.USER);
+    expect(mockGetRpcProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("batch-write-contract - malformed calls JSON", () => {
+  it("fails on non-JSON calls", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ calls: "not json" })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Invalid Calls JSON");
+    }
+  });
+
+  it("fails when calls is not an array", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ calls: '{"not":"array"}' })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Calls must be a JSON array");
+    }
+  });
+
+  it("fails on an empty calls array", async () => {
+    const result = await batchWriteContractCore(baseInput({ calls: "[]" }));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("at least one entry");
+    }
+  });
+
+  it("fails when an entry is not an object", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ calls: '["not-an-object"]' })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("index 0");
+      expect(result.error).toContain("must be an object");
+    }
+  });
+
+  it("fails when contractAddress is missing", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([{ args: [NETWORK_BYTES32, ARGS_BYTES] }]),
+      })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("missing contractAddress");
+    }
+  });
+
+  it("fails when contractAddress is invalid", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ calls: JSON.stringify([makeCall("not-an-address")]) })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("invalid address");
+    }
+  });
+
+  it("fails when args is present but not an array", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([
+          { contractAddress: JOB_1, args: "not-an-array" },
+        ]),
+      })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("args must be an array");
+    }
+  });
+});
+
+describe("batch-write-contract - ABI/function validation", () => {
+  it("fails on invalid ABI JSON", async () => {
+    const result = await batchWriteContractCore(baseInput({ abi: "not json" }));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Invalid ABI JSON");
+      expect(result.errorClass).toBe(ExecutionErrorType.USER);
+    }
+  });
+
+  it("fails when ABI is not an array", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ abi: '{"not":"array"}' })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("ABI must be a JSON array");
+    }
+  });
+
+  it("fails when the function is not found in the ABI", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ abiFunction: "doesNotExist" })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("not found in ABI");
+    }
+  });
+});
+
+describe("batch-write-contract - per-call argument validation", () => {
+  it("fails when a call's args do not match the shared function's arity", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([
+          makeCall(JOB_1),
+          { contractAddress: JOB_2, args: [] },
+        ]),
+      })
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("index 1");
+    }
+    expect(mockGetRpcProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("batch-write-contract - failOnError softening", () => {
+  it("does not soften a hard EOA-gate failure regardless of failOnError", async () => {
+    mockResolveSignerForNode.mockResolvedValue({
+      kind: "safe",
+      safeAddress: "0xsafe",
+    });
+
+    const hardFailure = await batchWriteContractCore(baseInput({}));
+    expect(hardFailure.success).toBe(false);
+
+    // EOA-gate failures carry errorClass (USER), so they are not softenable
+    // regardless of failOnError. Confirms the gate is a hard boundary.
+    const notSoftened = applyBatchFailOnError(hardFailure, false);
+    expect(notSoftened).toBe(hardFailure);
+  });
+
+  it("softens a genuine broadcast failure only when failOnError is false", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+    mockExecuteContractCall.mockRejectedValueOnce(new Error("nonce too low"));
+
+    const result = await batchWriteContractCore(baseInput({}));
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.errorClass).toBeUndefined();
+
+    const kept = applyBatchFailOnError(result, true);
+    expect(kept.success).toBe(false);
+
+    const softened = applyBatchFailOnError(result, false);
+    expect(softened.success).toBe(true);
+    if (!softened.success) {
+      throw new Error("expected softened success");
+    }
+    expect(softened.error).toContain("nonce too low");
+    expect(softened.results).toBeUndefined();
+    expect(softened.transactionHash).toBeUndefined();
+  });
+});
+
+describe("batch-write-contract - gas overrides threaded through", () => {
+  it("forwards resolved gas overrides and priority fee to executeContractCall", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+    mockResolveGasLimitOverrides.mockReturnValue({
+      multiplierOverride: 1.5,
+      gasLimitOverride: undefined,
+    });
+    const fiveGweiWei = BigInt(5e9);
+    mockParsePriorityFeeGwei.mockReturnValue(fiveGweiWei);
+
+    await batchWriteContractCore(
+      baseInput({ gasLimitMultiplier: "1.5", priorityFeeGwei: "5" })
+    );
+
+    expect(mockResolveGasLimitOverrides).toHaveBeenCalledWith("1.5");
+    expect(mockParsePriorityFeeGwei).toHaveBeenCalledWith("5");
+    expect(mockExecuteContractCall).toHaveBeenCalledTimes(1);
+    const optionsArg = mockExecuteContractCall.mock.calls[0][3] as {
+      gasOverrides: {
+        multiplierOverride?: number;
+        gasLimitOverride?: bigint;
+        priorityFeeOverride?: bigint;
+      };
+    };
+    expect(optionsArg.gasOverrides.multiplierOverride).toBe(1.5);
+    expect(optionsArg.gasOverrides.priorityFeeOverride).toBe(fiveGweiWei);
+  });
+});
+
+describe("batch-write-contract - decoded results", () => {
+  it("decodes a real revert reason from returnData", async () => {
+    const errorData = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["string"],
+      ["Splitter/kicked-too-soon"]
+    );
+    const revertData = `0x08c379a0${errorData.slice(2)}`;
+    mockStaticCall.mockResolvedValueOnce([[false, revertData], SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.results?.[0].success).toBe(false);
+    expect(result.results?.[0].error).toContain("Splitter/kicked-too-soon");
+    expect(result.results?.[1].success).toBe(true);
+  });
+});
