@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { type ZodError, z } from "zod";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import {
-  ApiErrorCodes,
-  apiError,
   resolveRequestId,
   sanitizeDetailForEnv,
 } from "@/lib/errors/api-envelope";
@@ -32,9 +30,10 @@ export const dynamic = "force-dynamic";
 
 /**
  * Token-endpoint errors use the KEEP-489 envelope plus RFC 6749 §5.2's
- * `error_description` alias for `detail`. Codes below are the registered
- * OAuth set (invalid_request, invalid_client, invalid_grant,
- * unsupported_grant_type) rather than ApiErrorCodes generics.
+ * `error_description` alias for `detail`. Client/grant failures use the
+ * registered OAuth set (invalid_request, invalid_client, invalid_grant,
+ * unsupported_grant_type). `rate_limited` is the only extension, used on
+ * 429 only. All of these go through `routeError` (not ApiErrorCodes generics).
  */
 function routeError(
   request: Request,
@@ -248,7 +247,7 @@ async function handleAuthorizationCode(
       request,
       "User account is deactivated",
       HttpStatus.UNAUTHORIZED,
-      ApiErrorCodes.UNAUTHORIZED
+      "invalid_grant"
     );
   }
 
@@ -333,7 +332,7 @@ async function handleRefreshToken(
       request,
       "User account is deactivated",
       HttpStatus.UNAUTHORIZED,
-      ApiErrorCodes.UNAUTHORIZED
+      "invalid_grant"
     );
   }
 
@@ -346,7 +345,7 @@ async function handleRefreshToken(
       request,
       "User is no longer a member of this organization",
       HttpStatus.UNAUTHORIZED,
-      ApiErrorCodes.UNAUTHORIZED
+      "invalid_grant"
     );
   }
 
@@ -380,12 +379,12 @@ export async function POST(request: Request): Promise<Response> {
   const rateLimit = checkIpRateLimit(ip, 30, 60_000);
   if (!rateLimit.allowed) {
     return applyRateLimitHeaders(
-      apiError({
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        code: ApiErrorCodes.RATE_LIMITED,
-        detail: "Too many requests",
-        requestHeaders: request.headers,
-      }),
+      routeError(
+        request,
+        "Too many requests",
+        HttpStatus.TOO_MANY_REQUESTS,
+        "rate_limited"
+      ),
       rateLimit
     );
   }
@@ -405,7 +404,7 @@ export async function POST(request: Request): Promise<Response> {
         request,
         "Invalid request body",
         HttpStatus.BAD_REQUEST,
-        ApiErrorCodes.INVALID_INPUT
+        "invalid_request"
       );
     }
   }

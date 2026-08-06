@@ -258,6 +258,7 @@ describe("auth route error envelopes (FRICTION-08)", () => {
     const body = (await response.json()) as EnvelopeBody;
     expect(body.error).toBe("rate_limited");
     expect(body.detail).toBe("Too many requests");
+    expect(body.error_description).toBe(body.detail);
     expect(typeof body.request_id).toBe("string");
   });
 
