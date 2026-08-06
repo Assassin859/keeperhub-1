@@ -482,10 +482,7 @@ export async function batchWriteContractCore(
     decodeAggregate3Entry(ok, data, iface, abiFunctionKey, outputs)
   );
 
-  const workflowId =
-    _context?.executionId && !_context?.organizationId
-      ? await getWorkflowIdFromExecution(_context.executionId)
-      : undefined;
+  const workflowId = await getWorkflowIdFromExecution(_context?.executionId);
 
   const txContext: TransactionContext = {
     organizationId,
