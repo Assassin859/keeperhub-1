@@ -11,7 +11,6 @@ export const NON_RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
   "MISSING_ARGUMENT",
   "UNEXPECTED_ARGUMENT",
   "NUMERIC_FAULT", // overflow, division by zero
-  "INSUFFICIENT_FUNDS", // wallet balance cannot be fixed by RPC failover
   // BAD_DATA intentionally omitted -- handled conditionally in
   // isNonRetryableError() because "missing response for request" is transient
   // while other BAD_DATA messages (malformed ABI decode) are permanent.

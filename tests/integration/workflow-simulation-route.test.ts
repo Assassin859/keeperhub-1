@@ -21,10 +21,25 @@ vi.mock("@/lib/workflow/access", () => ({
   getWorkflowAccess: (...args: unknown[]) => mockGetWorkflowAccess(...args),
 }));
 
-const mockRunWorkflowSimulation = vi.fn();
+const simulationMocks = vi.hoisted(() => {
+  class WorkflowSimulationDeadlineError extends Error {}
+  return {
+    runWorkflowSimulation: vi.fn(),
+    WorkflowSimulationDeadlineError,
+  };
+});
+
+const mockRunWorkflowSimulation = simulationMocks.runWorkflowSimulation;
 vi.mock("@/lib/workflow/run-simulation", () => ({
   runWorkflowSimulation: (...args: unknown[]) =>
-    mockRunWorkflowSimulation(...args),
+    simulationMocks.runWorkflowSimulation(...args),
+  WorkflowSimulationDeadlineError:
+    simulationMocks.WorkflowSimulationDeadlineError,
+}));
+
+const mockCheckRateLimit = vi.fn();
+vi.mock("@/app/api/execute/_lib/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => mockCheckRateLimit(...args),
 }));
 
 let mockWorkflowRows: unknown[] = [];
@@ -82,13 +97,15 @@ const workflowRow = {
   organizationId: OWNER_ORG_ID,
   deletedAt: null,
   nodes: savedNodes,
-  edges: [],
+  edges: [{ id: "edge-1", source: "trigger-1", target: "write-1" }],
 };
 
 const ownerAuthContext = {
   userId: OWNER_USER_ID,
   organizationId: OWNER_ORG_ID,
   authMethod: "session" as const,
+  apiKeyId: null,
+  isAnonymous: false,
 };
 
 const fullAccess = {
@@ -133,6 +150,12 @@ describe("/api/workflows/[workflowId]/simulate", () => {
     mockWorkflowRows = [];
     mockGetDualAuthContext.mockResolvedValue(ownerAuthContext);
     mockGetWorkflowAccess.mockResolvedValue(fullAccess);
+    mockCheckRateLimit.mockReturnValue({
+      allowed: true,
+      limit: 60,
+      remaining: 59,
+      reset: 1_800_000_000,
+    });
     mockRunWorkflowSimulation.mockResolvedValue({
       errors: [],
       warnings: [],
@@ -228,7 +251,12 @@ describe("/api/workflows/[workflowId]/simulate", () => {
     expect(mockRunWorkflowSimulation).toHaveBeenCalledWith({
       organizationId: OWNER_ORG_ID,
       nodes: savedNodes,
+      edges: workflowRow.edges,
+      deadlineAt: expect.any(Number),
     });
+    expect(mockCheckRateLimit).toHaveBeenCalledWith(
+      `workflow-simulation:${OWNER_USER_ID}`
+    );
 
     expect(await response.json()).toEqual({
       ok: true,
@@ -289,5 +317,88 @@ describe("/api/workflows/[workflowId]/simulate", () => {
         fieldKey: "amount",
       }),
     ]);
+  });
+
+  it("returns 429 when the simulation rate limit is exceeded", async () => {
+    mockCheckRateLimit.mockReturnValueOnce({
+      allowed: false,
+      retryAfter: 15,
+      limit: 60,
+      remaining: 0,
+      reset: 1_800_000_000,
+    });
+
+    const response = await POST(
+      makeRequest(WORKFLOW_ID),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "RATE_LIMIT_EXCEEDED",
+    });
+    expect(response.headers.get("Retry-After")).toBe("15");
+    expect(mockRunWorkflowSimulation).not.toHaveBeenCalled();
+  });
+
+  it("rejects workflows above the simulation node cap", async () => {
+    mockWorkflowRows = [
+      {
+        ...workflowRow,
+        nodes: Array.from({ length: 51 }, (_, index) => ({
+          id: `node-${index}`,
+          type: "action",
+          data: { type: "action", config: {} },
+        })),
+      },
+    ];
+
+    const response = await POST(
+      makeRequest(WORKFLOW_ID),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "SIMULATION_NODE_LIMIT_EXCEEDED",
+      maxNodeCount: 50,
+    });
+    expect(mockRunWorkflowSimulation).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when workflow simulation reaches its deadline", async () => {
+    mockWorkflowRows = [workflowRow];
+    mockRunWorkflowSimulation.mockRejectedValueOnce(
+      new simulationMocks.WorkflowSimulationDeadlineError()
+    );
+
+    const response = await POST(
+      makeRequest(WORKFLOW_ID),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "SIMULATION_TIMEOUT",
+    });
+  });
+
+  it("returns 503 when the simulation service throws unexpectedly", async () => {
+    mockWorkflowRows = [workflowRow];
+    mockRunWorkflowSimulation.mockRejectedValueOnce(new Error("boom"));
+
+    const response = await POST(
+      makeRequest(WORKFLOW_ID),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "SIMULATION_UNAVAILABLE",
+    });
   });
 });

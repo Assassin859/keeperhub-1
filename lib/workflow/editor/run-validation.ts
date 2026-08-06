@@ -111,11 +111,26 @@ async function fetchValidationResult(
   return payload.result;
 }
 
+function unavailableSimulationResult(
+  message: string
+): WorkflowSimulationResult {
+  return {
+    simulatedNodeCount: 0,
+    skippedNodeCount: 0,
+    warnings: [
+      {
+        code: "SIMULATION_UNAVAILABLE",
+        message,
+        parameterPath: "nodes",
+      },
+    ],
+  };
+}
+
 async function fetchSimulationResult(
   workflowId: string,
-  fetcher: WorkflowValidationFetcher,
-  onError: (message: string) => void
-): Promise<WorkflowSimulationResult | null> {
+  fetcher: WorkflowValidationFetcher
+): Promise<WorkflowSimulationResult> {
   let response: Response;
 
   try {
@@ -123,13 +138,15 @@ async function fetchSimulationResult(
       method: "POST",
     });
   } catch {
-    onError("Could not simulate workflow writes before running it");
-    return null;
+    return unavailableSimulationResult(
+      "Workflow write simulation was unavailable. You can still run the workflow."
+    );
   }
 
   if (!response.ok) {
-    onError("Could not simulate workflow writes before running it");
-    return null;
+    return unavailableSimulationResult(
+      "Workflow write simulation could not be completed. You can still run the workflow."
+    );
   }
 
   const payload = (await response.json().catch(() => null)) as {
@@ -137,8 +154,9 @@ async function fetchSimulationResult(
   } | null;
 
   if (!payload?.result) {
-    onError("Workflow simulation returned an unexpected response");
-    return null;
+    return unavailableSimulationResult(
+      "Workflow write simulation returned an unexpected response. You can still run the workflow."
+    );
   }
 
   return payload.result;
@@ -147,8 +165,8 @@ async function fetchSimulationResult(
 /**
  * Runs structural validation followed by read-only EVM write simulation.
  *
- * Confirmed validation or simulation failures block execution. Warnings can be
- * overridden through Run Anyway.
+ * Validation and simulation findings are advisory in the editor. Every issue
+ * can be overridden through Run Anyway, matching the existing run path.
  */
 export async function runWorkflowValidationPreflight({
   workflowId,
@@ -173,22 +191,18 @@ export async function runWorkflowValidationPreflight({
     nodes
   );
 
-  // Avoid RPC work when structural validation already proves that the saved
-  // workflow cannot run.
+  // Avoid RPC work when structural validation already identifies issues, but
+  // keep the existing editor precedent: the user may still choose Run Anyway.
   if (validationErrors.length > 0) {
     onOpenIssues({
       validationErrors,
       validationWarnings,
-      onRunAnyway: undefined,
+      onRunAnyway: onStartWorkflowExecution,
     });
     return;
   }
 
-  const simulation = await fetchSimulationResult(workflowId, fetcher, onError);
-
-  if (!simulation) {
-    return;
-  }
+  const simulation = await fetchSimulationResult(workflowId, fetcher);
 
   const simulationErrors = mapWorkflowValidationIssues(
     simulation.errors,
@@ -206,8 +220,7 @@ export async function runWorkflowValidationPreflight({
     onOpenIssues({
       validationErrors: combinedErrors,
       validationWarnings: combinedWarnings,
-      onRunAnyway:
-        combinedErrors.length === 0 ? onStartWorkflowExecution : undefined,
+      onRunAnyway: onStartWorkflowExecution,
     });
     return;
   }

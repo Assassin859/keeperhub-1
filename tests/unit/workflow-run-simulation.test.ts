@@ -48,6 +48,7 @@ vi.mock("@/lib/safe/signer-resolver", () => ({
 
 import {
   runWorkflowSimulation,
+  WorkflowSimulationDeadlineError,
   type WorkflowSimulationNode,
 } from "@/lib/workflow/run-simulation";
 
@@ -61,6 +62,18 @@ const SUCCESS_RESULT = {
   simulatedReturnValue: null,
   wouldRevert: false as const,
 };
+
+function triggerNode(id = "trigger-1"): WorkflowSimulationNode {
+  return {
+    id,
+    type: "trigger",
+    data: {
+      type: "trigger",
+      label: "Trigger",
+      config: { triggerType: "Manual" },
+    },
+  };
+}
 
 function actionNode(
   id: string,
@@ -125,7 +138,7 @@ describe("runWorkflowSimulation", () => {
     });
   });
 
-  it("turns a confirmed revert into a blocking node issue", async () => {
+  it("turns a confirmed revert into a non-blocking warning", async () => {
     spies.simulateNativeTransfer.mockResolvedValueOnce({
       success: false,
       status: "simulated",
@@ -153,19 +166,19 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toMatchObject({
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_WOULD_REVERT",
       nodeId: "transfer-1",
       fieldKey: "amount",
       parameterPath: "nodes[0].data.config.amount",
     });
-    expect(result.errors[0]?.message).toBe(
+    expect(result.warnings[0]?.message).toBe(
       "Pay supplier would revert: InsufficientBalance()"
     );
-    expect(result.errors[0]?.message).not.toContain("CALL_EXCEPTION");
-    expect(result.errors[0]?.message).not.toContain("transaction={");
-    expect(result.warnings).toEqual([]);
+    expect(result.warnings[0]?.message).not.toContain("CALL_EXCEPTION");
+    expect(result.warnings[0]?.message).not.toContain("transaction={");
+    expect(result.errors).toEqual([]);
   });
 
   it("preserves a useful decoded revert reason and uses a readable action name", async () => {
@@ -191,8 +204,8 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]?.message).toBe(
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.message).toBe(
       "Transfer Native Token would revert: InsufficientBalance()"
     );
   });
@@ -222,13 +235,13 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]?.message).toBe(
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.message).toBe(
       "Transfer Native Token would revert. Check the wallet balance, amount, recipient, and gas requirements."
     );
-    expect(result.errors[0]?.message).not.toContain("missing revert data");
-    expect(result.errors[0]?.message).not.toContain("CALL_EXCEPTION");
-    expect(result.errors[0]?.message).not.toContain("transaction=");
+    expect(result.warnings[0]?.message).not.toContain("missing revert data");
+    expect(result.warnings[0]?.message).not.toContain("CALL_EXCEPTION");
+    expect(result.warnings[0]?.message).not.toContain("transaction=");
   });
 
   it("turns RPC unavailability into a non-blocking warning", async () => {
@@ -450,5 +463,259 @@ describe("runWorkflowSimulation", () => {
       decimals: 6,
       recipientAddress: "0xbb0000000000000000000000000000000000bb00",
     });
+  });
+
+  it("supports legacy nodes with actionType at data.actionType", async () => {
+    const legacyNode: WorkflowSimulationNode = {
+      id: "legacy-transfer",
+      type: "action",
+      data: {
+        type: "action",
+        actionType: "web3/transfer-funds",
+        config: {
+          network: "1",
+          web3Connection: "eoa",
+          amount: "0.5",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        },
+      },
+    };
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [legacyNode],
+    });
+
+    expect(result.simulatedNodeCount).toBe(1);
+    expect(spies.simulateNativeTransfer).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores disconnected write nodes when workflow edges are provided", async () => {
+    const connected = actionNode("connected", "web3/transfer-funds", {
+      amount: "1",
+      recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+    });
+    const disconnected = actionNode("disconnected", "web3/transfer-funds", {
+      amount: "2",
+      recipientAddress: "0xcc0000000000000000000000000000000000cc00",
+    });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [triggerNode(), connected, disconnected],
+      edges: [{ source: "trigger-1", target: "connected" }],
+    });
+
+    expect(result.simulatedNodeCount).toBe(1);
+    expect(spies.simulateNativeTransfer).toHaveBeenCalledTimes(1);
+    expect(spies.simulateNativeTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: "1" })
+    );
+  });
+
+  it("resolves default signer mode without recording execution metrics", async () => {
+    spies.resolveSignerForNode.mockResolvedValueOnce({
+      kind: "safe",
+      ownerAddress: "0xaa0000000000000000000000000000000000aa00",
+      safeAddress: "0xdd0000000000000000000000000000000000dd00",
+      safeWalletId: "safe-1",
+    });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          web3Connection: "default",
+          amount: "1",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(spies.resolveSignerForNode).toHaveBeenCalledWith({
+      organizationId: "org_test",
+      chainId: 1,
+      web3Connection: "default",
+      recordMetrics: false,
+    });
+    expect(result.warnings[0]?.code).toBe("SIMULATION_SAFE_SIGNER_UNSUPPORTED");
+    expect(spies.simulateNativeTransfer).not.toHaveBeenCalled();
+  });
+
+  it("warns when the default signer cannot be resolved", async () => {
+    spies.resolveSignerForNode.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          web3Connection: "default",
+          amount: "1",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings[0]?.code).toBe("SIMULATION_SIGNER_UNAVAILABLE");
+    expect(result.skippedNodeCount).toBe(1);
+  });
+
+  it("returns a warning for an invalid Web3 connection", async () => {
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          web3Connection: "invalid-connection",
+          amount: "1",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.warnings[0]).toMatchObject({
+      code: "SIMULATION_INVALID_WEB3_CONNECTION",
+      fieldKey: "web3Connection",
+    });
+    expect(spies.simulateNativeTransfer).not.toHaveBeenCalled();
+  });
+
+  it("returns a warning for an invalid network", async () => {
+    spies.getChainIdFromNetwork.mockImplementationOnce(() => {
+      throw new Error("Unsupported network");
+    });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          network: "not-a-network",
+          amount: "1",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.warnings[0]).toMatchObject({
+      code: "SIMULATION_INVALID_NETWORK",
+      fieldKey: "network",
+    });
+    expect(spies.simulateNativeTransfer).not.toHaveBeenCalled();
+  });
+
+  it("turns an unexpected simulator throw into a warning", async () => {
+    spies.simulateNativeTransfer.mockRejectedValueOnce(new Error("boom"));
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          amount: "1",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings[0]?.code).toBe("SIMULATION_UNAVAILABLE");
+    expect(result.skippedNodeCount).toBe(1);
+  });
+
+  it("turns simulator validation failures into transaction warnings", async () => {
+    spies.simulateNativeTransfer.mockResolvedValueOnce({
+      success: false,
+      status: "simulated",
+      from: "0xaa0000000000000000000000000000000000aa00",
+      to: "0xbb0000000000000000000000000000000000bb00",
+      value: "0",
+      failureKind: "validation",
+      wouldRevert: true,
+      revertReason: "Invalid amount",
+      error: "Invalid amount",
+    });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        actionNode("transfer-1", "web3/transfer-funds", {
+          amount: "bad",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+      ],
+    });
+
+    expect(result.warnings[0]).toMatchObject({
+      code: "SIMULATION_INVALID_TRANSACTION",
+      fieldKey: "amount",
+    });
+  });
+
+  it("warns that a later write may depend on an earlier workflow step", async () => {
+    spies.simulateNativeTransfer
+      .mockResolvedValueOnce({
+        success: true,
+        status: "simulated",
+        from: "0xaa0000000000000000000000000000000000aa00",
+        to: "0xbb0000000000000000000000000000000000bb00",
+        value: "1",
+        wouldRevert: false,
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        status: "simulated",
+        from: "0xaa0000000000000000000000000000000000aa00",
+        to: "0xcc0000000000000000000000000000000000cc00",
+        value: "2",
+        failureKind: "revert",
+        wouldRevert: true,
+        revertReason: "InsufficientBalance()",
+        error: "InsufficientBalance()",
+      });
+
+    const result = await runWorkflowSimulation({
+      organizationId: "org_test",
+      nodes: [
+        triggerNode(),
+        actionNode("write-1", "web3/transfer-funds", {
+          amount: "1",
+          recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+        }),
+        actionNode("write-2", "web3/transfer-funds", {
+          amount: "2",
+          recipientAddress: "0xcc0000000000000000000000000000000000cc00",
+        }),
+      ],
+      edges: [
+        { source: "trigger-1", target: "write-1" },
+        { source: "write-1", target: "write-2" },
+      ],
+    });
+
+    expect(spies.simulateNativeTransfer).toHaveBeenCalledTimes(2);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings[0]).toMatchObject({
+      code: "SIMULATION_WOULD_REVERT",
+      nodeId: "write-2",
+    });
+    expect(result.warnings[0]?.message).toContain(
+      "This may depend on an earlier step in this workflow."
+    );
+  });
+
+  it("stops when the workflow simulation deadline has already passed", async () => {
+    await expect(
+      runWorkflowSimulation({
+        organizationId: "org_test",
+        nodes: [
+          actionNode("transfer-1", "web3/transfer-funds", {
+            amount: "1",
+            recipientAddress: "0xbb0000000000000000000000000000000000bb00",
+          }),
+        ],
+        deadlineAt: Date.now() - 1,
+      })
+    ).rejects.toBeInstanceOf(WorkflowSimulationDeadlineError);
+
+    expect(spies.simulateNativeTransfer).not.toHaveBeenCalled();
   });
 });

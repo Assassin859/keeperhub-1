@@ -36,8 +36,14 @@ export type WorkflowSimulationNode = {
     label?: string;
     type?: string;
     enabled?: boolean;
+    actionType?: string;
     config?: Record<string, unknown>;
   };
+};
+
+export type WorkflowSimulationEdge = {
+  source?: unknown;
+  target?: unknown;
 };
 
 export type WorkflowSimulationIssue = {
@@ -58,7 +64,16 @@ export type WorkflowSimulationResult = {
 type RunWorkflowSimulationInput = {
   organizationId: string;
   nodes: WorkflowSimulationNode[];
+  edges?: WorkflowSimulationEdge[];
+  deadlineAt?: number;
 };
+
+export class WorkflowSimulationDeadlineError extends Error {
+  constructor() {
+    super("Workflow simulation exceeded its deadline");
+    this.name = "WorkflowSimulationDeadlineError";
+  }
+}
 
 type NodeSimulationContext = {
   node: WorkflowSimulationNode;
@@ -66,6 +81,7 @@ type NodeSimulationContext = {
   organizationId: string;
   actionType: SupportedActionType;
   config: Record<string, unknown>;
+  hasEarlierReachableWrite: boolean;
 };
 
 type NodeSimulationOutcome =
@@ -114,6 +130,86 @@ const ACTION_DISPLAY_NAME: Record<SupportedActionType, string> = {
   "web3/transfer-token": "Transfer ERC20 Token",
   "web3/write-contract": "Write Contract",
 };
+
+function reachableNodeIds(
+  nodes: WorkflowSimulationNode[],
+  edges: WorkflowSimulationEdge[] | undefined
+): Set<string> | null {
+  if (!edges) {
+    return null;
+  }
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const reachable = new Set<string>();
+  const queue = nodes
+    .filter((node) => node.type === "trigger" || node.data?.type === "trigger")
+    .map((node) => node.id);
+
+  for (const nodeId of queue) {
+    reachable.add(nodeId);
+  }
+
+  const targetsBySource = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (typeof edge.source !== "string" || typeof edge.target !== "string") {
+      continue;
+    }
+    if (!(nodeIds.has(edge.source) && nodeIds.has(edge.target))) {
+      continue;
+    }
+    const targets = targetsBySource.get(edge.source) ?? [];
+    targets.push(edge.target);
+    targetsBySource.set(edge.source, targets);
+  }
+
+  for (const source of queue) {
+    for (const target of targetsBySource.get(source) ?? []) {
+      if (!reachable.has(target)) {
+        reachable.add(target);
+        queue.push(target);
+      }
+    }
+  }
+
+  return reachable;
+}
+
+function remainingDeadlineMs(deadlineAt: number | undefined): number | null {
+  if (deadlineAt === undefined) {
+    return null;
+  }
+  return deadlineAt - Date.now();
+}
+
+async function withSimulationDeadline<T>(
+  promise: Promise<T>,
+  deadlineAt: number | undefined
+): Promise<T> {
+  const remaining = remainingDeadlineMs(deadlineAt);
+  if (remaining === null) {
+    return promise;
+  }
+  if (remaining <= 0) {
+    throw new WorkflowSimulationDeadlineError();
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new WorkflowSimulationDeadlineError()),
+          remaining
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 function isSupportedActionType(
   actionType: unknown
@@ -174,6 +270,26 @@ function revertGuidance(actionType: SupportedActionType): string {
     default:
       return "Check the configured inputs and current on-chain state.";
   }
+}
+
+function simulationRevertMessage(
+  context: NodeSimulationContext,
+  label: string,
+  reason: string | null
+): string {
+  if (context.hasEarlierReachableWrite) {
+    if (reason) {
+      return `${label} may revert: ${reason}. This may depend on an earlier step in this workflow.`;
+    }
+
+    return `${label} may revert. This may depend on an earlier step in this workflow. ${revertGuidance(context.actionType)}`;
+  }
+
+  if (reason) {
+    return `${label} would revert: ${reason}`;
+  }
+
+  return `${label} would revert. ${revertGuidance(context.actionType)}`;
 }
 
 function makeIssue(
@@ -338,6 +454,7 @@ async function resolveEoaEligibility(
       organizationId: context.organizationId,
       chainId,
       web3Connection: rawConnection,
+      recordMetrics: false,
     });
 
     if (signerMode.kind === SIGNER_MODE.EOA) {
@@ -408,7 +525,8 @@ function runSimulator(context: NodeSimulationContext): Promise<SimulateResult> {
 }
 
 async function simulateNode(
-  context: NodeSimulationContext
+  context: NodeSimulationContext,
+  deadlineAt?: number
 ): Promise<NodeSimulationOutcome> {
   const dynamicField = findDynamicField(context.actionType, context.config);
 
@@ -460,7 +578,10 @@ async function simulateNode(
     };
   }
 
-  const signerEligibility = await resolveEoaEligibility(context, chainId);
+  const signerEligibility = await withSimulationDeadline(
+    resolveEoaEligibility(context, chainId),
+    deadlineAt
+  );
 
   if (!signerEligibility.eligible) {
     if ("error" in signerEligibility) {
@@ -476,8 +597,11 @@ async function simulateNode(
   let result: SimulateResult;
 
   try {
-    result = await runSimulator(context);
-  } catch {
+    result = await withSimulationDeadline(runSimulator(context), deadlineAt);
+  } catch (error) {
+    if (error instanceof WorkflowSimulationDeadlineError) {
+      throw error;
+    }
     return {
       status: "skipped",
       warning: makeIssue(context, {
@@ -516,9 +640,7 @@ async function simulateNode(
       issue: makeIssue(context, {
         code: "SIMULATION_WOULD_REVERT",
         fieldKey: failureField(context),
-        message: reason
-          ? `${label} would revert: ${reason}`
-          : `${label} would revert. ${revertGuidance(context.actionType)}`,
+        message: simulationRevertMessage(context, label, reason),
       }),
     };
   }
@@ -542,13 +664,25 @@ async function simulateNode(
 export async function runWorkflowSimulation({
   organizationId,
   nodes,
+  edges,
+  deadlineAt,
 }: RunWorkflowSimulationInput): Promise<WorkflowSimulationResult> {
   const errors: WorkflowSimulationIssue[] = [];
   const warnings: WorkflowSimulationIssue[] = [];
   let simulatedNodeCount = 0;
   let skippedNodeCount = 0;
+  let reachableWriteCount = 0;
+  const reachable = reachableNodeIds(nodes, edges);
 
   for (const [nodeIndex, node] of nodes.entries()) {
+    const remaining = remainingDeadlineMs(deadlineAt);
+    if (remaining !== null && remaining <= 0) {
+      throw new WorkflowSimulationDeadlineError();
+    }
+
+    if (reachable && !reachable.has(node.id)) {
+      continue;
+    }
     if (node.data?.enabled === false) {
       continue;
     }
@@ -558,19 +692,24 @@ export async function runWorkflowSimulation({
     }
 
     const config = node.data?.config;
-    const actionType = config?.actionType;
+    const actionType = config?.actionType ?? node.data?.actionType;
 
     if (!(config && isSupportedActionType(actionType))) {
       continue;
     }
 
-    const outcome = await simulateNode({
-      node,
-      nodeIndex,
-      organizationId,
-      actionType,
-      config,
-    });
+    const outcome = await simulateNode(
+      {
+        node,
+        nodeIndex,
+        organizationId,
+        actionType,
+        config,
+        hasEarlierReachableWrite: reachableWriteCount > 0,
+      },
+      deadlineAt
+    );
+    reachableWriteCount += 1;
 
     if (outcome.status === "simulated") {
       simulatedNodeCount += 1;
@@ -578,7 +717,7 @@ export async function runWorkflowSimulation({
     }
 
     if (outcome.status === "failed") {
-      errors.push(outcome.issue);
+      warnings.push(outcome.issue);
       continue;
     }
 

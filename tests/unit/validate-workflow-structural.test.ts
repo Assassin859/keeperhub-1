@@ -458,17 +458,49 @@ describe("validateWorkflow — missing-write-action-for-write-workflow (VALID-04
   });
 });
 
-describe("validateWorkflow — credentialed actions are writes (VALID-04)", () => {
+describe("validateWorkflow — explicit write-action classification (VALID-04)", () => {
   it.each([
     "web3/transfer-funds",
     "web3/transfer-token",
     "web3/approve-token",
-  ])("accepts %s when workflowType=write", (actionType) => {
+    "safe/get-pending-transactions",
+  ])("does not treat %s as an MCP-callable write", (actionType) => {
+    const writeWorkflow = validateWorkflow(
+      makeWorkflow({
+        workflowType: "write",
+        nodes: [triggerNode(), actionNode("action-1", { actionType })],
+        edges: [edge("e1", "trigger-1", "action-1")],
+      })
+    );
+
+    expect(
+      writeWorkflow.errors.some(
+        (issue) => issue.code === "missing-write-action-for-write-workflow"
+      )
+    ).toBe(true);
+
+    const readWorkflow = validateWorkflow(
+      makeWorkflow({
+        workflowType: "read",
+        nodes: [triggerNode(), actionNode("action-1", { actionType })],
+        edges: [edge("e1", "trigger-1", "action-1")],
+      })
+    );
+
+    expect(
+      readWorkflow.warnings.some(
+        (issue) => issue.code === "write-action-on-read-workflow"
+      )
+    ).toBe(false);
+  });
+
+  it("uses the same protocol-write classifier as MCP calldata generation", () => {
+    const actionType = "aave/protocol-write";
     const result = validateWorkflow(
       makeWorkflow({
         workflowType: "write",
-        nodes: [triggerNode(), actionNode("transfer-1", { actionType })],
-        edges: [edge("e1", "trigger-1", "transfer-1")],
+        nodes: [triggerNode(), actionNode("protocol-1", { actionType })],
+        edges: [edge("e1", "trigger-1", "protocol-1")],
       })
     );
 
@@ -477,26 +509,6 @@ describe("validateWorkflow — credentialed actions are writes (VALID-04)", () =
         (issue) => issue.code === "missing-write-action-for-write-workflow"
       )
     ).toBe(false);
-  });
-
-  it.each([
-    "web3/transfer-funds",
-    "web3/transfer-token",
-    "web3/approve-token",
-  ])("warns when %s is placed on workflowType=read", (actionType) => {
-    const result = validateWorkflow(
-      makeWorkflow({
-        workflowType: "read",
-        nodes: [triggerNode(), actionNode("transfer-1", { actionType })],
-        edges: [edge("e1", "trigger-1", "transfer-1")],
-      })
-    );
-
-    expect(
-      result.warnings.some(
-        (issue) => issue.code === "write-action-on-read-workflow"
-      )
-    ).toBe(true);
   });
 });
 

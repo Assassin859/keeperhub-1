@@ -22,13 +22,14 @@ describe("isNonRetryableError", () => {
     }
   });
 
-  it("treats INSUFFICIENT_FUNDS as non-retryable", () => {
+  it("does not change live failover policy for INSUFFICIENT_FUNDS", () => {
+    expect(NON_RETRYABLE_ERROR_CODES.has("INSUFFICIENT_FUNDS")).toBe(false);
     expect(
       isNonRetryableError({
         code: "INSUFFICIENT_FUNDS",
         message: "insufficient funds for gas * price + value",
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns false for retryable error codes", () => {

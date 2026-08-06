@@ -2,7 +2,7 @@
 // from tests and from the API route. Web3 + ABI checks land in
 // Plans 48-02 and 48-03 as additional exported functions.
 
-import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import { isWriteActionType } from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
   isInputSchemaPresent,
@@ -17,7 +17,6 @@ import {
   chainExists,
   tokenAddressFormat,
 } from "@/lib/mcp/validate-workflow-web3";
-import { findActionById } from "@/plugins/registry";
 
 export type ValidationIssue = {
   code: ValidationErrorCode | ValidationWarningCode;
@@ -304,18 +303,7 @@ function getWorkflowActionType(node: unknown): string | undefined {
 }
 
 function hasWorkflowWriteAction(nodes: unknown[]): boolean {
-  if (findFirstWriteActionNode(nodes) !== undefined) {
-    return true;
-  }
-
-  return nodes.some((node) => {
-    const actionType = getWorkflowActionType(node);
-
-    return (
-      actionType !== undefined &&
-      findActionById(actionType)?.requiresCredentials === true
-    );
-  });
+  return nodes.some((node) => isWriteActionType(getWorkflowActionType(node)));
 }
 
 function runWriteActionCheck(
@@ -330,7 +318,7 @@ function runWriteActionCheck(
     errors.push({
       code: VALIDATION_ERROR_CODES.MISSING_WRITE_ACTION_FOR_WRITE_WORKFLOW,
       message:
-        'workflowType is "write" but no node has a state-changing actionType.',
+        'workflowType is "write" but no node has an MCP-callable write actionType.',
       parameterPath: "workflowType",
     });
   }

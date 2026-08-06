@@ -143,7 +143,7 @@ describe("runWorkflowValidationPreflight", () => {
         }),
       ],
       validationWarnings: [],
-      onRunAnyway: undefined,
+      onRunAnyway: onStartWorkflowExecution,
     });
 
     expect(onStartWorkflowExecution).not.toHaveBeenCalled();
@@ -236,7 +236,7 @@ describe("runWorkflowValidationPreflight", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("blocks execution when simulation confirms a revert", async () => {
+  it("offers Run Anyway when simulation reports a revert", async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(createJsonResponse(cleanValidationResponse))
@@ -245,7 +245,7 @@ describe("runWorkflowValidationPreflight", () => {
           result: {
             simulatedNodeCount: 0,
             skippedNodeCount: 0,
-            errors: [
+            warnings: [
               {
                 code: "SIMULATION_WOULD_REVERT",
                 message: "Transfer would revert: InsufficientBalance()",
@@ -272,15 +272,15 @@ describe("runWorkflowValidationPreflight", () => {
     });
 
     expect(onOpenIssues).toHaveBeenCalledWith({
-      validationErrors: [
+      validationErrors: [],
+      validationWarnings: [
         expect.objectContaining({
           code: "SIMULATION_WOULD_REVERT",
           nodeId: "action-1",
           fieldKey: "recipientAddress",
         }),
       ],
-      validationWarnings: [],
-      onRunAnyway: undefined,
+      onRunAnyway: onStartWorkflowExecution,
     });
 
     expect(onStartWorkflowExecution).not.toHaveBeenCalled();
@@ -361,7 +361,7 @@ describe("runWorkflowValidationPreflight", () => {
     expect(onStartWorkflowExecution).not.toHaveBeenCalled();
   });
 
-  it("reports an error when the simulation endpoint fails", async () => {
+  it("offers Run Anyway when the simulation endpoint fails", async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(createJsonResponse(cleanValidationResponse))
@@ -380,14 +380,25 @@ describe("runWorkflowValidationPreflight", () => {
       onError,
     });
 
-    expect(onError).toHaveBeenCalledWith(
-      "Could not simulate workflow writes before running it"
-    );
-    expect(onOpenIssues).not.toHaveBeenCalled();
-    expect(onStartWorkflowExecution).not.toHaveBeenCalled();
+    const overlayIssues = onOpenIssues.mock
+      .calls[0]?.[0] as WorkflowValidationOverlayIssues;
+
+    expect(overlayIssues.validationErrors).toEqual([]);
+    expect(overlayIssues.validationWarnings).toEqual([
+      expect.objectContaining({
+        code: "SIMULATION_UNAVAILABLE",
+        parameterPath: "nodes",
+      }),
+    ]);
+    expect(overlayIssues.onRunAnyway).toEqual(expect.any(Function));
+
+    await overlayIssues.onRunAnyway?.();
+
+    expect(onStartWorkflowExecution).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
   });
 
-  it("reports an unexpected simulation response when JSON is invalid", async () => {
+  it("offers Run Anyway when the simulation response is invalid JSON", async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(createJsonResponse(cleanValidationResponse))
@@ -406,10 +417,47 @@ describe("runWorkflowValidationPreflight", () => {
       onError,
     });
 
-    expect(onError).toHaveBeenCalledWith(
-      "Workflow simulation returned an unexpected response"
-    );
-    expect(onOpenIssues).not.toHaveBeenCalled();
+    expect(onOpenIssues).toHaveBeenCalledWith({
+      validationErrors: [],
+      validationWarnings: [
+        expect.objectContaining({
+          code: "SIMULATION_UNAVAILABLE",
+          message: expect.stringContaining("unexpected response"),
+        }),
+      ],
+      onRunAnyway: onStartWorkflowExecution,
+    });
     expect(onStartWorkflowExecution).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("offers Run Anyway when the simulation request throws", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(createJsonResponse(cleanValidationResponse))
+      .mockRejectedValueOnce(new Error("network down"));
+
+    const onOpenIssues = vi.fn();
+    const onStartWorkflowExecution = vi.fn();
+    const onError = vi.fn();
+
+    await runWorkflowValidationPreflight({
+      workflowId: "workflow-1",
+      nodes,
+      fetcher,
+      onOpenIssues,
+      onStartWorkflowExecution,
+      onError,
+    });
+
+    expect(onOpenIssues).toHaveBeenCalledWith({
+      validationErrors: [],
+      validationWarnings: [
+        expect.objectContaining({ code: "SIMULATION_UNAVAILABLE" }),
+      ],
+      onRunAnyway: onStartWorkflowExecution,
+    });
+    expect(onStartWorkflowExecution).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 });
