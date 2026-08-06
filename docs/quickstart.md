@@ -37,8 +37,9 @@ The endpoint URL is also shown, with a copy button, in the dashboard under
 
 Browser OAuth (for example `/mcp` in Claude Code) mints a **Bearer OAuth access
 token**, not a `kh_` organization API key. The MCP server accepts either an
-OAuth access token or `Authorization: Bearer kh_...` on each request. Do not pass
-a `kh_` key to the OAuth token endpoint — it is rejected by design.
+OAuth access token or `Authorization: Bearer kh_...` on each request. The OAuth
+token endpoint expects an OAuth `client_id` / `client_secret`, not a `kh_` org
+key — a `kh_` value fails client authentication as an invalid secret.
 
 | Auth method | Credential | Best for |
 |-------------|------------|----------|
@@ -66,16 +67,35 @@ Chromium session. Set `DEV_LOGIN_URL` if the app is not on `http://localhost:300
 ### Simulation is EVM-only
 
 `simulate: true` on MCP direct-execution tools (`execute_transfer`, etc.) works
-on **EVM chain IDs only**. Solana mainnet (`101`) and devnet (`103`) cause the
-MCP tool to throw an error whose **message** is JSON. Parse it and stop the flow
-when `code` is `simulation_unsupported_chain`:
+on **EVM chain IDs only**. On Solana mainnet (`101`) and devnet (`103`), the
+tool call **resolves** with `isError: true` — it does not throw to the MCP
+client. Check that flag, then parse the JSON in `content[0].text` and stop when
+`error` is `simulation_unsupported_chain`:
 
-```json
-{ "code": "simulation_unsupported_chain", "chainId": 101, "hint": "..." }
+```js
+const result = await client.callTool({
+  name: "execute_transfer",
+  arguments: args,
+});
+if (result.isError) {
+  const payload = JSON.parse(result.content[0].text);
+  if (payload.error === "simulation_unsupported_chain") {
+    // hard stop — do not broadcast
+  }
+}
 ```
 
-Do not read `err.code` on the thrown error — that property is undefined. See
-[section 6](#6-send-your-first-transaction-safely) for the full preflight flow.
+```json
+{
+  "error": "simulation_unsupported_chain",
+  "message": "Direct-execution simulation is not supported on this chain.",
+  "chain_id": 101,
+  "hint": "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting."
+}
+```
+
+See [section 6](#6-send-your-first-transaction-safely) for the full preflight
+flow.
 
 ## 2. Pick a key type
 
@@ -134,8 +154,8 @@ tool. Faucet links are third-party and may change. See the full
 
 | Context | Limit |
 |---|---|
-| Authenticated requests | 100 / minute |
-| Unauthenticated requests | 10 / minute |
+| MCP (per organization) | 120 / minute |
+| Public MCP tools/call (per IP) | 10 / minute |
 | Direct execution (per API key) | 60 / minute |
 
 Rate-limited requests return `429` with a `Retry-After` header (delta seconds).
@@ -181,11 +201,12 @@ Example simulation on Base Sepolia:
 
 For an ERC-20 transfer, also pass the token's contract address as
 `token_address`. The Base Sepolia USDC address is listed in the table above.
-Any MCP tool error is a failed preflight and must stop the flow; revert details
-include the REST error JSON when available. As noted in [section 1](#simulation-is-evm-only),
-simulation is EVM-only — on Solana chain IDs `101` and `103` (and their aliases),
-`execute_transfer` with `simulate: true` throws before any API call; parse the
-error message as JSON and treat `code: "simulation_unsupported_chain"` as a hard
-stop. See [MCP Server](/ai-tools/mcp-server#safely-preflight-direct-writes) for the
-tool flow and [Direct Execution](/api/direct-execution) for complete response
-and error handling details.
+Any MCP tool result with `isError: true` is a failed preflight and must stop
+the flow; revert details include the REST error JSON when available. As noted
+in [section 1](#simulation-is-evm-only), simulation is EVM-only — on Solana
+chain IDs `101` and `103` (and their aliases), `execute_transfer` with
+`simulate: true` resolves with `isError: true` before any API call; parse
+`content[0].text` as JSON and treat `error: "simulation_unsupported_chain"` as
+a hard stop. See [MCP Server](/ai-tools/mcp-server#safely-preflight-direct-writes)
+for the tool flow and [Direct Execution](/api/direct-execution) for complete
+response and error handling details.
