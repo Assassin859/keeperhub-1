@@ -31,6 +31,7 @@ import "dotenv/config";
 import { createHash, randomBytes, scrypt } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  assertMigrateSucceeded,
   queryJournalDriftState,
   runMigrateWithRecovery,
 } from "../lib/migration-drift";
@@ -162,18 +163,7 @@ function runChildScript(script: string, label: string): void {
 async function runMigrate(databaseUrl: string): Promise<void> {
   console.log("> pnpm db:migrate");
   const result = await runMigrateWithRecovery(databaseUrl, process.env);
-  if (result.ok) {
-    return;
-  }
-
-  if (result.output) {
-    process.stderr.write(result.output);
-    if (!result.output.endsWith("\n")) {
-      process.stderr.write("\n");
-    }
-  }
-  const command = result.failedCommand ?? "pnpm db:migrate";
-  throw new Error(`${command} exited with status ${result.status ?? "null"}`);
+  assertMigrateSucceeded(result);
 }
 
 // ---------------------------------------------------------------------------

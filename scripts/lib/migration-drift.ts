@@ -230,6 +230,25 @@ export function runDbMigrate(env: NodeJS.ProcessEnv = process.env): CommandResul
   return spawnPnpm(MIGRATE_COMMAND, ["db:migrate"], env);
 }
 
+/**
+ * Writes migrate/backfill failure output to stderr and throws with the
+ * failing command label. Used by `dev-bootstrap` after `runMigrateWithRecovery`.
+ */
+export function assertMigrateSucceeded(result: MigrateRecoveryResult): void {
+  if (result.ok) {
+    return;
+  }
+
+  if (result.output) {
+    process.stderr.write(result.output);
+    if (!result.output.endsWith("\n")) {
+      process.stderr.write("\n");
+    }
+  }
+  const command = result.failedCommand ?? MIGRATE_COMMAND;
+  throw new Error(`${command} exited with status ${result.status ?? "null"}`);
+}
+
 export async function runMigrateWithRecovery(
   databaseUrl: string,
   env: NodeJS.ProcessEnv = process.env,

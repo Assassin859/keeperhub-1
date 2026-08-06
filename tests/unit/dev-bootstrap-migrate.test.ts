@@ -13,6 +13,7 @@ vi.mock("postgres", () => ({
 }));
 
 import {
+  assertMigrateSucceeded,
   BACKFILL_COMMAND,
   MIGRATE_COMMAND,
   runMigrateWithRecovery,
@@ -269,5 +270,54 @@ describe("runMigrateWithRecovery", () => {
     expect(result.ok).toBe(false);
     expect(result.output).toContain("ENOENT");
     expect(result.failedCommand).toBe(BACKFILL_COMMAND);
+  });
+});
+
+describe("assertMigrateSucceeded", () => {
+  it("is a no-op when migrate succeeded", () => {
+    expect(() =>
+      assertMigrateSucceeded({
+        ok: true,
+        output: "ok",
+        status: 0,
+      })
+    ).not.toThrow();
+  });
+
+  it("writes output to stderr and throws with failedCommand", () => {
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    expect(() =>
+      assertMigrateSucceeded({
+        ok: false,
+        output: "migrate blew up",
+        status: 1,
+        failedCommand: BACKFILL_COMMAND,
+      })
+    ).toThrowError(`${BACKFILL_COMMAND} exited with status 1`);
+
+    expect(writeSpy).toHaveBeenCalledWith("migrate blew up");
+    expect(writeSpy).toHaveBeenCalledWith("\n");
+    writeSpy.mockRestore();
+  });
+
+  it("falls back to pnpm db:migrate when failedCommand is missing", () => {
+    const writeSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    expect(() =>
+      assertMigrateSucceeded({
+        ok: false,
+        output: "failure already has newline\n",
+        status: null,
+      })
+    ).toThrowError(`${MIGRATE_COMMAND} exited with status null`);
+
+    expect(writeSpy).toHaveBeenCalledWith("failure already has newline\n");
+    expect(writeSpy).not.toHaveBeenCalledWith("\n");
+    writeSpy.mockRestore();
   });
 });
