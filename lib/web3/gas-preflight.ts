@@ -5,7 +5,7 @@ import {
   describeNativeShortfall,
   getNativeSymbol,
 } from "@/lib/execute/native-balance";
-import { getRedis } from "@/lib/redis";
+import { cachedRead } from "@/lib/redis-cache";
 import { gasPriceKey, nativeBalanceKey } from "@/lib/redis-keys";
 import type { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { SIGNER_MODE, type SignerMode } from "@/lib/safe/signer-resolver";
@@ -55,35 +55,18 @@ export function resolveFundingHolder(
     : walletAddress;
 }
 
-/** Read-through cache for a chain value. Best-effort: Redis never gates the read. */
-async function cachedWeiValue(
+/** Read-through cache for a wei-denominated chain value. */
+function cachedWeiValue(
   key: string,
   read: () => Promise<bigint>
 ): Promise<bigint> {
-  const redis = getRedis();
-
-  if (redis) {
-    try {
-      const hit = await redis.get(key);
-      if (hit !== null) {
-        return BigInt(hit);
-      }
-    } catch {
-      // Miss, unreachable, or an unparseable value: fall through to the chain.
-    }
-  }
-
-  const value = await read();
-
-  if (redis) {
-    try {
-      await redis.set(key, value.toString(), "EX", CACHE_TTL_SECONDS);
-    } catch {
-      // A cache write failure must not fail the preflight.
-    }
-  }
-
-  return value;
+  return cachedRead({
+    key,
+    ttlSeconds: CACHE_TTL_SECONDS,
+    decode: BigInt,
+    encode: String,
+    read,
+  });
 }
 
 /**
