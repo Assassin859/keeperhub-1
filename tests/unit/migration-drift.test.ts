@@ -1,25 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeError,
   getExpectedJournalCount,
-  hasPublicSchemaCollisionOutput,
+  isDuplicateObjectError,
   isMissingRelationError,
   type PostgresClient,
   queryJournalDriftState,
   shouldRecoverAfterMigrateFailure,
 } from "@/scripts/lib/migration-drift";
 
-const DB_PUSH_MIGRATE_FAILURE = `DrizzleQueryError: Failed query: CREATE TABLE "users" (
-	"id" text PRIMARY KEY NOT NULL,
-	"name" text NOT NULL,
-	"email" text NOT NULL
-);
-params:
-    at migrate (/node_modules/drizzle-orm/pg-core/dialect.ts:123:11)
-PostgresError: relation "users" already exists`;
-
-const JOURNAL_INDEX_FAILURE = `DrizzleQueryError: Failed query: CREATE INDEX "idx_j" ON "drizzle"."__drizzle_migrations" ("id");
-params:
-PostgresError: relation "idx_j" already exists`;
+/**
+ * Shape captured from drizzle-orm's migrator failing against a database whose
+ * schema was applied by `db:push`: the outer error carries the statement, the
+ * postgres.js error underneath carries the SQLSTATE.
+ */
+function duplicateTableError(): Error {
+  const pgError = Object.assign(new Error('relation "users" already exists'), {
+    code: "42P07",
+    name: "PostgresError",
+  });
+  return Object.assign(
+    new Error('Failed query: CREATE TABLE "users" (\n\t"id" text\n)'),
+    { cause: pgError }
+  );
+}
 
 function createMockClient(options: {
   usersExists: boolean;
@@ -45,37 +49,12 @@ function createMockClient(options: {
   return Object.assign(client, { end }) as unknown as PostgresClient;
 }
 
-describe("hasPublicSchemaCollisionOutput", () => {
-  it("returns true for real db:push migrate failure output", () => {
-    expect(hasPublicSchemaCollisionOutput(DB_PUSH_MIGRATE_FAILURE)).toBe(true);
-  });
-
-  it("returns false for drizzle schema index collisions", () => {
-    expect(hasPublicSchemaCollisionOutput(JOURNAL_INDEX_FAILURE)).toBe(false);
-  });
-
-  it("returns false for syntax errors", () => {
-    expect(hasPublicSchemaCollisionOutput("syntax error at or near")).toBe(
-      false
-    );
-  });
-
-  it("returns false for connection errors", () => {
-    expect(hasPublicSchemaCollisionOutput("connection refused")).toBe(false);
-  });
-
-  it("returns false for empty output", () => {
-    expect(hasPublicSchemaCollisionOutput("")).toBe(false);
-    expect(hasPublicSchemaCollisionOutput("   ")).toBe(false);
-  });
-});
-
 describe("isMissingRelationError", () => {
-  it("matches Postgres undefined_table code", () => {
+  it("matches the undefined_table SQLSTATE", () => {
     expect(isMissingRelationError({ code: "42P01" })).toBe(true);
   });
 
-  it("matches relation does not exist messages", () => {
+  it("matches a relation-does-not-exist message without a code", () => {
     expect(
       isMissingRelationError({
         message: 'relation "drizzle.__drizzle_migrations" does not exist',
@@ -91,65 +70,116 @@ describe("isMissingRelationError", () => {
       })
     ).toBe(false);
   });
+
+  it("terminates on a self-referential cause chain", () => {
+    const looping: { code: string; cause?: unknown } = { code: "42501" };
+    looping.cause = looping;
+    expect(isMissingRelationError(looping)).toBe(false);
+  });
+});
+
+describe("isDuplicateObjectError", () => {
+  it("matches duplicate_table nested under the failing statement", () => {
+    expect(isDuplicateObjectError(duplicateTableError())).toBe(true);
+  });
+
+  it.each([
+    ["42P07", "duplicate_table"],
+    ["42701", "duplicate_column"],
+    ["42710", "duplicate_object"],
+    ["42P06", "duplicate_schema"],
+  ])("matches %s (%s)", (code) => {
+    expect(isDuplicateObjectError({ code })).toBe(true);
+  });
+
+  it("does not match a unique violation, which is data and not schema drift", () => {
+    expect(
+      isDuplicateObjectError({
+        code: "23505",
+        message: "duplicate key value violates unique constraint",
+      })
+    ).toBe(false);
+  });
+
+  it("does not match a syntax error", () => {
+    expect(
+      isDuplicateObjectError({ code: "42601", message: "syntax error at end" })
+    ).toBe(false);
+  });
+
+  it("does not match a connection failure", () => {
+    expect(
+      isDuplicateObjectError(new Error("connect ECONNREFUSED 127.0.0.1:5433"))
+    ).toBe(false);
+  });
+
+  it("falls back to the message only when no code is present", () => {
+    expect(
+      isDuplicateObjectError({ message: 'relation "users" already exists' })
+    ).toBe(true);
+  });
+});
+
+describe("describeError", () => {
+  it("renders the statement, the SQLSTATE and the cause chain", () => {
+    const text = describeError(duplicateTableError());
+    expect(text).toContain("Failed query:");
+    expect(text).toContain("caused by:");
+    expect(text).toContain("[42P07]");
+    expect(text).toContain('relation "users" already exists');
+  });
 });
 
 describe("queryJournalDriftState", () => {
   it("treats a missing journal table as count 0", async () => {
-    const client = createMockClient({
-      usersExists: true,
-      journalError: {
-        code: "42P01",
-        message: 'relation "drizzle.__drizzle_migrations" does not exist',
-      },
-    });
+    const state = await queryJournalDriftState(
+      createMockClient({
+        usersExists: true,
+        journalError: {
+          code: "42P01",
+          message: 'relation "drizzle.__drizzle_migrations" does not exist',
+        },
+      })
+    );
 
-    const state = await queryJournalDriftState(client);
     expect(state.journalCount).toBe(0);
     expect(state.usersExists).toBe(true);
+    expect(state.expectedCount).toBe(getExpectedJournalCount());
   });
 
-  it("rethrows permission errors instead of treating the journal as empty", async () => {
-    const client = createMockClient({
-      usersExists: true,
-      journalError: {
-        code: "42501",
-        message: "permission denied for table __drizzle_migrations",
-      },
-    });
-
-    await expect(queryJournalDriftState(client)).rejects.toMatchObject({
-      code: "42501",
-    });
+  it("rethrows permission errors instead of reporting an empty journal", async () => {
+    await expect(
+      queryJournalDriftState(
+        createMockClient({
+          usersExists: true,
+          journalError: {
+            code: "42501",
+            message: "permission denied for table __drizzle_migrations",
+          },
+        })
+      )
+    ).rejects.toMatchObject({ code: "42501" });
   });
 });
 
 describe("shouldRecoverAfterMigrateFailure", () => {
-  it("recovers when schema is ahead of an empty journal and output shows public collision", async () => {
-    const client = createMockClient({
-      usersExists: true,
-      journalCount: 0,
-    });
-
-    const result = await shouldRecoverAfterMigrateFailure(
-      client,
-      DB_PUSH_MIGRATE_FAILURE
-    );
-
-    expect(result).toEqual({ recover: true, throughTag: null });
+  it("recovers when the schema is ahead of an empty journal", async () => {
+    const client = createMockClient({ usersExists: true, journalCount: 0 });
+    expect(
+      await shouldRecoverAfterMigrateFailure(client, duplicateTableError())
+    ).toBe(true);
   });
 
-  it("recovers without a --through bound when the journal is partial", async () => {
+  it("recovers when the journal is partially populated", async () => {
+    // The case a journal-derived --through bound turned into a no-op: migrated
+    // partway, then db:push pulled the schema up to HEAD.
     const client = createMockClient({
       usersExists: true,
-      journalCount: 1,
+      journalCount: getExpectedJournalCount() - 1,
     });
-
-    const result = await shouldRecoverAfterMigrateFailure(
-      client,
-      DB_PUSH_MIGRATE_FAILURE
-    );
-
-    expect(result).toEqual({ recover: true, throughTag: null });
+    expect(
+      await shouldRecoverAfterMigrateFailure(client, duplicateTableError())
+    ).toBe(true);
   });
 
   it("does not recover when the journal is fully populated", async () => {
@@ -157,41 +187,28 @@ describe("shouldRecoverAfterMigrateFailure", () => {
       usersExists: true,
       journalCount: getExpectedJournalCount(),
     });
-
-    const result = await shouldRecoverAfterMigrateFailure(
-      client,
-      DB_PUSH_MIGRATE_FAILURE
-    );
-
-    expect(result).toEqual({ recover: false, throughTag: null });
+    expect(
+      await shouldRecoverAfterMigrateFailure(client, duplicateTableError())
+    ).toBe(false);
   });
 
-  it("does not recover for drizzle schema index collisions even when journal lags", async () => {
-    const client = createMockClient({
-      usersExists: true,
-      journalCount: 59,
-    });
-
-    const result = await shouldRecoverAfterMigrateFailure(
-      client,
-      JOURNAL_INDEX_FAILURE
-    );
-
-    expect(result).toEqual({ recover: false, throughTag: null });
+  it("does not recover on a fresh database with no public schema", async () => {
+    const client = createMockClient({ usersExists: false, journalCount: 0 });
+    expect(
+      await shouldRecoverAfterMigrateFailure(client, duplicateTableError())
+    ).toBe(false);
   });
 
-  it("does not recover for non-collision migrate failures", async () => {
-    const client = createMockClient({
-      usersExists: true,
-      journalCount: 0,
-    });
-
-    const result = await shouldRecoverAfterMigrateFailure(
-      client,
-      "syntax error at or near"
-    );
-
-    expect(result).toEqual({ recover: false, throughTag: null });
+  it("does not recover for a failure that is not a duplicate object", async () => {
+    const client = createMockClient({ usersExists: true, journalCount: 0 });
+    expect(
+      await shouldRecoverAfterMigrateFailure(
+        client,
+        Object.assign(new Error("syntax error at end of input"), {
+          code: "42601",
+        })
+      )
+    ).toBe(false);
   });
 });
 

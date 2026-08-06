@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const spawnSyncMock = vi.hoisted(() => vi.fn());
 const postgresMock = vi.hoisted(() => vi.fn());
 const endMock = vi.hoisted(() => vi.fn());
+const migrateMock = vi.hoisted(() => vi.fn());
 
 vi.mock("node:child_process", () => ({
   spawnSync: spawnSyncMock,
@@ -12,22 +13,33 @@ vi.mock("postgres", () => ({
   default: postgresMock,
 }));
 
+vi.mock("drizzle-orm/postgres-js", () => ({
+  drizzle: (client: unknown) => client,
+}));
+
+vi.mock("drizzle-orm/postgres-js/migrator", () => ({
+  migrate: migrateMock,
+}));
+
 import {
   assertMigrateSucceeded,
   BACKFILL_COMMAND,
-  MIGRATE_COMMAND,
+  MIGRATE_LABEL,
   runMigrateWithRecovery,
 } from "@/scripts/lib/migration-drift";
 
-const DB_PUSH_MIGRATE_FAILURE = `DrizzleQueryError: Failed query: CREATE TABLE "users" (
-	"id" text PRIMARY KEY NOT NULL,
-	"name" text NOT NULL,
-	"email" text NOT NULL
-);
-params:
-PostgresError: relation "users" already exists`;
-
 const BACKFILL_SCRIPT_SUFFIX = "backfill-drizzle-migrations.ts";
+const DB_URL = "postgresql://postgres:postgres@localhost:5433/keeperhub";
+
+function duplicateTableError(): Error {
+  const pgError = Object.assign(new Error('relation "users" already exists'), {
+    code: "42P07",
+    name: "PostgresError",
+  });
+  return Object.assign(new Error('Failed query: CREATE TABLE "users"'), {
+    cause: pgError,
+  });
+}
 
 function mockPostgresClient(options: {
   usersExists: boolean;
@@ -49,27 +61,26 @@ function mockPostgresClient(options: {
   postgresMock.mockReturnValue(Object.assign(client, { end: endMock }));
 }
 
-function mockSpawnSequence(
-  responses: Array<{
-    status: number | null;
-    stdout?: string;
-    stderr?: string;
-    error?: Error;
-  }>
-): void {
+/** Queues migrate() outcomes in call order: `null` succeeds, an error rejects. */
+function mockMigrateSequence(outcomes: Array<Error | null>): void {
   let call = 0;
-  spawnSyncMock.mockImplementation((_cmd, _args: string[]) => {
-    const response = responses[call] ?? {
-      status: 1,
-      stderr: "unexpected call",
-    };
+  migrateMock.mockImplementation(() => {
+    // Bounds check, not `??`: a queued `null` means success and is nullish.
+    const outcome =
+      call < outcomes.length
+        ? outcomes[call]
+        : new Error("unexpected migrate call");
     call += 1;
-    return {
-      status: response.status,
-      stdout: response.stdout ?? "",
-      stderr: response.stderr ?? "",
-      error: response.error,
-    };
+    return outcome ? Promise.reject(outcome) : Promise.resolve();
+  });
+}
+
+function mockBackfill(status: number, output = ""): void {
+  spawnSyncMock.mockReturnValue({
+    status,
+    stdout: output,
+    stderr: "",
+    error: undefined,
   });
 }
 
@@ -78,213 +89,131 @@ describe("runMigrateWithRecovery", () => {
     spawnSyncMock.mockReset();
     postgresMock.mockReset();
     endMock.mockReset();
+    migrateMock.mockReset();
   });
 
-  it("returns ok when the first migrate succeeds", async () => {
-    mockSpawnSequence([{ status: 0, stdout: "applied migrations" }]);
+  it("returns ok when the first migration succeeds, without probing", async () => {
+    mockMigrateSequence([null]);
 
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
+    const result = await runMigrateWithRecovery(DB_URL, process.env, () => {
+      /* silent */
+    });
 
     expect(result.ok).toBe(true);
-    expect(result.output).toContain("applied migrations");
-    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      "pnpm",
-      ["db:migrate"],
-      expect.objectContaining({ encoding: "utf8" })
-    );
-    expect(postgresMock).not.toHaveBeenCalled();
+    expect(migrateMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    // One client for the migration itself, none for a drift probe.
+    expect(postgresMock).toHaveBeenCalledTimes(1);
   });
 
-  it("runs backfill and retries when db:push drift is detected from DB state", async () => {
-    mockPostgresClient({ usersExists: true, journalCount: 0 });
-    mockSpawnSequence([
-      { status: 1, stderr: DB_PUSH_MIGRATE_FAILURE },
-      { status: 0, stdout: "backfilled journal" },
-      { status: 0, stdout: "retry migrate ok" },
-    ]);
+  it("backfills the whole journal and retries on duplicate-object drift", async () => {
+    mockPostgresClient({ usersExists: true, journalCount: 11 });
+    mockMigrateSequence([duplicateTableError(), null]);
+    mockBackfill(0, "Inserted 128, skipped 11");
 
     const logs: string[] = [];
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      (message) => logs.push(message)
+    const result = await runMigrateWithRecovery(DB_URL, process.env, (m) =>
+      logs.push(m)
     );
 
     expect(result.ok).toBe(true);
-    expect(result.output).toContain("retry migrate ok");
+    expect(migrateMock).toHaveBeenCalledTimes(2);
     expect(logs).toContain(
       "dev-bootstrap: migration drift detected (schema ahead of journal)"
     );
-    expect(logs).toContain(
-      "dev-bootstrap: journal backfilled; retrying db:migrate once"
-    );
-    expect(spawnSyncMock).toHaveBeenCalledTimes(3);
-    expect(spawnSyncMock).toHaveBeenNthCalledWith(
-      1,
-      "pnpm",
-      ["db:migrate"],
-      expect.any(Object)
-    );
-    expect(spawnSyncMock).toHaveBeenNthCalledWith(
-      2,
+    // Exact args: any reintroduced bound flag fails here.
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock).toHaveBeenCalledWith(
       "pnpm",
       ["tsx", expect.stringContaining(BACKFILL_SCRIPT_SUFFIX)],
-      expect.any(Object)
+      expect.objectContaining({ encoding: "utf8" })
     );
-    expect(spawnSyncMock).toHaveBeenNthCalledWith(
-      3,
-      "pnpm",
-      ["db:migrate"],
-      expect.any(Object)
-    );
-    expect(endMock).toHaveBeenCalled();
   });
 
-  it("omits --through when the journal is partially populated", async () => {
-    mockPostgresClient({
-      usersExists: true,
-      journalCount: 1,
+  it("does not recover when the failure is not a duplicate object", async () => {
+    mockPostgresClient({ usersExists: true, journalCount: 11 });
+    mockMigrateSequence([
+      Object.assign(new Error("syntax error at end of input"), {
+        code: "42601",
+      }),
+    ]);
+
+    const result = await runMigrateWithRecovery(DB_URL, process.env, () => {
+      /* silent */
     });
-    mockSpawnSequence([
-      { status: 1, stderr: DB_PUSH_MIGRATE_FAILURE },
-      { status: 0, stdout: "backfilled journal" },
-      { status: 0, stdout: "retry migrate ok" },
-    ]);
 
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
-
-    expect(result.ok).toBe(true);
-    const backfillCall = spawnSyncMock.mock.calls[1];
-    expect(backfillCall?.[1]).toEqual([
-      "tsx",
-      expect.stringContaining(BACKFILL_SCRIPT_SUFFIX),
-    ]);
-    expect(backfillCall?.[1]).not.toEqual(
-      expect.arrayContaining(["--through"])
-    );
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("syntax error");
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(migrateMock).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves first migrate output when the recovery probe fails", async () => {
-    mockSpawnSequence([{ status: 1, stderr: DB_PUSH_MIGRATE_FAILURE }]);
+  it("keeps the migration error when the drift probe cannot connect", async () => {
+    mockMigrateSequence([duplicateTableError()]);
+    let call = 0;
     postgresMock.mockImplementation(() => {
-      throw new Error("connect ECONNREFUSED");
+      call += 1;
+      // First call is the migration's own client; the second is the probe.
+      if (call === 1) {
+        return Object.assign(async () => [], { end: endMock });
+      }
+      throw new Error("connect ECONNREFUSED 127.0.0.1:5433");
     });
+    endMock.mockResolvedValue(undefined);
 
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
+    const result = await runMigrateWithRecovery(DB_URL, process.env, () => {
+      /* silent */
+    });
 
     expect(result.ok).toBe(false);
     expect(result.output).toContain('relation "users" already exists');
     expect(result.output).not.toContain("ECONNREFUSED");
-    expect(result.status).toBe(1);
-    expect(result.failedCommand).toBe(MIGRATE_COMMAND);
-    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock).not.toHaveBeenCalled();
   });
 
-  it("preserves first migrate output when retry fails for another reason", async () => {
+  it("names the backfill command when the backfill itself fails", async () => {
     mockPostgresClient({ usersExists: true, journalCount: 0 });
-    mockSpawnSequence([
-      { status: 1, stderr: DB_PUSH_MIGRATE_FAILURE },
-      { status: 0, stdout: "backfilled journal" },
-      { status: 2, stderr: "connection refused" },
-    ]);
+    mockMigrateSequence([duplicateTableError()]);
+    mockBackfill(3, "backfill blew up");
 
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
+    const result = await runMigrateWithRecovery(DB_URL, process.env, () => {
+      /* silent */
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe(`${BACKFILL_COMMAND} exited with status 3`);
+    expect(result.output).toContain('relation "users" already exists');
+    expect(result.output).toContain("backfill blew up");
+    expect(migrateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps both failures when the retry fails for another reason", async () => {
+    mockPostgresClient({ usersExists: true, journalCount: 0 });
+    mockMigrateSequence([
+      duplicateTableError(),
+      new Error("connection terminated unexpectedly"),
+    ]);
+    mockBackfill(0);
+
+    const result = await runMigrateWithRecovery(DB_URL, process.env, () => {
+      /* silent */
+    });
 
     expect(result.ok).toBe(false);
     expect(result.output).toContain('relation "users" already exists');
-    expect(result.output).toContain("connection refused");
-    expect(result.status).toBe(2);
-    expect(result.failedCommand).toBe(MIGRATE_COMMAND);
-  });
-
-  it("does not run backfill for non-drift migrate failures", async () => {
-    mockPostgresClient({ usersExists: true, journalCount: 0 });
-    mockSpawnSequence([{ status: 1, stderr: "syntax error at or near" }]);
-
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("syntax error");
-    expect(result.failedCommand).toBe(MIGRATE_COMMAND);
-    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("reports backfill command failure instead of migrate", async () => {
-    mockPostgresClient({ usersExists: true, journalCount: 0 });
-    mockSpawnSequence([
-      { status: 1, stderr: DB_PUSH_MIGRATE_FAILURE },
-      { status: 3, stderr: "backfill failed" },
-    ]);
-
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain('relation "users" already exists');
-    expect(result.output).toContain("backfill failed");
-    expect(result.status).toBe(3);
-    expect(result.failedCommand).toBe(BACKFILL_COMMAND);
-    expect(spawnSyncMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("surfaces spawn errors with the failing command", async () => {
-    mockPostgresClient({ usersExists: true, journalCount: 0 });
-    mockSpawnSequence([
-      { status: 1, stderr: DB_PUSH_MIGRATE_FAILURE },
-      {
-        status: null,
-        error: new Error("spawnSync pnpm ENOENT"),
-      },
-    ]);
-
-    const result = await runMigrateWithRecovery(
-      "postgresql://postgres:postgres@localhost:5433/keeperhub",
-      process.env,
-      () => undefined
-    );
-
-    expect(result.ok).toBe(false);
-    expect(result.output).toContain("ENOENT");
-    expect(result.failedCommand).toBe(BACKFILL_COMMAND);
+    expect(result.output).toContain("connection terminated");
+    expect(result.reason).toContain("after journal backfill");
   });
 });
 
 describe("assertMigrateSucceeded", () => {
-  it("is a no-op when migrate succeeded", () => {
+  it("is a no-op when the migration succeeded", () => {
     expect(() =>
-      assertMigrateSucceeded({
-        ok: true,
-        output: "ok",
-        status: 0,
-      })
+      assertMigrateSucceeded({ ok: true, output: "" })
     ).not.toThrow();
   });
 
-  it("writes output to stderr and throws with failedCommand", () => {
+  it("writes output to stderr and throws with the reason", () => {
     const writeSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
@@ -293,30 +222,25 @@ describe("assertMigrateSucceeded", () => {
       assertMigrateSucceeded({
         ok: false,
         output: "migrate blew up",
-        status: 1,
-        failedCommand: BACKFILL_COMMAND,
+        reason: `${BACKFILL_COMMAND} exited with status 3`,
       })
-    ).toThrowError(`${BACKFILL_COMMAND} exited with status 1`);
+    ).toThrowError(`${BACKFILL_COMMAND} exited with status 3`);
 
     expect(writeSpy).toHaveBeenCalledWith("migrate blew up");
     expect(writeSpy).toHaveBeenCalledWith("\n");
     writeSpy.mockRestore();
   });
 
-  it("falls back to pnpm db:migrate when failedCommand is missing", () => {
+  it("does not add a newline when the output already ends with one", () => {
     const writeSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
     expect(() =>
-      assertMigrateSucceeded({
-        ok: false,
-        output: "failure already has newline\n",
-        status: null,
-      })
-    ).toThrowError(`${MIGRATE_COMMAND} exited with status null`);
+      assertMigrateSucceeded({ ok: false, output: "already newline\n" })
+    ).toThrowError(`${MIGRATE_LABEL} failed`);
 
-    expect(writeSpy).toHaveBeenCalledWith("failure already has newline\n");
+    expect(writeSpy).toHaveBeenCalledWith("already newline\n");
     expect(writeSpy).not.toHaveBeenCalledWith("\n");
     writeSpy.mockRestore();
   });

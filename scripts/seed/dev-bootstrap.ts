@@ -9,9 +9,10 @@
  * Sequence:
  *   1. assertLocalDb()
  *   2. If users table exists AND drizzle.__drizzle_migrations is empty,
- *      run scripts/backfill-drizzle-migrations.ts so db:migrate skips the
- *      already-applied SQL. (db:push-bootstrapped DBs land here.)
- *   3. pnpm db:migrate (applies anything new).
+ *      run scripts/backfill-drizzle-migrations.ts so the migration run skips
+ *      the already-applied SQL. (db:push-bootstrapped DBs land here.)
+ *   3. Apply migrations in-process, recovering from db:push drift if the
+ *      journal still lags the schema (see scripts/lib/migration-drift.ts).
  *   4. seedPersistentTestUsers() for the e2e user/org set.
  *   5. Upsert the dev user (default dev@keeperhub.local) + org + membership.
  *   6. Read the local kh CLI token from ~/.config/kh/hosts.yml and upsert
@@ -161,7 +162,7 @@ function runChildScript(script: string, label: string): void {
 }
 
 async function runMigrate(databaseUrl: string): Promise<void> {
-  console.log("> pnpm db:migrate");
+  console.log("> apply migrations");
   const result = await runMigrateWithRecovery(databaseUrl, process.env);
   assertMigrateSucceeded(result);
 }
