@@ -299,10 +299,10 @@ export function useGettingStarted(): GettingStarted {
       .catch(() => undefined);
   }, [isAuthenticated, persisted.state]);
 
-  // Derive testnet workspace from org wallet balances when the launcher is visible.
+  // Derive testnet workspace from org wallet balances when the launcher is expanded.
   // biome-ignore lint/correctness/useExhaustiveDependencies: activeOrgId is the refetch trigger on org switch; balances are scoped server-side
   useEffect(() => {
-    if (!isAuthenticated || persisted.state === "dismissed") {
+    if (!isAuthenticated || persisted.state !== "expanded") {
       setTestnetWorkspace(resolveTestnetWorkspace(undefined));
       return;
     }
