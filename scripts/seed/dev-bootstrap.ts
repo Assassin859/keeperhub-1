@@ -31,6 +31,7 @@ import "dotenv/config";
 import { createHash, randomBytes, scrypt } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  queryJournalDriftState,
   runMigrateWithRecovery,
 } from "../lib/migration-drift";
 import * as fs from "node:fs";
@@ -143,28 +144,8 @@ async function hashPassword(password: string): Promise<string> {
 async function maybeBackfillJournal(
   client: ReturnType<typeof postgres>
 ): Promise<boolean> {
-  const usersExists = await client<{ exists: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'users'
-    ) AS exists
-  `;
-  if (!usersExists[0]?.exists) {
-    return false;
-  }
-
-  const journalCount = await client<{ c: number }[]>`
-    SELECT COALESCE(
-      (SELECT COUNT(*)::int FROM drizzle.__drizzle_migrations),
-      0
-    ) AS c
-  `.catch(() => [{ c: 0 }]);
-
-  if ((journalCount[0]?.c ?? 0) > 0) {
-    return false;
-  }
-
-  return true;
+  const state = await queryJournalDriftState(client);
+  return state.usersExists && state.journalCount === 0;
 }
 
 function runChildScript(script: string, label: string): void {

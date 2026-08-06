@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import * as path from "node:path";
@@ -8,6 +7,7 @@ import postgres from "postgres";
 const ALREADY_EXISTS = /(already exists|duplicate key)/i;
 const PUBLIC_SCHEMA_COLLISION =
   /(?:Failed query:\s*CREATE TABLE|relation "[^"]+" already exists)/i;
+const MISSING_RELATION = /relation .* does not exist|undefined_table/i;
 
 const BACKFILL_SCRIPT = path.join(
   __dirname,
@@ -22,7 +22,6 @@ const JOURNAL_PATH = path.join(
   "meta",
   "_journal.json"
 );
-const MIGRATIONS_DIR = path.join(__dirname, "..", "..", "drizzle");
 
 export const MIGRATE_COMMAND = "pnpm db:migrate";
 export const BACKFILL_COMMAND =
@@ -75,37 +74,35 @@ function readJournalEntries(): JournalEntry[] {
   return journal.entries.slice().sort((a, b) => a.idx - b.idx);
 }
 
-function hashMigrationFile(tag: string): string | null {
-  const sqlPath = path.join(MIGRATIONS_DIR, `${tag}.sql`);
-  if (!fs.existsSync(sqlPath)) {
-    return null;
-  }
-  const content = fs.readFileSync(sqlPath, "utf8");
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
 export function getExpectedJournalCount(): number {
   return readJournalEntries().length;
 }
 
-export function computeThroughTagFromHashes(
-  existingHashes: Set<string>
-): string | null {
-  if (existingHashes.size === 0) {
-    return null;
+/** True when Postgres reports the journal table (or schema) is missing. */
+export function isMissingRelationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
   }
 
-  let highestPrefix: string | null = null;
-  for (const entry of readJournalEntries()) {
-    const hash = hashMigrationFile(entry.tag);
-    if (hash && existingHashes.has(hash)) {
-      const prefix = entry.tag.split("_")[0];
-      if (highestPrefix === null || prefix > highestPrefix) {
-        highestPrefix = prefix;
-      }
-    }
+  const err = error as {
+    code?: string;
+    message?: string;
+    cause?: unknown;
+  };
+
+  if (err.code === "42P01") {
+    return true;
   }
-  return highestPrefix;
+
+  if (typeof err.message === "string" && MISSING_RELATION.test(err.message)) {
+    return true;
+  }
+
+  if (err.cause !== undefined) {
+    return isMissingRelationError(err.cause);
+  }
+
+  return false;
 }
 
 export async function queryJournalDriftState(
@@ -123,7 +120,12 @@ export async function queryJournalDriftState(
       (SELECT COUNT(*)::int FROM drizzle.__drizzle_migrations),
       0
     ) AS c
-  `.catch(() => [{ c: 0 }]);
+  `.catch((error: unknown) => {
+    if (isMissingRelationError(error)) {
+      return [{ c: 0 }];
+    }
+    throw error;
+  });
 
   return {
     usersExists: usersExists[0]?.exists ?? false,
@@ -164,17 +166,11 @@ export async function shouldRecoverAfterMigrateFailure(
     return { recover: false, throughTag: null };
   }
 
-  if (state.journalCount === 0) {
-    return { recover: true, throughTag: null };
-  }
-
-  const existing = await client<{ hash: string }[]>`
-    SELECT hash FROM drizzle.__drizzle_migrations
-  `;
-  const existingHashes = new Set(existing.map((row) => row.hash));
-  const throughTag = computeThroughTagFromHashes(existingHashes);
-
-  return { recover: true, throughTag };
+  // Schema is ahead of the journal (db:push drift). Backfill every missing
+  // journal hash — a journal-hash --through bound is a no-op because every
+  // candidate under that bound is already recorded. Schema-state bounding
+  // would need DDL-vs-catalog introspection we do not have.
+  return { recover: true, throughTag: null };
 }
 
 function spawnPnpm(
@@ -249,12 +245,24 @@ export async function runMigrateWithRecovery(
   }
 
   const firstOutput = first.output;
-  const client = postgres(databaseUrl, { max: 1 });
+  let client: PostgresClient | null = null;
   let recovery: { recover: boolean; throughTag: string | null };
+
   try {
+    client = postgres(databaseUrl, { max: 1 });
     recovery = await shouldRecoverAfterMigrateFailure(client, firstOutput);
+  } catch {
+    // Probe failures must not hide the original migrate output.
+    return {
+      ok: false,
+      output: firstOutput,
+      status: first.status,
+      failedCommand: MIGRATE_COMMAND,
+    };
   } finally {
-    await client.end();
+    if (client) {
+      await client.end();
+    }
   }
 
   if (!recovery.recover) {

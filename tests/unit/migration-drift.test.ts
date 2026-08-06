@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   getExpectedJournalCount,
   hasPublicSchemaCollisionOutput,
+  isMissingRelationError,
   type PostgresClient,
+  queryJournalDriftState,
   shouldRecoverAfterMigrateFailure,
 } from "@/scripts/lib/migration-drift";
 
@@ -21,22 +23,22 @@ PostgresError: relation "idx_j" already exists`;
 
 function createMockClient(options: {
   usersExists: boolean;
-  journalCount: number;
-  hashes?: string[];
+  journalCount?: number;
+  journalError?: unknown;
 }): PostgresClient {
   const end = async (): Promise<void> => undefined;
   const client = async (
     strings: TemplateStringsArray
-  ): Promise<Array<{ exists?: boolean; c?: number; hash?: string }>> => {
+  ): Promise<Array<{ exists?: boolean; c?: number }>> => {
     const query = strings.join("");
     if (query.includes("information_schema.tables")) {
       return [{ exists: options.usersExists }];
     }
     if (query.includes("COUNT(*)") && query.includes("__drizzle_migrations")) {
-      return [{ c: options.journalCount }];
-    }
-    if (query.includes("SELECT hash FROM drizzle.__drizzle_migrations")) {
-      return (options.hashes ?? []).map((hash) => ({ hash }));
+      if (options.journalError !== undefined) {
+        throw options.journalError;
+      }
+      return [{ c: options.journalCount ?? 0 }];
     }
     return [];
   };
@@ -68,11 +70,78 @@ describe("hasPublicSchemaCollisionOutput", () => {
   });
 });
 
+describe("isMissingRelationError", () => {
+  it("matches Postgres undefined_table code", () => {
+    expect(isMissingRelationError({ code: "42P01" })).toBe(true);
+  });
+
+  it("matches relation does not exist messages", () => {
+    expect(
+      isMissingRelationError({
+        message: 'relation "drizzle.__drizzle_migrations" does not exist',
+      })
+    ).toBe(true);
+  });
+
+  it("does not match permission errors", () => {
+    expect(
+      isMissingRelationError({
+        code: "42501",
+        message: "permission denied for table __drizzle_migrations",
+      })
+    ).toBe(false);
+  });
+});
+
+describe("queryJournalDriftState", () => {
+  it("treats a missing journal table as count 0", async () => {
+    const client = createMockClient({
+      usersExists: true,
+      journalError: {
+        code: "42P01",
+        message: 'relation "drizzle.__drizzle_migrations" does not exist',
+      },
+    });
+
+    const state = await queryJournalDriftState(client);
+    expect(state.journalCount).toBe(0);
+    expect(state.usersExists).toBe(true);
+  });
+
+  it("rethrows permission errors instead of treating the journal as empty", async () => {
+    const client = createMockClient({
+      usersExists: true,
+      journalError: {
+        code: "42501",
+        message: "permission denied for table __drizzle_migrations",
+      },
+    });
+
+    await expect(queryJournalDriftState(client)).rejects.toMatchObject({
+      code: "42501",
+    });
+  });
+});
+
 describe("shouldRecoverAfterMigrateFailure", () => {
   it("recovers when schema is ahead of an empty journal and output shows public collision", async () => {
     const client = createMockClient({
       usersExists: true,
       journalCount: 0,
+    });
+
+    const result = await shouldRecoverAfterMigrateFailure(
+      client,
+      DB_PUSH_MIGRATE_FAILURE
+    );
+
+    expect(result).toEqual({ recover: true, throughTag: null });
+  });
+
+  it("recovers without a --through bound when the journal is partial", async () => {
+    const client = createMockClient({
+      usersExists: true,
+      journalCount: 1,
     });
 
     const result = await shouldRecoverAfterMigrateFailure(

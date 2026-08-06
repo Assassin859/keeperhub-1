@@ -1,6 +1,3 @@
-import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnSyncMock = vi.hoisted(() => vi.fn());
@@ -31,43 +28,20 @@ PostgresError: relation "users" already exists`;
 
 const BACKFILL_SCRIPT_SUFFIX = "backfill-drizzle-migrations.ts";
 
-function hashFirstJournalMigration(): string {
-  const journalPath = path.join(
-    process.cwd(),
-    "drizzle",
-    "meta",
-    "_journal.json"
-  );
-  const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
-    entries: Array<{ tag: string }>;
-  };
-  const tag = journal.entries[0]?.tag;
-  if (!tag) {
-    throw new Error("expected at least one journal entry");
-  }
-  const sqlPath = path.join(process.cwd(), "drizzle", `${tag}.sql`);
-  const content = fs.readFileSync(sqlPath, "utf8");
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
 function mockPostgresClient(options: {
   usersExists: boolean;
   journalCount: number;
-  hashes?: string[];
 }): void {
   endMock.mockResolvedValue(undefined);
   const client = async (
     strings: TemplateStringsArray
-  ): Promise<Array<{ exists?: boolean; c?: number; hash?: string }>> => {
+  ): Promise<Array<{ exists?: boolean; c?: number }>> => {
     const query = strings.join("");
     if (query.includes("information_schema.tables")) {
       return [{ exists: options.usersExists }];
     }
     if (query.includes("COUNT(*)") && query.includes("__drizzle_migrations")) {
       return [{ c: options.journalCount }];
-    }
-    if (query.includes("SELECT hash FROM drizzle.__drizzle_migrations")) {
-      return (options.hashes ?? []).map((hash) => ({ hash }));
     }
     return [];
   };
@@ -170,12 +144,10 @@ describe("runMigrateWithRecovery", () => {
     expect(endMock).toHaveBeenCalled();
   });
 
-  it("passes --through when the journal is partially populated", async () => {
-    const firstHash = hashFirstJournalMigration();
+  it("omits --through when the journal is partially populated", async () => {
     mockPostgresClient({
       usersExists: true,
       journalCount: 1,
-      hashes: [firstHash],
     });
     mockSpawnSequence([
       { status: 1, stderr: DB_PUSH_MIGRATE_FAILURE },
@@ -183,14 +155,41 @@ describe("runMigrateWithRecovery", () => {
       { status: 0, stdout: "retry migrate ok" },
     ]);
 
-    await runMigrateWithRecovery(
+    const result = await runMigrateWithRecovery(
       "postgresql://postgres:postgres@localhost:5433/keeperhub",
       process.env,
       () => undefined
     );
 
+    expect(result.ok).toBe(true);
     const backfillCall = spawnSyncMock.mock.calls[1];
-    expect(backfillCall?.[1]).toEqual(expect.arrayContaining(["--through"]));
+    expect(backfillCall?.[1]).toEqual([
+      "tsx",
+      expect.stringContaining(BACKFILL_SCRIPT_SUFFIX),
+    ]);
+    expect(backfillCall?.[1]).not.toEqual(
+      expect.arrayContaining(["--through"])
+    );
+  });
+
+  it("preserves first migrate output when the recovery probe fails", async () => {
+    mockSpawnSequence([{ status: 1, stderr: DB_PUSH_MIGRATE_FAILURE }]);
+    postgresMock.mockImplementation(() => {
+      throw new Error("connect ECONNREFUSED");
+    });
+
+    const result = await runMigrateWithRecovery(
+      "postgresql://postgres:postgres@localhost:5433/keeperhub",
+      process.env,
+      () => undefined
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('relation "users" already exists');
+    expect(result.output).not.toContain("ECONNREFUSED");
+    expect(result.status).toBe(1);
+    expect(result.failedCommand).toBe(MIGRATE_COMMAND);
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
   });
 
   it("preserves first migrate output when retry fails for another reason", async () => {
