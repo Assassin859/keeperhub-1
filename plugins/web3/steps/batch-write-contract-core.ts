@@ -544,9 +544,13 @@ export async function batchWriteContractCore(
       };
     } catch (error) {
       const rejection = classifyRevert(error, iface);
+      const hash = (error as { receipt?: { hash?: string }; transactionHash?: string })
+        ?.receipt?.hash ??
+        (error as { transactionHash?: string })?.transactionHash;
       return {
         success: false,
         error: formatContractError(error, iface),
+        ...(hash ? { transactionHash: hash, chainId } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
