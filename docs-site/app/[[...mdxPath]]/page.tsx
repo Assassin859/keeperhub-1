@@ -31,8 +31,17 @@ export default async function Page(props: PageProps) {
   const { default: MDXContent, ...rest } = result;
   const Wrapper = useMDXComponents().wrapper;
 
+  // `content` is a symlink to `../docs`, so Nextra reports filePath as
+  // `content/<page>.md` while git only knows the file as `docs/<page>.md`.
+  // The theme builds "Edit this page" as docsRepositoryBase + filePath, so the
+  // symlink segment has to come off here or every link 404s on GitHub.
+  const metadata = { ...rest.metadata };
+  if (typeof metadata.filePath === "string") {
+    metadata.filePath = metadata.filePath.replace(/^content\//, "");
+  }
+
   return (
-    <Wrapper {...rest}>
+    <Wrapper {...rest} metadata={metadata}>
       <MDXContent {...props} params={params} />
     </Wrapper>
   );
