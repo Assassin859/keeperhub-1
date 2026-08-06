@@ -45,6 +45,18 @@ KeeperHub has two key systems. They are not interchangeable.
 For programmatic API and MCP access, use an organization (`kh_`) key. Full
 details: [API Keys](/api/api-keys).
 
+Confirm the key works before building on it:
+
+```bash
+curl -sf -H "Authorization: Bearer kh_your_api_key" \
+  https://app.keeperhub.com/api/keys
+```
+
+`GET /api/keys` is the auth probe: a `200` means the credential is valid and
+scoped to an organization, a `401` means it is not. Point health checks and
+first-run scripts at this endpoint. `GET /api/chains` is public and answers
+either way, so it reports reachability rather than a working credential.
+
 No browser available? Sign-up is captcha-gated and key creation needs a signed
 confirmation, so a script or agent starts from wallet sign-in instead:
 [Headless Onboarding](/api/headless-onboarding) is the same first thirty minutes
