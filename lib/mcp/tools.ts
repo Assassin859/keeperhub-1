@@ -253,8 +253,9 @@ const SOLANA_DIRECT_EXECUTION_CHAIN_IDS = new Set<number>([
 export function buildSimulationUnsupportedChainError(chainId: number): Error {
   return new Error(
     JSON.stringify({
-      code: "simulation_unsupported_chain",
-      chainId,
+      error: "simulation_unsupported_chain",
+      message: "Direct-execution simulation is not supported on this chain.",
+      chain_id: chainId,
       hint: "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting.",
     })
   );
