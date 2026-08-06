@@ -8,21 +8,21 @@
 
 import "dotenv/config";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import { workflowRequiredPlan } from "@/lib/features/template-plan-gate";
-import {
-  extractActionTypeNodes,
-  validateWorkflowFeatures,
-} from "@/lib/features/workflow-validator";
+import { validateWorkflowFeatures } from "@/lib/features/workflow-validator";
 import { organizationSubscriptions, workflows } from "@/lib/db/schema";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 /** Pre-PR extract: config.actionType only, no legacy top-level, no colon normalization. */
 function extractActionTypeNodesLegacy(nodes: readonly unknown[]) {
   const refs: Array<{ id: string; actionType: string }> = [];
+  if (!Array.isArray(nodes)) {
+    return refs;
+  }
   for (const raw of nodes) {
     if (typeof raw !== "object" || raw === null) {
       continue;
@@ -58,6 +58,7 @@ async function main(): Promise<void> {
   const client = postgres(url, { max: 1 });
   const db = drizzle(client);
 
+  // Match getOrgPlan: missing subscription row means free.
   const rows = await db
     .select({
       id: workflows.id,
@@ -65,14 +66,17 @@ async function main(): Promise<void> {
       nodes: workflows.nodes,
     })
     .from(workflows)
-    .innerJoin(
+    .leftJoin(
       organizationSubscriptions,
       eq(workflows.organizationId, organizationSubscriptions.organizationId)
     )
     .where(
       and(
         workflowNotDeleted(),
-        eq(organizationSubscriptions.plan, "free"),
+        or(
+          isNull(organizationSubscriptions.plan),
+          eq(organizationSubscriptions.plan, "free")
+        ),
         isNull(workflows.deactivatedAt)
       )
     );
@@ -82,7 +86,7 @@ async function main(): Promise<void> {
   const samples: Array<{ id: string; name: string }> = [];
 
   for (const row of rows) {
-    const nodes = row.nodes as unknown[];
+    const nodes = Array.isArray(row.nodes) ? (row.nodes as unknown[]) : [];
     const after = workflowRequiredPlan(nodes);
     const before = legacyRequiredPlan(nodes);
 

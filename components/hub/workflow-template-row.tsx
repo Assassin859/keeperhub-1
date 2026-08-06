@@ -155,7 +155,7 @@ export function WorkflowTemplateRow({
       )}
 
       {workflow.requiredPlan || isFeatured ? (
-        <div className="pointer-events-none relative z-[2] hidden items-center justify-end justify-self-end gap-1.5 md:flex">
+        <div className="pointer-events-auto relative z-[2] flex flex-wrap items-center justify-end justify-self-end gap-1.5">
           {workflow.requiredPlan ? (
             <PlanRequiredBadge
               className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold"
@@ -170,7 +170,7 @@ export function WorkflowTemplateRow({
           ) : null}
         </div>
       ) : (
-        <span className="hidden md:inline" />
+        <span />
       )}
     </article>
   );

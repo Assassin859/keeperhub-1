@@ -21,7 +21,7 @@ export function PlanRequiredBadge({
   return (
     <span className={className} title={`Requires ${label} plan on free tier`}>
       <Gem className="size-2.5 text-[var(--color-text-accent)]" />
-      <span className="font-normal text-[0.625rem] text-[var(--color-text-accent)]">
+      <span className="text-[0.625rem] text-[var(--color-text-accent)]">
         {label}
       </span>
     </span>
