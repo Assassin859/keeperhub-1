@@ -567,23 +567,32 @@ export async function simulateContractCall(
   input: SimulateContractCallInput
 ): Promise<SimulateResult> {
   const to = input.contractAddress;
+  const fromOrFailure = await resolveSimulationWallet(
+    input.organizationId,
+    to,
+    BigInt(0)
+  );
+  if (typeof fromOrFailure !== "string") {
+    return fromOrFailure;
+  }
+  const from = fromOrFailure;
 
   const valueOrError = parseValue(input.value);
   if (typeof valueOrError === "string") {
-    return failure("", to, BigInt(0), valueOrError);
+    return failure(from, to, BigInt(0), valueOrError);
   }
   const value = valueOrError;
 
   const abiArrayOrError = parseAbiArray(input.abi);
   if (typeof abiArrayOrError === "string") {
-    return failure("", to, value, abiArrayOrError);
+    return failure(from, to, value, abiArrayOrError);
   }
   const abiArray = abiArrayOrError;
 
   const abiFn = findAbiFunction(abiArray as AbiItem[], input.functionName);
   if (!abiFn) {
     return failure(
-      "",
+      from,
       to,
       value,
       `Function ${input.functionName} not found in ABI`
@@ -592,7 +601,7 @@ export async function simulateContractCall(
 
   const argsOrError = parseFunctionArgs(input.functionArgs);
   if (typeof argsOrError === "string") {
-    return failure("", to, value, argsOrError);
+    return failure(from, to, value, argsOrError);
   }
 
   let iface: ethers.Interface;
@@ -604,7 +613,7 @@ export async function simulateContractCall(
     encodedData = iface.encodeFunctionData(input.functionName, reshaped);
   } catch (err) {
     return failure(
-      "",
+      from,
       to,
       value,
       `Failed to encode call: ${getErrorMessage(err)}`
@@ -613,19 +622,10 @@ export async function simulateContractCall(
 
   const rpcResolution = await getRpcManagerForChain(input.network);
   if (!rpcResolution.success) {
-    return rpcResolutionFailure(rpcResolution, "", to, value);
+    return rpcResolutionFailure(rpcResolution, from, to, value);
   }
   const { rpc, chainId } = rpcResolution;
 
-  const fromOrFailure = await resolveSimulationWallet(
-    input.organizationId,
-    to,
-    value
-  );
-  if (typeof fromOrFailure !== "string") {
-    return fromOrFailure;
-  }
-  const from = fromOrFailure;
   const tx: ethers.TransactionRequest = { from, to, data: encodedData, value };
 
   let gasEstimate: bigint;
@@ -680,28 +680,28 @@ export async function simulateNativeTransfer(
   input: SimulateNativeTransferInput
 ): Promise<SimulateResult> {
   const to = input.recipientAddress;
-
-  const valueOrError = parseValue(input.amount);
-  if (typeof valueOrError === "string") {
-    return failure("", to, BigInt(0), valueOrError);
-  }
-  const value = valueOrError;
-
-  const rpcResolution = await getRpcManagerForChain(input.network);
-  if (!rpcResolution.success) {
-    return rpcResolutionFailure(rpcResolution, "", to, value);
-  }
-  const { rpc, chainId } = rpcResolution;
-
   const fromOrFailure = await resolveSimulationWallet(
     input.organizationId,
     to,
-    value
+    BigInt(0)
   );
   if (typeof fromOrFailure !== "string") {
     return fromOrFailure;
   }
   const from = fromOrFailure;
+
+  const valueOrError = parseValue(input.amount);
+  if (typeof valueOrError === "string") {
+    return failure(from, to, BigInt(0), valueOrError);
+  }
+  const value = valueOrError;
+
+  const rpcResolution = await getRpcManagerForChain(input.network);
+  if (!rpcResolution.success) {
+    return rpcResolutionFailure(rpcResolution, from, to, value);
+  }
+  const { rpc, chainId } = rpcResolution;
+
   const tx: ethers.TransactionRequest = { from, to, value };
 
   // Run estimateGas + provider.call together so a contract recipient
@@ -755,11 +755,22 @@ async function fetchTokenDecimals(
 export async function simulateTokenTransfer(
   input: SimulateTokenTransferInput
 ): Promise<SimulateResult> {
+  const initialTokenAddress = input.tokenAddress ?? "";
+  const fromOrFailure = await resolveSimulationWallet(
+    input.organizationId,
+    initialTokenAddress,
+    BigInt(0)
+  );
+  if (typeof fromOrFailure !== "string") {
+    return fromOrFailure;
+  }
+  const from = fromOrFailure;
+
   const rpcResolution = await getRpcManagerForChain(input.network);
   if (!rpcResolution.success) {
     return rpcResolutionFailure(
       rpcResolution,
-      "",
+      from,
       input.tokenAddress ?? "",
       BigInt(0)
     );
@@ -777,23 +788,15 @@ export async function simulateTokenTransfer(
     );
   } catch {
     return unavailable(
-      "",
+      from,
       input.tokenAddress ?? "",
       BigInt(0),
       "Simulation unavailable: could not resolve the token configuration"
     );
   }
   if (!resolvedTokenAddress) {
-    const fromOrFailure = await resolveSimulationWallet(
-      input.organizationId,
-      input.tokenAddress ?? "",
-      BigInt(0)
-    );
-    if (typeof fromOrFailure !== "string") {
-      return fromOrFailure;
-    }
     return failure(
-      fromOrFailure,
+      from,
       input.tokenAddress ?? "",
       BigInt(0),
       "Simulating a token transfer requires a resolvable `tokenAddress` or `tokenConfig`"
@@ -802,7 +805,7 @@ export async function simulateTokenTransfer(
 
   if (!ethers.isAddress(resolvedTokenAddress)) {
     return failure(
-      "",
+      from,
       resolvedTokenAddress,
       BigInt(0),
       `Invalid token address: ${resolvedTokenAddress}`
@@ -815,7 +818,7 @@ export async function simulateTokenTransfer(
       decimals = await fetchTokenDecimals(rpc, resolvedTokenAddress);
     } catch (error) {
       return simulationFailureFromError(
-        "",
+        from,
         resolvedTokenAddress,
         BigInt(0),
         error
@@ -827,23 +830,15 @@ export async function simulateTokenTransfer(
 
   const decimalsError = validateDecimals(decimals);
   if (decimalsError) {
-    return failure("", resolvedTokenAddress, BigInt(0), decimalsError);
+    return failure(from, resolvedTokenAddress, BigInt(0), decimalsError);
   }
 
   let amountUnits: bigint;
   try {
     amountUnits = ethers.parseUnits(input.amount, decimals);
   } catch {
-    const fromOrFailure = await resolveSimulationWallet(
-      input.organizationId,
-      resolvedTokenAddress,
-      BigInt(0)
-    );
-    if (typeof fromOrFailure !== "string") {
-      return fromOrFailure;
-    }
     return failure(
-      fromOrFailure,
+      from,
       resolvedTokenAddress,
       BigInt(0),
       `Invalid amount for ${decimals} decimals: ${input.amount}`

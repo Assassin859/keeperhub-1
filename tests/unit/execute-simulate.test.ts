@@ -124,7 +124,7 @@ const WRITE_ABI = JSON.stringify([
 ]);
 
 function resetSpies(): void {
-  vi.resetAllMocks();
+  vi.clearAllMocks();
   getChainIdFromNetwork.mockReturnValue(1);
   getOrganizationWalletAddress.mockResolvedValue(FROM_ADDRESS);
   getRpcProvider.mockResolvedValue({ executeWithFailover });
@@ -447,7 +447,7 @@ describe("simulateContractCall", () => {
       expect(result.wouldRevert).toBe(false);
       expect(result.error).toContain("organization wallet");
     }
-    expect(getRpcProvider).toHaveBeenCalledTimes(1);
+    expect(getRpcProvider).not.toHaveBeenCalled();
   });
 
   it("returns unavailable instead of rejecting when provider setup fails", async () => {
@@ -706,7 +706,7 @@ describe("simulateNativeTransfer", () => {
       expect(result.failureKind).toBe("validation");
       expect(result.error).toContain("EVM networks only");
     }
-    expect(getOrganizationWalletAddress).not.toHaveBeenCalled();
+    expect(getOrganizationWalletAddress).toHaveBeenCalledTimes(1);
     expect(getRpcProvider).not.toHaveBeenCalled();
   });
 
@@ -719,6 +719,9 @@ describe("simulateNativeTransfer", () => {
       amount: "potato",
     });
     expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.from).toBe(FROM_ADDRESS);
+    }
     expect(executeWithFailover).not.toHaveBeenCalled();
   });
 });
@@ -821,7 +824,7 @@ describe("simulateTokenTransfer", () => {
       expect(result.wouldRevert).toBe(false);
       expect(result.error).toContain("token configuration");
     }
-    expect(getOrganizationWalletAddress).not.toHaveBeenCalled();
+    expect(getOrganizationWalletAddress).toHaveBeenCalledTimes(1);
     expect(getRpcProvider).toHaveBeenCalledTimes(1);
   });
 

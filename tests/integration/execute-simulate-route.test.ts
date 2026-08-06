@@ -379,6 +379,36 @@ describe("/api/execute/transfer simulate", () => {
     expect(transferFundsCore).not.toHaveBeenCalled();
   });
 
+  it("returns HTTP 503 when native transfer simulation is unavailable", async () => {
+    resetSpies();
+    simulateNativeTransferMock.mockResolvedValueOnce({
+      success: false,
+      status: "simulated",
+      from: FROM_ADDRESS,
+      to: "0xcc0000000000000000000000000000000000cc00",
+      value: "100000000000000000",
+      failureKind: "unavailable",
+      wouldRevert: false,
+      error: "Simulation unavailable: RPC timeout",
+    });
+
+    const res = await transferPOST(
+      jsonRequest("/api/execute/transfer", {
+        recipientAddress: "0xcc0000000000000000000000000000000000cc00",
+        amount: "0.1",
+        chainId: 1,
+        simulate: true,
+      })
+    );
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.failureKind).toBe("unavailable");
+    expect(body.wouldRevert).toBe(false);
+    expect(checkAndReserveExecution).not.toHaveBeenCalled();
+    expect(transferFundsCore).not.toHaveBeenCalled();
+  });
+
   it("carries the insufficient_balance fields across the HTTP boundary", async () => {
     resetSpies();
     // The route spreads the simulate result into NextResponse.json, so the
@@ -444,6 +474,38 @@ describe("/api/execute/transfer simulate", () => {
     expect(res.status).toBe(200);
     expect(simulateTokenTransferMock).toHaveBeenCalledTimes(1);
     expect(simulateNativeTransferMock).not.toHaveBeenCalled();
+    expect(transferTokenCore).not.toHaveBeenCalled();
+  });
+
+  it("returns HTTP 503 when token transfer simulation is unavailable", async () => {
+    resetSpies();
+    simulateTokenTransferMock.mockResolvedValueOnce({
+      success: false,
+      status: "simulated",
+      from: FROM_ADDRESS,
+      to: "0xbb0000000000000000000000000000000000bb00",
+      value: "0",
+      failureKind: "unavailable",
+      wouldRevert: false,
+      error: "Simulation unavailable: RPC timeout",
+    });
+
+    const res = await transferPOST(
+      jsonRequest("/api/execute/transfer", {
+        recipientAddress: "0xcc0000000000000000000000000000000000cc00",
+        amount: "100",
+        tokenAddress: "0xbb0000000000000000000000000000000000bb00",
+        decimals: 6,
+        chainId: 1,
+        simulate: true,
+      })
+    );
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.failureKind).toBe("unavailable");
+    expect(body.wouldRevert).toBe(false);
+    expect(checkAndReserveExecution).not.toHaveBeenCalled();
     expect(transferTokenCore).not.toHaveBeenCalled();
   });
 
