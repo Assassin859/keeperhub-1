@@ -1290,7 +1290,7 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "transactionHash",
           description:
-            "The transaction hash of the batch write. Present on a successful broadcast, and also on a genuine (non-softened) on-chain revert. Absent on a soft-failed (failOnError=false) call and on a pre-broadcast failure.",
+            "The transaction hash of the batch write. Present on a successful broadcast. Absent on a soft-failed (failOnError=false) call, on a revert, and on a pre-broadcast failure.",
         },
         {
           field: "chainId",
