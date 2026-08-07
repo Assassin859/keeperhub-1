@@ -89,6 +89,10 @@ export type CreateInvoiceItemParams = {
   // Attach to this specific draft invoice. Without it the item is left pending
   // and the provider only sweeps it into whichever invoice is created next.
   invoiceId?: string;
+  // Makes the create safe to repeat. If the provider created the item but the
+  // response never arrived, replaying the same key returns that item instead of
+  // billing the customer a second time.
+  idempotencyKey?: string;
 };
 
 export type CreateInvoiceItemResult = {

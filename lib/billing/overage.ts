@@ -182,6 +182,10 @@ export async function billOverageForOrg(
         periodEnd: periodEnd.toISOString(),
         overageCount: String(overageCount),
       },
+      // Keyed on the record, which the unique index already pins to one
+      // organization and period, so every attempt at this charge presents the
+      // same key and the provider can only ever create one item for it.
+      idempotencyKey: `overage-${record.id}`,
     };
 
     const { invoiceItemId } = await createItemWithFallback(

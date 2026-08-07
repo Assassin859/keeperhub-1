@@ -567,14 +567,22 @@ export class StripeBillingProvider implements BillingProvider {
   async createInvoiceItem(
     params: CreateInvoiceItemParams
   ): Promise<CreateInvoiceItemResult> {
-    const item = await getStripe().invoiceItems.create({
+    const body = {
       customer: params.customerId,
       amount: params.amount,
       currency: params.currency,
       description: params.description,
       metadata: params.metadata,
       ...(params.invoiceId && { invoice: params.invoiceId }),
-    });
+    };
+
+    // Callers without a key keep the original single-argument call.
+    const item = params.idempotencyKey
+      ? await getStripe().invoiceItems.create(body, {
+          idempotencyKey: params.idempotencyKey,
+        })
+      : await getStripe().invoiceItems.create(body);
+
     return { invoiceItemId: item.id };
   }
 
