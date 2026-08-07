@@ -32,13 +32,14 @@ import { computeSelector, findAbiFunction } from "@/lib/abi/utils";
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import { parseAddressBookSelection } from "@/lib/address-book-selection";
 import { toChecksumAddress } from "@/lib/address-utils";
+import { parseSchemaFields } from "@/lib/schema-fields";
 import { getCustomFieldRenderer } from "@/lib/workflow/editor/extension-registry";
 import {
   type ActionConfigField,
   type ActionConfigFieldBase,
   isFieldGroup,
 } from "@/plugins/registry";
-import { SchemaBuilder, type SchemaField } from "./schema-builder";
+import { SchemaBuilder } from "./schema-builder";
 
 type FieldProps = {
   field: ActionConfigFieldBase;
@@ -447,7 +448,7 @@ function SchemaBuilderField(props: FieldProps) {
     <SchemaBuilder
       disabled={props.disabled}
       onChange={(schema) => props.onChange(JSON.stringify(schema))}
-      schema={props.value ? (JSON.parse(props.value) as SchemaField[]) : []}
+      schema={parseSchemaFields(props.value)}
     />
   );
 }
