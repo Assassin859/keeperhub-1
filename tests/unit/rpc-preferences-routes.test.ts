@@ -81,7 +81,6 @@ import {
   resolveRpcConfig,
   setUserRpcPreference,
 } from "@/lib/rpc/config-service";
-import { RPC_ENDPOINT_ORIGIN } from "@/lib/rpc/types";
 
 describe("RPC Preferences API Routes", () => {
   const mockUser = {
@@ -144,8 +143,6 @@ describe("RPC Preferences API Routes", () => {
     chainName: "Ethereum Mainnet",
     primaryRpcUrl: "https://custom-eth.example.com",
     fallbackRpcUrl: "https://custom-eth-backup.example.com",
-    primaryOrigin: RPC_ENDPOINT_ORIGIN.USER,
-    fallbackOrigin: RPC_ENDPOINT_ORIGIN.USER,
     source: "user" as const,
   };
 

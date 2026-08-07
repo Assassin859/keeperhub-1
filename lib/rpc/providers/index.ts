@@ -2,13 +2,12 @@ import { ethers, isError } from "ethers";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeEthersGetUrl } from "../safe-ethers-fetch";
 import { redactAllUrls, scrubRpcUrls } from "../scrub-rpc-urls";
-import { RPC_ENDPOINT_ORIGIN, type RpcEndpointOrigin } from "../types";
 import {
   isNonRetryableError,
   isTransportFailure,
   RPC_CONNECTION_ERROR_PATTERNS,
 } from "./error-classification";
-import { RpcTransportError, transportFaultDomain } from "./transport-error";
+import { RpcRelayTransportError } from "./transport-error";
 
 export {
   isNonRetryableError,
@@ -16,10 +15,7 @@ export {
   NON_RETRYABLE_ERROR_CODES,
   RPC_CONNECTION_ERROR_PATTERNS,
 } from "./error-classification";
-export {
-  RpcTransportError,
-  rpcTransportErrorClass,
-} from "./transport-error";
+export { RpcRelayTransportError, rpcRelayErrorClass } from "./transport-error";
 
 /**
  * Interface for metrics collection - allows dependency injection
@@ -190,10 +186,10 @@ export type RpcProviderConfig = {
   timeoutMs?: number;
   chainName?: string;
   chainId?: number;
-  // Who operates each endpoint. Defaults to platform, so a manager built from
-  // raw URLs keeps attributing its failures to KeeperHub.
-  primaryOrigin?: RpcEndpointOrigin;
-  fallbackOrigin?: RpcEndpointOrigin;
+  // True only when the private-mempool swap put the chain's relay on the
+  // primary. Defaults to false, so a manager built from raw URLs keeps
+  // attributing its failures to KeeperHub.
+  primaryIsPrivateRelay?: boolean;
 };
 
 export type RpcProviderMetrics = {
@@ -215,10 +211,9 @@ export class RpcProviderManager {
   private primaryProvider: ethers.JsonRpcProvider | null = null;
   private fallbackProvider: ethers.JsonRpcProvider | null = null;
   private readonly config: Required<
-    Omit<RpcProviderConfig, "fallbackRpcUrl" | "fallbackOrigin">
+    Omit<RpcProviderConfig, "fallbackRpcUrl">
   > & {
     fallbackRpcUrl?: string;
-    fallbackOrigin?: RpcEndpointOrigin;
   };
   private readonly metrics: RpcProviderMetrics;
   private readonly metricsCollector: RpcMetricsCollector;
@@ -244,10 +239,7 @@ export class RpcProviderManager {
       timeoutMs: config.timeoutMs ?? RpcProviderManager.DEFAULT_TIMEOUT_MS,
       chainName: config.chainName ?? "unknown",
       chainId: config.chainId ?? 1,
-      primaryOrigin: config.primaryOrigin ?? RPC_ENDPOINT_ORIGIN.PLATFORM,
-      fallbackOrigin: config.fallbackRpcUrl
-        ? (config.fallbackOrigin ?? RPC_ENDPOINT_ORIGIN.PLATFORM)
-        : undefined,
+      primaryIsPrivateRelay: config.primaryIsPrivateRelay ?? false,
     };
 
     this.metricsCollector = metricsCollector;
@@ -477,10 +469,11 @@ export class RpcProviderManager {
   /**
    * Build the error for an exhausted failover round.
    *
-   * Carries a fault domain only when every endpoint we burned through failed on
-   * transport AND none of them is ours to operate -- a private-mempool relay or
-   * a customer's own node. Anything else stays a plain Error so the message
-   * classifier keeps deciding, which for RPC means a platform fault.
+   * Becomes a relay error only when the round never touched an endpoint we
+   * operate AND every attempt failed on transport. In practice that is the
+   * strict private-mempool case, where the swap left the relay as the only
+   * endpoint. Anything else stays a plain Error so the message classifier
+   * keeps deciding, which for RPC means a platform fault.
    */
   private failoverError(
     message: string,
@@ -490,18 +483,14 @@ export class RpcProviderManager {
     }[]
   ): Error {
     const redacted = redactAllUrls(message);
-    if (!failures.every((failure) => failure.transport)) {
-      return new Error(redacted);
-    }
-
-    const origins = failures.map((failure) =>
-      failure.endpoint === "primary"
-        ? this.config.primaryOrigin
-        : (this.config.fallbackOrigin ?? RPC_ENDPOINT_ORIGIN.PLATFORM)
+    const allOnTheRelay = failures.every(
+      (failure) =>
+        failure.transport &&
+        failure.endpoint === "primary" &&
+        this.config.primaryIsPrivateRelay
     );
-    const errorClass = transportFaultDomain(origins);
-    return errorClass
-      ? new RpcTransportError(redacted, errorClass)
+    return allOnTheRelay
+      ? new RpcRelayTransportError(redacted)
       : new Error(redacted);
   }
 
@@ -749,8 +738,7 @@ export type CreateRpcProviderManagerOptions = {
   timeoutMs?: number;
   chainName?: string;
   chainId?: number;
-  primaryOrigin?: RpcEndpointOrigin;
-  fallbackOrigin?: RpcEndpointOrigin;
+  primaryIsPrivateRelay?: boolean;
   metricsCollector?: RpcMetricsCollector;
   onFailoverStateChange?: FailoverStateChangeCallback;
 };
@@ -758,9 +746,7 @@ export type CreateRpcProviderManagerOptions = {
 export function createRpcProviderManager(
   options: CreateRpcProviderManagerOptions
 ): RpcProviderManager {
-  // Origins are part of the identity: the same URL reached as a chain default
-  // and as a customer preference are attributed differently on failure.
-  const cacheKey = `${options.primaryRpcUrl}|${options.fallbackRpcUrl || ""}|${options.chainId ?? ""}|${options.primaryOrigin ?? ""}|${options.fallbackOrigin ?? ""}`;
+  const cacheKey = `${options.primaryRpcUrl}|${options.fallbackRpcUrl || ""}|${options.chainId ?? ""}`;
 
   let manager = managerCache.get(cacheKey);
   if (!manager) {
@@ -772,8 +758,7 @@ export function createRpcProviderManager(
         timeoutMs: options.timeoutMs,
         chainName: options.chainName,
         chainId: options.chainId,
-        primaryOrigin: options.primaryOrigin,
-        fallbackOrigin: options.fallbackOrigin,
+        primaryIsPrivateRelay: options.primaryIsPrivateRelay,
       },
       metricsCollector: options.metricsCollector,
       onFailoverStateChange: options.onFailoverStateChange,

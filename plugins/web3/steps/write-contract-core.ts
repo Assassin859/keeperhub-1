@@ -23,7 +23,7 @@ import {
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import { rpcTransportErrorClass } from "@/lib/rpc/providers";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
 import { findAbiFunction } from "@/lib/abi/utils";
 import { getErrorMessage, resolveFailOnError } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
@@ -355,9 +355,10 @@ export async function writeContractCore(
     return {
       success: false,
       error: getErrorMessage(error),
-      // A relay or customer endpoint that never answered is not our platform
-      // failing; everything else here (unknown chain, disabled chain) is.
-      errorClass: rpcTransportErrorClass(error) ?? ExecutionErrorType.SYSTEM,
+      // A private-mempool relay that never answered is not our platform
+      // failing; everything else here (unknown chain, disabled chain, our own
+      // endpoints) is.
+      errorClass: rpcRelayErrorClass(error) ?? ExecutionErrorType.SYSTEM,
     };
   }
 
@@ -667,7 +668,7 @@ export async function writeContractCore(
       );
       const rejection = classifyRevert(error, contractInterface);
       const revertedHash = revertedTransactionHash(error);
-      const errorClass = rpcTransportErrorClass(error);
+      const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(error, contractInterface),

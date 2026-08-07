@@ -186,7 +186,7 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import { RpcTransportError } from "@/lib/rpc/providers/transport-error";
+import { RpcRelayTransportError } from "@/lib/rpc/providers/transport-error";
 import { parsePriorityFeeGwei } from "@/lib/web3/gas-defaults";
 // Import mocks for assertion
 import { initializeWalletSigner } from "@/lib/web3/wallet-helpers";
@@ -418,15 +418,12 @@ describe("writeContractCore RPC resolution failure", () => {
     }
   });
 
-  it("forwards the relay's fault domain when the endpoint we only point at never answered", async () => {
+  it("forwards the relay's fault domain when the private-mempool endpoint never answered", async () => {
     vi.mocked(getRpcProvider).mockResolvedValueOnce({
       resolveActiveRpcUrl: vi
         .fn()
         .mockRejectedValue(
-          new RpcTransportError(
-            "RPC failed on primary endpoint: timeout",
-            ExecutionErrorType.EXTERNAL
-          )
+          new RpcRelayTransportError("RPC failed on primary endpoint: timeout")
         ),
     } as unknown as Awaited<ReturnType<typeof getRpcProvider>>);
 

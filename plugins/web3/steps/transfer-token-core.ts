@@ -24,7 +24,7 @@ import {
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import { rpcTransportErrorClass } from "@/lib/rpc/providers";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
@@ -103,8 +103,8 @@ export type TransferTokenResult =
       success: false;
       error: string;
       rejection?: RevertKind;
-      // Authoritative fault domain when the failure site knows it, e.g. a
-      // transport failure against an endpoint KeeperHub does not operate.
+      // Authoritative fault domain when the failure site knows it: the
+      // private-mempool relay never answered, and we do not run that node.
       errorClass?: ExecutionErrorType;
       // Set only when a transaction reached the chain and failed
       // there, so the finalizer can persist a receipt for the failure. Absent
@@ -327,7 +327,7 @@ export async function transferTokenCore(
         chain_id: String(chainId),
       }
     );
-    const errorClass = rpcTransportErrorClass(error);
+    const errorClass = rpcRelayErrorClass(error);
     return {
       success: false,
       error: getErrorMessage(error),
@@ -645,7 +645,7 @@ export async function transferTokenCore(
         }
       );
       const rejection = classifyRevert(error, contract.interface);
-      const errorClass = rpcTransportErrorClass(error);
+      const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(
