@@ -25,11 +25,32 @@ export type ExplorerConfigType = {
   explorerContractPath?: string;
 };
 
+/**
+ * Who operates an RPC endpoint. Transport failures are attributed by origin:
+ * a KeeperHub-operated endpoint failing is a platform fault, a third-party
+ * private-mempool relay failing is an external dependency, and a node the
+ * customer pointed us at is theirs.
+ */
+export const RPC_ENDPOINT_ORIGIN = {
+  /** Chain default: `chain.techops.services`, `lb.drpc.live`, and friends. */
+  PLATFORM: "platform",
+  /** Private-mempool relay from `chains.default_private_rpc_url`. */
+  RELAY: "relay",
+  /** Endpoint from `user_rpc_preferences`. */
+  USER: "user",
+} as const;
+
+export type RpcEndpointOrigin =
+  (typeof RPC_ENDPOINT_ORIGIN)[keyof typeof RPC_ENDPOINT_ORIGIN];
+
 export type ResolvedRpcConfig = {
   chainId: number;
   chainName: string;
   primaryRpcUrl: string;
   fallbackRpcUrl?: string;
+  primaryOrigin: RpcEndpointOrigin;
+  /** Undefined when the config has no fallback endpoint. */
+  fallbackOrigin?: RpcEndpointOrigin;
   primaryWssUrl?: string;
   fallbackWssUrl?: string;
   // KEEP-137: whether the chain supports private mempool routing (Flashbots Protect).

@@ -13,7 +13,7 @@ import {
   userRpcPreferences,
 } from "@/lib/db/schema";
 import { logWarn } from "@/lib/logging";
-import type { ResolvedRpcConfig } from "./types";
+import { type ResolvedRpcConfig, RPC_ENDPOINT_ORIGIN } from "./types";
 
 /**
  * Options for resolveRpcConfig.
@@ -83,6 +83,10 @@ export async function resolveRpcConfig(
           userPref.primaryWssUrl || chain.defaultPrimaryWss || undefined,
         fallbackWssUrl:
           userPref.fallbackWssUrl || chain.defaultFallbackWss || undefined,
+        primaryOrigin: RPC_ENDPOINT_ORIGIN.USER,
+        fallbackOrigin: userPref.fallbackRpcUrl
+          ? RPC_ENDPOINT_ORIGIN.USER
+          : undefined,
         ...chainCapabilities,
         source: "user",
       };
@@ -113,6 +117,10 @@ function buildDefaultConfig(
     fallbackRpcUrl: chain.defaultFallbackRpc || undefined,
     primaryWssUrl: chain.defaultPrimaryWss || undefined,
     fallbackWssUrl: chain.defaultFallbackWss || undefined,
+    primaryOrigin: RPC_ENDPOINT_ORIGIN.PLATFORM,
+    fallbackOrigin: chain.defaultFallbackRpc
+      ? RPC_ENDPOINT_ORIGIN.PLATFORM
+      : undefined,
     ...capabilities,
     source: "default",
   };
@@ -151,6 +159,11 @@ function applyPrivateMempoolSwap(
     ...baseConfig,
     primaryRpcUrl: baseConfig.privateRpcUrl,
     fallbackRpcUrl: strict ? undefined : baseConfig.primaryRpcUrl,
+    // We configure the relay pointer but do not operate the node, so its
+    // transport failures are not ours. Non-strict keeps the pre-swap primary
+    // as fallback, which keeps whatever origin it already had.
+    primaryOrigin: RPC_ENDPOINT_ORIGIN.RELAY,
+    fallbackOrigin: strict ? undefined : baseConfig.primaryOrigin,
   };
 }
 
@@ -195,6 +208,10 @@ export async function resolveAllRpcConfigs(
           userPref.primaryWssUrl || chain.defaultPrimaryWss || undefined,
         fallbackWssUrl:
           userPref.fallbackWssUrl || chain.defaultFallbackWss || undefined,
+        primaryOrigin: RPC_ENDPOINT_ORIGIN.USER,
+        fallbackOrigin: userPref.fallbackRpcUrl
+          ? RPC_ENDPOINT_ORIGIN.USER
+          : undefined,
         ...capabilities,
         source: "user" as const,
       };
@@ -207,6 +224,10 @@ export async function resolveAllRpcConfigs(
       fallbackRpcUrl: chain.defaultFallbackRpc || undefined,
       primaryWssUrl: chain.defaultPrimaryWss || undefined,
       fallbackWssUrl: chain.defaultFallbackWss || undefined,
+      primaryOrigin: RPC_ENDPOINT_ORIGIN.PLATFORM,
+      fallbackOrigin: chain.defaultFallbackRpc
+        ? RPC_ENDPOINT_ORIGIN.PLATFORM
+        : undefined,
       ...capabilities,
       source: "default" as const,
     };

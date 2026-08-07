@@ -40,6 +40,18 @@ describe("config-service", () => {
     updatedAt: new Date(),
   };
 
+  function mockChainQuery(chain: Record<string, unknown>): void {
+    vi.mocked(db.select).mockImplementation(
+      vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([chain]),
+          }),
+        }),
+      })
+    );
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -65,6 +77,8 @@ describe("config-service", () => {
         fallbackRpcUrl: "https://default-eth-backup.example.com",
         primaryWssUrl: undefined,
         fallbackWssUrl: undefined,
+        primaryOrigin: "platform",
+        fallbackOrigin: "platform",
         usePrivateMempoolRpc: false,
         privateRpcUrl: undefined,
         source: "default",
@@ -107,6 +121,8 @@ describe("config-service", () => {
         fallbackRpcUrl: "https://user-eth-backup.example.com",
         primaryWssUrl: undefined,
         fallbackWssUrl: undefined,
+        primaryOrigin: "user",
+        fallbackOrigin: "user",
         usePrivateMempoolRpc: false,
         privateRpcUrl: undefined,
         source: "user",
@@ -170,6 +186,53 @@ describe("config-service", () => {
       const result = await resolveRpcConfig(1);
 
       expect(result).toBeNull();
+    });
+
+    it("marks the primary as a relay when the private mempool swap applies", async () => {
+      mockChainQuery({
+        ...mockChain,
+        usePrivateMempoolRpc: true,
+        defaultPrivateRpcUrl: "https://rpc.flashbots.example.com",
+      });
+
+      const result = await resolveRpcConfig(1, undefined, {
+        usePrivateMempool: true,
+      });
+
+      expect(result?.primaryRpcUrl).toBe("https://rpc.flashbots.example.com");
+      expect(result?.primaryOrigin).toBe("relay");
+      // Strict by default: no fallback, so nothing platform-operated is left in
+      // the round and a transport failure is attributable to the relay alone.
+      expect(result?.fallbackRpcUrl).toBeUndefined();
+      expect(result?.fallbackOrigin).toBeUndefined();
+    });
+
+    it("keeps the platform origin on the fallback when the swap is not strict", async () => {
+      mockChainQuery({
+        ...mockChain,
+        usePrivateMempoolRpc: true,
+        defaultPrivateRpcUrl: "https://rpc.flashbots.example.com",
+      });
+
+      const result = await resolveRpcConfig(1, undefined, {
+        usePrivateMempool: true,
+        strict: false,
+      });
+
+      expect(result?.primaryOrigin).toBe("relay");
+      expect(result?.fallbackRpcUrl).toBe("https://default-eth.example.com");
+      expect(result?.fallbackOrigin).toBe("platform");
+    });
+
+    it("keeps platform origins when the chain does not support private mempool", async () => {
+      mockChainQuery(mockChain);
+
+      const result = await resolveRpcConfig(1, undefined, {
+        usePrivateMempool: true,
+      });
+
+      expect(result?.primaryRpcUrl).toBe("https://default-eth.example.com");
+      expect(result?.primaryOrigin).toBe("platform");
     });
   });
 

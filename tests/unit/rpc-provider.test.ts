@@ -22,7 +22,9 @@ import {
   noopMetricsCollector,
   type RpcMetricsCollector,
   RpcProviderManager,
+  RpcTransportError,
 } from "@/lib/rpc/providers";
+import { RPC_ENDPOINT_ORIGIN } from "@/lib/rpc/types";
 
 // Mock ethers
 vi.mock("ethers", () => {
@@ -321,6 +323,133 @@ describe("RpcProviderManager", () => {
       await expect(manager.executeWithFailover(mockOperation)).rejects.toThrow(
         "RPC failed on primary endpoint"
       );
+    });
+
+    it("attributes a relay timeout to the third party, not the platform", async () => {
+      const manager = new RpcProviderManager({
+        config: {
+          primaryRpcUrl: "https://rpc.flashbots.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Sepolia",
+          primaryOrigin: RPC_ENDPOINT_ORIGIN.RELAY,
+        },
+        metricsCollector,
+      });
+
+      const mockOperation = vi
+        .fn()
+        .mockRejectedValue(makeEthersError("TIMEOUT", "timeout"));
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        expect(error).toBeInstanceOf(RpcTransportError);
+        expect((error as RpcTransportError).errorClass).toBe("external");
+        expect((error as Error).message).toContain(
+          "RPC failed on primary endpoint"
+        );
+        return true;
+      });
+    });
+
+    it("attributes a customer endpoint's timeout to the customer", async () => {
+      const manager = new RpcProviderManager({
+        config: {
+          primaryRpcUrl: "https://their-node.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Ethereum",
+          primaryOrigin: RPC_ENDPOINT_ORIGIN.USER,
+        },
+        metricsCollector,
+      });
+
+      const mockOperation = vi
+        .fn()
+        .mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.1:8545"));
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        expect((error as RpcTransportError).errorClass).toBe("user");
+        return true;
+      });
+    });
+
+    it("leaves a relay failure unattributed when it answered rather than timed out", async () => {
+      const manager = new RpcProviderManager({
+        config: {
+          primaryRpcUrl: "https://rpc.flashbots.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Sepolia",
+          primaryOrigin: RPC_ENDPOINT_ORIGIN.RELAY,
+        },
+        metricsCollector,
+      });
+
+      // Every node answers this identically, so it says nothing about the relay.
+      const mockOperation = vi.fn().mockRejectedValue(makeServerError(400));
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        expect(error).not.toBeInstanceOf(RpcTransportError);
+        return true;
+      });
+    });
+
+    it("keeps a platform endpoint's timeout unattributed", async () => {
+      const manager = new RpcProviderManager({
+        config: {
+          primaryRpcUrl: "https://primary.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Ethereum",
+        },
+        metricsCollector,
+      });
+
+      const mockOperation = vi
+        .fn()
+        .mockRejectedValue(makeEthersError("TIMEOUT", "timeout"));
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        expect(error).not.toBeInstanceOf(RpcTransportError);
+        return true;
+      });
+    });
+
+    it("keeps the failure ours when a platform fallback went down alongside the relay", async () => {
+      const manager = new RpcProviderManager({
+        config: {
+          primaryRpcUrl: "https://rpc.flashbots.example.com",
+          fallbackRpcUrl: "https://primary.example.com",
+          maxRetries: 1,
+          timeoutMs: 100,
+          chainName: "Sepolia",
+          primaryOrigin: RPC_ENDPOINT_ORIGIN.RELAY,
+          fallbackOrigin: RPC_ENDPOINT_ORIGIN.PLATFORM,
+        },
+        metricsCollector,
+      });
+
+      const mockOperation = vi
+        .fn()
+        .mockRejectedValue(makeEthersError("TIMEOUT", "timeout"));
+
+      await expect(
+        manager.executeWithFailover(mockOperation)
+      ).rejects.toSatisfy((error: unknown) => {
+        expect(error).not.toBeInstanceOf(RpcTransportError);
+        expect((error as Error).message).toContain(
+          "RPC failed on both endpoints"
+        );
+        return true;
+      });
     });
 
     it("should call failover state change callback on failover", async () => {

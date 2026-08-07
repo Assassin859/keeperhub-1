@@ -2,12 +2,24 @@ import { ethers, isError } from "ethers";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeEthersGetUrl } from "../safe-ethers-fetch";
 import { redactAllUrls, scrubRpcUrls } from "../scrub-rpc-urls";
-import { isNonRetryableError } from "./error-classification";
+import { RPC_ENDPOINT_ORIGIN, type RpcEndpointOrigin } from "../types";
+import {
+  isNonRetryableError,
+  isTransportFailure,
+  RPC_CONNECTION_ERROR_PATTERNS,
+} from "./error-classification";
+import { RpcTransportError, transportFaultDomain } from "./transport-error";
 
 export {
   isNonRetryableError,
+  isTransportFailure,
   NON_RETRYABLE_ERROR_CODES,
+  RPC_CONNECTION_ERROR_PATTERNS,
 } from "./error-classification";
+export {
+  RpcTransportError,
+  rpcTransportErrorClass,
+} from "./transport-error";
 
 /**
  * Interface for metrics collection - allows dependency injection
@@ -143,13 +155,6 @@ export const consoleMetricsCollector: RpcMetricsCollector = {
     ),
 };
 
-export const RPC_CONNECTION_ERROR_PATTERNS: readonly string[] = [
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "ETIMEDOUT",
-  "fetch failed",
-];
-
 /**
  * Classify an RPC error into a category for metrics tracking.
  * Standalone version for use outside of executeWithFailover
@@ -185,6 +190,10 @@ export type RpcProviderConfig = {
   timeoutMs?: number;
   chainName?: string;
   chainId?: number;
+  // Who operates each endpoint. Defaults to platform, so a manager built from
+  // raw URLs keeps attributing its failures to KeeperHub.
+  primaryOrigin?: RpcEndpointOrigin;
+  fallbackOrigin?: RpcEndpointOrigin;
 };
 
 export type RpcProviderMetrics = {
@@ -206,9 +215,10 @@ export class RpcProviderManager {
   private primaryProvider: ethers.JsonRpcProvider | null = null;
   private fallbackProvider: ethers.JsonRpcProvider | null = null;
   private readonly config: Required<
-    Omit<RpcProviderConfig, "fallbackRpcUrl">
+    Omit<RpcProviderConfig, "fallbackRpcUrl" | "fallbackOrigin">
   > & {
     fallbackRpcUrl?: string;
+    fallbackOrigin?: RpcEndpointOrigin;
   };
   private readonly metrics: RpcProviderMetrics;
   private readonly metricsCollector: RpcMetricsCollector;
@@ -234,6 +244,10 @@ export class RpcProviderManager {
       timeoutMs: config.timeoutMs ?? RpcProviderManager.DEFAULT_TIMEOUT_MS,
       chainName: config.chainName ?? "unknown",
       chainId: config.chainId ?? 1,
+      primaryOrigin: config.primaryOrigin ?? RPC_ENDPOINT_ORIGIN.PLATFORM,
+      fallbackOrigin: config.fallbackRpcUrl
+        ? (config.fallbackOrigin ?? RPC_ENDPOINT_ORIGIN.PLATFORM)
+        : undefined,
     };
 
     this.metricsCollector = metricsCollector;
@@ -376,10 +390,12 @@ export class RpcProviderManager {
         // Thrown messages reach end users via step errors; drop provider
         // URLs entirely (host included). Internal logs above keep the
         // host-visible masked form.
-        throw new Error(
-          redactAllUrls(
-            `RPC failed on both endpoints. Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`
-          )
+        throw this.failoverError(
+          `RPC failed on both endpoints. Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`,
+          [
+            { endpoint: "fallback", transport: fallbackResult.transport },
+            { endpoint: "primary", transport: primaryResult.transport },
+          ]
         );
       }
     }
@@ -443,16 +459,50 @@ export class RpcProviderManager {
           chain: this.config.chainName,
         }
       );
-      throw new Error(
-        redactAllUrls(
-          `RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`
-        )
+      throw this.failoverError(
+        `RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`,
+        [
+          { endpoint: "primary", transport: primaryResult.transport },
+          { endpoint: "fallback", transport: fallbackResult.transport },
+        ]
       );
     }
 
-    throw new Error(
-      redactAllUrls(`RPC failed on primary endpoint: ${primaryResult.error}`)
+    throw this.failoverError(
+      `RPC failed on primary endpoint: ${primaryResult.error}`,
+      [{ endpoint: "primary", transport: primaryResult.transport }]
     );
+  }
+
+  /**
+   * Build the error for an exhausted failover round.
+   *
+   * Carries a fault domain only when every endpoint we burned through failed on
+   * transport AND none of them is ours to operate -- a private-mempool relay or
+   * a customer's own node. Anything else stays a plain Error so the message
+   * classifier keeps deciding, which for RPC means a platform fault.
+   */
+  private failoverError(
+    message: string,
+    failures: readonly {
+      endpoint: "primary" | "fallback";
+      transport?: boolean;
+    }[]
+  ): Error {
+    const redacted = redactAllUrls(message);
+    if (!failures.every((failure) => failure.transport)) {
+      return new Error(redacted);
+    }
+
+    const origins = failures.map((failure) =>
+      failure.endpoint === "primary"
+        ? this.config.primaryOrigin
+        : (this.config.fallbackOrigin ?? RPC_ENDPOINT_ORIGIN.PLATFORM)
+    );
+    const errorClass = transportFaultDomain(origins);
+    return errorClass
+      ? new RpcTransportError(redacted, errorClass)
+      : new Error(redacted);
   }
 
   private recordAttempt(
@@ -550,7 +600,13 @@ export class RpcProviderManager {
     providerType: "primary" | "fallback",
     maxRetries: number,
     operationType: RpcOperationType = "read"
-  ): Promise<{ success: boolean; result?: T; error?: string }> {
+  ): Promise<{
+    success: boolean;
+    result?: T;
+    error?: string;
+    /** Whether the last attempt failed on transport rather than on an answer. */
+    transport?: boolean;
+  }> {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -609,6 +665,7 @@ export class RpcProviderManager {
       // Ethers v6 inlines info.requestUrl (keyed RPC URL) into Error.message;
       // mask the key before the message reaches thrown errors and logs.
       error: scrubRpcUrls(lastError?.message ?? "") || "Unknown error",
+      transport: isTransportFailure(lastError),
     };
   }
 
@@ -692,6 +749,8 @@ export type CreateRpcProviderManagerOptions = {
   timeoutMs?: number;
   chainName?: string;
   chainId?: number;
+  primaryOrigin?: RpcEndpointOrigin;
+  fallbackOrigin?: RpcEndpointOrigin;
   metricsCollector?: RpcMetricsCollector;
   onFailoverStateChange?: FailoverStateChangeCallback;
 };
@@ -699,7 +758,9 @@ export type CreateRpcProviderManagerOptions = {
 export function createRpcProviderManager(
   options: CreateRpcProviderManagerOptions
 ): RpcProviderManager {
-  const cacheKey = `${options.primaryRpcUrl}|${options.fallbackRpcUrl || ""}|${options.chainId ?? ""}`;
+  // Origins are part of the identity: the same URL reached as a chain default
+  // and as a customer preference are attributed differently on failure.
+  const cacheKey = `${options.primaryRpcUrl}|${options.fallbackRpcUrl || ""}|${options.chainId ?? ""}|${options.primaryOrigin ?? ""}|${options.fallbackOrigin ?? ""}`;
 
   let manager = managerCache.get(cacheKey);
   if (!manager) {
@@ -711,6 +772,8 @@ export function createRpcProviderManager(
         timeoutMs: options.timeoutMs,
         chainName: options.chainName,
         chainId: options.chainId,
+        primaryOrigin: options.primaryOrigin,
+        fallbackOrigin: options.fallbackOrigin,
       },
       metricsCollector: options.metricsCollector,
       onFailoverStateChange: options.onFailoverStateChange,

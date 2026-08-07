@@ -145,6 +145,8 @@ export async function getRpcProvider(
     fallbackRpcUrl: config.fallbackRpcUrl,
     chainName: config.chainName,
     chainId,
+    primaryOrigin: config.primaryOrigin,
+    fallbackOrigin: config.fallbackOrigin,
     metricsCollector,
     onFailoverStateChange: (chain, isUsingFallback, reason) => {
       try {
