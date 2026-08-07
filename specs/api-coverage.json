@@ -139,14 +139,14 @@
       "path": "/api/chains/{chainId}/abi",
       "route_file": "app/api/chains/[chainId]/abi/route.ts",
       "source": "docs/api/chains.md",
-      "line": 116
+      "line": 119
     },
     {
       "method": "GET",
       "path": "/api/execute/{executionId}/status",
       "route_file": "app/api/execute/[executionId]/status/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 536
+      "line": 549
     },
     {
       "method": "GET",
@@ -189,6 +189,13 @@
       "route_file": "app/api/public-tags/route.ts",
       "source": "docs/api/tags.md",
       "line": 88
+    },
+    {
+      "method": "GET",
+      "path": "/api/security/audit",
+      "route_file": "app/api/security/audit/route.ts",
+      "source": "docs/api/index.md",
+      "line": 65
     },
     {
       "method": "GET",
@@ -296,6 +303,13 @@
       "line": 13
     },
     {
+      "method": "GET",
+      "path": "/api/workflows/{workflowId}/history",
+      "route_file": "app/api/workflows/[workflowId]/history/route.ts",
+      "source": "docs/api/index.md",
+      "line": 64
+    },
+    {
       "method": "PATCH",
       "path": "/api/address-book/{entryId}",
       "route_file": "app/api/address-book/[entryId]/route.ts",
@@ -370,28 +384,28 @@
       "path": "/api/execute/check-and-execute",
       "route_file": "app/api/execute/check-and-execute/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 336
+      "line": 343
     },
     {
       "method": "POST",
       "path": "/api/execute/contract-call",
       "route_file": "app/api/execute/contract-call/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 280
+      "line": 287
     },
     {
       "method": "POST",
       "path": "/api/execute/transfer",
       "route_file": "app/api/execute/transfer/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 218
+      "line": 225
     },
     {
       "method": "POST",
       "path": "/api/executions/{executionId}/cancel",
       "route_file": "app/api/executions/[executionId]/cancel/route.ts",
       "source": "docs/api/authentication.md",
-      "line": 60
+      "line": 80
     },
     {
       "method": "POST",
