@@ -687,6 +687,18 @@ export class StripeBillingProvider implements BillingProvider {
     }
   }
 
+  // A 400 means the request was evaluated and refused, so no object was
+  // created. Transport and rate-limit failures say nothing about whether the
+  // provider acted, so they are deliberately excluded.
+  wasRejectedWithoutCreating(error: unknown): boolean {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "type" in error &&
+      (error as { type: unknown }).type === "StripeInvalidRequestError"
+    );
+  }
+
   async deleteDraftInvoice(invoiceId: string): Promise<void> {
     try {
       await getStripe().invoices.del(invoiceId);

@@ -202,4 +202,13 @@ export interface BillingProvider {
 
   /** Discard a draft that ended up with nothing to bill. */
   deleteDraftInvoice(invoiceId: string): Promise<void>;
+
+  /**
+   * Whether a create failed because the provider refused the request, meaning
+   * nothing was created and retrying with different parameters is safe.
+   *
+   * A transport failure is the opposite case: the item may well exist, and only
+   * the response was lost. Retrying that would bill twice.
+   */
+  wasRejectedWithoutCreating(error: unknown): boolean;
 }

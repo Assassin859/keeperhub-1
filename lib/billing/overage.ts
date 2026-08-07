@@ -1,8 +1,9 @@
 import "server-only";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
+  executionDebt,
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
@@ -32,27 +33,45 @@ type OverageResult =
  * Attaching only works while the invoice is still a draft. If it finalized
  * first the attached call is rejected, and the retry keeps the charge as a
  * pending item on the following invoice rather than dropping it.
+ *
+ * Each attempt carries its own idempotency key, so repeating either one returns
+ * the item it already made rather than a second one. The keys have to differ
+ * because the provider refuses a key replayed with different parameters, and
+ * the two attempts differ by exactly the invoice they attach to.
+ *
+ * The retry runs only when the provider refused the request outright, which
+ * means it created nothing. After a transport failure the item may exist and
+ * only the response was lost, so retrying under the other key would bill twice.
  */
 async function createItemWithFallback(
   provider: BillingProvider,
-  params: Omit<CreateInvoiceItemParams, "invoiceId">,
+  params: Omit<CreateInvoiceItemParams, "invoiceId" | "idempotencyKey">,
   invoiceId: string | undefined,
-  organizationId: string
+  organizationId: string,
+  idempotencyKey: string
 ): Promise<CreateInvoiceItemResult> {
   if (!invoiceId) {
-    return await provider.createInvoiceItem(params);
+    return await provider.createInvoiceItem({ ...params, idempotencyKey });
   }
 
   try {
-    return await provider.createInvoiceItem({ ...params, invoiceId });
+    return await provider.createInvoiceItem({
+      ...params,
+      invoiceId,
+      idempotencyKey: `${idempotencyKey}-inv`,
+    });
   } catch (error) {
+    if (!provider.wasRejectedWithoutCreating(error)) {
+      throw error;
+    }
+
     logSystemWarn(
       ErrorCategory.BILLING,
       `${LOG_PREFIX} Could not attach to the closing invoice, falling back to the next one`,
       error,
       { org_id: organizationId }
     );
-    return await provider.createInvoiceItem(params);
+    return await provider.createInvoiceItem({ ...params, idempotencyKey });
   }
 }
 
@@ -182,17 +201,17 @@ export async function billOverageForOrg(
         periodEnd: periodEnd.toISOString(),
         overageCount: String(overageCount),
       },
-      // Keyed on the record, which the unique index already pins to one
-      // organization and period, so every attempt at this charge presents the
-      // same key and the provider can only ever create one item for it.
-      idempotencyKey: `overage-${record.id}`,
     };
 
+    // Keyed on the record, which the unique index already pins to one
+    // organization and period, so a repeat of any attempt returns the item it
+    // already made instead of creating another.
     const { invoiceItemId } = await createItemWithFallback(
       provider,
       itemParams,
       options?.invoiceId,
-      organizationId
+      organizationId,
+      `overage-${record.id}`
     );
 
     await db
@@ -290,6 +309,38 @@ export async function collectFinalPeriodOverage(
   return { collected: true, totalChargeCents: result.totalChargeCents };
 }
 
+type SettleableRecord = {
+  providerInvoiceItemId: string | null;
+  providerInvoiceId: string | null;
+};
+
+/**
+ * Find the invoice a record was billed onto.
+ *
+ * A stamped record names its invoice directly. An unstamped one has to be
+ * traced through its item, which the provider can no longer resolve once the
+ * item has been consumed into a finalized invoice.
+ */
+async function resolveRecordInvoice(
+  row: SettleableRecord,
+  provider: BillingProvider
+): Promise<{ invoiceId: string; status: string; paid: boolean } | undefined> {
+  if (row.providerInvoiceId) {
+    const status = await provider.getInvoiceStatus(row.providerInvoiceId);
+    return {
+      invoiceId: row.providerInvoiceId,
+      status: status.status,
+      paid: status.paid,
+    };
+  }
+
+  if (!row.providerInvoiceItemId) {
+    return undefined;
+  }
+
+  return await provider.getInvoiceForItem(row.providerInvoiceItemId);
+}
+
 /**
  * Settle any overage an organization left unpaid, called when it subscribes
  * again.
@@ -303,17 +354,32 @@ export async function collectOutstandingOverage(
   organizationId: string,
   provider: BillingProvider
 ): Promise<{ attempted: number; collected: number }> {
+  // Unattributed records are the usual case. A record the debt scan already
+  // stamped is included too: stamping only means the invoice was resolved, not
+  // that it was paid, and skipping those leaves the debt that gates this
+  // organization with no way to ever settle.
   const rows = await db
     .select({
       id: overageBillingRecords.id,
       providerInvoiceItemId: overageBillingRecords.providerInvoiceItemId,
+      providerInvoiceId: overageBillingRecords.providerInvoiceId,
     })
     .from(overageBillingRecords)
+    .leftJoin(
+      executionDebt,
+      and(
+        eq(executionDebt.overageRecordId, overageBillingRecords.id),
+        eq(executionDebt.status, "active")
+      )
+    )
     .where(
       and(
         eq(overageBillingRecords.organizationId, organizationId),
         eq(overageBillingRecords.status, "billed"),
-        isNull(overageBillingRecords.providerInvoiceId)
+        or(
+          isNull(overageBillingRecords.providerInvoiceId),
+          isNotNull(executionDebt.id)
+        )
       )
     );
 
@@ -321,14 +387,8 @@ export async function collectOutstandingOverage(
   let collected = 0;
 
   for (const row of rows) {
-    if (!row.providerInvoiceItemId) {
-      continue;
-    }
-
     try {
-      const invoice = await provider.getInvoiceForItem(
-        row.providerInvoiceItemId
-      );
+      const invoice = await resolveRecordInvoice(row, provider);
       if (!invoice) {
         continue;
       }
@@ -338,6 +398,13 @@ export async function collectOutstandingOverage(
           .update(overageBillingRecords)
           .set({ providerInvoiceId: invoice.invoiceId })
           .where(eq(overageBillingRecords.id, row.id));
+        continue;
+      }
+
+      // A draft is still being assembled by the provider. Finalizing it here
+      // would charge a renewal invoice early, before the lines it is waiting on
+      // are added. Only an already-open invoice is ours to collect.
+      if (invoice.status === "draft") {
         continue;
       }
 

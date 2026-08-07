@@ -122,6 +122,7 @@ function createMockProvider(
       .fn()
       .mockResolvedValue({ invoiceId: "in_draft", paid: true }),
     deleteDraftInvoice: vi.fn().mockResolvedValue(undefined),
+    wasRejectedWithoutCreating: vi.fn().mockReturnValue(false),
     ...overrides,
   };
 }
