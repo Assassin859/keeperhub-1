@@ -19,6 +19,9 @@ import { getBillingProvider } from "./providers";
 
 const LOG_PREFIX = "[Overage Billing]";
 
+// The invoice and the items on it must agree; an invoice cannot mix currencies.
+const BILLING_CURRENCY = "usd";
+
 type OverageResult =
   | { billed: false; reason: string }
   | { billed: true; overageCount: number; totalChargeCents: number };
@@ -171,7 +174,7 @@ export async function billOverageForOrg(
     const itemParams = {
       customerId: sub.providerCustomerId,
       amount: totalChargeCents,
-      currency: "usd",
+      currency: BILLING_CURRENCY,
       description: `Overage: ${overageCount.toLocaleString()} executions above ${limits.maxExecutionsPerMonth.toLocaleString()} limit (${plan} plan)`,
       metadata: {
         organizationId,
@@ -247,7 +250,10 @@ export async function collectFinalPeriodOverage(
 ): Promise<FinalPeriodResult> {
   const provider = getBillingProvider();
 
-  const { invoiceId } = await provider.createDraftInvoice(customerId);
+  const { invoiceId } = await provider.createDraftInvoice(
+    customerId,
+    BILLING_CURRENCY
+  );
 
   const result = await billOverageForOrg(
     organizationId,

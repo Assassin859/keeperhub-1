@@ -618,12 +618,16 @@ export class StripeBillingProvider implements BillingProvider {
     };
   }
 
-  async createDraftInvoice(customerId: string): Promise<{ invoiceId: string }> {
+  async createDraftInvoice(
+    customerId: string,
+    currency: string
+  ): Promise<{ invoiceId: string }> {
     // No `subscription`, so Stripe adds no plan or proration lines, and
     // pending_invoice_items_behavior "exclude" keeps unrelated pending items
     // off it. The invoice bills exactly what is attached to it afterwards.
     const invoice = await getStripe().invoices.create({
       customer: customerId,
+      currency,
       auto_advance: false,
       collection_method: "charge_automatically",
       pending_invoice_items_behavior: "exclude",

@@ -383,10 +383,38 @@ describe("collectFinalPeriodOverage", () => {
       "cus_123"
     );
 
-    expect(createDraftInvoice).toHaveBeenCalledWith("cus_123");
+    expect(createDraftInvoice).toHaveBeenCalledWith("cus_123", "usd");
     expect(finalizeAndCollectInvoice).toHaveBeenCalledWith("in_final");
     expect(deleteDraftInvoice).not.toHaveBeenCalled();
     expect(result).toEqual({ collected: true, totalChargeCents: 300 });
+  });
+
+  it("opens the draft in the same currency as the item it will carry", async () => {
+    proSubWithOverage();
+    const createDraftInvoice = vi
+      .fn()
+      .mockResolvedValue({ invoiceId: "in_final" });
+    const createInvoiceItem = vi
+      .fn()
+      .mockResolvedValue({ invoiceItemId: "ii_1" });
+    mockBillingProvider({
+      createDraftInvoice,
+      createInvoiceItem,
+      finalizeAndCollectInvoice: vi
+        .fn()
+        .mockResolvedValue({ invoiceId: "in_final", paid: true }),
+      deleteDraftInvoice: vi.fn(),
+    });
+
+    await collectFinalPeriodOverage("org_1", periodStart, periodEnd, "cus_123");
+
+    // An invoice cannot mix currencies, so a draft left on the account default
+    // rejects the attach and the overage silently goes uncharged.
+    const draftCurrency = createDraftInvoice.mock.calls[0][1];
+    const itemCurrency = (
+      createInvoiceItem.mock.calls[0][0] as { currency: string }
+    ).currency;
+    expect(draftCurrency).toBe(itemCurrency);
   });
 
   it("discards the draft when there is nothing over the limit", async () => {

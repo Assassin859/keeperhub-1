@@ -178,8 +178,15 @@ export interface BillingProvider {
    * subscription so the provider puts no plan or proration lines on it. Items
    * are attached explicitly via createInvoiceItem, so the invoice bills only
    * what the caller adds.
+   *
+   * `currency` must match the items that will be attached. Left to the
+   * provider it defaults to the account or customer currency, and an invoice
+   * cannot mix currencies, so a mismatch rejects the attach outright.
    */
-  createDraftInvoice(customerId: string): Promise<{ invoiceId: string }>;
+  createDraftInvoice(
+    customerId: string,
+    currency: string
+  ): Promise<{ invoiceId: string }>;
 
   /**
    * Finalize a draft and attempt payment. Resolves with paid: false and a
