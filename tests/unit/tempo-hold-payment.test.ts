@@ -329,6 +329,27 @@ describe("executeHoldPayment - validation vs infrastructure", () => {
     expect(mockSignTempoTx).not.toHaveBeenCalled();
   });
 
+  it("returns infrastructure failureKind when RPC provider setup fails", async () => {
+    mockGetRpcProvider.mockRejectedValue(new Error("RPC unavailable"));
+
+    const res = await executeHoldPayment({
+      organizationId: "org1",
+      userId: "u1",
+      network: "tempo-testnet",
+      tokenConfig: { supportedTokenId: "usdc" },
+      amount: "1",
+      recipientAddress: RECIPIENT,
+    });
+
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.failureKind).toBe("infrastructure");
+      expect(res.error).toContain("RPC unavailable");
+    }
+    expect(mockResolveTempoToken).not.toHaveBeenCalled();
+    expect(mockSignTempoTx).not.toHaveBeenCalled();
+  });
+
   it("returns infrastructure failureKind when signing fails", async () => {
     mockSignTempoTx.mockRejectedValue(new Error("Turnkey unavailable"));
 

@@ -103,47 +103,7 @@ describe("MCP agent utility tool handlers", () => {
     expect(parsed.dailyCapWei).toBe("1000");
   });
 
-  it("tempo_release_hold returns structured session step-up error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              error: "Interactive session with step-up MFA required",
-              code: "session_required",
-            }),
-            { status: 403 }
-          )
-      )
-    );
-
-    const { server, tools } = makeMockServer();
-    const { registerTools } = await import("@/lib/mcp/tools");
-    registerTools(
-      server as unknown as McpServer,
-      "http://localhost:3000",
-      "Bearer oauth-token"
-    );
-    const tool = tools.find((t) => t.name === "tempo_release_hold");
-    if (!tool) {
-      throw new Error("tempo_release_hold not registered");
-    }
-
-    const result = (await tool.handler({ paymentId: "pay-1" })) as {
-      content: Array<{ text: string }>;
-    };
-    const parsed = JSON.parse(result.content[0].text) as {
-      error: string;
-      code: string;
-      paymentId: string;
-    };
-    expect(parsed.error).toBe("session_step_up_required");
-    expect(parsed.code).toBe("session_required");
-    expect(parsed.paymentId).toBe("pay-1");
-  });
-
-  it("tempo_release_hold rethrows non-session 403 errors", async () => {
+  it("tempo_release_hold rethrows 403 errors from the broadcast route", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(

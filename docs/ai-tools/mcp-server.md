@@ -180,9 +180,9 @@ mid-flight.
 |------|-------------|
 | `get_spending_limits` | Read org daily direct-execution spending caps and usage. |
 | `test_notification` | Test an integration (Discord, Slack, etc.) without saving credentials. May send a real test message. |
-| `tempo_sign_and_hold` | Sign a Tempo transfer and hold for later broadcast (org owner). Scheduled broadcast (`broadcastMode: schedule`) is allowed via OAuth for agent automation; immediate release still requires session step-up. |
+| `tempo_sign_and_hold` | Sign a Tempo transfer and hold for later broadcast (org owner). Scheduled broadcast and immediate release are both available to OAuth/`mcp:write` callers; interactive browser sessions still require step-up MFA on release. |
 | `tempo_cancel_hold` | Cancel a pending held payment. |
-| `tempo_release_hold` | Broadcast a held payment. Requires interactive session step-up MFA; OAuth tokens get a structured error. |
+| `tempo_release_hold` | Broadcast a held payment now. Org owner only. Interactive sessions require step-up MFA; OAuth and API-key callers may release without MFA. |
 
 ### Direct On-Chain Execution
 

@@ -423,46 +423,6 @@ function isMcpFetchTimeoutError(error: unknown): boolean {
   return error.name === "TimeoutError";
 }
 
-type ParsedApiCallError = {
-  status: number;
-  code?: string;
-  error?: string;
-};
-
-const API_CALL_FAILED_RE = /^API call failed: (\d+)(?: [^-]+)? - ([\s\S]*)$/;
-
-function parseApiCallError(error: unknown): ParsedApiCallError | null {
-  if (!(error instanceof Error)) {
-    return null;
-  }
-  const prefix = "API call failed: ";
-  if (!error.message.startsWith(prefix)) {
-    return null;
-  }
-  const match = API_CALL_FAILED_RE.exec(error.message);
-  if (!match) {
-    return null;
-  }
-  const status = Number(match[1]);
-  try {
-    const body = JSON.parse(match[2]) as { code?: string; error?: string };
-    return {
-      status,
-      code: body.code,
-      error: body.error,
-    };
-  } catch {
-    return { status };
-  }
-}
-
-const TEMPO_RELEASE_SESSION_CODES = new Set([
-  "session_required",
-  "mfa_pending",
-  "mfa_not_enrolled",
-  "org_mfa_enrollment_required",
-]);
-
 function parseRetryAfterSeconds(header: string | null): number {
   if (!header) {
     return DEFAULT_COLD_START_RETRY_SECONDS;
@@ -1903,7 +1863,7 @@ export function registerTools(
 
   server.tool(
     "tempo_release_hold",
-    "Release (broadcast) a held Tempo payment now. Requires an interactive browser session with step-up MFA — OAuth MCP tokens receive a structured error. Org owner only.",
+    "Release (broadcast) a held Tempo payment now. Org owner only. Interactive browser sessions still require step-up MFA; OAuth and API-key callers may release without MFA.",
     {
       paymentId: z
         .string()
@@ -1917,48 +1877,18 @@ export function registerTools(
     },
     withScopeCheck("tempo_release_hold", scope, async (args) =>
       withToolLogging("tempo_release_hold", undefined, async () => {
-        try {
-          const data = await callApi(
-            internalApiBaseUrl,
-            authHeader,
-            `/api/tempo/held-payments/${encodeURIComponent(args.paymentId)}/broadcast`,
-            "POST",
-            {},
-            args.idempotency_key,
-            NO_MCP_FETCH_TIMEOUT
-          );
-          return {
-            content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          };
-        } catch (error) {
-          const parsed = parseApiCallError(error);
-          if (
-            parsed?.status === 403 &&
-            parsed.code &&
-            TEMPO_RELEASE_SESSION_CODES.has(parsed.code)
-          ) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      error: "session_step_up_required",
-                      code: parsed.code,
-                      message:
-                        "Releasing a held payment requires an interactive browser session with step-up MFA. Use tempo_cancel_hold to abort, or release from the Held Payments UI.",
-                      paymentId: args.paymentId,
-                    },
-                    null,
-                    2
-                  ),
-                },
-              ],
-              isError: true,
-            };
-          }
-          throw error;
-        }
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          `/api/tempo/held-payments/${encodeURIComponent(args.paymentId)}/broadcast`,
+          "POST",
+          {},
+          args.idempotency_key,
+          NO_MCP_FETCH_TIMEOUT
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
       })
     )
   );

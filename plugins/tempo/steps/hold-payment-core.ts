@@ -163,13 +163,18 @@ export async function executeHoldPayment(
   }
 
   let rpcManager: Awaited<ReturnType<typeof getRpcProvider>>;
-  let token: Awaited<ReturnType<typeof resolveTempoToken>>;
-  let amountRaw: bigint;
   try {
     rpcManager = await getRpcProvider({
       chainId,
       userId: input.userId,
     });
+  } catch (error) {
+    return infrastructureFailure(getErrorMessage(error));
+  }
+
+  let token: Awaited<ReturnType<typeof resolveTempoToken>>;
+  let amountRaw: bigint;
+  try {
     token = await resolveTempoToken(
       input.tokenConfig,
       chainId,

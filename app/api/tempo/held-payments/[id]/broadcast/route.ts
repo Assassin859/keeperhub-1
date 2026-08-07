@@ -1,10 +1,12 @@
 /**
  * POST /api/tempo/held-payments/[id]/broadcast -- release a held payment now.
  *
- * Session-only + step-up MFA (releasing moves funds on-chain). The row is loaded
- * org-scoped (404 for a missing row or another org's), fast-rejected before MFA
- * when it is not releasable, then released through the guarded claim so it can
- * never be broadcast twice.
+ * Org owner + mcp:write. OAuth and API-key callers may release without step-up
+ * MFA. Interactive session callers still clear TOTP + email OTP via
+ * authorizeAction before broadcast. The row is loaded org-scoped (404 for a
+ * missing row or another org's), fast-rejected before MFA when it is not
+ * releasable, then released through the guarded claim so it can never be
+ * broadcast twice.
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
@@ -45,16 +47,6 @@ export async function POST(
     return NextResponse.json(
       { error: resolved.error },
       { status: resolved.status }
-    );
-  }
-  if (resolved.authMethod !== "session") {
-    return NextResponse.json(
-      {
-        error:
-          "Releasing a held payment requires an interactive session with step-up verification.",
-        code: "session_required",
-      },
-      { status: 403 }
     );
   }
   const scopeError = requireScope(resolved.scope, SCOPE_MCP_WRITE);
@@ -99,6 +91,29 @@ export async function POST(
     );
   }
 
+  // Interactive session callers still clear step-up MFA. Token callers skip it.
+  if (resolved.authMethod === "session") {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const body = (await request.json().catch(() => ({}))) as {
+      code?: string;
+      emailOtp?: string;
+      signature?: string;
+    };
+    const authorized = await authorizeAction({
+      session,
+      action: STEP_UP_ACTIONS.tempoHeldPaymentBroadcast,
+      roleFloor: "none",
+      body,
+      headers: request.headers,
+    });
+    if (!authorized.ok) {
+      return authorized.response;
+    }
+  }
+
   const idemBody = { paymentId: id };
   const idem = await beginIdempotentFromRequest({
     request,
@@ -113,26 +128,6 @@ export async function POST(
     }
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const body = (await request.json().catch(() => ({}))) as {
-    code?: string;
-    emailOtp?: string;
-    signature?: string;
-  };
-  const authorized = await authorizeAction({
-    session,
-    action: STEP_UP_ACTIONS.tempoHeldPaymentBroadcast,
-    roleFloor: "none",
-    body,
-    headers: request.headers,
-  });
-  if (!authorized.ok) {
-    return authorized.response;
-  }
-
   try {
     const result = await releaseHeldPaymentNow({
       paymentId: id,
@@ -141,9 +136,13 @@ export async function POST(
     });
     if (!result.ok) {
       const status = mapReleaseFailureStatus(result.reason);
-      return NextResponse.json(
-        { error: result.error, code: result.reason },
-        { status }
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: result.error, code: result.reason },
+          { status }
+        ),
+        "release"
       );
     }
     await recordAuditEvent({
@@ -176,9 +175,13 @@ export async function POST(
         operation: "broadcast",
       }
     );
-    return NextResponse.json(
-      { error: "Failed to broadcast held payment" },
-      { status: 500 }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { error: "Failed to broadcast held payment" },
+        { status: 500 }
+      ),
+      "release"
     );
   }
 }

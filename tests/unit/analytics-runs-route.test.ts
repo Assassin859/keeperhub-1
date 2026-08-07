@@ -22,18 +22,6 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-vi.mock("@/lib/middleware/require-scope", () => ({
-  requireScope: (grantedScope: string | undefined, required: string) => {
-    if (grantedScope === "mcp:read" || grantedScope === undefined) {
-      return null;
-    }
-    return new Response(
-      JSON.stringify({ error: "insufficient_scope", required_scope: required }),
-      { status: 403 }
-    );
-  },
-}));
-
 vi.mock("@/lib/analytics/queries", () => ({
   getUnifiedRuns: vi.fn().mockResolvedValue({
     runs: [],
@@ -126,6 +114,25 @@ describe("GET /api/analytics/runs auth", () => {
 
     const res = await GET(oauthRequest("success"));
     expect(res.status).toBe(401);
+    expect(getUnifiedRuns).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 insufficient_scope when OAuth token lacks mcp:read", async () => {
+    authenticateOAuthTokenMock.mockResolvedValueOnce({
+      authenticated: true,
+      userId: "user_oauth",
+      organizationId: "org_from_jwt",
+      scope: "",
+    });
+
+    const res = await GET(oauthRequest("success"));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: string;
+      required_scope: string;
+    };
+    expect(body.error).toBe("insufficient_scope");
+    expect(body.required_scope).toBe("mcp:read");
     expect(getUnifiedRuns).not.toHaveBeenCalled();
   });
 

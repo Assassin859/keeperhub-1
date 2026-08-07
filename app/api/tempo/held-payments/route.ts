@@ -239,12 +239,20 @@ export async function POST(request: Request): Promise<NextResponse> {
         new Error(result.error),
         { endpoint: "/api/tempo/held-payments", operation: "create" }
       );
-      return NextResponse.json(
-        { error: "Failed to create held payment" },
-        { status: 500 }
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: "Failed to create held payment" },
+          { status: 500 }
+        ),
+        "release"
       );
     }
-    return NextResponse.json({ error: result.error }, { status: 400 });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({ error: result.error }, { status: 400 }),
+      "release"
+    );
   }
 
   await recordAuditEvent({

@@ -106,7 +106,7 @@ describe("MCP Tempo tools", () => {
     );
   });
 
-  it("tempo_release_hold maps session_required to a structured MCP error", async () => {
+  it("tempo_release_hold surfaces API errors without a session_required special case", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 403,
@@ -115,24 +115,14 @@ describe("MCP Tempo tools", () => {
       text: () =>
         Promise.resolve(
           JSON.stringify({
-            error:
-              "Releasing a held payment requires an interactive session with step-up verification.",
-            code: "session_required",
+            error: "Only organization owners can release held payments.",
           })
         ),
     });
 
-    const result = await getTool("tempo_release_hold").handler({
-      paymentId: "hp-1",
-    });
-
-    expect(result.isError).toBe(true);
-    const payload = JSON.parse(result.content[0]?.text ?? "{}") as {
-      error: string;
-      code: string;
-    };
-    expect(payload.error).toBe("session_step_up_required");
-    expect(payload.code).toBe("session_required");
+    await expect(
+      getTool("tempo_release_hold").handler({ paymentId: "hp-1" })
+    ).rejects.toThrow(/403/);
   });
 
   it("test_notification calls the integrations test endpoint", async () => {

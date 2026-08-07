@@ -19,12 +19,19 @@ vi.mock("@/lib/security/org-role", () => ({
   getOrgRole: (...args: unknown[]) => mockGetOrgRole(...args),
 }));
 
+const recordIdempotentResponseMock = vi.fn(
+  (_outcome: unknown, response: Response, _disposition?: string) =>
+    Promise.resolve(response)
+);
+
 vi.mock("@/lib/idempotency", () => ({
-  beginIdempotentFromRequest: vi.fn().mockResolvedValue(null),
-  idempotencyEarlyResponse: vi.fn(),
-  recordIdempotentResponse: vi.fn(
-    (_idem: unknown, response: Response) => response
-  ),
+  beginIdempotentFromRequest: vi.fn().mockResolvedValue({ kind: "proceed" }),
+  idempotencyEarlyResponse: vi.fn().mockReturnValue(null),
+  recordIdempotentResponse: (
+    outcome: unknown,
+    response: Response,
+    disposition?: string
+  ) => recordIdempotentResponseMock(outcome, response, disposition),
 }));
 
 vi.mock("@/lib/security/audit-log", () => ({
@@ -108,6 +115,11 @@ describe("POST /api/tempo/held-payments", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("NOTATOKEN");
+    expect(recordIdempotentResponseMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "proceed" }),
+      expect.any(Response),
+      "release"
+    );
   });
 
   it("returns a generic 500 for infrastructure failures", async () => {
@@ -128,5 +140,10 @@ describe("POST /api/tempo/held-payments", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Failed to create held payment");
     expect(body.error).not.toContain("Turnkey");
+    expect(recordIdempotentResponseMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "proceed" }),
+      expect.any(Response),
+      "release"
+    );
   });
 });
