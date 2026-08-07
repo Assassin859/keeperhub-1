@@ -28,9 +28,12 @@
  *                      variables (fetch(BASE + path)) is out of reach and
  *                      is deliberately not guessed at.
  *
- * Prose inside an HTML comment is not scanned, and a line ending in
- * `<!-- api-docs-ignore -->` is skipped, so a page can say that
- * `POST /api/legacy/thing` was removed without failing the build.
+ * Nothing inside an HTML comment is scanned, prose and fenced blocks
+ * alike, and a line ending in `<!-- api-docs-ignore -->` is skipped in
+ * all three formats, so a page can say that `POST /api/legacy/thing` was
+ * removed without failing the build. In prose the marker renders as
+ * nothing; inside a fence it renders as literal text, which is the price
+ * of the fence being the natural place to write a removed endpoint.
  *
  * When the same endpoint is declared twice, the artifact records the
  * highest-priority format in the order above, so adding formats 2 and 3
@@ -193,11 +196,13 @@ const SIMPLE_TEMPLATE_HOLE_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/u;
 // ``` line inside a ~~~ block counts as content rather than closing it.
 const FENCE_RE = /^\s*(```|~~~)(\S*)/;
 
-// Opt-out for prose that names an endpoint without claiming it exists -
+// Opt-out for a line that names an endpoint without claiming it exists -
 // "`POST /api/legacy/thing` was removed in v2". Written as an HTML comment
-// so it renders as nothing on docs.keeperhub.com, and read from the raw
-// line before comments are stripped.
-const IGNORE_MARKER_RE = /<!--\s*api-docs-ignore\s*-->/;
+// so it renders as nothing in prose, and read from the raw line before
+// comments are stripped. Anchored to the end of the line because that is
+// what the header promises: unanchored, a marker written at the front of
+// a line silently drops every real declaration behind it as well.
+const IGNORE_MARKER_RE = /<!--\s*api-docs-ignore\s*-->\s*$/;
 const IGNORE_MARKER = "<!-- api-docs-ignore -->";
 
 function walkFiles(dir: string, suffix: string): string[] {
@@ -396,7 +401,15 @@ export function parseMarkdownEndpoints(
   const comment = { open: false };
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    const fence = raw.match(FENCE_RE);
+    // Comment state advances before the fence match, so a fenced block
+    // written inside an HTML comment never opens one - it renders as
+    // nothing on the docs site and must not gate CI either. Inside a
+    // fence, `<!--` is content: only the closing fence gets us out.
+    // Annotated because `fenceLang` is assigned below from a match on this
+    // value, and inference would have to walk that cycle.
+    const visible: string =
+      fenceLang === null ? stripHtmlComments(raw, comment) : raw;
+    const fence = visible.match(FENCE_RE);
     // A fence marker only closes the block it opened, so ``` inside a ~~~
     // block (and the reverse) is content.
     if (fence && (fenceLang === null || fence[1] === fenceMarker)) {
@@ -416,6 +429,9 @@ export function parseMarkdownEndpoints(
       continue;
     }
     if (fenceLang === "http") {
+      if (IGNORE_MARKER_RE.test(raw)) {
+        continue;
+      }
       const match = raw.match(/^\s*(GET|POST|PUT|PATCH|DELETE)\s+(\/api\/\S+)/);
       if (match) {
         endpoints.push({
@@ -430,18 +446,18 @@ export function parseMarkdownEndpoints(
     }
     if (fenceLang !== null) {
       if (CODE_SAMPLE_LANGS.has(fenceLang)) {
-        sampleLines.push(raw);
+        // A marked line is blanked rather than dropped, so the line
+        // numbers the block reports stay the line numbers the file has.
+        sampleLines.push(IGNORE_MARKER_RE.test(raw) ? "" : raw);
       }
       continue;
     }
-    // Comment state has to advance even on an ignored line, so strip
-    // first and read the marker off the raw text - the marker itself
-    // lives inside a comment and stripping would eat it.
-    const prose = stripHtmlComments(raw, comment);
+    // The marker is read off the raw text: it lives inside a comment, and
+    // stripping comments would eat it.
     if (IGNORE_MARKER_RE.test(raw)) {
       continue;
     }
-    for (const match of prose.matchAll(INLINE_CODE_ENDPOINT_RE)) {
+    for (const match of visible.matchAll(INLINE_CODE_ENDPOINT_RE)) {
       const path = canonicalizePath(match[2]);
       if (!PLAUSIBLE_ROUTE_PATH_RE.test(path)) {
         continue;

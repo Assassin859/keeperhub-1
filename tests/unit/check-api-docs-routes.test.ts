@@ -31,6 +31,43 @@ describe("parseMarkdownEndpoints - http fences", () => {
 
     expect(parseMarkdownEndpoints(text, SOURCE)[0].path).toBe("/api/runs");
   });
+
+  it("skips a fenced declaration marked with the ignore comment", () => {
+    // The failure message points every author at this marker, and the
+    // http fence is where most declarations live, so the marker has to be
+    // read here and not only in prose.
+    const text = page(
+      "```http",
+      "GET /api/legacy/thing <!-- api-docs-ignore -->",
+      "POST /api/keys",
+      "```"
+    );
+
+    expect(parseMarkdownEndpoints(text, SOURCE)).toEqual([
+      {
+        method: "POST",
+        path: "/api/keys",
+        source: SOURCE,
+        line: 3,
+        format: "http-fence",
+      },
+    ]);
+  });
+
+  it("ignores an http fence written inside an HTML comment", () => {
+    const text = page(
+      "<!--",
+      "```http",
+      "GET /api/legacy/thing",
+      "```",
+      "-->",
+      "Call `GET /api/user` for the account."
+    );
+
+    expect(parseMarkdownEndpoints(text, SOURCE).map((e) => e.path)).toEqual([
+      "/api/user",
+    ]);
+  });
 });
 
 describe("parseMarkdownEndpoints - inline code spans", () => {
@@ -189,6 +226,17 @@ describe("parseMarkdownEndpoints - inline code spans", () => {
       "/api/user",
     ]);
   });
+
+  it("keeps a declaration that sits behind a marker written mid-line", () => {
+    // The marker skips the line it ends, so a marker written anywhere
+    // else is not one - taking the rest of the line with it would drop a
+    // real declaration on the author's behalf.
+    const text = "<!-- api-docs-ignore --> and also `GET /api/user`";
+
+    expect(parseMarkdownEndpoints(text, SOURCE).map((e) => e.path)).toEqual([
+      "/api/user",
+    ]);
+  });
 });
 
 describe("parseMarkdownEndpoints - code samples", () => {
@@ -287,6 +335,39 @@ describe("parseMarkdownEndpoints - code samples", () => {
     );
 
     expect(parseMarkdownEndpoints(text, SOURCE)).toEqual([]);
+  });
+
+  it("ignores a code sample written inside an HTML comment", () => {
+    // Same class as the commented-out prose case: it renders as nothing
+    // on the docs site, so it must not gate CI either.
+    const text = page(
+      "<!--",
+      "```ts",
+      'await api("/api/legacy/thing");',
+      "```",
+      "-->"
+    );
+
+    expect(parseMarkdownEndpoints(text, SOURCE)).toEqual([]);
+  });
+
+  it("skips a marked call without shifting the lines reported after it", () => {
+    const text = page(
+      "```ts",
+      'await api("/api/legacy/thing"); // <!-- api-docs-ignore -->',
+      'await api("/api/user");',
+      "```"
+    );
+
+    expect(parseMarkdownEndpoints(text, SOURCE)).toEqual([
+      {
+        method: "GET",
+        path: "/api/user",
+        source: SOURCE,
+        line: 3,
+        format: "code-sample",
+      },
+    ]);
   });
 });
 
