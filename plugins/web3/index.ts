@@ -1326,6 +1326,11 @@ const web3Plugin: IntegrationPlugin = {
           description:
             "Error message if the batch failed, or the softened error when failOnError is off",
         },
+        {
+          field: "rejection",
+          description:
+            "Classified revert kind when the batch was rejected on-chain, when it could be determined",
+        },
       ],
       configFields: [
         {
