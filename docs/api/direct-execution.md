@@ -103,11 +103,19 @@ the request was received, so a retry must be able to match the original. Reusing
 key is what makes that retry safe: it returns the in-progress guard while the first
 request is still running, and the real outcome as a replay once it finishes.
 
-**Rotate to a new key** once the previous attempt returned a definite result, and
-on an `idempotency_conflict`. A stored failure is replayable for 24 hours, so a key
-that has already failed keeps returning that failure rather than retrying. Note that
-`retryable: false` on a conflict does not mean abandon the call: it means that key
-is spent, and the request still needs to go out under a fresh one.
+**Rotate to a new key** once the previous attempt returned a definite result. A
+stored failure is replayable for 24 hours, so a key that has already failed keeps
+returning that failure rather than retrying.
+
+**A conflict does not by itself mean rotate.** `retryable: false` says only that
+this body is not the body the key was bound to, and there are two reasons for
+that. If the work is genuinely different, rotate — that is what a new key is
+for. If it is the same intent whose body was re-serialized, the body drifted and
+the intent did not: `hashRequest` normalizes key order but not values, so `"0.1"`
+against `"0.10"`, `network` in place of `chainId`, or a reworded memo all produce
+a conflict for work that is already under way. Rotating there escapes the
+in-progress guard on a request that may already have broadcast. Canonicalize the
+body and keep the key.
 
 Rotating a key while a request may still be in flight is the case to avoid. It escapes
 the in-progress guard, and for a fund-moving call the second request can broadcast a

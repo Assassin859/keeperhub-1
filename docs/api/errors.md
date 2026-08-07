@@ -63,7 +63,7 @@ them. These two responses carry `retryable`, which answers one narrow question:
 
 | Code | `retryable` | Description | Resolution |
 |------|-------------|-------------|------------|
-| `idempotency_conflict` | `false` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Retry under a **new** key. The same key will always conflict. |
+| `idempotency_conflict` | `false` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Rotate to a **new** key only if this is genuinely different work. If it is the same intent whose body was re-serialized, canonicalize the body and keep the key. |
 | `idempotency_in_progress` | `true` | A request with this `Idempotency-Key` is still being processed | Retry shortly under the **same** key |
 
 ```json
@@ -74,13 +74,20 @@ them. These two responses carry `retryable`, which answers one narrow question:
 }
 ```
 
-`retryable: false` on a conflict does not mean give up. It means the key is
-spent: the call still needs to be made, under a key that has not already been
-used for a different body.
+`retryable: false` on a conflict does not mean give up, and it does not mean
+rotate-and-resend either. It means this body is not the body the key was bound
+to, and that has two causes wanting opposite responses. If the work is genuinely
+different, use a new key. If it is the same intent serialized differently —
+`"0.1"` against `"0.10"`, `network` in place of `chainId`, a reworded memo — then
+the body drifted, not the intent: canonicalize the body and keep the key.
+Rotating there escapes the in-flight guard on a request that may already have
+broadcast, and on these routes that pays twice.
 
 The field appears on these two codes only. Every other status on these routes
 keeps the semantics documented above, whether or not `retryable` is present: a
-`429` is still back-off-and-retry, and a `500` is still worth another attempt.
+`429` is still back-off-and-retry, and a `500` is still worth another attempt
+**under the same key** — a `5xx` tells you nothing about whether the request was
+received, so the retry has to be able to match the original.
 
 See [Direct Execution](/api/direct-execution#idempotency) for the full idempotency policy.
 

@@ -374,14 +374,27 @@ function annotateReplay(body: unknown): unknown {
 //   in_progress -> true.  The first request holds the lock; the same key is the
 //                         only safe way to retry, and it returns the guard now
 //                         and the real outcome as a replay once that finishes.
-//   conflict    -> false. The key is bound to a different body and always will
-//                         be, so reusing it can never succeed.
+//   conflict    -> false. The key is bound to a different body, and stays bound
+//                         for as long as the record lives, so resending this
+//                         body under this key can never succeed.
 //
-// `false` therefore does not mean abandon the call. A conflict still needs the
-// request sent, under a key that has not been used for a different body, and
-// the docs say so alongside the table. Do not read this field as a general
-// "is this error retryable": a 429 on these routes is retryable and carries no
-// `retryable` field at all, because the field exists only on these two codes.
+// `false` does not mean abandon the call. It also does not mean "rotate and
+// resend", and on a fund-moving route that distinction is the whole thing. A
+// conflict says one thing only: this body is not the body the key was bound to.
+// There are two reasons for that and they want opposite responses.
+//
+//   different work        -> rotate. That is what a new key is for.
+//   the same intent, re-   -> the body drifted, not the intent. `hashRequest`
+//   serialized differently    normalizes key order but not values, so "0.1"
+//                             against "0.10", `network` for `chainId`, or a
+//                             reworded memo all land here. Rotating escapes the
+//                             in-flight guard on a request that may already have
+//                             broadcast, and pays twice. Canonicalize the body
+//                             and keep the key.
+//
+// Do not read this field as a general "is this error retryable": a 429 on these
+// routes is retryable and carries no `retryable` field at all, because the field
+// exists only on these two codes.
 //
 // It rides in the body for the same reason `idempotentReplay` does: the common
 // consumer is an agent reading a tool result, where response headers are not
