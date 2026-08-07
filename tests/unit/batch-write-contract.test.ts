@@ -14,9 +14,7 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve([]),
-        }),
+        where: () => Promise.resolve([{ workflowId: "wf-1" }]),
       }),
     }),
   },
@@ -132,7 +130,7 @@ vi.mock("ethers", async () => {
     ...actual,
     ethers: {
       ...actual.ethers,
-      JsonRpcProvider: class MockProvider {},
+      JsonRpcProvider: class MockProvider { },
       Contract: class MockContract {
         aggregate3 = { staticCall: mockStaticCall };
       },
@@ -301,6 +299,41 @@ describe("batch-write-contract - per-call failure isolation", () => {
     expect(softened.results).toBeUndefined();
     expect(softened.transactionHash).toBeUndefined();
   });
+
+  it("all calls fail simulation: aborts before broadcasting", async () => {
+    mockStaticCall.mockResolvedValueOnce([revertReturn(), revertReturn()]);
+
+    const result = await batchWriteContractCore(
+      baseInput({ isolateCallFailures: "true" })
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.error).toContain("All 2 calls failed simulation");
+    expect(result.errorClass).toBeUndefined();
+    expect(result.results).toHaveLength(2);
+    expect(result.totalCalls).toBe(2);
+    expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+
+  it("preserves results/totalCalls when softening an all-calls-failed abort", async () => {
+    mockStaticCall.mockResolvedValueOnce([revertReturn(), revertReturn()]);
+
+    const result = await batchWriteContractCore(
+      baseInput({ isolateCallFailures: "true" })
+    );
+    expect(result.success).toBe(false);
+
+    const softened = applyBatchFailOnError(result, false);
+    expect(softened.success).toBe(true);
+    if (!softened.success) {
+      throw new Error("expected softened success");
+    }
+    expect(softened.results).toHaveLength(2);
+    expect(softened.totalCalls).toBe(2);
+  });
 });
 
 describe("batch-write-contract - EOA-only gate", () => {
@@ -355,6 +388,23 @@ describe("batch-write-contract - MAX_TOTAL_CALLS", () => {
     expect(result.error).toContain("Too many calls");
     expect(result.errorClass).toBe(ExecutionErrorType.USER);
     expect(mockGetRpcProvider).not.toHaveBeenCalled();
+  });
+
+  it("accepts a batch of exactly 200 calls", async () => {
+    mockStaticCall.mockResolvedValueOnce(
+      Array.from({ length: 200 }, () => SUCCESS_RETURN)
+    );
+    const calls = Array.from({ length: 200 }, () => makeCall(JOB_1));
+
+    const result = await batchWriteContractCore(
+      baseInput({ calls: JSON.stringify(calls) })
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.totalCalls).toBe(200);
   });
 });
 
@@ -463,6 +513,19 @@ describe("batch-write-contract - ABI/function validation", () => {
     if (!result.success) {
       expect(result.error).toContain("not found in ABI");
     }
+  });
+
+  it("fails when abiFunction is blank", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({ abiFunction: "  " })
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.error).toContain("abiFunction");
+    expect(result.errorClass).toBe(ExecutionErrorType.USER);
   });
 });
 

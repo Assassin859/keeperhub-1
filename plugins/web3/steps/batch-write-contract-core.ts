@@ -86,29 +86,36 @@ export type BatchWriteContractCoreInput = {
 
 export type BatchWriteContractResult =
   | {
-      success: true;
-      transactionHash?: string;
-      chainId?: number;
-      transactionLink?: string;
-      gasUsed?: string;
-      gasUsedUnits?: string;
-      effectiveGasPrice?: string;
-      results?: BatchWriteCallResult[];
-      totalCalls?: number;
-      // Present only when failOnError=false softened an execution failure
-      // into success (see applyBatchFailOnError). Absent on a genuine
-      // successful broadcast.
-      error?: string;
-      rejection?: RevertKind;
-    }
+    success: true;
+    transactionHash?: string;
+    chainId?: number;
+    transactionLink?: string;
+    gasUsed?: string;
+    gasUsedUnits?: string;
+    effectiveGasPrice?: string;
+    results?: BatchWriteCallResult[];
+    totalCalls?: number;
+    // Present only when failOnError=false softened an execution failure
+    // into success (see applyBatchFailOnError). Absent on a genuine
+    // successful broadcast.
+    error?: string;
+    rejection?: RevertKind;
+  }
   | {
-      success: false;
-      error: string;
-      rejection?: RevertKind;
-      errorClass?: ExecutionErrorType;
-      transactionHash?: string;
-      chainId?: number;
-    };
+    success: false;
+    error: string;
+    rejection?: RevertKind;
+    errorClass?: ExecutionErrorType;
+    transactionHash?: string;
+    chainId?: number;
+    // Present when the pre-broadcast simulation ran and decoded per-call
+    // outcomes before this failure was returned (e.g. every call failed
+    // simulation, so the broadcast was skipped). Absent on failures that
+    // occur before or without a simulation (validation, RPC/signer
+    // resolution, a whole-batch revert on the staticCall itself).
+    results?: BatchWriteCallResult[];
+    totalCalls?: number;
+  };
 
 /**
  * Soften an execution failure into a success value when failOnError=false, so
@@ -132,6 +139,12 @@ export function applyBatchFailOnError(
     success: true,
     error: redactAllUrls(result.error),
     rejection: result.rejection,
+    // Carried forward when present (e.g. an all-calls-failed simulation
+    // abort): unlike transactionHash, these are pre-broadcast diagnostics
+    // with no KEEP-966 reconciliation risk, so there is no reason to drop
+    // them on a softened result.
+    results: result.results,
+    totalCalls: result.totalCalls,
   };
 }
 
@@ -190,9 +203,9 @@ function decodeAggregate3Entry(
     const structured =
       outputs.length > 0
         ? structureAbiOutputs(
-            Array.isArray(serialized) ? serialized : [serialized],
-            outputs
-          )
+          Array.isArray(serialized) ? serialized : [serialized],
+          outputs
+        )
         : serialized;
     return { success: true, result: structured };
   } catch (error) {
@@ -489,6 +502,15 @@ export async function batchWriteContractCore(
   const results = aggregateResults.map(([ok, data]) =>
     decodeAggregate3Entry(ok, data, iface, abiFunctionKey, outputs)
   );
+
+  if (results.length > 0 && results.every((r) => !r.success)) {
+    return {
+      success: false,
+      error: `All ${results.length} calls failed simulation; skipping broadcast to avoid wasting gas. First error: ${results[0].error}`,
+      results,
+      totalCalls: results.length,
+    };
+  }
 
   // The executor already puts workflowId directly on _context for every real
   // workflow execution, so only fall back to a DB lookup when a caller
