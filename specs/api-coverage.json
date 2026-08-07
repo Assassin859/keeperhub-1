@@ -195,7 +195,7 @@
       "path": "/api/security/audit",
       "route_file": "app/api/security/audit/route.ts",
       "source": "docs/api/index.md",
-      "line": 65
+      "line": 76
     },
     {
       "method": "GET",
@@ -307,7 +307,7 @@
       "path": "/api/workflows/{workflowId}/history",
       "route_file": "app/api/workflows/[workflowId]/history/route.ts",
       "source": "docs/api/index.md",
-      "line": 64
+      "line": 75
     },
     {
       "method": "PATCH",
