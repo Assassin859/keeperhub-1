@@ -635,10 +635,14 @@ Broadcasting requires `mcp:write`. A dry run (`simulate: true`) neither signs no
 
 ## Workflow Run preflight simulation
 
-The workflow editor performs a read-only preflight simulation of reachable EVM write nodes before an interactive Run.
+Before an interactive Run, the workflow editor calls `POST /api/workflows/{workflowId}/simulate` to perform a read-only preflight of reachable EVM write nodes.
 
-The result is advisory and does not block execution. Reverts, invalid simulation inputs, unsupported signers, RPC failures, timeouts, and unavailable simulation services are shown in the issues overlay with **Run Anyway** available.
+The simulation is advisory and never blocks execution. Reverts, invalid simulation inputs, unsupported signers, RPC failures, timeouts, and unavailable simulation services are shown in the issues overlay with **Run Anyway** available.
 
-Each write is simulated against the current chain state. A later write may appear to revert when it depends on an earlier workflow step whose state change has not yet been applied. Later-write warnings therefore indicate that the result may depend on an earlier step in the workflow.
+Only write nodes reachable from a trigger are simulated. Disconnected write nodes are ignored.
+
+Each write is simulated independently against the current chain state. A later write may appear to revert when it depends on an earlier workflow step whose state change has not yet been applied. Later-write warnings therefore state that the result may depend on an earlier step in the workflow.
+
+The endpoint is protected by rate limiting, a maximum of 50 workflow nodes, and a 15-second simulation deadline.
 
 The preflight does not sign or broadcast transactions, create execution records, reserve spending limits, or perform billing operations.
