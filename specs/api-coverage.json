@@ -507,6 +507,13 @@
     },
     {
       "method": "POST",
+      "path": "/api/workflows/{id}/webhook",
+      "route_file": "app/api/workflows/[workflowId]/webhook/route.ts",
+      "source": "docs/api/workflows.md",
+      "line": 184
+    },
+    {
+      "method": "POST",
       "path": "/api/workflows/{workflowId}/claim",
       "route_file": "app/api/workflows/[workflowId]/claim/route.ts",
       "source": "docs/api/workflows.md",
