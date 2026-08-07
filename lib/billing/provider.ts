@@ -95,6 +95,13 @@ export type CreateInvoiceItemResult = {
   invoiceItemId: string;
 };
 
+export type CollectInvoiceResult = {
+  invoiceId: string;
+  paid: boolean;
+  // Why collection failed, for the log and the debt record. Undefined when paid.
+  failureReason?: string;
+};
+
 export type ProrationPreview = {
   amountDue: number;
   subtotal: number;
@@ -165,4 +172,23 @@ export interface BillingProvider {
   getInvoiceForItem(
     invoiceItemId: string
   ): Promise<{ invoiceId: string; status: string; paid: boolean } | undefined>;
+
+  /**
+   * Open an empty draft invoice for a customer, deliberately not tied to a
+   * subscription so the provider puts no plan or proration lines on it. Items
+   * are attached explicitly via createInvoiceItem, so the invoice bills only
+   * what the caller adds.
+   */
+  createDraftInvoice(customerId: string): Promise<{ invoiceId: string }>;
+
+  /**
+   * Finalize a draft and attempt payment. Resolves with paid: false and a
+   * reason rather than throwing when the charge is declined or no payment
+   * method is on file, since an uncollected invoice is a debt to record and
+   * not an error to retry.
+   */
+  finalizeAndCollectInvoice(invoiceId: string): Promise<CollectInvoiceResult>;
+
+  /** Discard a draft that ended up with nothing to bill. */
+  deleteDraftInvoice(invoiceId: string): Promise<void>;
 }

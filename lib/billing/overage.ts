@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   organizationSubscriptions,
@@ -217,4 +217,138 @@ export async function billOverageForOrg(
 
     return { billed: false, reason: `provider error: ${message}` };
   }
+}
+
+type FinalPeriodResult =
+  | { collected: true; totalChargeCents: number }
+  // invoiceId is set only when an invoice was raised but not paid, i.e. the
+  // amount is owed rather than there being nothing to bill.
+  | { collected: false; reason: string; invoiceId?: string };
+
+/**
+ * Bill and immediately collect a closing period's overage for an organization
+ * whose subscription is ending.
+ *
+ * The normal path attaches overage to the invoice that closes the period, but a
+ * subscription that ends produces no such invoice, so the excess would never be
+ * charged. This opens a standalone invoice instead, deliberately not tied to
+ * the subscription, so it carries the overage line and nothing else: no plan
+ * fee, no proration.
+ *
+ * A declined card leaves the invoice open rather than raising. The amount stays
+ * owed and the debt scan turns it into an execution-debt record once the grace
+ * period passes.
+ */
+export async function collectFinalPeriodOverage(
+  organizationId: string,
+  periodStart: Date,
+  periodEnd: Date,
+  customerId: string
+): Promise<FinalPeriodResult> {
+  const provider = getBillingProvider();
+
+  const { invoiceId } = await provider.createDraftInvoice(customerId);
+
+  const result = await billOverageForOrg(
+    organizationId,
+    periodStart,
+    periodEnd,
+    { invoiceId }
+  );
+
+  if (!result.billed) {
+    await provider.deleteDraftInvoice(invoiceId);
+    return { collected: false, reason: result.reason };
+  }
+
+  const collection = await provider.finalizeAndCollectInvoice(invoiceId);
+
+  if (!collection.paid) {
+    logSystemWarn(
+      ErrorCategory.BILLING,
+      `${LOG_PREFIX} Final-period invoice was not collected; amount stays owed`,
+      new Error(collection.failureReason ?? "collection failed"),
+      { org_id: organizationId }
+    );
+    return {
+      collected: false,
+      reason: collection.failureReason ?? "collection failed",
+      invoiceId: collection.invoiceId,
+    };
+  }
+
+  return { collected: true, totalChargeCents: result.totalChargeCents };
+}
+
+/**
+ * Settle any overage an organization left unpaid, called when it subscribes
+ * again.
+ *
+ * Cancelling does not clear what was already run up: the invoice stays open and
+ * the debt record stays active. Coming back is the point where a payment method
+ * exists again, so this is where the outstanding amount gets another attempt.
+ * Records already attributed to a paid invoice are skipped.
+ */
+export async function collectOutstandingOverage(
+  organizationId: string,
+  provider: BillingProvider
+): Promise<{ attempted: number; collected: number }> {
+  const rows = await db
+    .select({
+      id: overageBillingRecords.id,
+      providerInvoiceItemId: overageBillingRecords.providerInvoiceItemId,
+    })
+    .from(overageBillingRecords)
+    .where(
+      and(
+        eq(overageBillingRecords.organizationId, organizationId),
+        eq(overageBillingRecords.status, "billed"),
+        isNull(overageBillingRecords.providerInvoiceId)
+      )
+    );
+
+  let attempted = 0;
+  let collected = 0;
+
+  for (const row of rows) {
+    if (!row.providerInvoiceItemId) {
+      continue;
+    }
+
+    try {
+      const invoice = await provider.getInvoiceForItem(
+        row.providerInvoiceItemId
+      );
+      if (!invoice) {
+        continue;
+      }
+
+      if (invoice.paid) {
+        await db
+          .update(overageBillingRecords)
+          .set({ providerInvoiceId: invoice.invoiceId })
+          .where(eq(overageBillingRecords.id, row.id));
+        continue;
+      }
+
+      attempted += 1;
+      const result = await provider.finalizeAndCollectInvoice(
+        invoice.invoiceId
+      );
+      if (result.paid) {
+        collected += 1;
+      }
+    } catch (error) {
+      // One unsettleable record must not stop the rest, nor block the checkout
+      // that triggered this.
+      logSystemWarn(
+        ErrorCategory.BILLING,
+        `${LOG_PREFIX} Could not settle an outstanding overage record`,
+        error,
+        { org_id: organizationId }
+      );
+    }
+  }
+
+  return { attempted, collected };
 }

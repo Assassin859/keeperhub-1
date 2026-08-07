@@ -9,6 +9,7 @@ const mockOnConflictDoNothing = vi.fn();
 const mockReturning = vi.fn();
 const mockUpdateSet = vi.fn();
 const mockUpdateWhere = vi.fn();
+const mockSelectWhere = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -27,6 +28,11 @@ vi.mock("@/lib/db", () => ({
     update: vi.fn(() => ({
       set: mockUpdateSet,
     })),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: (...args: unknown[]) => mockSelectWhere(...args),
+      })),
+    })),
   },
 }));
 
@@ -34,7 +40,11 @@ vi.mock("@/lib/billing/providers", () => ({
   getBillingProvider: vi.fn(),
 }));
 
-import { billOverageForOrg } from "@/lib/billing/overage";
+import {
+  billOverageForOrg,
+  collectFinalPeriodOverage,
+  collectOutstandingOverage,
+} from "@/lib/billing/overage";
 import type { BillingProvider } from "@/lib/billing/provider";
 import { getBillingProvider } from "@/lib/billing/providers";
 import { db } from "@/lib/db";
@@ -65,6 +75,7 @@ beforeEach(() => {
     where: mockUpdateWhere,
   });
   mockUpdateWhere.mockResolvedValue(undefined);
+  mockSelectWhere.mockResolvedValue([]);
 });
 
 describe("billOverageForOrg", () => {
@@ -333,5 +344,184 @@ describe("billOverageForOrg", () => {
     expect(mockCreateInvoiceItem).toHaveBeenCalledWith(
       expect.not.objectContaining({ invoiceId: expect.anything() })
     );
+  });
+});
+
+describe("collectFinalPeriodOverage", () => {
+  function proSubWithOverage(): void {
+    mockFindFirstSub.mockResolvedValue({
+      plan: "pro",
+      tier: "25k",
+      status: "active",
+      providerCustomerId: "cus_123",
+    });
+    mockFindFirstOverage.mockResolvedValue(undefined);
+    mockExecutionCount(26_500);
+    mockReturning.mockResolvedValue([{ id: "rec_1" }]);
+  }
+
+  it("raises a standalone invoice carrying only the overage and collects it", async () => {
+    proSubWithOverage();
+    const createDraftInvoice = vi
+      .fn()
+      .mockResolvedValue({ invoiceId: "in_final" });
+    const finalizeAndCollectInvoice = vi
+      .fn()
+      .mockResolvedValue({ invoiceId: "in_final", paid: true });
+    const deleteDraftInvoice = vi.fn();
+    mockBillingProvider({
+      createDraftInvoice,
+      finalizeAndCollectInvoice,
+      deleteDraftInvoice,
+      createInvoiceItem: vi.fn().mockResolvedValue({ invoiceItemId: "ii_1" }),
+    });
+
+    const result = await collectFinalPeriodOverage(
+      "org_1",
+      periodStart,
+      periodEnd,
+      "cus_123"
+    );
+
+    expect(createDraftInvoice).toHaveBeenCalledWith("cus_123");
+    expect(finalizeAndCollectInvoice).toHaveBeenCalledWith("in_final");
+    expect(deleteDraftInvoice).not.toHaveBeenCalled();
+    expect(result).toEqual({ collected: true, totalChargeCents: 300 });
+  });
+
+  it("discards the draft when there is nothing over the limit", async () => {
+    mockFindFirstSub.mockResolvedValue({
+      plan: "pro",
+      tier: "25k",
+      status: "active",
+      providerCustomerId: "cus_123",
+    });
+    mockFindFirstOverage.mockResolvedValue(undefined);
+    mockExecutionCount(10_000);
+
+    const deleteDraftInvoice = vi.fn();
+    const finalizeAndCollectInvoice = vi.fn();
+    mockBillingProvider({
+      createDraftInvoice: vi.fn().mockResolvedValue({ invoiceId: "in_empty" }),
+      finalizeAndCollectInvoice,
+      deleteDraftInvoice,
+    });
+
+    const result = await collectFinalPeriodOverage(
+      "org_1",
+      periodStart,
+      periodEnd,
+      "cus_123"
+    );
+
+    expect(deleteDraftInvoice).toHaveBeenCalledWith("in_empty");
+    expect(finalizeAndCollectInvoice).not.toHaveBeenCalled();
+    expect(result).toEqual({ collected: false, reason: "no overage" });
+  });
+
+  it("reports the amount as owed when the card is declined", async () => {
+    proSubWithOverage();
+    mockBillingProvider({
+      createDraftInvoice: vi.fn().mockResolvedValue({ invoiceId: "in_final" }),
+      finalizeAndCollectInvoice: vi.fn().mockResolvedValue({
+        invoiceId: "in_final",
+        paid: false,
+        failureReason: "card_declined",
+      }),
+      deleteDraftInvoice: vi.fn(),
+      createInvoiceItem: vi.fn().mockResolvedValue({ invoiceItemId: "ii_1" }),
+    });
+
+    const result = await collectFinalPeriodOverage(
+      "org_1",
+      periodStart,
+      periodEnd,
+      "cus_123"
+    );
+
+    expect(result).toEqual({
+      collected: false,
+      reason: "card_declined",
+      invoiceId: "in_final",
+    });
+  });
+});
+
+describe("collectOutstandingOverage", () => {
+  it("retries an invoice the org left unpaid", async () => {
+    mockSelectWhere.mockResolvedValue([
+      { id: "rec_1", providerInvoiceItemId: "ii_1" },
+    ]);
+    const finalizeAndCollectInvoice = vi
+      .fn()
+      .mockResolvedValue({ invoiceId: "in_1", paid: true });
+    const provider = {
+      getInvoiceForItem: vi
+        .fn()
+        .mockResolvedValue({ invoiceId: "in_1", status: "open", paid: false }),
+      finalizeAndCollectInvoice,
+    } as unknown as BillingProvider;
+
+    const result = await collectOutstandingOverage("org_1", provider);
+
+    expect(finalizeAndCollectInvoice).toHaveBeenCalledWith("in_1");
+    expect(result).toEqual({ attempted: 1, collected: 1 });
+  });
+
+  it("stamps the invoice and does not recharge one already paid", async () => {
+    mockSelectWhere.mockResolvedValue([
+      { id: "rec_1", providerInvoiceItemId: "ii_1" },
+    ]);
+    const finalizeAndCollectInvoice = vi.fn();
+    const provider = {
+      getInvoiceForItem: vi
+        .fn()
+        .mockResolvedValue({ invoiceId: "in_1", status: "paid", paid: true }),
+      finalizeAndCollectInvoice,
+    } as unknown as BillingProvider;
+
+    const result = await collectOutstandingOverage("org_1", provider);
+
+    expect(finalizeAndCollectInvoice).not.toHaveBeenCalled();
+    expect(mockUpdateSet).toHaveBeenCalledWith({ providerInvoiceId: "in_1" });
+    expect(result).toEqual({ attempted: 0, collected: 0 });
+  });
+
+  it("keeps going when one record cannot be settled", async () => {
+    mockSelectWhere.mockResolvedValue([
+      { id: "rec_1", providerInvoiceItemId: "ii_bad" },
+      { id: "rec_2", providerInvoiceItemId: "ii_good" },
+    ]);
+    const provider = {
+      getInvoiceForItem: vi.fn((itemId: string) =>
+        itemId === "ii_bad"
+          ? Promise.reject(new Error("Stripe unavailable"))
+          : Promise.resolve({
+              invoiceId: "in_2",
+              status: "open",
+              paid: false,
+            })
+      ),
+      finalizeAndCollectInvoice: vi
+        .fn()
+        .mockResolvedValue({ invoiceId: "in_2", paid: true }),
+    } as unknown as BillingProvider;
+
+    const result = await collectOutstandingOverage("org_1", provider);
+
+    expect(result).toEqual({ attempted: 1, collected: 1 });
+  });
+
+  it("does nothing when the org owes nothing", async () => {
+    mockSelectWhere.mockResolvedValue([]);
+    const provider = {
+      getInvoiceForItem: vi.fn(),
+      finalizeAndCollectInvoice: vi.fn(),
+    } as unknown as BillingProvider;
+
+    const result = await collectOutstandingOverage("org_1", provider);
+
+    expect(provider.getInvoiceForItem).not.toHaveBeenCalled();
+    expect(result).toEqual({ attempted: 0, collected: 0 });
   });
 });
