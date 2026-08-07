@@ -383,14 +383,13 @@ function annotateReplay(body: unknown): unknown {
 // conflict says one thing only: this body is not the body the key was bound to.
 // There are two reasons for that and they want opposite responses.
 //
-//   different work        -> rotate. That is what a new key is for.
-//   the same intent, re-   -> the body drifted, not the intent. `hashRequest`
-//   serialized differently    normalizes key order but not values, so "0.1"
-//                             against "0.10", `network` for `chainId`, or a
-//                             reworded memo all land here. Rotating escapes the
-//                             in-flight guard on a request that may already have
-//                             broadcast, and pays twice. Canonicalize the body
-//                             and keep the key.
+//   genuinely different work -> rotate. That is what a new key is for.
+//
+//   the same intent, whose body was re-serialized -> the body drifted, not the
+//   intent. `hashRequest` normalizes key order but not values, so "0.1" against
+//   "0.10", `network` for `chainId`, or a reworded memo all land here. Rotating
+//   escapes the in-flight guard on a request that may already have broadcast,
+//   and pays twice. Canonicalize the body and keep the key.
 //
 // Do not read this field as a general "is this error retryable": a 429 on these
 // routes is retryable and carries no `retryable` field at all, because the field
