@@ -662,7 +662,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "17 * * * *" # hourly, offset by 17 minutes
+        schedule: "17 1,13 * * *" # twice daily, offset by 17 minutes
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
