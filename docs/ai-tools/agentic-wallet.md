@@ -62,7 +62,7 @@ The hook reads only the payment-challenge fields `amount`, `unit`, and the asset
 >
 > **The recipient is constrained by `/sign`'s workflow binding instead.** A signing request must carry a `workflowSlug`; the route derives the expected recipient from that workflow's organisation wallet and rejects a mismatch with `403 PAYTO_MISMATCH`. So an arbitrary destination is refused — by the workflow binding, not by an allowlist and not by a Turnkey policy.
 >
-> Two consequences worth knowing. The client-side tiers approve without ever considering the recipient, so a local `allowlisted_contracts` entry gives no assurance about *where* funds go. And the hook is stateless — it sees one payment at a time, so repeated payments each under `auto_approve_max_usd` all pass. The bound on that is server-side: the [daily spend cap](#server-side-hard-limits), plus a server-side `ask` at 50 USDC and `block` at 100 USDC that apply on every signing request independently of `safety.json`.
+> Two consequences worth knowing. The client-side tiers approve without ever considering the recipient, so a local `allowlisted_contracts` entry gives no assurance about *where* funds go. And the hook is stateless — it sees one payment at a time, so repeated payments each under `auto_approve_max_usd` all pass. The bound on that is server-side: the [daily spend cap](#server-side-hard-limits), plus a server-side `ask` at 50 USDC and `block` above 100 USDC that apply on every signing request independently of `safety.json`.
 >
 > If your agent should only pay a specific subset of workflows, or should hold to a budget you set, enforce that in your own `PreToolUse` hook or in a wrapper around `paymentSigner`. The tiers above will not do it for you.
 
@@ -185,9 +185,11 @@ This is a custodial model. You are trusting KeeperHub to honour the policy limit
 
 A set of Turnkey policies, applied per sub-organisation at provision time and enforced by Turnkey itself (not by application code). Full list above under [Server-side hard limits](#server-side-hard-limits). Briefly: signing only against the Base USDC / Tempo USDC.e contracts, no `approve()` above 100 USDC, no `transfer()` or `transferFrom()` above 100 USDC, and EIP-712 signing restricted to allowlisted chain ids and verifying contracts.
 
-If KeeperHub's operator key is compromised, the attacker is still bound by these policies. They cannot approve an arbitrary contract to spend your balance, and they cannot sign against a contract outside the USDC allowlist.
+If KeeperHub's operator key is compromised, the attacker is still bound by these policies. They cannot approve an arbitrary contract to spend your balance, and they cannot sign against a contract outside [the allowlisted set](#server-side-hard-limits) — Base USDC, Tempo USDC.e, and the ERC-8004 `ReputationRegistry`. The registry is bound to Ethereum mainnet and restricted to `giveFeedback()`, so it moves no funds, but it is a third allowlisted destination and not a USDC contract.
 
-They also cannot drain funds to an arbitrary address — but that constraint comes from `/sign`'s workflow binding, not from the Turnkey policy set. The policy conditions cover `eth.tx.to` and `eth.eip_712.domain.verifying_contract`; neither is the transfer recipient. The recipient is checked when the signing request is served, by deriving it from the workflow being paid and rejecting anything else with `403 PAYTO_MISMATCH`. See [the note under Safety hooks](#safety-hooks).
+**The recipient constraint is weaker than the ones above, and the difference matters here.** An attacker also cannot drain funds to an arbitrary address — but that comes from `/sign`'s workflow binding, not from the Turnkey policy set. The policy conditions cover `eth.tx.to` and `eth.eip_712.domain.verifying_contract`; neither is the transfer recipient. `verifyWorkflowBinding` is application code that reads the `workflows` and `organizationWallets` tables and rejects a mismatch with `403 PAYTO_MISMATCH`.
+
+So the Turnkey policies survive a compromise of the application because Turnkey enforces them. The recipient pin holds only while the application and those records are intact — it is the compromised application checking itself. See [the note under Safety hooks](#safety-hooks).
 
 ### What happens if I lose `wallet.json`?
 
