@@ -6,7 +6,7 @@ import { isErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
-import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { HttpStatus } from "@/lib/http-status";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import {
   type AuthorizedExecution,
@@ -14,9 +14,7 @@ import {
   redactExecutionStatusForPublicView,
   resolveExecutionViewAccess,
 } from "@/lib/workflow/execution-access";
-
-const PUBLIC_STATUS_IP_LIMIT = 60;
-const PUBLIC_STATUS_IP_WINDOW_MS = 60_000;
+import { checkExecutionStatusIpRateLimit } from "@/lib/workflow/execution-status-rate-limit";
 
 type NodeStatus = {
   nodeId: string;
@@ -65,28 +63,18 @@ export async function GET(
   try {
     const { executionId } = await context.params;
 
-    const authHeader = request.headers.get("Authorization");
-    const hasSessionCookie = request.headers
-      .get("cookie")
-      ?.includes("better-auth.session_token");
-    if (!authHeader && !hasSessionCookie) {
-      const ipRateLimit = checkIpRateLimit(
-        getClientIp(request),
-        PUBLIC_STATUS_IP_LIMIT,
-        PUBLIC_STATUS_IP_WINDOW_MS
+    const ipRateLimit = await checkExecutionStatusIpRateLimit(request);
+    if (!ipRateLimit.allowed) {
+      recordStatusPollMetrics({
+        executionId,
+        durationMs: timer(),
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+      });
+      const response = NextResponse.json(
+        { error: "Too many requests" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
       );
-      if (!ipRateLimit.allowed) {
-        recordStatusPollMetrics({
-          executionId,
-          durationMs: timer(),
-          statusCode: 429,
-        });
-        const response = NextResponse.json(
-          { error: "Too many requests" },
-          { status: 429 }
-        );
-        return applyRateLimitHeaders(response, ipRateLimit);
-      }
+      return applyRateLimitHeaders(response, ipRateLimit);
     }
 
     const viewAccess = await resolveExecutionViewAccess(request, executionId);

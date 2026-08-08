@@ -43,7 +43,19 @@ vi.mock("@/lib/metrics/instrumentation/api", () => ({
   recordStatusPollMetrics: vi.fn(),
 }));
 
+const { mockGetDualAuthContext } = vi.hoisted(() => ({
+  mockGetDualAuthContext: vi.fn(),
+}));
+
+vi.mock("@/lib/middleware/auth-helpers", () => ({
+  getDualAuthContext: (...args: unknown[]) => mockGetDualAuthContext(...args),
+}));
+
 import { GET } from "@/app/api/workflows/executions/[executionId]/status/route";
+import {
+  EXEC_STATUS_ANON_IP_LIMIT,
+  EXEC_STATUS_IP_WINDOW_MS,
+} from "@/lib/workflow/execution-status-rate-limit";
 
 const EXECUTION_ID = "exec_public_1";
 
@@ -74,9 +86,10 @@ function makeExecution(visibility: "public" | "private") {
   };
 }
 
-function createRequest(): Request {
+function createRequest(headers?: HeadersInit): Request {
   return new Request(
-    `http://localhost:3000/api/workflows/executions/${EXECUTION_ID}/status`
+    `http://localhost:3000/api/workflows/executions/${EXECUTION_ID}/status`,
+    { headers }
   );
 }
 
@@ -84,6 +97,10 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
   beforeEach(() => {
     vi.clearAllMocks();
     mockFindMany.mockResolvedValue([{ nodeId: "n1", status: "error" }]);
+    mockGetDualAuthContext.mockResolvedValue({
+      error: "Unauthorized",
+      status: 401,
+    });
   });
 
   it("returns 200 for publicReadOnly execution without auth", async () => {
@@ -194,5 +211,28 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
     expect(response.status).toBe(200);
     expect(body.errorContext?.error).toBe("step failed");
     expect(body.errorContext?.executionTrace).toEqual(["trace"]);
+  });
+
+  it("rate-limits garbage Authorization on the anonymous bucket", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "publicReadOnly",
+      execution: makeExecution("public"),
+    });
+
+    const headers = {
+      Authorization: "Bearer x",
+      "x-forwarded-for": "203.0.113.50",
+    };
+    let last: Response | undefined;
+    for (let i = 0; i < EXEC_STATUS_ANON_IP_LIMIT + 1; i += 1) {
+      last = await GET(createRequest(headers), {
+        params: Promise.resolve({ executionId: EXECUTION_ID }),
+      });
+    }
+
+    expect(last?.status).toBe(429);
+    expect(last?.headers.get("Retry-After")).toBeTruthy();
+    // Window constant kept in sync with the helper used by the route.
+    expect(EXEC_STATUS_IP_WINDOW_MS).toBe(60_000);
   });
 });

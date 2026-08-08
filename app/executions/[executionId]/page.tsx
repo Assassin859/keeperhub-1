@@ -5,6 +5,7 @@ import { ExecutionShareView } from "@/components/executions/execution-share-view
 import { auth } from "@/lib/auth";
 import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { resolveExecutionViewAccess } from "@/lib/workflow/execution-access";
+import { checkExecutionStatusIpRateLimit } from "@/lib/workflow/execution-status-rate-limit";
 
 type ExecutionPageProps = {
   params: Promise<{ executionId: string }>;
@@ -18,6 +19,18 @@ export default async function ExecutionPage({
   const request = new Request(`http://localhost/executions/${executionId}`, {
     headers: headerList,
   });
+
+  const ipRateLimit = await checkExecutionStatusIpRateLimit(request);
+  if (!ipRateLimit.allowed) {
+    return (
+      <main className="flex min-h-[40vh] flex-col items-center justify-center gap-2 p-8 text-center">
+        <h1 className="font-semibold text-lg">Too many requests</h1>
+        <p className="text-muted-foreground text-sm">
+          Please wait a moment and try again.
+        </p>
+      </main>
+    );
+  }
 
   const access = await resolveExecutionViewAccess(request, executionId);
 

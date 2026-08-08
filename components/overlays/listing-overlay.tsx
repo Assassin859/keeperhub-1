@@ -402,7 +402,7 @@ export function ListingOverlay({
         ? { nodeId: localOutputMapping.nodeId, field: localOutputMapping.field }
         : null;
 
-      await api.workflow.update(workflowId, {
+      const updated = await api.workflow.update(workflowId, {
         isListed: effectiveIsListed,
         listedSlug: localSlug || null,
         inputSchema: schema,
@@ -414,12 +414,13 @@ export function ListingOverlay({
       closeAll();
       setTimeout(() => {
         onSave({
-          isListed: effectiveIsListed,
-          listedSlug: localSlug || null,
-          inputSchema: schema,
-          outputMapping: mapping,
-          priceUsdcPerCall: localPrice || null,
-          shareExecutionStatus: localShareExecutionStatus,
+          isListed: updated.isListed ?? effectiveIsListed,
+          listedSlug: updated.listedSlug ?? (localSlug || null),
+          inputSchema: updated.inputSchema ?? schema,
+          outputMapping: updated.outputMapping ?? mapping,
+          priceUsdcPerCall: updated.priceUsdcPerCall ?? (localPrice || null),
+          // Server clears this on unlist; never echo stale local true.
+          shareExecutionStatus: updated.shareExecutionStatus ?? false,
         });
       }, 250);
 
