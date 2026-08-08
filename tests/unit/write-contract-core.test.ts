@@ -183,7 +183,10 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
   ),
 }));
 
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
+import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { RpcRelayTransportError } from "@/lib/rpc/providers/transport-error";
 import { parsePriorityFeeGwei } from "@/lib/web3/gas-defaults";
 // Import mocks for assertion
 import { initializeWalletSigner } from "@/lib/web3/wallet-helpers";
@@ -384,5 +387,58 @@ describe("writeContractCore priorityFeeGwei override", () => {
       gasOverrides: { priorityFeeOverride?: bigint };
     };
     expect(optionsArg.gasOverrides.priorityFeeOverride).toBeUndefined();
+  });
+});
+
+describe("writeContractCore RPC resolution failure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedTxContext = null;
+  });
+
+  // This branch previously omitted errorClass, which made applyFailOnError
+  // treat an RPC misconfiguration as a softenable execution failure instead
+  // of the SYSTEM-classified config problem it is.
+  it("classifies a getRpcProvider failure as SYSTEM so it is exempt from failOnError softening", async () => {
+    vi.mocked(getRpcProvider).mockRejectedValueOnce(
+      new Error("no RPC providers configured for chain 1")
+    );
+
+    const result = await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "ethereum",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errorClass).toBe(ExecutionErrorType.SYSTEM);
+    }
+  });
+
+  it("forwards the relay's fault domain when the private-mempool endpoint never answered", async () => {
+    vi.mocked(getRpcProvider).mockResolvedValueOnce({
+      resolveActiveRpcUrl: vi
+        .fn()
+        .mockRejectedValue(
+          new RpcRelayTransportError("RPC failed on primary endpoint: timeout")
+        ),
+    } as unknown as Awaited<ReturnType<typeof getRpcProvider>>);
+
+    const result = await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "ethereum",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      usePrivateMempool: true,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errorClass).toBe(ExecutionErrorType.EXTERNAL);
+    }
   });
 });

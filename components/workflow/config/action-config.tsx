@@ -7,6 +7,7 @@ import { FeatureUpgradeDialog } from "@/components/billing/feature-upgrade-dialo
 import { ConfigureConnectionOverlay } from "@/components/overlays/add-connection-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
+import { FailOnErrorSwitchField } from "@/components/workflow/config/fail-on-error-switch-field";
 import { Input } from "@/components/ui/input";
 import { IntegrationIcon } from "@/components/ui/integration-icon";
 import { IntegrationSelector } from "@/components/ui/integration-selector";
@@ -19,7 +20,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import {
   Tooltip,
@@ -30,6 +30,7 @@ import {
 import { SqlTemplateEditor } from "@/components/ui/sql-template-editor";
 import { TemplateCodeEditor } from "@/components/ui/template-code-editor";
 import { actionRequiresCredentials } from "@/lib/integration-helpers";
+import { parseSchemaFields } from "@/lib/schema-fields";
 import { ConditionQueryBuilder } from "@/components/workflow/condition-query-builder";
 import type { ConditionGroup } from "@/lib/workflow/nodes/condition/builder-types";
 import {
@@ -69,7 +70,7 @@ import {
   getIntegration,
 } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
-import { SchemaBuilder, type SchemaField } from "./schema-builder";
+import { SchemaBuilder } from "./schema-builder";
 import { Web3ConnectionSelect } from "./web3-connection-select";
 
 type ConfigValue = string | boolean | Record<string, unknown> | undefined;
@@ -114,11 +115,7 @@ function DatabaseQueryFields({
           onChange={(schema) =>
             onUpdateConfig("dbSchema", JSON.stringify(schema))
           }
-          schema={
-            config?.dbSchema
-              ? (JSON.parse(config.dbSchema as string) as SchemaField[])
-              : []
-          }
+          schema={parseSchemaFields(config?.dbSchema)}
         />
       </div>
       <div className="space-y-2">
@@ -255,25 +252,14 @@ function HttpRequestFields({
           How long to wait for a response. Default 5 seconds, max 30.
         </p>
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="space-y-0.5">
-          <Label htmlFor="failOnError">Fail workflow on error</Label>
-          <p className="text-muted-foreground text-xs">
-            When off, a non-2xx response or timeout passes a soft error to the
-            next node instead of failing the run.
-          </p>
-        </div>
-        <Switch
-          // Mirror `resolveFailOnError` so an imported workflow that persisted
-          // the string "false" doesn't display as ON while running as OFF.
-          checked={
-            config?.failOnError !== false && config?.failOnError !== "false"
-          }
-          disabled={disabled}
-          id="failOnError"
-          onCheckedChange={(checked) => onUpdateConfig("failOnError", checked)}
-        />
-      </div>
+      <FailOnErrorSwitchField
+        description="When off, a non-2xx response or timeout passes a soft error to the next node instead of failing the run."
+        disabled={disabled}
+        id="failOnError"
+        label="Fail workflow on error"
+        onChange={(checked) => onUpdateConfig("failOnError", checked)}
+        value={config?.failOnError}
+      />
     </>
   );
 }

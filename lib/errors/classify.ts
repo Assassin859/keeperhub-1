@@ -19,8 +19,12 @@ export { ExecutionErrorType } from "@/lib/errors/execution-error-type";
  *                    configured the workflow to call (HTTP request / webhook
  *                    transport failures such as timeouts, connection resets, DNS
  *                    failures) where neither the customer's config nor KeeperHub
- *                    is at fault. RPC endpoints are KeeperHub-managed, so their
- *                    failures stay "system", not "external".
+ *                    is at fault. RPC endpoints are KeeperHub-managed, so an
+ *                    `RPC failed ...` message stays "system" here; the one
+ *                    exception is the private-mempool relay a node opted into,
+ *                    which we point at but do not operate. The RPC layer tags
+ *                    that at the failure site and the step forwards it as an
+ *                    errorClass hint.
  *   - code:          a `PREFIX-NNNN` system error code for system failures, or
  *                    null for user and external failures (which surface their
  *                    raw message).
@@ -139,6 +143,33 @@ const RULES: readonly Rule[] = [
     pattern:
       /^On-chain verification failed.*\((reverted on-chain|Safe inner call failed)/i,
     errorCategory: ErrorCategory.TRANSACTION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  // The step reported a revert directly rather than through the finalize
+  // gate's `On-chain verification failed` wrapper. Same outcome, same bucket.
+  {
+    pattern: /^Transaction reverted:/i,
+    errorCategory: ErrorCategory.TRANSACTION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  // The author's wallet does not hold enough of the asset (or native gas
+  // token) for the transfer the workflow asked for. Observed shapes are
+  // `Insufficient USDC balance. Have: N, Need: N` and the Solana lamports
+  // variant. Anchored so an RPC-exhaustion message that quotes a provider
+  // body containing this phrase still falls through to the system RPC rules.
+  {
+    pattern: /^Insufficient \S+ balance\b/i,
+    errorCategory: ErrorCategory.TRANSACTION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
+  // Solana: the destination wallet has no associated token account for the
+  // mint the author configured, so the transfer cannot be routed.
+  {
+    pattern: /^Wallet has no token account for mint/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
     errorType: ExecutionErrorType.USER,
     code: null,
   },
@@ -280,6 +311,15 @@ const RULES: readonly Rule[] = [
     errorType: ExecutionErrorType.USER,
     code: null,
   },
+  // Typed-data signing against a chain the platform does not support -- the
+  // author picked it. Anchored on the field name for the same reason as the
+  // rules above: the phrase can appear inside a quoted provider response.
+  {
+    pattern: /^typedData\.domain\.chainId\b.*is not a supported chain/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
+  },
   // User-config: webhook hostname does not resolve -- the configured URL points
   // at a host that does not exist. Must come before the generic webhook rule.
   {
@@ -395,11 +435,14 @@ const RULES: readonly Rule[] = [
     errorType: ExecutionErrorType.SYSTEM,
     code: "E-0003",
   },
+  // Writes from one wallet are serialized, so exhausting the lock budget means
+  // the workflow is asking for more throughput than a single wallet has. That
+  // is the author's configuration, not an engine fault: user error, no code.
   {
-    pattern: /^Failed to acquire nonce lock/i,
-    errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: ExecutionErrorType.SYSTEM,
-    code: "E-0003",
+    pattern: /^Wallet is saturated: could not acquire the nonce lock/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
   },
 
   // System: deploy bugs / missing modules / missing secrets
