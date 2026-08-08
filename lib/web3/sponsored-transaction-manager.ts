@@ -251,12 +251,16 @@ async function decodeSponsoredRevertReason(
 }
 
 // The send is already on the network by the time this runs, so the question is
-// only how long to keep looking for its receipt. A sponsored write on Base has
-// been observed going from submit to readable receipt in under 3 seconds, so
-// five minutes is ~150 blocks of margin and covers a badly congested mempool.
-// It stays well inside the idempotency processing lock (10 minutes, heartbeated
-// every 2), so a request can never outlive its own reservation.
-const RECEIPT_WAIT_BUDGET_MS = 5 * 60_000;
+// only how long to keep looking for its receipt. A healthy sponsored write has
+// been observed going from submit to readable receipt in seconds, so eight
+// minutes is a very wide margin and covers a badly congested mempool.
+//
+// This plus the Turnkey hash poll exceeds the idempotency processing lock's
+// base TTL, which is safe only because the routes wrap the whole call in
+// withIdempotencyHeartbeat: the heartbeat re-extends the lock every 2 minutes,
+// so the request cannot outlive its own reservation. Do not raise this without
+// checking that heartbeat is still in place.
+const RECEIPT_WAIT_BUDGET_MS = 8 * 60_000;
 // How long to give one endpoint before rotating to the next. Short relative to
 // the budget so a single wedged endpoint cannot consume it.
 const RECEIPT_WAIT_PER_ENDPOINT_MS = 30_000;
