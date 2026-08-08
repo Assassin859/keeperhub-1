@@ -960,7 +960,14 @@ export async function logWorkflowCompleteDb(
   // must not emit a second sample - counters are append-only, so the first
   // terminal sample stands. resolvedStatus is post-reconciliation, so
   // spurious errors already flipped to success are counted as success here.
-  if (updated.length > 0 && !isErrorStatus(updated[0].previousStatus)) {
+  // An unconfirmed run has not finished, so it emits no sample here. The
+  // reconciler emits one when it settles, which keeps the counter meaning
+  // "finished" and keeps a success rate computed from it correct.
+  if (
+    updated.length > 0 &&
+    !isErrorStatus(updated[0].previousStatus) &&
+    executionStatus !== "unconfirmed"
+  ) {
     const workflowId = updated[0].workflowId;
     try {
       const orgSlug = await resolveOrgSlugForCounter(workflowId);

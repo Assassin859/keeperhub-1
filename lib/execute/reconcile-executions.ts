@@ -10,6 +10,9 @@ import {
   workflowExecutions,
 } from "@/lib/db/schema";
 import { ErrorCategory, logInfo, logSystemWarn } from "@/lib/logging";
+import { recordWorkflowExecutionFinished } from "@/lib/metrics/collectors/prometheus";
+import { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
+import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
 import {
   describeVerificationFailure,
   hasUnreadableReceipt,
@@ -168,9 +171,30 @@ async function reconcileOne(
  * verifies, and to error only when at least one is conclusively bad. While any
  * hash is merely unreadable the run stays open.
  */
+/**
+ * Emit the finished sample that logWorkflowCompleteDb deliberately skipped for
+ * an unconfirmed run, so the counter still means "finished" and a success rate
+ * computed from it stays correct.
+ */
+async function recordSettled(
+  workflowId: string,
+  status: "success" | "error"
+): Promise<void> {
+  try {
+    recordWorkflowExecutionFinished({
+      status,
+      orgSlug: await resolveOrgSlugForCounter(workflowId),
+      errorType: NA_ERROR_TYPE,
+    });
+  } catch {
+    // Counter emission must never break reconciliation.
+  }
+}
+
 async function reconcileWorkflow(
   execution: {
     id: string;
+    workflowId: string;
     transactionHashes: TransactionHashEntry[] | null;
     startedAt: Date;
   },
@@ -190,6 +214,7 @@ async function reconcileWorkflow(
         error: "On-chain verification failed: no verifiable transaction hashes",
       })
       .where(eq(workflowExecutions.id, execution.id));
+    await recordSettled(execution.workflowId, "error");
     return "failed";
   }
 
@@ -202,6 +227,7 @@ async function reconcileWorkflow(
       .update(workflowExecutions)
       .set({ status: "success", error: null, completedAt: new Date() })
       .where(eq(workflowExecutions.id, execution.id));
+    await recordSettled(execution.workflowId, "success");
     return "completed";
   }
 
@@ -223,6 +249,7 @@ async function reconcileWorkflow(
       completedAt: new Date(),
     })
     .where(eq(workflowExecutions.id, execution.id));
+  await recordSettled(execution.workflowId, "error");
   return "failed";
 }
 
@@ -264,6 +291,7 @@ export async function reconcileUnconfirmedExecutions(
   const pendingWorkflows = await db
     .select({
       id: workflowExecutions.id,
+      workflowId: workflowExecutions.workflowId,
       transactionHashes: workflowExecutions.transactionHashes,
       startedAt: workflowExecutions.startedAt,
     })
