@@ -23,6 +23,7 @@ import {
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
 import { findAbiFunction } from "@/lib/abi/utils";
 import { getErrorMessage, resolveFailOnError } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
@@ -32,6 +33,10 @@ import {
   executeContractCallAsSafe,
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
+import {
+  preflightGasBalance,
+  resolveFundingHolder,
+} from "@/lib/web3/gas-preflight";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -138,14 +143,15 @@ export type WriteContractResult =
  * the workflow continues past a revert/RPC failure instead of aborting. This is the
  * write-contract counterpart to HTTP Request's failOnError.
  *
- * Only failures with no `errorClass` are eligible: those are the ones raised
- * by the actual attempt to send the transaction (signer init, broadcast,
- * on-chain revert). Failures classified USER (bad ABI/args/address) or SYSTEM
- * (org context, wallet, RPC/Web3 Connection resolution) are configuration
- * problems that would recur on every execution, so, mirroring HTTP
- * Request's SSRF/malformed-URL carve-out, they always hard-fail regardless
- * of this flag; softening them would let a broken node config run forever
- * without the author noticing.
+ * Failures raised by the actual attempt to send the transaction (signer init,
+ * broadcast, on-chain revert) are eligible, and so are EXTERNAL ones: a relay
+ * that timed out is exactly the transient dependency failure this toggle
+ * exists to skip past. Failures classified USER (bad ABI/args/address) or
+ * SYSTEM (org context, wallet, RPC/Web3 Connection resolution) are
+ * configuration problems that would recur on every execution, so, mirroring
+ * HTTP Request's SSRF/malformed-URL carve-out, they always hard-fail
+ * regardless of this flag; softening them would let a broken node config run
+ * forever without the author noticing.
  *
  * Must be applied to the writeContractCore result only, AFTER
  * withStepValueCap resolves it, never inside writeContractCore: the
@@ -174,7 +180,10 @@ export function applyFailOnError(
   result: WriteContractResult,
   failOnError: unknown
 ): WriteContractResult {
-  if (result.success || result.errorClass || resolveFailOnError(failOnError)) {
+  if (result.success || resolveFailOnError(failOnError)) {
+    return result;
+  }
+  if (result.errorClass && result.errorClass !== ExecutionErrorType.EXTERNAL) {
     return result;
   }
   return {
@@ -346,7 +355,10 @@ export async function writeContractCore(
     return {
       success: false,
       error: getErrorMessage(error),
-      errorClass: ExecutionErrorType.SYSTEM,
+      // A private-mempool relay that never answered is not our platform
+      // failing; everything else here (unknown chain, disabled chain, our own
+      // endpoints) is.
+      errorClass: rpcRelayErrorClass(error) ?? ExecutionErrorType.SYSTEM,
     };
   }
 
@@ -522,6 +534,20 @@ export async function writeContractCore(
   // Fall back to direct signing with nonce management and RPC failover
   const adapter = getChainAdapter(chainId);
 
+  // Answer affordability before queueing on the wallet's nonce lock. A holder
+  // that cannot pay would otherwise take the lock, spend a full failover round
+  // discovering that at broadcast, and stall every other execution for the
+  // same wallet behind it.
+  const gasCheck = await preflightGasBalance({
+    rpcManager,
+    chainId,
+    holderAddress: resolveFundingHolder(signerMode, walletAddress),
+    valueWei: parsedEthValue,
+  });
+  if (!gasCheck.affordable) {
+    return { success: false, error: gasCheck.message };
+  }
+
   return withNonceSession(txContext, walletAddress, async (session) => {
     // Initialize wallet signer
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
@@ -642,9 +668,11 @@ export async function writeContractCore(
       );
       const rejection = classifyRevert(error, contractInterface);
       const revertedHash = revertedTransactionHash(error);
+      const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(error, contractInterface),
+        ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
         ...(revertedHash
           ? { transactionHash: revertedHash, chainId }
