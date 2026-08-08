@@ -112,6 +112,23 @@ principal (`Authorization: Bearer …`) with their own scope model, but they are
 browser-minted and short-lived — see [OAuth vs API keys](#oauth-vs-api-keys).
 Full details: [API Keys](/api/api-keys).
 
+Confirm the key works before building on it:
+
+```bash
+curl -sf -H "Authorization: Bearer kh_your_api_key" \
+  https://app.keeperhub.com/api/keys
+```
+
+`GET /api/keys` is the auth probe: a `200` means the credential is valid and
+scoped to an organization, a `401` means it is not. Point health checks and
+first-run scripts at this endpoint. `GET /api/chains` is public and answers
+either way, so it reports reachability rather than a working credential.
+
+No browser available? Sign-up is captcha-gated and key creation needs a signed
+confirmation, so a script or agent starts from wallet sign-in instead:
+[Headless Onboarding](/api/headless-onboarding) is the same first thirty minutes
+without a UI.
+
 ## 3. Supported chains
 
 Status reflects support maturity: **stable** chains are production-ready;
@@ -119,7 +136,10 @@ Status reflects support maturity: **stable** chains are production-ready;
 broadcasts can hang) and should not be used for production writes without
 opting in explicitly.
 
-Start on a testnet. Fund the wallet with native gas first, then test USDC.
+Start on a testnet. Fund the wallet with native gas first, then test USDC. The
+wallet to fund is the organization wallet reported by `GET /api/user`, not the
+address a wallet user signed in with - see
+[Headless Onboarding](/api/headless-onboarding#3-the-wallet-to-fund-is-not-the-wallet-you-signed-in-with).
 
 ### Testnets (recommended for hacking)
 
@@ -185,7 +205,10 @@ faucets above, then use this sequence:
 3. Repeat the same call with `simulate` omitted and a new
    `idempotency_key`.
 4. Pass the returned `executionId` to `get_direct_execution_status` and poll
-   until the status is `completed` or `failed`.
+   until the status is `completed` or `failed`. Wait the number of seconds in
+   the `X-Poll-Interval-Hint` response header between polls rather than
+   picking your own interval; a value of `0` means the execution is terminal
+   and you can stop.
 5. Save `transactionLink` from the terminal response as the onchain proof.
 
 Example simulation on Base Sepolia:
