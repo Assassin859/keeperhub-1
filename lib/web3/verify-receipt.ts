@@ -61,19 +61,28 @@ export function hasUnreadableReceipt(
   );
 }
 
-// Tight budget: the write path has already broadcast and waited for this
-// receipt once before returning -- this call is a fast independent re-fetch,
-// not a fresh confirmation wait. Bounded so a stuck RPC can't hang a
-// synchronous HTTP response / workflow finalize indefinitely.
-const VERIFY_MAX_RETRIES = 2;
+// The write path has already broadcast and waited for this receipt once before
+// returning, so this is a fast independent re-fetch, not a fresh confirmation
+// wait. Retries here only apply to attempts that throw: a null answer counts as
+// a successful call, so they buy resilience against transport failures rather
+// than against a lagging node.
+const VERIFY_MAX_RETRIES = 5;
 const VERIFY_TIMEOUT_MS = 8000;
 const VERIFY_CONCURRENCY_LIMIT = 20;
 
 // A single miss is not evidence of absence. RPC hosts sit behind load
 // balancers, so the node that answers this read can be a block or two behind
-// the one the write path used -- we have observed a receipt being found and
-// then reported missing 8ms later on the same chain. Re-ask within a bounded
-// wall-clock budget before concluding the receipt is not there.
+// the one the write path used. A receipt has been observed being found and then
+// reported missing 8ms later on the same chain, so re-ask before concluding it
+// is not there.
+//
+// This bounds how many rounds start, not elapsed time: the deadline is only
+// checked between rounds, so one already in flight runs to completion. Rounds
+// against a responsive endpoint cost milliseconds, but a round whose endpoints
+// time out instead of answering can overrun the budget by
+// VERIFY_MAX_RETRIES x VERIFY_TIMEOUT_MS per provider, primary then fallback.
+// That case only arises for a transaction no endpoint can see, which the
+// unconfirmed state and the reconciler then own.
 const LOOKUP_BUDGET_MS = 12_000;
 const LOOKUP_RETRY_DELAY_MS = 1500;
 
