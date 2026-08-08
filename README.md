@@ -33,7 +33,7 @@ Restart Claude Code after setup. [Plugin source code](https://github.com/KeeperH
 - **Visual Workflow Builder**: Drag-and-drop interface for building blockchain automations
 - **Smart Contract Interactions**: Read and write to smart contracts without writing code
 - **Multi-Chain Support**: Ethereum Mainnet, Sepolia, Base, Arbitrum, and more
-- **Secure Wallet Management**: Para-integrated MPC wallets with no private key exposure
+- **Secure Wallet Management**: Turnkey secure-enclave wallets with no private key exposure
 - **Notifications**: Email, Discord, Slack, and webhook integrations
 - **Scheduling**: Cron-based, event-driven, webhook, or manual triggers
 - **AI-Assisted Building**: Describe automations in plain language
@@ -87,7 +87,7 @@ BETTER_AUTH_URL=http://localhost:3000
 LOCALSTACK_AUTH_TOKEN=your-localstack-token
 ```
 
-Feature-specific keys (AI, Para wallets, encryption, OAuth providers, etc.) are listed in `.env.example` and only need values when you exercise that feature.
+Feature-specific keys (AI, wallets, encryption, OAuth providers, etc.) are listed in `.env.example` and only need values when you exercise that feature.
 
 ### Installation
 
@@ -98,6 +98,12 @@ pnpm dev
 ```
 
 Visit [http://localhost:3000](http://localhost:3000) to get started. The first request triggers a Next.js dev compile that can take 30-60 seconds; subsequent requests are fast.
+
+### Local development troubleshooting
+
+- **`pnpm dev:login` fails after `pnpm db:push`:** Your schema is ahead of the Drizzle migration journal. `dev:bootstrap` (invoked by `dev:login`) backfills the journal before migrating when the `users` table exists and the journal is empty. If a migration then fails because an object it creates already exists, while the journal still lags the schema, bootstrap marks every journal entry applied and retries once. `db:push` applies your whole working-tree schema, so that is the right set - but if you pulled migrations authored since your last push, run `pnpm db:push` again so their SQL is actually applied. Manual fallback: `pnpm tsx scripts/backfill-drizzle-migrations.ts`, then retry.
+- **`db:push` vs `db:migrate`:** Use `pnpm db:push` only for fast local schema iteration. Staging and production apply file-based migrations via `pnpm db:migrate` on deploy.
+- **Local Postgres required:** `dev:login` and `dev:bootstrap` refuse to run unless `DATABASE_URL` points at a local host (for example `postgresql://postgres:postgres@localhost:5433/keeperhub` when using Docker Compose).
 
 ## Running Modes
 
@@ -238,7 +244,7 @@ All trigger services (schedule dispatcher, block dispatcher, event tracker) send
 - **Workflow Engine**: Workflow DevKit
 - **Authentication**: Better Auth
 - **AI**: Vercel AI SDK (OpenAI/Anthropic)
-- **Wallets**: Para MPC integration
+- **Wallets**: Turnkey secure-enclave integration
 
 ### Plugin System
 

@@ -10,7 +10,11 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { chains, explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import {
+  describeNativeShortfall,
+  getNativeSymbol,
+} from "@/lib/execute/native-balance";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
@@ -20,6 +24,8 @@ import {
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
 import { PublicKey } from "@solana/web3.js";
@@ -30,6 +36,10 @@ import {
   executeNativeTransferAsSafe,
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
+import {
+  preflightGasBalance,
+  resolveFundingHolder,
+} from "@/lib/web3/gas-preflight";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -42,6 +52,7 @@ import {
   computeSolanaLamportFee,
   SOLANA_BASE_FEE_LAMPORTS,
 } from "@/lib/web3/solana-fees";
+import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -87,7 +98,22 @@ export type TransferFundsResult =
       effectiveGasPrice: string;
       sponsored?: boolean;
     }
-  | { success: false; error: string; rejection?: RevertKind };
+  | {
+      success: false;
+      error: string;
+      rejection?: RevertKind;
+      // Authoritative fault domain when the failure site knows it: the
+      // private-mempool relay never answered, and we do not run that node.
+      errorClass?: ExecutionErrorType;
+      // Set only when a transaction reached the chain and failed
+      // there, so the finalizer can persist a receipt for the failure. Absent
+      // on pre-broadcast failures, where no transaction exists.
+      transactionHash?: string;
+      chainId?: number;
+      // True when the terminal failure came from the gas-sponsored path, so
+      // the finalizer can report the route accurately on a failed execution.
+      sponsored?: boolean;
+    };
 
 /**
  * Core transfer funds logic
@@ -202,7 +228,12 @@ export async function transferFundsCore(
       error,
       { plugin_name: "web3", action_name: "transfer-funds" }
     );
-    return { success: false, error: getErrorMessage(error) };
+    const errorClass = rpcRelayErrorClass(error);
+    return {
+      success: false,
+      error: getErrorMessage(error),
+      ...(errorClass ? { errorClass } : {}),
+    };
   }
 
   // Get wallet address for nonce management
@@ -314,13 +345,35 @@ export async function transferFundsCore(
         chainId,
       });
       if (!decision.fallback) {
-        return { success: false, error: decision.error };
+        return {
+          success: false,
+          error: decision.error,
+          sponsored: true,
+          ...(decision.transactionHash
+            ? { transactionHash: decision.transactionHash, chainId }
+            : {}),
+        };
       }
     }
   }
 
   // Fall back to direct signing with nonce management and RPC failover
   const adapter = getChainAdapter(chainId);
+
+  // Answer affordability before queueing on the wallet's nonce lock. A holder
+  // that cannot pay would otherwise take the lock, spend a full failover round
+  // discovering that at broadcast, and stall every other execution for the
+  // same wallet behind it. The in-session check below stays as the backstop
+  // for when this one fails open on an RPC error.
+  const gasCheck = await preflightGasBalance({
+    rpcManager,
+    chainId,
+    holderAddress: resolveFundingHolder(signerMode, walletAddress),
+    valueWei: amountInWei,
+  });
+  if (!gasCheck.affordable) {
+    return { success: false, error: gasCheck.message };
+  }
 
   return withNonceSession(txContext, walletAddress, async (session) => {
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
@@ -349,21 +402,19 @@ export async function transferFundsCore(
       "preflight"
     );
     if (nativeBalance < amountInWei) {
-      const balanceFormatted = ethers.formatEther(nativeBalance);
-      const requestedFormatted = ethers.formatEther(amountInWei);
-      // Look up the chain's native symbol so the error reads "Insufficient
-      // ETH balance" / "Insufficient BNB balance" instead of the chain-
-      // agnostic "native". Looked up lazily because this branch only fires
-      // on the slow / unhappy path.
-      const chainRow = await db
-        .select({ symbol: chains.symbol })
-        .from(chains)
-        .where(eq(chains.chainId, chainId))
-        .limit(1);
-      const nativeSymbol = chainRow[0]?.symbol ?? "native";
+      // Wording (and the chain's native symbol, so the error reads
+      // "Insufficient ETH balance" rather than the chain-agnostic "native")
+      // comes from lib/execute/native-balance, shared with the dry-run
+      // simulator so the two paths cannot drift. Looked up lazily because
+      // this branch only fires on the slow / unhappy path.
+      const shortfall = describeNativeShortfall({
+        symbol: await getNativeSymbol(chainId),
+        balance: nativeBalance,
+        required: amountInWei,
+      });
       return {
         success: false,
-        error: `Insufficient ${nativeSymbol} balance. Have: ${balanceFormatted}, Need: ${requestedFormatted}`,
+        error: shortfall.message,
       };
     }
 
@@ -445,10 +496,15 @@ export async function transferFundsCore(
         }
       );
       const rejection = classifyRevert(error);
+      const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(error, undefined, "Transaction failed"),
+        ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
+        ...(revertedTransactionHash(error)
+          ? { transactionHash: revertedTransactionHash(error), chainId }
+          : {}),
       };
     }
   });
