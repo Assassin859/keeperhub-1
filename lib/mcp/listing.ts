@@ -11,6 +11,7 @@ import {
   isInputSchemaPresent,
 } from "@/lib/mcp/listing-validators";
 import {
+  canShareExecutionStatus,
   clearShareExecutionStatus,
   shareExecutionStatusUpdate,
 } from "@/lib/workflow/share-execution-status";
@@ -25,7 +26,8 @@ export type ListingErrorCode =
   | "MISSING_WRITE_ACTION"
   | "INVALID_TEMPLATE_LITERALS"
   | "INPUT_SCHEMA_REQUIRED"
-  | "INVALID_CHAIN";
+  | "INVALID_CHAIN"
+  | "SHARE_REQUIRES_PUBLIC_VISIBILITY";
 
 export interface ListingErrorDetails {
   // Bare-@ literals found in node configs at publish time, surfaced so the
@@ -214,6 +216,16 @@ export async function listWorkflow(
     updateSet.inputSchema = metadata.inputSchema;
   }
   if (metadata.shareExecutionStatus !== undefined) {
+    // Listing a workflow does not make it public - visibility is a separate
+    // axis this API never writes - so a curator enabling sharing on a private
+    // workflow would persist a flag the read gate refuses, and hand out links
+    // that 404 with a 200 to say it worked.
+    if (
+      metadata.shareExecutionStatus &&
+      !canShareExecutionStatus(current.visibility)
+    ) {
+      return { ok: false, error: "SHARE_REQUIRES_PUBLIC_VISIBILITY" };
+    }
     Object.assign(
       updateSet,
       shareExecutionStatusUpdate(metadata.shareExecutionStatus)

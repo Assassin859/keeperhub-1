@@ -11,6 +11,7 @@ import {
   hasResolvedPrincipal,
 } from "@/lib/middleware/auth-helpers";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { canShareExecutionStatus } from "@/lib/workflow/share-execution-status";
 
 type AuthenticatedContext = Exclude<DualAuthContext, { error: string }>;
 
@@ -71,8 +72,7 @@ function isPubliclyShareableWorkflow(
   if (!workflow.shareExecutionStatus) {
     return false;
   }
-  const visibility = workflow.visibility;
-  return visibility === "public" || visibility === "unlisted";
+  return canShareExecutionStatus(workflow.visibility);
 }
 
 /**

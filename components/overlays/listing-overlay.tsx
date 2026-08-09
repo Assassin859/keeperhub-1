@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError } from "@/lib/api-client";
+import { canShareExecutionStatus } from "@/lib/workflow/share-execution-status";
 import type {
   WorkflowNode,
   WorkflowVisibility,
@@ -338,8 +339,13 @@ export function ListingOverlay({
   } | null>(
     existingOutputMapping ? parseOutputMapping(existingOutputMapping) : null
   );
+  // Shown as off, and saved as off, whenever visibility cannot support it -
+  // both because a toggle reading "on" over links that 404 is the lie this
+  // gate removes, and because the server now refuses a `true` on a private
+  // workflow, so echoing a stale one back would 422 an unrelated edit. Saving
+  // clears the stale flag on rows that predate the gate.
   const [localShareExecutionStatus, setLocalShareExecutionStatus] = useState(
-    existingShareExecutionStatus
+    existingShareExecutionStatus && canShareExecutionStatus(existingVisibility)
   );
   const [isSaving, setIsSaving] = useState(false);
 
@@ -347,12 +353,11 @@ export function ListingOverlay({
   const priceError = validatePrice(localPrice);
   const isSlugImmutable = existingSlug !== null && existingListedAt !== null;
   // The server gate for shared execution links is visibility, not listing
-  // (lib/workflow/execution-access.ts::isPubliclyShareableWorkflow), and
+  // (lib/workflow/share-execution-status.ts::canShareExecutionStatus), and
   // visibility is set elsewhere (the go-live flow), never by this overlay.
   // Offering the toggle on a private workflow persisted the flag and returned
   // a success toast for links that then 404 for every recipient.
-  const isPubliclyVisible =
-    existingVisibility === "public" || existingVisibility === "unlisted";
+  const isPubliclyVisible = canShareExecutionStatus(existingVisibility);
 
   const changed = hasChanges(
     {

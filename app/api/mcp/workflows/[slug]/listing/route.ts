@@ -93,6 +93,16 @@ function mapListingError(
       { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
+  if (error === "SHARE_REQUIRES_PUBLIC_VISIBILITY") {
+    return NextResponse.json(
+      {
+        error: "SHARE_REQUIRES_PUBLIC_VISIBILITY",
+        message:
+          "Execution status can only be shared on a public or unlisted workflow. Listing a workflow does not change its visibility - set the workflow to public or unlisted first.",
+      },
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
+    );
+  }
   if (error === "INVALID_CHAIN") {
     return NextResponse.json(
       {

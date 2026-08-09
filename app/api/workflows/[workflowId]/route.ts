@@ -25,7 +25,10 @@ import {
 } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
-import { clearShareExecutionStatus } from "@/lib/workflow/share-execution-status";
+import {
+  canShareExecutionStatus,
+  clearShareExecutionStatus,
+} from "@/lib/workflow/share-execution-status";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
@@ -616,6 +619,28 @@ export async function PATCH(
       body.visibility === "private" && existingWorkflow.visibility !== "private";
     if (isTransitioningToUnlisted || isTransitioningToPrivate) {
       Object.assign(updateData, clearShareExecutionStatus());
+    }
+
+    // Enforce the sharing invariant against the visibility this request will
+    // leave behind, not the one it started with, so `{visibility: "private",
+    // shareExecutionStatus: true}` in a single PATCH is refused rather than
+    // half-applied. Rejecting beats silently dropping the field: a caller that
+    // is told nothing assumes sharing is on and hands out links that 404,
+    // which is the failure this invariant exists to prevent.
+    const effectiveVisibility = (body.visibility ??
+      existingWorkflow.visibility) as string | null;
+    if (
+      body.shareExecutionStatus === true &&
+      !canShareExecutionStatus(effectiveVisibility)
+    ) {
+      return NextResponse.json(
+        {
+          error: "SHARE_REQUIRES_PUBLIC_VISIBILITY",
+          message:
+            "Execution status can only be shared on a public or unlisted workflow. Change the workflow's visibility before enabling sharing.",
+        },
+        { status: 422 }
+      );
     }
     const willBeListed =
       !isTransitioningToUnlisted &&
