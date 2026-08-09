@@ -180,6 +180,7 @@ What each stage licenses you to say:
 | `202 Accepted` | the request was queued |
 | `status: "simulated"`, `wouldRevert: false` | the call did not revert against current state |
 | `transactionHash` present | a transaction was claimed |
+| `status: "unconfirmed"` | it was broadcast but its receipt is not yet readable — not a failure |
 | `status: "completed"` | every claimed hash verified onchain |
 | `receiptStatus: "success"` | that transaction did not revert |
 | expected log decoded | the intended effect happened |
@@ -187,8 +188,13 @@ What each stage licenses you to say:
 ## 9. When the result is ambiguous
 
 A timeout, a dropped connection, or `receiptStatus: "timeout"` means you do not know the
-outcome. It does not mean the transfer failed, and a `failed` execution carrying `timeout`
-may describe a transaction that lands later.
+outcome. It does not mean the transfer failed.
+
+KeeperHub models this state directly. When a broadcast transaction's receipt cannot be
+read conclusively, the execution settles as `unconfirmed`, which is **non-terminal**: the
+status endpoint keeps telling you to poll rather than handing you an outcome, and the
+record carries the hash. Do not re-send an `unconfirmed` execution — the transaction may
+still land, and re-sending can move the funds twice.
 
 Do not retry blindly. Instead:
 
