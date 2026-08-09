@@ -959,11 +959,66 @@ export function registerTools(
 
   server.tool(
     "get_execution",
-    "Get combined status and step-by-step logs for a workflow execution. Replaces the v1.11 get_execution_status + get_execution_logs pair. Returns { status, logs } in a single response. `status` and each log's `transactionHashes[].verified`/`receiptStatus` are independently reconciled against on-chain receipts before the execution is allowed to finalize as success -- this, not execute_workflow's trigger acknowledgement, is the authoritative signal for whether a workflow (and any money movement within it) actually completed. By default returns full node input/output data (backward compatible with v1.11 get_execution_logs no-param callers). Pass `includeData: false` to omit input/output/outputRaw blobs, `nodeIds: string[]` to restrict full data to specific nodes (status and error always returned for every node), or `truncateData: number` (bytes) to cap individual input/output/outputRaw payloads. The `error` field is never truncated.",
+    "Get combined status and step-by-step logs for a workflow execution. Replaces the v1.11 get_execution_status + get_execution_logs pair. Returns { status, logs } in a single response. `status` and each log's `transactionHashes[].verified`/`receiptStatus` are independently reconciled against on-chain receipts before the execution is allowed to finalize as success -- this, not execute_workflow's trigger acknowledgement, is the authoritative signal for whether a workflow (and any money movement within it) actually completed. By default returns full node input/output data (backward compatible with v1.11 get_execution_logs no-param callers). Pass `includeData: false` to omit input/output/outputRaw blobs, `nodeIds: string[]` to restrict full data to specific nodes (status and error always returned for every node), or `truncateData: number` (bytes) to cap individual input/output/outputRaw payloads. The `error` field is never truncated. One exception to the shape: for an execution owned by another organization that you can see only through its workflow's public share setting, `logs` is null and `status` is redacted (node identifiers omitted) -- includeData, nodeIds and truncateData have no effect there.",
     GET_EXECUTION_SCHEMA,
     { title: "Get Execution", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_execution", scope, async (args) =>
       withToolLogging("get_execution", undefined, async () => {
+        const accessRequest = new Request(`${internalApiBaseUrl}/mcp`, {
+          headers: { Authorization: authHeader },
+        });
+        const { resolveExecutionViewAccess } = await import(
+          "@/lib/workflow/execution-access"
+        );
+        const viewAccess = await resolveExecutionViewAccess(
+          accessRequest,
+          args.executionId
+        );
+        if (viewAccess.mode === "invalidAuth") {
+          throw new Error(viewAccess.error);
+        }
+        if (viewAccess.mode === "notFound") {
+          throw new Error(
+            `API call failed: 404 Not Found - ${JSON.stringify({ error: "Execution not found" })}`
+          );
+        }
+        if (viewAccess.mode === "accessDenied") {
+          throw new Error(
+            `API call failed: 403 Forbidden - ${JSON.stringify({ error: "Access denied" })}`
+          );
+        }
+
+        if (viewAccess.mode === "publicReadOnly") {
+          const statusPath = `/api/workflows/executions/${args.executionId}/status`;
+          const statusData = await callApi(
+            internalApiBaseUrl,
+            authHeader,
+            statusPath,
+            "GET"
+          );
+          // Same top-level shape as the owned path. Dropping the `logs` key
+          // here instead would make the response shape depend on ownership,
+          // so a client written against its own execution would silently read
+          // `undefined` (and report zero steps) the first time it was pointed
+          // at a shared one. `null` says "withheld", not "empty".
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    status: statusData,
+                    logs: null,
+                    note: "This execution belongs to another organization and is visible only through its workflow's public share setting. Step logs are withheld and the status is redacted (node identifiers omitted); includeData, nodeIds and truncateData do not apply.",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
         const data = await fetchExecutionData(
           internalApiBaseUrl,
           authHeader,

@@ -4,6 +4,14 @@ import { DEPRECATED_PREFIX_EXECUTION } from "@/lib/mcp/mcp-tool-catalog";
 
 vi.mock("server-only", () => ({}));
 
+const { mockResolveExecutionViewAccess } = vi.hoisted(() => ({
+  mockResolveExecutionViewAccess: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/execution-access", () => ({
+  resolveExecutionViewAccess: mockResolveExecutionViewAccess,
+}));
+
 // Top-level regex constants per Biome useTopLevelRegex rule.
 const STATUS_PATH_RE = /\/api\/workflows\/executions\/exec-1\/status$/;
 const LOGS_PATH_RE = /\/api\/workflows\/executions\/exec-1\/logs(\?|$)/;
@@ -108,9 +116,14 @@ describe("Phase 50 — get_execution merger registration (METATOOL-01, METATOOL-
 describe("Phase 50 — get_execution handler combines /status + /logs in one envelope", () => {
   beforeEach(() => {
     vi.resetModules();
+    mockResolveExecutionViewAccess.mockReset();
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "full",
+      execution: { id: "exec-1", workflow: { id: "wf_1" } },
+    });
   });
 
-  it("Test 5: no-params invocation calls /status + /logs in parallel and returns { status, logs }", async () => {
+  it("Test 5: no-params invocation calls /status then /logs sequentially and returns { status, logs }", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/status")) {
@@ -145,6 +158,9 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => STATUS_PATH_RE.test(u))).toBe(true);
     expect(urls.some((u) => LOGS_PATH_RE.test(u))).toBe(true);
+    expect(urls.findIndex((u) => STATUS_PATH_RE.test(u))).toBeLessThan(
+      urls.findIndex((u) => LOGS_PATH_RE.test(u))
+    );
 
     const parsed = JSON.parse(result.content[0].text) as Record<
       string,
@@ -157,6 +173,11 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
   });
 
   it("Test 6: Phase 46 params forwarded to /logs query string; /status URL has no query", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "full",
+      execution: { id: "exec-2", workflow: { id: "wf_2" } },
+    });
+
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/status")) {
@@ -199,6 +220,50 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
     expect(logsUrl).toContain("nodeIds=nodeA");
     expect(logsUrl).toContain("nodeIds=nodeB");
     expect(logsUrl).toContain("truncateData=500");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the { status, logs } envelope for a publicly shared execution", async () => {
+    // The response shape must not depend on ownership: a client that reads
+    // result.logs against its own execution would otherwise silently see
+    // undefined (and report zero steps) the first time it is pointed at a
+    // shared one. logs is null -- withheld, not empty.
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "publicReadOnly",
+      execution: { id: "exec-3", workflow: { id: "wf_3" } },
+    });
+
+    const fetchMock = vi.fn(
+      () =>
+        new Response(JSON.stringify({ status: "running" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { server, tools } = makeMockServer();
+    const { registerTools } = await import("@/lib/mcp/tools");
+    registerTools(server, "http://localhost:3000", "Bearer test-token");
+    const getExec = tools.find((t) => t.name === "get_execution");
+    if (!getExec) {
+      throw new Error("get_execution not registered");
+    }
+
+    const result = (await getExec.handler({ executionId: "exec-3" })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    const parsed = JSON.parse(result.content[0].text) as Record<
+      string,
+      unknown
+    >;
+
+    expect(parsed).toHaveProperty("status");
+    expect(parsed).toHaveProperty("logs");
+    expect(parsed.logs).toBeNull();
+    // Only the status endpoint is reachable on this path.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     vi.unstubAllGlobals();
   });
