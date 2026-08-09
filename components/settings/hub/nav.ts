@@ -20,8 +20,12 @@ export type SettingsNavItem = {
   icon: LucideIcon;
   /** Shown on the settings index cards and as the section subtitle. */
   description: string;
-  /** Where this used to live, so the index can say "moved from here". */
-  movedFrom?: string;
+  /**
+   * What this section actually contains. Rendered on the index card and
+   * matched by the index search, so a feature can be found by name without
+   * knowing which section owns it.
+   */
+  contents: readonly string[];
   ownerOnly?: boolean;
   adminOnly?: boolean;
 };
@@ -40,7 +44,11 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Profile",
         icon: User,
         description: "Your name, email and account status.",
-        movedFrom: "Avatar menu > Settings",
+        contents: [
+          "Name",
+        "Sign-in email",
+        "Deactivate account",
+        ],
       },
       {
         href: "/settings/security",
@@ -48,7 +56,14 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Shield,
         description:
           "Two-factor, password, wallet step-up and active sessions.",
-        movedFrom: "Avatar menu > Settings > Security",
+        contents: [
+          "Two-factor authentication",
+        "Password",
+        "Active sessions",
+        "Revoke a device",
+        "Organization MFA enforcement",
+        "Wallet step-up",
+        ],
       },
     ],
   },
@@ -60,21 +75,38 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Organizations",
         icon: Building2,
         description: "Every org you belong to, with roles and switching.",
-        movedFrom: "Org switcher > Manage Organizations",
+        contents: [
+          "Switch organization",
+        "Rename",
+        "Create organization",
+        "Invitations for you",
+        "Your role",
+        ],
       },
       {
         href: "/settings/members",
         label: "Members",
         icon: Users,
         description: "Seats, roles and pending invitations.",
-        movedFrom: "Org switcher > Manage Organizations > Organizations",
+        contents: [
+          "Invite by email",
+        "Invite by wallet address",
+        "Change roles",
+        "Remove members",
+        "Pending invitations",
+        "Seats",
+        ],
       },
       {
         href: "/settings/notifications",
         label: "Notifications",
         icon: Bell,
         description: "Execution digest emails and who receives them.",
-        movedFrom: "Org switcher > Manage Organizations > Notifications",
+        contents: [
+          "Execution digest email",
+        "Cadence",
+        "Subscribers",
+        ],
         adminOnly: true,
       },
     ],
@@ -87,14 +119,28 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Wallets",
         icon: Wallet,
         description: "Signing wallet, Safes, balances and key export.",
-        movedFrom: "Header wallet chip",
+        contents: [
+          "Turnkey signer",
+        "Safe smart accounts",
+        "Balances",
+        "Withdraw",
+        "Tracked tokens",
+        "Private key export",
+        "Recovery email",
+        "Deploy a Safe",
+        "Signing policies",
+        ],
       },
       {
         href: "/settings/limits",
         label: "Spending limits",
         icon: Gauge,
         description: "Daily value ceilings the executor enforces before signing.",
-        movedFrom: "Org switcher > Manage Organizations > Limits",
+        contents: [
+          "Daily EVM cap",
+        "Daily Solana cap",
+        "Usage today",
+        ],
         ownerOnly: true,
       },
       {
@@ -102,7 +148,14 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Billing and plan",
         icon: CreditCard,
         description: "Subscription, invoices and payment method.",
-        movedFrom: "Avatar menu > Billing",
+        contents: [
+          "Current plan",
+        "Executions used",
+        "Gas sponsorship credits",
+        "Payment method",
+        "Invoices",
+        "Upgrade",
+        ],
         ownerOnly: true,
       },
     ],
@@ -115,21 +168,43 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Connections",
         icon: Plug,
         description: "Credentials for Discord, SendGrid, databases and more.",
-        movedFrom: "Avatar menu > Connections",
+        contents: [
+          "Discord",
+        "SendGrid",
+        "Databases",
+        "Webhooks",
+        "Credentials",
+        "Connection activity",
+        ],
       },
       {
         href: "/settings/api-keys",
         label: "API keys",
         icon: Key,
         description: "Programmatic access keys and their scopes.",
-        movedFrom: "Avatar menu > API Keys",
+        contents: [
+          "Organisation keys",
+        "Personal keys",
+        "Scopes",
+        "Revoke a key",
+        "MCP endpoint",
+        "Key activity",
+        ],
       },
       {
         href: "/settings/agents",
         label: "Agents",
         icon: Bot,
         description: "Connect Claude, Codex or any MCP client to this org.",
-        movedFrom: "Avatar menu > Connect an agent",
+        contents: [
+          "MCP endpoint",
+        "Claude Code",
+        "Codex",
+        "Gemini CLI",
+        "Goose",
+        "Setup commands",
+        "Starter prompts",
+        ],
       },
     ],
   },
@@ -141,7 +216,12 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Projects and tags",
         icon: FolderTree,
         description: "How workflows are grouped in the sidebar.",
-        movedFrom: "Avatar menu > Projects and Tags",
+        contents: [
+          "Projects",
+        "Tags",
+        "Colours",
+        "Sidebar grouping",
+        ],
       },
     ],
   },
@@ -160,6 +240,21 @@ export function findSettingsItem(pathname: string): SettingsNavItem | null {
     }
   }
   return match;
+}
+
+/** Case-insensitive match across the label, blurb and contents. */
+export function matchesSettingsQuery(
+  item: SettingsNavItem,
+  query: string
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return true;
+  }
+  const haystack = [item.label, item.description, ...item.contents]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(needle);
 }
 
 export function isSettingsItemVisible(
