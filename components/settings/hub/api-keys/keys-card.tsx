@@ -1,0 +1,128 @@
+"use client";
+
+import { History, Plus } from "lucide-react";
+import { toast } from "sonner";
+import { Pager } from "@/components/activity/pager";
+import {
+  type ApiKey,
+  CreateApiKeyOverlay,
+  useApiKeys,
+} from "@/components/overlays/api-keys-overlay";
+import { KeyActivityOverlay } from "@/components/overlays/key-activity-overlay";
+import { useOverlay } from "@/components/overlays/overlay-provider";
+import { Button } from "@/components/ui/button";
+import { EmptyState, SettingsCard } from "../section";
+import { RowsSkeleton } from "../skeletons";
+import { ApiKeysTable } from "./api-keys-table";
+import { NewKeyBanner } from "./new-key-banner";
+
+export function KeysCard({
+  title,
+  description,
+  listEndpoint,
+  keyType,
+  showCreator,
+  canManage,
+  readOnlyReason,
+  activity,
+}: {
+  title: string;
+  description: string;
+  listEndpoint: string;
+  keyType: "webhook" | "organisation";
+  showCreator: boolean;
+  canManage: boolean;
+  readOnlyReason?: string;
+  activity?: { resourceType: string; title: string } | null;
+}): React.ReactElement {
+  const { push } = useOverlay();
+  const deleteEndpoint = (id: string): string => `${listEndpoint}/${id}`;
+  const keys = useApiKeys(listEndpoint, deleteEndpoint);
+
+  return (
+    <SettingsCard
+      action={
+        <div className="flex items-center gap-2">
+          {activity && (
+            <Button
+              onClick={() =>
+                push(KeyActivityOverlay, {
+                  keys: keys.apiKeys,
+                  resourceType: activity.resourceType,
+                  title: activity.title,
+                })
+              }
+              size="sm"
+              variant="ghost"
+            >
+              <History className="size-3.5" />
+              Activity
+            </Button>
+          )}
+          <Button
+            disabled={!canManage}
+            onClick={() =>
+              push(CreateApiKeyOverlay, {
+                endpoint: listEndpoint,
+                keyType,
+                onCreated: (key: ApiKey) => keys.handleKeyCreated(key),
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
+            <Plus className="size-3.5" />
+            New key
+          </Button>
+        </div>
+      }
+      bodyClassName="p-2"
+      description={description}
+      title={title}
+    >
+      {keys.newlyCreatedKey && (
+        <NewKeyBanner
+          onCopy={() => {
+            navigator.clipboard.writeText(keys.newlyCreatedKey ?? "");
+            toast.success("Copied to clipboard");
+          }}
+          onDismiss={keys.dismissNewKey}
+          secret={keys.newlyCreatedKey}
+        />
+      )}
+
+      {keys.loading && <RowsSkeleton rows={2} />}
+
+      {!keys.loading && keys.apiKeys.length === 0 && (
+        <EmptyState>
+          {canManage
+            ? "No keys yet. Create one to call the API from a script or agent."
+            : (readOnlyReason ?? "No keys yet.")}
+        </EmptyState>
+      )}
+
+      {!keys.loading && keys.apiKeys.length > 0 && (
+        <>
+          <ApiKeysTable
+            apiKeys={keys.apiKeys}
+            canDelete={canManage}
+            deleteEndpoint={deleteEndpoint}
+            onDelete={keys.handleDelete}
+            showCreator={showCreator}
+          />
+          {keys.meta && (
+            <div className="px-2 pt-2">
+              <Pager meta={keys.meta} onPage={keys.setPage} unit="keys" />
+            </div>
+          )}
+        </>
+      )}
+
+      {!canManage && readOnlyReason && keys.apiKeys.length > 0 && (
+        <p className="px-2 pt-2 text-muted-foreground text-xs">
+          {readOnlyReason}
+        </p>
+      )}
+    </SettingsCard>
+  );
+}
