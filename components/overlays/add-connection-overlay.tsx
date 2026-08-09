@@ -64,11 +64,12 @@ type AddConnectionOverlayProps = {
 /**
  * Overlay for selecting a connection type to add
  */
-export function AddConnectionOverlay({
-  overlayId,
-  onSuccess,
-}: AddConnectionOverlayProps) {
-  const { push } = useOverlay();
+/** Service picker. Used inline in settings and by the legacy overlay. */
+export function ConnectionTypePicker({
+  onSelect,
+}: {
+  onSelect: (type: IntegrationType) => void;
+}): React.ReactElement {
   const [searchQuery, setSearchQuery] = useState("");
   const isMobile = useIsMobile();
 
@@ -102,15 +103,10 @@ export function AddConnectionOverlay({
   };
 
   const handleSelectType = (type: IntegrationType): void => {
-    push(ConfigureConnectionOverlay, { type, onSuccess });
+    onSelect(type);
   };
 
   return (
-    <Overlay overlayId={overlayId} title="Add Connection">
-      <p className="-mt-2 mb-4 text-muted-foreground text-sm">
-        Select a service to connect
-      </p>
-
       <div className="space-y-3">
         <div className="relative">
           <Search className="-translate-y-1/2 absolute top-1/2 left-3 size-4 text-muted-foreground" />
@@ -175,6 +171,22 @@ export function AddConnectionOverlay({
           )}
         </div>
       </div>
+  );
+}
+
+export function AddConnectionOverlay({
+  overlayId,
+  onSuccess,
+}: AddConnectionOverlayProps) {
+  const { push } = useOverlay();
+  return (
+    <Overlay overlayId={overlayId} title="Add Connection">
+      <p className="-mt-2 mb-4 text-muted-foreground text-sm">
+        Select a service to connect
+      </p>
+      <ConnectionTypePicker
+        onSelect={(type) => push(ConfigureConnectionOverlay, { type, onSuccess })}
+      />
     </Overlay>
   );
 }
@@ -240,11 +252,22 @@ function SecretField({
 /**
  * Overlay for configuring a new connection
  */
-export function ConfigureConnectionOverlay({
-  overlayId,
+/**
+ * Credential form for one service. Rendered inline in settings; the overlay
+ * below is the legacy wrapper around the same form.
+ */
+export function ConfigureConnectionForm({
   type,
   onSuccess,
-}: ConfigureConnectionOverlayProps) {
+  onCancel,
+  inline = false,
+}: {
+  type: IntegrationType;
+  onSuccess?: (integrationId: string) => void;
+  onCancel?: () => void;
+  /** Renders its own Test/Create buttons instead of relying on overlay actions. */
+  inline?: boolean;
+}): React.ReactElement {
   const { push, closeAll } = useOverlay();
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -453,28 +476,7 @@ export function ConfigureConnectionOverlay({
   const hideOverlayActions = type === "web3";
 
   return (
-    <Overlay
-      actions={
-        hideOverlayActions
-          ? undefined
-          : [
-              {
-                label: "Test",
-                variant: "outline",
-                onClick: handleTest,
-                loading: testing,
-                disabled: saving,
-              },
-              { label: "Create", onClick: handleSave, loading: saving },
-            ]
-      }
-      overlayId={overlayId}
-      title={`Add ${getLabel(type)}`}
-    >
-      <p className="-mt-2 mb-4 text-muted-foreground text-sm">
-        Enter your credentials
-      </p>
-
+    <>
       <div className="space-y-4">
         {renderConfigFields()}
 
@@ -496,6 +498,37 @@ export function ConfigureConnectionOverlay({
           </AuthDialog>
         </OverlayFooter>
       )}
+
+      {inline && !hideOverlayActions && (
+        <div className="flex justify-end gap-2 pt-4">
+          {onCancel && (
+            <Button onClick={onCancel} variant="ghost">
+              Cancel
+            </Button>
+          )}
+          <Button disabled={saving} onClick={handleTest} variant="outline">
+            {testing ? "Testing..." : "Test"}
+          </Button>
+          <Button disabled={saving} onClick={handleSave}>
+            {saving ? "Creating..." : "Create"}
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+export function ConfigureConnectionOverlay({
+  overlayId,
+  type,
+  onSuccess,
+}: ConfigureConnectionOverlayProps) {
+  return (
+    <Overlay overlayId={overlayId} title={`Add ${getLabel(type)}`}>
+      <p className="-mt-2 mb-4 text-muted-foreground text-sm">
+        Enter your credentials
+      </p>
+      <ConfigureConnectionForm inline onSuccess={onSuccess} type={type} />
     </Overlay>
   );
 }
