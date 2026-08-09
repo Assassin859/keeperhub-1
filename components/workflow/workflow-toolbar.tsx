@@ -1225,6 +1225,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
       existingOutputMapping: outputMapping,
       existingPrice: priceUsdc,
       existingShareExecutionStatus: shareExecutionStatus,
+      existingVisibility: workflowVisibility,
       onSave: (data) => {
         setIsListed(data.isListed);
         setListedSlug(data.listedSlug);

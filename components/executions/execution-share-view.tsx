@@ -135,6 +135,7 @@ export function ExecutionShareView({
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    let lastStatus = initialStatus;
     const startedAt = Date.now();
 
     const scheduleNext = (status: string): void => {
@@ -163,13 +164,22 @@ export function ExecutionShareView({
         if (cancelled) {
           return;
         }
+        lastStatus = data.status;
         setStatusData(data as StatusResponse);
         setLoadError(false);
         scheduleNext(data.status);
       } catch {
-        if (!cancelled) {
-          setLoadError(true);
+        if (cancelled) {
+          return;
         }
+        setLoadError(true);
+        // Keep polling. api-client throws on any non-2xx, so without this a
+        // single 429, a 502 during a rolling deploy, or one dropped request
+        // on mobile would end polling for good and leave a still-running run
+        // frozen behind a stale-view warning with no way back except a full
+        // page reload. The attempt/elapsed caps in scheduleNext still bound
+        // the retries, and the backoff widens as attempts accumulate.
+        scheduleNext(lastStatus);
       }
     };
 
@@ -183,7 +193,7 @@ export function ExecutionShareView({
         clearTimeout(timeoutId);
       }
     };
-  }, [executionId]);
+  }, [executionId, initialStatus]);
 
   const percentage = statusData.progress?.percentage ?? 0;
   const txHashes = statusData.transactionHashes ?? [];

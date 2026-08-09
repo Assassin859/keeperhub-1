@@ -160,9 +160,9 @@ export function _resetChainLookupCacheForTesting(): void {
  * per-alias lookup.
  */
 async function loadEnabledChains(): Promise<ChainLookupRow[]> {
-  const now = Date.now();
-  if (chainLookupCache && chainLookupCache.expiresAt > now) {
-    return chainLookupCache.rows;
+  const cached = chainLookupCache;
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.rows;
   }
   const rows = await db
     .select({
@@ -179,7 +179,18 @@ async function loadEnabledChains(): Promise<ChainLookupRow[]> {
     isTestnet: row.isTestnet ?? false,
     isPaymentRail: row.isPaymentRail,
   }));
-  chainLookupCache = { rows: result, expiresAt: now + CHAIN_LOOKUP_TTL_MS };
+  // Never cache an empty result. seed-chains.ts disables stale rows as part of
+  // a seed run, and a DB restored ahead of its seed can legitimately return
+  // nothing for a moment; caching that would keep every tag "unrecognised" for
+  // a full TTL after the table is already correct. The expiry is stamped after
+  // the query (not before it) so a slow query extends the usable window rather
+  // than silently shortening it.
+  if (result.length > 0) {
+    chainLookupCache = {
+      rows: result,
+      expiresAt: Date.now() + CHAIN_LOOKUP_TTL_MS,
+    };
+  }
   return result;
 }
 
@@ -193,16 +204,62 @@ function resolvePaymentRailChain(chainId: number): BindingChain | null {
   if (chainId === BASE_CHAIN_ID) {
     return "base";
   }
-  if (chainId === TEMPO_MAINNET_CHAIN_ID || chainId === TEMPO_TESTNET_CHAIN_ID) {
+  if (
+    chainId === TEMPO_MAINNET_CHAIN_ID ||
+    chainId === TEMPO_TESTNET_CHAIN_ID
+  ) {
     return "tempo";
   }
   return null;
 }
 
 /**
+ * Payment-rail tags resolved from code, ahead of the chains table.
+ *
+ * The two rails are the chains the wallet actually settles on, and which one a
+ * tag means is already a code constant (resolvePaymentRailChain, and the
+ * BASE_/TEMPO_ ids in ./constants). Deriving the *tags* for them from the DB as
+ * well made payment acceptance depend on seed state it has no business
+ * depending on, and produced two live failures:
+ *
+ * - Shared alias, wrong row. seed-chains.ts stamps aliases ["tempo"] on both
+ *   Tempo rows, and the testnet row's seeded chainId (42431) is not one
+ *   resolvePaymentRailChain knows (4218). The unordered lookup below can match
+ *   that row first, so `chain: "tempo"` collapsed to "unrecognised" and 403'd
+ *   every Tempo payment. Until the 42431-vs-4218 seed mismatch is reconciled,
+ *   the alias must not decide which rail a tag means.
+ * - No rows at all. An unseeded PR environment, a migrate-only local DB, or a
+ *   chains row disabled by config left even `chain: "base"` unrecognised -
+ *   a defensive 403 on every priced listing, where the pre-table code path
+ *   simply worked.
+ *
+ * The table still owns the data-chain vocabulary (aliases, enabled, testnet);
+ * it just no longer gets a vote on the two rails.
+ */
+export const PAYMENT_RAIL_TAGS = new Map<string, BindingChain>([
+  ["base", "base"],
+  [String(BASE_CHAIN_ID), "base"],
+  ["tempo", "tempo"],
+  [String(TEMPO_MAINNET_CHAIN_ID), "tempo"],
+  [String(TEMPO_TESTNET_CHAIN_ID), "tempo"],
+]);
+
+/**
+ * Strict canonical decimal only: Number("08453") silently parses to 8453,
+ * which would let a leading-zero typo widen acceptance to a real chain id
+ * (KEEP-432 negative-set regression caught by
+ * tests/unit/agentic-wallet-workflow-binding.test.ts). No leading zeros,
+ * no hex, no floats.
+ */
+const CANONICAL_DECIMAL_RE = /^(0|[1-9]\d*)$/;
+
+/**
  * Classify a workflow.chain tag into one of three buckets:
  * - "payment": a recognised payment-chain slug or chain id; the listing is
- *   pinned to that payment chain and the caller must match.
+ *   pinned to that payment chain and the caller must match. Resolved from
+ *   PAYMENT_RAIL_TAGS first (see the note there on why the rails do not go
+ *   through the table), then from a table row flagged isPaymentRail whose id
+ *   the wallet can actually route.
  * - "data": a recognised, enabled, non-testnet data chain; the listing's
  *   chain identifies where the contracts live, not which chain payment
  *   must arrive on. Either Base or Tempo payment is accepted. Testnets are
@@ -230,12 +287,11 @@ export async function classifyChainTag(
   if (MULTI_CHAIN_TAGS.has(v)) {
     return { kind: "multi" };
   }
-  // Strict canonical decimal only: Number("08453") silently parses to 8453,
-  // which would let a leading-zero typo widen acceptance to a real chain id
-  // (KEEP-432 negative-set regression caught by
-  // tests/unit/agentic-wallet-workflow-binding.test.ts). No leading zeros,
-  // no hex, no floats.
-  const numericId = /^(0|[1-9]\d*)$/.test(v) ? Number(v) : null;
+  const railChain = PAYMENT_RAIL_TAGS.get(v);
+  if (railChain) {
+    return { kind: "payment", chain: railChain };
+  }
+  const numericId = CANONICAL_DECIMAL_RE.test(v) ? Number(v) : null;
   const rows = await loadEnabledChains();
   const match = rows.find(
     (row) =>
@@ -247,6 +303,11 @@ export async function classifyChainTag(
   }
   if (match.isPaymentRail) {
     const chain = resolvePaymentRailChain(match.chainId);
+    // A row flagged as a rail whose id the wallet cannot route (today: the
+    // seeded Tempo testnet, chainId 42431) stays unrecognised rather than
+    // falling through to the data-chain branch. Falling through would widen
+    // that tag to accept BOTH rails, which is the opposite of what flagging it
+    // a rail asked for.
     return chain ? { kind: "payment", chain } : { kind: "unrecognised" };
   }
   if (match.isTestnet) {

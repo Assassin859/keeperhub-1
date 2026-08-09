@@ -42,10 +42,16 @@ export interface ListingErrorDetails {
  * unsupported chain) persists silently and only surfaces as
  * 403 CHAIN_MISMATCH at the first payment attempt, months after listing.
  */
-async function validateChainTag(
-  chain: string | undefined
-): Promise<{ ok: false; error: "INVALID_CHAIN"; details: { chain: string } } | null> {
-  if (chain === undefined) {
+async function validateChainTag(chain: string | undefined): Promise<{
+  ok: false;
+  error: "INVALID_CHAIN";
+  details: { chain: string };
+} | null> {
+  // An empty (or whitespace-only) chain is how a caller clears the pin, not a
+  // tag to classify. workflows.chain is read as falsy by verifyWorkflowBinding,
+  // so a cleared value is permissive exactly like the null it replaces -- and
+  // rejecting it here would leave a mis-tagged listing with no way back.
+  if (chain === undefined || chain.trim() === "") {
     return null;
   }
   const classification = await classifyChainTag(chain);

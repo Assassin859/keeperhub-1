@@ -2,10 +2,12 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { ExecutionAccessDenied } from "@/components/executions/execution-access-denied";
 import { ExecutionShareView } from "@/components/executions/execution-share-view";
-import { auth } from "@/lib/auth";
-import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
+import {
+  getDualAuthContext,
+  hasResolvedPrincipal,
+} from "@/lib/middleware/auth-helpers";
 import { resolveExecutionViewAccess } from "@/lib/workflow/execution-access";
-import { checkExecutionStatusIpRateLimit } from "@/lib/workflow/execution-status-rate-limit";
+import { checkExecutionStatusRateLimit } from "@/lib/workflow/execution-status-rate-limit";
 
 type ExecutionPageProps = {
   params: Promise<{ executionId: string }>;
@@ -20,8 +22,10 @@ export default async function ExecutionPage({
     headers: headerList,
   });
 
-  const ipRateLimit = await checkExecutionStatusIpRateLimit(request);
-  if (!ipRateLimit.allowed) {
+  const authContext = await getDualAuthContext(request, { required: false });
+
+  const rateLimit = checkExecutionStatusRateLimit(request, authContext);
+  if (!rateLimit.allowed) {
     return (
       <main className="flex min-h-[40vh] flex-col items-center justify-center gap-2 p-8 text-center">
         <h1 className="font-semibold text-lg">Too many requests</h1>
@@ -32,7 +36,11 @@ export default async function ExecutionPage({
     );
   }
 
-  const access = await resolveExecutionViewAccess(request, executionId);
+  const access = await resolveExecutionViewAccess(
+    request,
+    executionId,
+    authContext
+  );
 
   if (access.mode === "notFound") {
     notFound();
@@ -46,10 +54,14 @@ export default async function ExecutionPage({
     notFound();
   }
 
-  const session = await auth.api.getSession({ headers: headerList });
-  const hasSession = Boolean(
-    session?.user && !isAnonymousUserShape(session.user)
-  );
+  // Derived from the context already resolved above rather than a third
+  // getSession round-trip. Anonymous-account sessions are excluded here on
+  // purpose: the "View workflow" / "Back to Hub" links they gate lead to
+  // surfaces an anonymous explorer has no use for.
+  const hasSession =
+    hasResolvedPrincipal(authContext) &&
+    !authContext.isAnonymous &&
+    authContext.userId !== null;
 
   const { execution } = access;
 

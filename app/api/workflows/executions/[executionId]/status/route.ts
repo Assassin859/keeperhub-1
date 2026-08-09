@@ -7,6 +7,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
 import { HttpStatus } from "@/lib/http-status";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import {
   type AuthorizedExecution,
@@ -14,12 +15,22 @@ import {
   redactExecutionStatusForPublicView,
   resolveExecutionViewAccess,
 } from "@/lib/workflow/execution-access";
-import { checkExecutionStatusIpRateLimit } from "@/lib/workflow/execution-status-rate-limit";
+import { checkExecutionStatusRateLimit } from "@/lib/workflow/execution-status-rate-limit";
 
 type NodeStatus = {
   nodeId: string;
   status: "pending" | "running" | "success" | "error" | "cancelled";
 };
+
+// Statuses after which there is nothing left to poll for. Mirrors the set the
+// share view stops on (components/executions/execution-share-view.tsx).
+const TERMINAL_STATUSES = new Set([
+  "success",
+  "error",
+  "system_error",
+  "cancelled",
+]);
+const POLL_INTERVAL_HINT_SECONDS = 2;
 
 function buildStatusPayload(
   execution: AuthorizedExecution,
@@ -63,8 +74,13 @@ export async function GET(
   try {
     const { executionId } = await context.params;
 
-    const ipRateLimit = await checkExecutionStatusIpRateLimit(request);
-    if (!ipRateLimit.allowed) {
+    // Resolved once and threaded through both the limiter and the access
+    // check: this is the hottest endpoint in the app, and each extra
+    // resolution is another api-key/session lookup plus a last_used_at write.
+    const authContext = await getDualAuthContext(request, { required: false });
+
+    const rateLimit = checkExecutionStatusRateLimit(request, authContext);
+    if (!rateLimit.allowed) {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),
@@ -74,10 +90,14 @@ export async function GET(
         { error: "Too many requests" },
         { status: HttpStatus.TOO_MANY_REQUESTS }
       );
-      return applyRateLimitHeaders(response, ipRateLimit);
+      return applyRateLimitHeaders(response, rateLimit);
     }
 
-    const viewAccess = await resolveExecutionViewAccess(request, executionId);
+    const viewAccess = await resolveExecutionViewAccess(
+      request,
+      executionId,
+      authContext
+    );
     if (viewAccess.mode === "invalidAuth") {
       recordStatusPollMetrics({
         executionId,
@@ -129,7 +149,14 @@ export async function GET(
       executionStatus: execution.status,
     });
 
-    return NextResponse.json(payload);
+    // Budget headers belong on the success path too, not just the denial: a
+    // poller that can only learn its remaining budget from the response that
+    // already rejected it has no way to slow down before hitting the wall.
+    return applyRateLimitHeaders(NextResponse.json(payload), rateLimit, {
+      pollIntervalHint: TERMINAL_STATUSES.has(execution.status)
+        ? 0
+        : POLL_INTERVAL_HINT_SECONDS,
+    });
   } catch (error) {
     const { executionId } = await context.params;
     logSystemError(

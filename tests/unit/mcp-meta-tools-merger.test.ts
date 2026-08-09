@@ -223,6 +223,50 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
 
     vi.unstubAllGlobals();
   });
+
+  it("keeps the { status, logs } envelope for a publicly shared execution", async () => {
+    // The response shape must not depend on ownership: a client that reads
+    // result.logs against its own execution would otherwise silently see
+    // undefined (and report zero steps) the first time it is pointed at a
+    // shared one. logs is null -- withheld, not empty.
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "publicReadOnly",
+      execution: { id: "exec-3", workflow: { id: "wf_3" } },
+    });
+
+    const fetchMock = vi.fn(
+      () =>
+        new Response(JSON.stringify({ status: "running" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { server, tools } = makeMockServer();
+    const { registerTools } = await import("@/lib/mcp/tools");
+    registerTools(server, "http://localhost:3000", "Bearer test-token");
+    const getExec = tools.find((t) => t.name === "get_execution");
+    if (!getExec) {
+      throw new Error("get_execution not registered");
+    }
+
+    const result = (await getExec.handler({ executionId: "exec-3" })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    const parsed = JSON.parse(result.content[0].text) as Record<
+      string,
+      unknown
+    >;
+
+    expect(parsed).toHaveProperty("status");
+    expect(parsed).toHaveProperty("logs");
+    expect(parsed.logs).toBeNull();
+    // Only the status endpoint is reachable on this path.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.unstubAllGlobals();
+  });
 });
 
 // ---------------------------------------------------------------------------

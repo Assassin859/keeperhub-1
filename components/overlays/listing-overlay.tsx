@@ -16,7 +16,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError } from "@/lib/api-client";
-import type { WorkflowNode } from "@/lib/workflow/store";
+import type {
+  WorkflowNode,
+  WorkflowVisibility,
+} from "@/lib/workflow/store";
 import { ConfirmOverlay } from "./confirm-overlay";
 
 // ---------------------------------------------------------------------------
@@ -291,6 +294,7 @@ type ListingOverlayProps = OverlayComponentProps<{
   existingOutputMapping: Record<string, unknown> | null;
   existingPrice: string | null;
   existingShareExecutionStatus: boolean;
+  existingVisibility: WorkflowVisibility;
   onSave: (data: {
     isListed: boolean;
     listedSlug: string | null;
@@ -313,6 +317,7 @@ export function ListingOverlay({
   existingOutputMapping,
   existingPrice,
   existingShareExecutionStatus,
+  existingVisibility,
   onSave,
 }: ListingOverlayProps) {
   const { closeAll, push } = useOverlay();
@@ -341,6 +346,13 @@ export function ListingOverlay({
   const slugError = validateSlug(localSlug, localIsListed);
   const priceError = validatePrice(localPrice);
   const isSlugImmutable = existingSlug !== null && existingListedAt !== null;
+  // The server gate for shared execution links is visibility, not listing
+  // (lib/workflow/execution-access.ts::isPubliclyShareableWorkflow), and
+  // visibility is set elsewhere (the go-live flow), never by this overlay.
+  // Offering the toggle on a private workflow persisted the flag and returned
+  // a success toast for links that then 404 for every recipient.
+  const isPubliclyVisible =
+    existingVisibility === "public" || existingVisibility === "unlisted";
 
   const changed = hasChanges(
     {
@@ -543,14 +555,15 @@ export function ListingOverlay({
                 Share execution status publicly
               </Label>
               <p className="text-muted-foreground text-xs">
-                Allow anyone with the link to view run progress for public or
-                unlisted workflows
+                {isPubliclyVisible
+                  ? "Allow anyone with the link to view run progress"
+                  : "Set this workflow's visibility to public or unlisted first - while it is private, shared run links return not found"}
               </p>
             </div>
             <Switch
               aria-label="Share execution status publicly"
               checked={localShareExecutionStatus}
-              disabled={!localIsListed}
+              disabled={!(localIsListed && isPubliclyVisible)}
               id="share-execution-status"
               onCheckedChange={setLocalShareExecutionStatus}
             />

@@ -605,7 +605,16 @@ export async function PATCH(
       body.isListed === false && existingWorkflow.isListed === true;
     const isTransitioningToListed =
       body.isListed === true && existingWorkflow.isListed !== true;
-    if (isTransitioningToUnlisted) {
+    // Sharing is an explicit owner opt-in, so it has to be cleared on every
+    // path that retires the surface it applies to - not just unlisting.
+    // Demoting visibility to private already makes the share links 404
+    // (isPubliclyShareableWorkflow requires public/unlisted), which reads to
+    // the owner as "sharing is off"; leaving the column true meant a later
+    // promotion back to public/unlisted silently re-exposed every historical
+    // run, including ones from the private period, with no re-consent.
+    const isTransitioningToPrivate =
+      body.visibility === "private" && existingWorkflow.visibility !== "private";
+    if (isTransitioningToUnlisted || isTransitioningToPrivate) {
       Object.assign(updateData, clearShareExecutionStatus());
     }
     const willBeListed =

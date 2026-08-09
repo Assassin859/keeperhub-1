@@ -8,6 +8,7 @@ import { workflowExecutions } from "@/lib/db/schema";
 import {
   type DualAuthContext,
   getDualAuthContext,
+  hasResolvedPrincipal,
 } from "@/lib/middleware/auth-helpers";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 
@@ -61,18 +62,6 @@ export type ExecutionStatusPayload = {
   transactionHashes: TransactionHashEntry[];
 };
 
-function isRealAuthenticatedCaller(
-  authContext: DualAuthContext
-): authContext is AuthenticatedContext {
-  if ("error" in authContext) {
-    return false;
-  }
-  if (authContext.isAnonymous) {
-    return false;
-  }
-  return Boolean(authContext.userId || authContext.organizationId);
-}
-
 function isPubliclyShareableWorkflow(
   workflow: AuthorizedExecution["workflow"]
 ): boolean {
@@ -86,21 +75,42 @@ function isPubliclyShareableWorkflow(
   return visibility === "public" || visibility === "unlisted";
 }
 
-async function resolveInvalidApiKeyAuth(
-  request: Request
+/**
+ * A caller that presented a Bearer credential which did not authenticate gets
+ * 401, not the anonymous 404. Covers OAuth access tokens as well as `kh_` API
+ * keys: `getDualAuthContext(..., { required: false })` degrades either failure
+ * to a null principal, so without this an expired MCP token looked identical
+ * to "no such execution" and the client had no signal to run its refresh flow.
+ *
+ * Takes the already-resolved context so the happy path costs one auth
+ * resolution; authenticateApiKey is re-run only on the failure path, purely to
+ * recover the specific reason ("expired", "revoked", bad format) for the
+ * response body.
+ */
+async function resolveInvalidBearerAuth(
+  request: Request,
+  authContext: DualAuthContext
 ): Promise<{ mode: "invalidAuth"; error: string } | null> {
   const authHeader = request.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer kh_")) {
+  if (!authHeader?.startsWith("Bearer ")) {
     return null;
   }
-  const apiKeyAuth = await authenticateApiKey(request);
-  if (apiKeyAuth.authenticated) {
+  if (hasResolvedPrincipal(authContext)) {
     return null;
   }
-  return {
-    mode: "invalidAuth",
-    error: apiKeyAuth.error ?? "Unauthorized",
-  };
+  if ("error" in authContext) {
+    // A session-shaped failure (MFA step-up, org resolution) keeps the
+    // established collapse to 404; it is not a bad Bearer.
+    return null;
+  }
+  if (authHeader.startsWith("Bearer kh_")) {
+    const apiKeyAuth = await authenticateApiKey(request);
+    if (apiKeyAuth.authenticated) {
+      return null;
+    }
+    return { mode: "invalidAuth", error: apiKeyAuth.error ?? "Unauthorized" };
+  }
+  return { mode: "invalidAuth", error: "Invalid or expired access token" };
 }
 
 /**
@@ -148,17 +158,25 @@ export function redactExecutionStatusForPublicView(
 
 /**
  * Resolve how a caller may view an execution: full org access, public read-only
- * (opted-in public/unlisted workflow), access denied (authenticated but no
- * access), invalid auth (malformed API key), or not found (unknown id or
- * unauthenticated private — anti-enumeration).
+ * (opted-in public/unlisted workflow), access denied (a member of the owning
+ * org whose access is blocked for another reason), invalid auth (a Bearer
+ * credential that did not authenticate), or not found (unknown id, or an
+ * execution the caller has no relationship to — anti-enumeration).
+ *
+ * Pass `authContext` when the caller has already resolved it (the status route
+ * needs it for rate limiting) so a single request does not resolve auth twice.
  */
 export async function resolveExecutionViewAccess(
   request: Request,
-  executionId: string
+  executionId: string,
+  authContext?: DualAuthContext
 ): Promise<ExecutionViewAccess> {
-  const invalidApiKey = await resolveInvalidApiKeyAuth(request);
-  if (invalidApiKey) {
-    return invalidApiKey;
+  const auth =
+    authContext ?? (await getDualAuthContext(request, { required: false }));
+
+  const invalidBearer = await resolveInvalidBearerAuth(request, auth);
+  if (invalidBearer) {
+    return invalidBearer;
   }
 
   const execution = await loadExecutionWithWorkflow(executionId);
@@ -166,27 +184,33 @@ export async function resolveExecutionViewAccess(
     return { mode: "notFound" };
   }
 
-  const authContext = await getDualAuthContext(request, { required: false });
-  if ("error" in authContext) {
+  if ("error" in auth) {
     return { mode: "notFound" };
   }
 
-  if (isRealAuthenticatedCaller(authContext)) {
-    const access = await getWorkflowAccess(execution.workflow, {
-      userId: authContext.userId,
-      organizationId: authContext.organizationId,
-      authMethod: authContext.authMethod,
-    });
-    if (access.hasFullAccess && !access.isDeleted) {
-      return { mode: "full", execution };
-    }
+  const access = hasResolvedPrincipal(auth)
+    ? await getWorkflowAccess(execution.workflow, {
+        userId: auth.userId,
+        organizationId: auth.organizationId,
+        authMethod: auth.authMethod,
+      })
+    : null;
+
+  if (access?.hasFullAccess && !access.isDeleted) {
+    return { mode: "full", execution };
   }
 
   if (isPubliclyShareableWorkflow(execution.workflow)) {
     return { mode: "publicReadOnly", execution };
   }
 
-  if (isRealAuthenticatedCaller(authContext)) {
+  // 403 only for a caller who is in the owning org and therefore already knows
+  // this execution exists (today: the workflow was soft-deleted). Anyone else -
+  // signed in or not - gets the same 404 a fabricated id gets. Distinguishing
+  // "real execution, not yours" from "no such execution" would hand any account
+  // holder an oracle over scraped execution ids, which is exactly the collapse
+  // resolveAuthorizedExecution has always made for the logs and wait routes.
+  if (access?.isSameOrg) {
     return { mode: "accessDenied" };
   }
 

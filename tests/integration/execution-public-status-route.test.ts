@@ -54,7 +54,7 @@ vi.mock("@/lib/middleware/auth-helpers", () => ({
 import { GET } from "@/app/api/workflows/executions/[executionId]/status/route";
 import {
   EXEC_STATUS_ANON_IP_LIMIT,
-  EXEC_STATUS_IP_WINDOW_MS,
+  EXEC_STATUS_WINDOW_MS,
 } from "@/lib/workflow/execution-status-rate-limit";
 
 const EXECUTION_ID = "exec_public_1";
@@ -233,6 +233,53 @@ describe("GET /api/workflows/executions/[executionId]/status public access", () 
     expect(last?.status).toBe(429);
     expect(last?.headers.get("Retry-After")).toBeTruthy();
     // Window constant kept in sync with the helper used by the route.
-    expect(EXEC_STATUS_IP_WINDOW_MS).toBe(60_000);
+    expect(EXEC_STATUS_WINDOW_MS).toBe(60_000);
+  });
+
+  it("advertises the remaining budget and a poll hint on 200s", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "publicReadOnly",
+      execution: { ...makeExecution("public"), status: "running" },
+    });
+
+    const response = await GET(
+      createRequest({ "x-forwarded-for": "203.0.113.51" }),
+      { params: Promise.resolve({ executionId: EXECUTION_ID }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-RateLimit-Limit")).toBe(
+      String(EXEC_STATUS_ANON_IP_LIMIT)
+    );
+    expect(Number(response.headers.get("X-RateLimit-Remaining"))).toBe(
+      EXEC_STATUS_ANON_IP_LIMIT - 1
+    );
+    expect(response.headers.get("X-Poll-Interval-Hint")).toBe("2");
+  });
+
+  it("keys authenticated callers per principal, not per IP", async () => {
+    mockResolveExecutionViewAccess.mockResolvedValue({
+      mode: "full",
+      execution: makeExecution("private"),
+    });
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "user_rl_1",
+      organizationId: "org_rl_1",
+      authMethod: "session",
+      apiKeyId: null,
+      isAnonymous: false,
+    });
+
+    // Same source IP, well past the anonymous budget: teammates behind one NAT
+    // (or one user with several canvas tabs) must not share a bucket.
+    const headers = { "x-forwarded-for": "203.0.113.52" };
+    let last: Response | undefined;
+    for (let i = 0; i < EXEC_STATUS_ANON_IP_LIMIT + 1; i += 1) {
+      last = await GET(createRequest(headers), {
+        params: Promise.resolve({ executionId: EXECUTION_ID }),
+      });
+    }
+
+    expect(last?.status).toBe(200);
   });
 });

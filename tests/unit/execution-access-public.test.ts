@@ -11,6 +11,17 @@ const { mockGetDualAuthContext, mockFindFirst, mockAuthenticateApiKey } =
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
   getDualAuthContext: mockGetDualAuthContext,
+  // Mirrors the real guard. Not importOriginal'd because the real module
+  // pulls in lib/auth (better-auth + its DB adapter), which this unit test
+  // deliberately does not stand up.
+  hasResolvedPrincipal: (context: {
+    error?: string;
+    userId?: string | null;
+    organizationId?: string | null;
+  }) =>
+    "error" in context
+      ? false
+      : Boolean(context.userId || context.organizationId),
 }));
 
 vi.mock("@/lib/api-key-auth", () => ({
@@ -97,9 +108,13 @@ describe("resolveExecutionViewAccess", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
+    mockGetDualAuthContext.mockResolvedValue(unauthenticatedContext);
   });
 
-  it("returns notFound for anonymous session on private workflow", async () => {
+  it("returns full for an anonymous-account owner of a private workflow", async () => {
+    // A better-auth anonymous account is a real principal with its own org.
+    // The canvas polls this route while its run is in flight, and the sibling
+    // /logs endpoint authorizes the same caller, so it must not 404 here.
     const execution = makeExecution({ visibility: "private" });
     mockFindFirst.mockResolvedValue(execution);
     mockGetDualAuthContext.mockResolvedValue({
@@ -108,6 +123,37 @@ describe("resolveExecutionViewAccess", () => {
       authMethod: "session",
       apiKeyId: null,
       isAnonymous: true,
+    });
+    mockGetWorkflowAccess.mockResolvedValue({
+      isCreatorWithCurrentAccess: true,
+      isSameOrg: true,
+      hasFullAccess: true,
+      isDeleted: false,
+    });
+
+    const result = await resolveExecutionViewAccess(
+      makeRequest(),
+      EXECUTION_ID
+    );
+
+    expect(result).toEqual({ mode: "full", execution });
+  });
+
+  it("returns notFound for an anonymous session with no access", async () => {
+    const execution = makeExecution({ visibility: "private" });
+    mockFindFirst.mockResolvedValue(execution);
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "anon_user",
+      organizationId: "org_anon",
+      authMethod: "session",
+      apiKeyId: null,
+      isAnonymous: true,
+    });
+    mockGetWorkflowAccess.mockResolvedValue({
+      isCreatorWithCurrentAccess: false,
+      isSameOrg: false,
+      hasFullAccess: false,
+      isDeleted: false,
     });
 
     const result = await resolveExecutionViewAccess(
@@ -137,6 +183,53 @@ describe("resolveExecutionViewAccess", () => {
       mode: "invalidAuth",
       error: "Invalid API key format. Expected key starting with kh_",
     });
+  });
+
+  it("returns invalidAuth for an OAuth Bearer that did not authenticate", async () => {
+    // An expired MCP token degrades to a null principal exactly like no
+    // credential at all; without a 401 the client cannot tell "refresh your
+    // token" from "no such execution" and retries the dead token forever.
+    mockFindFirst.mockResolvedValue(makeExecution());
+
+    const result = await resolveExecutionViewAccess(
+      new Request(`http://localhost/executions/${EXECUTION_ID}`, {
+        headers: { Authorization: "Bearer expired-oauth-token" },
+      }),
+      EXECUTION_ID
+    );
+
+    expect(result).toEqual({
+      mode: "invalidAuth",
+      error: "Invalid or expired access token",
+    });
+    // Only the failing kh_ path pays for a second api-key lookup.
+    expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
+  });
+
+  it("reuses a caller-supplied auth context instead of resolving again", async () => {
+    const execution = makeExecution({ visibility: "private" });
+    mockFindFirst.mockResolvedValue(execution);
+    mockGetWorkflowAccess.mockResolvedValue({
+      isCreatorWithCurrentAccess: true,
+      isSameOrg: true,
+      hasFullAccess: true,
+      isDeleted: false,
+    });
+
+    const result = await resolveExecutionViewAccess(
+      makeRequest(),
+      EXECUTION_ID,
+      {
+        userId: "user_1",
+        organizationId: "org_1",
+        authMethod: "session",
+        apiKeyId: null,
+        isAnonymous: false,
+      }
+    );
+
+    expect(result).toEqual({ mode: "full", execution });
+    expect(mockGetDualAuthContext).not.toHaveBeenCalled();
   });
 
   it("returns notFound when auth context returns an error", async () => {
@@ -294,7 +387,7 @@ describe("resolveExecutionViewAccess", () => {
     expect(result).toEqual({ mode: "notFound" });
   });
 
-  it("returns accessDenied for authenticated cross-org public workflow without share opt-in", async () => {
+  it("returns notFound for authenticated cross-org public workflow without share opt-in", async () => {
     const execution = makeExecution({
       visibility: "public",
       shareExecutionStatus: false,
@@ -313,7 +406,7 @@ describe("resolveExecutionViewAccess", () => {
       EXECUTION_ID
     );
 
-    expect(result).toEqual({ mode: "accessDenied" });
+    expect(result).toEqual({ mode: "notFound" });
   });
 
   it("returns notFound for unauthenticated private workflow", async () => {
@@ -329,7 +422,10 @@ describe("resolveExecutionViewAccess", () => {
     expect(result).toEqual({ mode: "notFound" });
   });
 
-  it("returns accessDenied for authenticated cross-org private workflow", async () => {
+  it("returns notFound, not accessDenied, for a cross-org caller", async () => {
+    // Anti-enumeration: a signed-in stranger must not be able to tell a real
+    // execution id from a fabricated one. Both answer 404, matching the
+    // collapse resolveAuthorizedExecution makes on the logs and wait routes.
     const execution = makeExecution({ visibility: "private" });
     mockFindFirst.mockResolvedValue(execution);
     mockGetDualAuthContext.mockResolvedValue(crossOrgContext);
@@ -340,12 +436,19 @@ describe("resolveExecutionViewAccess", () => {
       isDeleted: false,
     });
 
-    const result = await resolveExecutionViewAccess(
+    const knownId = await resolveExecutionViewAccess(
       makeRequest(),
       EXECUTION_ID
     );
 
-    expect(result).toEqual({ mode: "accessDenied" });
+    mockFindFirst.mockResolvedValue(undefined);
+    const fabricatedId = await resolveExecutionViewAccess(
+      makeRequest(),
+      "exec_does_not_exist"
+    );
+
+    expect(knownId).toEqual({ mode: "notFound" });
+    expect(knownId).toEqual(fabricatedId);
   });
 
   it("returns publicReadOnly for API key org context without userId on shared workflow", async () => {
