@@ -55,7 +55,7 @@ export function AssetsTable({
                   <span className="flex items-center gap-2 font-medium">
                     {row.symbol}
                     {row.kind === "native" && (
-                      <span className="rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
+                      <span className="rounded-full border px-2 py-0.5 text-[0.6875rem]">
                         Native
                       </span>
                     )}

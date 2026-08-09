@@ -52,7 +52,7 @@ export function OrgRow({
               <span className="flex items-center gap-2 font-medium">
                 <span className="truncate">{org.name}</span>
                 {isActive && (
-                  <span className="rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
+                  <span className="rounded-full border px-2 py-0.5 text-[0.6875rem]">
                     Current
                   </span>
                 )}

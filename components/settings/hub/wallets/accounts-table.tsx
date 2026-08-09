@@ -91,7 +91,7 @@ export function AccountsTable({
                       safeId={account.safeId}
                     />
                   ) : (
-                    <span className="rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
+                    <span className="rounded-full border px-2 py-0.5 text-[0.6875rem]">
                       Default signer
                     </span>
                   )}

@@ -59,7 +59,7 @@ export function SessionsTable({
                     <span className="flex items-center gap-2 truncate font-medium">
                       {device.label}
                       {session.isCurrent && (
-                        <span className="rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
+                        <span className="rounded-full border px-2 py-0.5 text-[0.6875rem]">
                           This device
                         </span>
                       )}
