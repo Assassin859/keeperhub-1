@@ -44,7 +44,7 @@ export interface ListingErrorDetails {
  */
 async function validateChainTag(
   chain: string | undefined
-): Promise<ListingResult<true> | null> {
+): Promise<{ ok: false; error: "INVALID_CHAIN"; details: { chain: string } } | null> {
   if (chain === undefined) {
     return null;
   }

@@ -230,7 +230,12 @@ export async function classifyChainTag(
   if (MULTI_CHAIN_TAGS.has(v)) {
     return { kind: "multi" };
   }
-  const numericId = /^\d+$/.test(v) ? Number(v) : null;
+  // Strict canonical decimal only: Number("08453") silently parses to 8453,
+  // which would let a leading-zero typo widen acceptance to a real chain id
+  // (KEEP-432 negative-set regression caught by
+  // tests/unit/agentic-wallet-workflow-binding.test.ts). No leading zeros,
+  // no hex, no floats.
+  const numericId = /^(0|[1-9]\d*)$/.test(v) ? Number(v) : null;
   const rows = await loadEnabledChains();
   const match = rows.find(
     (row) =>

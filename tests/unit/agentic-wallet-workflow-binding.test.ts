@@ -59,10 +59,19 @@ vi.mock("@/lib/db", () => {
   } {
     return {
       limit: (): Promise<unknown[]> => Promise.resolve(nextRows()),
-      then: (
-        onFulfilled?: ((value: unknown[]) => unknown) | null,
-        onRejected?: ((reason: unknown) => unknown) | null
-      ) => Promise.resolve(nextRows()).then(onFulfilled, onRejected),
+      then<TResult1 = unknown[], TResult2 = never>(
+        onFulfilled?:
+          | ((value: unknown[]) => TResult1 | PromiseLike<TResult1>)
+          | null,
+        onRejected?:
+          | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+          | null
+      ): PromiseLike<TResult1 | TResult2> {
+        return Promise.resolve(nextRows()).then(
+          onFulfilled ?? undefined,
+          onRejected ?? undefined
+        );
+      },
     };
   }
   return {
