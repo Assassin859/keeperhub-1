@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { classifyChainTag } from "@/lib/agentic-wallet/workflow-binding";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import {
@@ -23,13 +24,35 @@ export type ListingErrorCode =
   | "SLUG_REQUIRED"
   | "MISSING_WRITE_ACTION"
   | "INVALID_TEMPLATE_LITERALS"
-  | "INPUT_SCHEMA_REQUIRED";
+  | "INPUT_SCHEMA_REQUIRED"
+  | "INVALID_CHAIN";
 
 export interface ListingErrorDetails {
   // Bare-@ literals found in node configs at publish time, surfaced so the
   // author can locate the offending field without spelunking. Capped at
   // MAX_FINDINGS by the validator.
   literals?: string[];
+  // The unrecognised chain value, for INVALID_CHAIN.
+  chain?: string;
+}
+
+/**
+ * Reject a chain tag classifyChainTag cannot place in payment, data, or
+ * multi. Without this, an unrecognised value (typo, disabled chain,
+ * unsupported chain) persists silently and only surfaces as
+ * 403 CHAIN_MISMATCH at the first payment attempt, months after listing.
+ */
+async function validateChainTag(
+  chain: string | undefined
+): Promise<ListingResult<true> | null> {
+  if (chain === undefined) {
+    return null;
+  }
+  const classification = await classifyChainTag(chain);
+  if (classification.kind === "unrecognised") {
+    return { ok: false, error: "INVALID_CHAIN", details: { chain } };
+  }
+  return null;
 }
 
 export type ListingResult<T> =
@@ -175,6 +198,10 @@ export async function listWorkflow(
     updateSet.category = metadata.category;
   }
   if (metadata.chain !== undefined) {
+    const chainError = await validateChainTag(metadata.chain);
+    if (chainError) {
+      return chainError;
+    }
     updateSet.chain = metadata.chain;
   }
   if (metadata.inputSchema !== undefined) {
@@ -344,6 +371,10 @@ export async function updateWorkflowListing(
     updateSet.category = patch.category;
   }
   if (patch.chain !== undefined) {
+    const chainError = await validateChainTag(patch.chain);
+    if (chainError) {
+      return chainError;
+    }
     updateSet.chain = patch.chain;
   }
   if (patch.inputSchema !== undefined) {

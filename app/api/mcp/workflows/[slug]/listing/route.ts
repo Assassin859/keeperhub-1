@@ -93,6 +93,15 @@ function mapListingError(
       { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
+  if (error === "INVALID_CHAIN") {
+    return NextResponse.json(
+      {
+        error: "INVALID_CHAIN",
+        message: `Chain "${details?.chain}" is not a recognised payment or data chain. Use a supported chain id, its slug (e.g. "ethereum", "polygon"), "base", "tempo", or an explicit multi-chain tag (e.g. "multi-chain").`,
+      },
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
+    );
+  }
   return NextResponse.json(
     { error: "INVALID_INPUT", message: "Invalid request." },
     { status: HttpStatus.BAD_REQUEST }
@@ -215,6 +224,10 @@ export async function POST(
     workflowType:
       typeof rawBody.workflowType === "string"
         ? rawBody.workflowType
+        : undefined,
+    shareExecutionStatus:
+      typeof rawBody.shareExecutionStatus === "boolean"
+        ? rawBody.shareExecutionStatus
         : undefined,
   };
 

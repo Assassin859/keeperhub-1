@@ -1128,6 +1128,18 @@ export const chains = pgTable(
     chainId: integer("chain_id").notNull().unique(), // e.g., 1, 11155111, 8453
     name: text("name").notNull(), // e.g., "Ethereum Mainnet"
     symbol: text("symbol").notNull(), // e.g., "ETH"
+    // Human-readable slugs a workflow listing's `chain` field may use in
+    // place of the numeric chainId, e.g. ["ethereum", "eth"] for chainId 1.
+    // Matched case-insensitively by classifyChainTag in
+    // lib/agentic-wallet/workflow-binding.ts. Empty for chains with no
+    // registered alias.
+    aliases: jsonb("aliases").notNull().default([]).$type<string[]>(),
+    // Whether this chain is one of KeeperHub's own payment settlement rails
+    // (Base, Tempo) rather than a read-only data chain. Determines whether
+    // classifyChainTag treats a workflow's chain tag as a payment-chain pin
+    // (caller must match) or a data-chain hint (either payment rail
+    // accepted).
+    isPaymentRail: boolean("is_payment_rail").notNull().default(false),
     chainType: text("chain_type").notNull().default("evm"), // "evm" | "solana"
     defaultPrimaryRpc: text("default_primary_rpc").notNull(),
     defaultFallbackRpc: text("default_fallback_rpc"),
