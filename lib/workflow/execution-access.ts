@@ -130,8 +130,17 @@ export function redactExecutionStatusForPublicView(
           lastSuccessfulNodeName: null,
         }
       : null,
+    // Explicit allowlist rather than a spread + override: hash and chainId
+    // are the only fields the public share view renders (the tx link and
+    // its explorer). nodeId/nodeName identify internal workflow steps;
+    // network/iterationIndex/verified/receiptStatus are internal execution
+    // detail with no current public consumer. Blanking by name (as this
+    // used to do for nodeName only) leaks a new TransactionHashEntry field
+    // by default; allowlisting requires an explicit decision to expose one.
     transactionHashes: payload.transactionHashes.map((entry) => ({
-      ...entry,
+      hash: entry.hash,
+      chainId: entry.chainId,
+      nodeId: "",
       nodeName: "",
     })),
   };

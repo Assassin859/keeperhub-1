@@ -420,6 +420,10 @@ describe("redactExecutionStatusForPublicView", () => {
           nodeName: "Transfer",
           hash: "0xabc",
           chainId: 1,
+          network: "internal-rpc-alias",
+          iterationIndex: 3,
+          verified: true,
+          receiptStatus: "success" as const,
         },
       ],
     };
@@ -434,6 +438,14 @@ describe("redactExecutionStatusForPublicView", () => {
       lastSuccessfulNodeId: null,
       lastSuccessfulNodeName: null,
     });
-    expect(redacted.transactionHashes[0]?.nodeName).toBe("");
+    // hash + chainId are the only fields the public share view renders
+    // (the tx link and its explorer); everything else identifies an
+    // internal workflow step or exposes internal execution detail.
+    expect(redacted.transactionHashes[0]).toEqual({
+      hash: "0xabc",
+      chainId: 1,
+      nodeId: "",
+      nodeName: "",
+    });
   });
 });
