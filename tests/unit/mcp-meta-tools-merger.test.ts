@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEPRECATED_PREFIX_EXECUTION } from "@/lib/mcp/mcp-tool-catalog";
 
 vi.mock("server-only", () => ({}));
 
@@ -56,18 +57,30 @@ describe("Phase 50 — get_execution merger registration (METATOOL-01, METATOOL-
     vi.resetModules();
   });
 
-  it("Test 1: registerTools does NOT register get_execution_status", async () => {
+  it("Test 1: registerTools registers get_execution_status as deprecated alias", async () => {
     const { server, tools } = makeMockServer();
     const { registerTools } = await import("@/lib/mcp/tools");
     registerTools(server, "http://localhost:3000", "Bearer test-token");
-    expect(tools.map((t) => t.name)).not.toContain("get_execution_status");
+    const alias = tools.find((t) => t.name === "get_execution_status");
+    if (!alias) {
+      throw new Error("get_execution_status not registered");
+    }
+    expect(alias.description.startsWith(DEPRECATED_PREFIX_EXECUTION)).toBe(
+      true
+    );
   });
 
-  it("Test 2: registerTools does NOT register get_execution_logs", async () => {
+  it("Test 2: registerTools registers get_execution_logs as deprecated alias", async () => {
     const { server, tools } = makeMockServer();
     const { registerTools } = await import("@/lib/mcp/tools");
     registerTools(server, "http://localhost:3000", "Bearer test-token");
-    expect(tools.map((t) => t.name)).not.toContain("get_execution_logs");
+    const alias = tools.find((t) => t.name === "get_execution_logs");
+    if (!alias) {
+      throw new Error("get_execution_logs not registered");
+    }
+    expect(alias.description.startsWith(DEPRECATED_PREFIX_EXECUTION)).toBe(
+      true
+    );
   });
 
   it("Test 3: registerTools registers get_execution exactly once", async () => {
@@ -249,13 +262,17 @@ describe("Phase 50 — get_template and search_plugins are deprecated aliases (M
 // ---------------------------------------------------------------------------
 
 describe("Phase 50 — OAuth scope wiring after merger", () => {
-  it("Test 9: scope gates correctly route get_execution + deny old names + preserve get_direct_execution_status", async () => {
+  it("Test 9: scope gates correctly route get_execution + allow deprecated aliases + preserve get_direct_execution_status", async () => {
     const { isToolAllowed } = await import("@/lib/mcp/oauth-scopes");
     expect(isToolAllowed("get_execution", "mcp:read")).toBe(true);
-    expect(isToolAllowed("get_execution_status", "mcp:read")).toBe(false);
-    expect(isToolAllowed("get_execution_logs", "mcp:read")).toBe(false);
+    expect(isToolAllowed("get_execution_status", "mcp:read")).toBe(true);
+    expect(isToolAllowed("get_execution_logs", "mcp:read")).toBe(true);
     expect(isToolAllowed("get_direct_execution_status", "mcp:read")).toBe(true);
     expect(isToolAllowed("get_template", "mcp:read")).toBe(true);
     expect(isToolAllowed("search_plugins", "mcp:read")).toBe(true);
+    expect(isToolAllowed("validate_cron", "mcp:read")).toBe(true);
+    expect(isToolAllowed("list_executions", "mcp:read")).toBe(true);
+    expect(isToolAllowed("test_notification", "mcp:write")).toBe(true);
+    expect(isToolAllowed("tempo_sign_and_hold", "mcp:write")).toBe(true);
   });
 });
