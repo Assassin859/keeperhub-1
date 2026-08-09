@@ -13,6 +13,7 @@ import {
   Info,
   Loader2,
   Plus,
+  Settings,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
@@ -595,6 +596,13 @@ const NAV_ITEMS: NavItemDef[] = [
     href: "/activity",
     requireAuth: false,
   },
+  {
+    id: "settings",
+    icon: Settings,
+    label: "Settings",
+    href: "/settings",
+    requireAuth: true,
+  },
 ];
 
 export function NavigationSidebar(): React.ReactNode {
@@ -687,6 +695,7 @@ export function NavigationSidebar(): React.ReactNode {
   const isEarningsPage = pathname === "/earnings";
   const isHeldPaymentsPage = pathname === "/held-payments";
   const isActivityPage = pathname === "/activity";
+  const isSettingsPage = pathname.startsWith("/settings");
 
   const expanded = navState.state.sidebar;
   const setExpanded = navState.setSidebar;
@@ -830,6 +839,9 @@ export function NavigationSidebar(): React.ReactNode {
     }
     if (id === "activity") {
       return isActivityPage;
+    }
+    if (id === "settings") {
+      return isSettingsPage;
     }
     return false;
   }

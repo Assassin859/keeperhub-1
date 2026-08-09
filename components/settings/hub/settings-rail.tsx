@@ -1,0 +1,83 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { isSettingsItemVisible, SETTINGS_NAV } from "./nav";
+import { SettingsOrgPicker } from "./settings-org-picker";
+import { useSettingsContext } from "./settings-context";
+
+export const SETTINGS_RAIL_WIDTH = 244;
+
+export function SettingsRail(): React.ReactElement {
+  const pathname = usePathname();
+  const { isAdmin, isOwner } = useSettingsContext();
+
+  return (
+    <aside
+      aria-label="Settings navigation"
+      className="flex shrink-0 flex-col border-r bg-sidebar"
+      data-testid="settings-rail"
+      style={{ width: SETTINGS_RAIL_WIDTH }}
+    >
+      <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4">
+        <Link
+          className={cn(
+            "flex h-9 items-center rounded-md px-2.5 text-sm transition-colors",
+            pathname === "/settings"
+              ? "bg-muted font-medium text-foreground"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          )}
+          href="/settings"
+        >
+          All settings
+        </Link>
+
+        {SETTINGS_NAV.map((group) => {
+          const items = group.items.filter((item) =>
+            isSettingsItemVisible(item, { isAdmin, isOwner })
+          );
+          if (items.length === 0) {
+            return null;
+          }
+          return (
+            <div className="flex flex-col gap-0.5" key={group.label}>
+              <p className="px-2.5 pt-3 pb-1 font-medium font-mono text-[0.625rem] text-muted-foreground uppercase tracking-widest">
+                {group.label}
+              </p>
+              {items.map((item) => {
+                const active =
+                  pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+                      active
+                        ? "bg-muted font-medium text-foreground"
+                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    )}
+                    data-testid={`settings-nav-${item.href.split("/").pop()}`}
+                    href={item.href}
+                    key={item.href}
+                  >
+                    <item.icon className="size-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* Scope selector sits at the foot of the rail, where workspace
+          switchers usually live, so it reads as "everything above applies to
+          this organization". */}
+      <div className="shrink-0 border-t p-3">
+        <SettingsOrgPicker />
+      </div>
+    </aside>
+  );
+}
