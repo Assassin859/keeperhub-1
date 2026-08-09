@@ -157,15 +157,32 @@ const ACCEPT_CONTROL_CHARS_RE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e]/g;
 
-function sanitiseAcceptField(value: unknown, fallback: string): string {
+/**
+ * Strip control/invisible/reordering characters from an upstream-supplied
+ * string and cap its length before it is rendered into an error message.
+ *
+ * Shared by every augmentation that echoes bytes chosen by something outside
+ * this process (an x402 challenge, a contract's revert string), so the
+ * log-injection and hidden-text defences documented on ACCEPT_CONTROL_CHARS_RE
+ * apply uniformly instead of being re-implemented per call site.
+ */
+function sanitiseUpstreamField(
+  value: unknown,
+  maxChars: number,
+  fallback: string
+): string {
   if (typeof value !== "string") {
     return fallback;
   }
   const stripped = value.replace(ACCEPT_CONTROL_CHARS_RE, " ");
-  if (stripped.length > MAX_ACCEPT_FIELD_CHARS) {
-    return `${stripped.slice(0, MAX_ACCEPT_FIELD_CHARS - 3)}...`;
+  if (stripped.length > maxChars) {
+    return `${stripped.slice(0, maxChars - 3)}...`;
   }
   return stripped;
+}
+
+function sanitiseAcceptField(value: unknown, fallback: string): string {
+  return sanitiseUpstreamField(value, MAX_ACCEPT_FIELD_CHARS, fallback);
 }
 
 function formatAcceptOption(accept: X402Accept): string {
@@ -252,6 +269,152 @@ function buildPaymentRequiredHint(
     "  - agentcash: `mcp__agentcash__fetch` against the same endpoint",
     "  - Marketplace UI: open the listing's public page and run it interactively",
   ].join("\n");
+}
+
+/**
+ * Detect whether a `callApi` error message represents an HTTP 400. Same
+ * prefix-substring reasoning as `is402Error`.
+ */
+const API_CALL_FAILED_400_PREFIX = "API call failed: 400";
+
+function is400Error(message: string): boolean {
+  return message.includes(API_CALL_FAILED_400_PREFIX);
+}
+
+// Revert strings are chosen by the contract under test, so they get a wider
+// cap than an x402 accept field (a decoded custom error with arguments is
+// routinely longer than an address) while still being bounded.
+const MAX_REVERT_FIELD_CHARS = 200;
+
+type SimulateFailureShape = {
+  wouldRevert?: unknown;
+  revertReason?: unknown;
+  error?: unknown;
+  code?: unknown;
+  from?: unknown;
+  to?: unknown;
+};
+
+/**
+ * Turn a dry-run revert reported as HTTP 400 into an actionable message.
+ *
+ * `/api/execute/*` answers `simulate: true` with HTTP 400 and `wouldRevert:
+ * true` when the call would revert. As the Direct Execution API doc puts it,
+ * that status describes the transaction, not the request: the simulation ran,
+ * and the body carries the decoded reason. A REST caller is told to read
+ * `wouldRevert` before classifying the 400 — but an MCP caller never sees the
+ * body as data, because `callApi` throws and the JSON survives only as a
+ * fragment of an error string. So the agent-native surface loses exactly the
+ * diagnostic the dry run exists to produce.
+ *
+ * Returns null unless the body really is a simulation revert, so ordinary
+ * validation 400s (bad address, non-boolean `simulate`) stay verbatim and are
+ * never relabelled as reverts.
+ *
+ * Best-effort throughout, like `buildPaymentRequiredHint`: an unparseable body
+ * or a missing field degrades to fewer lines rather than throwing inside an
+ * error path. The original message is kept first so callers that pattern-match
+ * on the status line keep working, and every echoed field is sanitised — a
+ * contract can pick its own revert string, so it is untrusted input.
+ */
+function buildSimulationRevertHint(originalMessage: string): string | null {
+  const bodyStart = originalMessage.indexOf(
+    " - ",
+    API_CALL_FAILED_400_PREFIX.length
+  );
+  if (bodyStart < 0) {
+    return null;
+  }
+
+  let parsed: SimulateFailureShape | null;
+  try {
+    parsed = JSON.parse(
+      originalMessage.slice(bodyStart + 3)
+    ) as SimulateFailureShape | null;
+  } catch {
+    return null;
+  }
+  // A non-object body (array, string, null) has no `wouldRevert` to read.
+  if (!parsed || typeof parsed !== "object" || parsed.wouldRevert !== true) {
+    return null;
+  }
+
+  const reason = sanitiseUpstreamField(
+    typeof parsed.revertReason === "string"
+      ? parsed.revertReason
+      : parsed.error,
+    MAX_REVERT_FIELD_CHARS,
+    "not reported"
+  );
+
+  const lines = [
+    originalMessage,
+    "",
+    "Simulation reverted. Nothing was signed or broadcast.",
+    "Stage: simulation — this 400 describes the transaction, not your request.",
+    `Reason: ${reason}`,
+  ];
+
+  if (typeof parsed.code === "string") {
+    lines.push(
+      `Reason code: ${sanitiseUpstreamField(parsed.code, MAX_ACCEPT_FIELD_CHARS, "unknown")} (branch on this rather than the reason text)`
+    );
+  }
+  if (typeof parsed.from === "string") {
+    lines.push(
+      `Simulated sender: ${sanitiseUpstreamField(parsed.from, MAX_ACCEPT_FIELD_CHARS, "unknown")}`
+    );
+  }
+  if (typeof parsed.to === "string") {
+    lines.push(
+      `Simulated target: ${sanitiseUpstreamField(parsed.to, MAX_ACCEPT_FIELD_CHARS, "unknown")}`
+    );
+  }
+
+  lines.push(
+    "Next step:",
+    "  - The dry run resolves the sender to the organization wallet. If your org routes writes through a Safe, the broadcast spends from the Safe, so the sender above is not the account that pays — resolve the signer mode before acting on the reason.",
+    "  - Fix the cause, then re-run the same arguments with simulate: true. Broadcast only once the dry run returns wouldRevert: false."
+  );
+
+  return lines.join("\n");
+}
+
+/**
+ * `callApi` for the direct-execution tools: identical behaviour, except that a
+ * dry-run revert reported as HTTP 400 is augmented with the decoded diagnostic
+ * instead of surfacing as a bare `API call failed: 400 Bad Request - {...}`.
+ * Every other failure, including an ordinary validation 400, is rethrown
+ * untouched.
+ */
+async function callExecuteApi(
+  internalApiBaseUrl: string,
+  authHeader: string,
+  path: string,
+  method: string,
+  body?: unknown,
+  idempotencyKey?: string,
+  options?: CallApiOptions
+): Promise<ApiResponse> {
+  try {
+    return await callApi(
+      internalApiBaseUrl,
+      authHeader,
+      path,
+      method,
+      body,
+      idempotencyKey,
+      options
+    );
+  } catch (err) {
+    if (err instanceof Error && is400Error(err.message)) {
+      const hint = buildSimulationRevertHint(err.message);
+      if (hint) {
+        throw new Error(hint);
+      }
+    }
+    throw err;
+  }
 }
 
 // Optional idempotency key shared by the mutating tools. Forwarded to the REST
@@ -1429,7 +1592,7 @@ export function registerTools(
       async (args) =>
         withToolLogging("execute_transfer", undefined, async () => {
           assertSimulationSupported(args.chain_id, args.simulate);
-          const data = await callApi(
+          const data = await callExecuteApi(
             internalApiBaseUrl,
             authHeader,
             "/api/execute/transfer",
@@ -1486,7 +1649,7 @@ export function registerTools(
       async (args) =>
         withToolLogging("execute_contract_call", undefined, async () => {
           assertSimulationSupported(args.chain_id, args.simulate);
-          const data = await callApi(
+          const data = await callExecuteApi(
             internalApiBaseUrl,
             authHeader,
             "/api/execute/contract-call",
@@ -1561,7 +1724,7 @@ export function registerTools(
       async (args) =>
         withToolLogging("execute_check_and_execute", undefined, async () => {
           assertSimulationSupported(args.chain_id, args.simulate);
-          const data = await callApi(
+          const data = await callExecuteApi(
             internalApiBaseUrl,
             authHeader,
             "/api/execute/check-and-execute",

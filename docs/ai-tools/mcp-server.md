@@ -399,5 +399,21 @@ All tools return errors in this format:
 |------|---------|
 | 401 | Invalid or missing API key |
 | 404 | Workflow or execution not found |
-| 400 | Invalid parameters |
+| 400 | Invalid parameters -- or, on a dry run, a call that would revert (see below) |
 | 500 | Server error |
+
+### Dry runs that would revert
+
+A `400` from `execute_transfer`, `execute_contract_call`, or
+`execute_check_and_execute` with `simulate: true` is not always a bad request. When the
+simulation ran and the call would revert, the body carries `wouldRevert: true` and the
+decoded reason: the status describes the transaction, not your request.
+
+These tools surface that case as an error whose text names the stage, the decoded
+reason, the machine-readable `code` when the simulator attributed one, and the account
+the dry run used as sender. The original `API call failed: 400 ...` line is kept first,
+so callers that match on it are unaffected.
+
+The simulated sender is the organization wallet. If your org routes writes through a
+Safe, that is not the account the broadcast spends from -- see
+[Known limitation](/api/direct-execution#known-limitation).
