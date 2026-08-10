@@ -55,8 +55,49 @@ if [ "$QUEUE_MODE" != bundled ]; then
     exit 1
 fi
 
+# Discovered from the running release, not configured here.
+#
+# The queue's Service name, port, account id and queue name used to be settings
+# in config.sh. They are not settings any more: under the bundled queue the chart
+# computes every queue address from the release namespace, so a copy here would
+# be a second source of truth that can only ever drift. Reading the deployed
+# executor's own SQS_QUEUE_URL means this measures the queue that is actually
+# running, which is also the only thing worth measuring.
+discover_queue_url() {
+    local url
+    url=$(kube_ns get deploy "${RELEASE}-executor" -o \
+        "jsonpath={.spec.template.spec.containers[0].env[?(@.name=='SQS_QUEUE_URL')].value}" 2>/dev/null || true)
+    if [ -z "$url" ]; then
+        cat >&2 <<EOF
+Could not read SQS_QUEUE_URL from deployment '${RELEASE}-executor' in namespace '$NAMESPACE'.
+
+This measures a queue that is already installed. Install first, then re-run:
+
+    KUBE_CONTEXT=$KUBE_CONTEXT PROFILE=minikube IMAGE_TAG=<tag> ../install.sh
+
+If the release or namespace differs, pass RELEASE and NAMESPACE to match it.
+EOF
+        exit 1
+    fi
+    printf '%s' "$url"
+}
+
+# http://<service>.<ns>.svc.cluster.local:<port>/<account>/<queue>
+QUEUE_URL_IN_CLUSTER="$(discover_queue_url)"
+QUEUE_HOSTPORT="${QUEUE_URL_IN_CLUSTER#http://}"
+QUEUE_HOSTPORT="${QUEUE_HOSTPORT%%/*}"
+QUEUE_NAME="${QUEUE_HOSTPORT%%.*}"
+SQS_PORT="${QUEUE_HOSTPORT##*:}"
+QUEUE_PATH="${QUEUE_URL_IN_CLUSTER#*://*/}"
+
+if [ -z "$QUEUE_NAME" ] || [ -z "$SQS_PORT" ] || [ "$QUEUE_PATH" = "$QUEUE_URL_IN_CLUSTER" ]; then
+    echo "Could not parse a queue address out of '$QUEUE_URL_IN_CLUSTER'." >&2
+    exit 1
+fi
+
+# Reached through a port-forward, so the path is kept and only the host swapped.
 QUEUE_ENDPOINT="http://127.0.0.1:$LOCAL_PORT"
-QUEUE_ADDR="$QUEUE_ENDPOINT/$SQS_ACCOUNT_ID/$SQS_QUEUE_NAME"
+QUEUE_ADDR="$QUEUE_ENDPOINT/$QUEUE_PATH"
 
 # Reached through a port-forward rather than from inside the cluster, so that
 # restarting the queue pod cannot also kill the client doing the measuring.
@@ -70,23 +111,44 @@ stop_port_forward() {
     PF_PID=""
 }
 
+EXECUTOR_DEPLOY="${RELEASE}-executor"
+
 cleanup() {
     stop_port_forward
     if [ -n "$EXECUTOR_REPLICAS" ]; then
-        kube_ns scale deployment keeperhub-executor --replicas="$EXECUTOR_REPLICAS" >/dev/null 2>&1 || true
+        kube_ns scale deployment "$EXECUTOR_DEPLOY" --replicas="$EXECUTOR_REPLICAS" >/dev/null 2>&1 || true
         EXECUTOR_REPLICAS=""
     fi
 }
 trap cleanup EXIT
 
 # Restored by the trap on every exit path, including an interrupt.
+#
+# Not optional, and not silently skippable. A running executor is a competing
+# consumer on this queue: it receives these deliberately unsigned messages,
+# rejects them under SQS_HMAC_MODE enforce and routes them to the dead-letter
+# queue. The drain then finds nothing and the run reports total data loss that
+# never happened. Refusing to start is the only safe response to not finding it,
+# because the alternative is a confident wrong answer about durability.
 stand_down_consumer() {
-    EXECUTOR_REPLICAS=$(kube_ns get deployment keeperhub-executor \
+    EXECUTOR_REPLICAS=$(kube_ns get deployment "$EXECUTOR_DEPLOY" \
         -o jsonpath='{.spec.replicas}' 2>/dev/null || true)
-    [ -n "$EXECUTOR_REPLICAS" ] || { EXECUTOR_REPLICAS=""; return 0; }
-    kube_ns scale deployment keeperhub-executor --replicas=0 >/dev/null
-    kube_ns wait --for=delete pod -l app.kubernetes.io/name=executor --timeout=120s >/dev/null 2>&1 || true
-    echo "  consumer    keeperhub-executor scaled 0 (restored to $EXECUTOR_REPLICAS afterwards)"
+    if [ -z "$EXECUTOR_REPLICAS" ]; then
+        EXECUTOR_REPLICAS=""
+        cat >&2 <<EOF
+Deployment '$EXECUTOR_DEPLOY' not found in namespace '$NAMESPACE'.
+
+This test cannot run without standing that consumer down: it would receive the
+unsigned messages sent here, reject them, and route them to the dead-letter
+queue, which reads as data loss that never happened.
+
+If the release is named differently, pass RELEASE to match it.
+EOF
+        exit 1
+    fi
+    kube_ns scale deployment "$EXECUTOR_DEPLOY" --replicas=0 >/dev/null
+    kube_ns wait --for=delete pod -l "app.kubernetes.io/serviceName=$EXECUTOR_DEPLOY" --timeout=120s >/dev/null 2>&1 || true
+    echo "  consumer    $EXECUTOR_DEPLOY scaled 0 (restored to $EXECUTOR_REPLICAS afterwards)"
 }
 
 start_port_forward() {
@@ -95,8 +157,10 @@ start_port_forward() {
     # holding the local port. The next forward then fails to bind while the old
     # one keeps pointing at a pod that no longer exists, so every request comes
     # back "connection refused" long after the queue is healthy again.
+    local err
+    err="$(mktemp -t keeperhub-pf.XXXXXX.log)"
     kubectl --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-        port-forward "svc/$QUEUE_NAME" "$LOCAL_PORT:$SQS_PORT" >/dev/null 2>&1 &
+        port-forward "svc/$QUEUE_NAME" "$LOCAL_PORT:$SQS_PORT" >/dev/null 2>"$err" &
     PF_PID=$!
     local i=0
     # A real SQS call, not a TCP connect: kubectl binds the local port before the
@@ -110,10 +174,26 @@ try:
 except Exception:
     sys.exit(1)
 " 2>/dev/null; do
+        # Checked before the timeout, because the readiness probe above cannot
+        # tell OUR tunnel from someone else's on the same port. If the port is
+        # already taken, kubectl exits immediately and an unrelated forward -
+        # a stale one from an earlier run, pointed at a different namespace -
+        # answers every request. The measurement then runs happily against the
+        # wrong queue and reports total data loss that never happened. Cost an
+        # hour once; the fix is to notice that our own kubectl is gone.
+        if ! kill -0 "$PF_PID" 2>/dev/null; then
+            echo "port-forward exited immediately. Local port $LOCAL_PORT is probably taken:" >&2
+            sed 's/^/    /' "$err" >&2
+            echo "    ss -ltnp | grep $LOCAL_PORT   # find what holds it" >&2
+            echo "    LOCAL_PORT=<free port> $0     # or use another port" >&2
+            rm -f "$err"
+            exit 1
+        fi
         i=$((i + 1))
-        [ "$i" -lt 30 ] || { echo "port-forward did not come up" >&2; exit 1; }
+        [ "$i" -lt 30 ] || { echo "port-forward did not come up" >&2; rm -f "$err"; exit 1; }
         sleep 1
     done
+    rm -f "$err"
 }
 
 restart_port_forward() {

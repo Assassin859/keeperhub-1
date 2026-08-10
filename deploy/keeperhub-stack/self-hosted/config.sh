@@ -190,6 +190,28 @@ EOF
     fi
 }
 
+# Assert that a constant hardcoded in a test-harness script still matches the
+# overlay it mirrors.
+#
+# The harness runs before anything is deployed, so a few values - the local image
+# repository, the mkcert issuer, the hostname - cannot be discovered and have to
+# be written down twice: once in values.minikube.yaml, which the install reads,
+# and once in the script. This makes the second copy fail loudly when the first
+# one changes, instead of the script quietly building an image nothing pulls or
+# applying a ClusterIssuer with a blank name.
+#
+# Structural on purpose. A grep for the bare value would be satisfied by a
+# mention in a comment.
+assert_overlay() {
+    local key="$1" want="$2" overlay="${3:-$SCRIPT_DIR/../values.minikube.yaml}"
+    if ! grep -qE "^[[:space:]]*${key}:[[:space:]]*\"?${want}\"?[[:space:]]*$" "$overlay"; then
+        echo "Harness constant ${key}=${want} no longer matches $(basename "$overlay")." >&2
+        echo "Update the script and the overlay together, or the install and the" >&2
+        echo "harness will disagree about what they are building." >&2
+        exit 1
+    fi
+}
+
 kube() {
     kubectl --context "$KUBE_CONTEXT" "$@"
 }
