@@ -30,7 +30,7 @@ This page covers **Workflow Execution** — the more common pattern for an agent
 
 Profile icon → **Wallet**. Top up with ETH on whichever network your workflow targets.
 
-> **Gas sponsorship covers Mainnet Ethereum only.** If you're testing on Sepolia or any other testnet, the wallet needs its own funded balance regardless of sponsorship — this trips people up specifically because it's easy to test on a testnet first and assume sponsorship applies there too.
+> **Gas sponsorship pays the transaction fee, not the value your transaction moves.** On supported networks KeeperHub can cover the gas fee so a workflow runs from a wallet holding no native token — but a workflow that sends 0.1 ETH still needs 0.1 ETH in the wallet, and an ERC-20 transfer still needs the token balance. Sponsorship also requires the sender to be the wallet itself rather than a Safe, the transaction to use the public mempool, and your organization to have gas credits left for the period. See [Gas Management](/wallet-management/gas) for the supported networks and the full set of conditions.
 
 ## 3. Trigger the workflow
 
@@ -88,7 +88,3 @@ That's the full loop. See the [full API reference](/api) for execution history, 
 - **A key that "looks" set but isn't.** If you're validating config before running (recommended), check for placeholder patterns explicitly — an all-zeros private key (`0x000...0`) or a literal `your_key_here` string will pass a naive `if (key)` truthiness check and fail later with a confusing signing error instead of a clear "not configured" message.
 - **404 on execute.** Usually means the workflow ID is wrong or belongs to a different organization than the API key.
 - **Execution stuck in `pending`.** Check the wallet's balance on the target network first — see the gas sponsorship note above.
-
-## Runnable example
-
-A minimal, complete version of this flow (trigger → poll → confirm, with proper env validation) is available as a standalone template: [keeperhub-agent-quickstart](https://github.com/chriswilton971-sudo/keeperhub-agent-quickstart).
