@@ -128,8 +128,8 @@ export async function POST(
 }
 
 /**
- * Keep the route response compact: empty issue arrays are omitted rather than
- * returned as empty arrays.
+ * Keep the route response compact: an empty warning array is omitted rather
+ * than returned as an empty array.
  */
 function formatResult(
   result: WorkflowSimulationResult
@@ -138,10 +138,6 @@ function formatResult(
     simulatedNodeCount: result.simulatedNodeCount,
     skippedNodeCount: result.skippedNodeCount,
   };
-
-  if (result.errors.length > 0) {
-    out.errors = result.errors;
-  }
 
   if (result.warnings.length > 0) {
     out.warnings = result.warnings;

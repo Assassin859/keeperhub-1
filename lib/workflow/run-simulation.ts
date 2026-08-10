@@ -54,8 +54,11 @@ export type WorkflowSimulationIssue = {
   fieldKey?: string;
 };
 
+/**
+ * Preflight simulation is advisory, so every finding is a warning. There is
+ * deliberately no blocking channel here.
+ */
 export type WorkflowSimulationResult = {
-  errors: WorkflowSimulationIssue[];
   warnings: WorkflowSimulationIssue[];
   simulatedNodeCount: number;
   skippedNodeCount: number;
@@ -667,7 +670,6 @@ export async function runWorkflowSimulation({
   edges,
   deadlineAt,
 }: RunWorkflowSimulationInput): Promise<WorkflowSimulationResult> {
-  const errors: WorkflowSimulationIssue[] = [];
   const warnings: WorkflowSimulationIssue[] = [];
   let simulatedNodeCount = 0;
   let skippedNodeCount = 0;
@@ -716,6 +718,8 @@ export async function runWorkflowSimulation({
       continue;
     }
 
+    // A determined failure still only warns: the editor keeps Run Anyway
+    // available for every simulation outcome.
     if (outcome.status === "failed") {
       warnings.push(outcome.issue);
       continue;
@@ -728,7 +732,6 @@ export async function runWorkflowSimulation({
   }
 
   return {
-    errors,
     warnings,
     simulatedNodeCount,
     skippedNodeCount,

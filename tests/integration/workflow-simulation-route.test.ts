@@ -157,7 +157,6 @@ describe("/api/workflows/[workflowId]/simulate", () => {
       reset: 1_800_000_000,
     });
     mockRunWorkflowSimulation.mockResolvedValue({
-      errors: [],
       warnings: [],
       simulatedNodeCount: 1,
       skippedNodeCount: 0,
@@ -267,11 +266,11 @@ describe("/api/workflows/[workflowId]/simulate", () => {
     });
   });
 
-  it("includes node-level errors and warnings when present", async () => {
+  it("returns node-level findings as warnings and never as errors", async () => {
     mockWorkflowRows = [workflowRow];
 
     mockRunWorkflowSimulation.mockResolvedValue({
-      errors: [
+      warnings: [
         {
           code: "SIMULATION_WOULD_REVERT",
           message: "Transfer would revert: InsufficientBalance()",
@@ -279,8 +278,6 @@ describe("/api/workflows/[workflowId]/simulate", () => {
           nodeId: "write-1",
           fieldKey: "recipientAddress",
         },
-      ],
-      warnings: [
         {
           code: "SIMULATION_DYNAMIC_INPUT",
           message: "Amount depends on an upstream workflow step",
@@ -303,20 +300,19 @@ describe("/api/workflows/[workflowId]/simulate", () => {
     const body = await response.json();
 
     expect(body.ok).toBe(true);
-    expect(body.result.errors).toEqual([
+    expect(body.result.warnings).toEqual([
       expect.objectContaining({
         code: "SIMULATION_WOULD_REVERT",
         nodeId: "write-1",
         fieldKey: "recipientAddress",
       }),
-    ]);
-    expect(body.result.warnings).toEqual([
       expect.objectContaining({
         code: "SIMULATION_DYNAMIC_INPUT",
         nodeId: "write-1",
         fieldKey: "amount",
       }),
     ]);
+    expect(body.result).not.toHaveProperty("errors");
   });
 
   it("returns 429 when the simulation rate limit is exceeded", async () => {

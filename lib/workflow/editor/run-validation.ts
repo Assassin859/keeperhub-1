@@ -13,10 +13,12 @@ export type WorkflowValidationResult = {
   warnings?: WorkflowValidationIssue[];
 };
 
+/**
+ * Preflight simulation is advisory, so the route only ever returns warnings.
+ */
 export type WorkflowSimulationResult = {
   simulatedNodeCount: number;
   skippedNodeCount: number;
-  errors?: WorkflowValidationIssue[];
   warnings?: WorkflowValidationIssue[];
 };
 
@@ -204,21 +206,16 @@ export async function runWorkflowValidationPreflight({
 
   const simulation = await fetchSimulationResult(workflowId, fetcher);
 
-  const simulationErrors = mapWorkflowValidationIssues(
-    simulation.errors,
-    nodes
-  );
   const simulationWarnings = mapWorkflowValidationIssues(
     simulation.warnings,
     nodes
   );
 
-  const combinedErrors = [...validationErrors, ...simulationErrors];
   const combinedWarnings = [...validationWarnings, ...simulationWarnings];
 
-  if (combinedErrors.length > 0 || combinedWarnings.length > 0) {
+  if (combinedWarnings.length > 0) {
     onOpenIssues({
-      validationErrors: combinedErrors,
+      validationErrors,
       validationWarnings: combinedWarnings,
       onRunAnyway: onStartWorkflowExecution,
     });

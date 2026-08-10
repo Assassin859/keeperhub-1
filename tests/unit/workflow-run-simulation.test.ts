@@ -124,7 +124,6 @@ describe("runWorkflowSimulation", () => {
     });
 
     expect(result).toEqual({
-      errors: [],
       warnings: [],
       simulatedNodeCount: 1,
       skippedNodeCount: 0,
@@ -178,7 +177,7 @@ describe("runWorkflowSimulation", () => {
     );
     expect(result.warnings[0]?.message).not.toContain("CALL_EXCEPTION");
     expect(result.warnings[0]?.message).not.toContain("transaction={");
-    expect(result.errors).toEqual([]);
+    expect(result).not.toHaveProperty("errors");
   });
 
   it("preserves a useful decoded revert reason and uses a readable action name", async () => {
@@ -266,7 +265,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_UNAVAILABLE",
@@ -293,7 +291,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_DYNAMIC_INPUT",
@@ -315,7 +312,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.code).toBe("SIMULATION_SAFE_SIGNER_UNSUPPORTED");
     expect(spies.resolveSignerForNode).not.toHaveBeenCalled();
@@ -337,7 +333,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.warnings[0]?.code).toBe("SIMULATION_UNSUPPORTED_CHAIN");
     expect(spies.simulateNativeTransfer).not.toHaveBeenCalled();
   });
@@ -360,7 +355,6 @@ describe("runWorkflowSimulation", () => {
     });
 
     expect(result).toEqual({
-      errors: [],
       warnings: [],
       simulatedNodeCount: 0,
       skippedNodeCount: 0,
@@ -392,7 +386,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.simulatedNodeCount).toBe(1);
     expect(spies.simulateContractCall).toHaveBeenCalledWith({
       organizationId: "org_test",
@@ -428,7 +421,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.simulatedNodeCount).toBe(1);
     expect(spies.simulateContractCall).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: "setValue" })
@@ -452,7 +444,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.simulatedNodeCount).toBe(1);
     expect(spies.simulateTokenTransfer).toHaveBeenCalledWith({
       organizationId: "org_test",
@@ -556,7 +547,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.warnings[0]?.code).toBe("SIMULATION_SIGNER_UNAVAILABLE");
     expect(result.skippedNodeCount).toBe(1);
   });
@@ -616,7 +606,6 @@ describe("runWorkflowSimulation", () => {
       ],
     });
 
-    expect(result.errors).toEqual([]);
     expect(result.warnings[0]?.code).toBe("SIMULATION_UNAVAILABLE");
     expect(result.skippedNodeCount).toBe(1);
   });
@@ -692,7 +681,6 @@ describe("runWorkflowSimulation", () => {
     });
 
     expect(spies.simulateNativeTransfer).toHaveBeenCalledTimes(2);
-    expect(result.errors).toEqual([]);
     expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_WOULD_REVERT",
       nodeId: "write-2",
