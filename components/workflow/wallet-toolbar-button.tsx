@@ -1,9 +1,8 @@
 "use client";
 
 import { Copy, Loader2, Plus, Wallet } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useOverlay } from "@/components/overlays/overlay-provider";
-import { WalletOverlay } from "@/components/overlays/wallet-overlay";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -12,7 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
-import { useSession } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 import { useWalletProvisioning } from "@/lib/wallet/use-wallet-provisioning";
@@ -20,11 +19,11 @@ import { useWalletProvisioning } from "@/lib/wallet/use-wallet-provisioning";
 /**
  * Compact toolbar affordance for the organization wallet.
  *
- * - Shows the truncated wallet address when a wallet exists (click opens
- *   the wallet overlay; clipboard copies the full checksummed address).
+ * - Shows the truncated wallet address when a wallet exists (click opens the
+ *   wallet settings; clipboard copies the full checksummed address).
  * - Shows a "Create wallet" button when the user is signed in but has no
- *   wallet yet (click opens the overlay on the balances tab so admins can
- *   create one).
+ *   wallet yet, which lands on the same page: creating one is the first thing
+ *   it offers.
  * - Renders nothing for anonymous / unverified users to keep the toolbar
  *   clean on first load.
  */
@@ -56,9 +55,14 @@ export function WalletToolbarButton(): React.ReactElement | null {
 }
 
 function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
-  const { open: openOverlay } = useOverlay();
+  const router = useRouter();
+  const { data: activeOrg } = authClient.useActiveOrganization();
   const { hasWallet, walletAddress, isLoading } = useWalletInfo();
   const { isProvisioning } = useWalletProvisioning();
+
+  const walletsHref = activeOrg?.id
+    ? `/settings/${activeOrg.id}/wallets`
+    : "/settings";
 
   if (isLoading && !walletAddress) {
     return null;
@@ -83,7 +87,7 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
       <Button
         className="h-9"
         data-tour="create-wallet"
-        onClick={() => openOverlay(WalletOverlay)}
+        onClick={() => router.push(walletsHref)}
         size="sm"
         variant="outline"
       >
@@ -95,7 +99,7 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
   }
 
   const handleOpenWallet = (): void => {
-    openOverlay(WalletOverlay);
+    router.push(walletsHref);
   };
 
   const handleCopy = (e: React.MouseEvent<HTMLButtonElement>): void => {
@@ -120,7 +124,7 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
             </span>
           </button>
         </TooltipTrigger>
-        <TooltipContent>Open wallet</TooltipContent>
+        <TooltipContent>Open wallet settings</TooltipContent>
       </Tooltip>
       <div className="h-5 w-px bg-border" />
       <Tooltip>
