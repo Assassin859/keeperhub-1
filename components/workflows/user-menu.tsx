@@ -177,8 +177,8 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuLabel>
-            <div className="flex min-w-0 flex-col space-y-1">
+          <DropdownMenuLabel className="flex items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-col space-y-1">
               <p className="truncate font-medium text-sm leading-none">
                 {session?.user?.name || "User"}
               </p>
@@ -201,6 +201,21 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
                 </p>
               )}
             </div>
+            <button
+              aria-label="Settings"
+              className="relative shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => router.push("/settings")}
+              type="button"
+            >
+              <Settings className="size-4" />
+              {showBillingDot && (
+                <span
+                  aria-hidden="true"
+                  className="-top-0.5 -right-0.5 absolute size-2 rounded-full bg-destructive"
+                  data-testid="billing-notification-dot"
+                />
+              )}
+            </button>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <div className="lg:hidden">
@@ -220,18 +235,6 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </div>
-          <DropdownMenuItem onClick={() => router.push("/settings")}>
-            <Settings className="size-4" />
-            <span className="flex-1">Settings</span>
-            {showBillingDot && (
-              <span
-                aria-hidden="true"
-                className="size-2 rounded-full bg-destructive"
-                data-testid="billing-notification-dot"
-              />
-            )}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => openGettingStarted(true)}>
             <Rocket className="size-4" />
             <span>Getting started</span>
