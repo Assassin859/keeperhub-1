@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Mail, UserPlus, Wallet } from "lucide-react";
+import { Copy, Link as LinkIcon, Mail, UserPlus, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { isAddress } from "viem";
@@ -128,6 +128,13 @@ export function InviteMemberForm({
     }
   };
 
+  const submitLabel = (() => {
+    if (mode === "wallet") {
+      return loading ? "Creating..." : "Create invite link";
+    }
+    return loading ? "Sending..." : "Send invitation";
+  })();
+
   const inviteLink = inviteId
     ? `${typeof window === "undefined" ? "" : window.location.origin}/accept-invite/${inviteId}`
     : "";
@@ -239,8 +246,12 @@ export function InviteMemberForm({
           disabled={loading || (mode === "email" ? !email : !address)}
           onClick={handleInvite}
         >
-          <Mail className="mr-2 h-4 w-4" />
-          {loading ? "Sending..." : "Send Invitation"}
+          {mode === "wallet" ? (
+            <LinkIcon className="mr-2 h-4 w-4" />
+          ) : (
+            <Mail className="mr-2 h-4 w-4" />
+          )}
+          {submitLabel}
         </Button>
       </div>
     </>

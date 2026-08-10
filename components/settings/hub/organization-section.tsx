@@ -5,6 +5,8 @@ import { useState } from "react";
 import { InviteMemberForm } from "@/components/organization/invite-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { truncateAddress } from "@/lib/address-utils";
+import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
 import { useOrganizations } from "@/lib/hooks/use-organization";
 import { CreateOrgForm } from "./create-org-form";
@@ -142,11 +144,15 @@ export function OrganizationSection(): React.ReactElement {
           }}
           rows={members.invitations.map((inv) => ({
             badge: inv.role,
+            // Wallet invitees carry a synthetic address rather than a mailbox,
+            // and are never emailed, so show the wallet they sign in with.
+            label: isWalletEmail(inv.email)
+              ? truncateAddress(inv.email.split("@")[0])
+              : inv.email,
             expired: inv.expiresAt
               ? new Date(inv.expiresAt) < new Date()
               : false,
             id: inv.id,
-            label: inv.email,
           }))}
           title="Outstanding invitations"
         />
