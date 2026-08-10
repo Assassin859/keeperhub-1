@@ -503,7 +503,16 @@ export async function batchWriteContractCore(
     decodeAggregate3Entry(ok, data, iface, abiFunctionKey, outputs)
   );
 
-  if (results.length > 0 && results.every((r) => !r.success)) {
+  // Key the abort on the raw on-chain flag, not the decoded `results`
+  // success flag. decodeAggregate3Entry also reports success:false when a
+  // call succeeded on-chain but its return data doesn't decode against the
+  // declared ABI outputs (e.g. a USDT-style transfer() declared as
+  // `returns (bool)` against a contract that returns nothing). The raw flag
+  // is the only field that reflects what aggregate3 actually did; `results`
+  // still carries the decoded per-call detail for the response either way.
+  const allReverted =
+    aggregateResults.length > 0 && aggregateResults.every(([ok]) => !ok);
+  if (allReverted) {
     return {
       success: false,
       error: `All ${results.length} calls failed simulation; skipping broadcast to avoid wasting gas. First error: ${results[0].error}`,

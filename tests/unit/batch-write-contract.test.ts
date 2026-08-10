@@ -130,7 +130,7 @@ vi.mock("ethers", async () => {
     ...actual,
     ethers: {
       ...actual.ethers,
-      JsonRpcProvider: class MockProvider { },
+      JsonRpcProvider: class MockProvider {},
       Contract: class MockContract {
         aggregate3 = { staticCall: mockStaticCall };
       },
@@ -316,6 +316,40 @@ describe("batch-write-contract - per-call failure isolation", () => {
     expect(result.results).toHaveLength(2);
     expect(result.totalCalls).toBe(2);
     expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts when aggregate3 reports success but declared outputs don't decode against the actual return data", async () => {
+    const boolReturnAbi = JSON.stringify([
+      {
+        type: "function",
+        name: "work",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "network", type: "bytes32" },
+          { name: "args", type: "bytes" },
+        ],
+        outputs: [{ name: "", type: "bool" }],
+      },
+    ]);
+    // Raw aggregate3 flag is true on both entries (on-chain success), but the
+    // empty "0x" return data won't decode against a declared `returns (bool)`,
+    // so decodeAggregate3Entry reports success:false for both. The abort must
+    // key on the raw flag, not this decoded one, or it wrongly skips a batch
+    // that actually succeeded on-chain.
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(
+      baseInput({ abi: boolReturnAbi, isolateCallFailures: "true" })
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.transactionHash).toBe("0xhash");
+    expect(result.results).toHaveLength(2);
+    expect(result.results?.[0].success).toBe(false);
+    expect(mockExecuteContractCall).toHaveBeenCalledTimes(1);
   });
 
   it("preserves results/totalCalls when softening an all-calls-failed abort", async () => {
