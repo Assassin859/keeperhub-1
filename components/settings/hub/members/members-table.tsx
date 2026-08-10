@@ -36,7 +36,7 @@ export function MembersTable({
   currentMemberId: string | null;
   canManage: boolean;
   updatingId: string | null;
-  onRoleChange: (memberId: string, role: string) => Promise<void>;
+  onRoleChange: (member: OrgMember, role: string) => Promise<void>;
   onRemove: (member: OrgMember) => Promise<void>;
 }): React.ReactElement {
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -90,7 +90,7 @@ export function MembersTable({
                 {roleEditable ? (
                   <Select
                     disabled={updatingId === member.id}
-                    onValueChange={(role) => onRoleChange(member.id, role)}
+                    onValueChange={(role) => onRoleChange(member, role)}
                     value={member.role}
                   >
                     <SelectTrigger className="h-8 w-[120px]">

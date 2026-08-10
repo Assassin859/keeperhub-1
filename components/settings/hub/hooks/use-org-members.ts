@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
+import { roleLabel } from "@/lib/organization/role-label";
 import { useSettingsContext } from "../settings-context";
 import { cacheRead, cacheWrite } from "./settings-cache";
 
@@ -33,7 +34,7 @@ export type OrgMembersState = {
   refetch: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
   resendInvitation: (invitation: SentInvitation) => Promise<void>;
-  changeRole: (memberId: string, role: string) => Promise<void>;
+  changeRole: (member: OrgMember, role: string) => Promise<void>;
   removeMember: (member: OrgMember) => Promise<void>;
 };
 
@@ -113,30 +114,48 @@ export function useOrgMembers(): OrgMembersState {
   const cancelInvitation = useCallback(
     async (invitationId: string): Promise<void> => {
       try {
-        await authClient.organization.cancelInvitation({ invitationId });
-        toast.success("Invitation cancelled");
-        await refetch();
+        const { error } = await authClient.organization.cancelInvitation({
+          invitationId,
+        });
+        if (error) {
+          toast.error(error.message || "Could not cancel the invitation");
+        } else {
+          toast.success("Invitation cancelled");
+        }
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Failed to cancel invitation"
         );
+      } finally {
+        await refetch();
       }
     },
     [refetch]
   );
 
   const changeRole = useCallback(
-    async (memberId: string, role: string): Promise<void> => {
-      setUpdatingId(memberId);
+    async (member: OrgMember, role: string): Promise<void> => {
+      setUpdatingId(member.id);
+      const who = member.user.name || member.user.email;
       try {
-        await authClient.organization.updateMemberRole({ memberId, role });
-        await refetch();
+        // better-auth reports failures on the result rather than throwing, so
+        // a bare try/catch would let a rejected change pass silently.
+        const { error } = await authClient.organization.updateMemberRole({
+          memberId: member.id,
+          role,
+        });
+        if (error) {
+          toast.error(error.message || `Could not change the role for ${who}`);
+        } else {
+          toast.success(`${who} is now ${roleLabel(role) ?? role}`);
+        }
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Failed to update role"
         );
       } finally {
         setUpdatingId(null);
+        await refetch();
       }
     },
     [refetch]
@@ -144,16 +163,22 @@ export function useOrgMembers(): OrgMembersState {
 
   const removeMember = useCallback(
     async (member: OrgMember): Promise<void> => {
+      const who = member.user.name || member.user.email;
       try {
-        await authClient.organization.removeMember({
+        const { error } = await authClient.organization.removeMember({
           memberIdOrEmail: member.user.email,
         });
-        toast.success(`Removed ${member.user.name}`);
-        await refetch();
+        if (error) {
+          toast.error(error.message || `Could not remove ${who}`);
+        } else {
+          toast.success(`Removed ${who}`);
+        }
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Failed to remove member"
         );
+      } finally {
+        await refetch();
       }
     },
     [refetch]
