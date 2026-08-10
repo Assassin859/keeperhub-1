@@ -2,7 +2,7 @@
 // from tests and from the API route. Web3 + ABI checks land in
 // Plans 48-02 and 48-03 as additional exported functions.
 
-import { isWriteActionType } from "@/lib/mcp/calldata";
+import { isWriteActionType } from "@/lib/mcp/action-type";
 import {
   findBareAtLiterals,
   isInputSchemaPresent,
