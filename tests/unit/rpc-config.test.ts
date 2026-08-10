@@ -337,41 +337,43 @@ describe("RPC Config Resolution", () => {
       { json: "solana-devnet", public: PUBLIC_RPCS.SOLANA_DEVNET },
     ];
 
-    it.each(chainKeys)(
-      "should resolve $json from JSON config",
-      ({ json, public: publicDefault }) => {
-        const rpcConfig: RpcConfig = {
-          [json]: { primaryRpcUrl: `https://${json}.json.example.com` },
-        };
+    it.each(chainKeys)("should resolve $json from JSON config", ({
+      json,
+      public: publicDefault,
+    }) => {
+      const rpcConfig: RpcConfig = {
+        [json]: { primaryRpcUrl: `https://${json}.json.example.com` },
+      };
 
-        const result = getRpcUrl({
-          rpcConfig,
-          jsonKey: json,
-          envValue: undefined,
-          publicDefault,
-          type: "primary",
-        });
+      const result = getRpcUrl({
+        rpcConfig,
+        jsonKey: json,
+        envValue: undefined,
+        publicDefault,
+        type: "primary",
+      });
 
-        expect(result).toBe(`https://${json}.json.example.com`);
-      }
-    );
+      expect(result).toBe(`https://${json}.json.example.com`);
+    });
 
-    it.each(chainKeys)(
-      "should fall back to public default for $json when no config",
-      ({ json, public: publicDefault }) => {
-        const rpcConfig: RpcConfig = {};
+    it.each(
+      chainKeys
+    )("should fall back to public default for $json when no config", ({
+      json,
+      public: publicDefault,
+    }) => {
+      const rpcConfig: RpcConfig = {};
 
-        const result = getRpcUrl({
-          rpcConfig,
-          jsonKey: json,
-          envValue: undefined,
-          publicDefault,
-          type: "primary",
-        });
+      const result = getRpcUrl({
+        rpcConfig,
+        jsonKey: json,
+        envValue: undefined,
+        publicDefault,
+        type: "primary",
+      });
 
-        expect(result).toBe(publicDefault);
-      }
-    );
+      expect(result).toBe(publicDefault);
+    });
   });
 
   describe("edge cases", () => {
@@ -1098,5 +1100,43 @@ describe("RPC Config Resolution", () => {
         getConfigValue(rpcConfig, "tempo-mainnet", "isTestnet", true)
       ).toBe(false);
     });
+  });
+});
+
+/**
+ * A deployment that configures no RPCs falls through to PUBLIC_RPCS, and
+ * seed-chains.ts writes whatever it finds there into the chains table - on
+ * every deploy, so a hand-corrected row does not survive. An entry pointing at
+ * infrastructure KeeperHub operates would therefore route that deployment's
+ * chain traffic through us silently and durably.
+ *
+ * This asserts over the whole exported table rather than the one entry that was
+ * wrong, so an endpoint added later fails here rather than in someone's install.
+ */
+describe("PUBLIC_RPCS contains no KeeperHub-operated endpoint", () => {
+  const OPERATED_DOMAINS = ["techops.services", "keeperhub.com"];
+
+  function hostOf(url: string): string {
+    return new URL(url).hostname.toLowerCase();
+  }
+
+  it.each(
+    Object.entries(PUBLIC_RPCS)
+  )("%s is a third-party endpoint", (_name, url) => {
+    const host = hostOf(url);
+    for (const domain of OPERATED_DOMAINS) {
+      expect(
+        host === domain || host.endsWith(`.${domain}`),
+        `${url} is operated by KeeperHub; a deployment with no RPC config would route chain traffic through us`
+      ).toBe(false);
+    }
+  });
+
+  it("covers every entry, so the table cannot grow past the check", () => {
+    const entries = Object.entries(PUBLIC_RPCS);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [, url] of entries) {
+      expect(() => hostOf(url)).not.toThrow();
+    }
   });
 });
