@@ -1368,7 +1368,7 @@ const web3Plugin: IntegrationPlugin = {
           type: "json-editor",
           placeholder: '[{ "contractAddress": "0x...", "args": ["0x...", "0x..."] }]',
           helpTip:
-            "A JSON array of { contractAddress, args }, one entry per call, all invoking the same selected function. Bind this to a prior step's dynamic array output, e.g. {{@filter-workable-jobs:Filter Workable Jobs.result.jobs}}. Every call runs with msg.sender set to the Multicall3 contract, not your wallet, so an approve() here grants Multicall3 the allowance, not your organization wallet; do not batch msg.sender-gated calls expecting wallet-equivalent behavior.",
+            'A JSON array of { contractAddress, args }, one entry per call, all invoking the same selected function.\n\nExample batching approve(spender, amount) across two different token contracts:\n[{"contractAddress":"0x1111111111111111111111111111111111111111","args":["0x3333333333333333333333333333333333333333","1000000"]},{"contractAddress":"0x2222222222222222222222222222222222222222","args":["0x3333333333333333333333333333333333333333","2000000"]}]\n\nBind this to a prior step\'s dynamic array output instead of a static list, e.g. {{@filter-workable-jobs:Filter Workable Jobs.result.jobs}}.\n\nEvery call runs with msg.sender set to the Multicall3 contract, not your wallet, so an approve() here grants Multicall3 the allowance, not your organization wallet; do not batch msg.sender-gated calls expecting wallet-equivalent behavior.',
           required: true,
         },
         {
