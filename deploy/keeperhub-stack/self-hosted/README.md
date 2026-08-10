@@ -329,17 +329,19 @@ once in the node. Budget tens of minutes and around 25GB.
 These are properties of the shipped application, not of this profile. Each is
 tracked separately.
 
-**The app only runs on a `*.keeperhub.com` hostname.** `lib/trusted-origins.ts`
-hardcodes the trusted-origin list to `http://localhost:*`, `http://127.0.0.1:*`
-and `https://*.keeperhub.com`, with no environment variable to extend it. That
-list backs the CSRF guard in `proxy.ts` and better-auth, so on any other
-hostname every cookie-authenticated POST/PATCH/PUT/DELETE is rejected. The UI
-loads and reads fine, so it looks like the app works until you try to save:
-enabling a workflow returns "Failed to update workflow state" and the only trace
-is `[csrf] blocked: untrusted origin` in the app log. `values.minikube.yaml` sets `appHost` to
-`selfhosted.keeperhub.com` to stay inside the trusted suffix; the base profile has
-no default, because **a client cannot use one** - they do not own the domain. Making trusted origins configurable is a
-prerequisite for any client install (KEEP-1110).
+**Any hostname works, provided the origin is trusted.** `lib/trusted-origins.ts`
+ships a fixed list covering `http://localhost:*`, `http://127.0.0.1:*` and
+`https://*.keeperhub.com`, and that list backs the CSRF guard in `proxy.ts` and
+`lib/middleware/auth-helpers.ts`. An origin outside it has every
+cookie-authenticated POST/PATCH/PUT/DELETE rejected while the UI still loads and
+reads, so it looks like the app works until you try to save: enabling a workflow
+returns "Failed to update workflow state" and the only trace is
+`[csrf] blocked: untrusted origin` in the app log.
+
+This profile sets `ADDITIONAL_TRUSTED_ORIGINS` from `global.appHost`, so your own
+domain is trusted without further configuration. Set it yourself only if the app
+is reached on more origins than that one - a vanity domain, or a separate
+hostname for an internal network.
 
 **There is no email.** `lib/email.ts` posts to SendGrid's HTTP API, so there is
 no SMTP setting and no local mail-catcher option. Without `SENDGRID_API_KEY`,

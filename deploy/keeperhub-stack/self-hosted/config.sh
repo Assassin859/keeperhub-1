@@ -54,17 +54,15 @@ IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
 
 # The hostname the app is served on, and how it is exposed.
 #
-# One caveat that applies to every hostname outside *.keeperhub.com:
-# lib/trusted-origins.ts hardcodes the trusted-origin list to http://localhost:*,
-# http://127.0.0.1:* and https://*.keeperhub.com, with no environment variable to
-# extend it. That list backs the CSRF guard in proxy.ts and better-auth, so on
-# any other hostname every cookie-authenticated POST/PATCH/PUT/DELETE is
-# rejected. The UI still loads and reads fine, so it looks like the app works
-# until you try to save: enabling a workflow returns "Failed to update workflow
-# state" and the only trace is "[csrf] blocked: untrusted origin" in the app log.
+# Any hostname works. The application ships a fixed trusted-origin list
+# (lib/trusted-origins.ts) covering localhost and *.keeperhub.com, which backs
+# the CSRF guard; the profile extends it with this host through
+# ADDITIONAL_TRUSTED_ORIGINS so a client domain is trusted out of the box.
 #
-# Making the trusted origins configurable is a prerequisite for any client
-# domain, and is tracked separately.
+# Worth knowing because the failure mode is quiet: an untrusted origin still
+# loads and reads, and only writes fail, with 403 and "[csrf] blocked:
+# untrusted origin" in the app log. If you serve the app on more origins than
+# APP_HOST, add them to ADDITIONAL_TRUSTED_ORIGINS yourself.
 APP_HOST="${APP_HOST:-}"
 INGRESS_CLASS="${INGRESS_CLASS:-}"
 TLS_ISSUER="${TLS_ISSUER:-}"

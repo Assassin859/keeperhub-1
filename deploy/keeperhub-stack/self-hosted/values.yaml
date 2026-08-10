@@ -357,6 +357,17 @@ app:
     BETTER_AUTH_URL:
       type: template
       value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
+    # Trusts this install's own hostname for cookie-authenticated writes.
+    #
+    # The application ships a fixed trusted-origin list covering localhost and
+    # *.keeperhub.com. Without this entry a client domain loads and reads fine
+    # and then fails every save with 403 and "[csrf] blocked: untrusted origin"
+    # in the app log - which looks like the app is broken rather than
+    # unconfigured. Set from the same value as the URLs above so the three
+    # cannot disagree.
+    ADDITIONAL_TRUSTED_ORIGINS:
+      type: template
+      value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
     # Nothing is gated in a self-hosted install; this short-circuits both the
     # execution guard and the feature route-guard.
     NEXT_PUBLIC_BILLING_ENABLED:
