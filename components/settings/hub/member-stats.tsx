@@ -1,17 +1,14 @@
 "use client";
 
-import { roleLabel } from "@/lib/organization/role-label";
 import type { OrgMember } from "./hooks/use-org-members";
 import { StatTile } from "./section";
 
 export function MemberStats({
   members,
   pendingCount,
-  role,
 }: {
   members: OrgMember[];
   pendingCount: number;
-  role: string | undefined;
 }): React.ReactElement {
   const owners = members.filter((m) => m.role === "owner").length;
   const admins = members.filter((m) => m.role === "admin").length;
@@ -30,9 +27,9 @@ export function MemberStats({
         value={String(pendingCount)}
       />
       <StatTile
-        hint="Decides what you can change here"
-        label="Your role"
-        value={roleLabel(role) ?? "--"}
+        hint="Can manage members and wallets"
+        label="Admins and owners"
+        value={String(owners + admins)}
       />
     </div>
   );

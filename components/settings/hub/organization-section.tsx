@@ -22,6 +22,17 @@ import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
 import { RowsSkeleton, StatTilesSkeleton } from "./skeletons";
 
+/** Most privileged first; anything unrecognised sorts last. */
+function roleRank(role: string): number {
+  if (role === "owner") {
+    return 0;
+  }
+  if (role === "admin") {
+    return 1;
+  }
+  return role === "member" ? 2 : 3;
+}
+
 export function OrganizationSection(): React.ReactElement {
   const { organizationId, isAdmin, isOwner, role } = useSettingsContext();
   const { organizations } = useOrganizations();
@@ -38,13 +49,21 @@ export function OrganizationSection(): React.ReactElement {
     members.members.find((m) => m.userId === session?.user?.id)?.id ?? null;
 
   const needle = query.trim().toLowerCase();
-  const filtered = needle
-    ? members.members.filter(
-        (m) =>
-          m.user.name?.toLowerCase().includes(needle) ||
-          m.user.email?.toLowerCase().includes(needle)
-      )
-    : members.members;
+  const filtered = (
+    needle
+      ? members.members.filter(
+          (m) =>
+            m.user.name?.toLowerCase().includes(needle) ||
+            m.user.email?.toLowerCase().includes(needle)
+        )
+      : members.members
+  )
+    .slice()
+    .sort(
+      (a, b) =>
+        roleRank(a.role) - roleRank(b.role) ||
+        (a.user.name ?? a.user.email).localeCompare(b.user.name ?? b.user.email)
+    );
 
   return (
     <>
@@ -79,7 +98,6 @@ export function OrganizationSection(): React.ReactElement {
         <MemberStats
           members={members.members}
           pendingCount={members.invitations.length}
-          role={role}
         />
       )}
 
