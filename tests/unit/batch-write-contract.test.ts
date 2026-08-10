@@ -10,11 +10,15 @@ vi.mock("@/lib/metrics/instrumentation/plugin", () => ({
   withPluginMetrics: (_opts: unknown, fn: () => unknown) => fn(),
 }));
 
+const { mockDbWhere } = vi.hoisted(() => ({ mockDbWhere: vi.fn() }));
 vi.mock("@/lib/db", () => ({
   db: {
     select: () => ({
       from: () => ({
-        where: () => Promise.resolve([{ workflowId: "wf-1" }]),
+        where: (...args: unknown[]) => {
+          mockDbWhere(...args);
+          return Promise.resolve([{ workflowId: "wf-1" }]);
+        },
       }),
     }),
   },
@@ -687,5 +691,44 @@ describe("batch-write-contract - decoded results", () => {
     expect(result.results?.[0].success).toBe(false);
     expect(result.results?.[0].error).toContain("Splitter/kicked-too-soon");
     expect(result.results?.[1].success).toBe(true);
+  });
+});
+
+describe("batch-write-contract - workflowId resolution", () => {
+  it("does not query the DB when _context.workflowId is already present", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(
+      baseInput({
+        _context: { organizationId: "org-1", workflowId: "wf-present" },
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockDbWhere).not.toHaveBeenCalled();
+  });
+
+  it("does not query the DB for a direct execution (organizationId present, no workflowId)", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(
+      baseInput({
+        _context: { organizationId: "org-1", executionId: "exec-1" },
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockDbWhere).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a DB lookup when executionId is present without organizationId or workflowId", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(
+      baseInput({ _context: { executionId: "exec-1" } })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockDbWhere).toHaveBeenCalledTimes(1);
   });
 });

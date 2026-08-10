@@ -338,9 +338,15 @@ export function encodeCall3Array(
 }
 
 async function getWorkflowIdFromExecution(
-  executionId: string | undefined
+  executionId: string | undefined,
+  organizationId: string | undefined
 ): Promise<string | undefined> {
-  if (!executionId) {
+  // A direct execution (app/api/execute/node/route.ts) sets both
+  // executionId and organizationId, but its executionId is not a
+  // workflowExecutions row, so this lookup can never return anything for
+  // that shape. Only attempt it for the case it exists for: an execution
+  // supplying executionId without organizationId.
+  if (!executionId || organizationId) {
     return;
   }
   try {
@@ -540,7 +546,8 @@ export async function batchWriteContractCore(
   // workflow execution, so only fall back to a DB lookup when a caller
   // supplies executionId without it.
   const workflowId =
-    _context?.workflowId ?? (await getWorkflowIdFromExecution(_context?.executionId));
+    _context?.workflowId ??
+    (await getWorkflowIdFromExecution(_context?.executionId, _context?.organizationId));
 
   const txContext: TransactionContext = {
     organizationId,
