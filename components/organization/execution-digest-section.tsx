@@ -146,6 +146,20 @@ export function ExecutionDigestSection({
   const dirty =
     saved !== null && serialiseDigest(enabled, cadences, subscribers) !== saved;
 
+  const handleReset = useCallback(() => {
+    if (!saved) {
+      return;
+    }
+    const previous = JSON.parse(saved) as {
+      enabled: boolean;
+      cadences: Cadence[];
+      subscribers: string[];
+    };
+    setEnabled(previous.enabled);
+    setCadences(new Set(previous.cadences));
+    setSubscribers(new Set(previous.subscribers));
+  }, [saved]);
+
   const handleSave = useCallback(async () => {
     if (enabled && cadences.size === 0) {
       toast.error(DIGEST_REQUIRES_CADENCE_ERROR);
@@ -307,19 +321,27 @@ export function ExecutionDigestSection({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center justify-end gap-2">
+        {dirty && !saving && (
+          <span className="mr-auto text-muted-foreground text-xs">
+            Unsaved changes
+          </span>
+        )}
         <Button
-          className="flex-1"
+          disabled={!dirty || saving}
+          onClick={handleReset}
+          size="sm"
+          variant="ghost"
+        >
+          Cancel
+        </Button>
+        <Button
           disabled={loading || saving || !dirty}
           onClick={handleSave}
           size="sm"
-          variant={dirty ? "default" : "outline"}
         >
           {saving ? "Saving..." : "Save changes"}
         </Button>
-        {dirty && !saving && (
-          <span className="text-muted-foreground text-xs">Unsaved changes</span>
-        )}
       </div>
     </div>
   );
