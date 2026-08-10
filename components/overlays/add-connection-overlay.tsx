@@ -11,6 +11,7 @@ import { IntegrationIcon } from "@/components/ui/integration-icon";
 import { Label } from "@/components/ui/label";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { api } from "@/lib/api-client";
+import { integrationRequiresCredentials } from "@/lib/integration-helpers";
 import { useSession } from "@/lib/auth-client";
 import {
   DatabaseConnectionForm,
@@ -79,27 +80,27 @@ export function ConnectionTypePicker({
     [existingIntegrations]
   );
 
-  const integrationTypes = getIntegrationTypes();
+  // Most plugins are protocols and utility nodes that hold no credentials, so
+  // there is nothing to connect: listing them here only buried the handful of
+  // services that do take credentials.
+  const connectableTypes = useMemo(
+    () => getIntegrationTypes().filter(integrationRequiresCredentials),
+    []
+  );
 
   const filteredTypes = useMemo(() => {
     if (!searchQuery.trim()) {
-      return integrationTypes;
+      return connectableTypes;
     }
     const query = searchQuery.toLowerCase();
-    return integrationTypes.filter((type) =>
+    return connectableTypes.filter((type) =>
       getLabel(type).toLowerCase().includes(query)
     );
-  }, [integrationTypes, searchQuery]);
+  }, [connectableTypes, searchQuery]);
 
   const isAlreadyConfigured = (type: IntegrationType) => {
     const plugin = getIntegration(type);
     return plugin?.singleConnection && existingIntegrationTypes.has(type);
-  };
-
-  // Check if integration doesn't require credentials (e.g., webhook)
-  const noCredentialsRequired = (type: IntegrationType) => {
-    const plugin = getIntegration(type);
-    return plugin?.requiresCredentials === false;
   };
 
   const handleSelectType = (type: IntegrationType): void => {
@@ -128,8 +129,7 @@ export function ConnectionTypePicker({
               const description = getDescription(type);
               // or integrations that don't require credentials
               const configured = isAlreadyConfigured(type);
-              const noCredentials = noCredentialsRequired(type);
-              const isDisabled = configured || noCredentials;
+              const isDisabled = configured;
               return (
                 <button
                   className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${
@@ -151,11 +151,6 @@ export function ConnectionTypePicker({
                     {configured && (
                       <span className="ml-1 text-muted-foreground text-xs">
                         (Configured)
-                      </span>
-                    )}
-                    {noCredentials && !configured && (
-                      <span className="ml-1 text-muted-foreground text-xs">
-                        (Not required)
                       </span>
                     )}
                     {description && (
