@@ -34,7 +34,7 @@ Restart your agent session once after this so it picks up the newly installed sk
 
 ### First payment
 
-The wallet handles payment; the agent still needs a way to discover and call KeeperHub workflows. That comes from the [KeeperHub MCP server](/ai-tools/mcp-server), which exposes the `search_workflows` and `call_workflow` meta-tools to your agent. You can install the MCP server on its own (see the [MCP server](/ai-tools/mcp-server) page) or bundled with the [KeeperHub Claude Code plugin](/ai-tools/claude-code-plugin), which wires both the MCP server and (soon) the wallet skill in one step.
+The wallet handles payment; the agent still needs a way to discover and call KeeperHub workflows. That comes from the [KeeperHub MCP server](/agent/mcp-server), which exposes the `search_workflows` and `call_workflow` meta-tools to your agent. You can install the MCP server on its own (see the [MCP server](/agent/mcp-server) page) or bundled with the [KeeperHub Claude Code plugin](/agent/claude-code-plugin), which wires both the MCP server and (soon) the wallet skill in one step.
 
 With MCP + wallet both installed, ask your agent in plain language:
 
@@ -96,7 +96,7 @@ When `~/.keeperhub/safety.json` is absent the hook applies these defaults:
 
 > **`ask_threshold_usd` is inert, but it is not inconsequential.**
 >
-> It is part of `DEFAULT_SAFETY_CONFIG` and is still parsed and range-checked — it must be `>= auto_approve_max_usd`, and `block_threshold_usd` must be `>= ask_threshold_usd` — but the hook does not consult it when deciding. The ask tier is bounded by `auto_approve_max_usd` and `block_threshold_usd` alone, as the table above describes. The field is retained for backward compatibility with existing configs (`KEEP-307`).
+> It is part of `DEFAULT_SAFETY_CONFIG` and is still parsed and range-checked — it must be `>= auto_approve_max_usd`, and `block_threshold_usd` must be `>= ask_threshold_usd` — but the hook does not consult it when deciding. The ask tier is bounded by `auto_approve_max_usd` and `block_threshold_usd` alone, as the table above describes. The field is retained for backward compatibility with existing configs.
 >
 > **Any edit that raises `auto_approve_max_usd` above 50, or lowers `block_threshold_usd` below 50, must write `ask_threshold_usd` too.** Both directions throw, and the default of 50 sits between them. A partial config is merged over the defaults, so writing only:
 >
