@@ -1,12 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  isSettingsItemVisible,
-  SETTINGS_NAV,
-  settingsAnchor,
-  settingsHref,
-} from "./nav";
+import { findSettingsMatches, settingsAnchor, settingsHref } from "./nav";
 import { useSettingsContext } from "./settings-context";
 
 /**
@@ -19,24 +14,7 @@ export function SettingsNavMatches({
   query: string;
 }): React.ReactElement {
   const { isAdmin, isOwner, organizationId } = useSettingsContext();
-  const needle = query.trim().toLowerCase();
-
-  const matches = SETTINGS_NAV.flatMap((group) => group.items)
-    .filter((item) => isSettingsItemVisible(item, { isAdmin, isOwner }))
-    .map((item) => ({
-      // Only panels are offered as destinations: each one is a card on the
-      // page, so selecting it can deep link to something real. Keywords name
-      // actions that live inside a card, and only decide whether the section
-      // itself matches.
-      entries: item.panels.filter((panel) =>
-        panel.toLowerCase().includes(needle)
-      ),
-      item,
-      sectionHit:
-        item.label.toLowerCase().includes(needle) ||
-        item.keywords?.some((k) => k.toLowerCase().includes(needle)),
-    }))
-    .filter((match) => match.sectionHit || match.entries.length > 0);
+  const matches = findSettingsMatches(query, { isAdmin, isOwner });
 
   if (matches.length === 0) {
     return (
@@ -48,7 +26,7 @@ export function SettingsNavMatches({
 
   return (
     <>
-      {matches.map(({ item, entries }) => (
+      {matches.map(({ item, panels }) => (
         <div className="flex flex-col gap-0.5" key={item.segment}>
           <Link
             className="flex h-9 items-center gap-3 rounded-md px-2 font-medium text-sm transition-colors hover:bg-muted"
@@ -58,18 +36,18 @@ export function SettingsNavMatches({
             <item.icon className="size-4 shrink-0" />
             <span className="truncate">{item.label}</span>
           </Link>
-          {entries.length > 0 && (
+          {panels.length > 0 && (
             // Indent the row box itself, not just its text, so the hover fill
             // reads as an inner element rather than another top-level row. The
             // rule down the left ties the entries to their section.
             <div className="ml-4 flex flex-col gap-0.5 border-border/60 border-l pl-1.5">
-              {entries.map((entry) => (
+              {panels.map((panel) => (
                 <Link
                   className="flex h-8 items-center rounded-md px-2 text-sm transition-colors hover:bg-muted"
-                  href={`${settingsHref(item, organizationId)}?highlight=${settingsAnchor(entry)}`}
-                  key={entry}
+                  href={`${settingsHref(item, organizationId)}?highlight=${settingsAnchor(panel.title)}`}
+                  key={panel.title}
                 >
-                  <span className="truncate">{entry}</span>
+                  <span className="truncate">{panel.title}</span>
                 </Link>
               ))}
             </div>

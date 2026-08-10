@@ -10,9 +10,21 @@ import {
   Plug,
   Shield,
   User,
-  Users,
   Wallet,
 } from "lucide-react";
+
+export type SettingsPanel = {
+  /**
+   * A card title on the section's page. Search offers it as a destination, so
+   * it has to match a real card: selecting it deep links to that card.
+   */
+  title: string;
+  /**
+   * Other words for the same card. Matched by search but never shown, so a
+   * card is reachable by what it does as well as by what it is called.
+   */
+  tags?: readonly string[];
+};
 
 export type SettingsNavItem = {
   /** Path segment under /settings, e.g. "wallets". Unique across the nav. */
@@ -26,16 +38,10 @@ export type SettingsNavItem = {
   icon: LucideIcon;
   /** Shown on the settings index cards and as the section subtitle. */
   description: string;
-  /**
-   * Card titles on this section's page. Search offers these as destinations,
-   * so each one must match a real card: selecting it deep links to that card.
-   */
-  panels: readonly string[];
-  /**
-   * Extra terms that should surface the section without being offered as a
-   * destination of their own, e.g. actions that live inside one of the cards.
-   */
-  keywords?: readonly string[];
+  /** The cards on this section's page, in the order the page renders them. */
+  panels: readonly SettingsPanel[];
+  /** Other names for the section itself, e.g. "team" for Organization. */
+  tags?: readonly string[];
   ownerOnly?: boolean;
   adminOnly?: boolean;
 };
@@ -56,14 +62,30 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: User,
         description: "Your name, email and account status.",
         panels: [
-          "Account details",
-          "Deactivate account",
+          {
+            title: "Account details",
+            tags: [
+              "name",
+              "display name",
+              "email",
+              "sign-in email",
+              "change email",
+              "avatar",
+              "profile picture",
+              "account status",
+            ],
+          },
+          {
+            title: "Deactivate account",
+            tags: [
+              "delete account",
+              "close account",
+              "disable account",
+              "leave keeperhub",
+            ],
+          },
         ],
-        keywords: [
-          "Name",
-          "Sign-in email",
-          "Change email",
-        ],
+        tags: ["me", "personal", "user"],
       },
       {
         segment: "security",
@@ -73,18 +95,58 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         description:
           "Two-factor, password, wallet step-up and active sessions.",
         panels: [
-          "Two-factor authentication",
-          "Password",
-          "Active sessions",
-          "Organization MFA enforcement",
-          "Wallet step-up",
+          {
+            title: "Wallet step-up",
+            tags: [
+              "pin",
+              "transaction pin",
+              "wallet pin",
+              "step up",
+              "confirm a transaction",
+              "signing confirmation",
+            ],
+          },
+          {
+            title: "Two-factor authentication",
+            tags: [
+              "mfa",
+              "2fa",
+              "two factor",
+              "totp",
+              "otp",
+              "one-time code",
+              "authenticator app",
+              "backup codes",
+              "recovery codes",
+            ],
+          },
+          {
+            title: "Password",
+            tags: ["change password", "reset password", "passphrase"],
+          },
+          {
+            title: "Active sessions",
+            tags: [
+              "devices",
+              "revoke a device",
+              "sign out other devices",
+              "log out everywhere",
+              "browsers",
+            ],
+          },
+          {
+            title: "Organization MFA enforcement",
+            tags: [
+              "mfa",
+              "2fa",
+              "require two-factor",
+              "enforce mfa",
+              "mandatory mfa",
+              "org-wide security",
+            ],
+          },
         ],
-        keywords: [
-          "Revoke a device",
-          "Authenticator",
-          "Backup codes",
-          "Sign out other devices",
-        ],
+        tags: ["login", "sign-in", "privacy"],
       },
     ],
   },
@@ -98,22 +160,48 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Building2,
         description: "This organization, its members and their roles.",
         panels: [
-          "Organization details",
-          "Members",
-          "Outstanding invitations",
-          "Invitations for you",
+          {
+            title: "Organization details",
+            tags: [
+              "rename organization",
+              "organization name",
+              "slug",
+              "your role",
+              "new organization",
+              "create organization",
+            ],
+          },
+          {
+            title: "Members",
+            tags: [
+              "people",
+              "team",
+              "seats",
+              "roles",
+              "change roles",
+              "remove a member",
+              "owner",
+              "admin",
+              "permissions",
+            ],
+          },
+          {
+            title: "Outstanding invitations",
+            tags: [
+              "invite",
+              "invite by email",
+              "invite by wallet address",
+              "pending invites",
+              "resend invitation",
+              "cancel invitation",
+            ],
+          },
+          {
+            title: "Invitations for you",
+            tags: ["accept an invite", "join an organization", "my invites"],
+          },
         ],
-        keywords: [
-          "Rename organization",
-          "Seats",
-          "Invite by email",
-          "Invite by wallet address",
-          "Change roles",
-          "Remove members",
-          "Resend invitation",
-          "Create organization",
-          "Your role",
-        ],
+        tags: ["team", "org", "workspace", "company"],
       },
       {
         segment: "notifications",
@@ -122,13 +210,20 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Bell,
         description: "Execution digest emails and who receives them.",
         panels: [
-          "Execution digest",
+          {
+            title: "Execution digest",
+            tags: [
+              "digest email",
+              "cadence",
+              "daily summary",
+              "weekly summary",
+              "subscribers",
+              "recipients",
+              "email alerts",
+            ],
+          },
         ],
-        keywords: [
-          "Cadence",
-          "Subscribers",
-          "Digest email",
-        ],
+        tags: ["email", "alerts"],
         adminOnly: true,
       },
     ],
@@ -143,37 +238,58 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Wallet,
         description: "Signing wallet, Safes, balances and key export.",
         panels: [
-          "Accounts",
-          "Assets",
-          "Account settings",
+          {
+            title: "Accounts",
+            // Assets and per-account settings live one level down, on the
+            // account the row opens, and deploying a Safe is a form behind a
+            // button, so none of them are cards to link to.
+            tags: [
+              "signing wallet",
+              "turnkey signer",
+              "safe smart account",
+              "address",
+              "balances",
+              "assets",
+              "tokens",
+              "tracked tokens",
+              "deposit",
+              "withdraw",
+              "private key export",
+              "recovery email",
+              "signing policies",
+              "evm",
+              "solana",
+              "deploy a safe",
+              "adopt a safe",
+              "multisig",
+              "gnosis",
+            ],
+          },
         ],
-        keywords: [
-          "Turnkey signer",
-          "Safe smart accounts",
-          "Balances",
-          "Withdraw",
-          "Tracked tokens",
-          "Private key export",
-          "Recovery email",
-          "Deploy a Safe",
-          "Signing policies",
-        ],
+        tags: ["money", "funds", "treasury", "keys"],
       },
       {
         segment: "limits",
         scope: "org",
         label: "Spending limits",
         icon: Gauge,
-        description: "Daily value ceilings the executor enforces before signing.",
+        description:
+          "Daily value ceilings the executor enforces before signing.",
         panels: [
-          "Daily value caps",
+          {
+            title: "Daily value caps",
+            tags: [
+              "spend cap",
+              "spending limit",
+              "daily limit",
+              "evm cap",
+              "solana cap",
+              "usage today",
+              "transaction ceiling",
+            ],
+          },
         ],
-        keywords: [
-          "EVM cap",
-          "Solana cap",
-          "Spend cap",
-          "Usage today",
-        ],
+        tags: ["risk", "guardrails", "budget"],
         ownerOnly: true,
       },
       {
@@ -183,17 +299,31 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: CreditCard,
         description: "Subscription, invoices and payment method.",
         panels: [
-          "This month",
-          "Payment and invoices",
+          {
+            title: "This month",
+            tags: [
+              "current plan",
+              "subscription",
+              "executions used",
+              "usage",
+              "quota",
+              "gas sponsorship credits",
+            ],
+          },
+          {
+            title: "Payment and invoices",
+            tags: [
+              "payment method",
+              "card",
+              "invoices",
+              "receipts",
+              "upgrade",
+              "downgrade",
+              "cancel subscription",
+            ],
+          },
         ],
-        keywords: [
-          "Current plan",
-          "Executions used",
-          "Gas sponsorship credits",
-          "Payment method",
-          "Invoices",
-          "Upgrade",
-        ],
+        tags: ["pricing", "cost", "pay"],
         ownerOnly: true,
       },
     ],
@@ -208,17 +338,23 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Plug,
         description: "Credentials for Discord, SendGrid, databases and more.",
         panels: [
-          "Configured connections",
+          {
+            title: "Configured connections",
+            tags: [
+              "credentials",
+              "add a connection",
+              "connection activity",
+              "discord",
+              "sendgrid",
+              "telegram",
+              "database",
+              "postgres",
+              "webhook",
+              "secrets",
+            ],
+          },
         ],
-        keywords: [
-          "Discord",
-          "SendGrid",
-          "Databases",
-          "Webhooks",
-          "Credentials",
-          "Add a connection",
-          "Connection activity",
-        ],
+        tags: ["integrations", "third party", "apps"],
       },
       {
         segment: "api-keys",
@@ -227,16 +363,33 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Key,
         description: "Programmatic access keys and their scopes.",
         panels: [
-          "MCP endpoint",
-          "Organisation keys",
-          "Your keys",
+          {
+            title: "MCP endpoint",
+            tags: ["mcp url", "server url", "model context protocol"],
+          },
+          {
+            title: "Organisation keys",
+            tags: [
+              "organization keys",
+              "shared keys",
+              "team keys",
+              "scopes",
+              "revoke a key",
+              "key activity",
+            ],
+          },
+          {
+            title: "Your keys",
+            tags: [
+              "personal keys",
+              "my keys",
+              "scopes",
+              "revoke a key",
+              "key activity",
+            ],
+          },
         ],
-        keywords: [
-          "Scopes",
-          "Revoke a key",
-          "Key activity",
-          "Personal keys",
-        ],
+        tags: ["token", "api token", "programmatic access", "cli"],
       },
       {
         segment: "agents",
@@ -245,18 +398,29 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Bot,
         description: "Connect Claude, Codex or any MCP client to this org.",
         panels: [
-          "MCP endpoint",
-          "Client setup",
-          "Starter prompts",
+          {
+            title: "MCP endpoint",
+            tags: ["mcp url", "server url", "model context protocol"],
+          },
+          {
+            title: "Client setup",
+            tags: [
+              "claude code",
+              "codex",
+              "cursor",
+              "gemini cli",
+              "goose",
+              "mcp client",
+              "setup commands",
+              "connect an agent",
+            ],
+          },
+          {
+            title: "Starter prompts",
+            tags: ["example prompts", "sample prompts", "what to ask"],
+          },
         ],
-        keywords: [
-          "Claude Code",
-          "Codex",
-          "Gemini CLI",
-          "Goose",
-          "Setup commands",
-          "MCP client",
-        ],
+        tags: ["ai", "llm", "mcp", "assistant"],
       },
     ],
   },
@@ -270,14 +434,16 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: FolderTree,
         description: "How workflows are grouped in the sidebar.",
         panels: [
-          "Projects",
-          "Tags",
+          {
+            title: "Projects",
+            tags: ["folders", "group workflows", "sidebar grouping"],
+          },
+          {
+            title: "Tags",
+            tags: ["labels", "colours", "colors", "tag colour"],
+          },
         ],
-        keywords: [
-          "Colours",
-          "Sidebar grouping",
-          "Workflow grouping",
-        ],
+        tags: ["organise workflows", "sidebar"],
       },
     ],
   },
@@ -340,4 +506,68 @@ export function settingsAnchor(entry: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Punctuation is not something anyone types, so "two factor" has to find
+ * "Two-factor authentication" and "api key" has to find "API keys".
+ */
+function words(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter(Boolean);
+}
+
+/**
+ * Every word typed has to start a word in the term. Matching whole words this
+ * way keeps "auth" on "authentication" while keeping "pin" off "grouping",
+ * which a plain substring test cannot tell apart.
+ */
+function termMatches(term: string, typed: readonly string[]): boolean {
+  const parts = words(term);
+  return typed.every((word) => parts.some((part) => part.startsWith(word)));
+}
+
+export type SettingsMatch = {
+  item: SettingsNavItem;
+  panels: readonly SettingsPanel[];
+};
+
+/**
+ * Sections that match the query, each with the cards inside it that matched.
+ * A hit on the section's own name or tags lists all of its cards, since the
+ * whole section is what was asked for.
+ */
+export function findSettingsMatches(
+  query: string,
+  access: { isOwner: boolean; isAdmin: boolean }
+): SettingsMatch[] {
+  const typed = words(query);
+  if (typed.length === 0) {
+    return [];
+  }
+  const hits = (terms: readonly string[] | undefined): boolean =>
+    terms?.some((term) => termMatches(term, typed)) ?? false;
+
+  const matches: SettingsMatch[] = [];
+  for (const group of SETTINGS_NAV) {
+    for (const item of group.items) {
+      if (!isSettingsItemVisible(item, access)) {
+        continue;
+      }
+      if (hits([item.label]) || hits(item.tags)) {
+        matches.push({ item, panels: item.panels });
+        continue;
+      }
+      const panels = item.panels.filter(
+        (panel) => hits([panel.title]) || hits(panel.tags)
+      );
+      if (panels.length > 0) {
+        matches.push({ item, panels });
+      }
+    }
+  }
+  return matches;
 }
