@@ -15,6 +15,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 source "$SCRIPT_DIR/../config.sh"
 
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-keeperhub}"
+
+# Harness constant, not an install setting.
+#
+# A bare repository name with no registry host. It resolves only because the
+# images are side-loaded into the node below, which is why a real install has no
+# default for it and must name a registry the cluster can pull from.
+# assert_overlay keeps this in step with the overlay the install reads.
+IMAGE_REPO="keeperhub-local"   # values.minikube.yaml: global.image.repository
+assert_overlay repository "$IMAGE_REPO"
+
 SKIP_BUILD=false
 PRINT_TAG=false
 for arg in "$@"; do
@@ -68,7 +78,9 @@ echo "== Loading into minikube ($MINIKUBE_PROFILE)"
 present=$(minikube -p "$MINIKUBE_PROFILE" image ls 2>/dev/null || true)
 for component in app migrator workflow-runner executor schedule; do
     image="${IMAGE_REPO}:${component}-${IMAGE_TAG}"
-    if printf '%s' "$present" | grep -q "$image"; then
+    # Anchored: a bare substring match lets ":app-<tag>" match
+    # "keeperhub-local:app-<tag>" and report a skip for an image never checked.
+    if printf '%s' "$present" | grep -qE "(^|/)${image}$"; then
         echo "  skip  $image"
     else
         # A docker save | docker load round-trip, and the dominant cost of a warm
@@ -82,5 +94,5 @@ cat <<EOF
 
 Images ready. Install with:
 
-  KUBE_CONTEXT=$MINIKUBE_PROFILE IMAGE_TAG=$IMAGE_TAG ./install.sh
+  KUBE_CONTEXT=$MINIKUBE_PROFILE PROFILE=minikube IMAGE_TAG=$IMAGE_TAG ./install.sh
 EOF

@@ -12,17 +12,31 @@ while it stays structurally identical to what staging and production run.
 
 | Path | What it is |
 | --- | --- |
-| `values.yaml` | chart values common to every install |
+| `values.yaml` | chart values common to every install, and the `global:` block you set |
 | `values.db-{bundled,byo}.yaml`, `values.queue-{bundled,byo}.yaml` | the parts that differ per mode, merged over `values.yaml` |
 | `values.queue-byo-endpoint.yaml` | merged only when `QUEUE_MODE=byo` and `AWS_ENDPOINT_URL` is set |
 | `values.queue-aws-credentials.yaml` | merged only when `QUEUE_MODE=byo` with real AWS credentials |
-| `namespace.yaml`, `runner-sa.yaml` | resources applied alongside the release |
-| `config.sh` | every value that has to agree across the install |
-| `install.sh` | installs into an existing cluster |
+| `values.minikube.yaml` | overlay for the throwaway cluster the test harness builds |
+| `config.sh` | environment settings the installer turns into helm flags |
+| `install.sh` | optional wrapper: preflight checks, then `helm upgrade --install` |
 | `test-harness/` | scaffolding to try it on a throwaway minikube cluster, not part of the product |
 
 `deploy/local/` is unrelated. That is the developers' local-deployment setup and
 this work does not touch it.
+
+## These are ordinary Helm values
+
+The values files are valid Helm input. `install.sh` is a convenience, not a
+requirement, and nothing here needs pre-processing before `helm` reads it.
+
+That was not true before: the files carried `${VAR}` placeholders resolved by
+`envsubst`, and because Helm treats `${VAR}` as literal text, reading one
+directly did not fail - it produced a broken release. Everything a client sets
+now lives under `global:` in `values.yaml`, and every place that consumes one of
+those values is declared `type: template`, which the chart renders through `tpl`.
+
+The namespace is never configured. `{{ .Release.Namespace }}` is used wherever it
+is needed, so `--namespace` is the only place it is written.
 
 ## What the install does not provide
 
@@ -54,9 +68,12 @@ DB_MODE=byo DB_SECRET_NAME=my-db QUEUE_MODE=byo \
   SQS_DLQ_URL=https://sqs.us-east-1.amazonaws.com/<acct>/<queue>-dlq ./install.sh
 
 # Your own database, and your own SQS-compatible queue somewhere else in the
-# cluster. The URLs are derived from the endpoint when you do not give them.
+# cluster.
 DB_MODE=byo DB_SECRET_NAME=my-db QUEUE_MODE=byo \
-  AWS_ENDPOINT_URL=http://my-queue.my-namespace.svc.cluster.local:9324 ./install.sh
+  AWS_ENDPOINT_URL=http://my-q.my-ns.svc.cluster.local:9324 \
+  SQS_QUEUE_URL=http://my-q.my-ns.svc.cluster.local:9324/000000000000/keeperhub-workflow-queue \
+  SQS_DLQ_URL=http://my-q.my-ns.svc.cluster.local:9324/000000000000/keeperhub-workflow-queue-dlq \
+  ./install.sh
 ```
 
 All four combinations compose, so a bundled database with an external queue, or
@@ -185,23 +202,101 @@ in-flight, which is precisely the failure mode persistence exists to end.
 
 ## Installing
 
+Two supported paths. They produce the same release.
+
+### Plain helm
+
+Write your own values file with the handful of settings that are yours:
+
+```yaml
+# my-install.yaml
+global:
+  image:
+    repository: registry.example.com/keeperhub
+    tag: v1.4.0
+  appHost: keeperhub.example.com
+  tlsIssuer: letsencrypt-prod
+  fromAddress: noreply@example.com
+  turnstileSecretKey: "<your Turnstile secret key>"
+```
+
+Then install, choosing one db fragment and one queue fragment:
+
 ```bash
-KUBE_CONTEXT=<your-context> IMAGE_TAG=<tag> ./install.sh
+helm repo add techops-services https://techops-services.github.io/helm-charts
+helm install keeperhub techops-services/keeperhub-stack --version 0.5.0 \
+  --namespace keeperhub --create-namespace \
+  -f values.yaml \
+  -f values.db-bundled.yaml \
+  -f values.queue-bundled.yaml \
+  -f my-install.yaml \
+  --atomic --wait --timeout 15m
+```
+
+A value you have to set but did not stops the render naming the value, rather
+than installing something that cannot start.
+
+### With the installer
+
+```bash
+KUBE_CONTEXT=<your-context> \
+  IMAGE_REPO=registry.example.com/keeperhub IMAGE_TAG=v1.4.0 \
+  APP_HOST=keeperhub.example.com ./install.sh
 ```
 
 `KUBE_CONTEXT` is required and never guessed. A bare `kubectl` follows whatever
 context is current, which on a machine with production access is how an install
 lands somewhere it should not.
 
-Everything else has a default in `config.sh` and can be overridden in the
-environment: `NAMESPACE`, `APP_HOST`, `INGRESS_CLASS`, `TLS_ISSUER`,
-`IMAGE_REPO`, the `DB_MODE`/`QUEUE_MODE` settings above, and the `PG_*` and
-`SQS_*` values behind them.
+What the wrapper adds over plain helm:
 
-`--dry-run` renders the manifests and the chart without touching the cluster.
+- it refuses to run against a cluster you did not name
+- it checks the CloudNativePG CRD exists before `DB_MODE=bundled` needs it, so a
+  missing operator is a message rather than a rolled-back release
+- it checks the bring-your-own database Secret exists, for the same reason
+- it refuses half an AWS key pair
+- it puts real AWS credentials in a Secret rather than a values file
+- it reports which optional runner credentials are absent, which nothing else does
 
-`CHART_DIR` points the install at a working-tree copy of the chart instead of the
-published one, for developing chart changes alongside this profile.
+Every setting lives in `config.sh` and can be overridden in the environment:
+`NAMESPACE`, `APP_HOST`, `INGRESS_CLASS`, `TLS_ISSUER`, `IMAGE_REPO`,
+`FROM_ADDRESS`, `TURNSTILE_SECRET_KEY`, the `DB_MODE`/`QUEUE_MODE` settings
+above, and the `PG_*` and `SQS_*` values behind them.
+
+`--dry-run` renders the chart without touching the cluster. `PROFILE=minikube`
+merges the test-harness overlay. `CHART_DIR` points the install at a working-tree
+copy of the chart, for developing chart changes alongside this profile.
+
+## Secrets
+
+The chart generates them (`secrets.generate` is on in `values.yaml`), so an
+install needs no secret manager. Two of the values have formats that are not
+interchangeable and fail in ways that do not look like a format problem, which is
+why this is worth doing in the chart rather than in an instruction here: both
+HMAC keys must base64 decode to exactly 32 bytes, and the integration encryption
+key must be 64 hex characters.
+
+Each key resolves as an explicit value first, then whatever is already in the
+cluster, then a generated one. The middle step is what stops an upgrade rotating
+a key.
+
+`SENDGRID_API_KEY` and the three `TURNKEY_` keys are never generated. They are
+rendered empty, because an invented API key replaces a clean unconfigured state
+with 401s. Supply them under `secrets.values` when you have them.
+
+Two things to know before relying on this:
+
+- The "keep what is installed" step reads the cluster, and `helm template` does
+  not. A `helm template | kubectl apply` pipeline **rotates these keys on every
+  run**, and losing the integration encryption key orphans every stored
+  credential. Pin them under `secrets.values` if you deploy that way.
+- Changing a secret does not restart the pods reading it, because an env var is
+  resolved once at pod start. Roll them yourself:
+  `kubectl rollout restart deployment -l app.kubernetes.io/instance=keeperhub`.
+
+Every generated Secret carries `helm.sh/resource-policy: keep`, so an `--atomic`
+rollback of a failed first install does not delete the credentials the database
+was just bootstrapped with.
 
 ## Trying it on a throwaway cluster
 
@@ -209,7 +304,7 @@ published one, for developing chart changes alongside this profile.
 ./test-harness/bootstrap-cluster.sh                    # minikube + calico + cert-manager + cloudnative-pg
 IMAGE_TAG=$(./test-harness/build-images.sh --print-tag)
 ./test-harness/build-images.sh
-KUBE_CONTEXT=keeperhub IMAGE_TAG=$IMAGE_TAG ./install.sh
+KUBE_CONTEXT=keeperhub PROFILE=minikube IMAGE_TAG=$IMAGE_TAG ./install.sh
 KUBE_CONTEXT=keeperhub ./test-harness/queue-restart-test.sh   # optional: measure queue durability
 ```
 
@@ -241,9 +336,9 @@ list backs the CSRF guard in `proxy.ts` and better-auth, so on any other
 hostname every cookie-authenticated POST/PATCH/PUT/DELETE is rejected. The UI
 loads and reads fine, so it looks like the app works until you try to save:
 enabling a workflow returns "Failed to update workflow state" and the only trace
-is `[csrf] blocked: untrusted origin` in the app log. `APP_HOST` defaults to
-`selfhosted.keeperhub.com` to stay inside the trusted suffix. **A client cannot do
-this** - they do not own the domain. Making trusted origins configurable is a
+is `[csrf] blocked: untrusted origin` in the app log. `values.minikube.yaml` sets `appHost` to
+`selfhosted.keeperhub.com` to stay inside the trusted suffix; the base profile has
+no default, because **a client cannot use one** - they do not own the domain. Making trusted origins configurable is a
 prerequisite for any client install (KEEP-1110).
 
 **There is no email.** `lib/email.ts` posts to SendGrid's HTTP API, so there is
@@ -257,18 +352,50 @@ nothing. Everything else runs.
 
 **Wallets and signing do not work** unless you supply `TURNKEY_*`.
 
-**Two `parameterStore` entries remain** in `values.yaml`, and several credential
-Secrets the workflow runner references are absent. Those references are optional,
-so the runner starts and exits 0 looking healthy without them. Converting them to
-plain Secret references is KEEP-1108.
+**A workflow can run, exit 0 and do nothing.** The executor hands runner Job pods
+their credentials by `secretKeyRef`, and marks eight of the ten optional
+(`keeperhub-executor/k8s-job.ts`). A runner with none of them therefore starts,
+runs and reports success while every step that needed one silently did nothing.
+There is no log line for it and no failed execution to find.
+
+That optionality is application behaviour and this profile does not change it.
+What it does is name the gap at install time: `install.sh` reports which of the
+eight are absent and what stops working without each, and
+`STRICT_RUNNER_SECRETS=true` turns that report into a refusal. Each is a Secret
+whose key equals its name:
+
+```bash
+kubectl -n keeperhub create secret generic keeperhub-executor-openai-api-key \
+  --from-literal=keeperhub-executor-openai-api-key=<value>
+```
+
+| Secret suffix | What stops working without it |
+| --- | --- |
+| `chain-rpc-config` | web3 steps have no RPC endpoints and cannot reach any chain |
+| `etherscan-api-key` | contract ABI auto-fetch fails, so web3 steps needing an ABI fail |
+| `metrics-ingest-token` | runner metrics are not shipped, so executions are invisible |
+| `openai-api-key` | AI steps and AI workflow generation fail |
+| `sendgrid-api-key` | email steps send nothing |
+| `simple-account-7702-address` | EIP-7702 smart-account steps fail |
+| `turnkey-api-private-key` | managed wallet signing fails |
+| `turnkey-api-public-key` | managed wallet signing fails |
+
+The other two, `db-url` and `integration-encryption-key`, are not optional there.
+The chart creates both, so a missing one is not a degraded runner - it would be
+`CreateContainerConfigError` on every Job pod.
 
 ## The queue URL is a cryptographic input
 
 Producers sign `sqs\n<queueUrl>\n<caller>\n<sha256(body)>\n<ts>` and the executor
 verifies against its own `SQS_QUEUE_URL`. A one-byte disagreement between any
 producer and the consumer rejects every trigger as `bad_signature`, visible only
-as a warn line while every pod stays green. That is why the URL is defined once
-in `config.sh` and templated into all three components from there.
+as a warn line while every pod stays green.
+
+Under the bundled queue the chart computes the URL from the release namespace and
+`strictEndpointCheck` fails the render if a component disagrees with it, so there
+is nothing to keep in step by hand. Under `QUEUE_MODE=byo` you supply the URL and
+nothing can check it for you - it is written once under `global.queue.url` and
+read by all three components from there.
 
 `SQS_HMAC_MODE` is `enforce` and the dead-letter queue is live, so a rejected
 message is visible rather than simply gone.

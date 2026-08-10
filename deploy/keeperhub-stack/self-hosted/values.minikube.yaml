@@ -1,0 +1,74 @@
+# Overlay for the throwaway minikube cluster the test harness builds.
+#
+# Merged last, over values.yaml and the mode fragments. It carries only the
+# settings that would be wrong on a real cluster, so the base profile stays the
+# thing a client actually derives from. If you find yourself adding something
+# here that a client would also want, it belongs in values.yaml instead.
+#
+#   ./test-harness/bootstrap-cluster.sh
+#   IMAGE_TAG=$(./test-harness/build-images.sh --print-tag)
+#   ./test-harness/build-images.sh
+#   KUBE_CONTEXT=keeperhub IMAGE_TAG=$IMAGE_TAG PROFILE=minikube ./install.sh
+
+global:
+  image:
+    # A bare repository name with no registry host. It resolves only because
+    # build-images.sh side-loads the images with `minikube image load`.
+    repository: keeperhub-local
+    # The kubelet must not try to pull an image that exists only inside the node.
+    # This is the single most client-hostile setting in this file, which is why
+    # it lives here rather than in the base profile.
+    pullPolicy: Never
+
+  # Not local.keeperhub.com, so this can coexist with deploy/local on the same
+  # cluster. A client cannot use either: they do not own keeperhub.com. Reaching
+  # it needs `minikube tunnel -p keeperhub` and an /etc/hosts entry.
+  appHost: selfhosted.keeperhub.com
+
+  # The minikube ingress addon.
+  ingressClassName: nginx
+
+  # A ClusterIssuer backed by the developer's own mkcert CA, created by
+  # bootstrap-cluster.sh from `mkcert -CAROOT`.
+  tlsIssuer: mkcert-ca-issuer
+
+  # Cloudflare's documented always-pass test key. A dummy value, not a
+  # credential, and the reason it is here rather than in the base profile: an
+  # install that silently disables its captcha should be something you opt into.
+  turnstileSecretKey: "1x0000000000000000000000000000000AA"
+
+  # Nothing is delivered without a real SendGrid key, so this only has to be
+  # syntactically present. Signup dead-ends at the six-digit code either way.
+  fromAddress: "noreply@keeperhub.local"
+
+app:
+  # A laptop, not a cluster.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  env:
+    LOG_LEVEL:
+      type: kv
+      value: "debug"
+
+executor:
+  env:
+    # A single-node minikube cannot usefully run many concurrent runner pods.
+    MAX_CONCURRENT_JOBS:
+      type: kv
+      value: "2"
+    # Longer than the default on purpose: finished runner pods stay around long
+    # enough to read their logs when debugging.
+    JOB_TTL_SECONDS:
+      type: kv
+      value: "600"
+
+postgresql:
+  # One instance. Three would sit forever waiting on anti-affinity against a
+  # single node.
+  instances: 1
+  storage:
+    size: 5Gi

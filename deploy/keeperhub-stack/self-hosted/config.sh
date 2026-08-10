@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # Configuration for a self-hosted KeeperHub install.
 #
-# Sourced by install.sh and by the scripts under test-harness/. Everything that
-# has to agree across the install lives here exactly once, because the value
-# most likely to drift is also the one that fails least obviously:
+# Sourced by install.sh and by the scripts under test-harness/.
 #
-#   The SQS queue URL is a cryptographic input. Producers sign
+# This file no longer substitutes anything into the values files. Those are
+# ordinary Helm input now, and every setting below is passed through as a --set
+# on the chart's `global` map. The values files remain usable without this
+# script; it exists to turn environment variables into helm flags, run the
+# preflight checks helm cannot, and refuse to guess a cluster.
+#
+# One thing here is a cryptographic input rather than a mere address:
+#
+#   The SQS queue URL is signed. Producers sign
 #   "sqs\n<queueUrl>\n<caller>\n<sha256(body)>\n<ts>" (lib/sqs-message-auth.ts)
 #   and the executor verifies against its own SQS_QUEUE_URL. One byte of
 #   difference between any producer and the consumer rejects every trigger as
-#   bad_signature, visible only as a warn line while all pods stay green.
+#   bad_signature, visible only as a warn line while all pods stay green. Under
+#   the bundled queue the chart computes it and strictEndpointCheck verifies it;
+#   under QUEUE_MODE=byo you supply it and nothing can check it for you.
 #
 # Override any of these in the environment before running install.sh.
 #
@@ -27,44 +35,45 @@ RELEASE="${RELEASE:-keeperhub}"
 CHART_REPO_NAME="techops-services"
 CHART_REPO_URL="https://techops-services.github.io/helm-charts"
 CHART_NAME="techops-services/keeperhub-stack"
-CHART_VERSION="${CHART_VERSION:-0.4.0}"
+CHART_VERSION="${CHART_VERSION:-0.5.0}"
 # Point at a working-tree chart instead of the published one, for developing
 # chart changes alongside this profile: CHART_DIR=../../../helm-charts/charts/keeperhub-stack
 CHART_DIR="${CHART_DIR:-}"
 HELM_TIMEOUT="${HELM_TIMEOUT:-15m0s}"
 
-# Where the images come from. Defaults suit the test harness, which builds them
-# locally and side-loads them; a real install points these at a registry.
-IMAGE_REPO="${IMAGE_REPO:-keeperhub-local}"
+# PROFILE=minikube also merges values.minikube.yaml, which carries the settings
+# that only make sense on the throwaway cluster test-harness/ builds. Anything
+# else installs the base profile alone.
+PROFILE="${PROFILE:-}"
+
+# Where the images come from. No defaults: the chart fails the render naming the
+# value rather than installing something that cannot pull.
+IMAGE_REPO="${IMAGE_REPO:-}"
 IMAGE_TAG="${IMAGE_TAG:-}"
-IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-Never}"
+IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
 
-# The hostname the app is served on.
+# The hostname the app is served on, and how it is exposed.
 #
-# Deliberately inside *.keeperhub.com. lib/trusted-origins.ts hardcodes the
-# trusted-origin list to http://localhost:*, http://127.0.0.1:* and
-# https://*.keeperhub.com, with no environment variable to extend it. That list
-# backs the CSRF guard in proxy.ts and better-auth, so on any other hostname
-# every cookie-authenticated POST/PATCH/PUT/DELETE is rejected. The UI still
-# loads and reads fine, so it looks like the app works until you try to save:
-# enabling a workflow returns "Failed to update workflow state" and the only
-# trace is "[csrf] blocked: untrusted origin" in the app log.
+# One caveat that applies to every hostname outside *.keeperhub.com:
+# lib/trusted-origins.ts hardcodes the trusted-origin list to http://localhost:*,
+# http://127.0.0.1:* and https://*.keeperhub.com, with no environment variable to
+# extend it. That list backs the CSRF guard in proxy.ts and better-auth, so on
+# any other hostname every cookie-authenticated POST/PATCH/PUT/DELETE is
+# rejected. The UI still loads and reads fine, so it looks like the app works
+# until you try to save: enabling a workflow returns "Failed to update workflow
+# state" and the only trace is "[csrf] blocked: untrusted origin" in the app log.
 #
-# A real client cannot do this - they do not own keeperhub.com. Making the
-# trusted origins configurable is a prerequisite for any client domain.
-#
-# Not "local.keeperhub.com": that name belongs to deploy/local, and nginx-ingress
-# rejects a second Ingress claiming the same host and path with an admission
-# error. The two profiles are meant to be able to share a cluster.
-APP_HOST="${APP_HOST:-selfhosted.keeperhub.com}"
-INGRESS_CLASS="${INGRESS_CLASS:-nginx}"
-TLS_ISSUER="${TLS_ISSUER:-mkcert-ca-issuer}"
+# Making the trusted origins configurable is a prerequisite for any client
+# domain, and is tracked separately.
+APP_HOST="${APP_HOST:-}"
+INGRESS_CLASS="${INGRESS_CLASS:-}"
+TLS_ISSUER="${TLS_ISSUER:-}"
+FROM_ADDRESS="${FROM_ADDRESS:-}"
 
-# Cloudflare's documented always-pass Turnstile test keys, the same pair the
-# PR-environment values use. Dummy values, not credentials.
+# Cloudflare Turnstile.
 #
-# The two are NOT delivered the same way, and getting that wrong yields a signup
-# form that renders and then fails:
+# The two keys are NOT delivered the same way, and getting that wrong yields a
+# signup form that renders and then fails:
 #
 #   TURNSTILE_SECRET_KEY is read at runtime, so the values file supplies it.
 #     Without it lib/auth.ts throws at module load and every route importing the
@@ -76,7 +85,7 @@ TLS_ISSUER="${TLS_ISSUER:-mkcert-ca-issuer}"
 #     renders, the browser sends no token, and signup fails with
 #     "Missing CAPTCHA response".
 TURNSTILE_SITE_KEY="${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}"
-TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}"
+TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY:-}"
 
 # --- Queue -------------------------------------------------------------------
 # QUEUE_MODE=bundled  the chart runs ElasticMQ, persistent, single node
@@ -87,47 +96,29 @@ TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000A
 # the two: the same @aws-sdk/client-sqs reaches either through AWS_ENDPOINT_URL.
 QUEUE_MODE="${QUEUE_MODE:-bundled}"
 
-# The queue Service name. Also appears inside SQS_QUEUE_URL, which is an HMAC
-# signing input, so changing it on an existing install rejects every in-flight
-# message. Must match `queue.name` in the chart values.
-QUEUE_NAME="${QUEUE_NAME:-elasticmq}"
-SQS_HOST="${SQS_HOST:-${QUEUE_NAME}.${NAMESPACE}.svc.cluster.local}"
-SQS_PORT="${SQS_PORT:-9324}"
-AWS_REGION="${AWS_REGION:-us-east-1}"
-SQS_ACCOUNT_ID="${SQS_ACCOUNT_ID:-000000000000}"
-SQS_QUEUE_NAME="${SQS_QUEUE_NAME:-keeperhub-workflow-queue}"
-
-# Overridable in full, because a real SQS URL has a different shape entirely
-# (https://sqs.<region>.amazonaws.com/<account>/<name>) and is not derivable
-# from the parts above.
+# Under QUEUE_MODE=bundled the chart computes every queue address from the
+# release namespace, so nothing here applies.
 #
-# Only defaulted when the chart runs the queue. Under QUEUE_MODE=byo an UNSET
-# endpoint is meaningful: it is what sends the SDK to real AWS SQS with its
-# normal credential resolution. Setting it there selects a self-hosted
-# SQS-compatible endpoint instead, and install.sh merges the extra values
-# fragment that carries it. Defaulting it would silently rule out real SQS.
-if [ "$QUEUE_MODE" = "bundled" ]; then
-    AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://${SQS_HOST}:${SQS_PORT}}"
-else
-    AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-}"
-fi
+# Under QUEUE_MODE=byo an UNSET endpoint is meaningful: it is what sends the SDK
+# to real AWS SQS with its normal credential resolution. Setting it selects a
+# self-hosted SQS-compatible endpoint instead, and install.sh merges the extra
+# values fragment that carries it.
+AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-}"
+SQS_QUEUE_URL="${SQS_QUEUE_URL:-}"
+SQS_DLQ_URL="${SQS_DLQ_URL:-}"
+AWS_REGION="${AWS_REGION:-}"
+
 # Two different jobs, depending on whether an endpoint is set.
 #
-# With a custom endpoint, these are dummies that only exist because the SDK
-# refuses to sign a request without credentials; ElasticMQ ignores them, so they
-# default to "test" and are passed as plain values.
+# With a custom endpoint these are dummies that exist only because the SDK
+# refuses to sign a request without credentials; ElasticMQ ignores them.
 #
-# Against real AWS they are real credentials. They are then NOT defaulted, they
-# go into a Secret rather than a values file, and AWS_SESSION_TOKEN carries the
-# temporary-credential case. Leave all three empty to use the default credential
-# chain instead, which is what an IRSA-enabled cluster wants.
-if [ -n "$AWS_ENDPOINT_URL" ]; then
-    AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
-    AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
-else
-    AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
-    AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
-fi
+# Against real AWS they are real credentials. They then go into a Secret rather
+# than a values file, and AWS_SESSION_TOKEN carries the temporary-credential
+# case. Leave all three empty to use the default credential chain instead, which
+# is what an IRSA-enabled cluster wants.
+AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
 AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
 AWS_CREDENTIALS_SECRET="${AWS_CREDENTIALS_SECRET:-keeperhub-aws-credentials}"
 
@@ -137,16 +128,6 @@ use_aws_credentials() {
     [ "$QUEUE_MODE" = byo ] && [ -z "$AWS_ENDPOINT_URL" ] \
         && [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]
 }
-# Read the note at the top of this file before changing either URL. Derived from
-# the endpoint only when there is one; with real AWS SQS both must be given in
-# full, because that URL shape is not derivable from anything here.
-if [ -n "$AWS_ENDPOINT_URL" ]; then
-    SQS_QUEUE_URL="${SQS_QUEUE_URL:-${AWS_ENDPOINT_URL}/${SQS_ACCOUNT_ID}/${SQS_QUEUE_NAME}}"
-    SQS_DLQ_URL="${SQS_DLQ_URL:-${AWS_ENDPOINT_URL}/${SQS_ACCOUNT_ID}/${SQS_QUEUE_NAME}-dlq}"
-else
-    SQS_QUEUE_URL="${SQS_QUEUE_URL:-}"
-    SQS_DLQ_URL="${SQS_DLQ_URL:-}"
-fi
 
 # --- Database ----------------------------------------------------------------
 # DB_MODE=bundled  the chart runs PostgreSQL as a CloudNativePG Cluster, which
@@ -154,36 +135,39 @@ fi
 #                  CNPG operator to be installed cluster-wide first.
 # DB_MODE=byo      supply DATABASE_URL yourself, as a Kubernetes Secret.
 DB_MODE="${DB_MODE:-bundled}"
+PG_INSTANCES="${PG_INSTANCES:-}"
+PG_STORAGE_SIZE="${PG_STORAGE_SIZE:-}"
 
-PG_NAME="${PG_NAME:-${RELEASE}-postgres}"
-PG_USER="${PG_USER:-keeperhub}"
-PG_DATABASE="${PG_DATABASE:-keeperhub}"
-PG_INSTANCES="${PG_INSTANCES:-1}"
-PG_STORAGE_SIZE="${PG_STORAGE_SIZE:-20Gi}"
-# kubernetes.io/basic-auth Secret the installer creates and CNPG bootstraps from.
-PG_CREDENTIALS_SECRET="${PG_CREDENTIALS_SECRET:-${RELEASE}-db-credentials}"
-
-# The host MUST be the fully qualified .svc.cluster.local form.
-#
-# ensureExplicitSslMode (lib/db/connection-utils.ts) only skips forcing
-# sslmode=verify-full for that suffix. Anything shorter gets verify-full applied
-# and then fails TLS against CloudNativePG's in-cluster certificate - which is
-# why CNPG's own generated `uri` and `fqdn-uri` Secret keys are unusable here
-# and the connection string is composed by hand.
-#
-# -rw is CNPG's primary Service and is repointed automatically on failover, so
-# it stays correct with PG_INSTANCES > 1.
-if [ "$DB_MODE" = "bundled" ]; then
-    PG_HOST="${PG_HOST:-${PG_NAME}-rw.${NAMESPACE}.svc.cluster.local}"
-else
-    PG_HOST="${PG_HOST:-postgresql.${NAMESPACE}.svc.cluster.local}"
-fi
-PG_PASSWORD="${PG_PASSWORD:-}"
-DATABASE_URL_IN_CLUSTER="${DATABASE_URL_IN_CLUSTER:-}"
-
-# Name and key of the Secret holding DATABASE_URL when DB_MODE=byo.
+# Name and key of the Secret holding DATABASE_URL. In bundled mode the chart
+# writes it; in byo mode you create it and the chart reads it.
 DB_SECRET_NAME="${DB_SECRET_NAME:-keeperhub-db}"
 DB_SECRET_KEY="${DB_SECRET_KEY:-DATABASE_URL}"
+
+# --- Runner credentials ------------------------------------------------------
+# The executor hands runner Job pods their credentials by secretKeyRef, building
+# each reference as "<prefix>-<slug>" with the key equal to the name
+# (keeperhub-executor/k8s-job.ts). Only DATABASE_URL and
+# INTEGRATION_ENCRYPTION_KEY are non-optional there; the eight below are marked
+# optional, so a runner with none of them starts, exits 0 and looks healthy while
+# every step that needed one silently did nothing.
+#
+# The optionality lives in application code, which this programme does not
+# change. What the install layer can do is say which are absent, at install time
+# rather than after a confusing execution.
+RUNNER_SECRET_PREFIX="${RUNNER_SECRET_PREFIX:-keeperhub-executor}"
+STRICT_RUNNER_SECRETS="${STRICT_RUNNER_SECRETS:-false}"
+
+# slug|what stops working without it
+RUNNER_OPTIONAL_SECRETS=(
+    "chain-rpc-config|web3 steps have no RPC endpoints and cannot reach any chain"
+    "etherscan-api-key|contract ABI auto-fetch fails, so web3 steps needing an ABI fail"
+    "metrics-ingest-token|runner metrics are not shipped, so executions are invisible"
+    "openai-api-key|AI steps and AI workflow generation fail"
+    "sendgrid-api-key|email steps send nothing"
+    "simple-account-7702-address|EIP-7702 smart-account steps fail"
+    "turnkey-api-private-key|managed wallet signing fails"
+    "turnkey-api-public-key|managed wallet signing fails"
+)
 
 validate_modes() {
     case "$DB_MODE" in bundled|byo) ;; *) echo "DB_MODE must be 'bundled' or 'byo', got '$DB_MODE'" >&2; exit 1 ;; esac
@@ -198,11 +182,32 @@ resolves credentials the normal way:
     SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account>/<queue>
     SQS_DLQ_URL=https://sqs.<region>.amazonaws.com/<account>/<queue>-dlq
 
-Your own SQS-compatible endpoint - set AWS_ENDPOINT_URL too, and the URLs are
-derived from it unless you give them:
+Your own SQS-compatible endpoint - set AWS_ENDPOINT_URL as well:
 
     AWS_ENDPOINT_URL=http://my-queue.my-namespace.svc.cluster.local:9324
 EOF
+        exit 1
+    fi
+}
+
+# Assert that a constant hardcoded in a test-harness script still matches the
+# overlay it mirrors.
+#
+# The harness runs before anything is deployed, so a few values - the local image
+# repository, the mkcert issuer, the hostname - cannot be discovered and have to
+# be written down twice: once in values.minikube.yaml, which the install reads,
+# and once in the script. This makes the second copy fail loudly when the first
+# one changes, instead of the script quietly building an image nothing pulls or
+# applying a ClusterIssuer with a blank name.
+#
+# Structural on purpose. A grep for the bare value would be satisfied by a
+# mention in a comment.
+assert_overlay() {
+    local key="$1" want="$2" overlay="${3:-$SCRIPT_DIR/../values.minikube.yaml}"
+    if ! grep -qE "^[[:space:]]*${key}:[[:space:]]*\"?${want}\"?[[:space:]]*$" "$overlay"; then
+        echo "Harness constant ${key}=${want} no longer matches $(basename "$overlay")." >&2
+        echo "Update the script and the overlay together, or the install and the" >&2
+        echo "harness will disagree about what they are building." >&2
         exit 1
     fi
 }

@@ -23,6 +23,17 @@ source "$SCRIPT_DIR/../config.sh"
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-keeperhub}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-$MINIKUBE_PROFILE}"
 
+# Harness constants, not install settings.
+#
+# config.sh carries what an install needs, and a real install supplies both of
+# these itself. This cluster is the one values.minikube.yaml describes, and it has
+# to be built before anything is deployed, so there is nothing to read them from
+# yet. assert_overlay keeps the two copies honest.
+TLS_ISSUER="mkcert-ca-issuer"   # values.minikube.yaml: global.tlsIssuer
+APP_HOST="selfhosted.keeperhub.com"  # values.minikube.yaml: global.appHost
+assert_overlay tlsIssuer "$TLS_ISSUER"
+assert_overlay appHost "$APP_HOST"
+
 # Measured pod requests for the full stack come to roughly 3.3Gi, with
 # steady-state RSS around 4.5-5.5Gi under real use. 4GB cannot schedule it.
 MIN_MEMORY_GB=8
@@ -251,7 +262,7 @@ main() {
 
 Next:
   ./test-harness/build-images.sh
-  KUBE_CONTEXT=$KUBE_CONTEXT IMAGE_TAG=<tag> ./install.sh
+  KUBE_CONTEXT=$KUBE_CONTEXT PROFILE=minikube IMAGE_TAG=<tag> ./install.sh
 
 Then, to reach it:
   minikube tunnel -p $MINIKUBE_PROFILE
