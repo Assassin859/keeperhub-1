@@ -280,6 +280,17 @@ const SOLANA_DIRECT_EXECUTION_CHAIN_IDS = new Set<number>([
   SUPPORTED_CHAIN_IDS.SOLANA_DEVNET,
 ]);
 
+export function buildSimulationUnsupportedChainError(chainId: number): Error {
+  return new Error(
+    JSON.stringify({
+      error: "simulation_unsupported_chain",
+      message: "Direct-execution simulation is not supported on this chain.",
+      chain_id: chainId,
+      hint: "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting.",
+    })
+  );
+}
+
 function assertSimulationSupported(chainId: string, simulate?: boolean): void {
   if (!simulate) {
     return;
@@ -296,9 +307,7 @@ function assertSimulationSupported(chainId: string, simulate?: boolean): void {
     return;
   }
   if (SOLANA_DIRECT_EXECUTION_CHAIN_IDS.has(normalizedChainId)) {
-    throw new Error(
-      `Direct-execution simulation is currently EVM-only; Solana chain ${normalizedChainId} cannot be simulated. Do not broadcast unless you can preflight the transaction through a Solana-aware client.`
-    );
+    throw buildSimulationUnsupportedChainError(normalizedChainId);
   }
 }
 
