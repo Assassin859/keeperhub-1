@@ -33,8 +33,11 @@ type InviteMode = "email" | "wallet";
  */
 export function InviteMemberForm({
   onDone,
+  onInvited,
 }: {
   onDone?: () => void;
+  /** Fires once an invitation exists, so a pending list can refresh. */
+  onInvited?: () => void;
 }): React.ReactElement {
   const [mode, setMode] = useState<InviteMode>("email");
   const [email, setEmail] = useState("");
@@ -107,6 +110,7 @@ export function InviteMemberForm({
       const invitationId = invitationData?.id || invitationData?.invitation?.id;
       if (invitationId) {
         setInviteId(invitationId);
+        onInvited?.();
         toast.success(
           mode === "wallet"
             ? "Invitation created. Share the link so they can sign to join."
@@ -124,6 +128,10 @@ export function InviteMemberForm({
     }
   };
 
+  const inviteLink = inviteId
+    ? `${typeof window === "undefined" ? "" : window.location.origin}/accept-invite/${inviteId}`
+    : "";
+
   const copyInviteLink = () => {
     if (!inviteId) {
       return;
@@ -131,14 +139,6 @@ export function InviteMemberForm({
     const link = `${window.location.origin}/accept-invite/${inviteId}`;
     navigator.clipboard.writeText(link);
     toast.success("Invite link copied to clipboard");
-  };
-
-  const copyInviteCode = () => {
-    if (!inviteId) {
-      return;
-    }
-    navigator.clipboard.writeText(inviteId);
-    toast.success("Invite code copied to clipboard");
   };
 
   return (
@@ -211,26 +211,19 @@ export function InviteMemberForm({
           </Select>
         </div>
         {inviteId && (
-          <div className="space-y-2 rounded-lg border bg-muted p-4">
-            <p className="font-medium text-sm">Invitation Created</p>
-            <div className="flex gap-2">
-              <Button
-                className="flex-1"
-                onClick={copyInviteLink}
-                size="sm"
-                variant="outline"
-              >
-                <Copy className="mr-2 h-3 w-3" />
-                Copy Link
-              </Button>
-              <Button
-                className="flex-1"
-                onClick={copyInviteCode}
-                size="sm"
-                variant="outline"
-              >
-                <Copy className="mr-2 h-3 w-3" />
-                Copy Code
+          <div className="space-y-2 rounded-lg border p-3">
+            <p className="text-muted-foreground text-xs">
+              {mode === "wallet"
+                ? "Share this link so they can sign in and join."
+                : "Sent by email. Share this link if it does not arrive."}
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1.5 font-mono text-xs">
+                {inviteLink}
+              </code>
+              <Button onClick={copyInviteLink} size="sm" variant="outline">
+                <Copy className="size-3.5" />
+                Copy
               </Button>
             </div>
           </div>

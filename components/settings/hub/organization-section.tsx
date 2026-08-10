@@ -102,7 +102,12 @@ export function OrganizationSection(): React.ReactElement {
       >
         {inviting && isAdmin && (
           <div className="m-2 rounded-lg border p-4">
-            <InviteMemberForm onDone={() => setInviting(false)} />
+            <InviteMemberForm
+              onDone={() => setInviting(false)}
+              onInvited={() => {
+                members.refetch().catch(() => undefined);
+              }}
+            />
           </div>
         )}
         {members.loading && <RowsSkeleton rows={4} />}
