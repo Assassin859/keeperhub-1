@@ -128,14 +128,23 @@ export function OrganizationSection(): React.ReactElement {
 
       {isAdmin && (
         <InvitationsCard
-          description="Invited but not joined yet."
+          description="Invited but not joined yet. Resending issues a new link and invalidates the old one."
           emptyLabel="No invitations are outstanding."
           loading={members.invitationsLoading}
           onCancel={(id) => {
             members.cancelInvitation(id).catch(() => undefined);
           }}
+          onResend={(id) => {
+            const invitation = members.invitations.find((i) => i.id === id);
+            if (invitation) {
+              members.resendInvitation(invitation).catch(() => undefined);
+            }
+          }}
           rows={members.invitations.map((inv) => ({
             badge: inv.role,
+            expired: inv.expiresAt
+              ? new Date(inv.expiresAt) < new Date()
+              : false,
             id: inv.id,
             label: inv.email,
           }))}

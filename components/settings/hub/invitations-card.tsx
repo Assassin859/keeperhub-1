@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, X } from "lucide-react";
+import { Mail, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "./section";
@@ -10,6 +10,7 @@ type InvitationRow = {
   id: string;
   label: string;
   badge?: string;
+  expired?: boolean;
 };
 
 export function InvitationsCard({
@@ -19,6 +20,7 @@ export function InvitationsCard({
   loading,
   emptyLabel,
   onCancel,
+  onResend,
   reviewHref,
 }: {
   title: string;
@@ -28,6 +30,8 @@ export function InvitationsCard({
   emptyLabel: string;
   /** Admin surface: cancel a sent invitation. */
   onCancel?: (id: string) => void;
+  /** Admin surface: cancel and issue a fresh invitation to the same address. */
+  onResend?: (id: string) => void;
   /** Personal surface: link to the accept-invite page. */
   reviewHref?: (id: string) => string;
 }): React.ReactElement {
@@ -52,7 +56,22 @@ export function InvitationsCard({
                     {row.badge}
                   </span>
                 )}
+                {row.expired && (
+                  <span className="shrink-0 rounded-full border border-amber-500/40 px-2 py-0.5 text-[0.6875rem] text-amber-400">
+                    Expired
+                  </span>
+                )}
               </span>
+              {onResend && (
+                <Button
+                  onClick={() => onResend(row.id)}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <RefreshCw className="size-3.5" />
+                  Resend
+                </Button>
+              )}
               {onCancel && (
                 <Button
                   onClick={() => onCancel(row.id)}

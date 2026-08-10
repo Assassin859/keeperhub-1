@@ -19,6 +19,7 @@ export type SentInvitation = {
   email: string;
   role: string;
   status: string;
+  expiresAt?: Date | string;
 };
 
 export type OrgMembersState = {
@@ -30,6 +31,7 @@ export type OrgMembersState = {
   updatingId: string | null;
   refetch: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
+  resendInvitation: (invitation: SentInvitation) => Promise<void>;
   changeRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (member: OrgMember) => Promise<void>;
 };
@@ -156,8 +158,42 @@ export function useOrgMembers(): OrgMembersState {
     [refetch]
   );
 
+  // There is no API to re-send an existing invitation, and none to change its
+  // role once issued, so a resend is a cancel plus a fresh invite to the same
+  // address and role. The old link stops working.
+  const resendInvitation = useCallback(
+    async (invitation: SentInvitation): Promise<void> => {
+      if (!organizationId) {
+        return;
+      }
+      try {
+        await authClient.organization.cancelInvitation({
+          invitationId: invitation.id,
+        });
+        const { error } = await authClient.organization.inviteMember({
+          email: invitation.email,
+          organizationId,
+          role: invitation.role as "member" | "admin" | "owner",
+        });
+        if (error) {
+          toast.error(error.message || "Could not resend the invitation");
+        } else {
+          toast.success(`Invitation resent to ${invitation.email}`);
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not resend"
+        );
+      } finally {
+        await refetch();
+      }
+    },
+    [organizationId, refetch]
+  );
+
   return {
     cancelInvitation,
+    resendInvitation,
     changeRole,
     removeMember,
     updatingId,
