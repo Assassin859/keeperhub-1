@@ -349,6 +349,7 @@ describe("batch-write-contract - per-call failure isolation", () => {
     expect(result.transactionHash).toBe("0xhash");
     expect(result.results).toHaveLength(2);
     expect(result.results?.[0].success).toBe(false);
+    expect(result.results?.[1].success).toBe(false);
     expect(mockExecuteContractCall).toHaveBeenCalledTimes(1);
   });
 
