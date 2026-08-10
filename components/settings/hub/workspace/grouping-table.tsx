@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ConfirmRow } from "../confirm-row";
+import { ConfirmDeleteDialog } from "../confirm-delete-dialog";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 
 export type GroupingRow = {
@@ -36,10 +36,11 @@ export function GroupingTable({
   onEdit: (id: string) => void;
   onDelete: (id: string) => Promise<void>;
 }): React.ReactElement {
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [pending, setPending] = useState<GroupingRow | null>(null);
 
   return (
-    <Table>
+    <>
+      <Table>
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
           <TableHead>Name</TableHead>
@@ -72,18 +73,7 @@ export function GroupingTable({
               {row.workflowCount}
             </TableCell>
             <TableCell className="text-right">
-              {confirming === row.id ? (
-                <ConfirmRow
-                  confirmLabel="Delete"
-                  label={`Delete this ${unit}?`}
-                  onCancel={() => setConfirming(null)}
-                  onConfirm={async () => {
-                    await onDelete(row.id);
-                    setConfirming(null);
-                  }}
-                />
-              ) : (
-                canManage && (
+              {canManage && (
                   <div className="flex justify-end gap-1">
                     <Button
                       aria-label={`Edit ${row.name}`}
@@ -95,19 +85,32 @@ export function GroupingTable({
                     </Button>
                     <Button
                       aria-label={`Delete ${row.name}`}
-                      onClick={() => setConfirming(row.id)}
+                      onClick={() => setPending(row)}
                       size="icon"
                       variant="ghost"
                     >
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
                   </div>
-                )
               )}
             </TableCell>
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+      </Table>
+
+      <ConfirmDeleteDialog
+        confirmLabel="Delete"
+        description={`${pending?.name ?? "This " + unit} is removed from every workflow using it. The workflows themselves stay.`}
+        onConfirm={async () => {
+          if (pending) {
+            await onDelete(pending.id);
+          }
+        }}
+        onOpenChange={(next) => !next && setPending(null)}
+        open={pending !== null}
+        title={`Delete ${unit}`}
+      />
+    </>
   );
 }

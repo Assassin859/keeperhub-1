@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import type { Integration } from "@/lib/api-client";
 import type { LabelledIntegration } from "../hooks/use-connections";
-import { ConfirmRow } from "../confirm-row";
+import { ConfirmDeleteDialog } from "../confirm-delete-dialog";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 
 export function ConnectionsTable({
@@ -31,10 +31,11 @@ export function ConnectionsTable({
   onRemove: (integration: Integration) => Promise<void>;
 }): React.ReactElement {
   const { push } = useOverlay();
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [pending, setPending] = useState<LabelledIntegration | null>(null);
 
   return (
-    <Table>
+    <>
+      <Table>
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
           <TableHead>Service</TableHead>
@@ -58,17 +59,7 @@ export function ConnectionsTable({
               {connection.name}
             </TableCell>
             <TableCell className="text-right">
-              {confirming === connection.id ? (
-                <ConfirmRow
-                  label="Remove this connection?"
-                  onCancel={() => setConfirming(null)}
-                  onConfirm={async () => {
-                    await onRemove(connection);
-                    setConfirming(null);
-                  }}
-                />
-              ) : (
-                <div className="flex justify-end gap-1">
+              <div className="flex justify-end gap-1">
                   <Button
                     aria-label="Activity"
                     onClick={() =>
@@ -93,7 +84,7 @@ export function ConnectionsTable({
                       </Button>
                       <Button
                         aria-label="Remove"
-                        onClick={() => setConfirming(connection.id)}
+                        onClick={() => setPending(connection)}
                         size="icon"
                         variant="ghost"
                       >
@@ -101,12 +92,24 @@ export function ConnectionsTable({
                       </Button>
                     </>
                   )}
-                </div>
-              )}
+              </div>
             </TableCell>
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+      </Table>
+
+      <ConfirmDeleteDialog
+        description={`Workflows using ${pending?.name ?? "this connection"} stop being able to authenticate with it.`}
+        onConfirm={async () => {
+          if (pending) {
+            await onRemove(pending);
+          }
+        }}
+        onOpenChange={(next) => !next && setPending(null)}
+        open={pending !== null}
+        title="Remove connection"
+      />
+    </>
   );
 }

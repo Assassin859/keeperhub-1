@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { roleLabel } from "@/lib/organization/role-label";
-import { ConfirmRow } from "../confirm-row";
+import { ConfirmDeleteDialog } from "../confirm-delete-dialog";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 import type { OrgMember } from "../hooks/use-org-members";
 
@@ -39,10 +39,11 @@ export function MembersTable({
   onRoleChange: (member: OrgMember, role: string) => Promise<void>;
   onRemove: (member: OrgMember) => Promise<void>;
 }): React.ReactElement {
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [pending, setPending] = useState<OrgMember | null>(null);
 
   return (
-    <Table>
+    <>
+      <Table>
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
           <TableHead>Member</TableHead>
@@ -111,33 +112,34 @@ export function MembersTable({
                 {new Date(member.createdAt).toLocaleDateString()}
               </TableCell>
               <TableCell className="text-right">
-                {confirming === member.id ? (
-                  <ConfirmRow
-                    label={`Remove ${member.user.name}?`}
-                    onCancel={() => setConfirming(null)}
-                    onConfirm={async () => {
-                      await onRemove(member);
-                      setConfirming(null);
-                    }}
-                  />
-                ) : (
-                  canManage &&
-                  !isSelf && (
-                    <Button
-                      aria-label={`Remove ${member.user.name}`}
-                      onClick={() => setConfirming(member.id)}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Trash2 className="size-4 text-destructive" />
-                    </Button>
-                  )
+                {canManage && !isSelf && (
+                  <Button
+                    aria-label={`Remove ${member.user.name}`}
+                    onClick={() => setPending(member)}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <Trash2 className="size-4 text-destructive" />
+                  </Button>
                 )}
               </TableCell>
             </TableRow>
           );
         })}
       </TableBody>
-    </Table>
+      </Table>
+
+      <ConfirmDeleteDialog
+        description={`${pending?.user.name ?? "This member"} loses access to this organization straight away. Their workflows stay.`}
+        onConfirm={async () => {
+          if (pending) {
+            await onRemove(pending);
+          }
+        }}
+        onOpenChange={(next) => !next && setPending(null)}
+        open={pending !== null}
+        title="Remove member"
+      />
+    </>
   );
 }
