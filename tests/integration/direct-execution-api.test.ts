@@ -621,7 +621,33 @@ describe("Direct Execution API", () => {
       const data = await response.json();
       expect(data.executionId).toBe("exec_1");
       expect(data.status).toBe("completed");
+      expect(data.transactionHash).toBe("0xwrite");
+      expect(data.transactionLink).toBe("https://etherscan.io/tx/0xwrite");
       expect(mocks.checkAndReserveExecution).toHaveBeenCalledOnce();
+    });
+
+    it("returns the transaction hash on a write that broadcast then failed reconciliation", async () => {
+      // A broadcast that fails verification still produced a transaction, and
+      // the hash is the only way for the caller to find out what the chain did
+      // with it. Matches the transfer route.
+      setupPassingGuards();
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xwrite",
+        transactionLink: "https://etherscan.io/tx/0xwrite",
+      });
+      mocks.completeExecution.mockResolvedValue({
+        status: "failed",
+        error: "receipt not found within verification budget",
+      });
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", validWriteBody)
+      );
+
+      const data = await response.json();
+      expect(data.status).toBe("failed");
+      expect(data.transactionHash).toBe("0xwrite");
     });
 
     it("returns 403 when spending cap exceeded for write call", async () => {

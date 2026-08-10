@@ -35,6 +35,7 @@ import { checkRateLimit } from "../_lib/rate-limit";
 import { parseNativeValueWei } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
+import type { ExecuteResponse } from "../_lib/types";
 import { validateContractCallInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -225,16 +226,27 @@ async function handleWriteCall(
     outcome = { status: settled.status, error: result.error };
   }
 
+  // transactionHash/transactionLink are included whenever a tx was actually
+  // broadcast (result.success), regardless of final outcome, so a
+  // reconciliation-failed response still surfaces the hash to look up. This
+  // matches /execute/transfer and the documented contract that the hash is
+  // present when status is "completed"; without it a caller that completed a
+  // write has no identifier for the transaction it just caused.
+  const responseBody: ExecuteResponse = {
+    executionId,
+    status: outcome.status,
+    ...(result.success
+      ? {
+          transactionHash: result.transactionHash,
+          transactionLink: result.transactionLink,
+        }
+      : {}),
+    ...(outcome.error ? { error: outcome.error } : {}),
+  };
+
   return recordIdempotentResponse(
     idem,
-    NextResponse.json(
-      {
-        executionId,
-        status: outcome.status,
-        ...(outcome.error ? { error: outcome.error } : {}),
-      },
-      { status: HttpStatus.ACCEPTED }
-    ),
+    NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
     outcome.status === "completed" ? "success" : "failed"
   );
 }
