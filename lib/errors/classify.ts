@@ -19,8 +19,12 @@ export { ExecutionErrorType } from "@/lib/errors/execution-error-type";
  *                    configured the workflow to call (HTTP request / webhook
  *                    transport failures such as timeouts, connection resets, DNS
  *                    failures) where neither the customer's config nor KeeperHub
- *                    is at fault. RPC endpoints are KeeperHub-managed, so their
- *                    failures stay "system", not "external".
+ *                    is at fault. RPC endpoints are KeeperHub-managed, so an
+ *                    `RPC failed ...` message stays "system" here; the one
+ *                    exception is the private-mempool relay a node opted into,
+ *                    which we point at but do not operate. The RPC layer tags
+ *                    that at the failure site and the step forwards it as an
+ *                    errorClass hint.
  *   - code:          a `PREFIX-NNNN` system error code for system failures, or
  *                    null for user and external failures (which surface their
  *                    raw message).
@@ -431,11 +435,14 @@ const RULES: readonly Rule[] = [
     errorType: ExecutionErrorType.SYSTEM,
     code: "E-0003",
   },
+  // Writes from one wallet are serialized, so exhausting the lock budget means
+  // the workflow is asking for more throughput than a single wallet has. That
+  // is the author's configuration, not an engine fault: user error, no code.
   {
-    pattern: /^Failed to acquire nonce lock/i,
-    errorCategory: ErrorCategory.WORKFLOW_ENGINE,
-    errorType: ExecutionErrorType.SYSTEM,
-    code: "E-0003",
+    pattern: /^Wallet is saturated: could not acquire the nonce lock/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: ExecutionErrorType.USER,
+    code: null,
   },
 
   // System: deploy bugs / missing modules / missing secrets

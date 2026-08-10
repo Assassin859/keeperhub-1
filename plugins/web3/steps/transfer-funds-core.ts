@@ -24,6 +24,8 @@ import {
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
 import { PublicKey } from "@solana/web3.js";
@@ -34,6 +36,10 @@ import {
   executeNativeTransferAsSafe,
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
+import {
+  preflightGasBalance,
+  resolveFundingHolder,
+} from "@/lib/web3/gas-preflight";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -96,6 +102,9 @@ export type TransferFundsResult =
       success: false;
       error: string;
       rejection?: RevertKind;
+      // Authoritative fault domain when the failure site knows it: the
+      // private-mempool relay never answered, and we do not run that node.
+      errorClass?: ExecutionErrorType;
       // Set only when a transaction reached the chain and failed
       // there, so the finalizer can persist a receipt for the failure. Absent
       // on pre-broadcast failures, where no transaction exists.
@@ -219,7 +228,12 @@ export async function transferFundsCore(
       error,
       { plugin_name: "web3", action_name: "transfer-funds" }
     );
-    return { success: false, error: getErrorMessage(error) };
+    const errorClass = rpcRelayErrorClass(error);
+    return {
+      success: false,
+      error: getErrorMessage(error),
+      ...(errorClass ? { errorClass } : {}),
+    };
   }
 
   // Get wallet address for nonce management
@@ -334,6 +348,9 @@ export async function transferFundsCore(
         return {
           success: false,
           error: decision.error,
+          // Carried so a failOnError=false node cannot soften an unresolved
+          // in-flight send into success.
+          errorClass: decision.errorClass,
           sponsored: true,
           ...(decision.transactionHash
             ? { transactionHash: decision.transactionHash, chainId }
@@ -345,6 +362,21 @@ export async function transferFundsCore(
 
   // Fall back to direct signing with nonce management and RPC failover
   const adapter = getChainAdapter(chainId);
+
+  // Answer affordability before queueing on the wallet's nonce lock. A holder
+  // that cannot pay would otherwise take the lock, spend a full failover round
+  // discovering that at broadcast, and stall every other execution for the
+  // same wallet behind it. The in-session check below stays as the backstop
+  // for when this one fails open on an RPC error.
+  const gasCheck = await preflightGasBalance({
+    rpcManager,
+    chainId,
+    holderAddress: resolveFundingHolder(signerMode, walletAddress),
+    valueWei: amountInWei,
+  });
+  if (!gasCheck.affordable) {
+    return { success: false, error: gasCheck.message };
+  }
 
   return withNonceSession(txContext, walletAddress, async (session) => {
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
@@ -467,9 +499,11 @@ export async function transferFundsCore(
         }
       );
       const rejection = classifyRevert(error);
+      const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(error, undefined, "Transaction failed"),
+        ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
         ...(revertedTransactionHash(error)
           ? { transactionHash: revertedTransactionHash(error), chainId }

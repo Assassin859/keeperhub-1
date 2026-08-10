@@ -68,6 +68,7 @@ import {
   currentWorkflowNameAtom,
   currentWorkflowOutputMappingAtom,
   currentWorkflowPriceUsdcAtom,
+  currentWorkflowShareExecutionStatusAtom,
   currentWorkflowPublicTagsAtom,
   currentWorkflowVisibilityAtom,
   deleteEdgeAtom,
@@ -918,6 +919,9 @@ function useWorkflowState() {
     currentWorkflowOutputMappingAtom
   );
   const [priceUsdc, setPriceUsdc] = useAtom(currentWorkflowPriceUsdcAtom);
+  const [shareExecutionStatus, setShareExecutionStatus] = useAtom(
+    currentWorkflowShareExecutionStatusAtom
+  );
 
   // Load all workflows and projects on mount.
   // NAV-04: persistent toolbar mounts on every route including `/`. Skip the
@@ -1004,6 +1008,8 @@ function useWorkflowState() {
     setOutputMapping,
     priceUsdc,
     setPriceUsdc,
+    shareExecutionStatus,
+    setShareExecutionStatus,
   };
 }
 
@@ -1057,6 +1063,8 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     setOutputMapping,
     priceUsdc,
     setPriceUsdc,
+    shareExecutionStatus,
+    setShareExecutionStatus,
   } = state;
 
   const {
@@ -1269,12 +1277,15 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
       existingInputSchema: inputSchema,
       existingOutputMapping: outputMapping,
       existingPrice: priceUsdc,
+      existingShareExecutionStatus: shareExecutionStatus,
+      existingVisibility: workflowVisibility,
       onSave: (data) => {
         setIsListed(data.isListed);
         setListedSlug(data.listedSlug);
         setInputSchema(data.inputSchema);
         setOutputMapping(data.outputMapping);
         setPriceUsdc(data.priceUsdcPerCall);
+        setShareExecutionStatus(data.shareExecutionStatus);
       },
     });
   };

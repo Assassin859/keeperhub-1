@@ -13,7 +13,10 @@ Access supported blockchain networks and contract information.
 GET /api/chains
 ```
 
-Returns all supported blockchain networks.
+Returns all supported blockchain networks. The catalog is public, so this
+endpoint answers with or without a credential. To confirm an API key is valid,
+call `GET /api/keys` instead. See
+[Checking a key works](/api/authentication#checking-a-key-works).
 
 ### Query Parameters
 
@@ -73,9 +76,32 @@ Returns a bare JSON array of chain objects. The response is not wrapped in a `da
 | `explorerApiType` | string \| null | Explorer API family (e.g. `etherscan`, `blockscout`) |
 | `isTestnet` | boolean | Whether this chain is a testnet |
 | `isEnabled` | boolean | Whether the chain is currently available for workflow execution |
-| `usePrivateMempoolRpc` | boolean | Whether KeeperHub routes transactions through a private mempool (Flashbots Protect) by default |
+| `usePrivateMempoolRpc` | boolean | Whether this chain offers a configured private-mempool RPC capability (Flashbots Protect). This does not enable private routing by default. |
 
 RPC endpoint URLs (`defaultPrimaryRpc`, `defaultFallbackRpc`) are not returned by this endpoint. They may embed provider API keys and are read server-side only; client code should use the user-configurable RPC preferences API instead.
+
+### Private Mempool Capability
+
+`usePrivateMempoolRpc` describes a chain capability, not the route used by a
+specific transaction. A `true` value makes the chain's `(Flashbots)` variant
+available on supported workflow write actions. Selecting that variant stores
+`usePrivateMempool: true` in the action configuration. Programmatic workflow
+definitions can set the same field directly.
+
+Private routing is strict by default: when the private RPC is available, its
+public fallback is removed. Set `strict: false` only when falling back to the
+public mempool is acceptable. If a stored action requests private routing after
+the chain capability is removed, execution proceeds through the public RPC and
+logs a warning.
+
+Private-mempool writes are not gas sponsored because Turnkey sponsorship uses
+its own broadcast path. The direct-execution API and MCP execute tools do not
+currently expose the workflow action's `usePrivateMempool` or `strict` fields.
+
+Neither this chain capability nor a saved workflow setting confirms that a
+specific transaction used a private route. Current execution outputs do not
+include a public/private route field, so describe the route as requested unless
+you have separate relay evidence.
 
 ### Chain Types
 
@@ -140,4 +166,3 @@ Fetches the ABI for a verified contract from the block explorer. The `{chainId}`
   "explorerUrl": "https://etherscan.io"
 }
 ```
-

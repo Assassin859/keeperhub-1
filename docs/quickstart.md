@@ -33,6 +33,70 @@ reference for the full tool list and per-workflow details.
 The endpoint URL is also shown, with a copy button, in the dashboard under
 **Settings -> API Keys**.
 
+### OAuth vs API keys
+
+Browser OAuth (for example `/mcp` in Claude Code) mints a **Bearer OAuth access
+token**, not a `kh_` organization API key. The MCP server accepts either an
+OAuth access token or `Authorization: Bearer kh_...` on each request. The OAuth
+token endpoint expects an OAuth `client_id` / `client_secret`, not a `kh_` org
+key — a `kh_` value fails client authentication as an invalid secret.
+
+| Auth method | Credential | Best for |
+|-------------|------------|----------|
+| OAuth (browser) | Short-lived Bearer access token | Interactive agents, Claude Code `/mcp` |
+| Organization API key (`kh_`) | Long-lived org key from Settings -> API Keys | Headless CI, scripts, Docker |
+
+For programmatic REST and MCP access without a browser redirect, create an
+organization key at **Settings -> API Keys**. See [MCP Server auth](/ai-tools/mcp-server)
+and [API Keys](/api/api-keys).
+
+### Local and Docker MCP
+
+Self-hosted KeeperHub exposes MCP at `http://localhost:3000/mcp`. OAuth
+redirect flows require a reachable callback URL; when that is impractical (for
+example inside Docker without a browser), prefer a `kh_` key:
+
+```bash
+claude mcp add --transport http --scope user keeperhub http://localhost:3000/mcp \
+  --header "Authorization: Bearer kh_your_key_here"
+```
+
+For local development with a browser, `pnpm dev:login` opens a signed-in
+Chromium session. Set `DEV_LOGIN_URL` if the app is not on `http://localhost:3000`.
+
+### Simulation is EVM-only
+
+`simulate: true` on MCP direct-execution tools (`execute_transfer`, etc.) works
+on **EVM chain IDs only**. On Solana mainnet (`101`) and devnet (`103`), the
+tool call **resolves** with `isError: true` — it does not throw to the MCP
+client. Check that flag, then parse the JSON in `content[0].text` and stop when
+`error` is `simulation_unsupported_chain`:
+
+```js
+const result = await client.callTool({
+  name: "execute_transfer",
+  arguments: args,
+});
+if (result.isError) {
+  const payload = JSON.parse(result.content[0].text);
+  if (payload.error === "simulation_unsupported_chain") {
+    // hard stop — do not broadcast
+  }
+}
+```
+
+```json
+{
+  "error": "simulation_unsupported_chain",
+  "message": "Direct-execution simulation is not supported on this chain.",
+  "chain_id": 101,
+  "hint": "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting."
+}
+```
+
+See [section 6](#6-send-your-first-transaction-safely) for the full preflight
+flow.
+
 ## 2. Pick a key type
 
 KeeperHub has two key systems. They are not interchangeable.
@@ -42,8 +106,23 @@ KeeperHub has two key systems. They are not interchangeable.
 | `kh_` | Organization | `/api/keys` | REST API, MCP server, Claude Code plugin |
 | `wfb_` | User | `/api/api-keys` | Webhook trigger authentication |
 
-For programmatic API and MCP access, use an organization (`kh_`) key. Full
-details: [API Keys](/api/api-keys).
+For programmatic API and MCP access, use an organization (`kh_`) key when you
+need a long-lived credential. OAuth access tokens are a first-class REST
+principal (`Authorization: Bearer …`) with their own scope model, but they are
+browser-minted and short-lived — see [OAuth vs API keys](#oauth-vs-api-keys).
+Full details: [API Keys](/api/api-keys).
+
+Confirm the key works before building on it:
+
+```bash
+curl -sf -H "Authorization: Bearer kh_your_api_key" \
+  https://app.keeperhub.com/api/keys
+```
+
+`GET /api/keys` is the auth probe: a `200` means the credential is valid and
+scoped to an organization, a `401` means it is not. Point health checks and
+first-run scripts at this endpoint. `GET /api/chains` is public and answers
+either way, so it reports reachability rather than a working credential.
 
 No browser available? Sign-up is captcha-gated and key creation needs a signed
 confirmation, so a script or agent starts from wallet sign-in instead:
@@ -95,12 +174,18 @@ tool. Faucet links are third-party and may change. See the full
 
 | Context | Limit |
 |---|---|
-| Authenticated requests | 100 / minute |
-| Unauthenticated requests | 10 / minute |
+| MCP (per organization) | 120 / minute |
+| Public MCP tools/call (per IP) | 10 / minute |
 | Direct execution (per API key) | 60 / minute |
 
-Rate-limited requests return `429` with a `Retry-After` header. See
-[Direct Execution](/api/direct-execution) for spending caps.
+Rate-limited requests return `429` with a `Retry-After` header (delta seconds).
+When you hit a limit:
+
+1. Read `Retry-After` and wait at least that many seconds before retrying.
+2. Use exponential backoff with a cap (for example 1s, 2s, 4s, up to 30s; max 5 attempts).
+3. On write operations, pass a stable idempotency key: `Idempotency-Key` header on REST, `idempotency_key` on MCP direct-execution tools.
+
+For direct-execution spending caps, see [Direct Execution](/api/direct-execution).
 
 ## 5. Sandbox
 
@@ -120,7 +205,10 @@ faucets above, then use this sequence:
 3. Repeat the same call with `simulate` omitted and a new
    `idempotency_key`.
 4. Pass the returned `executionId` to `get_direct_execution_status` and poll
-   until the status is `completed` or `failed`.
+   until the status is `completed` or `failed`. Wait the number of seconds in
+   the `X-Poll-Interval-Hint` response header between polls rather than
+   picking your own interval; a value of `0` means the execution is terminal
+   and you can stop.
 5. Save `transactionLink` from the terminal response as the onchain proof.
 
 Example simulation on Base Sepolia:
@@ -136,10 +224,12 @@ Example simulation on Base Sepolia:
 
 For an ERC-20 transfer, also pass the token's contract address as
 `token_address`. The Base Sepolia USDC address is listed in the table above.
-Any MCP tool error is a failed preflight and must stop the flow; revert details
-include the REST error JSON when available. Simulation is currently EVM-only,
-so `execute_transfer` rejects `simulate: true` for Solana chain IDs `101` and
-`103` and their aliases before making an API call.
-See [MCP Server](/ai-tools/mcp-server#safely-preflight-direct-writes) for the
-tool flow and [Direct Execution](/api/direct-execution) for complete response
-and error handling details.
+Any MCP tool result with `isError: true` is a failed preflight and must stop
+the flow; revert details include the REST error JSON when available. As noted
+in [section 1](#simulation-is-evm-only), simulation is EVM-only — on Solana
+chain IDs `101` and `103` (and their aliases), `execute_transfer` with
+`simulate: true` resolves with `isError: true` before any API call; parse
+`content[0].text` as JSON and treat `error: "simulation_unsupported_chain"` as
+a hard stop. See [MCP Server](/ai-tools/mcp-server#safely-preflight-direct-writes)
+for the tool flow and [Direct Execution](/api/direct-execution) for complete
+response and error handling details.

@@ -24,6 +24,8 @@ import {
 } from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
 import {
@@ -31,6 +33,10 @@ import {
   executeContractCallAsSafe,
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
+import {
+  preflightGasBalance,
+  resolveFundingHolder,
+} from "@/lib/web3/gas-preflight";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -97,6 +103,9 @@ export type TransferTokenResult =
       success: false;
       error: string;
       rejection?: RevertKind;
+      // Authoritative fault domain when the failure site knows it: the
+      // private-mempool relay never answered, and we do not run that node.
+      errorClass?: ExecutionErrorType;
       // Set only when a transaction reached the chain and failed
       // there, so the finalizer can persist a receipt for the failure. Absent
       // on pre-broadcast failures, where no transaction exists.
@@ -318,7 +327,12 @@ export async function transferTokenCore(
         chain_id: String(chainId),
       }
     );
-    return { success: false, error: getErrorMessage(error) };
+    const errorClass = rpcRelayErrorClass(error);
+    return {
+      success: false,
+      error: getErrorMessage(error),
+      ...(errorClass ? { errorClass } : {}),
+    };
   }
 
   // Get wallet address for nonce management
@@ -457,6 +471,9 @@ export async function transferTokenCore(
         return {
           success: false,
           error: decision.error,
+          // Carried so a failOnError=false node cannot soften an unresolved
+          // in-flight send into success.
+          errorClass: decision.errorClass,
           sponsored: true,
           ...(decision.transactionHash
             ? { transactionHash: decision.transactionHash, chainId }
@@ -468,6 +485,20 @@ export async function transferTokenCore(
 
   // Fall back to direct signing with nonce management and RPC failover
   const adapter = getChainAdapter(chainId);
+
+  // Answer gas affordability before queueing on the wallet's nonce lock. A
+  // holder that cannot pay would otherwise take the lock, spend a full failover
+  // round discovering that at broadcast, and stall every other execution for
+  // the same wallet behind it. The ERC-20 balance check above covers the token
+  // side; this one covers the native gas the transfer still has to pay for.
+  const gasCheck = await preflightGasBalance({
+    rpcManager,
+    chainId,
+    holderAddress: resolveFundingHolder(signerMode, walletAddress),
+  });
+  if (!gasCheck.affordable) {
+    return { success: false, error: gasCheck.message };
+  }
 
   return withNonceSession(txContext, walletAddress, async (session) => {
     // Initialize wallet signer
@@ -617,6 +648,7 @@ export async function transferTokenCore(
         }
       );
       const rejection = classifyRevert(error, contract.interface);
+      const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(
@@ -624,6 +656,7 @@ export async function transferTokenCore(
           contract.interface,
           "Token transfer failed"
         ),
+        ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
         ...(revertedTransactionHash(error)
           ? { transactionHash: revertedTransactionHash(error), chainId }
