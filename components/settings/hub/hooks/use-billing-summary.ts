@@ -91,7 +91,15 @@ export function useBillingSummary(): BillingSummaryState {
   const openPortal = useCallback(async (): Promise<void> => {
     setOpeningPortal(true);
     try {
-      const res = await fetch(BILLING_API.PORTAL, { method: "POST" });
+      // Come back to the page the portal was opened from, not the old
+      // standalone billing route.
+      const res = await fetch(BILLING_API.PORTAL, {
+        body: JSON.stringify({
+          returnPath: window.location.pathname + window.location.search,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
       const data = (await res.json()) as { url?: string; error?: string };
       if (data.url) {
         window.location.href = data.url;
