@@ -247,6 +247,49 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(mockValidateAndParseCalls).not.toHaveBeenCalled();
   });
 
+  it("rejects a native calls array containing a template reference in an arg", async () => {
+    const response = await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: {
+          abi: WORK_ABI,
+          abiFunction: "work",
+          calls: [
+            {
+              contractAddress: SAMPLE_CALLS[0].contractAddress,
+              args: ["{{@prep:Prep.arg}}"],
+            },
+          ],
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as { error: string };
+    expect(data.error).toContain("template references");
+    expect(mockValidateAndParseCalls).not.toHaveBeenCalled();
+  });
+
+  it("rejects a native calls array containing a template reference in contractAddress", async () => {
+    const response = await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: {
+          abi: WORK_ABI,
+          abiFunction: "work",
+          calls: [{ contractAddress: "{{@prep:Prep.target}}", args: [] }],
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as { error: string };
+    expect(data.error).toContain("template references");
+    expect(mockValidateAndParseCalls).not.toHaveBeenCalled();
+  });
+
   it("accepts calls as a native array in the request body", async () => {
     const response = await POST(
       makeRequest({

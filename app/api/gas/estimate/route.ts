@@ -302,9 +302,11 @@ async function validateRequest(request: Request): Promise<
     config.functionArgs,
     config.recipientAddress,
     config.amount,
-    typeof config.calls === "string" ? config.calls : undefined,
   ];
-  if (configValues.some(hasTemplateRefs)) {
+  if (
+    configValues.some(hasTemplateRefs) ||
+    hasTemplateRefs(JSON.stringify(config.calls))
+  ) {
     return badRequest(
       "Cannot estimate gas with template references ({{...}}). Provide literal values."
     );
