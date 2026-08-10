@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronsUpDown, Plus, Settings, Users } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import {
   CommandGroup,
   CommandItem,
   CommandList,
-  CommandSeparator,
 } from "@/components/ui/command";
 import {
   Popover,
@@ -128,70 +127,52 @@ export function OrgSwitcher() {
   }
 
   return (
-    <>
-      <Popover onOpenChange={setOpen} open={open}>
-        <PopoverTrigger asChild>
-          <Button
-            aria-expanded={open}
-            aria-label="Switch organization"
-            className="w-[200px] justify-between"
-            data-state="ready"
-            data-testid="org-switcher"
-            role="combobox"
-            variant="outline"
-          >
-            <div className="flex items-center gap-2">
-              <Users className="size-4 shrink-0" />
-              <span className="truncate">{organization.name}</span>
-            </div>
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[200px] p-0">
-          <Command>
-            <CommandList>
-              <CommandGroup>
-                {organizations.map((org) => (
-                  <CommandItem
-                    key={org.id}
-                    onSelect={() => {
-                      setOpen(false);
-                      switchOrganization(org.id);
-                    }}
-                  >
-                    <Check
-                      className={`mr-1 h-4 w-4 ${
-                        organization.id === org.id ? "opacity-100" : "opacity-0"
-                      }`}
-                    />
-                    <TruncatedTooltip
-                      className="min-w-0 flex-1 text-left"
-                      side="right"
-                      text={org.name}
-                    />
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-              <CommandSeparator />
-              <CommandGroup>
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger asChild>
+        <Button
+          aria-expanded={open}
+          aria-label="Switch organization"
+          className="w-[200px] justify-between"
+          data-state="ready"
+          data-testid="org-switcher"
+          role="combobox"
+          variant="outline"
+        >
+          <div className="flex items-center gap-2">
+            <Users className="size-4 shrink-0" />
+            <span className="truncate">{organization.name}</span>
+          </div>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[200px] p-0">
+        <Command>
+          <CommandList>
+            <CommandGroup>
+              {organizations.map((org) => (
                 <CommandItem
+                  key={org.id}
                   onSelect={() => {
                     setOpen(false);
-                    setManageModalOpen(true);
+                    switchOrganization(org.id);
                   }}
                 >
-                  <Settings className="mr-2 h-4 w-4" />
-                  Manage Organizations
+                  <Check
+                    className={`mr-1 h-4 w-4 ${
+                      organization.id === org.id ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                  <TruncatedTooltip
+                    className="min-w-0 flex-1 text-left"
+                    side="right"
+                    text={org.name}
+                  />
                 </CommandItem>
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-      <ManageOrgsModal
-        onOpenChange={setManageModalOpen}
-        open={manageModalOpen}
-      />
-    </>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
