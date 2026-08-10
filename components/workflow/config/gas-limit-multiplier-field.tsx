@@ -67,6 +67,7 @@ export function GasLimitMultiplierField({
         recipientAddress: config.recipientAddress,
         amount: config.amount,
         tokenConfig: config.tokenConfig,
+        calls: config.calls,
       }),
     [
       config.contractAddress,
@@ -76,6 +77,7 @@ export function GasLimitMultiplierField({
       config.recipientAddress,
       config.amount,
       config.tokenConfig,
+      config.calls,
     ]
   );
 
@@ -108,6 +110,8 @@ export function GasLimitMultiplierField({
         return Boolean(
           config.contractAddress && config.abi && config.abiFunction
         );
+      case "batch-write-contract":
+        return Boolean(config.abi && config.abiFunction && config.calls);
       default:
         return false;
     }
@@ -120,6 +124,7 @@ export function GasLimitMultiplierField({
     config.contractAddress,
     config.abi,
     config.abiFunction,
+    config.calls,
   ]);
 
   // Fetch gas estimate with debounce

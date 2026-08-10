@@ -219,7 +219,7 @@ function decodeAggregate3Entry(
   }
 }
 
-type ParsedCall = { contractAddress: string; args: unknown[] };
+export type ParsedCall = { contractAddress: string; args: unknown[] };
 
 /**
  * Parse, validate, and coerce the `calls` JSON against the batch's shared
@@ -230,8 +230,11 @@ type ParsedCall = { contractAddress: string; args: unknown[] };
  * caller passes a native array (formatConfigValue only stringifies for the
  * workflow editor). Mirrors the string/native normalization in
  * sign-typed-data-core.ts:271.
+ *
+ * Exported so app/api/gas/estimate/route.ts can build the exact same Call3[]
+ * this step would send, instead of duplicating the parse/validate logic.
  */
-function validateAndParseCalls(
+export function validateAndParseCalls(
   callsInput: string | unknown[],
   // biome-ignore lint/suspicious/noExplicitAny: ethers ABI fragment shape, mirrors write-contract-core's functionAbi typing
   functionAbi: any
@@ -307,10 +310,13 @@ function validateAndParseCalls(
   return { calls };
 }
 
-type Call3 = { target: string; allowFailure: boolean; callData: string };
+export type Call3 = { target: string; allowFailure: boolean; callData: string };
 
-/** Encode each parsed call's calldata against the batch's shared interface. */
-function encodeCall3Array(
+/**
+ * Encode each parsed call's calldata against the batch's shared interface.
+ * Exported for the same reason as validateAndParseCalls above.
+ */
+export function encodeCall3Array(
   calls: ParsedCall[],
   iface: ethers.Interface,
   functionKey: string,

@@ -1,13 +1,20 @@
 import { ethers } from "ethers";
 import { NextResponse } from "next/server";
+import { getAbiFunctionKey } from "@/lib/abi/function-key";
+import { findAbiFunction } from "@/lib/abi/utils";
 import { apiError } from "@/lib/api-error";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
+import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from "@/lib/contracts/multicall3";
 import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
+import {
+  encodeCall3Array,
+  validateAndParseCalls,
+} from "@/plugins/web3/steps/batch-write-contract-core";
 
 type EstimateConfig = {
   contractAddress?: string;
@@ -17,15 +24,21 @@ type EstimateConfig = {
   recipientAddress?: string;
   amount?: string;
   tokenConfig?: unknown;
+  calls?: string | unknown[];
 };
 
-type ActionSlug = "write-contract" | "transfer-funds" | "transfer-token";
+type ActionSlug =
+  | "write-contract"
+  | "transfer-funds"
+  | "transfer-token"
+  | "batch-write-contract";
 
 const TEMPLATE_REF_PATTERN = /\{\{.*?\}\}/;
 const VALID_SLUGS: ActionSlug[] = [
   "write-contract",
   "transfer-funds",
   "transfer-token",
+  "batch-write-contract",
 ];
 
 function hasTemplateRefs(value: string | undefined): boolean {
@@ -171,6 +184,73 @@ function estimateWriteContract(
 }
 
 /**
+ * Estimate gas for a batch write via Multicall3's aggregate3. Builds the
+ * exact same Call3[] the step would broadcast (reusing
+ * validateAndParseCalls/encodeCall3Array from batch-write-contract-core.ts)
+ * and estimates gas for the aggregate3 call itself, since a batch has no
+ * single contractAddress/abiFunction to estimate against the way
+ * write-contract does.
+ */
+function estimateBatchWriteContract(
+  config: EstimateConfig,
+  provider: ethers.JsonRpcProvider,
+  walletAddress: string
+): Promise<bigint> | NextResponse {
+  if (!(config.abi && config.abiFunction && config.calls)) {
+    return badRequest(
+      "abi, abiFunction, and calls are required for batch-write-contract estimation"
+    );
+  }
+
+  let parsedAbi: unknown;
+  try {
+    parsedAbi = JSON.parse(config.abi);
+  } catch {
+    return badRequest("Invalid ABI JSON");
+  }
+  if (!Array.isArray(parsedAbi)) {
+    return badRequest("ABI must be a JSON array");
+  }
+
+  const functionAbi = findAbiFunction(parsedAbi, config.abiFunction);
+  if (!functionAbi) {
+    return badRequest(`Function '${config.abiFunction}' not found in ABI`);
+  }
+  const abiFunctionKey = getAbiFunctionKey(
+    parsedAbi,
+    config.abiFunction,
+    functionAbi
+  );
+
+  const { calls, error: callsError } = validateAndParseCalls(
+    config.calls,
+    functionAbi
+  );
+  if (callsError) {
+    return badRequest(callsError);
+  }
+
+  const iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
+  const { call3Array, error: encodeError } = encodeCall3Array(
+    calls,
+    iface,
+    abiFunctionKey,
+    true
+  );
+  if (encodeError) {
+    return badRequest(encodeError);
+  }
+
+  const multicall = new ethers.Contract(
+    MULTICALL3_ADDRESS,
+    MULTICALL3_ABI,
+    provider
+  );
+
+  return multicall.aggregate3.estimateGas(call3Array, { from: walletAddress });
+}
+
+/**
  * Validate common request fields and return parsed values
  */
 async function validateRequest(request: Request): Promise<
@@ -222,6 +302,7 @@ async function validateRequest(request: Request): Promise<
     config.functionArgs,
     config.recipientAddress,
     config.amount,
+    typeof config.calls === "string" ? config.calls : undefined,
   ];
   if (configValues.some(hasTemplateRefs)) {
     return badRequest(
@@ -269,6 +350,12 @@ export async function POST(request: Request): Promise<NextResponse> {
           return await estimateTransferToken(config, provider, walletAddress);
         case "write-contract":
           return await estimateWriteContract(config, provider, walletAddress);
+        case "batch-write-contract":
+          return await estimateBatchWriteContract(
+            config,
+            provider,
+            walletAddress
+          );
         default:
           return badRequest(`Unsupported action: ${actionSlug as string}`);
       }
