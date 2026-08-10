@@ -66,7 +66,9 @@ export type BatchWriteContractCoreInput = {
   network: string;
   abi: string;
   abiFunction: string;
-  calls: string; // JSON: [{ contractAddress: string, args?: unknown[] }, ...]
+  // JSON string [{ contractAddress: string, args?: unknown[] }, ...] from the
+  // json-editor UI field, or a native array from a direct/MCP caller.
+  calls: string | unknown[];
   isolateCallFailures?: string; // "true" (default) or "false"
   gasLimitMultiplier?: string;
   priorityFeeGwei?: string;
@@ -223,17 +225,24 @@ type ParsedCall = { contractAddress: string; args: unknown[] };
  * Parse, validate, and coerce the `calls` JSON against the batch's shared
  * function ABI. Fails fast on the first invalid entry (matches
  * batch-read-contract.ts's buildMixedCalls convention).
+ *
+ * `calls` is a JSON string from the json-editor UI field, but a direct/MCP
+ * caller passes a native array (formatConfigValue only stringifies for the
+ * workflow editor). Mirrors the string/native normalization in
+ * sign-typed-data-core.ts:271.
  */
 function validateAndParseCalls(
-  callsJson: string,
+  callsInput: string | unknown[],
   // biome-ignore lint/suspicious/noExplicitAny: ethers ABI fragment shape, mirrors write-contract-core's functionAbi typing
   functionAbi: any
 ): { calls: ParsedCall[]; error?: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(callsJson);
-  } catch (error) {
-    return { calls: [], error: `Invalid Calls JSON: ${getErrorMessage(error)}` };
+  let parsed: unknown = callsInput;
+  if (typeof callsInput === "string") {
+    try {
+      parsed = JSON.parse(callsInput);
+    } catch (error) {
+      return { calls: [], error: `Invalid Calls JSON: ${getErrorMessage(error)}` };
+    }
   }
 
   if (!Array.isArray(parsed)) {

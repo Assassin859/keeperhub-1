@@ -443,6 +443,22 @@ describe("batch-write-contract - MAX_TOTAL_CALLS", () => {
   });
 });
 
+describe("batch-write-contract - native array calls input", () => {
+  it("accepts calls as a native array, not just a JSON string", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(
+      baseInput({ calls: [makeCall(JOB_1), makeCall(JOB_2)] })
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.totalCalls).toBe(2);
+  });
+});
+
 describe("batch-write-contract - malformed calls JSON", () => {
   it("fails on non-JSON calls", async () => {
     const result = await batchWriteContractCore(
