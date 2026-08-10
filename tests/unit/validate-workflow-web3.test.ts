@@ -43,6 +43,36 @@ describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
     expect(err?.message).toContain("9999");
   });
 
+  it("skips a network supplied by a template reference", () => {
+    // A marketplace workflow takes its chain from the caller, which the
+    // Marketplace docs explicitly instruct. The value is a template resolved at
+    // execution time, so there is no chain id to check statically — the address
+    // checks in this module already skip these for the same reason.
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", { network: "{{@trigger-1:Manual.network}}" }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf, { chainIds: new Set([1, 8453]) });
+    expect(
+      result.errors.find((e) => e.code === "unknown-chain-id")
+    ).toBeUndefined();
+  });
+
+  it("still errors on a non-numeric network that is not a template", () => {
+    const wf = makeWorkflow({
+      nodes: [triggerNode(), actionNode("a1", { network: "{{ not closed" })],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    expect(
+      validateWorkflow(wf, { chainIds: new Set([1, 8453]) }).errors.find(
+        (e) => e.code === "unknown-chain-id"
+      )
+    ).toBeDefined();
+  });
+
   it("errors when network value is a non-numeric string", () => {
     const wf = makeWorkflow({
       nodes: [triggerNode(), actionNode("a1", { network: "abc" })],

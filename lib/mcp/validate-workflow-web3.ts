@@ -47,6 +47,15 @@ export function chainExists(
     if (network === null) {
       continue;
     }
+    // A network supplied by the caller arrives as a template reference and is
+    // resolved at execution time, so there is no chain id to check statically.
+    // The address checks below already skip these for the same reason; without
+    // the same guard here, every marketplace workflow that takes its chain from
+    // the trigger — which is what the Marketplace docs tell you to do — reports
+    // unknown-chain-id while executing correctly.
+    if (isTemplateReference(network)) {
+      continue;
+    }
     const parsed = Number(network);
     if (!Number.isInteger(parsed) || parsed <= 0) {
       issues.push({
