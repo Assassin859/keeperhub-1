@@ -596,14 +596,18 @@ const NAV_ITEMS: NavItemDef[] = [
     href: "/activity",
     requireAuth: false,
   },
-  {
-    id: "settings",
-    icon: Settings,
-    label: "Settings",
-    href: "/settings",
-    requireAuth: true,
-  },
 ];
+
+// Settings is a destination, not a workspace view, so it sits at the foot of
+// the nav column rather than among Hub / Workflows / Analytics -- above the
+// divider that starts the external links, but pushed clear of Activity.
+const SETTINGS_NAV_ITEM: NavItemDef = {
+  id: "settings",
+  icon: Settings,
+  label: "Settings",
+  href: "/settings",
+  requireAuth: true,
+};
 
 export function NavigationSidebar(): React.ReactNode {
   const isMobile = useIsMobile();
@@ -840,9 +844,6 @@ export function NavigationSidebar(): React.ReactNode {
     if (id === "activity") {
       return isActivityPage;
     }
-    if (id === "settings") {
-      return isSettingsPage;
-    }
     return false;
   }
 
@@ -994,6 +995,14 @@ export function NavigationSidebar(): React.ReactNode {
               showLabels={showLabels}
             />
           ))}
+          <div className="mt-auto pb-1">
+            <NavItem
+              active={isSettingsPage}
+              item={SETTINGS_NAV_ITEM}
+              onClick={() => handleNavClick(SETTINGS_NAV_ITEM)}
+              showLabels={showLabels}
+            />
+          </div>
         </nav>
 
         <GettingStartedLauncher compact={!showLabels} />
