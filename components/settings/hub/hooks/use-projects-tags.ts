@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, type Project, type Tag } from "@/lib/api-client";
 import { useSettingsContext } from "../settings-context";
+import { cacheRead, cacheWrite } from "./settings-cache";
 
 export type ProjectsTagsState = {
   projects: Project[];
@@ -17,30 +18,40 @@ export type ProjectsTagsState = {
 };
 
 export function useProjectsTags(): ProjectsTagsState {
-  const { revision } = useSettingsContext();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
-  const [loadingProjects, setLoadingProjects] = useState(true);
-  const [loadingTags, setLoadingTags] = useState(true);
+  const { revision, organizationId } = useSettingsContext();
+  const projectsKey = organizationId ? `projects:${organizationId}` : null;
+  const tagsKey = organizationId ? `tags:${organizationId}` : null;
+  const [projects, setProjects] = useState<Project[]>(
+    () => cacheRead<Project[]>(projectsKey) ?? []
+  );
+  const [tags, setTags] = useState<Tag[]>(() => cacheRead<Tag[]>(tagsKey) ?? []);
+  const [loadingProjects, setLoadingProjects] = useState(
+    () => cacheRead(projectsKey) === undefined
+  );
+  const [loadingTags, setLoadingTags] = useState(
+    () => cacheRead(tagsKey) === undefined
+  );
 
   const load = useCallback(async (): Promise<void> => {
-    setLoadingProjects(true);
-    setLoadingTags(true);
     try {
-      setProjects(await api.project.getAll());
+      const nextProjects = await api.project.getAll();
+      setProjects(nextProjects);
+      cacheWrite(projectsKey, nextProjects);
     } catch {
       toast.error("Failed to load projects");
     } finally {
       setLoadingProjects(false);
     }
     try {
-      setTags(await api.tag.getAll());
+      const nextTags = await api.tag.getAll();
+      setTags(nextTags);
+      cacheWrite(tagsKey, nextTags);
     } catch {
       toast.error("Failed to load tags");
     } finally {
       setLoadingTags(false);
     }
-  }, []);
+  }, [projectsKey, tagsKey]);
 
   useEffect(() => {
     load().catch(() => undefined);

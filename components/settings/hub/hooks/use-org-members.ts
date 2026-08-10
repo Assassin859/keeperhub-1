@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import { useSettingsContext } from "../settings-context";
+import { cacheRead, cacheWrite } from "./settings-cache";
 
 export type OrgMember = {
   id: string;
@@ -54,10 +55,20 @@ async function fetchInvitations(
 
 export function useOrgMembers(): OrgMembersState {
   const { organizationId, isAdmin, revision } = useSettingsContext();
-  const [members, setMembers] = useState<OrgMember[]>([]);
-  const [invitations, setInvitations] = useState<SentInvitation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [invitationsLoading, setInvitationsLoading] = useState(true);
+  const membersKey = organizationId ? `members:${organizationId}` : null;
+  const invitesKey = organizationId ? `invites:${organizationId}` : null;
+  const [members, setMembers] = useState<OrgMember[]>(
+    () => cacheRead<OrgMember[]>(membersKey) ?? []
+  );
+  const [invitations, setInvitations] = useState<SentInvitation[]>(
+    () => cacheRead<SentInvitation[]>(invitesKey) ?? []
+  );
+  const [loading, setLoading] = useState(
+    () => cacheRead(membersKey) === undefined
+  );
+  const [invitationsLoading, setInvitationsLoading] = useState(
+    () => cacheRead(invitesKey) === undefined
+  );
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const refetch = useCallback(async (): Promise<void> => {
@@ -66,9 +77,10 @@ export function useOrgMembers(): OrgMembersState {
       setInvitationsLoading(false);
       return;
     }
-    setLoading(true);
     try {
-      setMembers(await fetchMembers(organizationId));
+      const nextMembers = await fetchMembers(organizationId);
+      setMembers(nextMembers);
+      cacheWrite(membersKey, nextMembers);
     } catch {
       setMembers([]);
     } finally {
@@ -80,15 +92,16 @@ export function useOrgMembers(): OrgMembersState {
       setInvitationsLoading(false);
       return;
     }
-    setInvitationsLoading(true);
     try {
-      setInvitations(await fetchInvitations(organizationId));
+      const nextInvites = await fetchInvitations(organizationId);
+      setInvitations(nextInvites);
+      cacheWrite(invitesKey, nextInvites);
     } catch {
       setInvitations([]);
     } finally {
       setInvitationsLoading(false);
     }
-  }, [organizationId, isAdmin]);
+  }, [organizationId, isAdmin, membersKey, invitesKey]);
 
   useEffect(() => {
     refetch().catch(() => undefined);

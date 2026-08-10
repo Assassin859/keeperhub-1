@@ -7,6 +7,7 @@ import { api, type Integration } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import { getIntegrationLabels } from "@/plugins/registry";
 import { useSettingsContext } from "../settings-context";
+import { cacheRead, cacheWrite } from "./settings-cache";
 
 const SYSTEM_INTEGRATION_LABELS: Record<string, string> = {
   database: "Database",
@@ -26,23 +27,26 @@ export type ConnectionsState = {
  * section, so they stay in the global store but out of this list.
  */
 export function useConnections(filter: string): ConnectionsState {
-  const { revision } = useSettingsContext();
+  const { revision, organizationId } = useSettingsContext();
+  const key = organizationId ? `connections:${organizationId}` : null;
   const setGlobalIntegrations = useSetAtom(integrationsAtom);
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [integrations, setIntegrations] = useState<Integration[]>(
+    () => cacheRead<Integration[]>(key) ?? []
+  );
+  const [loading, setLoading] = useState(() => cacheRead(key) === undefined);
 
   const refetch = useCallback(async (): Promise<void> => {
-    setLoading(true);
     try {
       const data = await api.integration.getAll();
       setIntegrations(data);
       setGlobalIntegrations(data);
+      cacheWrite(key, data);
     } catch {
       toast.error("Failed to load connections");
     } finally {
       setLoading(false);
     }
-  }, [setGlobalIntegrations]);
+  }, [setGlobalIntegrations, key]);
 
   useEffect(() => {
     refetch().catch(() => undefined);

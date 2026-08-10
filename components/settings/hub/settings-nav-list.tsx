@@ -38,6 +38,9 @@ export function SettingsNavList(): React.ReactElement {
                 data-testid={`settings-nav-${item.href.split("/").pop()}`}
                 href={item.href}
                 key={item.href}
+                // Sections are dynamic routes, so their code is not fetched
+                // until asked for; prefetching keeps the click instant.
+                prefetch
               >
                 <item.icon className="size-4 shrink-0" />
                 <span className="truncate">{item.label}</span>
