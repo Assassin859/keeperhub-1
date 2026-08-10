@@ -2,8 +2,8 @@
 
 import { Plus } from "lucide-react";
 import { useState } from "react";
-import { EditConnectionOverlay } from "@/components/overlays/edit-connection-overlay";
-import { useOverlay } from "@/components/overlays/overlay-provider";
+import { EditConnectionForm } from "@/components/overlays/edit-connection-overlay";
+import type { Integration } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AddConnectionPanel } from "./add-connection-panel";
@@ -14,10 +14,10 @@ import { RowsSkeleton } from "./skeletons";
 import { useSettingsContext } from "./settings-context";
 
 export function ConnectionsSection(): React.ReactElement {
-  const { push } = useOverlay();
   const { refreshAll, isAdmin } = useSettingsContext();
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Integration | null>(null);
   const { connections, loading, refetch, remove } = useConnections(filter);
 
   return (
@@ -40,6 +40,29 @@ export function ConnectionsSection(): React.ReactElement {
             refreshAll();
           }}
         />
+      )}
+
+      {editing && (
+        <SettingsCard
+          description="Update the credentials KeeperHub uses for this service."
+          title={`Edit ${editing.name}`}
+        >
+          <EditConnectionForm
+            inline
+            integration={editing}
+            onCancel={() => setEditing(null)}
+            onDelete={() => {
+              setEditing(null);
+              refetch();
+              refreshAll();
+            }}
+            onSuccess={() => {
+              setEditing(null);
+              refetch();
+              refreshAll();
+            }}
+          />
+        </SettingsCard>
       )}
 
       <SettingsCard
@@ -65,19 +88,7 @@ export function ConnectionsSection(): React.ReactElement {
           <ConnectionsTable
             canManage={isAdmin}
             connections={connections}
-            onEdit={(integration) =>
-              push(EditConnectionOverlay, {
-                integration,
-                onDelete: () => {
-                  refetch();
-                  refreshAll();
-                },
-                onSuccess: () => {
-                  refetch();
-                  refreshAll();
-                },
-              })
-            }
+            onEdit={setEditing}
             onRemove={remove}
           />
         )}
