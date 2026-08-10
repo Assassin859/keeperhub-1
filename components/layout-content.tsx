@@ -27,10 +27,14 @@ const BARE_LAYOUT_PATHS: ReadonlySet<string> = new Set([
 
 // Prefixes whose whole subtree renders bare. The welcome landing plus its
 // onboarding wizard (/welcome, /welcome/create-org, ...) are full-screen and
-// must not render the workflow shell behind them. The settings hub is a full
-// takeover with its own top bar and rail, so the workflow sidebar and canvas
-// stay out of its way too.
-const BARE_LAYOUT_PREFIXES: readonly string[] = ["/welcome", "/settings"];
+// must not render the workflow shell behind them. Shared execution views are
+// standalone pages, and the settings hub is a full takeover with its own top
+// bar and rail, so the workflow sidebar and canvas stay out of both.
+const BARE_LAYOUT_PREFIXES: readonly string[] = [
+  "/welcome",
+  "/executions",
+  "/settings",
+];
 
 function isBareLayoutPath(pathname: string): boolean {
   if (BARE_LAYOUT_PATHS.has(pathname)) {
