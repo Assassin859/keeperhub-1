@@ -45,10 +45,10 @@ export function InvitationsCard({
         <ul className="flex flex-col gap-2">
           {rows.map((row) => (
             <li
-              className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+              className="flex items-center gap-3 rounded-lg border px-3 py-2.5"
               key={row.id}
             >
-              <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex min-w-0 flex-1 items-center gap-2.5">
                 <Mail className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate text-sm">{row.label}</span>
                 {row.badge && (
@@ -62,31 +62,35 @@ export function InvitationsCard({
                   </span>
                 )}
               </span>
-              {onResend && (
-                <Button
-                  onClick={() => onResend(row.id)}
-                  size="sm"
-                  variant="ghost"
-                >
-                  <RefreshCw className="size-3.5" />
-                  Resend
-                </Button>
-              )}
-              {onCancel && (
-                <Button
-                  onClick={() => onCancel(row.id)}
-                  size="sm"
-                  variant="ghost"
-                >
-                  <X className="size-3.5" />
-                  Cancel
-                </Button>
-              )}
-              {reviewHref && (
-                <Button asChild size="sm" variant="outline">
-                  <Link href={reviewHref(row.id)}>Review</Link>
-                </Button>
-              )}
+              {/* One group so the actions stay together at the right edge
+                  instead of being spread across the row. */}
+              <span className="flex shrink-0 items-center gap-1">
+                {onResend && (
+                  <Button
+                    onClick={() => onResend(row.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <RefreshCw className="size-3.5" />
+                    Resend
+                  </Button>
+                )}
+                {onCancel && (
+                  <Button
+                    onClick={() => onCancel(row.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <X className="size-3.5" />
+                    Cancel
+                  </Button>
+                )}
+                {reviewHref && (
+                  <Button asChild size="sm" variant="outline">
+                    <Link href={reviewHref(row.id)}>Review</Link>
+                  </Button>
+                )}
+              </span>
             </li>
           ))}
         </ul>
