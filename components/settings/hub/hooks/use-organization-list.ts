@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 import { authClient } from "@/lib/auth-client";
