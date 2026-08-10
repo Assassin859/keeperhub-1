@@ -165,9 +165,12 @@ export function OrgSwitcher() {
                       organization.id === org.id ? "opacity-100" : "opacity-0"
                     }`}
                   />
+                  {/* Clears the settings icon, which sits between the end of
+                      the name and the edge of the row. */}
                   <TruncatedTooltip
                     className="min-w-0 flex-1 text-left"
                     side="right"
+                    sideOffset={28}
                     text={org.name}
                   />
                   {/* Selecting the row switches to the org; this opens its
