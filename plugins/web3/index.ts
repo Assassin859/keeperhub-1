@@ -1276,7 +1276,7 @@ const web3Plugin: IntegrationPlugin = {
       slug: "batch-write-contract",
       label: "Batch Write Contract",
       description:
-        "Send multiple write calls to different contracts as a single on-chain transaction via Multicall3",
+        "Send multiple write calls to different contracts as a single on-chain transaction via Multicall3. Every call executes with msg.sender set to the Multicall3 contract, not your organization wallet: any call whose behavior depends on msg.sender (an approve() sets Multicall3's allowance, not the wallet's; an ownerOnly-style check fails) will not behave like a direct call from your wallet.",
       category: "Web3",
       requiresCredentials: true,
       stepFunction: "batchWriteContractStep",
@@ -1368,7 +1368,7 @@ const web3Plugin: IntegrationPlugin = {
           type: "json-editor",
           placeholder: '[{ "contractAddress": "0x...", "args": ["0x...", "0x..."] }]',
           helpTip:
-            "A JSON array of { contractAddress, args }, one entry per call, all invoking the same selected function. Bind this to a prior step's dynamic array output, e.g. {{@filter-workable-jobs:Filter Workable Jobs.result.jobs}}.",
+            "A JSON array of { contractAddress, args }, one entry per call, all invoking the same selected function. Bind this to a prior step's dynamic array output, e.g. {{@filter-workable-jobs:Filter Workable Jobs.result.jobs}}. Every call runs with msg.sender set to the Multicall3 contract, not your wallet, so an approve() here grants Multicall3 the allowance, not your organization wallet; do not batch msg.sender-gated calls expecting wallet-equivalent behavior.",
           required: true,
         },
         {
