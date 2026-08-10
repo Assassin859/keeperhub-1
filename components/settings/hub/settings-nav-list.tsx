@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { isSettingsItemVisible, SETTINGS_NAV } from "./nav";
+import {
+  isSettingsItemActive,
+  isSettingsItemVisible,
+  SETTINGS_NAV,
+  settingsHref,
+} from "./nav";
 import { useSettingsContext } from "./settings-context";
 
 const ROW =
@@ -11,7 +16,7 @@ const ROW =
 
 export function SettingsNavList(): React.ReactElement {
   const pathname = usePathname();
-  const { isAdmin, isOwner } = useSettingsContext();
+  const { isAdmin, isOwner, organizationId } = useSettingsContext();
 
   const groups = SETTINGS_NAV.map((group) => ({
     items: group.items.filter((item) =>
@@ -28,16 +33,15 @@ export function SettingsNavList(): React.ReactElement {
             {group.label}
           </p>
           {group.items.map((item) => {
-            const active =
-              pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const active = isSettingsItemActive(item, pathname);
             return (
               <Link
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   ROW, active && "bg-muted")}
-                data-testid={`settings-nav-${item.href.split("/").pop()}`}
-                href={item.href}
-                key={item.href}
+                data-testid={`settings-nav-${item.segment}`}
+                href={settingsHref(item, organizationId)}
+                key={item.segment}
                 // Sections are dynamic routes, so their code is not fetched
                 // until asked for; prefetching keeps the click instant.
                 prefetch

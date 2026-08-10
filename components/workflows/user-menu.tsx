@@ -204,7 +204,15 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <div className="lg:hidden">
-            <DropdownMenuItem onClick={() => router.push("/settings/members")}>
+            <DropdownMenuItem
+              onClick={() =>
+                router.push(
+                  organization?.id
+                    ? `/settings/${organization.id}/members`
+                    : "/settings"
+                )
+              }
+            >
               <Users className="size-4" />
               <span className="truncate">
                 {organization?.name ?? "Organization"}

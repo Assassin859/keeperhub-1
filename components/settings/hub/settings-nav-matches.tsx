@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { isSettingsItemVisible, SETTINGS_NAV, settingsAnchor } from "./nav";
+import {
+  isSettingsItemVisible,
+  SETTINGS_NAV,
+  settingsAnchor,
+  settingsHref,
+} from "./nav";
 import { useSettingsContext } from "./settings-context";
 
 /**
@@ -13,7 +18,7 @@ export function SettingsNavMatches({
 }: {
   query: string;
 }): React.ReactElement {
-  const { isAdmin, isOwner } = useSettingsContext();
+  const { isAdmin, isOwner, organizationId } = useSettingsContext();
   const needle = query.trim().toLowerCase();
 
   const matches = SETTINGS_NAV.flatMap((group) => group.items)
@@ -38,11 +43,11 @@ export function SettingsNavMatches({
   return (
     <>
       {matches.map(({ item, entries }) => (
-        <div className="flex flex-col gap-0.5" key={item.href}>
+        <div className="flex flex-col gap-0.5" key={item.segment}>
           <Link
             className="flex h-9 items-center gap-3 rounded-md px-2 font-medium text-sm transition-colors hover:bg-muted"
-            data-testid={`settings-match-${item.href.split("/").pop()}`}
-            href={item.href}
+            data-testid={`settings-match-${item.segment}`}
+            href={settingsHref(item, organizationId)}
           >
             <item.icon className="size-4 shrink-0" />
             <span className="truncate">{item.label}</span>
@@ -55,7 +60,7 @@ export function SettingsNavMatches({
               {entries.map((entry) => (
                 <Link
                   className="flex h-8 items-center rounded-md px-2 text-sm transition-colors hover:bg-muted"
-                  href={`${item.href}?highlight=${settingsAnchor(entry)}`}
+                  href={`${settingsHref(item, organizationId)}?highlight=${settingsAnchor(entry)}`}
                   key={entry}
                 >
                   <span className="truncate">{entry}</span>

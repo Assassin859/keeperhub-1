@@ -40,6 +40,20 @@ export function useOrganization() {
     invalidateFeatureSnapshot();
     refetchSidebar();
 
+    // Org-scoped settings carry the organization in the path, so switching has
+    // to rewrite it. Otherwise the route would keep pointing at the previous
+    // org and immediately switch back to it.
+    if (pathname.startsWith("/settings/")) {
+      const parts = pathname.split("/");
+      if (parts.length > 3) {
+        parts[2] = orgId;
+        router.push(parts.join("/"));
+      } else {
+        router.refresh();
+      }
+      return;
+    }
+
     // Stay on non-workflow pages (e.g. /analytics, /hub, /billing) after switching orgs
     const isWorkflowPage = pathname.startsWith("/workflows/");
     if (!isWorkflowPage) {

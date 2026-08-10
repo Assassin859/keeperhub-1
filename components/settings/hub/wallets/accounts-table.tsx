@@ -15,6 +15,7 @@ import { truncateAddress } from "@/lib/address-utils";
 import { cn } from "@/lib/utils";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 import { accountSlug, type WalletAccounts } from "@/lib/wallet/use-wallet-accounts";
+import { useSettingsContext } from "../settings-context";
 
 export function AccountsTable({
   accounts,
@@ -26,6 +27,7 @@ export function AccountsTable({
   onSigningChange: (safeId: string, next: boolean) => void;
 }): React.ReactElement {
   const router = useRouter();
+  const { organizationId } = useSettingsContext();
 
   return (
     <Table>
@@ -50,7 +52,9 @@ export function AccountsTable({
               className={cn("cursor-pointer", SETTINGS_ROW)}
               key={accountSlug(account)}
               onClick={() =>
-                router.push(`/settings/wallets/${accountSlug(account)}`)
+                router.push(
+                  `/settings/${organizationId}/wallets/${accountSlug(account)}`
+                )
               }
             >
               <TableCell>

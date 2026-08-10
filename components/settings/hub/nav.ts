@@ -15,7 +15,13 @@ import {
 } from "lucide-react";
 
 export type SettingsNavItem = {
-  href: string;
+  /** Path segment under /settings, e.g. "wallets". Unique across the nav. */
+  segment: string;
+  /**
+   * Org-scoped sections live at /settings/<orgId>/<segment> so a link carries
+   * the organization it was written for. Account-level ones have no org.
+   */
+  scope: "user" | "org";
   label: string;
   icon: LucideIcon;
   /** Shown on the settings index cards and as the section subtitle. */
@@ -40,7 +46,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     label: "Account",
     items: [
       {
-        href: "/settings/account",
+        segment: "account",
+        scope: "user",
         label: "Profile",
         icon: User,
         description: "Your name, email and account status.",
@@ -51,7 +58,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
       },
       {
-        href: "/settings/security",
+        segment: "security",
+        scope: "user",
         label: "Security",
         icon: Shield,
         description:
@@ -71,7 +79,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     label: "Organization",
     items: [
       {
-        href: "/settings/organization",
+        segment: "organization",
+        scope: "org",
         label: "Organizations",
         icon: Building2,
         description: "Every org you belong to, with roles and switching.",
@@ -84,7 +93,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
       },
       {
-        href: "/settings/members",
+        segment: "members",
+        scope: "org",
         label: "Members",
         icon: Users,
         description: "Seats, roles and pending invitations.",
@@ -98,7 +108,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
       },
       {
-        href: "/settings/notifications",
+        segment: "notifications",
+        scope: "org",
         label: "Notifications",
         icon: Bell,
         description: "Execution digest emails and who receives them.",
@@ -115,7 +126,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     label: "Money",
     items: [
       {
-        href: "/settings/wallets",
+        segment: "wallets",
+        scope: "org",
         label: "Wallets",
         icon: Wallet,
         description: "Signing wallet, Safes, balances and key export.",
@@ -132,7 +144,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
       },
       {
-        href: "/settings/limits",
+        segment: "limits",
+        scope: "org",
         label: "Spending limits",
         icon: Gauge,
         description: "Daily value ceilings the executor enforces before signing.",
@@ -144,7 +157,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ownerOnly: true,
       },
       {
-        href: "/settings/billing",
+        segment: "billing",
+        scope: "org",
         label: "Billing and plan",
         icon: CreditCard,
         description: "Subscription, invoices and payment method.",
@@ -164,7 +178,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     label: "Developer",
     items: [
       {
-        href: "/settings/connections",
+        segment: "connections",
+        scope: "org",
         label: "Connections",
         icon: Plug,
         description: "Credentials for Discord, SendGrid, databases and more.",
@@ -178,7 +193,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
       },
       {
-        href: "/settings/api-keys",
+        segment: "api-keys",
+        scope: "org",
         label: "API keys",
         icon: Key,
         description: "Programmatic access keys and their scopes.",
@@ -192,7 +208,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
       },
       {
-        href: "/settings/agents",
+        segment: "agents",
+        scope: "org",
         label: "Agents",
         icon: Bot,
         description: "Connect Claude, Codex or any MCP client to this org.",
@@ -212,7 +229,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     label: "Workspace",
     items: [
       {
-        href: "/settings/workspace",
+        segment: "workspace",
+        scope: "org",
         label: "Projects and tags",
         icon: FolderTree,
         description: "How workflows are grouped in the sidebar.",
@@ -227,19 +245,42 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
   },
 ];
 
-/** Longest matching nav entry, so nested routes still name their section. */
+/** Where a nav entry points, given the organization currently in scope. */
+export function settingsHref(
+  item: SettingsNavItem,
+  organizationId: string | null
+): string {
+  if (item.scope === "user" || !organizationId) {
+    return `/settings/${item.segment}`;
+  }
+  return `/settings/${organizationId}/${item.segment}`;
+}
+
+/**
+ * The nav entry a path belongs to. Segments are unique, so the organization id
+ * in the middle of an org-scoped path does not need to be parsed out.
+ */
 export function findSettingsItem(pathname: string): SettingsNavItem | null {
-  let match: SettingsNavItem | null = null;
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] !== "settings") {
+    return null;
+  }
   for (const group of SETTINGS_NAV) {
     for (const item of group.items) {
-      const isMatch =
-        pathname === item.href || pathname.startsWith(`${item.href}/`);
-      if (isMatch && (!match || item.href.length > match.href.length)) {
-        match = item;
+      if (parts.includes(item.segment)) {
+        return item;
       }
     }
   }
-  return match;
+  return null;
+}
+
+/** True when the path is inside this entry's section. */
+export function isSettingsItemActive(
+  item: SettingsNavItem,
+  pathname: string
+): boolean {
+  return pathname.split("/").filter(Boolean).includes(item.segment);
 }
 
 export function isSettingsItemVisible(

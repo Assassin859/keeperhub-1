@@ -1,5 +1,6 @@
 "use client";
 
+import { useParams } from "next/navigation";
 import {
   createContext,
   type ReactNode,
@@ -7,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -41,7 +43,12 @@ export function SettingsProvider({
 }: {
   children: ReactNode;
 }): React.ReactElement {
-  const { organization, isLoading: orgLoading } = useOrganization();
+  const params = useParams();
+  const {
+    organization,
+    isLoading: orgLoading,
+    switchOrganization: setActiveOrganization,
+  } = useOrganization();
   const {
     role: memberRole,
     isOwner,
@@ -51,7 +58,27 @@ export function SettingsProvider({
   const { organizations, isLoading: orgsLoading } = useOrganizations();
   const [revision, setRevision] = useState(0);
 
-  const organizationId = organization?.id ?? null;
+  // The URL is the source of truth for org-scoped sections, so a shared link
+  // opens the organization it was written for rather than whichever one the
+  // session happens to be on.
+  const routeOrgId =
+    typeof params.orgId === "string" ? params.orgId : null;
+  const organizationId = routeOrgId ?? organization?.id ?? null;
+
+  // useOrganization rebuilds switchOrganization on every render, so it is read
+  // through a ref: keeping it in the dependency list would re-run this on each
+  // render and thrash setActive.
+  const switchRef = useRef(setActiveOrganization);
+  switchRef.current = setActiveOrganization;
+  const activeOrgId = organization?.id;
+
+  useEffect(() => {
+    if (routeOrgId && activeOrgId && routeOrgId !== activeOrgId) {
+      switchRef.current(routeOrgId);
+    }
+  }, [routeOrgId, activeOrgId]);
+
+
 
   // useActiveMember reads the role off the active-organization payload, which
   // does not always carry the members array. /api/organizations returns a role

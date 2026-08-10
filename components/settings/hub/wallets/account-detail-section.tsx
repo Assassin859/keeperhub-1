@@ -11,6 +11,7 @@ import {
   useWalletAccounts,
 } from "@/lib/wallet/use-wallet-accounts";
 import { SectionHeader, SettingsCard } from "../section";
+import { useSettingsContext } from "../settings-context";
 import { FormSkeleton, RowsSkeleton } from "../skeletons";
 import { AccountDetailPanel } from "./account-detail-panel";
 
@@ -19,6 +20,7 @@ export function AccountDetailSection({
 }: {
   accountId: string;
 }): React.ReactElement {
+  const { organizationId } = useSettingsContext();
   const state = useOrgWallet();
   const { all } = useWalletAccounts({
     chains: state.chains,
@@ -31,7 +33,7 @@ export function AccountDetailSection({
 
   const back = (
     <Button asChild size="sm" variant="outline">
-      <Link href="/settings/wallets">
+      <Link href={`/settings/${organizationId}/wallets`}>
         <ArrowLeft className="size-3.5" />
         All wallets
       </Link>
