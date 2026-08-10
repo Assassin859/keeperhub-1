@@ -47,15 +47,22 @@ export function SettingsNavMatches({
             <item.icon className="size-4 shrink-0" />
             <span className="truncate">{item.label}</span>
           </Link>
-          {entries.map((entry) => (
-            <Link
-              className="flex h-8 items-center rounded-md pr-2 pl-9 text-muted-foreground text-sm transition-colors hover:bg-muted/60 hover:text-foreground"
-              href={`${item.href}?highlight=${settingsAnchor(entry)}`}
-              key={entry}
-            >
-              <span className="truncate">{entry}</span>
-            </Link>
-          ))}
+          {entries.length > 0 && (
+            // Indent the row box itself, not just its text, so the hover fill
+            // reads as an inner element rather than another top-level row. The
+            // rule down the left ties the entries to their section.
+            <div className="ml-4 flex flex-col gap-0.5 border-border/60 border-l pl-1.5">
+              {entries.map((entry) => (
+                <Link
+                  className="flex h-8 items-center rounded-md px-2 text-muted-foreground text-sm transition-colors hover:bg-muted/60 hover:text-foreground"
+                  href={`${item.href}?highlight=${settingsAnchor(entry)}`}
+                  key={entry}
+                >
+                  <span className="truncate">{entry}</span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </>
