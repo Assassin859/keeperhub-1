@@ -35,6 +35,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { Project, SavedWorkflow, Tag } from "@/lib/api-client";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
+import { useProjects, useTags } from "@/lib/hooks/use-org-data";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { NavPanelStates } from "@/lib/hooks/use-persisted-nav-state";
 import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
@@ -622,22 +623,17 @@ export function NavigationSidebar(): React.ReactNode {
 
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const [workflows, setWorkflows] = useState<SavedWorkflow[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
+  // Shared with the toolbar and settings, so the sidebar reads them rather
+  // than fetching its own copy.
+  const { data: projects } = useProjects();
+  const { data: tags } = useTags();
   const [dataLoading, setDataLoading] = useState(true);
   const isDragging = useRef(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async (): Promise<void> => {
     try {
-      const [w, p, t] = await Promise.all([
-        api.workflow.getAll().catch(() => [] as SavedWorkflow[]),
-        api.project.getAll().catch(() => [] as Project[]),
-        api.tag.getAll().catch(() => [] as Tag[]),
-      ]);
-      setWorkflows(w);
-      setProjects(p);
-      setTags(t);
+      setWorkflows(await api.workflow.getAll().catch(() => []));
     } finally {
       setDataLoading(false);
     }

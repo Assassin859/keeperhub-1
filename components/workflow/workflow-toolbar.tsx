@@ -43,6 +43,7 @@ import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
+import { useProjects, useTags } from "@/lib/hooks/use-org-data";
 import { VersionPreviewBanner } from "./version-preview-banner";
 import { useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
@@ -860,6 +861,16 @@ function useWorkflowState() {
   >([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
+  // Projects and tags are shared app-wide; mirror them into the existing state
+  // so everything reading `allProjects` / `allTags` keeps working unchanged.
+  const { data: storeProjects } = useProjects();
+  const { data: storeTags } = useTags();
+  useEffect(() => {
+    setAllProjects(storeProjects);
+  }, [storeProjects]);
+  useEffect(() => {
+    setAllTags(storeTags);
+  }, [storeTags]);
   const [isEnabled, setIsEnabled] = useAtom(isWorkflowEnabled);
 
   // v1.7 listing state
@@ -885,14 +896,8 @@ function useWorkflowState() {
     }
     const loadAllWorkflows = async () => {
       try {
-        const [workflows, projects, tags] = await Promise.all([
-          api.workflow.getAll(),
-          api.project.getAll().catch(() => [] as Project[]),
-          api.tag.getAll().catch(() => [] as Tag[]),
-        ]);
+        const workflows = await api.workflow.getAll();
         setAllWorkflows(workflows);
-        setAllProjects(projects);
-        setAllTags(tags);
       } catch (error) {
         console.error("Failed to load workflows:", error);
       }
@@ -1137,14 +1142,8 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
 
   const loadWorkflows = async () => {
     try {
-      const [workflows, projects, tags] = await Promise.all([
-        api.workflow.getAll(),
-        api.project.getAll().catch(() => [] as Project[]),
-        api.tag.getAll().catch(() => [] as Tag[]),
-      ]);
+      const workflows = await api.workflow.getAll();
       setAllWorkflows(workflows);
-      setAllProjects(projects);
-      setAllTags(tags);
     } catch (error) {
       console.error("Failed to load workflows:", error);
     }
