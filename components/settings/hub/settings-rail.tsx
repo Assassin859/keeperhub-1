@@ -1,6 +1,7 @@
 "use client";
 
-import { PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
+import { ArrowLeft, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useExitPath } from "./hooks/use-exit-path";
 import { useRailWidth } from "./hooks/use-rail-width";
 import { SettingsNavList } from "./settings-nav-list";
 import { SettingsNavMatches } from "./settings-nav-matches";
@@ -16,6 +18,7 @@ import { SettingsSearch } from "./settings-search";
 
 export function SettingsRail(): React.ReactElement {
   const [query, setQuery] = useState("");
+  const exitPath = useExitPath();
   const rail = useRailWidth();
   const searching = query.trim().length > 0;
 
@@ -36,6 +39,26 @@ export function SettingsRail(): React.ReactElement {
       data-testid="settings-rail"
       style={{ width: rail.width }}
     >
+      <div className="flex shrink-0 items-center border-b px-2.5 py-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              aria-label="Leave settings"
+              asChild
+              className={cn("h-8 gap-2 px-2", !rail.expanded && "w-full px-0")}
+              size="sm"
+              variant="ghost"
+            >
+              <Link href={exitPath}>
+                <ArrowLeft className="size-4 shrink-0" />
+                {rail.expanded && <span className="truncate">Back</span>}
+              </Link>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Back to {exitPath}</TooltipContent>
+        </Tooltip>
+      </div>
+
       {rail.expanded ? (
         <SettingsSearch onQueryChange={setQuery} query={query} />
       ) : (

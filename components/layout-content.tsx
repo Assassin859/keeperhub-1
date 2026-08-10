@@ -4,6 +4,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { NavigationSidebar } from "@/components/navigation-sidebar";
+import { useRecordExitPath } from "@/components/settings/hub/hooks/use-exit-path";
 import { PersistentCanvas } from "@/components/workflow/persistent-canvas";
 import { WorkflowToolbar } from "@/components/workflow/workflow-toolbar";
 
@@ -44,6 +45,7 @@ export function LayoutContent({
   children: ReactNode;
 }): React.ReactElement {
   const pathname = usePathname();
+  useRecordExitPath();
   if (isBareLayoutPath(pathname)) {
     return <div className="relative z-10">{children}</div>;
   }
