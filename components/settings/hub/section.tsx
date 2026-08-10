@@ -45,18 +45,26 @@ export function SectionHeader({
   title,
   description,
   action,
+  leading,
 }: {
   title: string;
   description?: string;
   action?: ReactNode;
+  /** Sits to the left of the title, for the way back out of a subpage. */
+  leading?: ReactNode;
 }): React.ReactElement {
   return (
     <div className="flex flex-wrap items-end justify-between gap-4">
-      <div className="flex flex-col gap-1.5">
-        <h1 className="font-bold text-2xl tracking-tight">{title}</h1>
-        {description && (
-          <p className="max-w-xl text-muted-foreground text-sm">{description}</p>
-        )}
+      <div className="flex min-w-0 items-center gap-3">
+        {leading}
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <h1 className="font-bold text-2xl tracking-tight">{title}</h1>
+          {description && (
+            <p className="max-w-xl text-muted-foreground text-sm">
+              {description}
+            </p>
+          )}
+        </div>
       </div>
       {action}
     </div>

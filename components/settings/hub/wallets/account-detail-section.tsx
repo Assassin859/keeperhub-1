@@ -32,10 +32,9 @@ export function AccountDetailSection({
   const account = all.find((a) => accountSlug(a) === accountId);
 
   const back = (
-    <Button asChild size="sm" variant="outline">
+    <Button aria-label="All wallets" asChild size="icon" variant="outline">
       <Link href={`/settings/${organizationId}/wallets`}>
-        <ArrowLeft className="size-3.5" />
-        All wallets
+        <ArrowLeft className="size-4" />
       </Link>
     </Button>
   );
@@ -43,7 +42,7 @@ export function AccountDetailSection({
   if (state.walletLoading) {
     return (
       <>
-        <SectionHeader action={back} title="Account" />
+        <SectionHeader leading={back} title="Account" />
         <SettingsCard title="Assets">
           <RowsSkeleton rows={4} />
         </SettingsCard>
@@ -58,8 +57,8 @@ export function AccountDetailSection({
     return (
       <>
         <SectionHeader
-          action={back}
           description="This account is not part of the current organization."
+          leading={back}
           title="Account not found"
         />
       </>
@@ -69,8 +68,8 @@ export function AccountDetailSection({
   return (
     <>
       <SectionHeader
-        action={back}
         description={toChecksumAddress(account.address)}
+        leading={back}
         title={accountTitle(account)}
       />
       <AccountDetailPanel account={account} state={state} />
