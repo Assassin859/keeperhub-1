@@ -294,4 +294,55 @@ describe("generateCalldataForWorkflow", () => {
       expect(result.to).toBe("0xFirstWriteContract");
     }
   });
+
+  it("does not treat web3/batch-write-contract as a write action node", () => {
+    // batch-write-contract has no single contractAddress/abiFunction/
+    // functionArgs (it targets N contracts via a shared `calls` array), so
+    // picking it up here would either throw or generate calldata against
+    // undefined fields. Its "write-contract" substring must not match.
+    const nodes = [
+      {
+        id: "batch-write-1",
+        data: {
+          actionType: "web3/batch-write-contract",
+          config: {
+            network: "base",
+            abi: SAMPLE_ABI,
+            abiFunction: "transfer",
+            calls: JSON.stringify([{ contractAddress: "0xA", args: [] }]),
+          },
+        },
+      },
+    ];
+    const result = generateCalldataForWorkflow(nodes, {});
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe("No write action node found in workflow");
+    }
+  });
+
+  it("skips web3/batch-write-contract and uses a real write node after it", () => {
+    const nodes = [
+      {
+        id: "batch-write-1",
+        data: {
+          actionType: "web3/batch-write-contract",
+          config: {
+            network: "base",
+            abi: SAMPLE_ABI,
+            abiFunction: "transfer",
+            calls: JSON.stringify([{ contractAddress: "0xA", args: [] }]),
+          },
+        },
+      },
+      makeWriteNode({ contractAddress: "0xRealWriteContract" }),
+    ];
+    const result = generateCalldataForWorkflow(nodes, {});
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.to).toBe("0xRealWriteContract");
+    }
+  });
 });

@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import { isWriteActionType } from "@/lib/mcp/action-type";
 
 export type CalldataResult =
   | { success: true; to: string; data: string; value: string }
@@ -19,16 +20,6 @@ type WriteNode = {
 // Defined at module level to satisfy Biome useTopLevelRegex rule
 const TRIGGER_TEMPLATE_RE = /\{\{@trigger:Trigger\.(\w+)\}\}/g;
 const UNRESOLVED_TEMPLATE_RE = /\{\{@[^}]+\}\}/;
-
-function isWriteActionType(actionType: unknown): boolean {
-  if (typeof actionType !== "string") {
-    return false;
-  }
-  return (
-    actionType.includes("write-contract") ||
-    actionType.includes("protocol-write")
-  );
-}
 
 /**
  * Returns the FIRST write-action node in the workflow, or undefined if none.

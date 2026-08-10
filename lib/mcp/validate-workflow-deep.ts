@@ -13,6 +13,7 @@
 import "server-only";
 
 import { resolveAbi } from "@/lib/abi/cache";
+import { isWriteActionType } from "@/lib/mcp/action-type";
 import {
   type ValidationIssue,
   type ValidationResult,
@@ -58,16 +59,6 @@ type WorkflowNodeShape = {
     } & Record<string, unknown>;
   };
 };
-
-function isWriteActionType(actionType: unknown): boolean {
-  if (typeof actionType !== "string") {
-    return false;
-  }
-  return (
-    actionType.includes("write-contract") ||
-    actionType.includes("protocol-write")
-  );
-}
 
 function isAbiCarryingReadType(actionType: unknown): boolean {
   // web3 read-contract / batch-read / query-events also carry an `abi`

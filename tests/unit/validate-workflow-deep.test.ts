@@ -176,6 +176,22 @@ describe("collectContractRefs", () => {
     const refs = collectContractRefs([makeTriggerNode(), node]);
     expect(refs).toHaveLength(0);
   });
+
+  it("does not collect a web3/batch-write-contract node as a write ref, even if a stray contractAddress is present", () => {
+    // batch-write-contract targets N contracts via `calls`, not one
+    // contractAddress. Its declared `abi` is the shared function ABI, not a
+    // specific target's deployed bytecode, so it must not be gated by
+    // isWrite's ABI-mismatch checks the way a real write-contract node is.
+    const node = makeWriteNode(
+      0,
+      "0xccccccccccccccccccccccccccccccccccccccc",
+      "1",
+      SIMPLE_ABI_TRANSFER,
+      "web3/batch-write-contract"
+    );
+    const refs = collectContractRefs([makeTriggerNode(), node]);
+    expect(refs).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
