@@ -257,6 +257,55 @@ export function matchesSettingsQuery(
   return haystack.includes(needle);
 }
 
+export type SettingsSearchHit = {
+  item: SettingsNavItem;
+  /** The contents entry that matched, e.g. "Password". */
+  entry: string;
+};
+
+/** Stable id for a settings card, so a hit can point at one. */
+export function settingsAnchor(entry: string): string {
+  return entry.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/**
+ * Flattens the nav into individual settings so a search can offer the exact
+ * one, e.g. "Password" under Security, rather than only the section.
+ */
+export function searchSettings(
+  query: string,
+  access: { isOwner: boolean; isAdmin: boolean },
+  limit = 8
+): SettingsSearchHit[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return [];
+  }
+  const hits: SettingsSearchHit[] = [];
+  for (const group of SETTINGS_NAV) {
+    for (const item of group.items) {
+      if (!isSettingsItemVisible(item, access)) {
+        continue;
+      }
+      if (item.label.toLowerCase().includes(needle)) {
+        hits.push({ entry: item.label, item });
+      }
+      for (const entry of item.contents) {
+        if (entry.toLowerCase().includes(needle)) {
+          hits.push({ entry, item });
+        }
+      }
+    }
+  }
+  // Prefer entries that start with the query over ones that merely contain it.
+  hits.sort((a, b) => {
+    const aStarts = a.entry.toLowerCase().startsWith(needle) ? 0 : 1;
+    const bStarts = b.entry.toLowerCase().startsWith(needle) ? 0 : 1;
+    return aStarts - bStarts || a.entry.localeCompare(b.entry);
+  });
+  return hits.slice(0, limit);
+}
+
 export function isSettingsItemVisible(
   item: SettingsNavItem,
   access: { isOwner: boolean; isAdmin: boolean }

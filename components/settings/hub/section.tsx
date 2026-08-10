@@ -1,7 +1,36 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { settingsAnchor } from "./nav";
+
+/**
+ * A card names one setting, so the rail search can deep link straight to it:
+ * `?highlight=<anchor>` scrolls it into view and rings it briefly.
+ */
+function useHighlight(title: string | undefined): {
+  ref: React.RefObject<HTMLElement | null>;
+  lit: boolean;
+} {
+  const params = useSearchParams();
+  const ref = useRef<HTMLElement>(null);
+  const [lit, setLit] = useState(false);
+  const target = title ? settingsAnchor(title) : null;
+  const wanted = params.get("highlight");
+
+  useEffect(() => {
+    if (!(target && wanted) || target !== wanted) {
+      return;
+    }
+    ref.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setLit(true);
+    const timer = window.setTimeout(() => setLit(false), 2200);
+    return () => window.clearTimeout(timer);
+  }, [target, wanted]);
+
+  return { lit, ref };
+}
 
 export function SectionHeader({
   title,
@@ -40,12 +69,16 @@ export function SettingsCard({
   className?: string;
   bodyClassName?: string;
 }): React.ReactElement {
+  const { ref, lit } = useHighlight(title);
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-xl border bg-card/60 backdrop-blur-sm",
+        "overflow-hidden rounded-xl border bg-card/60 backdrop-blur-sm transition-shadow duration-300",
+        lit && "ring-2 ring-foreground/30",
         className
       )}
+      id={title ? settingsAnchor(title) : undefined}
+      ref={ref}
     >
       {title && (
         <header className="flex items-start justify-between gap-4 border-b px-5 py-4">
