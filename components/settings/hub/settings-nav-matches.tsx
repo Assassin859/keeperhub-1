@@ -24,13 +24,19 @@ export function SettingsNavMatches({
   const matches = SETTINGS_NAV.flatMap((group) => group.items)
     .filter((item) => isSettingsItemVisible(item, { isAdmin, isOwner }))
     .map((item) => ({
-      entries: item.contents.filter((entry) =>
-        entry.toLowerCase().includes(needle)
+      // Only panels are offered as destinations: each one is a card on the
+      // page, so selecting it can deep link to something real. Keywords name
+      // actions that live inside a card, and only decide whether the section
+      // itself matches.
+      entries: item.panels.filter((panel) =>
+        panel.toLowerCase().includes(needle)
       ),
       item,
-      labelHit: item.label.toLowerCase().includes(needle),
+      sectionHit:
+        item.label.toLowerCase().includes(needle) ||
+        item.keywords?.some((k) => k.toLowerCase().includes(needle)),
     }))
-    .filter((match) => match.labelHit || match.entries.length > 0);
+    .filter((match) => match.sectionHit || match.entries.length > 0);
 
   if (matches.length === 0) {
     return (

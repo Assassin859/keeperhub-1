@@ -27,11 +27,15 @@ export type SettingsNavItem = {
   /** Shown on the settings index cards and as the section subtitle. */
   description: string;
   /**
-   * What this section actually contains. Rendered on the index card and
-   * matched by the index search, so a feature can be found by name without
-   * knowing which section owns it.
+   * Card titles on this section's page. Search offers these as destinations,
+   * so each one must match a real card: selecting it deep links to that card.
    */
-  contents: readonly string[];
+  panels: readonly string[];
+  /**
+   * Extra terms that should surface the section without being offered as a
+   * destination of their own, e.g. actions that live inside one of the cards.
+   */
+  keywords?: readonly string[];
   ownerOnly?: boolean;
   adminOnly?: boolean;
 };
@@ -51,10 +55,14 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Profile",
         icon: User,
         description: "Your name, email and account status.",
-        contents: [
+        panels: [
+          "Account details",
+          "Deactivate account",
+        ],
+        keywords: [
           "Name",
-        "Sign-in email",
-        "Deactivate account",
+          "Sign-in email",
+          "Change email",
         ],
       },
       {
@@ -64,13 +72,18 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         icon: Shield,
         description:
           "Two-factor, password, wallet step-up and active sessions.",
-        contents: [
+        panels: [
           "Two-factor authentication",
-        "Password",
-        "Active sessions",
-        "Revoke a device",
-        "Organization MFA enforcement",
-        "Wallet step-up",
+          "Password",
+          "Active sessions",
+          "Organization MFA enforcement",
+          "Wallet step-up",
+        ],
+        keywords: [
+          "Revoke a device",
+          "Authenticator",
+          "Backup codes",
+          "Sign out other devices",
         ],
       },
     ],
@@ -84,17 +97,22 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Organization",
         icon: Building2,
         description: "This organization, its members and their roles.",
-        contents: [
-          "Rename organization",
+        panels: [
+          "Organization details",
           "Members",
+          "Outstanding invitations",
+          "Invitations for you",
+        ],
+        keywords: [
+          "Rename organization",
           "Seats",
           "Invite by email",
           "Invite by wallet address",
           "Change roles",
           "Remove members",
-          "Pending invitations",
-          "Your role",
+          "Resend invitation",
           "Create organization",
+          "Your role",
         ],
       },
       {
@@ -103,10 +121,13 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Notifications",
         icon: Bell,
         description: "Execution digest emails and who receives them.",
-        contents: [
-          "Execution digest email",
-        "Cadence",
-        "Subscribers",
+        panels: [
+          "Execution digest",
+        ],
+        keywords: [
+          "Cadence",
+          "Subscribers",
+          "Digest email",
         ],
         adminOnly: true,
       },
@@ -121,16 +142,21 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Wallets",
         icon: Wallet,
         description: "Signing wallet, Safes, balances and key export.",
-        contents: [
+        panels: [
+          "Accounts",
+          "Assets",
+          "Account settings",
+        ],
+        keywords: [
           "Turnkey signer",
-        "Safe smart accounts",
-        "Balances",
-        "Withdraw",
-        "Tracked tokens",
-        "Private key export",
-        "Recovery email",
-        "Deploy a Safe",
-        "Signing policies",
+          "Safe smart accounts",
+          "Balances",
+          "Withdraw",
+          "Tracked tokens",
+          "Private key export",
+          "Recovery email",
+          "Deploy a Safe",
+          "Signing policies",
         ],
       },
       {
@@ -139,10 +165,14 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Spending limits",
         icon: Gauge,
         description: "Daily value ceilings the executor enforces before signing.",
-        contents: [
-          "Daily EVM cap",
-        "Daily Solana cap",
-        "Usage today",
+        panels: [
+          "Daily value caps",
+        ],
+        keywords: [
+          "EVM cap",
+          "Solana cap",
+          "Spend cap",
+          "Usage today",
         ],
         ownerOnly: true,
       },
@@ -152,13 +182,17 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Billing and plan",
         icon: CreditCard,
         description: "Subscription, invoices and payment method.",
-        contents: [
+        panels: [
+          "This month",
+          "Payment and invoices",
+        ],
+        keywords: [
           "Current plan",
-        "Executions used",
-        "Gas sponsorship credits",
-        "Payment method",
-        "Invoices",
-        "Upgrade",
+          "Executions used",
+          "Gas sponsorship credits",
+          "Payment method",
+          "Invoices",
+          "Upgrade",
         ],
         ownerOnly: true,
       },
@@ -173,13 +207,17 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Connections",
         icon: Plug,
         description: "Credentials for Discord, SendGrid, databases and more.",
-        contents: [
+        panels: [
+          "Configured connections",
+        ],
+        keywords: [
           "Discord",
-        "SendGrid",
-        "Databases",
-        "Webhooks",
-        "Credentials",
-        "Connection activity",
+          "SendGrid",
+          "Databases",
+          "Webhooks",
+          "Credentials",
+          "Add a connection",
+          "Connection activity",
         ],
       },
       {
@@ -188,13 +226,16 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "API keys",
         icon: Key,
         description: "Programmatic access keys and their scopes.",
-        contents: [
+        panels: [
+          "MCP endpoint",
           "Organisation keys",
-        "Personal keys",
-        "Scopes",
-        "Revoke a key",
-        "MCP endpoint",
-        "Key activity",
+          "Your keys",
+        ],
+        keywords: [
+          "Scopes",
+          "Revoke a key",
+          "Key activity",
+          "Personal keys",
         ],
       },
       {
@@ -203,14 +244,18 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Agents",
         icon: Bot,
         description: "Connect Claude, Codex or any MCP client to this org.",
-        contents: [
+        panels: [
           "MCP endpoint",
-        "Claude Code",
-        "Codex",
-        "Gemini CLI",
-        "Goose",
-        "Setup commands",
-        "Starter prompts",
+          "Client setup",
+          "Starter prompts",
+        ],
+        keywords: [
+          "Claude Code",
+          "Codex",
+          "Gemini CLI",
+          "Goose",
+          "Setup commands",
+          "MCP client",
         ],
       },
     ],
@@ -224,11 +269,14 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         label: "Projects and tags",
         icon: FolderTree,
         description: "How workflows are grouped in the sidebar.",
-        contents: [
+        panels: [
           "Projects",
-        "Tags",
-        "Colours",
-        "Sidebar grouping",
+          "Tags",
+        ],
+        keywords: [
+          "Colours",
+          "Sidebar grouping",
+          "Workflow grouping",
         ],
       },
     ],
