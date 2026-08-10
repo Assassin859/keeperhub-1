@@ -22,18 +22,6 @@ export function SettingsNavList(): React.ReactElement {
 
   return (
     <>
-      <Link
-          className={cn(
-            ROW,
-            pathname === "/settings"
-              ? "bg-muted font-medium text-foreground"
-              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-          )}
-        href="/settings"
-      >
-        All settings
-      </Link>
-
       {groups.map((group) => (
         <div className="flex flex-col gap-0.5" key={group.label}>
           <p className="px-2 pt-3 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wider">
