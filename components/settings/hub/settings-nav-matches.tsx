@@ -40,7 +40,7 @@ export function SettingsNavMatches({
       {matches.map(({ item, entries }) => (
         <div className="flex flex-col gap-0.5" key={item.href}>
           <Link
-            className="flex h-9 items-center gap-3 rounded-md px-2 font-medium text-foreground text-sm transition-colors hover:bg-muted/60"
+            className="flex h-9 items-center gap-3 rounded-md px-2 font-medium text-sm transition-colors hover:bg-muted"
             data-testid={`settings-match-${item.href.split("/").pop()}`}
             href={item.href}
           >
@@ -54,7 +54,7 @@ export function SettingsNavMatches({
             <div className="ml-4 flex flex-col gap-0.5 border-border/60 border-l pl-1.5">
               {entries.map((entry) => (
                 <Link
-                  className="flex h-8 items-center rounded-md px-2 text-muted-foreground text-sm transition-colors hover:bg-muted/60 hover:text-foreground"
+                  className="flex h-8 items-center rounded-md px-2 text-sm transition-colors hover:bg-muted"
                   href={`${item.href}?highlight=${settingsAnchor(entry)}`}
                   key={entry}
                 >

@@ -7,7 +7,7 @@ import { isSettingsItemVisible, SETTINGS_NAV } from "./nav";
 import { useSettingsContext } from "./settings-context";
 
 const ROW =
-  "flex h-9 items-center gap-3 rounded-md px-2 text-sm transition-colors";
+  "flex h-9 items-center gap-3 rounded-md px-2 text-sm transition-colors hover:bg-muted";
 
 export function SettingsNavList(): React.ReactElement {
   const pathname = usePathname();
@@ -34,11 +34,7 @@ export function SettingsNavList(): React.ReactElement {
               <Link
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  ROW,
-                  active
-                    ? "bg-muted font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                )}
+                  ROW, active && "bg-muted")}
                 data-testid={`settings-nav-${item.href.split("/").pop()}`}
                 href={item.href}
                 key={item.href}
