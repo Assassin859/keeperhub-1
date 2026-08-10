@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, ChevronsUpDown, Plus, Users } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Settings, Users } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import {
 } from "@/lib/hooks/use-organization";
 
 export function OrgSwitcher() {
+  const router = useRouter();
   const { data: session } = useSession();
   const {
     organization,
@@ -151,6 +153,7 @@ export function OrgSwitcher() {
             <CommandGroup>
               {organizations.map((org) => (
                 <CommandItem
+                  className="group"
                   key={org.id}
                   onSelect={() => {
                     setOpen(false);
@@ -167,6 +170,20 @@ export function OrgSwitcher() {
                     side="right"
                     text={org.name}
                   />
+                  {/* Selecting the row switches to the org; this opens its
+                      settings without switching, so it must not bubble. */}
+                  <button
+                    aria-label={`Settings for ${org.name}`}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setOpen(false);
+                      router.push(`/settings/${org.id}/organization`);
+                    }}
+                    type="button"
+                  >
+                    <Settings className="size-3.5" />
+                  </button>
                 </CommandItem>
               ))}
             </CommandGroup>
