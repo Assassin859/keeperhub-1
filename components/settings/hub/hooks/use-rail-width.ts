@@ -2,15 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export const RAIL_COLLAPSED_WIDTH = 56;
-// Opens at the workflow sidebar's width so the two line up, and can be dragged
-// wider for the longer section names without becoming a second content column.
-export const RAIL_DEFAULT_WIDTH = 200;
-export const RAIL_MAX_WIDTH = 300;
+// Mirrors COLLAPSED_WIDTH and EXPANDED_WIDTH in the workflow sidebar, so the
+// two rails are the same size in both states. Kept as local constants rather
+// than imported, to avoid pulling that component into this bundle.
+export const RAIL_COLLAPSED_WIDTH = 60;
+export const RAIL_EXPANDED_WIDTH = 200;
 
-const SNAP_THRESHOLD = (RAIL_COLLAPSED_WIDTH + RAIL_DEFAULT_WIDTH) / 2;
+const SNAP_THRESHOLD = (RAIL_COLLAPSED_WIDTH + RAIL_EXPANDED_WIDTH) / 2;
 const STORAGE_KEY = "keeperhub-settings-rail-expanded";
-const WIDTH_KEY = "keeperhub-settings-rail-width";
 
 export type RailWidth = {
   width: number;
@@ -28,7 +27,6 @@ export type RailWidth = {
  */
 export function useRailWidth(): RailWidth {
   const [expanded, setExpanded] = useState(true);
-  const [openWidth, setOpenWidth] = useState(RAIL_DEFAULT_WIDTH);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const dragging = useRef(false);
 
@@ -36,31 +34,21 @@ export function useRailWidth(): RailWidth {
   // reading during render would risk a hydration mismatch.
   useEffect(() => {
     setExpanded(localStorage.getItem(STORAGE_KEY) !== "false");
-    const stored = Number(localStorage.getItem(WIDTH_KEY));
-    if (Number.isFinite(stored) && stored > 0) {
-      setOpenWidth(
-        Math.min(RAIL_MAX_WIDTH, Math.max(RAIL_DEFAULT_WIDTH, stored))
-      );
-    }
   }, []);
 
-  const persist = useCallback((next: boolean, width?: number): void => {
+  const persist = useCallback((next: boolean): void => {
     setExpanded(next);
     localStorage.setItem(STORAGE_KEY, String(next));
-    if (width !== undefined) {
-      setOpenWidth(width);
-      localStorage.setItem(WIDTH_KEY, String(width));
-    }
   }, []);
 
   const onResizeStart = useCallback(
     (event: React.MouseEvent): void => {
       event.preventDefault();
       dragging.current = true;
-      setDragWidth(expanded ? openWidth : RAIL_COLLAPSED_WIDTH);
+      setDragWidth(expanded ? RAIL_EXPANDED_WIDTH : RAIL_COLLAPSED_WIDTH);
 
       const clamp = (x: number): number =>
-        Math.min(RAIL_MAX_WIDTH, Math.max(RAIL_COLLAPSED_WIDTH, x));
+        Math.min(RAIL_EXPANDED_WIDTH, Math.max(RAIL_COLLAPSED_WIDTH, x));
 
       const onMove = (move: MouseEvent): void => {
         if (dragging.current) {
@@ -69,14 +57,8 @@ export function useRailWidth(): RailWidth {
       };
       const onUp = (up: MouseEvent): void => {
         dragging.current = false;
-        const released = clamp(up.clientX);
-        // Anything dragged past the halfway point stays open at the width it
-        // was released at; below that it snaps shut.
-        if (released >= SNAP_THRESHOLD) {
-          persist(true, Math.max(RAIL_DEFAULT_WIDTH, released));
-        } else {
-          persist(false);
-        }
+        // Released past the halfway point it opens, below it snaps shut.
+        persist(clamp(up.clientX) >= SNAP_THRESHOLD);
         setDragWidth(null);
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
@@ -89,10 +71,10 @@ export function useRailWidth(): RailWidth {
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     },
-    [expanded, openWidth, persist]
+    [expanded, persist]
   );
 
-  const resting = expanded ? openWidth : RAIL_COLLAPSED_WIDTH;
+  const resting = expanded ? RAIL_EXPANDED_WIDTH : RAIL_COLLAPSED_WIDTH;
   const width = dragWidth ?? resting;
 
   return {
