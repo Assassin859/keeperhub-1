@@ -229,7 +229,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     ],
   },
   {
-    label: "Money",
+    label: "Finance",
     items: [
       {
         segment: "wallets",
