@@ -20,13 +20,22 @@ function useHighlight(title: string | undefined): {
   const wanted = params.get("highlight");
 
   useEffect(() => {
+    // Cards stay mounted while you click through several entries in the same
+    // section, so a card that is no longer the target has to drop its ring
+    // rather than just skip the effect.
     if (!(target && wanted) || target !== wanted) {
+      setLit(false);
       return;
     }
     ref.current?.scrollIntoView({ block: "center", behavior: "smooth" });
     setLit(true);
     const timer = window.setTimeout(() => setLit(false), 2200);
-    return () => window.clearTimeout(timer);
+    // Clearing the timer on an early navigation would otherwise leave the ring
+    // on for good, so drop it here too.
+    return () => {
+      window.clearTimeout(timer);
+      setLit(false);
+    };
   }, [target, wanted]);
 
   return { lit, ref };
