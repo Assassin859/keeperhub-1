@@ -2,11 +2,12 @@
 
 import { getDefaultStore, useSetAtom } from "jotai";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
 import { invalidateFeatureSnapshot } from "@/hooks/use-features";
 import { api } from "@/lib/api-client";
 import { analyticsProjectIdAtom } from "@/lib/atoms/analytics";
 import { authClient } from "@/lib/auth-client";
+import { useOrganizationsData } from "@/lib/hooks/use-org-data";
 import { registerOrganizationRefetch } from "@/lib/refetch-organizations";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { resetWorkflowStateForOrgSwitchAtom } from "@/lib/workflow/store";
@@ -88,54 +89,15 @@ export function useOrganization() {
   };
 }
 
-export type OrganizationWithRole = {
-  id: string;
-  name: string;
-  slug: string;
-  logo: string | null;
-  createdAt: string;
-  metadata: string | null;
-  role: string;
-};
+export type { OrganizationWithRole } from "@/lib/atoms/organization";
 
+/**
+ * The organizations the user belongs to. One shared request no matter how many
+ * components ask; see `lib/atoms/organization.ts`.
+ */
 export function useOrganizations() {
-  const [organizations, setOrganizations] = useState<OrganizationWithRole[]>(
-    []
-  );
-  const [isLoading, setIsLoading] = useState(true);
-
-  const refetch = useCallback(async () => {
-    try {
-      const response = await fetch("/api/organizations");
-      if (response.ok) {
-        const data = (await response.json()) as OrganizationWithRole[];
-        setOrganizations(data);
-      }
-    } catch (error) {
-      console.error("Failed to fetch organizations:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  // Register this hook's refetch callback so it can be triggered externally
-  useEffect(
-    () =>
-      registerOrganizationRefetch(() => {
-        refetch();
-      }),
-    [refetch]
-  );
-
-  return {
-    organizations,
-    isLoading,
-    refetch,
-  };
+  const { data: organizations, isLoading, refetch } = useOrganizationsData();
+  return { organizations, isLoading, refetch };
 }
 
 export function useActiveMember() {
