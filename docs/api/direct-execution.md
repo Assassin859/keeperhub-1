@@ -624,9 +624,11 @@ Check the status of a direct execution.
   "executionId": "direct_123",
   "status": "completed",
   "type": "transfer",
+  "network": "sepolia",
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
   "sponsored": false,
+  "retryCount": 0,
   "receipts": [
     {
       "hash": "0x...",
@@ -639,12 +641,25 @@ Check the status of a direct execution.
     }
   ],
   "gasUsedWei": "21000000000000",
+  "gasPriceWei": "1163827869",
+  "estimatedCostUsd": null,
   "result": {...},
   "error": null,
   "createdAt": "2024-01-01T00:00:00Z",
   "completedAt": "2024-01-01T00:00:15Z"
 }
 ```
+
+**Other fields:**
+
+- `network`: the chain the execution ran on, as the slug accepted in the request.
+- `retryCount`: how many times KeeperHub re-submitted this execution internally.
+  `0` means it landed on the first attempt. This is the field to read when
+  asking whether the audit trail exposes retries.
+- `gasPriceWei`: effective gas price of the transaction, in wei, as a decimal
+  string.
+- `estimatedCostUsd`: cost estimate at execution time, or `null` when no price
+  was available for the chain's native token.
 
 **Receipts:**
 
