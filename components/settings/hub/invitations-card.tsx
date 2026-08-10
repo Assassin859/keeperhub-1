@@ -11,6 +11,8 @@ type InvitationRow = {
   label: string;
   badge?: string;
   expired?: boolean;
+  /** Secondary line, e.g. when it was sent and when it lapses. */
+  meta?: string;
 };
 
 export function InvitationsCard({
@@ -50,17 +52,26 @@ export function InvitationsCard({
             >
               <span className="flex min-w-0 flex-1 items-center gap-2.5">
                 <Mail className="size-4 shrink-0 text-muted-foreground" />
-                <span className="truncate text-sm">{row.label}</span>
-                {row.badge && (
-                  <span className="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[0.625rem] uppercase">
-                    {row.badge}
+                <span className="flex min-w-0 flex-col">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm">{row.label}</span>
+                    {row.badge && (
+                      <span className="shrink-0 rounded-full border px-2 py-0.5 font-mono text-[0.625rem] uppercase">
+                        {row.badge}
+                      </span>
+                    )}
+                    {row.expired && (
+                      <span className="shrink-0 rounded-full border border-amber-500/40 px-2 py-0.5 text-[0.6875rem] text-amber-400">
+                        Expired
+                      </span>
+                    )}
                   </span>
-                )}
-                {row.expired && (
-                  <span className="shrink-0 rounded-full border border-amber-500/40 px-2 py-0.5 text-[0.6875rem] text-amber-400">
-                    Expired
-                  </span>
-                )}
+                  {row.meta && (
+                    <span className="truncate text-muted-foreground text-xs">
+                      {row.meta}
+                    </span>
+                  )}
+                </span>
               </span>
               {/* One group so the actions stay together at the right edge
                   instead of being spread across the row. */}

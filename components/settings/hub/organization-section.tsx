@@ -16,6 +16,7 @@ import { useUserInvitations } from "./hooks/use-user-invitations";
 import { InvitationsCard } from "./invitations-card";
 import { MemberStats } from "./member-stats";
 import { MembersTable } from "./members/members-table";
+import { invitationTiming } from "./relative-time";
 import { OrgDetailsCard } from "./organization/org-details-card";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
@@ -153,6 +154,7 @@ export function OrganizationSection(): React.ReactElement {
               ? new Date(inv.expiresAt) < new Date()
               : false,
             id: inv.id,
+            meta: invitationTiming(inv.createdAt, inv.expiresAt),
           }))}
           title="Outstanding invitations"
         />

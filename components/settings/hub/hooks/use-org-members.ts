@@ -20,6 +20,7 @@ export type SentInvitation = {
   role: string;
   status: string;
   expiresAt?: Date | string;
+  createdAt?: Date | string;
 };
 
 export type OrgMembersState = {
