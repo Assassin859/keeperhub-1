@@ -72,8 +72,18 @@ export function SettingsProvider({
   switchRef.current = setActiveOrganization;
   const activeOrgId = organization?.id;
 
+  // Only a change of organization in the URL should drive a switch, never a
+  // change of the active organization. Switching from the toolbar sets the
+  // active org first and rewrites the path after, so reacting to the active
+  // org would see the old path still in place and switch straight back.
+  const reconciledRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (routeOrgId && activeOrgId && routeOrgId !== activeOrgId) {
+    if (!(routeOrgId && activeOrgId) || reconciledRef.current === routeOrgId) {
+      return;
+    }
+    reconciledRef.current = routeOrgId;
+    if (routeOrgId !== activeOrgId) {
       switchRef.current(routeOrgId);
     }
   }, [routeOrgId, activeOrgId]);
