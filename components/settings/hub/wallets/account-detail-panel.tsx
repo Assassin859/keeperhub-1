@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { PoliciesTab } from "@/components/overlays/wallet/account-detail/policies-tab";
+import { SolanaAssets } from "@/components/overlays/wallet/account-detail/solana-assets";
 import type { WalletAccountKind } from "@/components/overlays/wallet/account-row";
 import { Button } from "@/components/ui/button";
 import { useAccountDetail } from "@/lib/wallet/use-account-detail";
 import type { OrgWalletState } from "@/lib/wallet/use-org-wallet";
-import { EmptyState, SettingsCard, StatTile } from "../section";
+import { EmptyState, SettingsCard } from "../section";
 import { useSettingsContext } from "../settings-context";
 import { RowsSkeleton, StatTilesSkeleton } from "../skeletons";
+import { AccountStats } from "./account-stats";
 import { AccountSettingsCard } from "./account-settings-card";
 import { AssetsTable } from "./assets-table";
 import { useAccountAssets } from "./use-account-assets";
@@ -34,34 +36,25 @@ export function AccountDetailPanel({
     showZero
   );
   const isSafe = account.kind === "safe";
-  const networks = new Set(rows.map((r) => r.chainId)).size;
+  // The Solana signer has its own balance source; the EVM chain feed does not
+  // describe it, so it gets the dedicated view the wallet modal also uses.
+  const isSolana = account.kind === "turnkey" && account.family === "solana";
 
   return (
     <>
-      {detail.isLoadingBalances ? (
+      {detail.isLoadingBalances && !isSolana ? (
         <StatTilesSkeleton tiles={3} />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <StatTile
-            hint="Networks with a balance here"
-            label="Funded networks"
-            value={String(networks)}
-          />
-          <StatTile
-            hint="Native and token balances"
-            label="Assets held"
-            value={String(rows.filter((r) => !showZero || Number.parseFloat(r.balance) > 0).length)}
-          />
-          <StatTile
-            hint={isSafe ? "Safe smart account" : "Turnkey signer"}
-            label="Account type"
-            value={isSafe ? "Safe" : "EOA"}
-          />
-        </div>
+        <AccountStats
+          account={account}
+          rows={rows}
+          solanaIsTestnet={state.solanaIsTestnet}
+        />
       )}
 
       <SettingsCard
         action={
+          !isSolana &&
           hiddenCount > 0 && (
             <Button
               onClick={() => setShowZero((v) => !v)}
@@ -73,16 +66,25 @@ export function AccountDetailPanel({
           )
         }
         bodyClassName="p-2"
-        description="Everything this account can move. Withdraw sends from this address."
+        description={
+          isSolana
+            ? "Native SOL held by this signer."
+            : "Everything this account can move. Withdraw sends from this address."
+        }
         title="Assets"
       >
-        {detail.isLoadingBalances && <RowsSkeleton rows={4} />}
-        {!detail.isLoadingBalances && rows.length === 0 && (
+        {isSolana && (
+          <div className="p-3">
+            <SolanaAssets address={account.address} />
+          </div>
+        )}
+        {!isSolana && detail.isLoadingBalances && <RowsSkeleton rows={4} />}
+        {!(isSolana || detail.isLoadingBalances) && rows.length === 0 && (
           <EmptyState>
             No balances yet. Send funds to the address below to get started.
           </EmptyState>
         )}
-        {!detail.isLoadingBalances && rows.length > 0 && (
+        {!(isSolana || detail.isLoadingBalances) && rows.length > 0 && (
           <AssetsTable
             canWithdraw={isAdmin}
             onWithdraw={detail.withdraw}
