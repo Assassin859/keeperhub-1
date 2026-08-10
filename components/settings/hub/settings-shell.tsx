@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { SettingsRail } from "./settings-rail";
-import { SettingsTopBar } from "./settings-topbar";
 
 export function SettingsShell({
   children,
@@ -13,9 +12,12 @@ export function SettingsShell({
     <div
       className="pointer-events-auto fixed inset-x-0 bottom-0 flex flex-col bg-background"
       data-testid="settings-shell"
-      style={{ top: "var(--app-banner-height, 0px)" }}
+      // Sits directly under the shared app toolbar, which is fixed at the top
+      // of every route.
+      style={{
+        top: "calc(var(--header-height, 60px) + var(--app-banner-height, 0px))",
+      }}
     >
-      <SettingsTopBar />
       <div className="flex min-h-0 flex-1">
         <SettingsRail />
         <main className="min-w-0 flex-1 overflow-y-auto">

@@ -4,10 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { isSettingsItemVisible, SETTINGS_NAV } from "./nav";
-import { SettingsOrgPicker } from "./settings-org-picker";
 import { useSettingsContext } from "./settings-context";
 
-export const SETTINGS_RAIL_WIDTH = 244;
+// Matches EXPANDED_WIDTH in the workflow sidebar so the two rails line up.
+export const SETTINGS_RAIL_WIDTH = 200;
 
 export function SettingsRail(): React.ReactElement {
   const pathname = usePathname();
@@ -16,14 +16,14 @@ export function SettingsRail(): React.ReactElement {
   return (
     <aside
       aria-label="Settings navigation"
-      className="flex shrink-0 flex-col border-r bg-sidebar"
+      className="flex shrink-0 flex-col border-r bg-background"
       data-testid="settings-rail"
       style={{ width: SETTINGS_RAIL_WIDTH }}
     >
-      <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4">
+      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2.5 pt-3 pb-4">
         <Link
           className={cn(
-            "flex h-9 items-center rounded-md px-2.5 text-sm transition-colors",
+            "flex h-9 items-center rounded-md px-2 text-sm transition-colors",
             pathname === "/settings"
               ? "bg-muted font-medium text-foreground"
               : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -42,7 +42,7 @@ export function SettingsRail(): React.ReactElement {
           }
           return (
             <div className="flex flex-col gap-0.5" key={group.label}>
-              <p className="px-2.5 pt-3 pb-1 font-medium font-mono text-[0.625rem] text-muted-foreground uppercase tracking-widest">
+              <p className="px-2 pt-3 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wider">
                 {group.label}
               </p>
               {items.map((item) => {
@@ -53,7 +53,7 @@ export function SettingsRail(): React.ReactElement {
                   <Link
                     aria-current={active ? "page" : undefined}
                     className={cn(
-                      "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
+                      "flex h-9 items-center gap-3 rounded-md px-2 text-sm transition-colors",
                       active
                         ? "bg-muted font-medium text-foreground"
                         : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -71,13 +71,6 @@ export function SettingsRail(): React.ReactElement {
           );
         })}
       </nav>
-
-      {/* Scope selector sits at the foot of the rail, where workspace
-          switchers usually live, so it reads as "everything above applies to
-          this organization". */}
-      <div className="shrink-0 border-t p-3">
-        <SettingsOrgPicker />
-      </div>
     </aside>
   );
 }

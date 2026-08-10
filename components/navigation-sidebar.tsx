@@ -792,7 +792,9 @@ export function NavigationSidebar(): React.ReactNode {
     );
   }, [currentWidth, navState.state.panels]);
 
-  if (isMobile || !navState.hasMounted) {
+  // The settings hub renders its own rail under the shared toolbar, so the
+  // workflow sidebar would be a second, competing navigation there.
+  if (isMobile || !navState.hasMounted || isSettingsPage) {
     return null;
   }
 
