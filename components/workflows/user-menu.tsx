@@ -208,7 +208,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
               onClick={() =>
                 router.push(
                   organization?.id
-                    ? `/settings/${organization.id}/members`
+                    ? `/settings/${organization.id}/organization`
                     : "/settings"
                 )
               }

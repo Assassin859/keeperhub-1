@@ -7,5 +7,5 @@ export default async function OrgSettingsIndex({
   params: Promise<{ orgId: string }>;
 }): Promise<never> {
   const { orgId } = await params;
-  redirect(`/settings/${orgId}/members`);
+  redirect(`/settings/${orgId}/organization`);
 }

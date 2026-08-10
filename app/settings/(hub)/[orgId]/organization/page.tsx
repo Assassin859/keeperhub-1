@@ -1,7 +1,7 @@
 "use client";
 
-import { OrganizationsSection } from "@/components/settings/hub/organizations-section";
+import { OrganizationSection } from "@/components/settings/hub/organization-section";
 
 export default function Page(): React.ReactElement {
-  return <OrganizationsSection />;
+  return <OrganizationSection />;
 }
