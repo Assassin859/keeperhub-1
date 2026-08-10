@@ -1,29 +1,105 @@
 "use client";
 
+import { PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { useRailWidth } from "./hooks/use-rail-width";
 import { SettingsNavList } from "./settings-nav-list";
 import { SettingsNavMatches } from "./settings-nav-matches";
 import { SettingsSearch } from "./settings-search";
 
-// Matches EXPANDED_WIDTH in the workflow sidebar so the two rails line up.
-export const SETTINGS_RAIL_WIDTH = 200;
-
 export function SettingsRail(): React.ReactElement {
   const [query, setQuery] = useState("");
+  const rail = useRailWidth();
   const searching = query.trim().length > 0;
+
+  const expand = (): void => {
+    if (!rail.expanded) {
+      rail.toggle();
+    }
+  };
 
   return (
     <aside
       aria-label="Settings navigation"
-      className="flex shrink-0 flex-col border-r bg-background"
+      className={cn(
+        "relative flex shrink-0 flex-col border-r bg-background",
+        !rail.dragging && "transition-[width] duration-200 ease-out"
+      )}
+      data-expanded={rail.expanded}
       data-testid="settings-rail"
-      style={{ width: SETTINGS_RAIL_WIDTH }}
+      style={{ width: rail.width }}
     >
-      <SettingsSearch onQueryChange={setQuery} query={query} />
+      {rail.expanded ? (
+        <SettingsSearch onQueryChange={setQuery} query={query} />
+      ) : (
+        // Collapsed there is nowhere to type, so searching reopens the rail.
+        <div className="flex justify-center px-2 pt-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="Search settings"
+                className="size-8"
+                onClick={expand}
+                size="icon"
+                variant="ghost"
+              >
+                <Search className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Search settings</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
 
       <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2.5 pt-2 pb-4">
-        {searching ? <SettingsNavMatches query={query} /> : <SettingsNavList />}
+        {searching ? (
+          <SettingsNavMatches query={query} />
+        ) : (
+          <SettingsNavList expanded={rail.expanded} />
+        )}
       </nav>
+
+      <div className="flex shrink-0 justify-end border-t p-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              aria-label={rail.expanded ? "Collapse sidebar" : "Expand sidebar"}
+              className="size-8"
+              onClick={rail.toggle}
+              size="icon"
+              variant="ghost"
+            >
+              {rail.expanded ? (
+                <PanelLeftClose className="size-4" />
+              ) : (
+                <PanelLeftOpen className="size-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            {rail.expanded ? "Collapse" : "Expand"}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+
+      {/* Drag the edge to resize; it snaps to collapsed or expanded on release. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: resize handle, mirrors the workflow sidebar */}
+      <div
+        aria-label="Resize settings sidebar"
+        aria-orientation="vertical"
+        aria-valuenow={rail.width}
+        className="absolute inset-y-0 right-0 z-10 w-2 cursor-col-resize"
+        onMouseDown={rail.onResizeStart}
+        role="separator"
+        tabIndex={0}
+      />
     </aside>
   );
 }
