@@ -88,4 +88,5 @@ Example prompts:
 
 - Explore the **Hub** to discover and import workflow templates from the community
 - Learn more about [building workflows](/workflows/creating) for more complex automation patterns
+- Building an agent or backend service instead of clicking through the canvas? See the [Agent Quick Start](/getting-started/agent-quickstart) for triggering workflows and reading results entirely from code
 - Review [Security Best Practices](/practices/security) before deploying to Mainnet
