@@ -711,3 +711,17 @@ An `insufficient_scope` response names both scopes so the caller can reauthorize
 ```
 
 Broadcasting requires `mcp:write`. A dry run (`simulate: true`) neither signs nor broadcasts, so `mcp:read` is sufficient.
+
+## Workflow Run preflight simulation
+
+Before an interactive Run, the workflow editor calls `POST /api/workflows/{workflowId}/simulate` to perform a read-only preflight of reachable EVM write nodes.
+
+The simulation is advisory and never blocks execution. Reverts, invalid simulation inputs, unsupported signers, RPC failures, timeouts, and unavailable simulation services are shown in the issues overlay with **Run Anyway** available.
+
+Only write nodes reachable from a trigger are simulated. Disconnected write nodes are ignored.
+
+Each write is simulated independently against the current chain state. A later write may appear to revert when it depends on an earlier workflow step whose state change has not yet been applied. Later-write warnings therefore state that the result may depend on an earlier step in the workflow.
+
+The endpoint is protected by rate limiting, a maximum of 50 workflow nodes, and a 15-second simulation deadline.
+
+The preflight does not sign or broadcast transactions, create execution records, reserve spending limits, or perform billing operations.
