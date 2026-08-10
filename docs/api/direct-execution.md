@@ -55,9 +55,9 @@ a transaction.
 
 Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID). Every guarantee below depends on the retry sending the **same** key, so a caller that reconstructs a request rather than replaying a buffered one must derive its key deterministically: see [Choosing a stable key](#choosing-a-stable-key).
 
-- **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again, plus an `idempotentReplay` marker described below.
-- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for genuinely different work, not for a retry of the same work whose body was reconstructed: see [Choosing a stable key](#choosing-a-stable-key).
-- **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress`; retry shortly.
+- **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again, plus an `idempotentReplay` marker described below. Replay lasts 24 hours from the original request. Past that the stored response is gone and the same key executes again, silently, so a job that repeats on a cadence of a day or longer needs a time bucket in its key: see [Choosing a stable key](#choosing-a-stable-key).
+- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict`, `retryable: false`, and the `originalExecutionId` the key first produced. Use a new key for genuinely different work, not for a retry of the same work whose body was reconstructed: see [Choosing a stable key](#choosing-a-stable-key).
+- **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress` and `retryable: true`; retry shortly with the same key.
 - **Scope**: keys are scoped per organization and per endpoint, so the same key is shared across an org's API keys but does not collide between `/transfer`, `/contract-call`, `/check-and-execute`, and a workflow webhook.
 - **Window**: stored responses are replayable for 24 hours. After that the key is free to reuse.
 
@@ -80,6 +80,46 @@ A replayed response is otherwise indistinguishable from a fresh one, which matte
 - The marker rides in the body rather than a response header because the common consumer is an agent reading a tool result, where headers are not surfaced.
 
 Conflict and in-progress responses are not replays and never carry the field.
+
+### When to reuse a key, and when to rotate it
+
+The two `409` codes mean opposite things, so the status does not separate them.
+Both carry `retryable`, which answers one narrow question: is it safe to send this
+request again under the same key? The field is on these two codes only, and every
+other status keeps the semantics documented in [Errors](/api/errors) whether or
+not it is present.
+
+```json
+{
+  "error": "A request with this Idempotency-Key is already being processed. Retry the same key shortly; do not rotate it.",
+  "code": "idempotency_in_progress",
+  "retryable": true
+}
+```
+
+**Reuse the same key** whenever you do not hold a definite outcome for the previous
+attempt. A timeout, a dropped connection or a `5xx` tells you nothing about whether
+the request was received, so a retry must be able to match the original. Reusing the
+key is what makes that retry safe: it returns the in-progress guard while the first
+request is still running, and the real outcome as a replay once it finishes.
+
+**Rotate to a new key** once the previous attempt returned a definite result. A
+stored failure is replayable for 24 hours, so a key that has already failed keeps
+returning that failure rather than retrying.
+
+**A conflict does not by itself mean rotate.** `retryable: false` says only that
+this body is not the body the key was bound to, and there are two reasons for
+that. If the work is genuinely different, rotate — that is what a new key is
+for. If it is the same intent whose body was re-serialized, the body drifted and
+the intent did not: `hashRequest` normalizes key order but not values, so `"0.1"`
+against `"0.10"`, `network` in place of `chainId`, or a reworded memo all produce
+a conflict for work that is already under way. Rotating there escapes the
+in-progress guard on a request that may already have broadcast. Canonicalize the
+body and keep the key.
+
+Rotating a key while a request may still be in flight is the case to avoid. It escapes
+the in-progress guard, and for a fund-moving call the second request can broadcast a
+transaction for an action the first one is already completing.
 
 Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
 
@@ -112,6 +152,13 @@ The separator is a single ASCII vertical bar, `U+007C`, with no surrounding whit
 `taskId` is whatever the caller already uses to name the work: an invoice number, a
 payroll period, a job id. It must be stable across a retry of the same work and
 different for different work.
+
+Work that repeats on a schedule needs the period in the `taskId`, not just the job name.
+A daily job keyed on `nightly-sweep` alone derives the same key on every run, and because
+the replay window is 24 hours it lands near the boundary each time: sometimes inside the
+window, where the run is swallowed as a replay, sometimes outside it, where the run
+executes. Including the period, as in `nightly-sweep-2026-08-06`, makes each run distinct
+work with a full 24 hours of retry protection of its own.
 
 Canonicalize each part before joining:
 
@@ -377,7 +424,7 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
 ```json
 {
   "executed": false,
-  "condition": {
+  "conditionResult": {
     "met": false,
     "observedValue": "500000000000000000",
     "targetValue": "1000000000000000000",
@@ -393,7 +440,7 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
   "executed": true,
   "executionId": "direct_123",
   "status": "completed",
-  "condition": {
+  "conditionResult": {
     "met": true,
     "observedValue": "1500000000000000000",
     "targetValue": "1000000000000000000",
@@ -402,11 +449,17 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
 }
 ```
 
+The request field is `condition` and the response field is `conditionResult`, on
+both the broadcast and the `simulate: true` paths. A parser written once against
+this endpoint works for both.
+
 ## Dry-Run Simulation
 
 All three execute endpoints (`/api/execute/transfer`, `/api/execute/contract-call`, `/api/execute/check-and-execute`) accept a `simulate` flag on the body. When set to boolean `true`, the endpoint validates inputs, resolves the org's from-address, encodes the call, and runs `provider.estimateGas` + `provider.call` against the chain — **without** signing or broadcasting a transaction.
 
 No row is inserted into the execution audit table, no funds are reserved against the spending cap, and no transaction hash is produced. Use it to pre-flight a transaction (catch reverts, allowance mismatches, balance shortfalls, ABI mistakes) before spending gas.
+
+A simulation that reports the call would revert answers with HTTP `400` and `wouldRevert: true`. That status describes the transaction, not the request: the simulation itself ran, and the body carries the decoded reason your client wants. Read `wouldRevert` before classifying a `400` from these endpoints, so a generic "non-2xx means the call failed" wrapper does not discard the answer. The distinguishing marker is the `wouldRevert` field, which is present only on simulate responses.
 
 ### Request
 
@@ -524,6 +577,32 @@ For ERC-20 transfers, `decimals` is optional — when omitted, the simulator loo
 
 `executed` reflects whether the action would have successfully run, so a reverted simulate returns `executed: false`.
 
+#### When no action is simulated
+
+A dry run reaches the action only when the condition is met and the action is a
+write. Two outcomes stop earlier, and both answer `200` with `success: true` and
+`status: "simulated"`, so the run is never mistaken for a failure:
+
+```json
+{
+  "success": true,
+  "status": "simulated",
+  "executed": false,
+  "conditionResult": { "met": false, "...": "..." }
+}
+```
+
+A read-only action answers the same way with `executed: true` and the `result`
+of the read.
+
+Neither carries `wouldRevert`. That field is a statement about a specific call
+that was encoded and estimated, and on these paths no such call was made, so
+there is nothing to report. Read `wouldRevert` only when it is present, and use
+`success` to decide whether the dry run itself completed.
+
+Broadcast responses are unaffected: without `simulate: true` these two outcomes
+return `{ executed, conditionResult }` exactly as before.
+
 ### Known limitation
 
 The `from` address used during simulation is the org's wallet (`getOrganizationWalletAddress`). Organizations that route writes through a Safe will see a simulation that reflects the EOA sending the call, not the Safe. Most config-bug categories (bad ABI, bad args, allowance mismatches) still surface; Safe-routed `msg.sender` semantics do not.
@@ -632,3 +711,17 @@ An `insufficient_scope` response names both scopes so the caller can reauthorize
 ```
 
 Broadcasting requires `mcp:write`. A dry run (`simulate: true`) neither signs nor broadcasts, so `mcp:read` is sufficient.
+
+## Workflow Run preflight simulation
+
+Before an interactive Run, the workflow editor calls `POST /api/workflows/{workflowId}/simulate` to perform a read-only preflight of reachable EVM write nodes.
+
+The simulation is advisory and never blocks execution. Reverts, invalid simulation inputs, unsupported signers, RPC failures, timeouts, and unavailable simulation services are shown in the issues overlay with **Run Anyway** available.
+
+Only write nodes reachable from a trigger are simulated. Disconnected write nodes are ignored.
+
+Each write is simulated independently against the current chain state. A later write may appear to revert when it depends on an earlier workflow step whose state change has not yet been applied. Later-write warnings therefore state that the result may depend on an earlier step in the workflow.
+
+The endpoint is protected by rate limiting, a maximum of 50 workflow nodes, and a 15-second simulation deadline.
+
+The preflight does not sign or broadcast transactions, create execution records, reserve spending limits, or perform billing operations.

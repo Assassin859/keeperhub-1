@@ -9,7 +9,7 @@ description: "Frequently asked questions about KeeperHub - getting started, secu
 
 ### What is KeeperHub?
 
-KeeperHub is a no-code blockchain automation platform. You build visual workflows that monitor onchain state, execute transactions, and send notifications -- without writing code or managing infrastructure. It works with Ethereum, Base, Arbitrum, Polygon, and other EVM-compatible chains.
+KeeperHub is a no-code blockchain automation platform. You build visual workflows that monitor onchain state, execute transactions, and send notifications -- without writing code or managing infrastructure. It works with Ethereum, Base, Arbitrum, Polygon, and other EVM-compatible chains, and with Solana for native SOL and SPL token transfers.
 
 People use it for things like treasury monitoring, DeFi position management, event-driven alerting, and recurring onchain operations (reward distribution, collateral top-ups, that sort of thing).
 
@@ -22,17 +22,19 @@ People use it for things like treasury monitoring, DeFi position management, eve
 5. Test with a manual trigger before turning on automated scheduling
 6. Watch the run logs to make sure everything behaves
 
-The [Quick Start Guide](/getting-started/quickstart) walks through this in detail.
+The [browser walkthrough](/getting-started/browser) covers this in detail.
 
 ### Do I need to know how to code?
 
 No. The visual builder covers most automation patterns with drag-and-drop nodes -- triggers, actions, conditions, loops. You can also just describe what you want in plain English and the AI assistant will generate a workflow for you.
 
-If you do need custom logic, the [Code Plugin](/plugins/code) runs JavaScript in a sandbox. And if you want full programmatic control, there's a [REST API](/api) and an [MCP server](/ai-tools/mcp-server) for managing workflows from code or AI agents.
+If you do need custom logic, the [Code Plugin](/plugins/code) runs JavaScript in a sandbox. And if you want full programmatic control, there's a [REST API](/api) and an [MCP server](/agent/mcp-server) for managing workflows from code or AI agents.
 
 ### What blockchains does KeeperHub support?
 
 KeeperHub supports a range of EVM chains, including Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, Avalanche, and others, plus their testnets (Sepolia, Base Sepolia, and more). The live, authoritative list is always available from `GET /api/chains`. Gas defaults are applied automatically per chain; L2s like Base and Arbitrum use lower gas multipliers since their estimates tend to be tighter.
+
+Solana mainnet and devnet are also supported, for native SOL transfers and SPL token transfers. Your Turnkey wallet carries a Solana address alongside its EVM address. Contract calls, protocol plugins, and simulation are EVM only today, so a Solana workflow is built from the transfer actions in the [Web3 Plugin](/plugins/web3).
 
 Some protocol plugins only work on certain chains. Ajna is Base-only, Sky converters are Ethereum-only, and so on. Check each plugin's docs for specifics.
 
@@ -131,11 +133,11 @@ You can override the gas limit on any action node in its Advanced section. Gas p
 
 Click "Ask AI" at the bottom of the workflow canvas and describe what you want -- for example, "Monitor my vault health every 15 minutes and send a Telegram alert if collateral drops below 150%." The AI generates a workflow with triggers, actions, and conditions that you can review and tweak before turning it on.
 
-You can also use this programmatically through the [MCP server's](/ai-tools/mcp-server) `ai_generate_workflow` tool.
+You can also use this programmatically through the [MCP server's](/agent/mcp-server) `ai_generate_workflow` tool.
 
 ### How do I pass data between workflow steps?
 
-Each node's output is available to downstream nodes through template references: `{{@nodeId:Label.field}}`. So if a "Check Balance" node outputs a balance, a condition node downstream can reference `{{@checkBalance:Check Balance.balance}}`. These references work in notification messages, condition expressions, and action parameters. See [Core Concepts](/intro/concepts) for the full syntax.
+Each node's output is available to downstream nodes through template references: `{{@nodeId:Label.field}}`. So if a "Check Balance" node outputs a balance, a condition node downstream can reference `{{@checkBalance:Check Balance.balance}}`. These references work in notification messages, condition expressions, and action parameters. See [Core Concepts](/concepts) for the full syntax.
 
 ### Does KeeperHub handle token approvals automatically?
 
@@ -143,7 +145,7 @@ No. You need to add an "Approve ERC20 Token" node before any write operation tha
 
 ### Can AI agents use KeeperHub autonomously?
 
-Yes. The [MCP server](/ai-tools/mcp-server) exposes more than 30 tools that let AI agents create, trigger, run, and monitor workflows programmatically. There's also a Claude Code plugin for building workflows from the terminal.
+Yes. The [MCP server](/agent/mcp-server) exposes more than 30 tools that let AI agents create, trigger, run, and monitor workflows programmatically. There's also a Claude Code plugin for building workflows from the terminal.
 
 ---
 
@@ -151,7 +153,7 @@ Yes. The [MCP server](/ai-tools/mcp-server) exposes more than 30 tools that let 
 
 ### What is the MCP server?
 
-The KeeperHub [MCP server](/ai-tools/mcp-server) lets AI agents (Claude, custom agents, etc.) create, run, and monitor workflows over the [Model Context Protocol](https://modelcontextprotocol.io). It exposes more than 30 tools covering workflow CRUD, execution, plugin discovery, protocol actions, and integration management.
+The KeeperHub [MCP server](/agent/mcp-server) lets AI agents (Claude, custom agents, etc.) create, run, and monitor workflows over the [Model Context Protocol](https://modelcontextprotocol.io). It exposes more than 30 tools covering workflow CRUD, execution, plugin discovery, protocol actions, and integration management.
 
 ### How do I set up the MCP server?
 

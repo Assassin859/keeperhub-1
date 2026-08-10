@@ -5,7 +5,7 @@ description: "KeeperHub is the execution and reliability layer for AI agents ope
 
 # Overview
 
-KeeperHub is the execution and reliability layer for AI agents operating onchain. Build visual workflows that monitor onchain state, execute transactions, and send notifications -- without writing code or managing infrastructure. Works with Ethereum, Base, Arbitrum, Polygon, and other EVM-compatible chains.
+KeeperHub is the execution and reliability layer for AI agents operating onchain. Build visual workflows that monitor onchain state, execute transactions, and send notifications -- without writing code or managing infrastructure. Works with Ethereum, Base, Arbitrum, Polygon, and other EVM-compatible chains, and with Solana for native SOL and SPL token transfers.
 
 Whether you are a protocol team automating treasury operations, a security team responding to threats, or an AI agent executing onchain actions, KeeperHub handles gas estimation, transaction ordering, retries, and wallet security so you can focus on what to automate, not how to keep it running.
 
@@ -32,8 +32,9 @@ Triggers define when a workflow runs:
 | **Manual** | When you click Run in the builder |
 | **Schedule** | On a recurring interval (every N minutes, hourly, daily) |
 | **Webhook** | When an external service sends an HTTP request to your workflow URL |
-| **Blockchain Event** | When a specific smart contract event is emitted onchain |
-| **Block Interval** | At regular block intervals on a specific chain |
+| **Event** | When a specific smart contract event is emitted onchain |
+| **Block** | At regular block intervals on a specific chain |
+| **Transfer** | When a payment arrives at a watched address |
 
 ### Actions
 
@@ -50,7 +51,7 @@ Condition nodes evaluate data from previous steps and split the workflow into br
 
 ### Data Flow Between Nodes
 
-Each node can reference the output of any previous step. This means you can read a balance in one node, compare it against a threshold in the next, and include the exact value in a notification message -- all through built-in references. See [Core Concepts](/intro/concepts) for details on the reference syntax.
+Each node can reference the output of any previous step. This means you can read a balance in one node, compare it against a threshold in the next, and include the exact value in a notification message -- all through built-in references. See [Core Concepts](/concepts) for details on the reference syntax.
 
 ### Failure Handling
 
@@ -61,6 +62,10 @@ When a step fails, KeeperHub retries with configurable behavior. Failed runs are
 ### Supported Chains
 
 KeeperHub operates on Ethereum, Base, Arbitrum, Polygon, Sepolia, and additional EVM-compatible networks. Chain-specific gas defaults are applied automatically based on network conditions and trigger type. See [Gas Management](/wallet-management/gas) for details.
+
+Solana mainnet and devnet are supported for native SOL transfers and SPL token transfers. The same Turnkey wallet holds both an EVM and a Solana address. Contract calls, protocol plugins, and dry runs are EVM only today. See [Web3 Plugin](/plugins/web3) for the Solana actions and [Turnkey Wallets](/wallet-management/turnkey) for how the addresses are provisioned.
+
+The live, authoritative chain list is `GET /api/chains`.
 
 ### Turnkey Wallets
 
@@ -84,15 +89,18 @@ KeeperHub runs your workflows on managed infrastructure with automatic gas estim
 
 ## Getting Started
 
-The fastest path to your first automation:
+Pick the path that matches how you work:
 
-1. **Create an account** at app.keeperhub.com -- a Turnkey wallet is provisioned automatically
-2. **Fund your wallet** with ETH on your target network. Start on Sepolia (a free test network) to experiment without real funds
-3. **Build a workflow** using the visual builder or the AI assistant
-4. **Test with a manual trigger** before switching to an automated schedule
-5. **Enable and monitor** execution through the run logs
+| You are | Start here |
+|---|---|
+| Clicking through the app | [Browser](/getting-started/browser) |
+| Building an AI agent | [Agent (MCP)](/getting-started/agent) |
+| Calling from a backend service | [API](/getting-started/api) |
+| Working from a terminal | [CLI](/getting-started/cli) |
 
-For a detailed walkthrough, see the [Quick Start Guide](/getting-started/quickstart).
+All four provision a Turnkey wallet automatically on signup and include a monthly allowance of
+sponsored gas, so a first run does not require funding anything. See
+[Getting Started](/getting-started).
 
 ## Coming from Another Platform?
 

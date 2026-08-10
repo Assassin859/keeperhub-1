@@ -1,3 +1,4 @@
+import { simulationHttpStatus } from "@/app/api/execute/_lib/simulation-response";
 import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
@@ -24,6 +25,7 @@ import { enforceDirectExecutionConcurrency } from "../_lib/concurrency-limit";
 import type { ConditionInput, ConditionResult } from "../_lib/condition";
 import { evaluateCondition } from "../_lib/condition";
 import {
+  type CompleteExecutionOutcome,
   completeExecution,
   failExecution,
   markRunning,
@@ -63,12 +65,19 @@ async function resolveAbiFromField(
   }
 }
 
+// Every dry-run response says whether the run itself completed, so a caller
+// never has to read an absent `success` as a failure. `wouldRevert` is not in
+// here on purpose: it is a claim about a specific call, so it is only set on
+// the branches that actually made one.
+const SIMULATION_RAN = { success: true, status: "simulated" } as const;
+
 async function executeConditionalRead(
   action: ActionBody,
   network: string,
   resolvedWriteAbi: string,
   organizationId: string,
-  conditionResult: ConditionResult
+  conditionResult: ConditionResult,
+  simulate: boolean
 ): Promise<NextResponse> {
   const readResult = await readContractCore({
     contractAddress: action.contractAddress,
@@ -86,8 +95,17 @@ async function executeConditionalRead(
     );
   }
 
+  // No `wouldRevert`: nothing was written or estimated here, so the field has
+  // no answer to give about this call.
   return NextResponse.json(
-    { executed: true, conditionResult, result: readResult.result },
+    simulate
+      ? {
+          ...SIMULATION_RAN,
+          executed: true,
+          conditionResult,
+          result: readResult.result,
+        }
+      : { executed: true, conditionResult, result: readResult.result },
     { status: HttpStatus.OK }
   );
 }
@@ -115,8 +133,8 @@ async function simulateConditionalWrite(
   // than "we reached the action step". A reverted simulate means a real
   // broadcast would have reverted too, so executed is false.
   return NextResponse.json(
-    { ...result, executed: !result.wouldRevert, conditionResult },
-    { status: result.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK }
+    { ...result, executed: result.success, conditionResult },
+    { status: simulationHttpStatus(result) }
   );
 }
 
@@ -178,7 +196,7 @@ async function executeConditionalWrite(
   // completeExecution independently re-verifies the claimed transaction
   // against the chain (KEEP-966) -- its returned outcome, not result.success,
   // is authoritative for the response and idempotency cache.
-  let outcome: { status: "completed" | "failed"; error?: string } = {
+  let outcome: CompleteExecutionOutcome = {
     status: "failed",
     error: result.success ? undefined : result.error,
   };
@@ -192,14 +210,16 @@ async function executeConditionalWrite(
       output: result as unknown as Record<string, unknown>,
     });
   } else {
-    // A failure that already reached the chain carries its hash,
-    // so the execution records which transaction failed and what the chain
-    // said about it, rather than leaving the hash only inside the message.
-    await failExecution(executionId, result.error, {
+    // A failure that already reached the chain carries its hash, so the
+    // execution records which transaction failed and what the chain said about
+    // it. failExecution decides from that receipt whether this is terminal or
+    // a broadcast that may still land, and its verdict is authoritative.
+    const settled = await failExecution(executionId, result.error, {
       transactionHash: result.transactionHash,
       chainId: result.chainId,
       sponsored: result.sponsored,
     });
+    outcome = { status: settled.status, error: result.error };
   }
 
   return recordIdempotentResponse(
@@ -320,8 +340,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   const conditionResult = evaluateCondition(readResult.result, condition);
 
   if (!conditionResult.met) {
+    // No `wouldRevert`: the action was never encoded or estimated, so we have
+    // no evidence either way and will not invent one.
     return NextResponse.json(
-      { executed: false, conditionResult },
+      simulateFlag.simulate
+        ? { ...SIMULATION_RAN, executed: false, conditionResult }
+        : { executed: false, conditionResult },
       { status: HttpStatus.OK }
     );
   }
@@ -365,7 +389,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         network,
         writeAbiResult.abi,
         apiKeyCtx.organizationId,
-        conditionResult
+        conditionResult,
+        simulateFlag.simulate
       ),
       rateLimit
     );
