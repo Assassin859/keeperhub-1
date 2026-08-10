@@ -7,7 +7,7 @@ import {
   type WithdrawableAsset,
   WithdrawModal,
 } from "@/components/overlays/withdraw-modal";
-import { useSession } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { buildWithdrawableAssets } from "@/lib/wallet/build-withdrawable-assets";
 import type {
@@ -79,6 +79,7 @@ function findAssetIndex(
 export function useOrgWallet(): OrgWalletState {
   const { push } = useOverlay();
   const { data: session } = useSession();
+  const { data: activeOrg } = authClient.useActiveOrganization();
   const invalidateWalletInfo = useInvalidateWalletInfo();
 
   const [walletLoading, setWalletLoading] = useState(true);
@@ -213,10 +214,14 @@ export function useOrgWallet(): OrgWalletState {
   );
 
   const sessionUserId = session?.user?.id;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionUserId triggers re-fetch on sign-in
+  // The wallet, its Safes and every balance are organization-scoped, so the
+  // active org is a fetch key just like the signed-in user. Without it,
+  // switching organization leaves the previous org's accounts on screen.
+  const activeOrgId = activeOrg?.id;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionUserId and activeOrgId are refetch triggers
   useEffect(() => {
     loadWallet();
-  }, [loadWallet, sessionUserId]);
+  }, [loadWallet, sessionUserId, activeOrgId]);
 
   return {
     balances,

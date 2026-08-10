@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
-import { useSession } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
 import {
   runWalletStepUp,
@@ -581,6 +581,9 @@ export function useApiKeys(
 ) {
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  // Organisation keys are scoped server-side to the active org, so the org id
+  // belongs in the query identity: switching org must reload the list.
+  const { data: activeOrg } = authClient.useActiveOrganization();
 
   const {
     items: apiKeys,
@@ -597,7 +600,7 @@ export function useApiKeys(
         }
         return r.json() as Promise<Page<ApiKey>>;
       }),
-    listEndpoint
+    `${listEndpoint}:${activeOrg?.id ?? ""}`
   );
 
   useEffect(() => {
