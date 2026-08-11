@@ -3,6 +3,7 @@
 import { ChevronRight, Plus, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -25,14 +26,19 @@ import {
 import { useSettingsContext } from "../settings-context";
 import { AccountAddress } from "./account-address";
 
+const SKELETON_ROWS = ["a", "b", "c"] as const;
+
 export function AccountsTable({
   accounts,
   canManage,
+  loading,
   onAddSafe,
   onFindExisting,
   finding,
 }: {
   accounts: WalletAccounts;
+  /** Draws the same rows with their contents blanked, so nothing resizes. */
+  loading: boolean;
   canManage: boolean;
   onAddSafe: () => void;
   /** Looks on chain for Safes already deployed at this org's address. */
@@ -52,7 +58,26 @@ export function AccountsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {accounts.all.map((account) => {
+        {loading &&
+          SKELETON_ROWS.map((key) => (
+            <TableRow className={SETTINGS_ROW} key={key}>
+              <TableCell>
+                <div className="flex items-start gap-3">
+                  <Skeleton className="mt-0.5 size-8 shrink-0 rounded-lg" />
+                  <span className="flex flex-col gap-1.5">
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-4 w-72" />
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-5 w-28" />
+              </TableCell>
+              <TableCell />
+            </TableRow>
+          ))}
+        {!loading &&
+          accounts.all.map((account) => {
           const isSafe = account.kind === "safe";
           const isSolana = !isSafe && account.family === "solana";
           const name = isSafe
@@ -101,8 +126,8 @@ export function AccountsTable({
               </TableCell>
             </TableRow>
           );
-        })}
-        {canManage && (
+          })}
+        {!loading && canManage && (
           // Adding an account belongs with the accounts, not in the card's
           // header: the header buttons named Safe operations rather than the
           // thing the user is after, which is another wallet.

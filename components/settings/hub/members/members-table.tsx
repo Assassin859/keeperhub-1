@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -24,8 +25,11 @@ import { ConfirmDeleteDialog } from "../confirm-delete-dialog";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 import type { OrgMember } from "../hooks/use-org-members";
 
+const SKELETON_ROWS = ["a", "b"] as const;
+
 export function MembersTable({
   members,
+  loading,
   currentMemberId,
   canManage,
   updatingId,
@@ -33,6 +37,8 @@ export function MembersTable({
   onRemove,
 }: {
   members: OrgMember[];
+  /** Draws the same rows blanked, so the card keeps its height. */
+  loading: boolean;
   currentMemberId: string | null;
   canManage: boolean;
   updatingId: string | null;
@@ -53,14 +59,36 @@ export function MembersTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {members.map((member) => {
+        {loading &&
+          SKELETON_ROWS.map((key) => (
+            <TableRow className={SETTINGS_ROW} key={key}>
+              <TableCell>
+                <div className="flex items-center gap-3">
+                  <Skeleton className="size-8 shrink-0 rounded-full" />
+                  <div className="flex flex-col gap-1.5">
+                    <Skeleton className="h-5 w-36" />
+                    <Skeleton className="h-4 w-52" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-5 w-20" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-5 w-24" />
+              </TableCell>
+              <TableCell />
+            </TableRow>
+          ))}
+        {!loading &&
+          members.map((member) => {
           const isSelf = member.id === currentMemberId;
           // One owner per org (DB-enforced); transferring ownership happens in
           // the leave flow, so the picker only offers the two editable roles.
           const roleEditable =
             canManage && !isSelf && member.role !== "owner";
-          return (
-            <TableRow className={SETTINGS_ROW} key={member.id}>
+            return (
+              <TableRow className={SETTINGS_ROW} key={member.id}>
               <TableCell>
                 <div className="flex items-center gap-3">
                   <Avatar className="size-8">

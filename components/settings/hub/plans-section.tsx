@@ -3,7 +3,6 @@
 import { PricingTable } from "@/components/billing/pricing-table";
 import { useBillingPlan } from "./hooks/use-billing-plan";
 import { SectionHeader } from "./section";
-import { FormSkeleton } from "./skeletons";
 
 export function PlansSection(): React.ReactElement {
   const billing = useBillingPlan();
@@ -15,10 +14,10 @@ export function PlansSection(): React.ReactElement {
         title="Plans"
       />
 
-      {billing.loading ? (
-        <FormSkeleton rows={4} />
-      ) : (
-        <PricingTable
+      {/* The grid is the same size whichever plan is current, and the table
+          comes from a package with no loading state of its own, so it renders
+          straight away and only the highlighted plan arrives late. */}
+      <PricingTable
           currentInterval={billing.interval}
           currentPlan={billing.plan}
           currentTier={billing.tier}
@@ -26,10 +25,9 @@ export function PlansSection(): React.ReactElement {
           // The trial tier decides the Pro card's default selection, which is
           // state inside the table, so a change has to remount it.
           key={`${billing.plan}-${billing.tier ?? "none"}-${billing.interval ?? "none"}-${billing.refreshKey}`}
-          onPlanUpdated={billing.refresh}
-          trial={billing.trial}
-        />
-      )}
+        onPlanUpdated={billing.refresh}
+        trial={billing.trial}
+      />
     </>
   );
 }

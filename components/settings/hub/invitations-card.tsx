@@ -4,7 +4,7 @@ import { Mail, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SettingsCard } from "./section";
-import { RowsSkeleton } from "./skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type InvitationRow = {
   id: string;
@@ -39,7 +39,22 @@ export function InvitationsCard({
 }): React.ReactElement {
   return (
     <SettingsCard description={description} title={title}>
-      {loading && <RowsSkeleton rows={2} />}
+      {loading && (
+        <ul className="flex flex-col gap-2">
+          {["a", "b"].map((key) => (
+            <li
+              className="flex items-center gap-3 rounded-lg border px-3 py-2.5"
+              key={key}
+            >
+              <Skeleton className="size-4 shrink-0" />
+              <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <Skeleton className="h-4 w-56" />
+                <Skeleton className="h-3 w-40" />
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {!loading && rows.length === 0 && (
         <p className="text-muted-foreground text-sm">{emptyLabel}</p>
       )}

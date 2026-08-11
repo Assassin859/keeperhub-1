@@ -3,6 +3,7 @@
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -22,14 +23,19 @@ export type GroupingRow = {
   description?: string | null;
 };
 
+const SKELETON_ROWS = ["a", "b"] as const;
+
 export function GroupingTable({
   rows,
+  loading,
   unit,
   canManage,
   onEdit,
   onDelete,
 }: {
   rows: GroupingRow[];
+  /** Draws the same rows blanked, so the card keeps its height. */
+  loading: boolean;
   /** Singular noun for the count column, e.g. "workflow". */
   unit: string;
   canManage: boolean;
@@ -49,7 +55,26 @@ export function GroupingTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((row) => (
+        {loading &&
+          SKELETON_ROWS.map((key) => (
+            <TableRow className={SETTINGS_ROW} key={key}>
+              <TableCell>
+                <div className="flex items-center gap-2.5">
+                  <Skeleton className="size-2.5 shrink-0 rounded-full" />
+                  <div className="flex flex-col gap-1.5">
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-4 w-56" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-5 w-16" />
+              </TableCell>
+              <TableCell />
+            </TableRow>
+          ))}
+        {!loading &&
+          rows.map((row) => (
           <TableRow className={SETTINGS_ROW} key={row.id}>
             <TableCell>
               <div className="flex items-center gap-2.5">
@@ -95,7 +120,7 @@ export function GroupingTable({
               )}
             </TableCell>
           </TableRow>
-        ))}
+          ))}
       </TableBody>
       </Table>
 

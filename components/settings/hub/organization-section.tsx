@@ -20,7 +20,7 @@ import { invitationTiming } from "./relative-time";
 import { OrgDetailsCard } from "./organization/org-details-card";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { StatTilesSkeleton, TableSkeleton } from "./skeletons";
+import { StatTilesSkeleton } from "./skeletons";
 
 /** Most privileged first; anything unrecognised sorts last. */
 function roleRank(role: string): number {
@@ -131,13 +131,14 @@ export function OrganizationSection(): React.ReactElement {
             />
           </div>
         )}
-        {members.loading && <TableSkeleton columns={4} leading rows={3} />}
+
         {!members.loading && filtered.length === 0 && (
           <EmptyState>No members match that search.</EmptyState>
         )}
-        {!members.loading && filtered.length > 0 && (
+        {(members.loading || filtered.length > 0) && (
           <MembersTable
             canManage={isAdmin}
+            loading={members.loading}
             currentMemberId={currentMemberId}
             members={filtered}
             onRemove={members.removeMember}
