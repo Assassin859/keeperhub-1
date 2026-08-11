@@ -47,6 +47,8 @@ import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { workflowReachableConditions } from "@/lib/workflow/executable";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { calculateTotalSteps } from "@/lib/workflow/executor/progress";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -225,6 +227,27 @@ async function startExecutionInBackground(
 ): Promise<void> {
   const { slug: organizationSlug, plan: organizationPlan } =
     await resolveExecutionOrgMetadata(workflow.organizationId);
+
+  // Mirrors keeperhub-executor's initializeExecutionProgress (the K8s Job
+  // and in-process/SQS dispatch paths already do this before running).
+  // Without it, total_steps stays NULL forever and the status endpoint's
+  // progress.percentage is stuck at 0 even after a successful run.
+  await db
+    .update(workflowExecutions)
+    .set({
+      totalSteps: calculateTotalSteps(
+        workflow.nodes as WorkflowNode[],
+        workflow.edges as WorkflowEdge[]
+      ).toString(),
+      completedSteps: "0",
+      executionTrace: [],
+      currentNodeId: null,
+      currentNodeName: null,
+      lastSuccessfulNodeId: null,
+      lastSuccessfulNodeName: null,
+    })
+    .where(eq(workflowExecutions.id, executionId));
+
   start(executeWorkflow, [
     buildExecutorInput(workflow, {
       triggerInput: body,

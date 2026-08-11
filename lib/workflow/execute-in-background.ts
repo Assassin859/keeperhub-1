@@ -16,6 +16,7 @@ import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { signSqsMessageAttributes } from "@/lib/sqs-message-auth";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { calculateTotalSteps } from "@/lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 let _sqsClient: SQSClient | null = null;
@@ -117,6 +118,23 @@ export async function executeWorkflowInBackground(
           eq(workflowExecutions.status, "pending")
         )
       );
+
+    // Mirrors keeperhub-executor's initializeExecutionProgress (the K8s Job
+    // and in-process/SQS dispatch paths already do this before running).
+    // Without it, total_steps stays NULL forever and the status endpoint's
+    // progress.percentage is stuck at 0 even after a successful run.
+    await db
+      .update(workflowExecutions)
+      .set({
+        totalSteps: calculateTotalSteps(nodes, edges).toString(),
+        completedSteps: "0",
+        executionTrace: [],
+        currentNodeId: null,
+        currentNodeName: null,
+        lastSuccessfulNodeId: null,
+        lastSuccessfulNodeName: null,
+      })
+      .where(eq(workflowExecutions.id, executionId));
 
     const run = await start(executeWorkflow, [
       {
