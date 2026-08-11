@@ -1,7 +1,12 @@
 # Self-hosted KeeperHub
 
-Installs KeeperHub into a Kubernetes cluster you own, with no AWS account and no
-dependency on any KeeperHub-operated service.
+Installs KeeperHub into a Kubernetes cluster you own, with no AWS account.
+
+The running product depends on no service KeeperHub operates. The install itself
+reaches exactly one, the Helm chart repository, and `CHART_REPO_URL` or
+`CHART_DIR` avoids that too. [DEPENDENCIES.md](DEPENDENCIES.md) lists every host
+the build, the install and the running product contact, what each one is for,
+and how to switch it off or point it elsewhere.
 
 A peer of `../staging/` and `../prod/`: the same `keeperhub-stack` umbrella chart,
 the same structure, different values. Diff `values.yaml` against
@@ -12,6 +17,7 @@ while it stays structurally identical to what staging and production run.
 
 | Path | What it is |
 | --- | --- |
+| `DEPENDENCIES.md` | every external host the build, install and running product reach, and how to turn each off |
 | `values.yaml` | chart values common to every install, and the `global:` block you set |
 | `values.db-{bundled,byo}.yaml`, `values.queue-{bundled,byo}.yaml` | the parts that differ per mode, merged over `values.yaml` |
 | `values.queue-byo-endpoint.yaml` | merged only when `QUEUE_MODE=byo` and `AWS_ENDPOINT_URL` is set |
