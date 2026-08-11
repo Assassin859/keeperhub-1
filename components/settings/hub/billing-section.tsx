@@ -4,7 +4,7 @@ import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { PaygSection } from "@/components/billing/payg-section";
-import { billsOverage } from "@/lib/billing/plans";
+import { PAYG_PLAN_NAME } from "@/lib/billing/plans";
 import { UsageMeter } from "./billing/usage-meter";
 import { useBillingSummary } from "./hooks/use-billing-summary";
 import { SectionHeader, SettingsCard, StatTile } from "./section";
@@ -98,7 +98,7 @@ export function BillingSection(): React.ReactElement {
         )}
       </SettingsCard>
 
-      {summary && !billsOverage(summary.plan) && (
+      {summary?.plan === PAYG_PLAN_NAME && (
         <SettingsCard
           description="Keep a balance in USDC and spend it per execution, with no subscription. Top it up here."
           title="Pay as you go"
