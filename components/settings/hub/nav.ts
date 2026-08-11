@@ -242,9 +242,9 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
       {
         segment: "billing",
         scope: "org",
-        label: "Billing and plan",
+        label: "Billing",
         icon: CreditCard,
-        description: "Subscription, invoices and payment method.",
+        description: "Usage this month, payment method and invoices.",
         panels: [
           {
             title: "This month",

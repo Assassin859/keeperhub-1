@@ -37,7 +37,7 @@ export function BillingSection(): React.ReactElement {
           </Button>
         }
         description="What this organization is on right now, and how much of it you have used this month."
-        title="Billing and plan"
+        title="Billing"
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
