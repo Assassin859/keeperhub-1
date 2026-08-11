@@ -13,7 +13,7 @@ Manage workflows programmatically.
 GET /api/workflows
 ```
 
-Returns all workflows for the authenticated user (session) or organization (API key).
+Returns all workflows for the authenticated user (session) or organization (API key), unless `limit` is supplied.
 
 ### Query Parameters
 
@@ -21,6 +21,16 @@ Returns all workflows for the authenticated user (session) or organization (API 
 |-----------|------|-------------|
 | `projectId` | string | Optional. Filter workflows by project ID |
 | `tagId` | string | Optional. Filter workflows by tag ID |
+| `limit` | number | Optional. Page size, capped at 500. Omit for the complete list |
+| `offset` | number | Optional. Rows to skip. Requires `limit` |
+
+`limit` and `offset` must be positive integers when present; anything else is a
+400. `offset` without `limit` is a 400, since the response would be the whole
+list either way.
+
+When `limit` is supplied the response carries an `X-Total-Count` header with the
+number of rows matching the query, so a clamped page can be told apart from a
+complete list. The body stays a bare JSON array in every case.
 
 ### Example
 
