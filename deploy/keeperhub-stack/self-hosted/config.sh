@@ -32,9 +32,13 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-}"
 NAMESPACE="${NAMESPACE:-keeperhub}"
 RELEASE="${RELEASE:-keeperhub}"
 
-CHART_REPO_NAME="techops-services"
-CHART_REPO_URL="https://techops-services.github.io/helm-charts"
-CHART_NAME="techops-services/keeperhub-stack"
+# The chart repository. This is the only host the install reaches that
+# KeeperHub operates, so it is overridable for an installer who mirrors the
+# chart rather than pulling it from us. CHART_DIR below bypasses the repository
+# entirely and installs from a local directory.
+CHART_REPO_NAME="${CHART_REPO_NAME:-techops-services}"
+CHART_REPO_URL="${CHART_REPO_URL:-https://techops-services.github.io/helm-charts}"
+CHART_NAME="${CHART_NAME:-${CHART_REPO_NAME}/keeperhub-stack}"
 CHART_VERSION="${CHART_VERSION:-0.5.0}"
 # Point at a working-tree chart instead of the published one, for developing
 # chart changes alongside this profile: CHART_DIR=../../../helm-charts/charts/keeperhub-stack

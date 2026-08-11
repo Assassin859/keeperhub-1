@@ -1,9 +1,18 @@
 # Multi-stage Dockerfile for Next.js application
 # Stage 1: Dependencies
 FROM node:24-alpine AS deps
+# CA bundle for TLS to Amazon RDS. Only a deployment whose database is RDS
+# needs it, so the URL is a build arg and an empty value skips the download -
+# a build for a cluster-local or self-managed Postgres then needs no AWS host
+# at all. The file is still created either way because the migrator stage
+# copies it unconditionally.
+ARG RDS_CA_BUNDLE_URL=https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 RUN apk add --no-cache libc6-compat && \
-    wget -q -O /etc/ssl/certs/rds-combined-ca-bundle.pem \
-      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+    if [ -n "$RDS_CA_BUNDLE_URL" ]; then \
+      wget -q -O /etc/ssl/certs/rds-combined-ca-bundle.pem "$RDS_CA_BUNDLE_URL"; \
+    else \
+      : > /etc/ssl/certs/rds-combined-ca-bundle.pem; \
+    fi
 WORKDIR /app
 
 # Install pnpm
