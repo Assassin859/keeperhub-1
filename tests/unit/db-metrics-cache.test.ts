@@ -176,7 +176,6 @@ describe("updateDbMetrics TTL cache", () => {
 
   afterEach(() => {
     if (originalTtl === undefined) {
-      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
       delete process.env.DB_METRICS_CACHE_TTL_MS;
     } else {
       process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
@@ -391,7 +390,6 @@ describe("keeperhub_workflow_errors_by_workflow gauge", () => {
 
   afterEach(() => {
     if (originalTtl === undefined) {
-      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
       delete process.env.DB_METRICS_CACHE_TTL_MS;
     } else {
       process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
@@ -454,7 +452,6 @@ describe("keeperhub_system_errors_by_category gauge", () => {
 
   afterEach(() => {
     if (originalTtl === undefined) {
-      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
       delete process.env.DB_METRICS_CACHE_TTL_MS;
     } else {
       process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
@@ -521,7 +518,6 @@ describe("keeperhub_workflow_executions_finished_age_seconds gauge", () => {
 
   afterEach(() => {
     if (originalTtl === undefined) {
-      // biome-ignore lint/performance/noDelete: must truly unset the env var to restore the unset state; assigning "" or undefined changes cache-TTL semantics
       delete process.env.DB_METRICS_CACHE_TTL_MS;
     } else {
       process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
