@@ -32,7 +32,7 @@ export function useAccountAssets(
   detail: AccountDetailState,
   chains: ChainData[],
   showZero: boolean
-): { rows: AssetRow[]; hiddenCount: number } {
+): { rows: AssetRow[]; funded: AssetRow[]; hiddenCount: number } {
   return useMemo(() => {
     const scoped =
       account.kind === "safe"
@@ -107,6 +107,12 @@ export function useAccountAssets(
         a.symbol.localeCompare(b.symbol)
     );
 
-    return { hiddenCount: rows.length - funded.length, rows: visible };
+    funded.sort(
+      (a, b) =>
+        Number(a.isTestnet) - Number(b.isTestnet) ||
+        a.chainName.localeCompare(b.chainName)
+    );
+
+    return { funded, hiddenCount: rows.length - funded.length, rows: visible };
   }, [account, detail, chains, showZero]);
 }

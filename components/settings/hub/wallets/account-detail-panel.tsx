@@ -30,7 +30,7 @@ export function AccountDetailPanel({
   const { isAdmin, isOwner } = useSettingsContext();
   const detail = useAccountDetail(account, state);
   const [showZero, setShowZero] = useState(false);
-  const { rows, hiddenCount } = useAccountAssets(
+  const { rows, funded, hiddenCount } = useAccountAssets(
     account,
     detail,
     state.chains,
@@ -48,7 +48,7 @@ export function AccountDetailPanel({
       ) : (
         <AccountStats
           account={account}
-          rows={rows}
+          funded={funded}
           solanaIsTestnet={state.solanaIsTestnet}
         />
       )}

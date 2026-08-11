@@ -6,11 +6,13 @@ import type { AssetRow } from "./use-account-assets";
 
 export function AccountStats({
   account,
-  rows,
+  funded,
   solanaIsTestnet,
 }: {
   account: WalletAccountKind;
-  rows: AssetRow[];
+  /** Only balances that are not zero: what the account holds, whatever the
+   * table is currently filtered to show. */
+  funded: AssetRow[];
   solanaIsTestnet: boolean;
 }): React.ReactElement {
   const isSafe = account.kind === "safe";
@@ -41,12 +43,12 @@ export function AccountStats({
       <StatTile
         hint="Networks with a balance here"
         label="Funded networks"
-        value={String(new Set(rows.map((r) => r.chainId)).size)}
+        value={String(new Set(funded.map((r) => r.chainId)).size)}
       />
       <StatTile
         hint="Native and token balances"
         label="Assets held"
-        value={String(rows.length)}
+        value={String(funded.length)}
       />
       <StatTile
         hint={isSafe ? "Safe smart account" : "Turnkey signer"}
