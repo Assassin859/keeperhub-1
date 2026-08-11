@@ -5,14 +5,16 @@ import { PoliciesTab } from "@/components/overlays/wallet/account-detail/policie
 import { SolanaAssets } from "@/components/overlays/wallet/account-detail/solana-assets";
 import type { WalletAccountKind } from "@/components/overlays/wallet/account-row";
 import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
-import { Button } from "@/components/ui/button";
 import { useAccountDetail } from "@/lib/wallet/use-account-detail";
 import type { OrgWalletState } from "@/lib/wallet/use-org-wallet";
+import { accountSlug } from "@/lib/wallet/use-wallet-accounts";
 import { EmptyState, SettingsCard } from "../section";
 import { useSettingsContext } from "../settings-context";
 import { RowsSkeleton, StatTilesSkeleton } from "../skeletons";
 import { AccountSettingsCard } from "./account-settings-card";
 import { AccountStats } from "./account-stats";
+import { AddAssetPanel } from "./add-asset-panel";
+import { AssetFilters, networksOf, useNetworkFilter } from "./asset-filters";
 import { AssetsTable } from "./assets-table";
 import { useAccountAssets } from "./use-account-assets";
 
@@ -30,12 +32,28 @@ export function AccountDetailPanel({
   const { isAdmin, isOwner } = useSettingsContext();
   const detail = useAccountDetail(account, state);
   const [showZero, setShowZero] = useState(false);
+  const [query, setQuery] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [network, setNetwork] = useNetworkFilter(accountSlug(account));
   const { rows, funded, hiddenCount } = useAccountAssets(
     account,
     detail,
     state.chains,
     showZero
   );
+  const needle = query.trim().toLowerCase();
+  const visible = rows.filter((row) => {
+    if (network.length > 0 && !network.includes(String(row.chainId))) {
+      return false;
+    }
+    if (!needle) {
+      return true;
+    }
+    return [row.symbol, row.name, row.chainName].some((field) =>
+      field.toLowerCase().includes(needle)
+    );
+  });
+
   const isSafe = account.kind === "safe";
   // The Solana signer has its own balance source; the EVM chain feed does not
   // describe it, so it gets the dedicated view the wallet modal also uses.
@@ -55,15 +73,17 @@ export function AccountDetailPanel({
 
       <SettingsCard
         action={
-          !isSolana &&
-          hiddenCount > 0 && (
-            <Button
-              onClick={() => setShowZero((v) => !v)}
-              size="sm"
-              variant="ghost"
-            >
-              {showZero ? "Hide empty" : `Show ${hiddenCount} empty`}
-            </Button>
+          !isSolana && (
+            <AssetFilters
+              hiddenCount={hiddenCount}
+              network={network}
+              networks={networksOf(rows)}
+              onNetworkChange={setNetwork}
+              onQueryChange={setQuery}
+              onToggleZero={() => setShowZero((v) => !v)}
+              query={query}
+              showZero={showZero}
+            />
           )
         }
         bodyClassName="p-2"
@@ -74,22 +94,34 @@ export function AccountDetailPanel({
         }
         title="Assets"
       >
+        {adding && !isSolana && (
+          <AddAssetPanel
+            chains={state.chains}
+            defaultChainId={network.length === 1 ? network[0] : undefined}
+            onAdd={detail.addToken}
+            onCancel={() => setAdding(false)}
+          />
+        )}
         {isSolana && (
           <div className="p-3">
             <SolanaAssets address={account.address} />
           </div>
         )}
         {!isSolana && detail.isLoadingBalances && <RowsSkeleton rows={4} />}
-        {!(isSolana || detail.isLoadingBalances) && rows.length === 0 && (
+        {!(isSolana || detail.isLoadingBalances) && visible.length === 0 && (
           <EmptyState>
-            No balances yet. Send funds to the address below to get started.
+            {rows.length === 0
+              ? "No balances yet. Send funds to the address below to get started."
+              : "No assets match that."}
           </EmptyState>
         )}
-        {!(isSolana || detail.isLoadingBalances) && rows.length > 0 && (
+        {!(isSolana || detail.isLoadingBalances) && visible.length > 0 && (
           <AssetsTable
+            canAdd={isAdmin && !adding}
             canWithdraw={isAdmin}
+            onAdd={() => setAdding(true)}
             onWithdraw={detail.withdraw}
-            rows={rows}
+            rows={visible}
           />
         )}
       </SettingsCard>

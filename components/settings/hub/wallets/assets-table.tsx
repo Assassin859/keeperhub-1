@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Send } from "lucide-react";
+import { ExternalLink, Plus, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -31,10 +31,14 @@ function fmt(balance: string): string {
 export function AssetsTable({
   rows,
   canWithdraw,
+  canAdd,
+  onAdd,
   onWithdraw,
 }: {
   rows: AssetRow[];
   canWithdraw: boolean;
+  canAdd: boolean;
+  onAdd: () => void;
   onWithdraw: (chainId: number, tokenAddress?: string) => void;
 }): React.ReactElement {
   return (
@@ -109,6 +113,27 @@ export function AssetsTable({
             </TableRow>
           );
         })}
+        {canAdd && (
+          <TableRow className={SETTINGS_ROW}>
+            <TableCell colSpan={4}>
+              <button
+                className="flex items-center gap-3 text-left"
+                onClick={onAdd}
+                type="button"
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-dashed">
+                  <Plus className="size-4 text-muted-foreground" />
+                </span>
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium">Add a custom token</span>
+                  <span className="text-muted-foreground text-xs">
+                    Track a token this list does not know about yet.
+                  </span>
+                </span>
+              </button>
+            </TableCell>
+          </TableRow>
+        )}
       </TableBody>
     </Table>
   );

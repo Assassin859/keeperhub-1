@@ -205,4 +205,7 @@ export const SETTINGS_ROW = [
 ].join(" ");
 
 /** Header row: same horizontal rhythm as the body, a touch more air below. */
-export const SETTINGS_HEAD_ROW = "border-border/60 [&>th]:h-9 [&>th]:pb-2";
+// A header is not a row anyone can act on, so it does not light up under the
+// pointer the way the rows below it do.
+export const SETTINGS_HEAD_ROW =
+  "border-border/60 hover:bg-transparent [&>th]:h-9 [&>th]:pb-2";
