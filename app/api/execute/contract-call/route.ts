@@ -226,20 +226,23 @@ async function handleWriteCall(
     outcome = { status: settled.status, error: result.error };
   }
 
-  // transactionHash/transactionLink are included whenever a tx was actually
-  // broadcast (result.success), regardless of final outcome, so a
-  // reconciliation-failed response still surfaces the hash to look up. This
-  // matches /execute/transfer and the documented contract that the hash is
-  // present when status is "completed"; without it a caller that completed a
-  // write has no identifier for the transaction it just caused.
+  // The hash is returned whenever one exists, not only when the write
+  // succeeded. A call that broadcast and then reverted comes back with
+  // success: false and a hash (write-contract-core.ts sets it from
+  // revertedTransactionHash), and that is exactly the case where the caller
+  // needs it -- to look up what the chain said about a write it has already
+  // paid for. The failure branch above already reads that hash and records it
+  // against the execution, so withholding it from the response leaves the
+  // caller with less than the row it just wrote.
+  //
+  // transactionLink stays on the success arm because the failure return does
+  // not set one.
   const responseBody: ExecuteResponse = {
     executionId,
     status: outcome.status,
-    ...(result.success
-      ? {
-          transactionHash: result.transactionHash,
-          transactionLink: result.transactionLink,
-        }
+    ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+    ...(result.success && result.transactionLink
+      ? { transactionLink: result.transactionLink }
       : {}),
     ...(outcome.error ? { error: outcome.error } : {}),
   };
