@@ -84,6 +84,20 @@ because the API's documented unit is ether and the misleading thing is the
 internal function name. That was caught by reading the plan. Unwritten, it would
 have been caught by reading the pull request.
 
+### Already filed an issue
+
+Nothing here applies retroactively. Issues filed before this page existed are
+triaged on what they contain, and you will never be asked to resubmit one to
+match a template that did not exist when you wrote it.
+
+More generally, and for new issues too: **you will not be asked to restate
+something you have already said.** If triage needs one more fact, it asks for
+that fact, on your issue. The forms exist so we can answer in one pass, not as a
+standard you have to be measured against.
+
+If an issue turns out to hold several problems, we split it and credit you on
+each part. Finding several problems is the work; refiling them is not.
+
 ## What happens to your issue
 
 | Label | Meaning |
