@@ -49,12 +49,7 @@ export function SettingsProvider({
     isLoading: orgLoading,
     switchOrganization: setActiveOrganization,
   } = useOrganization();
-  const {
-    role: memberRole,
-    isOwner,
-    isAdmin,
-    isLoading: memberLoading,
-  } = useActiveMember();
+  const { role: memberRole, isLoading: memberLoading } = useActiveMember();
   const { organizations, isLoading: orgsLoading } = useOrganizations();
   const [revision, setRevision] = useState(0);
 
@@ -90,12 +85,17 @@ export function SettingsProvider({
 
 
 
-  // useActiveMember reads the role off the active-organization payload, which
-  // does not always carry the members array. /api/organizations returns a role
-  // per organization, so fall back to that rather than render a blank badge.
+  // The role has to describe the organization on screen, which is the one in
+  // the URL and not always the active one. /api/organizations carries a role
+  // per organization, so it answers for whichever is being shown; the active
+  // membership only stands in until that list arrives.
   const listedRole = organizations.find((o) => o.id === organizationId)?.role;
-  const role = (memberRole ?? listedRole) as OrgRole | undefined;
+  const role = (listedRole ?? memberRole) as OrgRole | undefined;
   const roleLoading = !role && (memberLoading || orgsLoading || orgLoading);
+  // Unknown is treated as no privileges, so a page never appears and then
+  // disappears once the answer arrives.
+  const isOwner = role === "owner";
+  const isAdmin = role === "owner" || role === "admin";
 
   useEffect(() => {
     setRevision((n) => n + 1);
