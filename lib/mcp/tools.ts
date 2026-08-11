@@ -271,22 +271,20 @@ function buildPaymentRequiredHint(
   ].join("\n");
 }
 
-/**
- * Detect whether a `callApi` error message represents an HTTP 400. Same
- * prefix-substring reasoning as `is402Error`.
- */
+/** Detect whether a `callApi` error message starts with an HTTP 400 status. */
 const API_CALL_FAILED_400_PREFIX = "API call failed: 400";
 
 function is400Error(message: string): boolean {
-  return message.includes(API_CALL_FAILED_400_PREFIX);
+  return message.startsWith(API_CALL_FAILED_400_PREFIX);
 }
 
-// Revert strings are chosen by the contract under test, so they get a wider
-// cap than an x402 accept field (a decoded custom error with arguments is
-// routinely longer than an address) while still being bounded.
+// The appended Reason field gets a wider cap than an x402 accept field because
+// decoded custom errors are routinely longer than addresses. The original
+// callApi message remains verbatim as the first line for compatibility.
 const MAX_REVERT_FIELD_CHARS = 200;
 
 type SimulateFailureShape = {
+  failureKind?: unknown;
   wouldRevert?: unknown;
   revertReason?: unknown;
   error?: unknown;
@@ -298,14 +296,13 @@ type SimulateFailureShape = {
 /**
  * Turn a dry-run revert reported as HTTP 400 into an actionable message.
  *
- * `/api/execute/*` answers `simulate: true` with HTTP 400 and `wouldRevert:
- * true` when the call would revert. As the Direct Execution API doc puts it,
- * that status describes the transaction, not the request: the simulation ran,
- * and the body carries the decoded reason. A REST caller is told to read
- * `wouldRevert` before classifying the 400 — but an MCP caller never sees the
- * body as data, because `callApi` throws and the JSON survives only as a
- * fragment of an error string. So the agent-native surface loses exactly the
- * diagnostic the dry run exists to produce.
+ * `/api/execute/*` answers `simulate: true` with HTTP 400, `failureKind:
+ * "revert"`, and `wouldRevert: true` when the simulated call reverted. In that
+ * case the status describes the transaction rather than a malformed request,
+ * and the body carries the decoded reason. An MCP caller never sees that body
+ * as data because `callApi` throws and the JSON survives only as a fragment of
+ * an error string. So the agent-native surface loses exactly the diagnostic
+ * the dry run exists to produce.
  *
  * Returns null unless the body really is a simulation revert, so ordinary
  * validation 400s (bad address, non-boolean `simulate`) stay verbatim and are
@@ -314,7 +311,7 @@ type SimulateFailureShape = {
  * Best-effort throughout, like `buildPaymentRequiredHint`: an unparseable body
  * or a missing field degrades to fewer lines rather than throwing inside an
  * error path. The original message is kept first so callers that pattern-match
- * on the status line keep working, and every echoed field is sanitised — a
+ * on the status line keep working. Every appended field copy is sanitised — a
  * contract can pick its own revert string, so it is untrusted input.
  */
 function buildSimulationRevertHint(originalMessage: string): string | null {
@@ -334,8 +331,14 @@ function buildSimulationRevertHint(originalMessage: string): string | null {
   } catch {
     return null;
   }
-  // A non-object body (array, string, null) has no `wouldRevert` to read.
-  if (!parsed || typeof parsed !== "object" || parsed.wouldRevert !== true) {
+  // `wouldRevert` is also true for simulator-side request validation failures.
+  // Only the explicit discriminator licenses an on-chain-revert diagnosis.
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    parsed.failureKind !== "revert" ||
+    parsed.wouldRevert !== true
+  ) {
     return null;
   }
 
@@ -420,11 +423,24 @@ async function callExecuteApi(
 // Optional idempotency key shared by the mutating tools. Forwarded to the REST
 // layer as the `Idempotency-Key` header so a retry with the same key and
 // arguments replays the original result instead of executing again.
+//
+// The description spells out which 409 to retry because an agent cannot tell
+// from the status: conflict and in-progress share it and mean opposite things,
+// and rotating the key on the in-progress one can broadcast a second
+// transaction for an action the first request is still completing. It also has
+// to say what `retryable` does NOT mean, since `false` on a conflict is neither
+// "stop" nor an unconditional "rotate".
+//
+// The rotate case needs its precondition stated here more than anywhere else.
+// This text is read by an LLM, which is the caller most likely to rebuild a body
+// from memory and re-serialize the same intent differently -- "0.1" against
+// "0.10" -- and an unqualified "use a NEW key" would tell it to resend a
+// transfer that is already in flight.
 const IDEMPOTENCY_KEY_ARG = z
   .string()
   .optional()
   .describe(
-    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Reusing a key with different arguments returns a 409 conflict."
+    "Optional Idempotency-Key (e.g. an agent-side transaction id). Retrying with the same key and arguments returns the original result instead of executing again, within a 24h window. Two 409s are possible, and the body's `retryable` field says only whether it is safe to send the request again under the SAME key. `idempotency_in_progress` (retryable true): the first request is still running, so retry shortly with the same key. `idempotency_conflict` (retryable false): this body is not the body the key was bound to. Rotate to a NEW key ONLY if this is genuinely different work. If it is the same intent you already sent, the body drifted rather than the intent - re-serializing `0.1` as `0.10`, or `network` for `chainId`, produces this - so rebuild the body to match the original and keep the key. Rotating there escapes the in-flight guard and can broadcast a second transaction. False does not mean give up. Keep the same key whenever the previous attempt's outcome is unknown, such as after a timeout, because rotating it then escapes the in-flight guard. The field appears on these two codes only; other statuses keep their usual meaning, so a 429 is still worth retrying after a back-off even though it carries no `retryable`."
   );
 
 // The direct-execution REST routes support a dry-run path that estimates gas
@@ -443,6 +459,17 @@ const SOLANA_DIRECT_EXECUTION_CHAIN_IDS = new Set<number>([
   SUPPORTED_CHAIN_IDS.SOLANA_DEVNET,
 ]);
 
+export function buildSimulationUnsupportedChainError(chainId: number): Error {
+  return new Error(
+    JSON.stringify({
+      error: "simulation_unsupported_chain",
+      message: "Direct-execution simulation is not supported on this chain.",
+      chain_id: chainId,
+      hint: "Direct-execution simulation is EVM-only. Preflight with a Solana-aware client before broadcasting.",
+    })
+  );
+}
+
 function assertSimulationSupported(chainId: string, simulate?: boolean): void {
   if (!simulate) {
     return;
@@ -459,9 +486,7 @@ function assertSimulationSupported(chainId: string, simulate?: boolean): void {
     return;
   }
   if (SOLANA_DIRECT_EXECUTION_CHAIN_IDS.has(normalizedChainId)) {
-    throw new Error(
-      `Direct-execution simulation is currently EVM-only; Solana chain ${normalizedChainId} cannot be simulated. Do not broadcast unless you can preflight the transaction through a Solana-aware client.`
-    );
+    throw buildSimulationUnsupportedChainError(normalizedChainId);
   }
 }
 
@@ -1122,11 +1147,66 @@ export function registerTools(
 
   server.tool(
     "get_execution",
-    "Get combined status and step-by-step logs for a workflow execution. Replaces the v1.11 get_execution_status + get_execution_logs pair. Returns { status, logs } in a single response. `status` and each log's `transactionHashes[].verified`/`receiptStatus` are independently reconciled against on-chain receipts before the execution is allowed to finalize as success -- this, not execute_workflow's trigger acknowledgement, is the authoritative signal for whether a workflow (and any money movement within it) actually completed. By default returns full node input/output data (backward compatible with v1.11 get_execution_logs no-param callers). Pass `includeData: false` to omit input/output/outputRaw blobs, `nodeIds: string[]` to restrict full data to specific nodes (status and error always returned for every node), or `truncateData: number` (bytes) to cap individual input/output/outputRaw payloads. The `error` field is never truncated.",
+    "Get combined status and step-by-step logs for a workflow execution. Replaces the v1.11 get_execution_status + get_execution_logs pair. Returns { status, logs } in a single response. `status` and each log's `transactionHashes[].verified`/`receiptStatus` are independently reconciled against on-chain receipts before the execution is allowed to finalize as success -- this, not execute_workflow's trigger acknowledgement, is the authoritative signal for whether a workflow (and any money movement within it) actually completed. By default returns full node input/output data (backward compatible with v1.11 get_execution_logs no-param callers). Pass `includeData: false` to omit input/output/outputRaw blobs, `nodeIds: string[]` to restrict full data to specific nodes (status and error always returned for every node), or `truncateData: number` (bytes) to cap individual input/output/outputRaw payloads. The `error` field is never truncated. One exception to the shape: for an execution owned by another organization that you can see only through its workflow's public share setting, `logs` is null and `status` is redacted (node identifiers omitted) -- includeData, nodeIds and truncateData have no effect there.",
     GET_EXECUTION_SCHEMA,
     { title: "Get Execution", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_execution", scope, async (args) =>
       withToolLogging("get_execution", undefined, async () => {
+        const accessRequest = new Request(`${internalApiBaseUrl}/mcp`, {
+          headers: { Authorization: authHeader },
+        });
+        const { resolveExecutionViewAccess } = await import(
+          "@/lib/workflow/execution-access"
+        );
+        const viewAccess = await resolveExecutionViewAccess(
+          accessRequest,
+          args.executionId
+        );
+        if (viewAccess.mode === "invalidAuth") {
+          throw new Error(viewAccess.error);
+        }
+        if (viewAccess.mode === "notFound") {
+          throw new Error(
+            `API call failed: 404 Not Found - ${JSON.stringify({ error: "Execution not found" })}`
+          );
+        }
+        if (viewAccess.mode === "accessDenied") {
+          throw new Error(
+            `API call failed: 403 Forbidden - ${JSON.stringify({ error: "Access denied" })}`
+          );
+        }
+
+        if (viewAccess.mode === "publicReadOnly") {
+          const statusPath = `/api/workflows/executions/${args.executionId}/status`;
+          const statusData = await callApi(
+            internalApiBaseUrl,
+            authHeader,
+            statusPath,
+            "GET"
+          );
+          // Same top-level shape as the owned path. Dropping the `logs` key
+          // here instead would make the response shape depend on ownership,
+          // so a client written against its own execution would silently read
+          // `undefined` (and report zero steps) the first time it was pointed
+          // at a shared one. `null` says "withheld", not "empty".
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    status: statusData,
+                    logs: null,
+                    note: "This execution belongs to another organization and is visible only through its workflow's public share setting. Step logs are withheld and the status is redacted (node identifiers omitted); includeData, nodeIds and truncateData do not apply.",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
         const data = await fetchExecutionData(
           internalApiBaseUrl,
           authHeader,
