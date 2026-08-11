@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCachedResource } from "@/lib/hooks/use-cached-resource";
 import { useSettingsContext } from "../settings-context";
-import { cacheRead, cacheWrite } from "./settings-cache";
 
 type CachedSection<T> = {
   data: T | undefined;
@@ -25,19 +24,5 @@ export function useCachedSection<T>(
   fetcher: () => Promise<T>
 ): CachedSection<T> {
   const { revision } = useSettingsContext();
-  const [data, setData] = useState<T | undefined>(() => cacheRead<T>(key));
-
-  const load = useCallback(async (): Promise<void> => {
-    const next = await fetcher();
-    cacheWrite(key, next);
-    setData(next);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: the fetcher is rebuilt on every render by its callers
-  }, [key]);
-
-  useEffect(() => {
-    setData(cacheRead<T>(key));
-    load().catch(() => undefined);
-  }, [key, load, revision]);
-
-  return { data, loading: data === undefined, refetch: load };
+  return useCachedResource(key, fetcher, revision);
 }
