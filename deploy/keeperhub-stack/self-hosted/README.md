@@ -1,7 +1,12 @@
 # Self-hosted KeeperHub
 
-Installs KeeperHub into a Kubernetes cluster you own, with no AWS account and no
-dependency on any KeeperHub-operated service.
+Installs KeeperHub into a Kubernetes cluster you own, with no AWS account.
+
+The running product depends on no service KeeperHub operates. The install itself
+reaches exactly one, the Helm chart repository, and `CHART_REPO_URL` or
+`CHART_DIR` avoids that too. [DEPENDENCIES.md](DEPENDENCIES.md) lists every host
+the build, the install and the running product contact, what each one is for,
+and how to switch it off or point it elsewhere.
 
 A peer of `../staging/` and `../prod/`: the same `keeperhub-stack` umbrella chart,
 the same structure, different values. Diff `values.yaml` against
@@ -12,6 +17,7 @@ while it stays structurally identical to what staging and production run.
 
 | Path | What it is |
 | --- | --- |
+| `DEPENDENCIES.md` | every external host the build, install and running product reach, and how to turn each off |
 | `values.yaml` | chart values common to every install, and the `global:` block you set |
 | `values.db-{bundled,byo}.yaml`, `values.queue-{bundled,byo}.yaml` | the parts that differ per mode, merged over `values.yaml` |
 | `values.queue-byo-endpoint.yaml` | merged only when `QUEUE_MODE=byo` and `AWS_ENDPOINT_URL` is set |
@@ -329,17 +335,19 @@ once in the node. Budget tens of minutes and around 25GB.
 These are properties of the shipped application, not of this profile. Each is
 tracked separately.
 
-**The app only runs on a `*.keeperhub.com` hostname.** `lib/trusted-origins.ts`
-hardcodes the trusted-origin list to `http://localhost:*`, `http://127.0.0.1:*`
-and `https://*.keeperhub.com`, with no environment variable to extend it. That
-list backs the CSRF guard in `proxy.ts` and better-auth, so on any other
-hostname every cookie-authenticated POST/PATCH/PUT/DELETE is rejected. The UI
-loads and reads fine, so it looks like the app works until you try to save:
-enabling a workflow returns "Failed to update workflow state" and the only trace
-is `[csrf] blocked: untrusted origin` in the app log. `values.minikube.yaml` sets `appHost` to
-`selfhosted.keeperhub.com` to stay inside the trusted suffix; the base profile has
-no default, because **a client cannot use one** - they do not own the domain. Making trusted origins configurable is a
-prerequisite for any client install (KEEP-1110).
+**Any hostname works, provided the origin is trusted.** `lib/trusted-origins.ts`
+ships a fixed list covering `http://localhost:*`, `http://127.0.0.1:*` and
+`https://*.keeperhub.com`, and that list backs the CSRF guard in `proxy.ts` and
+`lib/middleware/auth-helpers.ts`. An origin outside it has every
+cookie-authenticated POST/PATCH/PUT/DELETE rejected while the UI still loads and
+reads, so it looks like the app works until you try to save: enabling a workflow
+returns "Failed to update workflow state" and the only trace is
+`[csrf] blocked: untrusted origin` in the app log.
+
+This profile sets `ADDITIONAL_TRUSTED_ORIGINS` from `global.appHost`, so your own
+domain is trusted without further configuration. Set it yourself only if the app
+is reached on more origins than that one - a vanity domain, or a separate
+hostname for an internal network.
 
 **There is no email.** `lib/email.ts` posts to SendGrid's HTTP API, so there is
 no SMTP setting and no local mail-catcher option. Without `SENDGRID_API_KEY`,

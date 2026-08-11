@@ -64,13 +64,24 @@ if [ "$SKIP_BUILD" = false ]; then
     # buildx merges list fields across -f files and an empty-list assignment does
     # not clear an inherited value. The root file's cache refs point at
     # ${ECR_REGISTRY}, which resolves to "/:cache" here and is not a valid ref.
+    # These three are a command prefix: they enter docker's environment, where
+    # bake reads them as HCL variables. shellcheck loses track of that across
+    # the line continuations and reports them unused, which fails the
+    # --severity=warning gate in maintainability.yml.
+    # shellcheck disable=SC2034
     NEXT_PUBLIC_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
     IMAGE_TAG="$IMAGE_TAG" \
     LOCAL_IMAGE_REPO="$IMAGE_REPO" \
+    # DOCS_BASE_URL is emptied so the image does not redirect /llms.txt to
+    # docs.keeperhub.com. next.config.ts bakes redirects into the build, so this
+    # cannot be a Helm value - it has to be decided here. Set on every target
+    # rather than just app: the four that run `next build` share one builder
+    # stage and BuildKit only deduplicates it while their args match.
     docker buildx bake \
         -f docker-bake.hcl \
         -f "$SCRIPT_DIR/docker-bake.hcl" \
         --set "*.cache-from=" --set "*.cache-to=" \
+        --set "*.args.DOCS_BASE_URL=" \
         local
 fi
 

@@ -161,9 +161,10 @@ app:
       value: '{{ .Values.global.awsRegion }}'
     # Set for the same reason staging sets them. The Code plugin throws at
     # module load when NODE_ENV is "production" unless both are present, and the
-    # plugin registry imports it eagerly. NODE_ENV is "development" here, so the
-    # guard cannot fire today, but leaving these unset would turn any future
-    # NODE_ENV change into a crash on import rather than a config error.
+    # plugin registry imports it eagerly. Both are required, not precautionary:
+    # Next.js inlines process.env.NODE_ENV at build time, so the compiled app
+    # takes the "production" branch whatever NODE_ENV says at runtime. See the
+    # NODE_ENV entry below for the same trap in lib/auth.ts.
     SANDBOX_BACKEND:
       type: kv
       value: "remote"
@@ -355,6 +356,17 @@ app:
       type: template
       value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
     BETTER_AUTH_URL:
+      type: template
+      value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
+    # Trusts this install's own hostname for cookie-authenticated writes.
+    #
+    # The application ships a fixed trusted-origin list covering localhost and
+    # *.keeperhub.com. Without this entry a client domain loads and reads fine
+    # and then fails every save with 403 and "[csrf] blocked: untrusted origin"
+    # in the app log - which looks like the app is broken rather than
+    # unconfigured. Set from the same value as the URLs above so the three
+    # cannot disagree.
+    ADDITIONAL_TRUSTED_ORIGINS:
       type: template
       value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
     # Nothing is gated in a self-hosted install; this short-circuits both the

@@ -32,9 +32,13 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-}"
 NAMESPACE="${NAMESPACE:-keeperhub}"
 RELEASE="${RELEASE:-keeperhub}"
 
-CHART_REPO_NAME="techops-services"
-CHART_REPO_URL="https://techops-services.github.io/helm-charts"
-CHART_NAME="techops-services/keeperhub-stack"
+# The chart repository. This is the only host the install reaches that
+# KeeperHub operates, so it is overridable for an installer who mirrors the
+# chart rather than pulling it from us. CHART_DIR below bypasses the repository
+# entirely and installs from a local directory.
+CHART_REPO_NAME="${CHART_REPO_NAME:-techops-services}"
+CHART_REPO_URL="${CHART_REPO_URL:-https://techops-services.github.io/helm-charts}"
+CHART_NAME="${CHART_NAME:-${CHART_REPO_NAME}/keeperhub-stack}"
 CHART_VERSION="${CHART_VERSION:-0.5.0}"
 # Point at a working-tree chart instead of the published one, for developing
 # chart changes alongside this profile: CHART_DIR=../../../helm-charts/charts/keeperhub-stack
@@ -54,17 +58,15 @@ IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
 
 # The hostname the app is served on, and how it is exposed.
 #
-# One caveat that applies to every hostname outside *.keeperhub.com:
-# lib/trusted-origins.ts hardcodes the trusted-origin list to http://localhost:*,
-# http://127.0.0.1:* and https://*.keeperhub.com, with no environment variable to
-# extend it. That list backs the CSRF guard in proxy.ts and better-auth, so on
-# any other hostname every cookie-authenticated POST/PATCH/PUT/DELETE is
-# rejected. The UI still loads and reads fine, so it looks like the app works
-# until you try to save: enabling a workflow returns "Failed to update workflow
-# state" and the only trace is "[csrf] blocked: untrusted origin" in the app log.
+# Any hostname works. The application ships a fixed trusted-origin list
+# (lib/trusted-origins.ts) covering localhost and *.keeperhub.com, which backs
+# the CSRF guard; the profile extends it with this host through
+# ADDITIONAL_TRUSTED_ORIGINS so a client domain is trusted out of the box.
 #
-# Making the trusted origins configurable is a prerequisite for any client
-# domain, and is tracked separately.
+# Worth knowing because the failure mode is quiet: an untrusted origin still
+# loads and reads, and only writes fail, with 403 and "[csrf] blocked:
+# untrusted origin" in the app log. If you serve the app on more origins than
+# APP_HOST, add them to ADDITIONAL_TRUSTED_ORIGINS yourself.
 APP_HOST="${APP_HOST:-}"
 INGRESS_CLASS="${INGRESS_CLASS:-}"
 TLS_ISSUER="${TLS_ISSUER:-}"
