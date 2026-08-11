@@ -6,6 +6,7 @@ import {
   FolderTree,
   Gauge,
   Key,
+  Layers,
   type LucideIcon,
   Plug,
   Shield,
@@ -273,6 +274,29 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ownerOnly: true,
       },
       {
+        segment: "plans",
+        scope: "org",
+        label: "Plans",
+        icon: Layers,
+        description: "The plan this organization is on, and the alternatives.",
+        panels: [
+          {
+            title: "Plans",
+            tags: [
+              "pricing",
+              "upgrade",
+              "downgrade",
+              "change plan",
+              "tiers",
+              "trial",
+              "monthly",
+              "yearly",
+            ],
+          },
+        ],
+        ownerOnly: true,
+      },
+      {
         segment: "connections",
         scope: "org",
         label: "Connections",
@@ -396,6 +420,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
           {
             title: "Organisation keys",
             tags: [
+              "api keys",
+              "cli",
               "organization keys",
               "shared keys",
               "team keys",
@@ -405,10 +431,13 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             ],
           },
           {
-            title: "Your keys",
+            title: "Webhook keys",
             tags: [
+              "wbf",
+              "webhook authentication",
+              "webhook trigger",
+              "your keys",
               "personal keys",
-              "my keys",
               "scopes",
               "revoke a key",
               "key activity",

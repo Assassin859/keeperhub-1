@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { UsageMeter } from "./billing/usage-meter";
 import { useBillingSummary } from "./hooks/use-billing-summary";
 import { SectionHeader, SettingsCard, StatTile } from "./section";
+import { useSettingsContext } from "./settings-context";
 import { FormSkeleton, StatTilesSkeleton } from "./skeletons";
 
 const PLAN_LABELS: Record<string, string> = {
@@ -20,6 +21,7 @@ function formatDate(value: string | null): string {
 }
 
 export function BillingSection(): React.ReactElement {
+  const { organizationId } = useSettingsContext();
   const { summary, loading, openPortal, openingPortal } = useBillingSummary();
   const isPaid = summary ? summary.plan !== "free" : false;
 
@@ -28,7 +30,7 @@ export function BillingSection(): React.ReactElement {
       <SectionHeader
         action={
           <Button asChild>
-            <Link href="/billing#plans-section">
+            <Link href={`/settings/${organizationId}/plans`}>
               {isPaid ? "Change plan" : "Upgrade"}
             </Link>
           </Button>
