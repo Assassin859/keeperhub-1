@@ -32,6 +32,7 @@ import {
   initializeWalletSigner,
 } from "@/lib/web3/wallet-helpers";
 import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
+import { rpcRelayErrorClass } from "@/lib/rpc/providers";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -123,18 +124,22 @@ export type BatchWriteContractResult =
  * Soften an execution failure into a success value when failOnError=false, so
  * the workflow continues past a signer/RPC failure or a whole-batch revert
  * instead of aborting. This is a local copy of applyFailOnError in
- * write-contract-core.ts (same rationale: only failures with no errorClass,
- * meaning the actual attempt to broadcast, are eligible; USER/SYSTEM
- * configuration failures always hard-fail). Duplicated rather than imported
- * because write-contract-core.ts's version is nominally typed against
- * WriteContractResult, which would drop `results`/`totalCalls` from the
- * return type if reused here.
+ * write-contract-core.ts (same rationale and same errorClass carve-out: a
+ * failure with no errorClass, meaning the actual attempt to broadcast, or one
+ * classified EXTERNAL (an RPC/relay transport failure, see
+ * rpcRelayErrorClass) is eligible; USER/SYSTEM configuration failures always
+ * hard-fail). Duplicated rather than imported because write-contract-core.ts's
+ * version is nominally typed against WriteContractResult, which would drop
+ * `results`/`totalCalls` from the return type if reused here.
  */
 export function applyBatchFailOnError(
   result: BatchWriteContractResult,
   failOnError: unknown
 ): BatchWriteContractResult {
-  if (result.success || result.errorClass || resolveFailOnError(failOnError)) {
+  if (result.success || resolveFailOnError(failOnError)) {
+    return result;
+  }
+  if (result.errorClass && result.errorClass !== ExecutionErrorType.EXTERNAL) {
     return result;
   }
   return {
@@ -606,14 +611,22 @@ export async function batchWriteContractCore(
       };
     } catch (error) {
       const rejection = classifyRevert(error, iface);
+      const errorClass = rpcRelayErrorClass(error);
       const hash = (error as { receipt?: { hash?: string }; transactionHash?: string })
         ?.receipt?.hash ??
         (error as { transactionHash?: string })?.transactionHash;
       return {
         success: false,
         error: formatContractError(error, iface),
+        ...(errorClass ? { errorClass } : {}),
         ...(hash ? { transactionHash: hash, chainId } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
+        // Already computed by the pre-broadcast simulation, which always
+        // runs before this catch is reachable; carrying them forward matches
+        // the failure variant's own type doc (results/totalCalls "present
+        // when the pre-broadcast simulation ran").
+        results,
+        totalCalls: results.length,
       };
     }
   });

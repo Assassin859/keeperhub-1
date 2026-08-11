@@ -58,6 +58,11 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
   getRpcProvider: (...args: unknown[]) => mockGetRpcProvider(...args),
 }));
 
+const mockRpcRelayErrorClass = vi.fn();
+vi.mock("@/lib/rpc/providers", () => ({
+  rpcRelayErrorClass: (...args: unknown[]) => mockRpcRelayErrorClass(...args),
+}));
+
 vi.mock("@/lib/contracts/multicall3", () => ({
   MULTICALL3_ADDRESS: "0xcA11bde05977b3631167028862bE2a173976CA11",
   MULTICALL3_ABI: [
@@ -639,8 +644,33 @@ describe("batch-write-contract - failOnError softening", () => {
       throw new Error("expected softened success");
     }
     expect(softened.error).toContain("nonce too low");
-    expect(softened.results).toBeUndefined();
+    // The pre-broadcast simulation already decoded both calls successfully
+    // before the broadcast itself failed, so the failure carries them
+    // forward (matches the type doc: present whenever simulation ran) and
+    // the softened success value does too.
+    expect(softened.results).toHaveLength(2);
+    expect(softened.totalCalls).toBe(2);
     expect(softened.transactionHash).toBeUndefined();
+  });
+
+  it("tags a broadcast failure caused by an RPC relay transport error as EXTERNAL, and still softens it", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+    mockExecuteContractCall.mockRejectedValueOnce(new Error("relay unreachable"));
+    mockRpcRelayErrorClass.mockReturnValueOnce(ExecutionErrorType.EXTERNAL);
+
+    const result = await batchWriteContractCore(baseInput({}));
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.errorClass).toBe(ExecutionErrorType.EXTERNAL);
+
+    // EXTERNAL failures are still softenable, same as an untagged failure --
+    // only USER/SYSTEM-classified failures are a hard boundary. This is what
+    // keeps failOnError=false skipping past a private-relay hiccup instead of
+    // aborting the workflow, matching write-contract-core's own carve-out.
+    const softened = applyBatchFailOnError(result, false);
+    expect(softened.success).toBe(true);
   });
 });
 
