@@ -20,7 +20,7 @@ export function ApiKeysSection(): React.ReactElement {
       <KeysCard
         activity={{ resourceType: "org_api_key", title: "Organisation key activity" }}
         canManage={isAdmin}
-        description="Shared by the whole organization. Admins and owners can mint and revoke them."
+        description="Call the API and the CLI on this organization's behalf, across everything the scopes allow. Admins and owners can mint and revoke them."
         keyType="organisation"
         listEndpoint="/api/keys"
         readOnlyReason={ORG_READ_ONLY}
@@ -29,13 +29,15 @@ export function ApiKeysSection(): React.ReactElement {
       />
 
       <KeysCard
-        activity={isAdmin ? { resourceType: "api_key", title: "User key activity" } : null}
+        activity={
+          isAdmin ? { resourceType: "api_key", title: "Webhook key activity" } : null
+        }
         canManage
-        description="Personal to your account. Used for webhook authentication."
+        description="Authenticate calls into this organization's webhook triggers. Scoped to webhooks only, and valid for this organization."
         keyType="webhook"
         listEndpoint="/api/api-keys"
         showCreator={false}
-        title="Your keys"
+        title="Webhook keys"
       />
     </>
   );
