@@ -56,7 +56,9 @@ export function SectionHeader({
 }): React.ReactElement {
   return (
     <div className="flex flex-wrap items-end justify-between gap-4">
-      <div className="flex min-w-0 items-center gap-3">
+      {/* Aligned to the title's line, not to the middle of the block: with a
+          second line under the title the control sat between the two. */}
+      <div className="flex min-w-0 items-start gap-3">
         {leading}
         <div className="flex min-w-0 flex-col gap-1.5">
           <h1 className="font-bold text-2xl tracking-tight">{title}</h1>

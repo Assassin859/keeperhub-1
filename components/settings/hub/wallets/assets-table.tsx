@@ -50,10 +50,11 @@ export function AssetsTable({
     <Table className="table-fixed">
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
-          <TableHead className="w-[28%]">Asset</TableHead>
+          <TableHead className="w-[26%]">Asset</TableHead>
           <TableHead className="w-[18%]">Network</TableHead>
           <TableHead className="w-[12%] text-right">Balance</TableHead>
-          <TableHead className="w-[42%]">Contract</TableHead>
+          <TableHead className="w-[32%]">Contract</TableHead>
+          <TableHead className="w-[12%]" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -86,28 +87,12 @@ export function AssetsTable({
                   )}
                 </span>
               </TableCell>
-              <TableCell className="text-right">
-                {/* Withdrawing acts on the balance, so it sits with it. */}
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <span className="font-mono tabular-nums">
-                    {fmt(row.balance)}
-                  </span>
-                  {canWithdraw && funded && (
-                    <Button
-                      className="opacity-0 transition focus-visible:opacity-100 group-hover:opacity-100"
-                      onClick={() => onWithdraw(row.chainId, row.tokenAddress)}
-                      size="sm"
-                      variant="outline"
-                    >
-                      <Send className="size-3.5" />
-                      Withdraw
-                    </Button>
-                  )}
-                </div>
+              <TableCell className="text-right font-mono tabular-nums">
+                {fmt(row.balance)}
               </TableCell>
               <TableCell>
                 {row.tokenAddress ? (
-                  <div className="flex min-w-0 items-center gap-1">
+                  <div className="flex min-w-0 flex-nowrap items-center gap-1">
                     {/* Shown whole where it fits, clipped where it does not,
                         rather than always cut to a fixed shape. */}
                     <span className="truncate font-mono text-xs">
@@ -150,12 +135,25 @@ export function AssetsTable({
                   <span className="text-muted-foreground text-xs">--</span>
                 )}
               </TableCell>
+              <TableCell className="text-right">
+                {canWithdraw && funded && (
+                  <Button
+                    className="h-7 gap-1.5 px-2 text-xs"
+                    onClick={() => onWithdraw(row.chainId, row.tokenAddress)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Send className="size-3" />
+                    Withdraw
+                  </Button>
+                )}
+              </TableCell>
             </TableRow>
           );
         })}
         {canAdd && (
           <TableRow className={SETTINGS_ROW}>
-            <TableCell colSpan={4}>
+            <TableCell colSpan={5}>
               <button
                 className="flex items-center gap-3 text-left"
                 onClick={onAdd}
