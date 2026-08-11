@@ -1,6 +1,6 @@
 "use client";
 
-import { getDefaultStore, useSetAtom } from "jotai";
+import { useSetAtom } from "jotai";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { invalidateFeatureSnapshot } from "@/hooks/use-features";
@@ -22,6 +22,12 @@ export function useOrganization() {
   const router = useRouter();
   const pathname = usePathname();
   const setAnalyticsProjectId = useSetAtom(analyticsProjectIdAtom);
+  // Through the hook, not getDefaultStore: the app mounts its own jotai store
+  // in app/layout.tsx, and a write to the default one lands where nothing is
+  // reading, which is why this reset never ran.
+  const resetWorkflowStateForOrgSwitch = useSetAtom(
+    resetWorkflowStateForOrgSwitchAtom
+  );
 
   // Register this hook's refetch callback so it can be triggered externally
   useEffect(
@@ -36,7 +42,7 @@ export function useOrganization() {
   const switchOrganization = async (orgId: string) => {
     await authClient.organization.setActive({ organizationId: orgId });
     // Reset workflow state only after org switch succeeds (safe in hook context)
-    getDefaultStore().set(resetWorkflowStateForOrgSwitchAtom);
+    resetWorkflowStateForOrgSwitch();
     setAnalyticsProjectId(null);
     invalidateFeatureSnapshot();
     refetchSidebar();
