@@ -73,4 +73,14 @@ describe("validateWorkflow - allowance preflight", () => {
     );
     expect(result.warnings.some((w) => w.code === CODE)).toBe(false);
   });
+
+  it("ignores allowance methods on a batch-write-contract node (no single contractAddress to gate)", () => {
+    const result = validateWorkflow(
+      writeWorkflow({
+        actionType: "web3/batch-write-contract",
+        abiFunction: "transferFrom",
+      })
+    );
+    expect(result.warnings.some((w) => w.code === CODE)).toBe(false);
+  });
 });

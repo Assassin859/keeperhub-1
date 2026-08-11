@@ -401,11 +401,7 @@ function runAllowancePreflightCheck(
   }
   for (const [idx, node] of workflow.nodes.entries()) {
     const cfg = readNodeActionConfig(node);
-    if (
-      cfg === null ||
-      typeof cfg.actionType !== "string" ||
-      !cfg.actionType.includes("write-contract")
-    ) {
+    if (cfg === null || !isWriteActionType(cfg.actionType)) {
       continue;
     }
     const method = bareMethodName(cfg.abiFunction);
