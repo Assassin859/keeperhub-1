@@ -14,25 +14,27 @@ function results(query: string, access = OWNER): string[] {
 describe("findSettingsMatches", () => {
   it("finds both the personal and the org side of a term", () => {
     expect(results("mfa")).toEqual([
-      "Security > Two-factor authentication",
+      "Account security > Two-factor authentication",
       "Security > Organization MFA enforcement",
     ]);
   });
 
   it("matches a card by any of its other names", () => {
     for (const query of ["2fa", "totp", "authenticator", "backup codes"]) {
-      expect(results(query)).toContain("Security > Two-factor authentication");
+      expect(results(query)).toContain(
+        "Account security > Two-factor authentication"
+      );
     }
   });
 
   it("ignores the punctuation in a card's title", () => {
     expect(results("two factor")).toContain(
-      "Security > Two-factor authentication"
+      "Account security > Two-factor authentication"
     );
   });
 
   it("matches whole words, so pin does not reach grouping", () => {
-    expect(results("pin")).toEqual(["Security > Wallet step-up"]);
+    expect(results("pin")).toEqual(["Account security > Wallet step-up"]);
   });
 
   it("lists everything in a section when the section itself is named", () => {

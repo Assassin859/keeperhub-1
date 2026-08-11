@@ -9,6 +9,7 @@ import {
   type LucideIcon,
   Plug,
   Shield,
+  ShieldCheck,
   User,
   Wallet,
 } from "lucide-react";
@@ -90,7 +91,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
       {
         segment: "security",
         scope: "user",
-        label: "Security",
+        label: "Account security",
         icon: Shield,
         description:
           "Two-factor, password, wallet step-up and active sessions.",
@@ -132,17 +133,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
               "sign out other devices",
               "log out everywhere",
               "browsers",
-            ],
-          },
-          {
-            title: "Organization MFA enforcement",
-            tags: [
-              "mfa",
-              "2fa",
-              "require two-factor",
-              "enforce mfa",
-              "mandatory mfa",
-              "org-wide security",
             ],
           },
         ],
@@ -204,6 +194,28 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         tags: ["team", "org", "workspace", "company"],
       },
       {
+        segment: "security",
+        scope: "org",
+        label: "Security",
+        icon: ShieldCheck,
+        description: "Security rules that apply to everyone here.",
+        panels: [
+          {
+            title: "Organization MFA enforcement",
+            tags: [
+              "mfa",
+              "2fa",
+              "require two-factor",
+              "enforce mfa",
+              "mandatory mfa",
+              "org-wide security",
+            ],
+          },
+        ],
+        tags: ["org security", "policy"],
+        adminOnly: true,
+      },
+      {
         segment: "notifications",
         scope: "org",
         label: "Notifications",
@@ -225,6 +237,83 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
         tags: ["email", "alerts"],
         adminOnly: true,
+      },
+      {
+        segment: "billing",
+        scope: "org",
+        label: "Billing and plan",
+        icon: CreditCard,
+        description: "Subscription, invoices and payment method.",
+        panels: [
+          {
+            title: "This month",
+            tags: [
+              "current plan",
+              "subscription",
+              "executions used",
+              "usage",
+              "quota",
+              "gas sponsorship credits",
+            ],
+          },
+          {
+            title: "Payment and invoices",
+            tags: [
+              "payment method",
+              "card",
+              "invoices",
+              "receipts",
+              "upgrade",
+              "downgrade",
+              "cancel subscription",
+            ],
+          },
+        ],
+        tags: ["pricing", "cost", "pay"],
+        ownerOnly: true,
+      },
+      {
+        segment: "connections",
+        scope: "org",
+        label: "Connections",
+        icon: Plug,
+        description: "Credentials for Discord, SendGrid, databases and more.",
+        panels: [
+          {
+            title: "Configured connections",
+            tags: [
+              "credentials",
+              "add a connection",
+              "connection activity",
+              "discord",
+              "sendgrid",
+              "telegram",
+              "database",
+              "postgres",
+              "webhook",
+              "secrets",
+            ],
+          },
+        ],
+        tags: ["integrations", "third party", "apps"],
+      },
+      {
+        segment: "workspace",
+        scope: "org",
+        label: "Projects and tags",
+        icon: FolderTree,
+        description: "How workflows are grouped in the sidebar.",
+        panels: [
+          {
+            title: "Projects",
+            tags: ["folders", "group workflows", "sidebar grouping"],
+          },
+          {
+            title: "Tags",
+            tags: ["labels", "colours", "colors", "tag colour"],
+          },
+        ],
+        tags: ["organise workflows", "sidebar"],
       },
     ],
   },
@@ -292,70 +381,11 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         tags: ["risk", "guardrails", "budget"],
         ownerOnly: true,
       },
-      {
-        segment: "billing",
-        scope: "org",
-        label: "Billing and plan",
-        icon: CreditCard,
-        description: "Subscription, invoices and payment method.",
-        panels: [
-          {
-            title: "This month",
-            tags: [
-              "current plan",
-              "subscription",
-              "executions used",
-              "usage",
-              "quota",
-              "gas sponsorship credits",
-            ],
-          },
-          {
-            title: "Payment and invoices",
-            tags: [
-              "payment method",
-              "card",
-              "invoices",
-              "receipts",
-              "upgrade",
-              "downgrade",
-              "cancel subscription",
-            ],
-          },
-        ],
-        tags: ["pricing", "cost", "pay"],
-        ownerOnly: true,
-      },
     ],
   },
   {
     label: "Developer",
     items: [
-      {
-        segment: "connections",
-        scope: "org",
-        label: "Connections",
-        icon: Plug,
-        description: "Credentials for Discord, SendGrid, databases and more.",
-        panels: [
-          {
-            title: "Configured connections",
-            tags: [
-              "credentials",
-              "add a connection",
-              "connection activity",
-              "discord",
-              "sendgrid",
-              "telegram",
-              "database",
-              "postgres",
-              "webhook",
-              "secrets",
-            ],
-          },
-        ],
-        tags: ["integrations", "third party", "apps"],
-      },
       {
         segment: "api-keys",
         scope: "org",
@@ -420,29 +450,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
       },
     ],
   },
-  {
-    label: "Workspace",
-    items: [
-      {
-        segment: "workspace",
-        scope: "org",
-        label: "Projects and tags",
-        icon: FolderTree,
-        description: "How workflows are grouped in the sidebar.",
-        panels: [
-          {
-            title: "Projects",
-            tags: ["folders", "group workflows", "sidebar grouping"],
-          },
-          {
-            title: "Tags",
-            tags: ["labels", "colours", "colors", "tag colour"],
-          },
-        ],
-        tags: ["organise workflows", "sidebar"],
-      },
-    ],
-  },
 ];
 
 /** Where a nav entry points, given the organization currently in scope. */
@@ -457,30 +464,33 @@ export function settingsHref(
 }
 
 /**
- * The nav entry a path belongs to. Segments are unique, so the organization id
- * in the middle of an org-scoped path does not need to be parsed out.
+ * Position, not presence: account and organization both have a `security`
+ * page, and they are told apart by where the segment sits in the path.
+ * `/settings/security` is the account one, `/settings/<orgId>/security` the
+ * organization one.
  */
-export function findSettingsItem(pathname: string): SettingsNavItem | null {
+export function isSettingsItemActive(
+  item: SettingsNavItem,
+  pathname: string
+): boolean {
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] !== "settings") {
-    return null;
+    return false;
   }
+  const at = item.scope === "user" ? parts[1] : parts[2];
+  return at === item.segment;
+}
+
+/** The nav entry a path belongs to. */
+export function findSettingsItem(pathname: string): SettingsNavItem | null {
   for (const group of SETTINGS_NAV) {
     for (const item of group.items) {
-      if (parts.includes(item.segment)) {
+      if (isSettingsItemActive(item, pathname)) {
         return item;
       }
     }
   }
   return null;
-}
-
-/** True when the path is inside this entry's section. */
-export function isSettingsItemActive(
-  item: SettingsNavItem,
-  pathname: string
-): boolean {
-  return pathname.split("/").filter(Boolean).includes(item.segment);
 }
 
 export function isSettingsItemVisible(

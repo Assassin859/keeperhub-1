@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { MfaEnforcementSection } from "@/components/organization/mfa-enforcement-section";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { WalletSecuritySection } from "@/components/settings/wallet-security-section";
 import { useAccount } from "./hooks/use-account";
@@ -10,12 +9,10 @@ import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { RevokeSessionPanel } from "./security/revoke-session-panel";
 import { SessionsTable } from "./security/sessions-table";
 import { TwoFactorCard } from "./security/two-factor-card";
-import { useSettingsContext } from "./settings-context";
 import { RowsSkeleton } from "./skeletons";
 
 export function SecuritySection(): React.ReactElement {
   const { providerId, loading } = useAccount();
-  const { organizationId, isAdmin, isOwner } = useSettingsContext();
   const security = useSecurity();
   const [revoking, setRevoking] = useState<SessionRow | null>(null);
   const isWalletAccount = providerId === "siwe";
@@ -24,7 +21,7 @@ export function SecuritySection(): React.ReactElement {
     <>
       <SectionHeader
         description="What it takes to sign in as you, and which devices currently can."
-        title="Security"
+        title="Account security"
       />
 
       {isWalletAccount ? (
@@ -78,18 +75,6 @@ export function SecuritySection(): React.ReactElement {
           </>
         )}
       </SettingsCard>
-
-      {isAdmin && organizationId && (
-        <SettingsCard
-          description="Require every member of this organization to enrol a second factor before they can run workflows."
-          title="Organization MFA enforcement"
-        >
-          <MfaEnforcementSection
-            canEdit={isOwner}
-            organizationId={organizationId}
-          />
-        </SettingsCard>
-      )}
     </>
   );
 }
