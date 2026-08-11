@@ -13,6 +13,25 @@ import { SectionHeader, SettingsCard, StatTile } from "./section";
 import { useSettingsContext } from "./settings-context";
 import { FormSkeleton } from "./skeletons";
 
+/** Provider statuses arrive lower-case and underscored, e.g. `past_due`. */
+const STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  canceled: "Canceled",
+  incomplete: "Incomplete",
+  incomplete_expired: "Expired",
+  past_due: "Past due",
+  paused: "Paused",
+  trialing: "Trialing",
+  unpaid: "Unpaid",
+};
+
+function statusLabel(status: string | undefined): string {
+  if (!status) {
+    return "";
+  }
+  return STATUS_LABELS[status] ?? status.replace(/_/g, " ");
+}
+
 const PLAN_LABELS: Record<string, string> = {
   business: "Business",
   enterprise: "Enterprise",
@@ -61,7 +80,7 @@ export function BillingSection(): React.ReactElement {
           loading={pending}
           tone={summary?.cancelAtPeriodEnd ? "warning" : "neutral"}
           value={
-            summary?.status === "active" ? "Active" : (summary?.status ?? "")
+            statusLabel(summary?.status)
           }
         />
         <StatTile
@@ -101,10 +120,12 @@ export function BillingSection(): React.ReactElement {
       </SettingsCard>
 
       {isPaid && (
-        <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-          <BillingHistory />
+        <>
+          {/* One under the other, each the full width: side by side left the
+              history table too narrow to show its first column. */}
           <BillingDetails />
-        </div>
+          <BillingHistory />
+        </>
       )}
 
       {summary?.plan === PAYG_PLAN_NAME && (
