@@ -11,7 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
+import { toChecksumAddress } from "@/lib/address-utils";
+import { cn } from "@/lib/utils";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 import type { AssetRow } from "./use-account-assets";
 
@@ -49,17 +50,17 @@ export function AssetsTable({
     <Table className="table-fixed">
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
-          <TableHead className="w-[38%]">Asset</TableHead>
-          <TableHead className="w-[26%]">Network</TableHead>
-          <TableHead className="w-[16%] text-right">Balance</TableHead>
-          <TableHead className="w-[20%] text-right">Actions</TableHead>
+          <TableHead className="w-[28%]">Asset</TableHead>
+          <TableHead className="w-[18%]">Network</TableHead>
+          <TableHead className="w-[12%] text-right">Balance</TableHead>
+          <TableHead className="w-[42%]">Contract</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((row) => {
           const funded = Number.parseFloat(row.balance) > 0;
           return (
-            <TableRow className={SETTINGS_ROW} key={row.key}>
+            <TableRow className={cn("group", SETTINGS_ROW)} key={row.key}>
               <TableCell>
                 <div className="flex min-w-0 flex-col">
                   <span className="flex items-center gap-2 font-medium">
@@ -72,11 +73,6 @@ export function AssetsTable({
                   </span>
                   <span className="truncate text-muted-foreground text-xs">
                     {row.name}
-                    {row.tokenAddress && (
-                      <span className="ml-2 font-mono">
-                        {truncateAddress(toChecksumAddress(row.tokenAddress))}
-                      </span>
-                    )}
                   </span>
                 </div>
               </TableCell>
@@ -90,40 +86,15 @@ export function AssetsTable({
                   )}
                 </span>
               </TableCell>
-              <TableCell className="text-right font-mono tabular-nums">
-                {fmt(row.balance)}
-              </TableCell>
               <TableCell className="text-right">
-                <div className="flex justify-end gap-1">
-                  {row.tokenAddress && (
-                    <Button
-                      aria-label={`Copy ${row.symbol} address`}
-                      onClick={() => {
-                        navigator.clipboard.writeText(
-                          toChecksumAddress(row.tokenAddress ?? "")
-                        );
-                        toast.success("Token address copied");
-                      }}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Copy className="size-4" />
-                    </Button>
-                  )}
-                  {row.explorerUrl && (
-                    <Button
-                      aria-label="View on explorer"
-                      asChild
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <a href={row.explorerUrl} rel="noopener" target="_blank">
-                        <ExternalLink className="size-4" />
-                      </a>
-                    </Button>
-                  )}
+                {/* Withdrawing acts on the balance, so it sits with it. */}
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <span className="font-mono tabular-nums">
+                    {fmt(row.balance)}
+                  </span>
                   {canWithdraw && funded && (
                     <Button
+                      className="opacity-0 transition focus-visible:opacity-100 group-hover:opacity-100"
                       onClick={() => onWithdraw(row.chainId, row.tokenAddress)}
                       size="sm"
                       variant="outline"
@@ -133,6 +104,51 @@ export function AssetsTable({
                     </Button>
                   )}
                 </div>
+              </TableCell>
+              <TableCell>
+                {row.tokenAddress ? (
+                  <div className="flex min-w-0 items-center gap-1">
+                    {/* Shown whole where it fits, clipped where it does not,
+                        rather than always cut to a fixed shape. */}
+                    <span className="truncate font-mono text-xs">
+                      {toChecksumAddress(row.tokenAddress)}
+                    </span>
+                    <Button
+                      aria-label={`Copy ${row.symbol} address`}
+                      className="size-6 shrink-0"
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          toChecksumAddress(row.tokenAddress ?? "")
+                        );
+                        toast.success("Token address copied");
+                      }}
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <Copy className="size-3" />
+                    </Button>
+                    {row.explorerUrl && (
+                      <Button
+                        aria-label="View on explorer"
+                        asChild
+                        className="size-6 shrink-0"
+                        size="icon"
+                        variant="ghost"
+                      >
+                        <a
+                          href={row.explorerUrl}
+                          rel="noopener"
+                          target="_blank"
+                        >
+                          <ExternalLink className="size-3" />
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  // A native coin is the network itself; there is no contract.
+                  <span className="text-muted-foreground text-xs">--</span>
+                )}
               </TableCell>
             </TableRow>
           );

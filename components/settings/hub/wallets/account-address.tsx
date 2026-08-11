@@ -21,12 +21,19 @@ export function AccountAddress({
   address,
   chainId,
   isEvm,
+  always = false,
 }: {
   address: string;
   /** Safes are on one chain, so only they can link to an explorer. */
   chainId?: number;
   isEvm: boolean;
+  /** In a list the controls wait for the pointer; on a page of their own,
+   * where there is one address and it is the subject, they stay put. */
+  always?: boolean;
 }): React.ReactElement {
+  const reveal = always
+    ? ""
+    : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100";
   const [copied, setCopied] = useState(false);
   const display = isEvm ? toChecksumAddress(address) : address;
   const explorerUrl = chainId ? getExplorerAddressUrl(chainId, display) : null;
@@ -39,7 +46,7 @@ export function AccountAddress({
   };
 
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="group flex items-center gap-1.5">
       <span className="break-all font-mono text-muted-foreground text-xs">
         {display}
       </span>
@@ -48,8 +55,8 @@ export function AccountAddress({
           <button
             aria-label="Copy address"
             className={cn(
-              "shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition",
-              "hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              "shrink-0 rounded p-0.5 text-muted-foreground transition hover:text-foreground",
+              reveal
             )}
             onClick={copy}
             type="button"
@@ -69,8 +76,8 @@ export function AccountAddress({
             <a
               aria-label="View on explorer"
               className={cn(
-                "shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition",
-                "hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                "shrink-0 rounded p-0.5 text-muted-foreground transition hover:text-foreground",
+                reveal
               )}
               href={explorerUrl}
               onClick={(event) => event.stopPropagation()}

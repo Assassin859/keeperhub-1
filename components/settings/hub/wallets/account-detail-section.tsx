@@ -3,7 +3,6 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { toChecksumAddress } from "@/lib/address-utils";
 import { useOrgWallet } from "@/lib/wallet/use-org-wallet";
 import {
   accountSlug,
@@ -14,6 +13,7 @@ import {
 import { SectionHeader, SettingsCard, VEILED } from "../section";
 import { useSettingsContext } from "../settings-context";
 import { FormSkeleton, StatTilesSkeleton, TableSkeleton } from "../skeletons";
+import { AccountAddress } from "./account-address";
 import { AccountDetailPanel } from "./account-detail-panel";
 
 export function AccountDetailSection({
@@ -88,7 +88,14 @@ export function AccountDetailSection({
   return (
     <>
       <SectionHeader
-        description={toChecksumAddress(account.address)}
+        description={
+          <AccountAddress
+            address={account.address}
+            always
+            chainId={account.kind === "safe" ? account.chainId : undefined}
+            isEvm={!(account.kind === "turnkey" && account.family === "solana")}
+          />
+        }
         leading={back}
         title={accountTitle(account)}
       />
