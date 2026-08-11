@@ -210,7 +210,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  aria-label="User settings"
+                  aria-label="Account settings"
                   className="relative shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
                   onClick={() => router.push("/settings")}
                   type="button"
@@ -225,7 +225,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
                   )}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="left">User settings</TooltipContent>
+              <TooltipContent side="left">Account settings</TooltipContent>
             </Tooltip>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />

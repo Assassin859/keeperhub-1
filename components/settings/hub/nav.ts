@@ -197,7 +197,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
       {
         segment: "security",
         scope: "org",
-        label: "Security",
+        label: "Organization security",
         icon: ShieldCheck,
         description: "Security rules that apply to everyone here.",
         panels: [

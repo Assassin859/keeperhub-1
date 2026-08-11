@@ -11,7 +11,7 @@ export function OrgSecuritySection(): React.ReactElement {
     <>
       <SectionHeader
         description="Security rules that apply to everyone in this organization."
-        title="Security"
+        title="Organization security"
       />
 
       {isAdmin && organizationId ? (

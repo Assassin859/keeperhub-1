@@ -15,7 +15,7 @@ describe("findSettingsMatches", () => {
   it("finds both the personal and the org side of a term", () => {
     expect(results("mfa")).toEqual([
       "Account security > Two-factor authentication",
-      "Security > Organization MFA enforcement",
+      "Organization security > Organization MFA enforcement",
     ]);
   });
 
