@@ -25,8 +25,8 @@ const DEBOUNCE_MS = 500;
 const TEMPLATE_REF_PATTERN = /\{\{.*?\}\}/;
 
 function hasTemplateRefs(config: Record<string, unknown>): boolean {
-  return Object.values(config).some(
-    (v) => typeof v === "string" && TEMPLATE_REF_PATTERN.test(v)
+  return Object.values(config).some((v) =>
+    TEMPLATE_REF_PATTERN.test(typeof v === "string" ? v : JSON.stringify(v))
   );
 }
 
