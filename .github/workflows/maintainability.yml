@@ -2,7 +2,17 @@ name: Maintainability
 
 on:
   pull_request:
-    branches: [staging]
+    branches:
+      - staging
+      # The self-hosted milestone integrates on its own gate branch, so its pull
+      # requests never target staging and none of the checks below ran on any of
+      # them. Left alone, every one of these jobs would fire for the first time
+      # on the single large pull request that takes the whole milestone to
+      # staging. Listing the gate branch runs them per merge instead.
+      #
+      # Temporary. Delete this entry when the gate branch merges and is deleted;
+      # a filter naming a branch that no longer exists is silent dead config.
+      - KEEP-1114-gate-m0-aws-free-install
 
 permissions:
   contents: read
