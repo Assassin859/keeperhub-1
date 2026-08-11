@@ -1,6 +1,7 @@
 "use client";
 
-import { ExternalLink, Plus, Send } from "lucide-react";
+import { Copy, ExternalLink, Plus, Send } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -10,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 import type { AssetRow } from "./use-account-assets";
 
@@ -42,13 +44,15 @@ export function AssetsTable({
   onWithdraw: (chainId: number, tokenAddress?: string) => void;
 }): React.ReactElement {
   return (
-    <Table>
+    // Fixed widths: the columns were sized from whatever rows survived the
+    // filter, so narrowing the list moved every column.
+    <Table className="table-fixed">
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
-          <TableHead>Asset</TableHead>
-          <TableHead>Network</TableHead>
-          <TableHead className="text-right">Balance</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
+          <TableHead className="w-[38%]">Asset</TableHead>
+          <TableHead className="w-[26%]">Network</TableHead>
+          <TableHead className="w-[16%] text-right">Balance</TableHead>
+          <TableHead className="w-[20%] text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -68,6 +72,11 @@ export function AssetsTable({
                   </span>
                   <span className="truncate text-muted-foreground text-xs">
                     {row.name}
+                    {row.tokenAddress && (
+                      <span className="ml-2 font-mono">
+                        {truncateAddress(toChecksumAddress(row.tokenAddress))}
+                      </span>
+                    )}
                   </span>
                 </div>
               </TableCell>
@@ -86,6 +95,21 @@ export function AssetsTable({
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end gap-1">
+                  {row.tokenAddress && (
+                    <Button
+                      aria-label={`Copy ${row.symbol} address`}
+                      onClick={() => {
+                        navigator.clipboard.writeText(
+                          toChecksumAddress(row.tokenAddress ?? "")
+                        );
+                        toast.success("Token address copied");
+                      }}
+                      size="icon"
+                      variant="ghost"
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  )}
                   {row.explorerUrl && (
                     <Button
                       aria-label="View on explorer"
