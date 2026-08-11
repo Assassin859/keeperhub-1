@@ -54,7 +54,7 @@ export function CardGridSkeleton({
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {KEYS.slice(0, cards).map((key) => (
-        <div className="space-y-4 rounded-xl border p-4" key={key}>
+        <div className="space-y-4 rounded-xl border bg-card/60 p-4" key={key}>
           <div className="flex items-center gap-3">
             <Skeleton className="size-9 rounded-lg" />
             <div className="space-y-1.5">
@@ -78,7 +78,7 @@ export function StatTilesSkeleton({
   return (
     <div className="grid gap-4 sm:grid-cols-3">
       {KEYS.slice(0, tiles).map((key) => (
-        <div className="space-y-2 rounded-xl border p-4" key={key}>
+        <div className="space-y-2 rounded-xl border bg-card/60 p-4" key={key}>
           <Skeleton className="h-2.5 w-20" />
           <Skeleton className="h-6 w-14" />
           <Skeleton className="h-2.5 w-24" />
