@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { History, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Pager } from "@/components/activity/pager";
@@ -8,9 +10,11 @@ import {
   CreateApiKeyOverlay,
   useApiKeys,
 } from "@/components/overlays/api-keys-overlay";
-import { KeyActivityOverlay } from "@/components/overlays/key-activity-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
+import { createdFallback } from "@/lib/activity/created-fallback";
+import type { SecurityAuditEvent } from "@/lib/api-client";
+import { ActivityPanel } from "../activity-panel";
 import { EmptyState, SettingsCard } from "../section";
 import { TableSkeleton } from "../skeletons";
 import { ApiKeysTable } from "./api-keys-table";
@@ -38,20 +42,33 @@ export function KeysCard({
   const { push } = useOverlay();
   const deleteEndpoint = (id: string): string => `${listEndpoint}/${id}`;
   const keys = useApiKeys(listEndpoint, deleteEndpoint);
+  const [showActivity, setShowActivity] = useState(false);
+
+  const activityFallback: SecurityAuditEvent[] = activity
+    ? keys.apiKeys.map((key) =>
+        createdFallback({
+          createdAt: key.createdAt,
+          creator: key.createdByName
+            ? {
+                email: key.createdByEmail,
+                name: key.createdByName,
+                role: key.createdByRole,
+              }
+            : null,
+          resourceId: key.id,
+          resourceType: activity.resourceType,
+        })
+      )
+    : [];
 
   return (
+    <>
     <SettingsCard
       action={
         <div className="flex items-center gap-2">
           {activity && (
             <Button
-              onClick={() =>
-                push(KeyActivityOverlay, {
-                  keys: keys.apiKeys,
-                  resourceType: activity.resourceType,
-                  title: activity.title,
-                })
-              }
+              onClick={() => setShowActivity((open) => !open)}
               size="sm"
               variant="ghost"
             >
@@ -124,5 +141,15 @@ export function KeysCard({
         </p>
       )}
     </SettingsCard>
+
+    {showActivity && activity && (
+      <ActivityPanel
+        fallback={activityFallback}
+        onClose={() => setShowActivity(false)}
+        params={{ limit: 5, resourceType: activity.resourceType }}
+        title={activity.title}
+      />
+    )}
+    </>
   );
 }

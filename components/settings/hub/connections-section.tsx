@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { AddConnectionPanel } from "./add-connection-panel";
 import { ConnectionsTable } from "./connections/connections-table";
 import { useConnections } from "./hooks/use-connections";
+import { createdFallback } from "@/lib/activity/created-fallback";
+import { ActivityPanel } from "./activity-panel";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { TableSkeleton } from "./skeletons";
 import { useSettingsContext } from "./settings-context";
@@ -18,6 +20,7 @@ export function ConnectionsSection(): React.ReactElement {
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Integration | null>(null);
+  const [activityFor, setActivityFor] = useState<Integration | null>(null);
   const { connections, loading, refetch, remove } = useConnections(filter);
 
   return (
@@ -90,9 +93,35 @@ export function ConnectionsSection(): React.ReactElement {
             connections={connections}
             onEdit={setEditing}
             onRemove={remove}
+            onShowActivity={setActivityFor}
           />
         )}
       </SettingsCard>
+
+      {activityFor && (
+        <ActivityPanel
+          fallback={[
+            createdFallback({
+              createdAt: activityFor.createdAt,
+              creator: {
+                email: activityFor.createdByEmail,
+                name: activityFor.createdByName,
+                role: activityFor.createdByRole,
+              },
+              resourceId: activityFor.id,
+              resourceName: activityFor.name,
+              resourceType: "integration",
+            }),
+          ]}
+          onClose={() => setActivityFor(null)}
+          params={{
+            limit: 5,
+            resourceId: activityFor.id,
+            resourceType: "integration",
+          }}
+          title={`Activity: ${activityFor.name}`}
+        />
+      )}
     </>
   );
 }

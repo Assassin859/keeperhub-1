@@ -2,8 +2,6 @@
 
 import { History, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { IntegrationActivityOverlay } from "@/components/overlays/integration-activity-overlay";
-import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
 import { IntegrationIcon } from "@/components/ui/integration-icon";
 import {
@@ -24,13 +22,14 @@ export function ConnectionsTable({
   canManage,
   onEdit,
   onRemove,
+  onShowActivity,
 }: {
   connections: LabelledIntegration[];
   canManage: boolean;
   onEdit: (integration: Integration) => void;
   onRemove: (integration: Integration) => Promise<void>;
+  onShowActivity: (integration: Integration) => void;
 }): React.ReactElement {
-  const { push } = useOverlay();
   const [pending, setPending] = useState<LabelledIntegration | null>(null);
 
   return (
@@ -62,11 +61,7 @@ export function ConnectionsTable({
               <div className="flex justify-end gap-1">
                   <Button
                     aria-label="Activity"
-                    onClick={() =>
-                      push(IntegrationActivityOverlay, {
-                        integration: connection,
-                      })
-                    }
+                    onClick={() => onShowActivity(connection)}
                     size="icon"
                     variant="ghost"
                   >
