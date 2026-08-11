@@ -98,6 +98,18 @@ ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 # so this stage is cache-deterministic across commits (see sentry-upload stage).
 ARG NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+
+# Where /llms.txt redirects. next.config.ts compiles redirects into
+# routes-manifest.json, so this is a build-time value and a runtime env var
+# cannot change it.
+#
+# The default is the current destination, on purpose. An empty value drops the
+# redirect entirely, so a bare `ARG DOCS_BASE_URL` would hand every build an
+# empty string and silently remove it from production. Build with
+# `--build-arg DOCS_BASE_URL=` to opt out; that is what the self-hosted harness
+# does, so an install does not redirect its users to a host KeeperHub runs.
+ARG DOCS_BASE_URL=https://docs.keeperhub.com
+ENV DOCS_BASE_URL=$DOCS_BASE_URL
 ENV CI=true
 
 # KEEP-237: Gate admin test routes at build time. Set to "true" for

@@ -112,7 +112,7 @@ signup while verifying nothing, so the opt-out is usually the better answer.
 | Feedback | whatever you point it at | user submits feedback | `FEEDBACK_SERVICE_URL`, unset by default |
 | Sign-in with GitHub or Google | `github.com`, `accounts.google.com` | OAuth exchange | leave the client id and secret unset |
 | Token logos, email logo | `raw.githubusercontent.com` | rendering a token list; opening an email | `EMAIL_LOGO_URL` for the email one - set it empty to send no logo. Token logo addresses live in your database |
-| Docs redirect | `docs.keeperhub.com` | someone requests `/llms.txt` | `DOCS_BASE_URL`, empty to drop the redirect. Build-time |
+| Docs redirect | `docs.keeperhub.com` | someone requests `/llms.txt` | **Already off** in an image built by the self-hosted harness, which passes `DOCS_BASE_URL=` so the redirect is not compiled in. Build a different image and you inherit it: `next.config.ts` bakes redirects into the build, so no Helm value can remove it afterwards |
 
 ### Only because a user configured it
 
