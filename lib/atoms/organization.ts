@@ -32,6 +32,7 @@ export const orgDataReadyAtom = atom(false);
 export const activeOrgScopeAtom = atom<string | null>(null);
 
 export const organizationsRefreshAtom = atom(0);
+export const walletRefreshAtom = atom(0);
 export const projectsRefreshAtom = atom(0);
 export const tagsRefreshAtom = atom(0);
 
@@ -50,6 +51,28 @@ export const organizationsAtom = atom(
     return (await response.json()) as OrganizationWithRole[];
   }
 );
+
+export type OrgWalletSummary = {
+  hasWallet?: boolean;
+  walletAddress?: string;
+};
+
+/**
+ * The organization's wallet, shared by everything that only needs to know
+ * whether one exists and at which address. Five components asked for this
+ * separately before.
+ */
+export const walletAtom = atom(async (get): Promise<OrgWalletSummary | null> => {
+  if (!(get(orgDataReadyAtom) && get(activeOrgScopeAtom))) {
+    return null;
+  }
+  get(walletRefreshAtom);
+  const response = await fetch("/api/user/wallet");
+  if (!response.ok) {
+    return { hasWallet: false };
+  }
+  return (await response.json()) as OrgWalletSummary;
+});
 
 export const projectsAtom = atom(async (get): Promise<Project[] | null> => {
   if (!(get(orgDataReadyAtom) && get(activeOrgScopeAtom))) {

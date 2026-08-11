@@ -12,6 +12,8 @@ import {
   projectsRefreshAtom,
   tagsAtom,
   tagsRefreshAtom,
+  walletAtom,
+  walletRefreshAtom,
 } from "@/lib/atoms/organization";
 
 // Built once at module scope: loadable() returns a new atom each call, so
@@ -19,6 +21,7 @@ import {
 const organizationsLoadable = loadable(organizationsAtom);
 const projectsLoadable = loadable(projectsAtom);
 const tagsLoadable = loadable(tagsAtom);
+const walletLoadable = loadable(walletAtom);
 
 // One shared instance: a fresh [] on every read would be a new identity each
 // render, and any effect depending on the value would never stop firing.
@@ -70,4 +73,21 @@ export function useProjects(): Loaded<Project> {
 
 export function useTags(): Loaded<Tag> {
   return read(useAtomValue(tagsLoadable), useRefresh(tagsRefreshAtom));
+}
+
+export function useOrgWalletSummary(): {
+  hasWallet: boolean;
+  walletAddress: string | null;
+  isLoading: boolean;
+  refetch: () => Promise<void>;
+} {
+  const state = useAtomValue(walletLoadable);
+  const refetch = useRefresh(walletRefreshAtom);
+  const data = state.state === "hasData" ? state.data : null;
+  return {
+    hasWallet: data?.hasWallet === true && !!data.walletAddress,
+    isLoading: state.state === "loading" || data === null,
+    refetch,
+    walletAddress: data?.walletAddress ?? null,
+  };
 }
