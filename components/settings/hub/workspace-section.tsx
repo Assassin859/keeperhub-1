@@ -9,7 +9,7 @@ import type { Project, Tag } from "@/lib/api-client";
 import { useProjectsTags } from "./hooks/use-projects-tags";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { RowsSkeleton } from "./skeletons";
+import { TableSkeleton } from "./skeletons";
 import { GroupingTable } from "./workspace/grouping-table";
 
 export function WorkspaceSection(): React.ReactElement {
@@ -49,7 +49,7 @@ export function WorkspaceSection(): React.ReactElement {
         description="The top-level grouping in the workflows sidebar."
         title="Projects"
       >
-        {data.loadingProjects && <RowsSkeleton rows={3} />}
+        {data.loadingProjects && <TableSkeleton columns={3} rows={3} />}
         {!data.loadingProjects && data.projects.length === 0 && (
           <EmptyState>No projects yet.</EmptyState>
         )}
@@ -84,7 +84,7 @@ export function WorkspaceSection(): React.ReactElement {
         description="Tags subdivide a project in the second sidebar panel."
         title="Tags"
       >
-        {data.loadingTags && <RowsSkeleton rows={3} />}
+        {data.loadingTags && <TableSkeleton columns={3} rows={3} />}
         {!data.loadingTags && data.tags.length === 0 && (
           <EmptyState>No tags yet.</EmptyState>
         )}

@@ -144,9 +144,19 @@ export function StatTile({
   );
 }
 
-export function EmptyState({ children }: { children: string }): React.ReactElement {
+/**
+ * Holds roughly the height of the skeleton it replaces, so a card that turns
+ * out to be empty does not collapse the moment its request lands.
+ */
+export function EmptyState({
+  children,
+}: {
+  children: string;
+}): React.ReactElement {
   return (
-    <p className="py-6 text-center text-muted-foreground text-sm">{children}</p>
+    <p className="flex min-h-32 items-center justify-center text-center text-muted-foreground text-sm">
+      {children}
+    </p>
   );
 }
 

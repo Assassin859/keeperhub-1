@@ -20,7 +20,7 @@ import { invitationTiming } from "./relative-time";
 import { OrgDetailsCard } from "./organization/org-details-card";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { RowsSkeleton, StatTilesSkeleton } from "./skeletons";
+import { StatTilesSkeleton, TableSkeleton } from "./skeletons";
 
 /** Most privileged first; anything unrecognised sorts last. */
 function roleRank(role: string): number {
@@ -131,7 +131,7 @@ export function OrganizationSection(): React.ReactElement {
             />
           </div>
         )}
-        {members.loading && <RowsSkeleton rows={4} />}
+        {members.loading && <TableSkeleton columns={4} leading rows={3} />}
         {!members.loading && filtered.length === 0 && (
           <EmptyState>No members match that search.</EmptyState>
         )}

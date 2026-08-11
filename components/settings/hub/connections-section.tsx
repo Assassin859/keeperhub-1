@@ -10,7 +10,7 @@ import { AddConnectionPanel } from "./add-connection-panel";
 import { ConnectionsTable } from "./connections/connections-table";
 import { useConnections } from "./hooks/use-connections";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
-import { RowsSkeleton } from "./skeletons";
+import { TableSkeleton } from "./skeletons";
 import { useSettingsContext } from "./settings-context";
 
 export function ConnectionsSection(): React.ReactElement {
@@ -77,7 +77,7 @@ export function ConnectionsSection(): React.ReactElement {
         bodyClassName="p-2"
         title="Configured connections"
       >
-        {loading && <RowsSkeleton rows={3} />}
+        {loading && <TableSkeleton columns={3} leading rows={2} />}
         {!loading && connections.length === 0 && (
           <EmptyState>
             No connections yet. Add one to reuse its credentials across

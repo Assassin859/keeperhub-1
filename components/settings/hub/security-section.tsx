@@ -9,7 +9,7 @@ import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { RevokeSessionPanel } from "./security/revoke-session-panel";
 import { SessionsTable } from "./security/sessions-table";
 import { TwoFactorCard } from "./security/two-factor-card";
-import { RowsSkeleton } from "./skeletons";
+import { FormSkeleton, TableSkeleton } from "./skeletons";
 
 export function SecuritySection(): React.ReactElement {
   const { providerId, loading } = useAccount();
@@ -42,7 +42,11 @@ export function SecuritySection(): React.ReactElement {
             description="Changing your password signs out every other device."
             title="Password"
           >
-            {loading ? null : <ChangePasswordSection providerId={providerId} />}
+            {loading ? (
+              <FormSkeleton rows={1} />
+            ) : (
+              <ChangePasswordSection providerId={providerId} />
+            )}
           </SettingsCard>
         </>
       )}
@@ -52,7 +56,7 @@ export function SecuritySection(): React.ReactElement {
         description="Every browser and device currently holding a session for this account."
         title="Active sessions"
       >
-        {security.sessionsLoading && <RowsSkeleton rows={2} />}
+        {security.sessionsLoading && <TableSkeleton columns={4} lines={2} rows={2} />}
         {!security.sessionsLoading && security.sessions.length === 0 && (
           <EmptyState>No other sessions are active.</EmptyState>
         )}

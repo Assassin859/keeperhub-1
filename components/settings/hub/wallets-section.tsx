@@ -8,7 +8,7 @@ import { useOrgWallet } from "@/lib/wallet/use-org-wallet";
 import { useWalletAccounts } from "@/lib/wallet/use-wallet-accounts";
 import { SectionHeader, SettingsCard, StatTile } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { RowsSkeleton, StatTilesSkeleton } from "./skeletons";
+import { TableSkeleton, StatTilesSkeleton } from "./skeletons";
 import { AccountsTable } from "./wallets/accounts-table";
 import { useSafeReconcile } from "@/lib/wallet/use-safe-reconcile";
 import { RefreshCw } from "lucide-react";
@@ -73,7 +73,7 @@ export function WalletsSection(): React.ReactElement {
         description="Open an account to see its assets, policies, key export and recovery."
         title="Accounts"
       >
-        {state.walletLoading && <RowsSkeleton rows={3} />}
+        {state.walletLoading && <TableSkeleton columns={3} leading lines={2} rows={3} />}
         {!state.walletLoading && state.walletData?.hasWallet && (
           <AccountsTable
             accounts={accounts}

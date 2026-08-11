@@ -12,7 +12,7 @@ import { KeyActivityOverlay } from "@/components/overlays/key-activity-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
 import { EmptyState, SettingsCard } from "../section";
-import { RowsSkeleton } from "../skeletons";
+import { TableSkeleton } from "../skeletons";
 import { ApiKeysTable } from "./api-keys-table";
 import { NewKeyBanner } from "./new-key-banner";
 
@@ -91,7 +91,7 @@ export function KeysCard({
         />
       )}
 
-      {keys.loading && <RowsSkeleton rows={2} />}
+      {keys.loading && <TableSkeleton columns={5} rows={2} />}
 
       {!keys.loading && keys.apiKeys.length === 0 && (
         <EmptyState>

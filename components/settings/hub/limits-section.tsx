@@ -20,7 +20,7 @@ export function LimitsSection(): React.ReactElement {
         title="Daily value caps"
       >
         {loading ? (
-          <FormSkeleton rows={2} />
+          <FormSkeleton rows={3} />
         ) : (
           <div className="flex flex-col gap-3">
             {caps.map((cap) => (
