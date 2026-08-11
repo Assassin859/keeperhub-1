@@ -1,6 +1,5 @@
 "use client";
 
-import { McpEndpointCard } from "./api-keys/mcp-endpoint-card";
 import { KeysCard } from "./api-keys/keys-card";
 import { SectionHeader } from "./section";
 import { useSettingsContext } from "./settings-context";
@@ -17,8 +16,6 @@ export function ApiKeysSection(): React.ReactElement {
         description="Keys let scripts, agents and CI call the KeeperHub API on this organization's behalf."
         title="API keys"
       />
-
-      <McpEndpointCard />
 
       <KeysCard
         activity={{ resourceType: "org_api_key", title: "Organisation key activity" }}

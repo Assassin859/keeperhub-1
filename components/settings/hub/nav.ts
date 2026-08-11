@@ -364,10 +364,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         description: "Programmatic access keys and their scopes.",
         panels: [
           {
-            title: "MCP endpoint",
-            tags: ["mcp url", "server url", "model context protocol"],
-          },
-          {
             title: "Organisation keys",
             tags: [
               "organization keys",
