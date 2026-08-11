@@ -56,8 +56,7 @@ export function SettingsProvider({
   // The URL is the source of truth for org-scoped sections, so a shared link
   // opens the organization it was written for rather than whichever one the
   // session happens to be on.
-  const routeOrgId =
-    typeof params.orgId === "string" ? params.orgId : null;
+  const routeOrgId = typeof params.orgId === "string" ? params.orgId : null;
   const organizationId = routeOrgId ?? organization?.id ?? null;
 
   // useOrganization rebuilds switchOrganization on every render, so it is read
@@ -83,8 +82,6 @@ export function SettingsProvider({
     }
   }, [routeOrgId, activeOrgId]);
 
-
-
   // The role has to describe the organization on screen, which is the one in
   // the URL and not always the active one. /api/organizations carries a role
   // per organization, so it answers for whichever is being shown; the active
@@ -97,6 +94,7 @@ export function SettingsProvider({
   const isOwner = role === "owner";
   const isAdmin = role === "owner" || role === "admin";
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: organizationId is a reload trigger, not a value this reads
   useEffect(() => {
     setRevision((n) => n + 1);
   }, [organizationId]);

@@ -1,6 +1,12 @@
 "use client";
 
-import { ChevronRight, Plus, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
+import {
+  ChevronRight,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Wallet,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,16 +19,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  accountSlug,
-  type WalletAccounts,
-} from "@/lib/wallet/use-wallet-accounts";
-import { cn } from "@/lib/utils";
-import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import {
+  accountSlug,
+  type WalletAccounts,
+} from "@/lib/wallet/use-wallet-accounts";
+import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 import { useSettingsContext } from "../settings-context";
 import { AccountAddress } from "./account-address";
 
@@ -78,54 +84,50 @@ export function AccountsTable({
           ))}
         {!loading &&
           accounts.all.map((account) => {
-          const isSafe = account.kind === "safe";
-          const isSolana = !isSafe && account.family === "solana";
-          const name = isSafe
-            ? `Safe on ${account.chainName}`
-            : isSolana
+            const isSafe = account.kind === "safe";
+            const isSolana = !isSafe && account.family === "solana";
+            const signerName = isSolana
               ? "Turnkey signer (Solana)"
               : "Turnkey signer (EVM)";
-          return (
-            <TableRow
-              className={cn("group cursor-pointer", SETTINGS_ROW)}
-              key={accountSlug(account)}
-              onClick={() =>
-                router.push(
-                  `/settings/${organizationId}/wallets/${accountSlug(account)}`
-                )
-              }
-            >
-              <TableCell>
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-                    {isSafe ? (
-                      <ShieldCheck className="size-4" />
-                    ) : (
-                      <Wallet className="size-4" />
-                    )}
-                  </span>
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="font-medium">{name}</span>
-                    <AccountAddress
-                      address={account.address}
-                      chainId={isSafe ? account.chainId : undefined}
-                      isEvm={!isSolana}
-                    />
-                  </span>
-                </div>
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {isSafe
-                  ? account.chainName
-                  : isSolana
-                    ? "Solana"
-                    : "All EVM networks"}
-              </TableCell>
-              <TableCell className="text-right">
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </TableCell>
-            </TableRow>
-          );
+            const name = isSafe ? `Safe on ${account.chainName}` : signerName;
+            const network = isSolana ? "Solana" : "All EVM networks";
+            return (
+              <TableRow
+                className={cn("group cursor-pointer", SETTINGS_ROW)}
+                key={accountSlug(account)}
+                onClick={() =>
+                  router.push(
+                    `/settings/${organizationId}/wallets/${accountSlug(account)}`
+                  )
+                }
+              >
+                <TableCell>
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      {isSafe ? (
+                        <ShieldCheck className="size-4" />
+                      ) : (
+                        <Wallet className="size-4" />
+                      )}
+                    </span>
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="font-medium">{name}</span>
+                      <AccountAddress
+                        address={account.address}
+                        chainId={isSafe ? account.chainId : undefined}
+                        isEvm={!isSolana}
+                      />
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {isSafe ? account.chainName : network}
+                </TableCell>
+                <TableCell className="text-right">
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </TableCell>
+              </TableRow>
+            );
           })}
         {!loading && canManage && (
           // Adding an account belongs with the accounts, not in the card's

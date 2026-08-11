@@ -5,11 +5,11 @@ import { NoWalletSection } from "@/components/overlays/wallet/no-wallet-section"
 import { DeploySafeFlow } from "@/components/safe/deploy-safe-card";
 import { useSession } from "@/lib/auth-client";
 import { useOrgWallet } from "@/lib/wallet/use-org-wallet";
+import { useSafeReconcile } from "@/lib/wallet/use-safe-reconcile";
 import { useWalletAccounts } from "@/lib/wallet/use-wallet-accounts";
 import { SectionHeader, SettingsCard, StatTile } from "./section";
 import { useSettingsContext } from "./settings-context";
 import { AccountsTable } from "./wallets/accounts-table";
-import { useSafeReconcile } from "@/lib/wallet/use-safe-reconcile";
 
 export function WalletsSection(): React.ReactElement {
   const { data: session } = useSession();

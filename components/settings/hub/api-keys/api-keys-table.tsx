@@ -35,6 +35,8 @@ type DeleteFn = (
   emailOtp: string
 ) => Promise<{ ok: true } | { ok: false; code: string }>;
 
+const SCOPE_SEPARATOR = /[\s,]+/;
+
 export function ApiKeysTable({
   apiKeys,
   showCreator,
@@ -77,7 +79,7 @@ export function ApiKeysTable({
             <TableCell>
               <div className="flex flex-wrap gap-1">
                 {(key.scope ?? "")
-                  .split(/[\s,]+/)
+                  .split(SCOPE_SEPARATOR)
                   .filter(Boolean)
                   .map((scope) => (
                     <span

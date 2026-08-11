@@ -48,6 +48,7 @@ export function useConnections(filter: string): ConnectionsState {
     }
   }, [setGlobalIntegrations, key]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revision is a reload trigger, not a value this reads
   useEffect(() => {
     refetch().catch(() => undefined);
   }, [refetch, revision]);
@@ -91,8 +92,7 @@ export function useConnections(filter: string): ConnectionsState {
         );
       })
       .sort(
-        (a, b) =>
-          a.label.localeCompare(b.label) || a.name.localeCompare(b.name)
+        (a, b) => a.label.localeCompare(b.label) || a.name.localeCompare(b.name)
       );
   }, [integrations, filter]);
 

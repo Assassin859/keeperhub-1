@@ -2,17 +2,17 @@
 
 import { useState } from "react";
 import { PoliciesTab } from "@/components/overlays/wallet/account-detail/policies-tab";
-import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
 import { SolanaAssets } from "@/components/overlays/wallet/account-detail/solana-assets";
 import type { WalletAccountKind } from "@/components/overlays/wallet/account-row";
+import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
 import { Button } from "@/components/ui/button";
 import { useAccountDetail } from "@/lib/wallet/use-account-detail";
 import type { OrgWalletState } from "@/lib/wallet/use-org-wallet";
 import { EmptyState, SettingsCard } from "../section";
 import { useSettingsContext } from "../settings-context";
 import { RowsSkeleton, StatTilesSkeleton } from "../skeletons";
-import { AccountStats } from "./account-stats";
 import { AccountSettingsCard } from "./account-settings-card";
+import { AccountStats } from "./account-stats";
 import { AssetsTable } from "./assets-table";
 import { useAccountAssets } from "./use-account-assets";
 

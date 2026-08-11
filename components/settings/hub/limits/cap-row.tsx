@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { SpendCap } from "../hooks/use-spend-caps";
 
+const TRAILING_ZEROS = /\.?0+$/;
+
 function fromBase(base: string, decimals: number): string {
   try {
     const value = BigInt(base);
     const unit = BigInt(10) ** BigInt(decimals);
     const whole = value / unit;
     const frac = (value % unit).toString().padStart(decimals, "0").slice(0, 6);
-    return `${whole}.${frac}`.replace(/\.?0+$/, "") || "0";
+    return `${whole}.${frac}`.replace(TRAILING_ZEROS, "") || "0";
   } catch {
     return "0";
   }
@@ -24,7 +26,10 @@ function toBase(input: string, decimals: number): string | null {
   }
   const [whole = "0", frac = ""] = trimmed.split(".");
   const padded = frac.padEnd(decimals, "0").slice(0, decimals);
-  return (BigInt(whole) * BigInt(10) ** BigInt(decimals) + BigInt(padded || "0")).toString();
+  return (
+    BigInt(whole) * BigInt(10) ** BigInt(decimals) +
+    BigInt(padded || "0")
+  ).toString();
 }
 
 export function CapRow({
@@ -44,7 +49,10 @@ export function CapRow({
 
   const used = fromBase(cap.used, cap.decimals);
   const pct = cap.cap
-    ? Math.min(100, (Number(used) / Number(fromBase(cap.cap, cap.decimals))) * 100)
+    ? Math.min(
+        100,
+        (Number(used) / Number(fromBase(cap.cap, cap.decimals))) * 100
+      )
     : 0;
 
   return (

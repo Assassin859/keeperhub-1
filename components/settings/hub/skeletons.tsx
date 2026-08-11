@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -8,7 +9,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "./section";
 
 const KEYS = ["a", "b", "c", "d", "e", "f"] as const;

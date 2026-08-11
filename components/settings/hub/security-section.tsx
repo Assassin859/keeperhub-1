@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { WalletSecuritySection } from "@/components/settings/wallet-security-section";
+import { cn } from "@/lib/utils";
 import { useAccount } from "./hooks/use-account";
 import { type SessionRow, useSecurity } from "./hooks/use-security";
 import { EmptyState, SectionHeader, SettingsCard, VEILED } from "./section";
-import { cn } from "@/lib/utils";
 import { RevokeSessionPanel } from "./security/revoke-session-panel";
 import { SessionsTable } from "./security/sessions-table";
 import { TwoFactorCard } from "./security/two-factor-card";
@@ -47,10 +47,14 @@ export function SecuritySection(): React.ReactElement {
                 known yet, so the wait is shaped like the shorter of the two. */}
             {loading ? (
               <div className="space-y-2">
-                <span className={cn("ml-1 block w-fit font-medium text-sm", VEILED)}>
+                <span
+                  className={cn("ml-1 block w-fit font-medium text-sm", VEILED)}
+                >
                   Password
                 </span>
-                <p className={cn("w-fit text-muted-foreground text-sm", VEILED)}>
+                <p
+                  className={cn("w-fit text-muted-foreground text-sm", VEILED)}
+                >
                   Checking how this account signs in, so the right control can
                   be offered here.
                 </p>
@@ -67,7 +71,9 @@ export function SecuritySection(): React.ReactElement {
         description="Every browser and device currently holding a session for this account."
         title="Active sessions"
       >
-        {security.sessionsLoading && <TableSkeleton columns={4} lines={2} rows={2} />}
+        {security.sessionsLoading && (
+          <TableSkeleton columns={4} lines={2} rows={2} />
+        )}
         {!security.sessionsLoading && security.sessions.length === 0 && (
           <EmptyState>No other sessions are active.</EmptyState>
         )}

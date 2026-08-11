@@ -24,7 +24,12 @@ export function ActivityPanel({
   return (
     <SettingsCard
       action={
-        <Button aria-label="Close activity" onClick={onClose} size="sm" variant="ghost">
+        <Button
+          aria-label="Close activity"
+          onClick={onClose}
+          size="sm"
+          variant="ghost"
+        >
           <X className="size-3.5" />
           Close
         </Button>

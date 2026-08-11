@@ -107,6 +107,7 @@ export function useOrgMembers(): OrgMembersState {
     }
   }, [organizationId, isAdmin, membersKey, invitesKey]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revision is a reload trigger, not a value this reads
   useEffect(() => {
     refetch().catch(() => undefined);
   }, [refetch, revision]);

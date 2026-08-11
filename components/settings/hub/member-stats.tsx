@@ -18,22 +18,22 @@ export function MemberStats({
   return (
     <div className="grid gap-4 sm:grid-cols-3">
       <StatTile
-        loading={loading}
         hint={`${owners} owner${owners === 1 ? "" : "s"}, ${admins} admin${admins === 1 ? "" : "s"}`}
         label="Seats in use"
+        loading={loading}
         value={String(members.length)}
       />
       <StatTile
-        loading={loading}
         hint={pendingCount > 0 ? "Awaiting acceptance" : "None waiting"}
         label="Pending invitations"
+        loading={loading}
         tone={pendingCount > 0 ? "warning" : "neutral"}
         value={String(pendingCount)}
       />
       <StatTile
-        loading={loading}
         hint="Can manage members and wallets"
         label="Admins and owners"
+        loading={loading}
         value={String(owners + admins)}
       />
     </div>

@@ -13,8 +13,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Integration } from "@/lib/api-client";
-import type { LabelledIntegration } from "../hooks/use-connections";
 import { ConfirmDeleteDialog } from "../confirm-delete-dialog";
+import type { LabelledIntegration } from "../hooks/use-connections";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 
 export function ConnectionsTable({
@@ -35,30 +35,30 @@ export function ConnectionsTable({
   return (
     <>
       <Table>
-      <TableHeader>
-        <TableRow className={SETTINGS_HEAD_ROW}>
-          <TableHead>Service</TableHead>
-          <TableHead>Label</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {connections.map((connection) => (
-          <TableRow className={SETTINGS_ROW} key={connection.id}>
-            <TableCell>
-              <span className="flex items-center gap-2.5 font-medium">
-                <IntegrationIcon
-                  className="size-4 shrink-0"
-                  integration={connection.type}
-                />
-                {connection.label}
-              </span>
-            </TableCell>
-            <TableCell className="text-muted-foreground">
-              {connection.name}
-            </TableCell>
-            <TableCell className="text-right">
-              <div className="flex justify-end gap-1">
+        <TableHeader>
+          <TableRow className={SETTINGS_HEAD_ROW}>
+            <TableHead>Service</TableHead>
+            <TableHead>Label</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {connections.map((connection) => (
+            <TableRow className={SETTINGS_ROW} key={connection.id}>
+              <TableCell>
+                <span className="flex items-center gap-2.5 font-medium">
+                  <IntegrationIcon
+                    className="size-4 shrink-0"
+                    integration={connection.type}
+                  />
+                  {connection.label}
+                </span>
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {connection.name}
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex justify-end gap-1">
                   <Button
                     aria-label="Activity"
                     onClick={() => onShowActivity(connection)}
@@ -87,11 +87,11 @@ export function ConnectionsTable({
                       </Button>
                     </>
                   )}
-              </div>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
       </Table>
 
       <ConfirmDeleteDialog

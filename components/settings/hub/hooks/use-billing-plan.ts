@@ -76,11 +76,11 @@ export function useBillingPlan(): BillingPlanState {
   const trial = snapshot?.trial;
   const loading = section.loading;
 
+  const refetch = section.refetch;
   const refresh = useCallback(async (): Promise<void> => {
-    await section.refetch();
+    await refetch();
     setRefreshKey((k) => k + 1);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: refetch is rebuilt each render
-  }, []);
+  }, [refetch]);
 
   return {
     gasCreditCaps,

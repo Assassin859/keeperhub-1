@@ -57,7 +57,9 @@ export function AccountDetailSection({
             everything below it once the account arrives. */}
         <SectionHeader
           description={
-            <span className={VEILED}>0x0000000000000000000000000000000000000000</span>
+            <span className={VEILED}>
+              0x0000000000000000000000000000000000000000
+            </span>
           }
           leading={back}
           title={accountTitleForSlug(accountId)}
@@ -75,13 +77,11 @@ export function AccountDetailSection({
 
   if (!account) {
     return (
-      <>
-        <SectionHeader
-          description="This account is not part of the current organization."
-          leading={back}
-          title="Account not found"
-        />
-      </>
+      <SectionHeader
+        description="This account is not part of the current organization."
+        leading={back}
+        title="Account not found"
+      />
     );
   }
 

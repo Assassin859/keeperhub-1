@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
-import { useCachedSection } from "./use-cached-section";
 import { useSession } from "@/lib/auth-client";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
+import { useCachedSection } from "./use-cached-section";
 
 type DualFactorState = ReturnType<typeof useDualFactorState>;
 
@@ -45,13 +45,12 @@ export function useAccount(): AccountState {
   const emailChanged = email.trim() !== savedEmail;
   const showMfaCode = mfaEnrolled && emailChanged;
 
+  const refetch = cached.refetch;
   const load = useCallback(async (): Promise<void> => {
-    await cached.refetch().catch(() => {
+    await refetch().catch(() => {
       toast.error("Could not load your account.");
     });
-    // cached.refetch is rebuilt per render by the hook above
-    // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
-  }, []);
+  }, [refetch]);
 
   const data = cached.data;
   useEffect(() => {
@@ -71,8 +70,7 @@ export function useAccount(): AccountState {
     setName(savedName);
     setEmail(savedEmail);
     dual.reset();
-    // biome-ignore lint/correctness/useExhaustiveDependencies: dual.reset is stable
-  }, [savedName, savedEmail]);
+  }, [savedName, savedEmail, dual.reset]);
 
   const save = useCallback(async (): Promise<void> => {
     if (showMfaCode && dual.totpCode.trim().length !== 6) {

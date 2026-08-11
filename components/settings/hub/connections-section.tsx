@@ -3,17 +3,17 @@
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { EditConnectionForm } from "@/components/overlays/edit-connection-overlay";
-import type { Integration } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { createdFallback } from "@/lib/activity/created-fallback";
+import type { Integration } from "@/lib/api-client";
+import { ActivityPanel } from "./activity-panel";
 import { AddConnectionPanel } from "./add-connection-panel";
 import { ConnectionsTable } from "./connections/connections-table";
 import { useConnections } from "./hooks/use-connections";
-import { createdFallback } from "@/lib/activity/created-fallback";
-import { ActivityPanel } from "./activity-panel";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
-import { TableSkeleton } from "./skeletons";
 import { useSettingsContext } from "./settings-context";
+import { TableSkeleton } from "./skeletons";
 
 export function ConnectionsSection(): React.ReactElement {
   const { refreshAll } = useSettingsContext();

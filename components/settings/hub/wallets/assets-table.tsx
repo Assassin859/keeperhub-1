@@ -21,9 +21,11 @@ function fmt(balance: string): string {
   if (n === 0) {
     return "0";
   }
-  return n < 0.000_001 ? "<0.000001" : n.toLocaleString(undefined, {
-    maximumFractionDigits: 6,
-  });
+  return n < 0.000_001
+    ? "<0.000001"
+    : n.toLocaleString(undefined, {
+        maximumFractionDigits: 6,
+      });
 }
 
 export function AssetsTable({
@@ -81,7 +83,12 @@ export function AssetsTable({
               <TableCell className="text-right">
                 <div className="flex justify-end gap-1">
                   {row.explorerUrl && (
-                    <Button aria-label="View on explorer" asChild size="icon" variant="ghost">
+                    <Button
+                      aria-label="View on explorer"
+                      asChild
+                      size="icon"
+                      variant="ghost"
+                    >
                       <a href={row.explorerUrl} rel="noopener" target="_blank">
                         <ExternalLink className="size-4" />
                       </a>

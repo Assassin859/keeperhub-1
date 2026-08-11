@@ -48,6 +48,7 @@ export function useSpendCaps(): SpendCapsState {
   );
   const data = section.data ?? null;
   const loading = section.loading;
+  const refetch = section.refetch;
   const save = useCallback(
     async (id: "evm" | "solana", base: string | null): Promise<void> => {
       setSaving(true);
@@ -60,7 +61,7 @@ export function useSpendCaps(): SpendCapsState {
         if (res.ok) {
           // Read the saved value back rather than patching a copy, so the
           // cache other sections read from holds what the server has.
-          await section.refetch();
+          await refetch();
           toast.success(base ? "Cap saved" : "Cap cleared");
           return;
         }
@@ -75,7 +76,7 @@ export function useSpendCaps(): SpendCapsState {
         setSaving(false);
       }
     },
-    []
+    [refetch]
   );
 
   return {

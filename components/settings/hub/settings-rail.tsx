@@ -10,8 +10,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { RAIL_WIDTH } from "./hooks/use-rail-width";
 import { useExitPath } from "./hooks/use-exit-path";
+import { RAIL_WIDTH } from "./hooks/use-rail-width";
 import { SettingsNavList } from "./settings-nav-list";
 import { SettingsNavMatches } from "./settings-nav-matches";
 import { SettingsSearch } from "./settings-search";
@@ -64,11 +64,7 @@ export function SettingsRail(): React.ReactElement {
       <SettingsSearch onQueryChange={setQuery} query={query} />
 
       <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2.5 pt-2 pb-4">
-        {searching ? (
-          <SettingsNavMatches query={query} />
-        ) : (
-          <SettingsNavList />
-        )}
+        {searching ? <SettingsNavMatches query={query} /> : <SettingsNavList />}
       </nav>
 
       <div className="flex shrink-0 flex-col gap-1 border-t px-2.5 py-3">

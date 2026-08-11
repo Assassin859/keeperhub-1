@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { BillingDetails } from "@/components/billing/billing-details";
 import { BillingHistory } from "@/components/billing/billing-history";
 import { PaygSection } from "@/components/billing/payg-section";
+import { Button } from "@/components/ui/button";
 import { PAYG_PLAN_NAME } from "@/lib/billing/plans";
 import { UsageMeter } from "./billing/usage-meter";
 import { useBillingSummary } from "./hooks/use-billing-summary";
@@ -78,9 +78,7 @@ export function BillingSection(): React.ReactElement {
           label="Status"
           loading={pending}
           tone={summary?.cancelAtPeriodEnd ? "warning" : "neutral"}
-          value={
-            statusLabel(summary?.status)
-          }
+          value={statusLabel(summary?.status)}
         />
         <StatTile
           hint="Billable runs this calendar month"
@@ -135,7 +133,6 @@ export function BillingSection(): React.ReactElement {
           <PaygSection plan={summary.plan} />
         </SettingsCard>
       )}
-
     </>
   );
 }

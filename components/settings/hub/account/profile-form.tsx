@@ -55,8 +55,8 @@ export function ProfileForm({
           </p>
           <DualFactorInput
             awaitingEmailOtp={account.dual.awaitingEmailOtp}
-            idPrefix="profile"
             emailOtp={account.dual.emailOtp}
+            idPrefix="profile"
             onEmailOtpChange={account.dual.setEmailOtp}
             onTotpChange={account.dual.setTotpCode}
             totpCode={account.dual.totpCode}

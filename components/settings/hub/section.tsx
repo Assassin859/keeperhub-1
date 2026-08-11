@@ -121,7 +121,8 @@ export function SettingsCard({
  * placeholder occupies exactly the line box the real text will. A separate
  * skeleton with its own heights cannot promise that.
  */
-export const VEILED = "animate-pulse select-none rounded bg-muted text-transparent";
+export const VEILED =
+  "animate-pulse select-none rounded bg-muted text-transparent";
 
 export function StatTile({
   label,
@@ -144,7 +145,10 @@ export function StatTile({
         {loading ? "Loading label" : label}
       </span>
       <span
-        className={cn("w-fit font-bold text-xl tabular-nums", loading && VEILED)}
+        className={cn(
+          "w-fit font-bold text-xl tabular-nums",
+          loading && VEILED
+        )}
       >
         {loading ? "0000" : value}
       </span>

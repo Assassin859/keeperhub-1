@@ -3,8 +3,8 @@
 import { Mail, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { SettingsCard } from "./section";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SettingsCard } from "./section";
 
 type InvitationRow = {
   id: string;

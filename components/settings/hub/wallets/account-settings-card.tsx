@@ -22,9 +22,7 @@ function Row({
     <div className="flex flex-wrap items-center justify-between gap-3 border-b py-3 last:border-b-0 last:pb-0 first:pt-0">
       <div className="flex min-w-0 flex-col">
         <span className="font-medium text-sm">{label}</span>
-        {hint && (
-          <span className="text-muted-foreground text-xs">{hint}</span>
-        )}
+        {hint && <span className="text-muted-foreground text-xs">{hint}</span>}
       </div>
       {children}
     </div>
@@ -63,13 +61,25 @@ export function AccountSettingsCard({
       title="Account settings"
     >
       <div className="flex flex-col">
-        <Row hint="Funds sent here are controlled by this account." label="Address">
+        <Row
+          hint="Funds sent here are controlled by this account."
+          label="Address"
+        >
           <div className="flex items-center gap-2">
             <code className="max-w-[340px] truncate rounded bg-muted px-2 py-1 font-mono text-xs">
               {address}
             </code>
-            <Button aria-label="Copy address" onClick={copy} size="icon" variant="ghost">
-              {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+            <Button
+              aria-label="Copy address"
+              onClick={copy}
+              size="icon"
+              variant="ghost"
+            >
+              {copied ? (
+                <Check className="size-4" />
+              ) : (
+                <Copy className="size-4" />
+              )}
             </Button>
           </div>
         </Row>

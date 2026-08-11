@@ -5,9 +5,9 @@ import { useState } from "react";
 import { TotpManageDialog } from "@/components/settings/totp-manage-dialog";
 import { TotpSetupDialog } from "@/components/settings/totp-setup-dialog";
 import { Button } from "@/components/ui/button";
-import { SettingsCard, VEILED } from "../section";
 import { cn } from "@/lib/utils";
 import type { TotpStatus } from "../hooks/use-security";
+import { SettingsCard, VEILED } from "../section";
 
 export function TwoFactorCard({
   status,
@@ -21,6 +21,28 @@ export function TwoFactorCard({
   const [setupOpen, setSetupOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const enabled = status?.enabled ?? false;
+
+  const enrolledDetail = status?.enrolledAt
+    ? ` · added ${new Date(status.enrolledAt).toLocaleDateString()}`
+    : "";
+  const backupDetail = status?.hasBackupCodes ? "" : " · no backup codes";
+  const onDetail = `${status?.name ?? "Authenticator"}${enrolledDetail}${backupDetail}`;
+  const offDetail =
+    "Your password alone can sign you in. Turn this on to require a code too.";
+
+  let detail = "Checking whether a second factor is enrolled";
+  if (!loading) {
+    detail = enabled ? onDetail : offDetail;
+  }
+
+  let stateIcon: React.ReactNode = null;
+  if (!loading) {
+    stateIcon = enabled ? (
+      <ShieldCheck className="size-4" />
+    ) : (
+      <ShieldOff className="size-4 text-muted-foreground" />
+    );
+  }
 
   return (
     <SettingsCard
@@ -45,15 +67,11 @@ export function TwoFactorCard({
             loading && "animate-pulse"
           )}
         >
-          {loading ? null : enabled ? (
-              <ShieldCheck className="size-4" />
-            ) : (
-              <ShieldOff className="size-4 text-muted-foreground" />
-            )}
-          </span>
+          {stateIcon}
+        </span>
         <div className="flex flex-col gap-0.5">
           <span className={cn("w-fit font-medium text-sm", loading && VEILED)}>
-            {loading ? "Off" : enabled ? "On" : "Off"}
+            {enabled && !loading ? "On" : "Off"}
           </span>
           <span
             className={cn(
@@ -61,15 +79,7 @@ export function TwoFactorCard({
               loading && VEILED
             )}
           >
-            {loading
-              ? "Checking whether a second factor is enrolled"
-              : enabled
-                ? `${status?.name ?? "Authenticator"}${
-                    status?.enrolledAt
-                      ? ` · added ${new Date(status.enrolledAt).toLocaleDateString()}`
-                      : ""
-                  }${status?.hasBackupCodes ? "" : " · no backup codes"}`
-                : "Your password alone can sign you in. Turn this on to require a code too."}
+            {detail}
           </span>
         </div>
       </div>

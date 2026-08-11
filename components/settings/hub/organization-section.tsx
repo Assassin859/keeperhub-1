@@ -10,14 +10,14 @@ import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { useSession } from "@/lib/auth-client";
 import { useOrganizations } from "@/lib/hooks/use-organization";
 import { CreateOrgForm } from "./create-org-form";
-import { useOrganizationList } from "./hooks/use-organization-list";
 import { useOrgMembers } from "./hooks/use-org-members";
+import { useOrganizationList } from "./hooks/use-organization-list";
 import { useUserInvitations } from "./hooks/use-user-invitations";
 import { InvitationsCard } from "./invitations-card";
 import { MemberStats } from "./member-stats";
 import { MembersTable } from "./members/members-table";
-import { invitationTiming } from "./relative-time";
 import { OrgDetailsCard } from "./organization/org-details-card";
+import { invitationTiming } from "./relative-time";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
 
@@ -134,8 +134,8 @@ export function OrganizationSection(): React.ReactElement {
         {(members.loading || filtered.length > 0) && (
           <MembersTable
             canManage={isAdmin}
-            loading={members.loading}
             currentMemberId={currentMemberId}
+            loading={members.loading}
             members={filtered}
             onRemove={members.removeMember}
             onRoleChange={members.changeRole}

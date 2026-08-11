@@ -40,7 +40,7 @@ describe("findSettingsMatches", () => {
   it("lists everything in a section when the section itself is named", () => {
     expect(results("billing")).toEqual([
       "Billing > This month",
-      "Billing > Payment and invoices",
+      "Billing > Pay as you go",
     ]);
   });
 
