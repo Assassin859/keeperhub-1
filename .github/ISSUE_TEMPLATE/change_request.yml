@@ -1,0 +1,82 @@
+name: Behaviour change or new feature
+description: Propose something KeeperHub should do that it does not do today.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with what you are trying to do, not with what to build. The problem
+        is stable and the solution is negotiable - we may already know a cheaper
+        one, or a reason the obvious one does not work here.
+
+        Wait for the `accepted` label before writing code. See
+        [ISSUES.md](https://github.com/KeeperHub/keeperhub/blob/staging/ISSUES.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched open and closed issues for this proposal.
+          required: true
+        - label: I checked the docs and the current behaviour on `staging`.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you cannot do today
+      description: >-
+        The concrete task that is blocked or awkward, and what you currently do
+        instead. Real usage beats a hypothetical - if this came out of building
+        something, describe that.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: >-
+        The change as you would build it. Include the API or UI shape if it has
+        one, and say what happens to existing callers.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: >-
+        What this touches, and explicitly what it does not. Then apply the split
+        test: can each piece of this ship, deploy, and be correct with the other
+        pieces reverted? If yes, they are separate issues - list them and file
+        the rest separately.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: >-
+        Including doing nothing. If there is a workaround that already works,
+        say what it costs you - that is what tells us the size of the problem.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: breaking
+    attributes:
+      label: Compatibility
+      options:
+        - label: This changes an existing response shape, status code, CLI flag, or default.
+          required: false
+        - label: This adds, removes, or upgrades a dependency.
+          required: false
+        - label: This changes database schema or requires a migration.
+          required: false
+        - label: This touches authentication, permissions, validation, or spend limits.
+          required: false
+        - label: This changes pricing, plan limits, or anything a user is charged.
+          required: false

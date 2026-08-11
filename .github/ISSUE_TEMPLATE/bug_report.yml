@@ -1,0 +1,91 @@
+name: Bug report
+description: Something behaves differently from how it is documented or intended.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A reproduction settles a bug report faster than any amount of description.
+        If you already know the fix, say so at the bottom - but wait for the
+        `accepted` label before writing it. See [ISSUES.md](https://github.com/KeeperHub/keeperhub/blob/staging/ISSUES.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched open and closed issues for this behaviour.
+          required: true
+        - label: I confirmed it still happens on the current `staging`, not only on an older checkout.
+          required: true
+        - label: This is not a security vulnerability (those go through private reporting).
+          required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >-
+        The exact steps, request, or workflow. Include the endpoint and body for
+        an API call, the command for the CLI, or the click path for the UI.
+        Redact keys and addresses you do not want public.
+      placeholder: |
+        curl -X POST https://app.keeperhub.com/api/execute/transfer \
+          -H "Authorization: Bearer kh_..." \
+          -d '{"chainId": 11155111, "recipientAddress": "0x...", "amount": "0.1"}'
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: >-
+        The response body, error message, stack trace, or screenshot. Paste the
+        text rather than a screenshot of text where you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: >-
+        If a documentation page or an error message told you to expect something
+        else, link it. That link is often the fastest route to a fix.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where you saw it
+      options:
+        - Production (app.keeperhub.com)
+        - Staging
+        - Local development
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: >-
+        The `staging` commit you reproduced on, the `kh` version (`kh version`),
+        or the date and time of the production request.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed fix and its scope
+      description: >-
+        Optional, and the problem above matters more. If you do have a fix in
+        mind, say which files or subsystems it touches and - explicitly - what
+        it does not touch. If it splits into parts that could each ship alone,
+        say so; those are separate issues.
+    validations:
+      required: false
