@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { useSettingsContext } from "../settings-context";
 import { useCachedSection } from "./use-cached-section";
@@ -48,10 +48,6 @@ export function useSpendCaps(): SpendCapsState {
   );
   const data = section.data ?? null;
   const loading = section.loading;
-  const load = (): void => {
-    section.refetch().catch(() => toast.error("Could not load the spend caps"));
-  };
-
   const save = useCallback(
     async (id: "evm" | "solana", base: string | null): Promise<void> => {
       setSaving(true);
