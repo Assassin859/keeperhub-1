@@ -22,6 +22,7 @@ import {
   useOrganization,
   useOrganizations,
 } from "@/lib/hooks/use-organization";
+import { cn } from "@/lib/utils";
 
 export function OrgSwitcher() {
   const router = useRouter();
@@ -177,7 +178,10 @@ export function OrgSwitcher() {
                       settings without switching, so it must not bubble. */}
                   <button
                     aria-label={`Settings for ${org.name}`}
-                    className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                    className={cn(
+                      "shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
+                      org.id === organization.id ? "opacity-100" : "opacity-0"
+                    )}
                     onClick={(event) => {
                       event.stopPropagation();
                       setOpen(false);
