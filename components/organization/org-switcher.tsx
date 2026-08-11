@@ -190,7 +190,14 @@ export function OrgSwitcher() {
                   {/* Selecting the row switches to the org; this opens its
                       settings without switching, so it must not bubble. */}
                   <Tooltip>
-                    <TooltipTrigger asChild>
+                    {/* Opening the list moves focus to the first thing that
+                        takes it, which is this button. Radix opens a tooltip
+                        on focus as well as on hover, so the name appeared
+                        over a row nobody had pointed at. */}
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => event.preventDefault()}
+                    >
                       <button
                         aria-label={`Settings for ${org.name}`}
                         className={cn(
