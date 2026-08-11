@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Loader2, Plus, Wallet } from "lucide-react";
+import { Copy, Loader2, Plus, Settings, Wallet } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -124,14 +124,14 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
             </span>
           </button>
         </TooltipTrigger>
-        <TooltipContent>Open wallet settings</TooltipContent>
+        <TooltipContent>Wallet</TooltipContent>
       </Tooltip>
       <div className="h-5 w-px bg-border" />
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             aria-label="Copy wallet address"
-            className="flex h-full items-center rounded-r-md px-2 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+            className="flex h-full items-center px-2 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
             data-testid="wallet-toolbar-copy"
             onClick={handleCopy}
             type="button"
@@ -140,6 +140,21 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
           </button>
         </TooltipTrigger>
         <TooltipContent>Copy address</TooltipContent>
+      </Tooltip>
+      <div className="h-5 w-px bg-border" />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            aria-label="Wallet settings"
+            className="flex h-full items-center rounded-r-md px-2 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+            data-testid="wallet-toolbar-settings"
+            onClick={handleOpenWallet}
+            type="button"
+          >
+            <Settings className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Wallet settings</TooltipContent>
       </Tooltip>
     </div>
   );
