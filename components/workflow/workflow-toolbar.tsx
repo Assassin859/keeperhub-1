@@ -10,16 +10,12 @@ import {
   Link2,
   Loader2,
   Lock,
-  Share2,
   Play,
-  Plus,
-  Redo2,
   Save,
   Settings2,
   Square,
   Store,
   Trash2,
-  Undo2,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { usePathname, useRouter } from "next/navigation";
@@ -28,12 +24,6 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { OrgSwitcher } from "@/components/organization/org-switcher";
 import { GoLiveOverlay } from "@/components/overlays/go-live-overlay";
 import { ListingOverlay } from "@/components/overlays/listing-overlay";
