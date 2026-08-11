@@ -41,6 +41,22 @@ export function accountTitle(account: WalletAccountKind): string {
     : "Turnkey EOA (EVM Compatible)";
 }
 
+/**
+ * The name a slug carries on its own. Both signer accounts are named by their
+ * slug alone, so a heading does not have to wait for the wallet to load; a
+ * Safe's name carries its network, which the slug does not hold.
+ */
+export function accountTitleForSlug(slug: string): string {
+  if (slug === "evm" || slug === "solana") {
+    return accountTitle({
+      address: "",
+      family: slug === "solana" ? "solana" : "evm",
+      kind: "turnkey",
+    } as WalletAccountKind);
+  }
+  return "Safe";
+}
+
 /** Derives the renderable account rows from the raw wallet payload. */
 export function useWalletAccounts({
   walletAddress,

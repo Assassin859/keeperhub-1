@@ -8,6 +8,7 @@ import { useOrgWallet } from "@/lib/wallet/use-org-wallet";
 import {
   accountSlug,
   accountTitle,
+  accountTitleForSlug,
   useWalletAccounts,
 } from "@/lib/wallet/use-wallet-accounts";
 import { SectionHeader, SettingsCard } from "../section";
@@ -39,10 +40,19 @@ export function AccountDetailSection({
     </Button>
   );
 
-  if (state.walletLoading) {
+  // A Safe is only missing once the Safes have actually been fetched; they
+  // arrive after the wallet, and until then the list is simply empty.
+  const isSignerSlug = accountId === "evm" || accountId === "solana";
+  const pending =
+    state.walletLoading ||
+    (!isSignerSlug &&
+      state.walletData?.hasWallet === true &&
+      !state.safesLoaded);
+
+  if (pending) {
     return (
       <>
-        <SectionHeader leading={back} title="Account" />
+        <SectionHeader leading={back} title={accountTitleForSlug(accountId)} />
         <SettingsCard title="Assets">
           <RowsSkeleton rows={4} />
         </SettingsCard>

@@ -37,6 +37,8 @@ export type SafeRow = SafeRowType;
 
 export type OrgWalletState = {
   walletLoading: boolean;
+  /** Safes arrive after the wallet, so a Safe is not missing until this. */
+  safesLoaded: boolean;
   walletData: WalletData | null;
   chains: ChainData[];
   solanaIsTestnet: boolean;
@@ -89,6 +91,7 @@ export function useOrgWallet(): OrgWalletState {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>([]);
   const [safes, setSafes] = useState<SafeRow[]>([]);
+  const [safesLoaded, setSafesLoaded] = useState(false);
 
   const {
     balances,
@@ -99,9 +102,13 @@ export function useOrgWallet(): OrgWalletState {
   } = useWalletBalances();
 
   const refreshSafes = useCallback(async (): Promise<SafeRow[]> => {
-    const rows = await fetchDeployedSafes();
-    setSafes(rows);
-    return rows;
+    try {
+      const rows = await fetchDeployedSafes();
+      setSafes(rows);
+      return rows;
+    } finally {
+      setSafesLoaded(true);
+    }
   }, []);
 
   const loadWallet = useCallback(async (): Promise<void> => {
@@ -111,6 +118,7 @@ export function useOrgWallet(): OrgWalletState {
       setWalletData(data);
       setWalletLoading(false);
       if (!data.hasWallet) {
+        setSafesLoaded(true);
         return;
       }
 
@@ -242,6 +250,7 @@ export function useOrgWallet(): OrgWalletState {
     tokenBalances,
     tokens,
     walletData,
+    safesLoaded,
     walletLoading,
   };
 }
