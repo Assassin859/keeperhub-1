@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { useSettingsContext } from "../settings-context";
+import { useCachedSection } from "./use-cached-section";
 
 export type UserInvitation = {
   id: string;
@@ -16,34 +15,16 @@ export function useUserInvitations(): {
   invitations: UserInvitation[];
   loading: boolean;
 } {
-  const { revision } = useSettingsContext();
-  const [invitations, setInvitations] = useState<UserInvitation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const section = useCachedSection<UserInvitation[]>(
+    "user-invitations",
+    async () => {
+      const result = await authClient.organization.listUserInvitations();
+      const list = Array.isArray(result.data) ? result.data : [];
+      return (list as UserInvitation[]).filter(
+        (inv) => inv.status === "pending"
+      );
+    }
+  );
 
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    authClient.organization
-      .listUserInvitations()
-      .then((result) => {
-        if (!active) {
-          return;
-        }
-        const list = Array.isArray(result.data) ? result.data : [];
-        setInvitations(
-          (list as UserInvitation[]).filter((inv) => inv.status === "pending")
-        );
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [revision]);
-
-  return { invitations, loading };
+  return { invitations: section.data ?? [], loading: section.loading };
 }

@@ -11,6 +11,7 @@ import {
   type TierKey,
 } from "@/lib/billing/plans";
 import { useSettingsContext } from "../settings-context";
+import { useCachedSection } from "./use-cached-section";
 
 type SubscriptionResponse = {
   subscription: {
@@ -50,20 +51,18 @@ export type BillingSummaryState = {
 };
 
 export function useBillingSummary(): BillingSummaryState {
-  const { revision } = useSettingsContext();
-  const [summary, setSummary] = useState<BillingSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { organizationId } = useSettingsContext();
   const [openingPortal, setOpeningPortal] = useState(false);
 
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
+  const section = useCachedSection<BillingSummary | null>(
+    organizationId ? `billing-summary:${organizationId}` : null,
+    async () => {
       const res = await fetch(BILLING_API.SUBSCRIPTION);
       if (!res.ok) {
-        return;
+        return null;
       }
       const data = (await res.json()) as SubscriptionResponse;
-      setSummary({
+      return {
         cancelAtPeriodEnd: data.subscription.cancelAtPeriodEnd,
         executionLimit: data.usage.executionLimit,
         executionsUsed: data.usage.executionsUsed,
@@ -78,15 +77,11 @@ export function useBillingSummary(): BillingSummaryState {
         renewsAt: data.subscription.currentPeriodEnd,
         status: data.subscription.status,
         tier: parseTierKey(data.subscription.tier),
-      });
-    } finally {
-      setLoading(false);
+      };
     }
-  }, []);
-
-  useEffect(() => {
-    load().catch(() => undefined);
-  }, [load, revision]);
+  );
+  const summary = section.data ?? null;
+  const loading = section.loading;
 
   const openPortal = useCallback(async (): Promise<void> => {
     setOpeningPortal(true);

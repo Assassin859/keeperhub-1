@@ -90,16 +90,16 @@ export function BillingDetails(): React.ReactElement {
           <span>Billing Details</span>
           {hasPaymentMethod && (
             <Button
-              aria-label="Edit billing details"
-              className="size-7 text-muted-foreground hover:text-foreground"
+              className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
               disabled={portalLoading}
               onClick={() => {
                 openPortal().catch(() => undefined);
               }}
-              size="icon"
+              size="sm"
               variant="ghost"
             >
               <Pencil className="size-3.5" />
+              {portalLoading ? "Opening..." : "Manage payment method"}
             </Button>
           )}
         </CardTitle>

@@ -14,6 +14,7 @@ import {
   type TierKey,
 } from "@/lib/billing/plans";
 import { useSettingsContext } from "../settings-context";
+import { useCachedSection } from "./use-cached-section";
 
 type SubscriptionResponse = {
   subscription: { plan: string; tier: string | null; interval: string | null };
@@ -33,54 +34,53 @@ export type BillingPlanState = {
   refresh: () => Promise<void>;
 };
 
+type PlanSnapshot = {
+  plan: PlanName;
+  tier: TierKey | null;
+  interval: BillingInterval | null;
+  gasCreditCaps: GasCreditCapsMap | undefined;
+  trial: TrialInfo | undefined;
+};
+
 export function useBillingPlan(): BillingPlanState {
-  const { organizationId, revision } = useSettingsContext();
-  const [plan, setPlan] = useState<PlanName>("free");
-  const [tier, setTier] = useState<TierKey | null>(null);
-  const [interval, setInterval] = useState<BillingInterval | null>(null);
-  const [gasCreditCaps, setGasCreditCaps] = useState<
-    GasCreditCapsMap | undefined
-  >(undefined);
-  const [trial, setTrial] = useState<TrialInfo | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
+  const { organizationId } = useSettingsContext();
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const fetchPlan = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
+  const section = useCachedSection<PlanSnapshot>(
+    organizationId ? `billing-plan:${organizationId}` : null,
+    async () => {
       const response = await fetch(BILLING_API.SUBSCRIPTION);
       if (!response.ok) {
-        return;
+        throw new Error("Could not load the plan");
       }
       const data = (await response.json()) as SubscriptionResponse;
-      setPlan(parsePlanName(data.subscription.plan));
-      setTier(parseTierKey(data.subscription.tier));
-      setInterval(
-        data.subscription.interval === "monthly" ||
+      return {
+        gasCreditCaps: data.gasCreditCaps,
+        interval:
+          data.subscription.interval === "monthly" ||
           data.subscription.interval === "yearly"
-          ? data.subscription.interval
-          : null
-      );
-      setGasCreditCaps(data.gasCreditCaps);
-      setTrial(data.trial);
-    } finally {
-      setLoading(false);
+            ? data.subscription.interval
+            : null,
+        plan: parsePlanName(data.subscription.plan),
+        tier: parseTierKey(data.subscription.tier),
+        trial: data.trial,
+      };
     }
-  }, []);
+  );
 
-  useEffect(() => {
-    setPlan("free");
-    setTier(null);
-    setInterval(null);
-    setTrial(undefined);
-    setRefreshKey((k) => k + 1);
-    fetchPlan().catch(() => undefined);
-  }, [fetchPlan, organizationId, revision]);
+  const snapshot = section.data;
+  const plan = snapshot?.plan ?? "free";
+  const tier = snapshot?.tier ?? null;
+  const interval = snapshot?.interval ?? null;
+  const gasCreditCaps = snapshot?.gasCreditCaps;
+  const trial = snapshot?.trial;
+  const loading = section.loading;
 
   const refresh = useCallback(async (): Promise<void> => {
-    await fetchPlan();
+    await section.refetch();
     setRefreshKey((k) => k + 1);
-  }, [fetchPlan]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: refetch is rebuilt each render
+  }, []);
 
   return {
     gasCreditCaps,

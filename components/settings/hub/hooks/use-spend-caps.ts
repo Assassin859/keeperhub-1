@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useSettingsContext } from "../settings-context";
+import { useCachedSection } from "./use-cached-section";
 
 export const EVM_DECIMALS = 18;
 export const SOLANA_DECIMALS = 9;
@@ -36,23 +37,20 @@ const FIELD: Record<"evm" | "solana", string> = {
 };
 
 export function useSpendCaps(): SpendCapsState {
-  const { revision } = useSettingsContext();
-  const [data, setData] = useState<SpendCapResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { organizationId } = useSettingsContext();
   const [saving, setSaving] = useState(false);
-
-  const load = useCallback((): void => {
-    setLoading(true);
-    fetch("/api/analytics/spend-cap")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((next: SpendCapResponse | null) => setData(next))
-      .catch(() => toast.error("Could not load the spend caps"))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load, revision]);
+  const section = useCachedSection<SpendCapResponse | null>(
+    organizationId ? `spend-caps:${organizationId}` : null,
+    async () => {
+      const res = await fetch("/api/analytics/spend-cap");
+      return res.ok ? ((await res.json()) as SpendCapResponse) : null;
+    }
+  );
+  const data = section.data ?? null;
+  const loading = section.loading;
+  const load = (): void => {
+    section.refetch().catch(() => toast.error("Could not load the spend caps"));
+  };
 
   const save = useCallback(
     async (id: "evm" | "solana", base: string | null): Promise<void> => {
@@ -64,16 +62,9 @@ export function useSpendCaps(): SpendCapsState {
           body: JSON.stringify({ [FIELD[id]]: base }),
         });
         if (res.ok) {
-          setData((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  ...(id === "evm"
-                    ? { dailyCapWei: base }
-                    : { dailySolanaCapLamports: base }),
-                }
-              : prev
-          );
+          // Read the saved value back rather than patching a copy, so the
+          // cache other sections read from holds what the server has.
+          await section.refetch();
           toast.success(base ? "Cap saved" : "Cap cleared");
           return;
         }

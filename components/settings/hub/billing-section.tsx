@@ -1,6 +1,5 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { BillingDetails } from "@/components/billing/billing-details";
@@ -45,7 +44,7 @@ function formatDate(value: string | null): string {
 
 export function BillingSection(): React.ReactElement {
   const { organizationId } = useSettingsContext();
-  const { summary, loading, openPortal, openingPortal } = useBillingSummary();
+  const { summary, loading } = useBillingSummary();
   const isPaid = summary ? summary.plan !== "free" : false;
   const pending = loading || !summary;
 
@@ -137,21 +136,6 @@ export function BillingSection(): React.ReactElement {
         </SettingsCard>
       )}
 
-      {isPaid && (
-        <SettingsCard
-          description="The card on file, changed through the billing portal."
-          title="Payment method"
-        >
-          <Button
-            disabled={openingPortal}
-            onClick={openPortal}
-            variant="outline"
-          >
-            {openingPortal ? "Opening..." : "Manage payment method"}
-            <ExternalLink className="size-3.5" />
-          </Button>
-        </SettingsCard>
-      )}
     </>
   );
 }

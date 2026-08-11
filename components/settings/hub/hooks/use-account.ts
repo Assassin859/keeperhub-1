@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
+import { useCachedSection } from "./use-cached-section";
 import { useSession } from "@/lib/auth-client";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
@@ -32,8 +33,11 @@ export function useAccount(): AccountState {
   const [savedName, setSavedName] = useState("");
   const [savedEmail, setSavedEmail] = useState("");
   const [providerId, setProviderId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // The account is the same whichever organization is active, so it is cached
+  // once and painted from there when a section that needs it opens again.
+  const cached = useCachedSection("account:user", () => api.user.get());
+  const loading = cached.loading;
 
   const mfaEnrolled =
     (session.data?.user as { twoFactorEnabled?: boolean | null } | undefined)
@@ -42,26 +46,26 @@ export function useAccount(): AccountState {
   const showMfaCode = mfaEnrolled && emailChanged;
 
   const load = useCallback(async (): Promise<void> => {
-    try {
-      const data = await api.user.get();
-      setName(data.name || "");
-      setEmail(data.email || "");
-      setSavedName(data.name || "");
-      setSavedEmail(data.email || "");
-      setProviderId(data.providerId ?? null);
-      dual.reset();
-    } catch {
+    await cached.refetch().catch(() => {
       toast.error("Could not load your account.");
-    } finally {
-      setLoading(false);
-    }
-    // dual.reset is a stable closure over useState setters.
+    });
+    // cached.refetch is rebuilt per render by the hook above
     // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   }, []);
 
+  const data = cached.data;
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!data) {
+      return;
+    }
+    setName(data.name || "");
+    setEmail(data.email || "");
+    setSavedName(data.name || "");
+    setSavedEmail(data.email || "");
+    setProviderId(data.providerId ?? null);
+    // dual.reset is a stable closure over useState setters.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
+  }, [data]);
 
   const reset = useCallback((): void => {
     setName(savedName);

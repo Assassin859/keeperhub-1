@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
+import { useCachedSection } from "./use-cached-section";
 
 export type TotpStatus = {
   enabled: boolean;
@@ -32,51 +31,35 @@ export type SecurityState = {
 };
 
 export function useSecurity(): SecurityState {
-  const [totp, setTotp] = useState<TotpStatus | null>(null);
-  const [totpLoading, setTotpLoading] = useState(true);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(true);
-
-  const reloadTotp = useCallback(async (): Promise<void> => {
-    setTotpLoading(true);
-    try {
+  const totpState = useCachedSection<TotpStatus | null>(
+    "security:totp",
+    async () => {
       const res = await fetch("/api/user/totp/status");
-      if (res.ok) {
-        setTotp((await res.json()) as TotpStatus);
+      if (!res.ok) {
+        throw new Error("Could not load two-factor status");
       }
-    } catch {
-      toast.error("Could not load two-factor status");
-    } finally {
-      setTotpLoading(false);
+      return (await res.json()) as TotpStatus;
     }
-  }, []);
+  );
 
-  const reloadSessions = useCallback(async (): Promise<void> => {
-    setSessionsLoading(true);
-    try {
+  const sessionsState = useCachedSection<SessionRow[]>(
+    "security:sessions",
+    async () => {
       const res = await fetch("/api/user/sessions", { cache: "no-store" });
-      if (res.ok) {
-        const data = (await res.json()) as { sessions?: SessionRow[] };
-        setSessions(data.sessions ?? []);
+      if (!res.ok) {
+        throw new Error("Could not load sessions");
       }
-    } catch {
-      toast.error("Could not load your sessions");
-    } finally {
-      setSessionsLoading(false);
+      const data = (await res.json()) as { sessions?: SessionRow[] };
+      return data.sessions ?? [];
     }
-  }, []);
-
-  useEffect(() => {
-    reloadTotp().catch(() => undefined);
-    reloadSessions().catch(() => undefined);
-  }, [reloadTotp, reloadSessions]);
+  );
 
   return {
-    reloadSessions,
-    reloadTotp,
-    sessions,
-    sessionsLoading,
-    totp,
-    totpLoading,
+    reloadSessions: sessionsState.refetch,
+    reloadTotp: totpState.refetch,
+    sessions: sessionsState.data ?? [],
+    sessionsLoading: sessionsState.loading,
+    totp: totpState.data ?? null,
+    totpLoading: totpState.loading,
   };
 }
