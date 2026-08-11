@@ -127,7 +127,7 @@ export function KeysCard({
             onDelete={keys.handleDelete}
             showCreator={showCreator}
           />
-          {keys.meta && (
+          {keys.meta && keys.meta.totalPages > 1 && (
             <div className="px-2 pt-2">
               <Pager meta={keys.meta} onPage={keys.setPage} unit="keys" />
             </div>
