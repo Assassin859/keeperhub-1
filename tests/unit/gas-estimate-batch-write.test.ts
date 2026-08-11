@@ -127,6 +127,56 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
       expect.objectContaining({ name: "work" })
     );
     expect(mockEstimateGas).toHaveBeenCalledTimes(1);
+    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      true
+    );
+  });
+
+  it("derives allowFailure=true when isolateCallFailures is absent, matching the step's default", async () => {
+    await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: {
+          abi: WORK_ABI,
+          abiFunction: "work",
+          calls: JSON.stringify(SAMPLE_CALLS),
+        },
+      })
+    );
+
+    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      true
+    );
+  });
+
+  it('derives allowFailure=false when isolateCallFailures is "false", matching the step exactly', async () => {
+    const response = await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: {
+          abi: WORK_ABI,
+          abiFunction: "work",
+          calls: JSON.stringify(SAMPLE_CALLS),
+          isolateCallFailures: "false",
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      false
+    );
   });
 
   it("rejects when calls is missing", async () => {

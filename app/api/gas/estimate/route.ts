@@ -25,6 +25,7 @@ type EstimateConfig = {
   amount?: string;
   tokenConfig?: unknown;
   calls?: string | unknown[];
+  isolateCallFailures?: string;
 };
 
 type ActionSlug =
@@ -231,11 +232,16 @@ function estimateBatchWriteContract(
   }
 
   const iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
+  // Mirrors batch-write-contract-core.ts's own derivation exactly, so a
+  // batch with Isolate Call Failures off (a single sub-call revert reverts
+  // the whole aggregate3 call) estimates the same transaction that would
+  // actually broadcast, instead of always the isolated-failure variant.
+  const allowFailure = config.isolateCallFailures !== "false";
   const { call3Array, error: encodeError } = encodeCall3Array(
     calls,
     iface,
     abiFunctionKey,
-    true
+    allowFailure
   );
   if (encodeError) {
     return badRequest(encodeError);

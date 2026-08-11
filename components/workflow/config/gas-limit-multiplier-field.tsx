@@ -68,6 +68,7 @@ export function GasLimitMultiplierField({
         amount: config.amount,
         tokenConfig: config.tokenConfig,
         calls: config.calls,
+        isolateCallFailures: config.isolateCallFailures,
       }),
     [
       config.contractAddress,
@@ -78,6 +79,7 @@ export function GasLimitMultiplierField({
       config.amount,
       config.tokenConfig,
       config.calls,
+      config.isolateCallFailures,
     ]
   );
 
