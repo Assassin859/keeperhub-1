@@ -64,6 +64,11 @@ if [ "$SKIP_BUILD" = false ]; then
     # buildx merges list fields across -f files and an empty-list assignment does
     # not clear an inherited value. The root file's cache refs point at
     # ${ECR_REGISTRY}, which resolves to "/:cache" here and is not a valid ref.
+    # These three are a command prefix: they enter docker's environment, where
+    # bake reads them as HCL variables. shellcheck loses track of that across
+    # the line continuations and reports them unused, which fails the
+    # --severity=warning gate in maintainability.yml.
+    # shellcheck disable=SC2034
     NEXT_PUBLIC_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
     IMAGE_TAG="$IMAGE_TAG" \
     LOCAL_IMAGE_REPO="$IMAGE_REPO" \
