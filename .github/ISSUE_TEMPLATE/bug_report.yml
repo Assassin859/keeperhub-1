@@ -5,9 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        A reproduction settles a bug report faster than any amount of description.
-        If you already know the fix, say so at the bottom - but wait for the
-        `accepted` label before writing it. See [ISSUES.md](https://github.com/KeeperHub/keeperhub/blob/staging/ISSUES.md).
+        Every issue carries three things: a **reason** it matters, a **scope**
+        it is bounded to, and a **plan** for what happens next. All three are
+        required. The plan is your proposal - triage may replace it, and will
+        say so in a comment before accepting.
+
+        Wait for the `accepted` label before writing code. See
+        [ISSUES.md](https://github.com/KeeperHub/keeperhub/blob/staging/ISSUES.md).
 
   - type: checkboxes
     id: preflight
@@ -18,17 +22,21 @@ body:
           required: true
         - label: I confirmed it still happens on the current `staging`, not only on an older checkout.
           required: true
+        - label: This is one problem, not several. (Several means several issues.)
+          required: true
         - label: This is not a security vulnerability (those go through private reporting).
           required: true
 
   - type: textarea
     id: reproduction
     attributes:
-      label: Reproduction
+      label: "Reason: reproduction"
       description: >-
-        The exact steps, request, or workflow. Include the endpoint and body for
-        an API call, the command for the CLI, or the click path for the UI.
-        Redact keys and addresses you do not want public.
+        The exact steps, request, or workflow, as something someone else can
+        run. A runnable repro is what turns "is this real" into a two-minute
+        question instead of a conversation. Redact keys and addresses you do
+        not want public.
+      render: shell
       placeholder: |
         curl -X POST https://app.keeperhub.com/api/execute/transfer \
           -H "Authorization: Bearer kh_..." \
@@ -39,20 +47,32 @@ body:
   - type: textarea
     id: actual
     attributes:
-      label: What happened
-      description: >-
-        The response body, error message, stack trace, or screenshot. Paste the
-        text rather than a screenshot of text where you can.
+      label: "Reason: what happened"
+      description: The response body, error, stack trace, or screenshot. Paste text rather than a picture of text.
     validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: What you expected instead
+      label: "Reason: what you expected, and what told you to expect it"
       description: >-
-        If a documentation page or an error message told you to expect something
-        else, link it. That link is often the fastest route to a fix.
+        Name the source of the expectation - a docs page, an error message, a
+        type, a function name, a schema. This field settles more issues than any
+        other: if the source says something different from the code, we know
+        immediately which of the two is wrong. If nothing told you, say that.
+    validations:
+      required: true
+
+  - type: textarea
+    id: cost
+    attributes:
+      label: "Reason: what it costs"
+      description: >-
+        What goes wrong for a real user or agent that hits this. Lost time,
+        wrong data, a silent failure, funds moved that should not have been.
+        This is what orders the queue - "it is wrong" does not distinguish a
+        typo from a transaction broadcast by mistake.
     validations:
       required: true
 
@@ -72,20 +92,42 @@ body:
     id: version
     attributes:
       label: Version or commit
-      description: >-
-        The `staging` commit you reproduced on, the `kh` version (`kh version`),
-        or the date and time of the production request.
+      description: The `staging` commit you reproduced on, the `kh` version, or the time of the production request.
     validations:
       required: true
 
   - type: textarea
     id: scope
     attributes:
-      label: Proposed fix and its scope
+      label: "Scope: what this covers, and what it does not"
       description: >-
-        Optional, and the problem above matters more. If you do have a fix in
-        mind, say which files or subsystems it touches and - explicitly - what
-        it does not touch. If it splits into parts that could each ship alone,
-        say so; those are separate issues.
+        The surfaces you believe are affected, and the ones you checked and
+        found fine. If the same fault might exist on sibling routes or commands,
+        say which - a fix applied to one route and not its three siblings is a
+        recurring failure here. Then confirm this is one problem: if any part
+        could be fixed and shipped while another stays broken, those are
+        separate issues.
+      placeholder: >-
+        Affects POST /api/execute/{protocol}/{action}. Checked
+        /api/execute/contract-call and /api/execute/transfer - both fine.
+        Did not check check-and-execute.
     validations:
-      required: false
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: "Plan: what should happen next"
+      description: >-
+        Your proposal, which triage may replace. If you know the fix, describe
+        it and say whether it changes anything a caller depends on - a response
+        shape, a unit, a status code, a default. If you do not know the fix,
+        that is a valid plan: say what you would need to determine to choose
+        one. What is not valid is leaving this blank.
+      placeholder: >-
+        Either reject `simulate` on this route with a 400 naming the supported
+        routes, or implement it as contract-call does. The first is smaller and
+        removes the trap; the second is what an agent expects. Changes no
+        existing successful response.
+    validations:
+      required: true

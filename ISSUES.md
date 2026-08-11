@@ -41,39 +41,72 @@ any code is written.
 If you are unsure, open the issue. A wrong guess in that direction costs you a
 day; the other direction can cost you the whole change.
 
+## Reason, scope, plan
+
+Every issue carries three things. An issue missing any of them cannot be
+answered, only discussed, and discussion is what this policy exists to replace.
+
+**Reason** - why this matters, in evidence rather than assertion. For a bug that
+is a runnable reproduction, what happened, what you expected, *what told you to
+expect it*, and what it costs someone who hits it. For a change it is the task
+you cannot accomplish and what the workaround costs.
+
+The "what told you to expect it" part settles more issues than anything else. An
+expectation comes from somewhere - a docs page, an error message, a type, a
+function name. Naming that source tells us immediately whether the code is wrong
+or the source is, and those have completely different fixes.
+
+**Scope** - what this covers and, explicitly, what it does not. Which surfaces
+you checked and found fine. Whether the same fault plausibly exists on sibling
+routes or commands. A fix applied to one route and not its three siblings is a
+recurring failure here, and scope is where it gets caught.
+
+Scope is also where you confirm this is *one* issue. If any part could be fixed
+and shipped while another part stays broken, those are separate issues. See
+[Should this be one change](#should-this-be-one-change).
+
+**Plan** - what should happen next. This is your proposal, not a commitment we
+have made, and triage may replace it.
+
+A plan does not require knowing the fix. If you cannot see the codebase, *"I do
+not know the fix; here is what I would need to determine to choose one"* is a
+complete and useful plan. What is not acceptable is leaving it blank: a problem
+with no proposed next step puts the entire cost of thinking on whoever reads it,
+which is exactly the load this policy is meant to move upstream.
+
+What a plan buys you is a check nothing else provides. A proposal stated out
+loud can be tested against the actual contract before any code exists - and a
+well-evidenced issue can still carry a wrong plan. One report here correctly
+observed that `parseNativeValueWei` parses with `ethers.parseEther`, and
+proposed denominating `value` in wei. The observation was right; the plan would
+have silently changed every existing caller's amount by a factor of 1e18,
+because the API's documented unit is ether and the misleading thing is the
+internal function name. That was caught by reading the plan. Unwritten, it would
+have been caught by reading the pull request.
+
 ## What happens to your issue
 
 | Label | Meaning |
 |---|---|
 | `needs-triage` | Received, not yet read. Applied automatically. |
-| `accepted` | The problem is real and the proposed approach is sound and correctly scoped. Write the pull request. |
-| `needs-discussion` | Real, but the approach or the scope is not settled. Do not start yet. |
+| `confirmed` | Someone reproduced it. Says nothing yet about whether we will fix it. |
+| `accepted` | Reason, scope and plan all stand. Write the pull request. |
+| `needs-discussion` | Real, but the scope or the plan is not settled. Do not start yet. |
 | `wontfix` / `duplicate` / `invalid` | Closed, with the reason in a comment. |
 
 **`accepted` is the signal to start.** It is what the pull request gate checks
-for. Nothing else on the issue means "go".
+for. Nothing else on the issue means "go" - `confirmed` in particular does not,
+because reproducing something is not the same as deciding to change it.
+
+**`accepted` accepts a specific plan.** If triage takes your reason and scope but
+replaces your plan, it says so in a comment before applying the label, and that
+comment is the plan. Build against it, not against the one you filed. An
+`accepted` label with no comment means your plan as written was accepted as
+written.
 
 We aim to triage within two working days. If an issue has sat longer than that,
 comment on it - that is not nagging, it is the correct response, and it is the
 fastest way to get it moving.
-
-## What makes an issue answerable
-
-The issue forms ask for these. They exist so we can answer in one pass instead
-of three.
-
-**For a bug**, the thing that settles it is a reproduction: the exact request or
-steps, what happened, what you expected, and on which environment. A stack
-trace, a request id, or a failing response body is worth more than a paragraph
-of description.
-
-**For a change in behaviour**, tell us what you want to do that you currently
-cannot, before telling us what to build. The problem is stable; the solution is
-negotiable, and we may know a cheaper one.
-
-**Scope it.** Name what the change touches and, explicitly, what it does not. If
-you find yourself listing two things joined by "and", that is usually two
-issues. See [Should this be one change](#should-this-be-one-change).
 
 **Check it is still there.** `staging` moves quickly. Confirm the behaviour on
 the current default branch before filing, and say which commit you checked.

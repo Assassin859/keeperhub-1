@@ -5,9 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
+        Every issue carries three things: a **reason** it matters, a **scope**
+        it is bounded to, and a **plan** for what happens next. All three are
+        required. The plan is your proposal - triage may replace it, and will
+        say so in a comment before accepting.
+
         Lead with what you are trying to do, not with what to build. The problem
-        is stable and the solution is negotiable - we may already know a cheaper
-        one, or a reason the obvious one does not work here.
+        is stable; the solution is negotiable, and we may know a cheaper one.
 
         Wait for the `accepted` label before writing code. See
         [ISSUES.md](https://github.com/KeeperHub/keeperhub/blob/staging/ISSUES.md).
@@ -21,62 +25,81 @@ body:
           required: true
         - label: I checked the docs and the current behaviour on `staging`.
           required: true
+        - label: This is one change, not several. (Several means several issues.)
+          required: true
 
   - type: textarea
     id: problem
     attributes:
-      label: What you cannot do today
+      label: "Reason: what you cannot do today"
       description: >-
-        The concrete task that is blocked or awkward, and what you currently do
-        instead. Real usage beats a hypothetical - if this came out of building
+        The concrete task that is blocked or awkward, and what you do instead.
+        Real usage beats a hypothetical - if this came out of building
         something, describe that.
     validations:
       required: true
 
   - type: textarea
-    id: proposal
+    id: cost
     attributes:
-      label: What you propose
+      label: "Reason: what the workaround costs"
       description: >-
-        The change as you would build it. Include the API or UI shape if it has
-        one, and say what happens to existing callers.
+        If a workaround exists, what it costs you - time, reliability, an
+        invariant you cannot hold. That cost is the size of the problem, and it
+        is what this gets weighed against. If there is no workaround at all, say
+        so.
     validations:
       required: true
 
   - type: textarea
     id: scope
     attributes:
-      label: Scope
+      label: "Scope: what this touches, and what it does not"
       description: >-
-        What this touches, and explicitly what it does not. Then apply the split
-        test: can each piece of this ship, deploy, and be correct with the other
-        pieces reverted? If yes, they are separate issues - list them and file
-        the rest separately.
+        The surfaces this changes and the ones it deliberately leaves alone.
+        Then confirm it is one change: if any part could ship, deploy, and be
+        correct with another part reverted, those are separate issues - list
+        them and file the rest separately.
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: "Plan: what you propose"
+      description: >-
+        The change as you would build it, including the API or UI shape and what
+        happens to existing callers. Triage may replace this with a different
+        approach and will say so before accepting. If you are proposing the
+        problem rather than a solution, say what you would need to determine to
+        choose one.
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives you considered
+      label: "Plan: alternatives you considered"
       description: >-
-        Including doing nothing. If there is a workaround that already works,
-        say what it costs you - that is what tells us the size of the problem.
+        Including doing nothing, and including approaches you rejected and why.
+        A rejected alternative with a reason is often the most useful thing in
+        the issue - it stops triage re-deriving it.
     validations:
       required: false
 
   - type: checkboxes
     id: breaking
     attributes:
-      label: Compatibility
+      label: "Scope: compatibility"
+      description: Tick anything the plan above would touch. Each one turns this into a decision rather than a fix.
       options:
-        - label: This changes an existing response shape, status code, CLI flag, or default.
+        - label: Changes an existing response shape, status code, CLI flag, or default.
           required: false
-        - label: This adds, removes, or upgrades a dependency.
+        - label: Adds, removes, or upgrades a dependency.
           required: false
-        - label: This changes database schema or requires a migration.
+        - label: Changes database schema or requires a migration.
           required: false
-        - label: This touches authentication, permissions, validation, or spend limits.
+        - label: Touches authentication, permissions, validation, or spend limits.
           required: false
-        - label: This changes pricing, plan limits, or anything a user is charged.
+        - label: Changes pricing, plan limits, or anything a user is charged.
           required: false

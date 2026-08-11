@@ -24,7 +24,7 @@ body:
   - type: textarea
     id: claim
     attributes:
-      label: What the page says
+      label: "Reason: what the page says"
       description: Quote the sentence or block, with the line number if you have it.
     validations:
       required: true
@@ -32,21 +32,43 @@ body:
   - type: textarea
     id: reality
     attributes:
-      label: What the code does
+      label: "Reason: what the code does"
       description: >-
         The file and line that settles it, or the request and response showing
-        the real behaviour. This is the part that makes the issue answerable in
-        one pass - a docs claim is only wrong relative to some code.
+        the real behaviour. A docs claim is only wrong relative to some code, so
+        this is the field that makes the issue answerable in one pass.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: "Scope: where else this appears"
+      description: >-
+        The same claim often appears on several pages, in a tool description, in
+        an error message, and in a type. List the ones you found, and say where
+        you looked and found it correct. Fixing one page and leaving four is the
+        common failure here.
     validations:
       required: true
 
   - type: dropdown
-    id: which
+    id: plan
     attributes:
-      label: Which one is wrong
+      label: "Plan: which one changes"
       options:
         - The docs - the code is behaving correctly
         - The code - the docs describe the intended behaviour
-        - Not sure
+        - Not sure, needs a maintainer to decide
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan_detail
+    attributes:
+      label: "Plan: the correction"
+      description: >-
+        What the page should say instead, or what the code should do. If you
+        picked "not sure" above, say what would settle it.
     validations:
       required: true
