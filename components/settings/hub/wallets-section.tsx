@@ -10,9 +10,6 @@ import { SectionHeader, SettingsCard, StatTile } from "./section";
 import { useSettingsContext } from "./settings-context";
 import { AccountsTable } from "./wallets/accounts-table";
 import { useSafeReconcile } from "@/lib/wallet/use-safe-reconcile";
-import { RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
 
 export function WalletsSection(): React.ReactElement {
   const { data: session } = useSession();

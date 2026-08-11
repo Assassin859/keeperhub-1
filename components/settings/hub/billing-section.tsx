@@ -7,7 +7,7 @@ import { UsageMeter } from "./billing/usage-meter";
 import { useBillingSummary } from "./hooks/use-billing-summary";
 import { SectionHeader, SettingsCard, StatTile } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { FormSkeleton, StatTilesSkeleton } from "./skeletons";
+import { FormSkeleton } from "./skeletons";
 
 const PLAN_LABELS: Record<string, string> = {
   business: "Business",
