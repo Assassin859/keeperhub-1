@@ -9,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "./section";
+import { SETTINGS_HEAD_ROW, SETTINGS_ROW, StatTile } from "./section";
 
 const KEYS = ["a", "b", "c", "d", "e", "f"] as const;
 
@@ -70,6 +70,10 @@ export function CardGridSkeleton({
   );
 }
 
+/**
+ * The real tiles, waiting. Drawing an approximation of them is what made a
+ * page shift when the figures arrived.
+ */
 export function StatTilesSkeleton({
   tiles = 3,
 }: {
@@ -78,11 +82,7 @@ export function StatTilesSkeleton({
   return (
     <div className="grid gap-4 sm:grid-cols-3">
       {KEYS.slice(0, tiles).map((key) => (
-        <div className="space-y-2 rounded-xl border bg-card/60 p-4" key={key}>
-          <Skeleton className="h-2.5 w-20" />
-          <Skeleton className="h-6 w-14" />
-          <Skeleton className="h-2.5 w-24" />
-        </div>
+        <StatTile hint="" key={key} label="" loading value="" />
       ))}
     </div>
   );

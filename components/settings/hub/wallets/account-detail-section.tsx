@@ -15,6 +15,9 @@ import { useSettingsContext } from "../settings-context";
 import { FormSkeleton, StatTilesSkeleton, TableSkeleton } from "../skeletons";
 import { AccountAddress } from "./account-address";
 import { AccountDetailPanel } from "./account-detail-panel";
+import { AssetFilters } from "./asset-filters";
+
+const noop = (): void => undefined;
 
 export function AccountDetailSection({
   accountId,
@@ -65,8 +68,25 @@ export function AccountDetailSection({
           title={accountTitleForSlug(accountId)}
         />
         <StatTilesSkeleton tiles={3} />
-        <SettingsCard bodyClassName="p-2" title="Assets">
-          <TableSkeleton columns={4} leading rows={2} />
+        <SettingsCard
+          action={
+            // The real controls, inert: a drawing of them is what moved the
+            // table down when they arrived.
+            <AssetFilters
+              hiddenCount={0}
+              network={[]}
+              networks={[]}
+              onNetworkChange={noop}
+              onQueryChange={noop}
+              onToggleZero={noop}
+              query=""
+              showZero={false}
+            />
+          }
+          bodyClassName="p-2"
+          title="Assets"
+        >
+          <TableSkeleton columns={5} leading rows={2} />
         </SettingsCard>
         <SettingsCard title="Account settings">
           <FormSkeleton rows={3} />
