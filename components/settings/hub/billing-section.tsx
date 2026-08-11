@@ -116,26 +116,21 @@ export function BillingSection(): React.ReactElement {
         </SettingsCard>
       )}
 
-      <SettingsCard
-        description="The card on file, changed through the billing portal."
-        title="Payment method"
-      >
-        <div className="flex flex-wrap gap-2">
+      {isPaid && (
+        <SettingsCard
+          description="The card on file, changed through the billing portal."
+          title="Payment method"
+        >
           <Button
-            disabled={openingPortal || !isPaid}
+            disabled={openingPortal}
             onClick={openPortal}
             variant="outline"
           >
             {openingPortal ? "Opening..." : "Manage payment method"}
             <ExternalLink className="size-3.5" />
           </Button>
-        </div>
-        {!isPaid && (
-          <p className="mt-3 text-muted-foreground text-xs">
-            You are on the free plan, so there is no payment method on file yet.
-          </p>
-        )}
-      </SettingsCard>
+        </SettingsCard>
+      )}
     </>
   );
 }
