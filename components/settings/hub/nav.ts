@@ -147,7 +147,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
       {
         segment: "organization",
         scope: "org",
-        label: "Organization",
+        label: "General",
         icon: Building2,
         description: "This organization, its members and their roles.",
         panels: [
