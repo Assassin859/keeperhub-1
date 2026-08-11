@@ -20,7 +20,6 @@ import { invitationTiming } from "./relative-time";
 import { OrgDetailsCard } from "./organization/org-details-card";
 import { EmptyState, SectionHeader, SettingsCard } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { StatTilesSkeleton } from "./skeletons";
 
 /** Most privileged first; anything unrecognised sorts last. */
 function roleRank(role: string): number {
@@ -92,14 +91,11 @@ export function OrganizationSection(): React.ReactElement {
         slug={org?.slug ?? ""}
       />
 
-      {members.loading ? (
-        <StatTilesSkeleton tiles={3} />
-      ) : (
-        <MemberStats
-          members={members.members}
-          pendingCount={members.invitations.length}
-        />
-      )}
+      <MemberStats
+        loading={members.loading}
+        members={members.members}
+        pendingCount={members.invitations.length}
+      />
 
       <SettingsCard
         action={

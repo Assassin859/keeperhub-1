@@ -5,11 +5,12 @@ import { ChangePasswordSection } from "@/components/settings/change-password-sec
 import { WalletSecuritySection } from "@/components/settings/wallet-security-section";
 import { useAccount } from "./hooks/use-account";
 import { type SessionRow, useSecurity } from "./hooks/use-security";
-import { EmptyState, SectionHeader, SettingsCard } from "./section";
+import { EmptyState, SectionHeader, SettingsCard, VEILED } from "./section";
+import { cn } from "@/lib/utils";
 import { RevokeSessionPanel } from "./security/revoke-session-panel";
 import { SessionsTable } from "./security/sessions-table";
 import { TwoFactorCard } from "./security/two-factor-card";
-import { FormSkeleton, TableSkeleton } from "./skeletons";
+import { TableSkeleton } from "./skeletons";
 
 export function SecuritySection(): React.ReactElement {
   const { providerId, loading } = useAccount();
@@ -42,10 +43,18 @@ export function SecuritySection(): React.ReactElement {
             description="Changing your password signs out every other device."
             title="Password"
           >
-            {/* What this renders depends on the sign-in method, so it waits
-                for one rather than guessing and collapsing. */}
+            {/* What this renders depends on the sign-in method, which is not
+                known yet, so the wait is shaped like the shorter of the two. */}
             {loading ? (
-              <FormSkeleton rows={1} />
+              <div className="space-y-2">
+                <span className={cn("ml-1 block w-fit font-medium text-sm", VEILED)}>
+                  Password
+                </span>
+                <p className={cn("w-fit text-muted-foreground text-sm", VEILED)}>
+                  Checking how this account signs in, so the right control can
+                  be offered here.
+                </p>
+              </div>
             ) : (
               <ChangePasswordSection providerId={providerId} />
             )}

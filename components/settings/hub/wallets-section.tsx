@@ -8,7 +8,6 @@ import { useOrgWallet } from "@/lib/wallet/use-org-wallet";
 import { useWalletAccounts } from "@/lib/wallet/use-wallet-accounts";
 import { SectionHeader, SettingsCard, StatTile } from "./section";
 import { useSettingsContext } from "./settings-context";
-import { StatTilesSkeleton } from "./skeletons";
 import { AccountsTable } from "./wallets/accounts-table";
 import { useSafeReconcile } from "@/lib/wallet/use-safe-reconcile";
 import { RefreshCw } from "lucide-react";
@@ -43,30 +42,29 @@ export function WalletsSection(): React.ReactElement {
         title="Wallets"
       />
 
-      {state.walletLoading ? (
-        <StatTilesSkeleton tiles={3} />
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <StatTile
-            hint="Turnkey signer plus any Safes"
-            label="Accounts"
-            value={String(accounts.all.length)}
-          />
-          <StatTile
-            hint={state.safes.length > 0 ? "Deployed on chain" : "None deployed"}
-            label="Safe smart accounts"
-            value={String(state.safes.length)}
-          />
-          <StatTile
-            hint={
-              state.isLoadingBalances ? "Reading balances" : "Ready to withdraw"
-            }
-            label="Fundable assets"
-            tone={withdrawable > 0 ? "accent" : "neutral"}
-            value={String(withdrawable)}
-          />
-        </div>
-      )}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatTile
+          hint="Turnkey signer plus any Safes"
+          label="Accounts"
+          loading={state.walletLoading}
+          value={String(accounts.all.length)}
+        />
+        <StatTile
+          hint={state.safes.length > 0 ? "Deployed on chain" : "None deployed"}
+          label="Safe smart accounts"
+          loading={state.walletLoading}
+          value={String(state.safes.length)}
+        />
+        <StatTile
+          hint={
+            state.isLoadingBalances ? "Reading balances" : "Ready to withdraw"
+          }
+          label="Fundable assets"
+          loading={state.walletLoading}
+          tone={withdrawable > 0 ? "accent" : "neutral"}
+          value={String(withdrawable)}
+        />
+      </div>
 
       <SettingsCard
         bodyClassName="p-2"
