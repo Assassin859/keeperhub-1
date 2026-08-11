@@ -11,9 +11,9 @@ import {
   accountTitleForSlug,
   useWalletAccounts,
 } from "@/lib/wallet/use-wallet-accounts";
-import { SectionHeader, SettingsCard } from "../section";
+import { SectionHeader, SettingsCard, VEILED } from "../section";
 import { useSettingsContext } from "../settings-context";
-import { FormSkeleton, RowsSkeleton } from "../skeletons";
+import { FormSkeleton, StatTilesSkeleton, TableSkeleton } from "../skeletons";
 import { AccountDetailPanel } from "./account-detail-panel";
 
 export function AccountDetailSection({
@@ -52,12 +52,22 @@ export function AccountDetailSection({
   if (pending) {
     return (
       <>
-        <SectionHeader leading={back} title={accountTitleForSlug(accountId)} />
-        <SettingsCard title="Assets">
-          <RowsSkeleton rows={4} />
+        {/* The same shape the loaded page has: an address under the name,
+            three tiles, then the cards. Anything missing here moves
+            everything below it once the account arrives. */}
+        <SectionHeader
+          description={
+            <span className={VEILED}>0x0000000000000000000000000000000000000000</span>
+          }
+          leading={back}
+          title={accountTitleForSlug(accountId)}
+        />
+        <StatTilesSkeleton tiles={3} />
+        <SettingsCard bodyClassName="p-2" title="Assets">
+          <TableSkeleton columns={4} leading rows={2} />
         </SettingsCard>
         <SettingsCard title="Account settings">
-          <FormSkeleton rows={2} />
+          <FormSkeleton rows={3} />
         </SettingsCard>
       </>
     );

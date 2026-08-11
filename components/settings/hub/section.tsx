@@ -48,7 +48,8 @@ export function SectionHeader({
   leading,
 }: {
   title: string;
-  description?: string;
+  /** A node, so a page still waiting for it can hold the line open. */
+  description?: ReactNode;
   action?: ReactNode;
   /** Sits to the left of the title, for the way back out of a subpage. */
   leading?: ReactNode;
