@@ -3,6 +3,8 @@
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { BillingDetails } from "@/components/billing/billing-details";
+import { BillingHistory } from "@/components/billing/billing-history";
 import { PaygSection } from "@/components/billing/payg-section";
 import { PAYG_PLAN_NAME } from "@/lib/billing/plans";
 import { UsageMeter } from "./billing/usage-meter";
@@ -98,6 +100,13 @@ export function BillingSection(): React.ReactElement {
         )}
       </SettingsCard>
 
+      {isPaid && (
+        <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+          <BillingHistory />
+          <BillingDetails />
+        </div>
+      )}
+
       {summary?.plan === PAYG_PLAN_NAME && (
         <SettingsCard
           description="Keep a balance in USDC and spend it per execution, with no subscription. Top it up here."
@@ -108,8 +117,8 @@ export function BillingSection(): React.ReactElement {
       )}
 
       <SettingsCard
-        description="Invoices, payment method and the full plan comparison live in the billing portal."
-        title="Payment and invoices"
+        description="The card on file, changed through the billing portal."
+        title="Payment method"
       >
         <div className="flex flex-wrap gap-2">
           <Button
@@ -119,9 +128,6 @@ export function BillingSection(): React.ReactElement {
           >
             {openingPortal ? "Opening..." : "Manage payment method"}
             <ExternalLink className="size-3.5" />
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/billing">Invoices and plans</Link>
           </Button>
         </div>
         {!isPaid && (

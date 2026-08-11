@@ -216,7 +216,7 @@ export function ExecutionDigestSection({
           </p>
           {isBillingEnabled() &&
             (canManageBilling ? (
-              <Button onClick={() => router.push("/billing")} size="sm">
+              <Button onClick={() => router.push("/settings")} size="sm">
                 Upgrade
               </Button>
             ) : (
