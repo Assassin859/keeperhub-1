@@ -22,6 +22,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { signOut, useSession } from "@/lib/auth-client";
@@ -201,21 +206,27 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
                 </p>
               )}
             </div>
-            <button
-              aria-label="Settings"
-              className="relative shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
-              onClick={() => router.push("/settings")}
-              type="button"
-            >
-              <Settings className="size-4" />
-              {showBillingDot && (
-                <span
-                  aria-hidden="true"
-                  className="-top-0.5 -right-0.5 absolute size-2 rounded-full bg-destructive"
-                  data-testid="billing-notification-dot"
-                />
-              )}
-            </button>
+            <div className="h-8 w-px shrink-0 bg-border" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  aria-label="User settings"
+                  className="relative shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => router.push("/settings")}
+                  type="button"
+                >
+                  <Settings className="size-4" />
+                  {showBillingDot && (
+                    <span
+                      aria-hidden="true"
+                      className="-top-0.5 -right-0.5 absolute size-2 rounded-full bg-destructive"
+                      data-testid="billing-notification-dot"
+                    />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left">User settings</TooltipContent>
+            </Tooltip>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <div className="lg:hidden">
