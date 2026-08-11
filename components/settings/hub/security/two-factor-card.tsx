@@ -5,8 +5,8 @@ import { useState } from "react";
 import { TotpManageDialog } from "@/components/settings/totp-manage-dialog";
 import { TotpSetupDialog } from "@/components/settings/totp-setup-dialog";
 import { Button } from "@/components/ui/button";
-import { SettingsCard } from "../section";
-import { FormSkeleton } from "../skeletons";
+import { SettingsCard, VEILED } from "../section";
+import { cn } from "@/lib/utils";
 import type { TotpStatus } from "../hooks/use-security";
 
 export function TwoFactorCard({
@@ -38,33 +38,41 @@ export function TwoFactorCard({
       description="An authenticator code is required on sign-in and before sensitive changes."
       title="Two-factor authentication"
     >
-      {loading ? (
-        <FormSkeleton rows={1} />
-      ) : (
-        <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-            {enabled ? (
+      <div className="flex items-start gap-3">
+        <span
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted",
+            loading && "animate-pulse"
+          )}
+        >
+          {loading ? null : enabled ? (
               <ShieldCheck className="size-4" />
             ) : (
               <ShieldOff className="size-4 text-muted-foreground" />
             )}
           </span>
-          <div className="flex flex-col gap-0.5">
-            <span className="font-medium text-sm">
-              {enabled ? "On" : "Off"}
-            </span>
-            <span className="text-muted-foreground text-xs">
-              {enabled
+        <div className="flex flex-col gap-0.5">
+          <span className={cn("w-fit font-medium text-sm", loading && VEILED)}>
+            {loading ? "Off" : enabled ? "On" : "Off"}
+          </span>
+          <span
+            className={cn(
+              "w-fit text-muted-foreground text-xs",
+              loading && VEILED
+            )}
+          >
+            {loading
+              ? "Checking whether a second factor is enrolled"
+              : enabled
                 ? `${status?.name ?? "Authenticator"}${
                     status?.enrolledAt
                       ? ` · added ${new Date(status.enrolledAt).toLocaleDateString()}`
                       : ""
                   }${status?.hasBackupCodes ? "" : " · no backup codes"}`
                 : "Your password alone can sign you in. Turn this on to require a code too."}
-            </span>
-          </div>
+          </span>
         </div>
-      )}
+      </div>
 
       <TotpSetupDialog
         onEnrolled={onChanged}

@@ -24,6 +24,7 @@ export function BillingSection(): React.ReactElement {
   const { organizationId } = useSettingsContext();
   const { summary, loading, openPortal, openingPortal } = useBillingSummary();
   const isPaid = summary ? summary.plan !== "free" : false;
+  const pending = loading || !summary;
 
   return (
     <>
@@ -39,32 +40,33 @@ export function BillingSection(): React.ReactElement {
         title="Billing and plan"
       />
 
-      {loading || !summary ? (
-        <StatTilesSkeleton tiles={3} />
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <StatTile
-            hint={summary.interval ? `Billed ${summary.interval}` : "No charge"}
-            label="Current plan"
-            value={PLAN_LABELS[summary.plan] ?? summary.plan}
-          />
-          <StatTile
-            hint={
-              summary.cancelAtPeriodEnd
-                ? "Cancels at period end"
-                : `Renews ${formatDate(summary.renewsAt)}`
-            }
-            label="Status"
-            tone={summary.cancelAtPeriodEnd ? "warning" : "neutral"}
-            value={summary.status === "active" ? "Active" : summary.status}
-          />
-          <StatTile
-            hint="Billable runs this calendar month"
-            label="Executions used"
-            value={summary.executionsUsed.toLocaleString()}
-          />
-        </div>
-      )}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatTile
+          hint={summary?.interval ? `Billed ${summary.interval}` : "No charge"}
+          label="Current plan"
+          loading={pending}
+          value={summary ? (PLAN_LABELS[summary.plan] ?? summary.plan) : ""}
+        />
+        <StatTile
+          hint={
+            summary?.cancelAtPeriodEnd
+              ? "Cancels at period end"
+              : `Renews ${formatDate(summary?.renewsAt ?? null)}`
+          }
+          label="Status"
+          loading={pending}
+          tone={summary?.cancelAtPeriodEnd ? "warning" : "neutral"}
+          value={
+            summary?.status === "active" ? "Active" : (summary?.status ?? "")
+          }
+        />
+        <StatTile
+          hint="Billable runs this calendar month"
+          label="Executions used"
+          loading={pending}
+          value={summary?.executionsUsed.toLocaleString() ?? ""}
+        />
+      </div>
 
       <SettingsCard
         description="Resets at the start of each calendar month."

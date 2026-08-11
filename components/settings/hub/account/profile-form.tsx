@@ -8,8 +8,11 @@ import type { AccountState } from "../hooks/use-account";
 
 export function ProfileForm({
   account,
+  loading = false,
 }: {
   account: AccountState;
+  /** Renders the real fields, waiting rather than standing in for them. */
+  loading?: boolean;
 }): React.ReactElement {
   return (
     <div className="flex flex-col gap-5">
@@ -17,6 +20,7 @@ export function ProfileForm({
         <div className="space-y-2">
           <Label htmlFor="profile-name">Name</Label>
           <Input
+            disabled={loading}
             id="profile-name"
             onChange={(e) => account.setName(e.target.value)}
             placeholder="Your name"
@@ -29,6 +33,7 @@ export function ProfileForm({
         <div className="space-y-2">
           <Label htmlFor="profile-email">Email</Label>
           <Input
+            disabled={loading}
             id="profile-email"
             onChange={(e) => account.setEmail(e.target.value)}
             placeholder="you@example.com"

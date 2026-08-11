@@ -113,31 +113,49 @@ export function SettingsCard({
   );
 }
 
+/**
+ * Keeps the element and its type styles and only hides the words, so a
+ * placeholder occupies exactly the line box the real text will. A separate
+ * skeleton with its own heights cannot promise that.
+ */
+export const VEILED = "animate-pulse select-none rounded bg-muted text-transparent";
+
 export function StatTile({
   label,
   value,
   hint,
   tone = "neutral",
+  loading = false,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "neutral" | "accent" | "warning";
+  loading?: boolean;
 }): React.ReactElement {
   return (
     <div className="flex flex-col gap-1.5 rounded-xl border bg-card/60 p-4">
-      <span className="text-muted-foreground text-xs">{label}</span>
-      <span className="font-bold text-xl tabular-nums">{value}</span>
-      {hint && (
+      <span
+        className={cn("w-fit text-muted-foreground text-xs", loading && VEILED)}
+      >
+        {loading ? "Loading label" : label}
+      </span>
+      <span
+        className={cn("w-fit font-bold text-xl tabular-nums", loading && VEILED)}
+      >
+        {loading ? "0000" : value}
+      </span>
+      {(hint || loading) && (
         <span
           className={cn(
-            "text-xs",
+            "w-fit text-xs",
             tone === "accent" && "text-foreground",
             tone === "warning" && "text-amber-400",
-            tone === "neutral" && "text-muted-foreground"
+            tone === "neutral" && "text-muted-foreground",
+            loading && VEILED
           )}
         >
-          {hint}
+          {loading ? "Loading hint text" : hint}
         </span>
       )}
     </div>

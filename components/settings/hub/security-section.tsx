@@ -42,6 +42,8 @@ export function SecuritySection(): React.ReactElement {
             description="Changing your password signs out every other device."
             title="Password"
           >
+            {/* What this renders depends on the sign-in method, so it waits
+                for one rather than guessing and collapsing. */}
             {loading ? (
               <FormSkeleton rows={1} />
             ) : (

@@ -4,7 +4,6 @@ import { DeactivateAccountSection } from "@/components/settings/delete-account-s
 import { ProfileForm } from "./account/profile-form";
 import { useAccount } from "./hooks/use-account";
 import { SectionHeader, SettingsCard } from "./section";
-import { FormSkeleton } from "./skeletons";
 
 export function ProfileSection(): React.ReactElement {
   const account = useAccount();
@@ -17,7 +16,7 @@ export function ProfileSection(): React.ReactElement {
       />
 
       <SettingsCard title="Account details">
-        {account.loading ? <FormSkeleton rows={2} /> : <ProfileForm account={account} />}
+        <ProfileForm account={account} loading={account.loading} />
       </SettingsCard>
 
       <SettingsCard
