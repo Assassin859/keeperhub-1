@@ -624,7 +624,7 @@ Check the status of a direct execution.
   "executionId": "direct_123",
   "status": "completed",
   "type": "transfer",
-  "network": "sepolia",
+  "network": "11155111",
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
   "sponsored": false,
@@ -652,14 +652,24 @@ Check the status of a direct execution.
 
 **Other fields:**
 
-- `network`: the chain the execution ran on, as the slug accepted in the request.
-- `retryCount`: how many times KeeperHub re-submitted this execution internally.
-  `0` means it landed on the first attempt. This is the field to read when
-  asking whether the audit trail exposes retries.
-- `gasPriceWei`: effective gas price of the transaction, in wei, as a decimal
-  string.
-- `estimatedCostUsd`: cost estimate at execution time, or `null` when no price
-  was available for the chain's native token.
+- `network`: whichever chain identifier the request supplied, stored verbatim as
+  a string. A request using the canonical `chainId` gets the numeric chain id
+  back (`"11155111"`); one using the deprecated `network` alias gets the chain
+  name it sent (`"sepolia"`). It is `null` when the request carried neither.
+  Do not key a chain lookup on this without handling all three.
+- `retryCount`: internal re-submissions of a node execution -
+  `POST /api/execute/node`, which this page does not otherwise cover. <!-- api-docs-ignore -->
+  It is always `0` for the transfer, contract-call and check-and-execute
+  endpoints documented here, whatever happened internally - those paths never
+  set it. A `0` is therefore not evidence that no nonce replacement or gas bump
+  occurred.
+- `gasPriceWei`: the effective gas price, as a decimal string. On EVM chains
+  this is in wei. On Solana it is the micro-lamports-per-compute-unit price of
+  the priority component, as described in
+  [Gas Management](../wallet-management/gas.md) - so `gasUsed * gasPriceWei` is
+  not a cost in either unit there.
+- `estimatedCostUsd`: reserved, and always `null` today. Nothing populates it;
+  it awaits a price-oracle integration. Do not branch on it being non-null.
 
 **Receipts:**
 
