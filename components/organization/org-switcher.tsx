@@ -16,6 +16,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { TruncatedTooltip } from "@/components/ui/truncated-tooltip";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -171,26 +176,43 @@ export function OrgSwitcher() {
                   <TruncatedTooltip
                     className="min-w-0 flex-1 text-left"
                     side="right"
-                    sideOffset={28}
+                    sideOffset={36}
                     text={org.name}
+                  />
+                  <div
+                    className={cn(
+                      // bg-border is the same colour as the row's hover fill, so it would
+                      // disappear under the pointer.
+                      "h-4 w-px shrink-0 bg-muted-foreground/60 transition group-hover:opacity-100",
+                      org.id === organization.id ? "opacity-100" : "opacity-0"
+                    )}
                   />
                   {/* Selecting the row switches to the org; this opens its
                       settings without switching, so it must not bubble. */}
-                  <button
-                    aria-label={`Settings for ${org.name}`}
-                    className={cn(
-                      "shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
-                      org.id === organization.id ? "opacity-100" : "opacity-0"
-                    )}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setOpen(false);
-                      router.push(`/settings/${org.id}/organization`);
-                    }}
-                    type="button"
-                  >
-                    <Settings className="size-3.5" />
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        aria-label={`Settings for ${org.name}`}
+                        className={cn(
+                          "shrink-0 rounded p-0.5 text-muted-foreground transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
+                          org.id === organization.id
+                            ? "opacity-100"
+                            : "opacity-0"
+                        )}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpen(false);
+                          router.push(`/settings/${org.id}/organization`);
+                        }}
+                        type="button"
+                      >
+                        <Settings className="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      Organization settings
+                    </TooltipContent>
+                  </Tooltip>
                 </CommandItem>
               ))}
             </CommandGroup>
