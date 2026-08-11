@@ -70,7 +70,9 @@ export type BatchWriteContractCoreInput = {
   // JSON string [{ contractAddress: string, args?: unknown[] }, ...] from the
   // json-editor UI field, or a native array from a direct/MCP caller.
   calls: string | unknown[];
-  isolateCallFailures?: string; // "true" (default) or "false"
+  // "true" (default) or "false" from the workflow UI's string-valued config,
+  // but a direct/MCP caller can send a native JSON boolean instead.
+  isolateCallFailures?: string | boolean;
   gasLimitMultiplier?: string;
   priorityFeeGwei?: string;
   usePrivateMempool?: boolean;
@@ -342,6 +344,21 @@ export function encodeCall3Array(
   return { call3Array };
 }
 
+/**
+ * Derive Call3.allowFailure from the isolateCallFailures config, defaulting
+ * to true (isolated) when absent. Mirrors resolveFailOnError's own
+ * true-boolean-or-string-false guard (lib/utils.ts): the workflow UI always
+ * sends a string, but a direct/MCP caller can send a native JSON boolean, and
+ * `!== "false"` alone would treat boolean false the same as true, the
+ * opposite of what the caller asked for. Exported so
+ * app/api/gas/estimate/route.ts derives the identical value the step would.
+ */
+export function resolveIsolateCallFailures(
+  isolateCallFailures: string | boolean | undefined
+): boolean {
+  return isolateCallFailures !== false && isolateCallFailures !== "false";
+}
+
 async function getWorkflowIdFromExecution(
   executionId: string | undefined,
   organizationId: string | undefined
@@ -439,7 +456,7 @@ export async function batchWriteContractCore(
   }
 
   const iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
-  const allowFailure = isolateCallFailures !== "false";
+  const allowFailure = resolveIsolateCallFailures(isolateCallFailures);
   const { call3Array, error: encodeError } = encodeCall3Array(
     parsedCalls,
     iface,

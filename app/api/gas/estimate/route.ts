@@ -13,6 +13,7 @@ import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
 import {
   encodeCall3Array,
+  resolveIsolateCallFailures,
   validateAndParseCalls,
 } from "@/plugins/web3/steps/batch-write-contract-core";
 
@@ -25,7 +26,7 @@ type EstimateConfig = {
   amount?: string;
   tokenConfig?: unknown;
   calls?: string | unknown[];
-  isolateCallFailures?: string;
+  isolateCallFailures?: string | boolean;
 };
 
 type ActionSlug =
@@ -232,11 +233,11 @@ function estimateBatchWriteContract(
   }
 
   const iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
-  // Mirrors batch-write-contract-core.ts's own derivation exactly, so a
+  // Reuses batch-write-contract-core.ts's own derivation exactly, so a
   // batch with Isolate Call Failures off (a single sub-call revert reverts
   // the whole aggregate3 call) estimates the same transaction that would
   // actually broadcast, instead of always the isolated-failure variant.
-  const allowFailure = config.isolateCallFailures !== "false";
+  const allowFailure = resolveIsolateCallFailures(config.isolateCallFailures);
   const { call3Array, error: encodeError } = encodeCall3Array(
     calls,
     iface,

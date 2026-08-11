@@ -285,6 +285,18 @@ describe("batch-write-contract - per-call failure isolation", () => {
     expect(call3Arg.args[0][1].allowFailure).toBe(false);
   });
 
+  it("isolateCallFailures as the native boolean false: encodes allowFailure=false too, not just the string", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    await batchWriteContractCore(baseInput({ isolateCallFailures: false }));
+
+    const call3Arg = mockExecuteContractCall.mock.calls[0][1] as {
+      args: [{ allowFailure: boolean }[]];
+    };
+    expect(call3Arg.args[0][0].allowFailure).toBe(false);
+    expect(call3Arg.args[0][1].allowFailure).toBe(false);
+  });
+
   it("whole batch revert: pre-broadcast staticCall itself rejects, no errorClass so softenable", async () => {
     mockStaticCall.mockRejectedValueOnce(new Error("execution reverted"));
 

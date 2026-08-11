@@ -52,6 +52,10 @@ vi.mock("@/plugins/web3/steps/batch-write-contract-core", () => ({
   validateAndParseCalls: (...args: unknown[]) =>
     mockValidateAndParseCalls(...args),
   encodeCall3Array: (...args: unknown[]) => mockEncodeCall3Array(...args),
+  // Real implementation (not a spy): trivial, and the allowFailure-threading
+  // tests below assert on its actual output reaching encodeCall3Array.
+  resolveIsolateCallFailures: (value: unknown) =>
+    value !== false && value !== "false",
 }));
 
 const mockGetRpcProvider = vi.fn();
@@ -166,6 +170,29 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
           abiFunction: "work",
           calls: JSON.stringify(SAMPLE_CALLS),
           isolateCallFailures: "false",
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      false
+    );
+  });
+
+  it("derives allowFailure=false when isolateCallFailures is the native boolean false, not just the string", async () => {
+    const response = await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: {
+          abi: WORK_ABI,
+          abiFunction: "work",
+          calls: JSON.stringify(SAMPLE_CALLS),
+          isolateCallFailures: false,
         },
       })
     );
