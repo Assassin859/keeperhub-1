@@ -98,14 +98,16 @@ export function SettingsCard({
       ref={ref}
     >
       {title && (
-        <header className="flex items-start justify-between gap-4 border-b px-5 py-4">
-          <div className="flex flex-col gap-1">
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+          <div className="flex min-w-0 flex-col gap-1">
             <h2 className="font-semibold text-sm">{title}</h2>
             {description && (
               <p className="text-muted-foreground text-xs">{description}</p>
             )}
           </div>
-          {action}
+          {/* The actions keep their size and drop to their own line rather
+              than being pushed past the card's edge on a narrow screen. */}
+          {action && <div className="flex shrink-0 items-center">{action}</div>}
         </header>
       )}
       <div className={cn("p-5", bodyClassName)}>{children}</div>
