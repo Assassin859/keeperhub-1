@@ -281,9 +281,11 @@ function is400Error(message: string): boolean {
 // The appended Reason field gets a wider cap than an x402 accept field because
 // decoded custom errors are routinely longer than addresses. The original
 // callApi message remains verbatim as the first line for compatibility.
-const MAX_REVERT_FIELD_CHARS = 200;
+const MAX_SIMULATION_REASON_CHARS = 200;
 
 type SimulateFailureShape = {
+  success?: unknown;
+  status?: unknown;
   failureKind?: unknown;
   wouldRevert?: unknown;
   revertReason?: unknown;
@@ -294,19 +296,19 @@ type SimulateFailureShape = {
 };
 
 /**
- * Turn a dry-run revert reported as HTTP 400 into an actionable message.
+ * Turn an actionable dry-run failure reported as HTTP 400 into an agent-native
+ * message.
  *
- * `/api/execute/*` answers `simulate: true` with HTTP 400, `failureKind:
- * "revert"`, and `wouldRevert: true` when the simulated call reverted. In that
- * case the status describes the transaction rather than a malformed request,
- * and the body carries the decoded reason. An MCP caller never sees that body
- * as data because `callApi` throws and the JSON survives only as a fragment of
- * an error string. So the agent-native surface loses exactly the diagnostic
- * the dry run exists to produce.
+ * `/api/execute/*` reports two failures that carry enough structure to act on:
+ * a true call revert has `failureKind: "revert"` plus `wouldRevert: true`, while
+ * an attributed preflight failure has a machine-readable `code`. The latter is
+ * deliberately not called a revert: the current `insufficient_balance` case is
+ * rejected by gas estimation before the EVM returns revert data.
  *
- * Returns null unless the body really is a simulation revert, so ordinary
- * validation 400s (bad address, non-boolean `simulate`) stay verbatim and are
- * never relabelled as reverts.
+ * An MCP caller never sees either body as data because `callApi` throws and the
+ * JSON survives only as a fragment of an error string. Returns null for every
+ * other 400, including uncoded simulator validation failures, so malformed
+ * inputs are never relabelled as chain-side reverts.
  *
  * Best-effort throughout, like `buildPaymentRequiredHint`: an unparseable body
  * or a missing field degrades to fewer lines rather than throwing inside an
@@ -314,7 +316,7 @@ type SimulateFailureShape = {
  * on the status line keep working. Every appended field copy is sanitised — a
  * contract can pick its own revert string, so it is untrusted input.
  */
-function buildSimulationRevertHint(originalMessage: string): string | null {
+function buildSimulationFailureHint(originalMessage: string): string | null {
   const bodyStart = originalMessage.indexOf(
     " - ",
     API_CALL_FAILED_400_PREFIX.length
@@ -331,14 +333,23 @@ function buildSimulationRevertHint(originalMessage: string): string | null {
   } catch {
     return null;
   }
-  // `wouldRevert` is also true for simulator-side request validation failures.
-  // Only the explicit discriminator licenses an on-chain-revert diagnosis.
   if (
     !parsed ||
     typeof parsed !== "object" ||
-    parsed.failureKind !== "revert" ||
+    parsed.success !== false ||
+    parsed.status !== "simulated" ||
     parsed.wouldRevert !== true
   ) {
+    return null;
+  }
+
+  // `wouldRevert` is also true for simulator-side validation failures. A true
+  // revert therefore needs the explicit discriminator. Separately, a string
+  // `code` means the simulator attributed a preflight failure closely enough
+  // to make it actionable even when `failureKind` remains "validation".
+  const isRevert = parsed.failureKind === "revert";
+  const hasFailureCode = typeof parsed.code === "string";
+  if (!(isRevert || hasFailureCode)) {
     return null;
   }
 
@@ -346,15 +357,19 @@ function buildSimulationRevertHint(originalMessage: string): string | null {
     typeof parsed.revertReason === "string"
       ? parsed.revertReason
       : parsed.error,
-    MAX_REVERT_FIELD_CHARS,
+    MAX_SIMULATION_REASON_CHARS,
     "not reported"
   );
 
   const lines = [
     originalMessage,
     "",
-    "Simulation reverted. Nothing was signed or broadcast.",
-    "Stage: simulation — this 400 describes the transaction, not your request.",
+    isRevert
+      ? "Simulation reverted. Nothing was signed or broadcast."
+      : "Simulation preflight failed. Nothing was signed or broadcast.",
+    isRevert
+      ? "Stage: simulation — this 400 describes the transaction, not your request."
+      : "Stage: simulation preflight — the simulator attributed a machine-readable cause.",
     `Reason: ${reason}`,
   ];
 
@@ -370,14 +385,14 @@ function buildSimulationRevertHint(originalMessage: string): string | null {
   }
   if (typeof parsed.to === "string") {
     lines.push(
-      `Simulated target: ${sanitiseUpstreamField(parsed.to, MAX_ACCEPT_FIELD_CHARS, "unknown")}`
+      `Simulated call target: ${sanitiseUpstreamField(parsed.to, MAX_ACCEPT_FIELD_CHARS, "unknown")}`
     );
   }
 
   lines.push(
     "Next step:",
     "  - The dry run resolves the sender to the organization wallet. If your org routes writes through a Safe, the broadcast spends from the Safe, so the sender above is not the account that pays — resolve the signer mode before acting on the reason.",
-    "  - Fix the cause, then re-run the same arguments with simulate: true. Broadcast only once the dry run returns wouldRevert: false."
+    "  - Fix the cause, then re-run the same arguments with simulate: true. Broadcast only once the dry run returns success: true and wouldRevert: false."
   );
 
   return lines.join("\n");
@@ -385,10 +400,10 @@ function buildSimulationRevertHint(originalMessage: string): string | null {
 
 /**
  * `callApi` for the direct-execution tools: identical behaviour, except that a
- * dry-run revert reported as HTTP 400 is augmented with the decoded diagnostic
- * instead of surfacing as a bare `API call failed: 400 Bad Request - {...}`.
- * Every other failure, including an ordinary validation 400, is rethrown
- * untouched.
+ * structured dry-run failure reported as HTTP 400 is augmented with its
+ * actionable diagnostic instead of surfacing as a bare
+ * `API call failed: 400 Bad Request - {...}`. Every other failure, including
+ * an uncoded validation 400, is rethrown untouched.
  */
 async function callExecuteApi(
   internalApiBaseUrl: string,
@@ -411,7 +426,7 @@ async function callExecuteApi(
     );
   } catch (err) {
     if (err instanceof Error && is400Error(err.message)) {
-      const hint = buildSimulationRevertHint(err.message);
+      const hint = buildSimulationFailureHint(err.message);
       if (hint) {
         throw new Error(hint);
       }
