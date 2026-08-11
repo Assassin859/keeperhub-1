@@ -61,9 +61,47 @@ describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
     ).toBeUndefined();
   });
 
-  it("still errors on a non-numeric network that is not a template", () => {
+  it.each([
+    ["an unclosed template", "{{ not closed"],
+    ["an empty template body", "{{}}"],
+    ["a template that is only part of the value", "1{{@trigger-1:Manual.network}}"],
+  ])("still errors on %s", (_label, network) => {
+    // The skip covers a value that is entirely one reference. A chain id is
+    // substituted whole and never re-validated after resolution, so a fragment
+    // would resolve into a chain nobody chose, and an empty body resolves to
+    // nothing at all.
     const wf = makeWorkflow({
-      nodes: [triggerNode(), actionNode("a1", { network: "{{ not closed" })],
+      nodes: [triggerNode(), actionNode("a1", { network })],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    expect(
+      validateWorkflow(wf, { chainIds: new Set([1, 8453]) }).errors.find(
+        (e) => e.code === "unknown-chain-id"
+      )
+    ).toBeDefined();
+  });
+
+  it("still errors on a templated network on the trigger itself", () => {
+    // Nothing resolves a trigger's own network. The event listener parses it
+    // with Number() and skips the workflow when that fails, so a templated
+    // trigger network registers no listener and the workflow never fires --
+    // and this error is the only static signal that says why.
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: "trigger-1",
+          type: "trigger",
+          data: {
+            label: "Trigger",
+            type: "trigger",
+            config: {
+              triggerType: "Event",
+              network: "{{@trigger-1:Event.chainId}}",
+            },
+          },
+        },
+        actionNode("a1", { network: "1" }),
+      ],
       edges: [edge("e1", "trigger-1", "a1")],
     });
     expect(

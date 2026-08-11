@@ -50,10 +50,26 @@ export function chainExists(
     // A network supplied by the caller arrives as a template reference and is
     // resolved at execution time, so there is no chain id to check statically.
     // The address checks below already skip these for the same reason; without
-    // the same guard here, every marketplace workflow that takes its chain from
-    // the trigger — which is what the Marketplace docs tell you to do — reports
-    // unknown-chain-id while executing correctly.
-    if (isTemplateReference(network)) {
+    // the same guard here, a workflow that takes its chain from the trigger
+    // reports unknown-chain-id while executing correctly.
+    //
+    // Two limits on the skip, both cases where a template is wrong rather than
+    // unresolvable:
+    //
+    // - Trigger nodes are excluded. Nothing resolves a trigger's own network:
+    //   the event listener does Number(config.network) and skips the workflow
+    //   when it does not parse (workflow-mapper.ts), so a templated trigger
+    //   network never registers a listener and the workflow silently never
+    //   fires. This error is the only static signal that says why.
+    // - The reference must be the whole value. A chain id is substituted
+    //   entire, never built from a fragment, so "1{{@a:B.c}}" is a mistake
+    //   that would otherwise resolve into a chain the author never chose.
+    //   Address fields can afford the looser check because readContractCore
+    //   re-checks the resolved value with ethers.isAddress; network has no
+    //   such re-check.
+    const isTriggerNode =
+      readStringConfig(rawNode as NodeLike, "triggerType") !== null;
+    if (!isTriggerNode && isWholeTemplateReference(network)) {
       continue;
     }
     const parsed = Number(network);
@@ -144,6 +160,27 @@ const TEMPLATE_REFERENCE_RE = /\{\{.*?\}\}/;
 
 export function isTemplateReference(value: string): boolean {
   return TEMPLATE_REFERENCE_RE.test(value);
+}
+
+/**
+ * True when the value is a single template reference and nothing else.
+ *
+ * Stricter than isTemplateReference, which matches a `{{...}}` anywhere in the
+ * value. That is right for an address, whose resolved value is re-checked with
+ * ethers.isAddress before use, and wrong for a chain id, which is substituted
+ * whole and never re-validated: "1{{@a:B.c}}" would skip the check and then
+ * resolve into a chain the author never chose.
+ *
+ * An empty or whitespace-only body is not a reference any resolver in the repo
+ * recognises, and neither is a body containing further braces.
+ */
+export function isWholeTemplateReference(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{{") || !trimmed.endsWith("}}")) {
+    return false;
+  }
+  const body = trimmed.slice(2, -2);
+  return body.trim().length > 0 && !/[{}]/.test(body);
 }
 
 function readStringConfig(node: NodeLike, key: string): string | null {
