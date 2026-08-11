@@ -403,7 +403,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
           },
         ],
         tags: ["risk", "guardrails", "budget"],
-        ownerOnly: true,
+        adminOnly: true,
       },
     ],
   },

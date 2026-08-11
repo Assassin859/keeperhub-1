@@ -14,7 +14,7 @@ import { TableSkeleton } from "./skeletons";
 import { useSettingsContext } from "./settings-context";
 
 export function ConnectionsSection(): React.ReactElement {
-  const { refreshAll, isAdmin } = useSettingsContext();
+  const { refreshAll } = useSettingsContext();
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Integration | null>(null);
@@ -86,7 +86,7 @@ export function ConnectionsSection(): React.ReactElement {
         )}
         {!loading && connections.length > 0 && (
           <ConnectionsTable
-            canManage={isAdmin}
+            canManage
             connections={connections}
             onEdit={setEditing}
             onRemove={remove}
