@@ -49,7 +49,7 @@ export function WalletsSection(): React.ReactElement {
         <div className="grid gap-4 sm:grid-cols-3">
           <StatTile
             hint="Turnkey signer plus any Safes"
-            label="Signing accounts"
+            label="Accounts"
             value={String(accounts.all.length)}
           />
           <StatTile
@@ -69,28 +69,6 @@ export function WalletsSection(): React.ReactElement {
       )}
 
       <SettingsCard
-        action={
-          isAdmin && (
-            <div className="flex gap-2">
-              <Button onClick={() => setDeploying(true)} size="sm" variant="outline">
-                <Plus className="size-3.5" />
-                Deploy a Safe
-              </Button>
-              <Button
-                disabled={reconciling}
-                onClick={() => {
-                  reconcile().catch(() => undefined);
-                }}
-                size="sm"
-                title="Adopt any Safe that exists on chain at this org's deterministic address but isn't tracked here yet."
-                variant="ghost"
-              >
-                <RefreshCw className="size-3.5" />
-                Sync from chain
-              </Button>
-            </div>
-          )
-        }
         bodyClassName="p-2"
         description="Open an account to see its assets, policies, key export and recovery."
         title="Accounts"
@@ -99,14 +77,12 @@ export function WalletsSection(): React.ReactElement {
         {!state.walletLoading && state.walletData?.hasWallet && (
           <AccountsTable
             accounts={accounts}
-            isAdmin={isAdmin}
-            onSigningChange={(safeId, next) =>
-              state.setSafes((current) =>
-                current.map((s) =>
-                  s.id === safeId ? { ...s, isSigningActive: next } : s
-                )
-              )
-            }
+            canManage={isAdmin}
+            finding={reconciling}
+            onAddSafe={() => setDeploying(true)}
+            onFindExisting={() => {
+              reconcile().catch(() => undefined);
+            }}
           />
         )}
         {!(state.walletLoading || state.walletData?.hasWallet) && (

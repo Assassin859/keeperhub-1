@@ -1,8 +1,8 @@
 "use client";
 
-import { ChevronRight, ShieldCheck, Wallet } from "lucide-react";
+import { ChevronRight, Plus, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -11,20 +11,33 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { truncateAddress } from "@/lib/address-utils";
+import {
+  accountSlug,
+  type WalletAccounts,
+} from "@/lib/wallet/use-wallet-accounts";
 import { cn } from "@/lib/utils";
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
-import { accountSlug, type WalletAccounts } from "@/lib/wallet/use-wallet-accounts";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useSettingsContext } from "../settings-context";
+import { AccountAddress } from "./account-address";
 
 export function AccountsTable({
   accounts,
-  isAdmin,
-  onSigningChange,
+  canManage,
+  onAddSafe,
+  onFindExisting,
+  finding,
 }: {
   accounts: WalletAccounts;
-  isAdmin: boolean;
-  onSigningChange: (safeId: string, next: boolean) => void;
+  canManage: boolean;
+  onAddSafe: () => void;
+  /** Looks on chain for Safes already deployed at this org's address. */
+  onFindExisting: () => void;
+  finding: boolean;
 }): React.ReactElement {
   const router = useRouter();
   const { organizationId } = useSettingsContext();
@@ -34,22 +47,22 @@ export function AccountsTable({
       <TableHeader>
         <TableRow className={SETTINGS_HEAD_ROW}>
           <TableHead>Account</TableHead>
-          <TableHead>Address</TableHead>
           <TableHead>Network</TableHead>
-          <TableHead className="text-right">Signing</TableHead>
+          <TableHead className="w-8" />
         </TableRow>
       </TableHeader>
       <TableBody>
         {accounts.all.map((account) => {
           const isSafe = account.kind === "safe";
+          const isSolana = !isSafe && account.family === "solana";
           const name = isSafe
-            ? "Safe smart account"
-            : account.family === "solana"
+            ? `Safe on ${account.chainName}`
+            : isSolana
               ? "Turnkey signer (Solana)"
               : "Turnkey signer (EVM)";
           return (
             <TableRow
-              className={cn("cursor-pointer", SETTINGS_ROW)}
+              className={cn("group cursor-pointer", SETTINGS_ROW)}
               key={accountSlug(account)}
               onClick={() =>
                 router.push(
@@ -58,53 +71,82 @@ export function AccountsTable({
               }
             >
               <TableCell>
-                <div className="flex items-center gap-3">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
                     {isSafe ? (
                       <ShieldCheck className="size-4" />
                     ) : (
                       <Wallet className="size-4" />
                     )}
                   </span>
-                  <span className="font-medium">{name}</span>
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="font-medium">{name}</span>
+                    <AccountAddress
+                      address={account.address}
+                      chainId={isSafe ? account.chainId : undefined}
+                      isEvm={!isSolana}
+                    />
+                  </span>
                 </div>
-              </TableCell>
-              <TableCell className="font-mono text-muted-foreground text-xs">
-                {truncateAddress(account.address)}
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {isSafe
                   ? account.chainName
-                  : account.family === "solana"
+                  : isSolana
                     ? "Solana"
                     : "All EVM networks"}
               </TableCell>
               <TableCell className="text-right">
-                <div
-                  className="flex items-center justify-end gap-2"
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                >
-                  {isSafe ? (
-                    <SafeSigningToggle
-                      chainLabel={account.chainName}
-                      compact
-                      isActive={account.isSigningActive}
-                      isAdmin={isAdmin}
-                      onChange={(next) => onSigningChange(account.safeId, next)}
-                      safeId={account.safeId}
-                    />
-                  ) : (
-                    <span className="rounded-full border px-2 py-0.5 text-[0.6875rem]">
-                      Default signer
-                    </span>
-                  )}
-                  <ChevronRight className="size-4 text-muted-foreground" />
-                </div>
+                <ChevronRight className="size-4 text-muted-foreground" />
               </TableCell>
             </TableRow>
           );
         })}
+        {canManage && (
+          // Adding an account belongs with the accounts, not in the card's
+          // header: the header buttons named Safe operations rather than the
+          // thing the user is after, which is another wallet.
+          <TableRow className={cn("group", SETTINGS_ROW)}>
+            <TableCell colSpan={2}>
+              <button
+                className="flex items-center gap-3 text-left"
+                onClick={onAddSafe}
+                type="button"
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-dashed">
+                  <Plus className="size-4 text-muted-foreground" />
+                </span>
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium">Add a Safe account</span>
+                  <span className="text-muted-foreground text-xs">
+                    A smart account that holds funds and signs on one network.
+                  </span>
+                </span>
+              </button>
+            </TableCell>
+            <TableCell className="text-right">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    disabled={finding}
+                    onClick={onFindExisting}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <RefreshCw
+                      className={cn("size-3.5", finding && "animate-spin")}
+                    />
+                    Find existing
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">
+                  Looks on chain for Safes already deployed at this
+                  organization's address but not listed here.
+                </TooltipContent>
+              </Tooltip>
+            </TableCell>
+          </TableRow>
+        )}
       </TableBody>
     </Table>
   );

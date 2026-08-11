@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PoliciesTab } from "@/components/overlays/wallet/account-detail/policies-tab";
+import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
 import { SolanaAssets } from "@/components/overlays/wallet/account-detail/solana-assets";
 import type { WalletAccountKind } from "@/components/overlays/wallet/account-row";
 import { Button } from "@/components/ui/button";
@@ -103,6 +104,27 @@ export function AccountDetailPanel({
             isAdmin={isAdmin}
             isOwner={isOwner}
             safeAddress={account.address}
+            safeId={account.safeId}
+          />
+        </SettingsCard>
+      )}
+
+      {isSafe && (
+        <SettingsCard
+          description="Workflow transactions are sent from this Safe when it is on. The Turnkey signer signs either way; this only decides which account the transaction comes from."
+          title="Send from this Safe"
+        >
+          <SafeSigningToggle
+            chainLabel={account.chainName}
+            isActive={account.isSigningActive}
+            isAdmin={isAdmin}
+            onChange={(next) =>
+              state.setSafes((current) =>
+                current.map((s) =>
+                  s.id === account.safeId ? { ...s, isSigningActive: next } : s
+                )
+              )
+            }
             safeId={account.safeId}
           />
         </SettingsCard>
