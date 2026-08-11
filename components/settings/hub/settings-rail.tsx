@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Info, Search } from "lucide-react";
+import { ArrowLeft, Info } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { DiscordIcon } from "@/components/icons/discord-icon";
