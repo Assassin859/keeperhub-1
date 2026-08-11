@@ -100,6 +100,18 @@ create_cluster() {
         --memory="${MIN_MEMORY_GB}g" --cpus="$MIN_CPU_CORES" \
         --disk-size="${MIN_DISK_GB}g" --kubernetes-version=stable
     kubectl --context "$KUBE_CONTEXT" wait --for=condition=Ready nodes --all --timeout=300s
+    # `kubectl wait` on a label selector exits immediately with "no matching
+    # resources found" when nothing matches yet, rather than waiting for the
+    # pods to appear. On a fresh cluster the node goes Ready a moment before the
+    # calico DaemonSet has produced any, so wait for the DaemonSet to exist and
+    # roll out first, then wait on readiness.
+    local waited=0
+    until cni_present; do
+        [ "$waited" -ge 120 ] && { echo "  calico DaemonSet never appeared" >&2; return 1; }
+        sleep 3
+        waited=$((waited + 3))
+    done
+    kubectl --context "$KUBE_CONTEXT" rollout status daemonset/calico-node -n kube-system --timeout=300s
     kubectl --context "$KUBE_CONTEXT" wait --for=condition=Ready pods -l k8s-app=calico-node -n kube-system --timeout=300s
 }
 
