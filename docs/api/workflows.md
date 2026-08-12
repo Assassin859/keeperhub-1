@@ -21,12 +21,19 @@ Returns all workflows for the authenticated user (session) or organization (API 
 |-----------|------|-------------|
 | `projectId` | string | Optional. Filter workflows by project ID |
 | `tagId` | string | Optional. Filter workflows by tag ID |
-| `limit` | number | Optional. Page size, capped at 500. Omit for the complete list |
-| `offset` | number | Optional. Rows to skip. Requires `limit` |
+| `limit` | number | Optional. Page size, clamped to 200. Omit for the complete list |
+| `offset` | number | Optional. Rows to skip, starting at 0. Requires `limit` |
 
-`limit` and `offset` must be positive integers when present; anything else is a
-400. `offset` without `limit` is a 400, since the response would be the whole
-list either way.
+`limit` must be an integer >= 1. `offset` must be an integer >= 0, because
+offset 0 is the first page. Anything else is a 400, including values above
+`Number.MAX_SAFE_INTEGER`, which would otherwise reach Postgres as a bigint
+overflow and return a raw driver message to the caller.
+
+Values are parsed with `Number.parseInt` and must round-trip exactly, so
+`0x1f4`, `1e2` and `%205` are rejected rather than read as 500, 100 and 5.
+
+`offset` without `limit` is a 400, since the response would be the whole list
+either way.
 
 When `limit` is supplied the response carries an `X-Total-Count` header with the
 number of rows matching the query, so a clamped page can be told apart from a

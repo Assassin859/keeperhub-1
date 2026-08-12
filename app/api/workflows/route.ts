@@ -4,24 +4,49 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { MAX_PAGE_SIZE } from "@/lib/pagination";
 
 /**
- * Upper bound on an explicitly requested page. `?limit=1000000` should not be
- * a way to ask for the unbounded response by another name.
+ * The page cap is the shared one, imported rather than restated. A second
+ * MAX_PAGE_SIZE here was a silent divergence: 500 against lib/pagination.ts's
+ * 200, for no reason beyond the order the two were written in.
  */
-const MAX_PAGE_SIZE = 500;
+const MAX_OFFSET = Number.MAX_SAFE_INTEGER;
 
-/** A positive integer, or null when the parameter was absent. Throws on junk. */
-function parsePositiveInt(raw: string | null, name: string): number | null {
+/**
+ * A bounded integer, or null when the parameter was absent. Throws on junk.
+ *
+ * `min` differs per parameter and the difference is load-bearing: a limit of 0
+ * requests nothing, but an OFFSET of 0 is the FIRST PAGE of every pager ever
+ * written - `for (let p = 0; ; p++) fetch(?offset=${p * 50})` must not 400 on
+ * request one.
+ *
+ * Number.parseInt rather than Number, matching lib/pagination.ts:49 and
+ * app/api/earnings/route.ts:24. Number() also accepts `0x1f4` as 500, `1e2` as
+ * 100 and " 5" as 5, none of which a caller writing a page number meant.
+ */
+function parseBoundedInt(
+  raw: string | null,
+  name: string,
+  { min, max }: { min: number; max: number }
+): number | null {
   if (raw === null) {
     return null;
   }
-  const value = Number(raw);
-  // Number("") is 0 and Number("abc") is NaN. Treating either as "unset" is how
-  // `?limit=${undefined}` from a client mid-migration would silently return
-  // every row in the org - the case MAX_PAGE_SIZE exists to prevent.
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new RangeError(`${name} must be a positive integer`);
+  // parseInt("12abc") is 12 and parseInt(" 5") is 5, so the string must round
+  // -trip exactly - otherwise `?limit=50%20OR%201=1` reads as a plain 50, and
+  // `?limit=%205` as 5. No trim: whitespace in a numeric query parameter is a
+  // malformed request, not a formatting preference.
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || String(value) !== raw || value < min) {
+    throw new RangeError(
+      `${name} must be an integer >= ${min}`
+    );
+  }
+  // Capped, not clamped: 1e20 survives Number.isInteger and reaches Postgres as
+  // a bigint overflow, which surfaces to the caller as a raw driver message.
+  if (value > max) {
+    throw new RangeError(`${name} must be <= ${max}`);
   }
   return value;
 }
@@ -50,8 +75,17 @@ export async function GET(request: Request): Promise<NextResponse> {
     let limit: number | null;
     let offset: number | null;
     try {
-      limit = parsePositiveInt(searchParams.get("limit"), "limit");
-      offset = parsePositiveInt(searchParams.get("offset"), "offset");
+      // Clamped below rather than rejected here, because lib/pagination.ts:53
+      // clamps and X-Total-Count exists so a clamped page is detectable. The
+      // ceiling passed here only rejects values too large to be a real request.
+      limit = parseBoundedInt(searchParams.get("limit"), "limit", {
+        min: 1,
+        max: MAX_OFFSET,
+      });
+      offset = parseBoundedInt(searchParams.get("offset"), "offset", {
+        min: 0,
+        max: MAX_OFFSET,
+      });
     } catch (rangeError) {
       return NextResponse.json(
         { error: (rangeError as RangeError).message },
@@ -90,33 +124,31 @@ export async function GET(request: Request): Promise<NextResponse> {
       // page boundary can appear on both pages while another is skipped.
       .orderBy(asc(workflows.createdAt), asc(workflows.id));
 
-    const userWorkflows =
-      limit === null
-        ? await baseQuery
-        : await baseQuery
-            .limit(Math.min(limit, MAX_PAGE_SIZE))
-            .offset(offset ?? 0);
-
-    const mappedWorkflows = userWorkflows.map((workflow) => ({
-      ...workflow,
-      createdAt: workflow.createdAt.toISOString(),
-      updatedAt: workflow.updatedAt.toISOString(),
-    }));
+    const map = (rows: Awaited<typeof baseQuery>) =>
+      rows.map((workflow) => ({
+        ...workflow,
+        createdAt: workflow.createdAt.toISOString(),
+        updatedAt: workflow.updatedAt.toISOString(),
+      }));
 
     if (limit === null) {
-      return NextResponse.json(mappedWorkflows);
+      return NextResponse.json(map(await baseQuery));
     }
 
     // The response stays a bare array - an envelope here would be a breaking
     // shape change - so the total rides in a header. Without it a clamped page
     // is indistinguishable from a complete list.
-    const [totalRow] = await db
-      .select({ value: count() })
-      .from(workflows)
-      .where(where);
+    //
+    // Issued together, not in sequence: the count does not depend on the page,
+    // so awaiting it afterwards spent two serial round trips on one request.
+    // app/api/mcp/workflows/route.ts:159 does the same.
+    const [totalRow, userWorkflows] = await Promise.all([
+      db.select({ value: count() }).from(workflows).where(where),
+      baseQuery.limit(Math.min(limit, MAX_PAGE_SIZE)).offset(offset ?? 0),
+    ]);
 
-    return NextResponse.json(mappedWorkflows, {
-      headers: { "X-Total-Count": String(totalRow?.value ?? 0) },
+    return NextResponse.json(map(userWorkflows), {
+      headers: { "X-Total-Count": String(totalRow[0]?.value ?? 0) },
     });
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get workflows", error, {

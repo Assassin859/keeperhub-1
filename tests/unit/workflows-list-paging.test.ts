@@ -102,8 +102,54 @@ describe("GET /api/workflows paging", () => {
 
     await call("https://x.test/api/workflows?limit=1000000");
 
-    expect(calls.limit).toBe(500);
+    expect(calls.limit).toBe(200);
   });
+
+  it("accepts offset=0, which is page one of every pager", async () => {
+    // The regression this exists for: offset shared limit's `> 0` rule, so
+    // `for (let p = 0; ; p++) fetch(?limit=50&offset=${p * 50})` 400d on its
+    // first request - the one call every paging client makes.
+    const { builder, calls } = queryStub([]);
+    mockSelect
+      .mockReturnValueOnce(builder)
+      .mockReturnValueOnce(queryStub([{ value: 0 }]).builder);
+
+    const res = await call("https://x.test/api/workflows?limit=50&offset=0");
+
+    expect(res.status).toBe(200);
+    expect(calls.offset).toBe(0);
+  });
+
+  it.each(["1e20", "99999999999999999999", "-1"])(
+    "rejects offset=%s rather than letting Postgres reject it",
+    async (value) => {
+      // Number.isInteger(1e20) is true, so an unbounded offset reaches the
+      // driver as a bigint overflow and the caller gets a raw database message.
+      const { builder } = queryStub([]);
+      mockSelect.mockReturnValue(builder);
+
+      const res = await call(
+        `https://x.test/api/workflows?limit=10&offset=${encodeURIComponent(value)}`
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/offset/);
+    }
+  );
+
+  it.each(["0x1f4", "1e2", " 5"])(
+    "rejects limit=%s, which Number() would have silently accepted",
+    async (value) => {
+      const { builder } = queryStub([]);
+      mockSelect.mockReturnValue(builder);
+
+      const res = await call(
+        `https://x.test/api/workflows?limit=${encodeURIComponent(value)}`
+      );
+
+      expect(res.status).toBe(400);
+    }
+  );
 
   it("sorts by a total order so pages cannot overlap", async () => {
     // createdAt is not unique, so a single-column sort lets a row on a page
