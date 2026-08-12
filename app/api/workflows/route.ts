@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { authFailureResponse, getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
 
 /**
@@ -55,10 +55,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     const authContext = await getDualAuthContext(request, { required: false });
     if ("error" in authContext) {
-      return NextResponse.json(
-        { error: authContext.error },
-        { status: authContext.status }
-      );
+      return authFailureResponse(authContext, request.headers);
     }
 
     const { organizationId } = authContext;

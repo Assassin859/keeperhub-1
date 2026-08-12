@@ -1,11 +1,11 @@
 ---
-title: "Hackathon Quickstart"
-description: "Everything you need to integrate KeeperHub in one place - MCP endpoint, supported chains, USDC addresses, faucets, API key types, and rate limits."
+title: "Platform Reference"
+description: "The facts you need to integrate KeeperHub in one place - MCP endpoint, supported chains, USDC addresses, faucets, API key types, and rate limits."
 ---
 
-# Hackathon Quickstart
+# Platform Reference
 
-A single copy-paste reference for the facts you need in the first thirty minutes:
+A single copy-paste reference for the facts an integration needs:
 where the MCP endpoint is, which chains are supported, which USDC address and
 faucet to use, what the two API key types are for, and the rate limits. Each
 section links to its full reference page.
@@ -27,11 +27,11 @@ claude mcp add --transport http --scope user keeperhub https://app.keeperhub.com
 ```
 
 Every listed marketplace workflow is also reachable as its own typed MCP server
-at `https://app.keeperhub.com/mcp/w/<slug>`. See the [MCP Server](/ai-tools/mcp-server)
+at `https://app.keeperhub.com/mcp/w/<slug>`. See the [MCP Server](/agent/mcp-server)
 reference for the full tool list and per-workflow details.
 
-The endpoint URL is also shown, with a copy button, in the dashboard under
-**Settings -> API Keys**.
+The endpoint URL is also shown, with a copy button, in the dashboard: click your
+avatar, then **API Keys**.
 
 ### OAuth vs API keys
 
@@ -44,10 +44,11 @@ key — a `kh_` value fails client authentication as an invalid secret.
 | Auth method | Credential | Best for |
 |-------------|------------|----------|
 | OAuth (browser) | Short-lived Bearer access token | Interactive agents, Claude Code `/mcp` |
-| Organization API key (`kh_`) | Long-lived org key from Settings -> API Keys | Headless CI, scripts, Docker |
+| Organization API key (`kh_`) | Long-lived org key from avatar > API Keys > Organisation | Headless CI, scripts, Docker |
 
 For programmatic REST and MCP access without a browser redirect, create an
-organization key at **Settings -> API Keys**. See [MCP Server auth](/ai-tools/mcp-server)
+organization key from your avatar, then **API Keys**, then the **Organisation**
+tab. See [MCP Server auth](/agent/mcp-server)
 and [API Keys](/api/api-keys).
 
 ### Local and Docker MCP
@@ -126,7 +127,7 @@ either way, so it reports reachability rather than a working credential.
 
 No browser available? Sign-up is captcha-gated and key creation needs a signed
 confirmation, so a script or agent starts from wallet sign-in instead:
-[Headless Onboarding](/api/headless-onboarding) is the same first thirty minutes
+[Headless Onboarding](/api/headless-onboarding) is the same path
 without a UI.
 
 ## 3. Supported chains
@@ -141,7 +142,7 @@ wallet to fund is the organization wallet reported by `GET /api/user`, not the
 address a wallet user signed in with - see
 [Headless Onboarding](/api/headless-onboarding#3-the-wallet-to-fund-is-not-the-wallet-you-signed-in-with).
 
-### Testnets (recommended for hacking)
+### Testnets (recommended to start on)
 
 | Network | chainId | USDC | Faucets | Status |
 |---|---|---|---|---|
@@ -230,6 +231,6 @@ in [section 1](#simulation-is-evm-only), simulation is EVM-only — on Solana
 chain IDs `101` and `103` (and their aliases), `execute_transfer` with
 `simulate: true` resolves with `isError: true` before any API call; parse
 `content[0].text` as JSON and treat `error: "simulation_unsupported_chain"` as
-a hard stop. See [MCP Server](/ai-tools/mcp-server#safely-preflight-direct-writes)
+a hard stop. See [MCP Server](/agent/mcp-server#safely-preflight-direct-writes)
 for the tool flow and [Direct Execution](/api/direct-execution) for complete
 response and error handling details.
