@@ -336,13 +336,15 @@ describe("generateCalldataForWorkflow", () => {
           },
         },
       },
-      makeWriteNode({ contractAddress: "0xRealWriteContract" }),
+      makeWriteNode({
+        contractAddress: "0x2222222222222222222222222222222222222222",
+      }),
     ];
     const result = generateCalldataForWorkflow(nodes, {});
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.to).toBe("0xRealWriteContract");
+      expect(result.to).toBe("0x2222222222222222222222222222222222222222");
     }
   });
 });
