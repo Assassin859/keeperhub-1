@@ -1019,8 +1019,9 @@ async function fetchWorkflowRuns(
     .as("log_summary");
 
   // Total native gas cost sponsored per execution, from the sponsorship ledger.
-  // Used to show a single-network run's real total (the wallet-side gas above is
-  // ~0 for sponsored runs); multi-network runs render as "Composed" instead.
+  // Preferred for a single-network run because it carries the chain, so the
+  // amount renders in that chain's own token; multi-network runs render as
+  // "Composed" instead.
   const gasCostSummary = db
     .select({
       executionId: gasCreditUsage.executionId,
