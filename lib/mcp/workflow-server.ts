@@ -162,6 +162,8 @@ export function createWorkflowMcpServer(
   const toolDescription = buildToolDescription(listing);
   const triggerKind = detectListingTriggerType(listing.nodes);
   const inputSchema = buildTriggerInputSchema(triggerKind);
+  const isReadOnlyListing =
+    listing.workflowType === "read" && !hasMutatingNode(listing.nodes);
 
   server.registerTool(
     slug,
@@ -169,10 +171,23 @@ export function createWorkflowMcpServer(
       title: listing.name,
       description: toolDescription,
       inputSchema,
+      // listing.workflowType alone does not describe side effects: the call
+      // route runs a "read" listing server-side with the owner's wallet and
+      // credentials (handleReadWorkflow -> startExecutionInBackground) while
+      // a "write" listing only returns unsigned calldata for the caller to
+      // sign, so "read" is the branch that actually executes. hasMutatingNode
+      // is the wider check that catches the mutating nodes deriveWorkflowType
+      // leaves typed "read".
+      //
+      // destructiveHint tracks readOnlyHint rather than being pinned false.
+      // Under the MCP spec destructiveHint defaults to true and is only
+      // meaningful when readOnlyHint is false, so an explicit false on a
+      // non-read listing is a positive assertion that a call is safe to run
+      // unattended -- which nothing here establishes. A listing that is not
+      // provably read-only is therefore advertised as destructive.
       annotations: {
-        readOnlyHint:
-          listing.workflowType === "read" && !hasMutatingNode(listing.nodes),
-        destructiveHint: false,
+        readOnlyHint: isReadOnlyListing,
+        destructiveHint: !isReadOnlyListing,
       },
     },
     async (args: unknown) => {
