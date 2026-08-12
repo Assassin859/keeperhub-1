@@ -147,18 +147,79 @@ describe("buildRegistrations", () => {
     expect(regs).toEqual([]);
   });
 
-  it("changes the config hash and sourceMode when SOLANA_SOURCE_MODE=signatures", () => {
+  it("defaults mainnet event ingestion to the filtered signatures source", () => {
+    // getBlock pulls every produced block in full; on mainnet that is a
+    // firehose no CPU request absorbs, and it skips slots (missing triggers)
+    // once it falls behind.
+    const regs = buildRegistrations(
+      data({
+        eventWorkflows: [eventWorkflow("wf-1", "101", VALID_PROGRAM)],
+        networks: { 101: solanaNetwork(101) },
+      }),
+    );
+    expect(regs[0].sourceMode).toBe("signatures");
+  });
+
+  it("leaves testnet chains on getBlock, where whole-block pulls are cheap", () => {
+    const regs = buildRegistrations(
+      data({
+        eventWorkflows: [eventWorkflow("wf-1", "103", VALID_PROGRAM)],
+        networks: { 103: solanaNetwork(103, { isTestnet: true }) },
+      }),
+    );
+    expect(regs[0].sourceMode).toBeUndefined();
+  });
+
+  it("leaves a mainnet chain with only block triggers on getBlock", () => {
+    // No event triggers means no full-detail pull: getBlock runs header-only
+    // and is the only source that serves block triggers.
+    const regs = buildRegistrations(
+      data({
+        blockWorkflows: [blockWorkflow("wf-b", "101", "1")],
+        networks: { 101: solanaNetwork(101) },
+      }),
+    );
+    expect(regs[0].sourceMode).toBeUndefined();
+  });
+
+  it("lets SOLANA_SOURCE_MODE override the per-chain default in both directions", () => {
+    const mainnet = data({
+      eventWorkflows: [eventWorkflow("wf-1", "101", VALID_PROGRAM)],
+      networks: { 101: solanaNetwork(101) },
+    });
+    const testnet = data({
+      eventWorkflows: [eventWorkflow("wf-1", "103", VALID_PROGRAM)],
+      networks: { 103: solanaNetwork(103, { isTestnet: true }) },
+    });
+
+    process.env.SOLANA_SOURCE_MODE = "getblock";
+    expect(buildRegistrations(mainnet)[0].sourceMode).toBe("getblock");
+
+    process.env.SOLANA_SOURCE_MODE = "signatures";
+    expect(buildRegistrations(testnet)[0].sourceMode).toBe("signatures");
+  });
+
+  it("ignores an unrecognised SOLANA_SOURCE_MODE and keeps the default", () => {
+    process.env.SOLANA_SOURCE_MODE = "geyser";
+    const regs = buildRegistrations(
+      data({
+        eventWorkflows: [eventWorkflow("wf-1", "101", VALID_PROGRAM)],
+        networks: { 101: solanaNetwork(101) },
+      }),
+    );
+    expect(regs[0].sourceMode).toBe("signatures");
+  });
+
+  it("changes the config hash when the source mode changes, so the ingestor restarts", () => {
     const input = data({
       eventWorkflows: [eventWorkflow("wf-1", "101", VALID_PROGRAM)],
       networks: { 101: solanaNetwork(101) },
     });
 
     const defaultReg = buildRegistrations(input)[0];
-    expect(defaultReg.sourceMode).toBeUndefined();
+    process.env.SOLANA_SOURCE_MODE = "getblock";
+    const overriddenReg = buildRegistrations(input)[0];
 
-    process.env.SOLANA_SOURCE_MODE = "signatures";
-    const signaturesReg = buildRegistrations(input)[0];
-    expect(signaturesReg.sourceMode).toBe("signatures");
-    expect(signaturesReg.configHash).not.toBe(defaultReg.configHash);
+    expect(overriddenReg.configHash).not.toBe(defaultReg.configHash);
   });
 });
