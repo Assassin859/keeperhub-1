@@ -2,27 +2,21 @@
 
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import {
+  fetchSpendCap,
+  type SpendCap,
+  type SpendCapResponse,
+  spendCapCacheKey,
+  toSpendCaps,
+} from "@/lib/wallet/spend-cap";
 import { useSettingsContext } from "../settings-context";
 import { useCachedSection } from "./use-cached-section";
 
-export const EVM_DECIMALS = 18;
-export const SOLANA_DECIMALS = 9;
-
-type SpendCapResponse = {
-  dailyCapWei: string | null;
-  dailyUsedWei: string;
-  dailySolanaCapLamports: string | null;
-  dailySolanaUsedLamports: string;
-};
-
-export type SpendCap = {
-  id: "evm" | "solana";
-  label: string;
-  symbol: string;
-  decimals: number;
-  cap: string | null;
-  used: string;
-};
+export {
+  EVM_DECIMALS,
+  SOLANA_DECIMALS,
+  type SpendCap,
+} from "@/lib/wallet/spend-cap";
 
 export type SpendCapsState = {
   caps: SpendCap[];
@@ -40,11 +34,8 @@ export function useSpendCaps(): SpendCapsState {
   const { organizationId } = useSettingsContext();
   const [saving, setSaving] = useState(false);
   const section = useCachedSection<SpendCapResponse | null>(
-    organizationId ? `spend-caps:${organizationId}` : null,
-    async () => {
-      const res = await fetch("/api/analytics/spend-cap");
-      return res.ok ? ((await res.json()) as SpendCapResponse) : null;
-    }
+    spendCapCacheKey(organizationId),
+    fetchSpendCap
   );
   const data = section.data ?? null;
   const loading = section.loading;
@@ -79,27 +70,5 @@ export function useSpendCaps(): SpendCapsState {
     [refetch]
   );
 
-  return {
-    caps: [
-      {
-        cap: data?.dailyCapWei ?? null,
-        decimals: EVM_DECIMALS,
-        id: "evm",
-        label: "EVM networks",
-        symbol: "ETH",
-        used: data?.dailyUsedWei ?? "0",
-      },
-      {
-        cap: data?.dailySolanaCapLamports ?? null,
-        decimals: SOLANA_DECIMALS,
-        id: "solana",
-        label: "Solana",
-        symbol: "SOL",
-        used: data?.dailySolanaUsedLamports ?? "0",
-      },
-    ],
-    loading,
-    saving,
-    save,
-  };
+  return { caps: toSpendCaps(data), loading, saving, save };
 }

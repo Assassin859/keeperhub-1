@@ -2,25 +2,34 @@
 
 import { Copy, Loader2, Plus, Settings, Wallet } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { WalletDigestMenu } from "@/components/workflow/wallet-digest-menu";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { isWalletEmail } from "@/lib/auth/wallet-constants";
 import { authClient, useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
+import { usePinnedAccount } from "@/lib/wallet/use-default-account";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 import { useWalletProvisioning } from "@/lib/wallet/use-wallet-provisioning";
 
 /**
  * Compact toolbar affordance for the organization wallet.
  *
- * - Shows the truncated wallet address when a wallet exists (click opens the
- *   wallet settings; clipboard copies the full checksummed address).
+ * - Shows the truncated wallet address when a wallet exists (click opens a
+ *   digest of the org's accounts and balances; the gear goes to the wallet
+ *   settings and the clipboard copies the full checksummed address).
  * - Shows a "Create wallet" button when the user is signed in but has no
  *   wallet yet, which lands on the same page: creating one is the first thing
  *   it offers.
@@ -60,6 +69,9 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
   const { hasWallet, walletAddress, isLoading } = useWalletInfo();
   const { isProvisioning } = useWalletProvisioning();
 
+  const pinned = usePinnedAccount(activeOrg?.id ?? null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const walletsHref = activeOrg?.id
     ? `/settings/${activeOrg.id}/wallets`
     : "/settings";
@@ -98,34 +110,55 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
     );
   }
 
+  // Whichever account was pinned in the menu, falling back to the EVM signer.
+  const shownAddress = pinned?.address ?? walletAddress;
+  const shownIsEvm = pinned ? pinned.isEvm : true;
+  const fullAddress = shownIsEvm
+    ? toChecksumAddress(shownAddress)
+    : shownAddress;
+
   const handleOpenWallet = (): void => {
     router.push(walletsHref);
   };
 
   const handleCopy = (e: React.MouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation();
-    navigator.clipboard.writeText(toChecksumAddress(walletAddress));
+    navigator.clipboard.writeText(fullAddress);
     toast.success("Address copied to clipboard");
   };
 
   return (
     <div className="flex h-9 items-center rounded-md border bg-secondary text-secondary-foreground">
-      <Tooltip>
-        <TooltipTrigger asChild>
+      <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
+        <DropdownMenuTrigger asChild>
           <button
             className="flex h-full items-center gap-2 rounded-l-md px-3 font-medium text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             data-testid="wallet-toolbar-address"
-            onClick={handleOpenWallet}
             type="button"
           >
             <Wallet className="size-4 shrink-0" />
             <span className="font-mono text-xs">
-              {truncateAddress(walletAddress)}
+              {truncateAddress(fullAddress)}
             </span>
           </button>
-        </TooltipTrigger>
-        <TooltipContent>Wallet</TooltipContent>
-      </Tooltip>
+        </DropdownMenuTrigger>
+        {/* Radix mounts this only while open, so the digest's fetches are the
+            price of asking rather than of every page that draws the header. */}
+        {/* Anchored to the left edge of the pill: the trigger is only the
+            address segment, so aligning to its end hung the panel out to the
+            left of the wallet it belongs to. */}
+        <DropdownMenuContent
+          align="start"
+          className="w-80 p-0"
+          collisionPadding={12}
+        >
+          <WalletDigestMenu
+            onClose={() => setMenuOpen(false)}
+            organizationId={activeOrg?.id ?? null}
+            walletsHref={walletsHref}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
       <div className="h-5 w-px bg-border" />
       <Tooltip>
         <TooltipTrigger asChild>

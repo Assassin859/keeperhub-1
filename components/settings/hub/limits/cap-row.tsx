@@ -3,21 +3,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatCapAmount as fromBase } from "@/lib/wallet/spend-cap";
 import type { SpendCap } from "../hooks/use-spend-caps";
-
-const TRAILING_ZEROS = /\.?0+$/;
-
-function fromBase(base: string, decimals: number): string {
-  try {
-    const value = BigInt(base);
-    const unit = BigInt(10) ** BigInt(decimals);
-    const whole = value / unit;
-    const frac = (value % unit).toString().padStart(decimals, "0").slice(0, 6);
-    return `${whole}.${frac}`.replace(TRAILING_ZEROS, "") || "0";
-  } catch {
-    return "0";
-  }
-}
 
 function toBase(input: string, decimals: number): string | null {
   const trimmed = input.trim();
