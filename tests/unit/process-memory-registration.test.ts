@@ -21,6 +21,10 @@ const GAUGE_NAMES = [
   "keeperhub_process_memory_heap_used_peak_bytes",
   "keeperhub_process_memory_external_peak_bytes",
   "keeperhub_process_memory_array_buffers_peak_bytes",
+  "keeperhub_container_memory_current_bytes",
+  "keeperhub_container_memory_peak_bytes",
+  "keeperhub_container_memory_limit_bytes",
+  "keeperhub_container_memory_oom_kills",
 ];
 
 const RUNTIME_NAMES = [

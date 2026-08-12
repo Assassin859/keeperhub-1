@@ -73,8 +73,8 @@ app:
     # concentrate every burst on the survivor.
     minAvailable: 3
 
-  # Spread the replicas over distinct nodes, and keep them on nodes large enough
-  # to honour the memory limit below.
+  # One replica per node, on nodes large enough to honour the memory limit
+  # below. Both rules are required, and that is deliberate.
   #
   # The node affinity is required because the scheduler places pods by REQUEST,
   # not by limit. The Karpenter default-private NodePool admits every instance
@@ -82,9 +82,20 @@ app:
   # can never deliver the 6Gi limit. Gating on instance-memory keeps these pods
   # on nodes with real headroom.
   #
-  # The pod anti-affinity is preferred, not required, so a replica still
-  # schedules when the node count is temporarily low. It selects on
-  # app.kubernetes.io/serviceName, which is the only selector label that is
+  # The pod anti-affinity is required rather than preferred because a preferred
+  # rule buys nothing here. Four pods at a 4Gi request fit on the two nodes
+  # that satisfy the gate today, so Karpenter would never add a node and the
+  # best available spread would be two per node. Two co-located pods can each
+  # reach 6Gi, and the nodes peak near 10GiB of 15.25GiB already, so that turns
+  # a single cgroup kill into node memory pressure - which is worse, because
+  # the kubelet then evicts neighbouring pods too. Concurrent bursts across
+  # replicas are observed, not hypothetical.
+  #
+  # If Karpenter cannot provision a qualifying node, the extra replicas stay
+  # Pending. That is the intended failure mode: Pending is visible and leaves
+  # the surviving replicas alone, while silent co-location is neither.
+  #
+  # Both selectors use app.kubernetes.io/serviceName, the only selector label
   # unique per component - every component in this umbrella release shares
   # name=common and instance=keeperhub, so selecting on those would push these
   # pods away from the executor and dispatcher pods as well.
@@ -98,13 +109,11 @@ app:
                 values:
                   - "12000"
     podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            topologyKey: kubernetes.io/hostname
-            labelSelector:
-              matchLabels:
-                app.kubernetes.io/serviceName: keeperhub-common
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/serviceName: keeperhub-common
 
   service:
     enabled: true

@@ -1220,6 +1220,41 @@ const processMemoryArrayBuffersPeak = getOrCreateGauge(
   []
 );
 
+// cgroup v2 accounting for this container. This is the number the OOM killer
+// compares against the limit, so it decides whether the process lives, and it
+// counts page cache that RSS does not.
+//
+// The peak matters most. The kernel maintains it continuously, so it cannot
+// miss a spike that opens and closes between two reads - unlike every gauge
+// above it, and unlike cadvisor, which samples once per 60s.
+const containerMemoryCurrent = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_container_memory_current_bytes",
+  "Current cgroup v2 memory charge for this container, in bytes",
+  []
+);
+
+const containerMemoryPeak = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_container_memory_peak_bytes",
+  "Kernel high-water mark of cgroup memory since this container started, in bytes",
+  []
+);
+
+const containerMemoryLimit = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_container_memory_limit_bytes",
+  "cgroup v2 memory limit for this container, in bytes",
+  []
+);
+
+const containerMemoryOomKills = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_container_memory_oom_kills",
+  "OOM kills the kernel performed in this cgroup since the container started",
+  []
+);
+
 // prom-client's default Node.js metrics, on apiRegistry for the same reason the
 // gauges above are: only /api/metrics/api is scraped from the app pods, and
 // these values are per-pod. They add the per-V8-space heap breakdown, GC pause
@@ -2093,6 +2128,10 @@ export const processMemoryMetrics = {
   heapUsedPeak: processMemoryHeapUsedPeak,
   externalPeak: processMemoryExternalPeak,
   arrayBuffersPeak: processMemoryArrayBuffersPeak,
+  cgroupCurrent: containerMemoryCurrent,
+  cgroupPeak: containerMemoryPeak,
+  cgroupLimit: containerMemoryLimit,
+  cgroupOomKills: containerMemoryOomKills,
 };
 
 /**

@@ -124,9 +124,28 @@ Per-pod Node.js memory, emitted from `lib/metrics/instrumentation/process-memory
 | `keeperhub_process_memory_array_buffers_bytes` | Memory held by ArrayBuffers and Buffers, a subset of `external` | - | API |
 | `keeperhub_process_memory_*_peak_bytes` | High-water mark of the matching bucket since the previous scrape | - | API |
 
-Read the `_peak_` variants, not the instantaneous ones, when investigating an OOM kill. A container can cross its memory limit and die entirely between two scrapes: cadvisor samples once per 60s and the app ServiceMonitor scrapes every 30s, so an allocation that starts and ends inside one interval leaves no trace in either. The sampler behind the peak gauges runs every second and reports the highest value it saw, so a spike of a few seconds still reaches the scrape that follows it. Each export opens a new window, which means `delta()` and `rate()` are meaningless on these; graph them with `max_over_time()`.
+Alongside these, the cgroup v2 accounting for the container itself, read from `lib/metrics/cgroup-memory.ts`. These are absent off-cluster, where the files do not exist.
 
-`prom-client`'s default Node.js metrics are registered on the same registry, so `nodejs_gc_duration_seconds`, the per-space `nodejs_heap_space_size_*_bytes` breakdown, and `nodejs_eventloop_lag_seconds` are available alongside them. The heap-space breakdown plus `external` and `array_buffers` are what separate a burst that returns its memory from growth that does not.
+| Metric Name | Description | Labels | Source |
+|-------------|-------------|--------|--------|
+| `keeperhub_container_memory_current_bytes` | Current cgroup charge for the container | - | API |
+| `keeperhub_container_memory_peak_bytes` | Kernel high-water mark since the container started | - | API |
+| `keeperhub_container_memory_limit_bytes` | The cgroup limit, from `memory.max` | - | API |
+| `keeperhub_container_memory_oom_kills` | OOM kills the kernel performed in this cgroup | - | API |
+
+### Which one to read
+
+**`keeperhub_container_memory_peak_bytes` answers "how close did this container get to being killed".** The kernel maintains that high-water mark continuously, so unlike everything else here it cannot miss a spike that opens and closes between two reads. `container_memory_working_set_bytes` from cadvisor can and does: it samples once per 60s, `container_memory_max_usage_bytes` is not shipped to our Mimir tenant, and prod containers have crossed the limit and died inside a single sample gap leaving nothing behind. Prefer the cgroup number over cadvisor and over `rss` - the cgroup charge is what the OOM killer compares, and it counts page cache that RSS does not.
+
+**The `_peak_bytes` process buckets answer "which part of the process grew".** The cgroup cannot say, and that is the question when deciding whether a change is a heap problem or an off-heap one. These are sampled every second, so a spike shorter than that interval can still slip past them.
+
+Each export of the process buckets opens a new window, so `delta()` and `rate()` are meaningless on them; graph with `max_over_time()`. The cgroup peak is monotonic for the life of the container instead, and resets on restart.
+
+### The gap none of these close
+
+A container killed mid-burst never reaches the scrape that would have carried its window, so **no gauge here can describe the burst that actually kills a pod** - only near misses. For that case the sampler writes a log line when the cgroup charge crosses 75% of the limit, carrying the bucket split, and re-arms once it falls below 65%. That line ships as it is written and outlives the kill. Search Loki for `[ProcessMemory]`.
+
+`prom-client`'s default Node.js metrics are registered on the same registry, so `nodejs_gc_duration_seconds`, the per-space `nodejs_heap_space_size_*_bytes` breakdown, and `nodejs_eventloop_lag_seconds` are available alongside them.
 
 ---
 
