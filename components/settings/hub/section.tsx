@@ -108,7 +108,7 @@ export function SettingsCard({
           <div className="flex min-w-0 flex-col gap-1">
             <h2 className="font-semibold text-sm">{title}</h2>
             {description && (
-              <p className="max-w-prose text-muted-foreground text-xs">
+              <p className="max-w-2xl text-muted-foreground text-xs">
                 {description}
               </p>
             )}

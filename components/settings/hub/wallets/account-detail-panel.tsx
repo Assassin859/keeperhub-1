@@ -35,7 +35,7 @@ export function AccountDetailPanel({
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [network, setNetwork] = useNetworkFilter(accountSlug(account));
-  const { rows, funded, hiddenCount } = useAccountAssets(
+  const { rows, funded, all, hiddenCount } = useAccountAssets(
     account,
     detail,
     state.chains,
@@ -77,7 +77,7 @@ export function AccountDetailPanel({
             <AssetFilters
               hiddenCount={hiddenCount}
               network={network}
-              networks={networksOf(rows)}
+              networks={networksOf(all)}
               onNetworkChange={setNetwork}
               onQueryChange={setQuery}
               onToggleZero={() => setShowZero((v) => !v)}

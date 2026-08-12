@@ -32,7 +32,13 @@ export function useAccountAssets(
   detail: AccountDetailState,
   chains: ChainData[],
   showZero: boolean
-): { rows: AssetRow[]; funded: AssetRow[]; hiddenCount: number } {
+): {
+  rows: AssetRow[];
+  funded: AssetRow[];
+  /** Every row the account has, whatever the table is filtered to. */
+  all: AssetRow[];
+  hiddenCount: number;
+} {
   return useMemo(() => {
     const scoped =
       account.kind === "safe"
@@ -113,6 +119,11 @@ export function useAccountAssets(
         a.chainName.localeCompare(b.chainName)
     );
 
-    return { funded, hiddenCount: rows.length - funded.length, rows: visible };
+    return {
+      all: rows,
+      funded,
+      hiddenCount: rows.length - funded.length,
+      rows: visible,
+    };
   }, [account, detail, chains, showZero]);
 }
