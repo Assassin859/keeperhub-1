@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BlockSourceOptions } from "../../src/ingest/block-source";
+import { CompositeSource } from "../../src/ingest/composite-source";
 import { GetBlockSource } from "../../src/ingest/getblock-source";
 import { GeyserSource } from "../../src/ingest/geyser-source";
 import { SignaturesSource } from "../../src/ingest/signatures-source";
@@ -26,13 +27,31 @@ describe("createBlockSource selection", () => {
     ).toBeInstanceOf(SignaturesSource);
   });
 
-  it("falls back to getBlock when signatures mode meets block triggers", () => {
-    expect(
-      createBlockSource(opts(), {
-        sourceMode: "signatures",
-        hasBlockTriggers: true,
-      }),
-    ).toBeInstanceOf(GetBlockSource);
+  it("pairs signatures with a header-only getBlock when block triggers are present", () => {
+    const source = createBlockSource(opts(), {
+      sourceMode: "signatures",
+      hasBlockTriggers: true,
+    });
+
+    expect(source).toBeInstanceOf(CompositeSource);
+    const members = (source as CompositeSource).sources;
+    expect(members[0]).toBeInstanceOf(SignaturesSource);
+    expect(members[1]).toBeInstanceOf(GetBlockSource);
+  });
+
+  it("gives the composite's getBlock member no watched programs, so it stays header-only", () => {
+    // watchedProgramIds drives GetBlockSource's detail level. Leaving them set
+    // would make the block-trigger member pull full blocks - the firehose this
+    // pairing exists to avoid.
+    const source = createBlockSource(opts(), {
+      sourceMode: "signatures",
+      hasBlockTriggers: true,
+    }) as CompositeSource;
+
+    const getBlockMember = source.sources[1] as unknown as {
+      opts: BlockSourceOptions;
+    };
+    expect(getBlockMember.opts.watchedProgramIds).toEqual([]);
   });
 
   it("uses Geyser whenever an endpoint is configured, overriding sourceMode", () => {

@@ -1,3 +1,4 @@
+import { SOLANA_SIGNATURES_POLL_INTERVAL_MS } from "../../lib/config/environment";
 import { logger } from "../../lib/utils/logger";
 import { formatError } from "../format-error";
 import type { NormalizedBlock } from "../match/types";
@@ -18,6 +19,11 @@ import { type ConnectionHealth, SolanaConnection } from "./solana-connection";
  * counts. EVENT triggers only: it produces one-transaction "blocks" (blockHeight
  * null) so the same matcher/enqueue path runs unchanged; block-height triggers
  * are served by the getBlock or Geyser sources.
+ *
+ * Polling is floored at `pollIntervalMs`: the slot tick is only a wake-up, and
+ * honouring every one would issue a query per program about as fast as RPC
+ * latency allows. Ticks arriving inside the interval coalesce into a single
+ * deferred poll, so a wake-up is delayed to the interval boundary, never lost.
  */
 const MAX_SIGNATURES_PER_TICK = 1_000;
 
@@ -26,8 +32,13 @@ export class SignaturesSource implements BlockSource {
   private readonly cursors = new Map<string, string>();
   private isProcessing = false;
   private pendingTick = false;
+  private lastPollAt = 0;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly opts: BlockSourceOptions) {}
+  constructor(
+    private readonly opts: BlockSourceOptions,
+    private readonly pollIntervalMs: number = SOLANA_SIGNATURES_POLL_INTERVAL_MS,
+  ) {}
 
   async start(): Promise<void> {
     this.connection = new SolanaConnection({
@@ -59,6 +70,11 @@ export class SignaturesSource implements BlockSource {
   }
 
   async stop(): Promise<void> {
+    if (this.pollTimer !== null) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.pendingTick = false;
     if (this.connection) {
       await this.connection.stop();
       this.connection = null;
@@ -77,7 +93,24 @@ export class SignaturesSource implements BlockSource {
       this.pendingTick = true;
       return;
     }
+    const sinceLastPoll = Date.now() - this.lastPollAt;
+    if (sinceLastPoll < this.pollIntervalMs) {
+      // Too soon. Defer to the interval boundary, coalescing every tick that
+      // arrives before then into this one timer.
+      if (this.pollTimer === null) {
+        this.pollTimer = setTimeout(() => {
+          this.pollTimer = null;
+          this.onTick();
+        }, this.pollIntervalMs - sinceLastPoll);
+      }
+      return;
+    }
+    this.runPoll();
+  }
+
+  private runPoll(): void {
     this.isProcessing = true;
+    this.lastPollAt = Date.now();
     void this.poll()
       .catch((err) => {
         logger.warn(
