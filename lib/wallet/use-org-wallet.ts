@@ -8,6 +8,10 @@ import {
   WithdrawModal,
 } from "@/components/overlays/withdraw-modal";
 import { authClient, useSession } from "@/lib/auth-client";
+import {
+  readCachedResource,
+  writeCachedResource,
+} from "@/lib/hooks/use-cached-resource";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { buildWithdrawableAssets } from "@/lib/wallet/build-withdrawable-assets";
 import type {
@@ -59,6 +63,15 @@ export type OrgWalletState = {
   handleWithdraw: (chainId: number, tokenAddress?: string) => void;
 };
 
+type OrgWalletSnapshot = {
+  walletData: WalletData;
+  chains: ChainData[];
+  solanaIsTestnet: boolean;
+  tokens: TokenData[];
+  supportedTokens: SupportedToken[];
+  safes: SafeRow[];
+};
+
 function findAssetIndex(
   assets: WithdrawableAsset[],
   chainId: number,
@@ -84,14 +97,26 @@ export function useOrgWallet(): OrgWalletState {
   const { data: activeOrg } = authClient.useActiveOrganization();
   const invalidateWalletInfo = useInvalidateWalletInfo();
 
-  const [walletLoading, setWalletLoading] = useState(true);
-  const [walletData, setWalletData] = useState<WalletData | null>(null);
-  const [chains, setChains] = useState<ChainData[]>([]);
-  const [solanaIsTestnet, setSolanaIsTestnet] = useState(false);
-  const [tokens, setTokens] = useState<TokenData[]>([]);
-  const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>([]);
-  const [safes, setSafes] = useState<SafeRow[]>([]);
-  const [safesLoaded, setSafesLoaded] = useState(false);
+  // What the organization's wallet looked like last time. Leaving an account
+  // and coming back re-runs this hook, and without a starting point every
+  // visit paid for the whole load again before it could draw anything.
+  const cacheKey = activeOrg?.id ? `org-wallet:${activeOrg.id}` : null;
+  const cached = readCachedResource<OrgWalletSnapshot>(cacheKey);
+
+  const [walletLoading, setWalletLoading] = useState(!cached);
+  const [walletData, setWalletData] = useState<WalletData | null>(
+    cached?.walletData ?? null
+  );
+  const [chains, setChains] = useState<ChainData[]>(cached?.chains ?? []);
+  const [solanaIsTestnet, setSolanaIsTestnet] = useState(
+    cached?.solanaIsTestnet ?? false
+  );
+  const [tokens, setTokens] = useState<TokenData[]>(cached?.tokens ?? []);
+  const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>(
+    cached?.supportedTokens ?? []
+  );
+  const [safes, setSafes] = useState<SafeRow[]>(cached?.safes ?? []);
+  const [safesLoaded, setSafesLoaded] = useState(Boolean(cached));
 
   const {
     balances,
@@ -122,16 +147,25 @@ export function useOrgWallet(): OrgWalletState {
         return;
       }
 
-      const [chainResult, trackedTokens, supported] = await Promise.all([
-        fetchChains(),
-        fetchTrackedTokens(),
-        fetchSupportedTokens(),
-        refreshSafes(),
-      ]);
+      const [chainResult, trackedTokens, supported, safeRows] =
+        await Promise.all([
+          fetchChains(),
+          fetchTrackedTokens(),
+          fetchSupportedTokens(),
+          refreshSafes(),
+        ]);
       setChains(chainResult.evmChains);
       setSolanaIsTestnet(chainResult.solanaIsTestnet);
       setTokens(trackedTokens);
       setSupportedTokens(supported);
+      writeCachedResource(cacheKey, {
+        chains: chainResult.evmChains,
+        safes: safeRows,
+        solanaIsTestnet: chainResult.solanaIsTestnet,
+        supportedTokens: supported,
+        tokens: trackedTokens,
+        walletData: data,
+      });
 
       if (data.walletAddress && chainResult.evmChains.length > 0) {
         fetchBalances(data.walletAddress, chainResult.evmChains);
@@ -146,7 +180,7 @@ export function useOrgWallet(): OrgWalletState {
       setWalletData({ hasWallet: false });
       setWalletLoading(false);
     }
-  }, [refreshSafes, fetchBalances]);
+  }, [refreshSafes, fetchBalances, cacheKey]);
 
   const handleAddToken = useCallback(
     async (chainId: number, tokenAddress: string): Promise<void> => {
