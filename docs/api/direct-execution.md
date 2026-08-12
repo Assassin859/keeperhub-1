@@ -321,10 +321,11 @@ Successful broadcast requests return HTTP `202 Accepted`:
 
 The execution runs synchronously. Status will be `completed`, `failed` or
 `unconfirmed` when the request returns. `transactionHash` and `transactionLink`
-are present whenever the transfer was broadcast, so they accompany an
-`unconfirmed` or reconciliation-failed response as well as a completed one -
-that is the case where the hash matters most. They are absent when the transfer
-failed before broadcast.
+are present only when the transfer step reported success, so a `failed` or
+`unconfirmed` response carries neither - including when a transaction was
+broadcast and its receipt could not be confirmed. Retrieve the hash for those
+from `GET /api/execute/{executionId}/status`, which reads the stored execution
+rather than the step result.
 
 ## Call Smart Contract
 

@@ -663,7 +663,6 @@ describe("Direct Execution API", () => {
         transactionHash: "0xreverted",
         chainId: 11155111,
       });
-      mocks.failExecution.mockResolvedValue({ status: "failed" });
 
       const response = await contractCallPOST(
         postRequest("/contract-call", validWriteBody)

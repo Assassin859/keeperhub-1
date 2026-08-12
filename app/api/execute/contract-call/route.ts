@@ -240,7 +240,9 @@ async function handleWriteCall(
   const responseBody: ExecuteResponse = {
     executionId,
     status: outcome.status,
-    ...(result.transactionHash ? { transactionHash: result.transactionHash } : {}),
+    ...(result.transactionHash
+      ? { transactionHash: result.transactionHash }
+      : {}),
     ...(result.success && result.transactionLink
       ? { transactionLink: result.transactionLink }
       : {}),
