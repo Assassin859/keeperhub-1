@@ -14,6 +14,15 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const { organizationId } = authContext;
 
+    // A caller who presented a Bearer credential and got no principal back had
+    // it refused. Answering 200 with an empty list tells an MCP client "nothing
+    // here" instead of "reauthenticate", so a revoked or rescoped connection
+    // goes quiet and never refreshes. Anonymous callers, who send no
+    // credential, keep the empty list.
+    if (!organizationId && request.headers.get("Authorization")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     // The org owns every workflow; the list is purely org-scoped.
     if (!organizationId) {
       return NextResponse.json([], { status: 200 });

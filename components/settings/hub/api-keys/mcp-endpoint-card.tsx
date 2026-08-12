@@ -25,7 +25,7 @@ export function McpEndpointCard(): React.ReactElement {
 
   return (
     <SettingsCard
-      description="Point an MCP client here, then authenticate with a key below."
+      description="Point an MCP client here. It opens a browser to sign in, so there is no key to paste."
       title="MCP endpoint"
     >
       <div className="flex items-center gap-2">

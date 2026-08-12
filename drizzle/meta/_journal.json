@@ -1002,6 +1002,20 @@
       "when": 1785860200000,
       "tag": "0142_keep_1136_signup_notified_at",
       "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1785860300000,
+      "tag": "0143_mcp_connection_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1785860400000,
+      "tag": "0144_mcp_member_scope_ceiling",
+      "breakpoints": true
     }
   ]
 }

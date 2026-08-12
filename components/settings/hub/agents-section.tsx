@@ -1,31 +1,58 @@
 "use client";
 
-import Link from "next/link";
 import {
   AgentFrameworkGroups,
   AgentStarterPrompts,
 } from "@/components/agent/connect-agent-panel";
-import { Button } from "@/components/ui/button";
+import { ConnectionsTable } from "./agents/connections-table";
+import { PolicyCard } from "./agents/policy-card";
 import { McpEndpointCard } from "./api-keys/mcp-endpoint-card";
+import { useMcpConnections } from "./hooks/use-mcp-connections";
 import { SectionHeader, SettingsCard } from "./section";
-import { useSettingsContext } from "./settings-context";
 
 export function AgentsSection(): React.ReactElement {
-  const { organizationId } = useSettingsContext();
+  const state = useMcpConnections();
 
   return (
     <>
       <SectionHeader
-        action={
-          <Button asChild variant="outline">
-            <Link href={`/settings/${organizationId}/api-keys`}>
-              Manage API keys
-            </Link>
-          </Button>
-        }
-        description="Point an MCP client at this organization so it can build and run workflows for you. Clients sign in through the browser, so no API key is needed to connect."
+        description="The MCP clients connected to this organization, and what each one is allowed to do. Clients sign in through the browser, so connecting one needs no API key."
         title="Agents"
       />
+
+      <SettingsCard
+        bodyClassName="p-2"
+        description={
+          state.canManage
+            ? "Access belongs to the person, so it holds even if they reconnect. Ending a session cuts off that agent alone. Both take effect within a minute, without waiting for a token to expire."
+            : "Your agents. Access is set by an organization admin; you can end any of your own sessions."
+        }
+        title="Connected agents"
+      >
+        <ConnectionsTable
+          busyId={state.busyId}
+          canManage={state.canManage}
+          loading={state.loading}
+          maxScope={state.maxScope}
+          onRevoke={(connection) => {
+            state.revoke(connection).catch(() => undefined);
+          }}
+          onScopeChange={(connection, scope) => {
+            state.setScope(connection, scope).catch(() => undefined);
+          }}
+          users={state.users}
+        />
+      </SettingsCard>
+
+      {state.canManage && (
+        <PolicyCard
+          maxScope={state.maxScope}
+          onChange={(scope) => {
+            state.setMaxScope(scope).catch(() => undefined);
+          }}
+          saving={state.savingPolicy}
+        />
+      )}
 
       <McpEndpointCard />
 

@@ -481,8 +481,32 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         scope: "org",
         label: "Agents",
         icon: Bot,
-        description: "Connect Claude, Codex or any MCP client to this org.",
+        description:
+          "The MCP clients connected here, and what each one may do.",
         panels: [
+          {
+            title: "Connected agents",
+            tags: [
+              "mcp connections",
+              "connected clients",
+              "revoke an agent",
+              "disconnect an agent",
+              "agent permissions",
+              "agent scopes",
+              "who connected",
+              "last used",
+            ],
+          },
+          {
+            title: "Maximum access",
+            tags: [
+              "agent policy",
+              "scope ceiling",
+              "limit agents",
+              "read only agents",
+              "restrict mcp",
+            ],
+          },
           {
             title: "MCP endpoint",
             tags: ["mcp url", "server url", "model context protocol"],
