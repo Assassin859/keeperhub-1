@@ -681,8 +681,10 @@ read calls and simulations.
 Treat this list as a lower bound rather than a closed set. A client that routes an
 unrecognised status into a failing `default` branch will report a failure for an
 execution that is still settling, and one that responds by retrying with a new
-idempotency key can put a second transaction onchain. Handle unknown values as
-non-terminal.
+idempotency key can put a second transaction onchain. Decide terminality from the
+`X-Poll-Interval-Hint` response header rather than from the status string: the
+server computes it from its own terminal set, so it stays correct for statuses
+added after your client shipped. `0` means terminal.
 
 `sponsored` is `true` when the write was gas-sponsored and broadcast through
 a relayer or smart-account path rather than your org's EOA wallet — see
