@@ -1006,15 +1006,22 @@
     {
       "idx": 143,
       "version": "7",
-      "when": 1785860300000,
-      "tag": "0143_mcp_connection_scopes",
+      "when": 1786497011505,
+      "tag": "0143_keep_calldata_payments",
       "breakpoints": true
     },
     {
       "idx": 144,
       "version": "7",
-      "when": 1785860400000,
-      "tag": "0144_mcp_member_scope_ceiling",
+      "when": 1786497111505,
+      "tag": "0144_mcp_connection_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1786497211505,
+      "tag": "0145_mcp_member_scope_ceiling",
       "breakpoints": true
     }
   ]
