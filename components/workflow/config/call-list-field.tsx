@@ -85,6 +85,9 @@ type CallListFieldProps = {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  // Full action config, used to read the action-level network when this
+  // field's per-row Network selector is hidden (see hideNetworkColumn).
+  actionConfig?: Record<string, unknown>;
 };
 
 export function CallListField({
@@ -92,6 +95,7 @@ export function CallListField({
   value,
   onChange,
   disabled,
+  actionConfig,
 }: CallListFieldProps): React.ReactNode {
   const idCounter = useRef(0);
   const nextId = (): number => {
@@ -128,10 +132,15 @@ export function CallListField({
     updateEntries(updated);
   }
 
+  const actionNetwork = String(
+    actionConfig?.[field.networkField ?? "network"] ?? ""
+  );
+
   return (
     <div className="space-y-3">
       {entries.map((entry, index) => (
         <CallRow
+          actionNetwork={actionNetwork}
           contractInteractionType={field.contractInteractionType}
           disabled={disabled}
           entry={entry}
@@ -168,6 +177,9 @@ type CallRowProps = {
   functionFilter?: "read" | "write";
   contractInteractionType?: "read" | "write";
   hideNetworkColumn?: boolean;
+  // Action-level network, used for ABI auto-fetch when the per-row Network
+  // selector is hidden (hideNetworkColumn).
+  actionNetwork?: string;
   onUpdate: (key: keyof Omit<CallEntry, "id">, value: string) => void;
   onRemove?: () => void;
 };
@@ -180,15 +192,20 @@ function CallRow({
   functionFilter,
   contractInteractionType,
   hideNetworkColumn,
+  actionNetwork,
   onUpdate,
   onRemove,
 }: CallRowProps): React.ReactNode {
+  const abiFetchNetwork = hideNetworkColumn
+    ? (actionNetwork ?? "")
+    : entry.network;
+
   const rowConfig = useMemo<Record<string, unknown>>(
     () => ({
       contractAddress: entry.contractAddress,
-      network: entry.network,
+      network: abiFetchNetwork,
     }),
-    [entry.contractAddress, entry.network]
+    [entry.contractAddress, abiFetchNetwork]
   );
 
   return (
