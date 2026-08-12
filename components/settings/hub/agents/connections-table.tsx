@@ -153,7 +153,7 @@ export function ConnectionsTable({
         <Input
           className="h-9 pl-8"
           onChange={(e) => setTerm(e.target.value)}
-          placeholder="Search people or clients"
+          placeholder="Search people or sessions"
           value={term}
         />
       </div>
