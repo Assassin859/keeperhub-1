@@ -199,6 +199,35 @@ describe("buildRegistrations", () => {
     expect(buildRegistrations(testnet)[0].sourceMode).toBe("signatures");
   });
 
+  it("accepts SOLANA_SOURCE_MODE regardless of case or surrounding space", () => {
+    // "getBlock" is the spelling used by the class name, the code comments and
+    // the spec, so it is what an operator reaches for under pressure.
+    process.env.SOLANA_SOURCE_MODE = " getBlock ";
+    const regs = buildRegistrations(
+      data({
+        eventWorkflows: [eventWorkflow("wf-1", "101", VALID_PROGRAM)],
+        networks: { 101: solanaNetwork(101) },
+      }),
+    );
+    expect(regs[0].sourceMode).toBe("getblock");
+  });
+
+  it("treats a chain with an unknown isTestnet as a testnet, not mainnet", () => {
+    // chains.is_testnet is nullable and discovery payloads are not validated;
+    // a null must not read as mainnet and pull a testnet onto the mainnet path.
+    const regs = buildRegistrations(
+      data({
+        eventWorkflows: [eventWorkflow("wf-1", "103", VALID_PROGRAM)],
+        networks: {
+          103: solanaNetwork(103, {
+            isTestnet: undefined as unknown as boolean,
+          }),
+        },
+      }),
+    );
+    expect(regs[0].sourceMode).toBeUndefined();
+  });
+
   it("ignores an unrecognised SOLANA_SOURCE_MODE and keeps the default", () => {
     process.env.SOLANA_SOURCE_MODE = "geyser";
     const regs = buildRegistrations(

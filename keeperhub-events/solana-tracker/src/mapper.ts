@@ -85,8 +85,21 @@ type SourceMode = "getblock" | "signatures";
  * one whole-block pull). Any other value leaves selection to the default.
  */
 function sourceModeOverride(): SourceMode | undefined {
-  const raw = process.env.SOLANA_SOURCE_MODE;
-  return raw === "signatures" || raw === "getblock" ? raw : undefined;
+  const raw = process.env.SOLANA_SOURCE_MODE?.trim().toLowerCase();
+  if (!raw) {
+    return undefined;
+  }
+  if (raw === "signatures" || raw === "getblock") {
+    return raw;
+  }
+  // Unrecognised values fall through to the per-chain default, which is
+  // `signatures` on mainnet - the opposite of what an operator typing
+  // "getBlock" during an incident intends. Say so rather than silently
+  // running the mode they were trying to leave.
+  logger.warn(
+    `[mapper] SOLANA_SOURCE_MODE="${process.env.SOLANA_SOURCE_MODE}" is not "signatures" or "getblock"; ignoring it and using the per-chain default`,
+  );
+  return undefined;
 }
 
 /**
@@ -105,7 +118,11 @@ function defaultSourceMode(
   network: NetworkConfig,
   hasEventTriggers: boolean,
 ): SourceMode | undefined {
-  if (!hasEventTriggers || network.isTestnet) {
+  // Explicit `!== false` rather than a truthiness test: discovery payloads are
+  // not runtime-validated and `chains.is_testnet` is nullable, so a null would
+  // otherwise read as mainnet and pull a testnet onto the mainnet path.
+  const isMainnet = network.isTestnet === false;
+  if (!hasEventTriggers || !isMainnet) {
     return undefined;
   }
   return "signatures";
