@@ -299,54 +299,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ownerOnly: true,
       },
       {
-        segment: "connections",
-        scope: "org",
-        label: "Connections",
-        icon: Plug,
-        description: "Credentials for Discord, SendGrid, databases and more.",
-        panels: [
-          {
-            title: "Configured connections",
-            tags: [
-              "credentials",
-              "add a connection",
-              "connection activity",
-              "discord",
-              "sendgrid",
-              "telegram",
-              "database",
-              "postgres",
-              "webhook",
-              "secrets",
-            ],
-          },
-        ],
-        tags: ["integrations", "third party", "apps"],
-      },
-      {
-        segment: "workspace",
-        scope: "org",
-        label: "Projects and tags",
-        icon: FolderTree,
-        description: "How workflows are grouped in the sidebar.",
-        panels: [
-          {
-            title: "Projects",
-            tags: ["folders", "group workflows", "sidebar grouping"],
-          },
-          {
-            title: "Tags",
-            tags: ["labels", "colours", "colors", "tag colour"],
-          },
-        ],
-        tags: ["organise workflows", "sidebar"],
-      },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      {
         segment: "wallets",
         scope: "org",
         label: "Wallets",
@@ -406,6 +358,49 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         ],
         tags: ["risk", "guardrails", "budget"],
         adminOnly: true,
+      },
+      {
+        segment: "connections",
+        scope: "org",
+        label: "Connections",
+        icon: Plug,
+        description: "Credentials for Discord, SendGrid, databases and more.",
+        panels: [
+          {
+            title: "Configured connections",
+            tags: [
+              "credentials",
+              "add a connection",
+              "connection activity",
+              "discord",
+              "sendgrid",
+              "telegram",
+              "database",
+              "postgres",
+              "webhook",
+              "secrets",
+            ],
+          },
+        ],
+        tags: ["integrations", "third party", "apps"],
+      },
+      {
+        segment: "workspace",
+        scope: "org",
+        label: "Projects and tags",
+        icon: FolderTree,
+        description: "How workflows are grouped in the sidebar.",
+        panels: [
+          {
+            title: "Projects",
+            tags: ["folders", "group workflows", "sidebar grouping"],
+          },
+          {
+            title: "Tags",
+            tags: ["labels", "colours", "colors", "tag colour"],
+          },
+        ],
+        tags: ["organise workflows", "sidebar"],
       },
     ],
   },
