@@ -25,6 +25,25 @@ export interface SourceSelection {
   hasBlockTriggers?: boolean;
 }
 
+/**
+ * Chains calls so each block is fully processed before the next begins,
+ * regardless of which source produced it.
+ *
+ * The rejection still reaches the caller - `GetBlockSource` relies on a thrown
+ * `onBlock` to hold its cursor at the failed slot - while the internal chain
+ * absorbs it, so one failed block does not stall every block queued behind it.
+ */
+function serializeBlocks(
+  onBlock: BlockSourceOptions["onBlock"],
+): BlockSourceOptions["onBlock"] {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (block) => {
+    const processed = tail.then(() => onBlock(block));
+    tail = processed.catch(() => undefined);
+    return processed;
+  };
+}
+
 export function createBlockSource(
   opts: BlockSourceOptions,
   selection: SourceSelection = {},
@@ -43,9 +62,16 @@ export function createBlockSource(
       // programs -> transactionDetails "none") rather than reverting the whole
       // chain to getBlock: that revert would put event matching back on the
       // full-block firehose, which is unaffordable at mainnet throughput.
+      // Both members feed the same onBlock, and BlockSourceOptions specifies
+      // that blocks are delivered serially - the ingestor's dedup is a
+      // check-then-set spanning two awaits, so concurrent delivery could let one
+      // signature past the check twice. Independent sources cannot honour that
+      // between themselves, so serialize here rather than relying on the
+      // members never producing the same transaction.
+      const onBlock = serializeBlocks(opts.onBlock);
       return new CompositeSource(opts.chainId, opts.endpoints, [
-        new SignaturesSource(opts),
-        new GetBlockSource({ ...opts, watchedProgramIds: [] }),
+        new SignaturesSource({ ...opts, onBlock }),
+        new GetBlockSource({ ...opts, watchedProgramIds: [], onBlock }),
       ]);
     }
     return new SignaturesSource(opts);
