@@ -661,7 +661,7 @@ describe("Direct Execution API", () => {
         success: false,
         error: "execution reverted: Pausable: paused",
         transactionHash: "0xreverted",
-        chainId: 11155111,
+        chainId: 11_155_111,
       });
 
       const response = await contractCallPOST(
