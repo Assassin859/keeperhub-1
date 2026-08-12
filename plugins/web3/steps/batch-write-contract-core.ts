@@ -607,7 +607,9 @@ export async function batchWriteContractCore(
     aggregateResults = await rpcManager.executeWithFailover(
       (provider) =>
         new ethers.Contract(MULTICALL3_ADDRESS, MULTICALL3_ABI, provider)
-          .aggregate3.staticCall(call3Array) as Promise<[boolean, string][]>
+          .aggregate3.staticCall(call3Array, {
+            from: walletAddress,
+          }) as Promise<[boolean, string][]>
     );
   } catch (error) {
     const rejection = classifyRevert(error, revertIface);

@@ -271,6 +271,20 @@ describe("batch-write-contract - happy path", () => {
     expect(call3Arg.args[0][1].target).toBe(JOB_2);
   });
 
+  it("runs the pre-broadcast simulation from the organization wallet, not the zero-address default", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    await batchWriteContractCore(baseInput({}));
+
+    expect(mockStaticCall).toHaveBeenCalledTimes(1);
+    const simulationOverrides = mockStaticCall.mock.calls[0][1] as {
+      from: string;
+    };
+    expect(simulationOverrides.from).toBe(
+      "0xwalletaddress1234567890123456789012345678"
+    );
+  });
+
   it("broadcasts one atomic transaction for calls to different contracts with different ABIs/functions", async () => {
     const approveIface = new ethers.Interface(JSON.parse(APPROVE_ABI));
     const approveReturnData = approveIface.encodeFunctionResult("approve", [
