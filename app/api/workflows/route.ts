@@ -1,25 +1,33 @@
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authFailureResponse, getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { MAX_PAGE_SIZE } from "@/lib/pagination";
 
 /**
- * The page cap is the shared one, imported rather than restated. A second
- * MAX_PAGE_SIZE here was a silent divergence: 500 against lib/pagination.ts's
- * 200, for no reason beyond the order the two were written in.
+ * The largest offset worth forwarding. Past Number.MAX_SAFE_INTEGER a parsed
+ * value has already lost precision, and Postgres answers a bigint overflow
+ * whose raw driver message would reach the caller through the catch below.
  */
 const MAX_OFFSET = Number.MAX_SAFE_INTEGER;
 
 /**
- * A bounded integer, or null when the parameter was absent. Throws on junk.
+ * A bounded integer, or null when the parameter was absent. Throws otherwise.
+ *
+ * Out-of-range is rejected rather than clamped, and that is the one place this
+ * endpoint departs from lib/pagination.ts:53. Clamping is only honest when the
+ * response can name the size it actually used: the shared helper hands back
+ * `meta.pageSize`, so a caller can see it was cut. A bare array has no such
+ * field, so a silently shortened page is indistinguishable from the end of the
+ * list. Rejecting keeps that ambiguity from existing - a caller gets the page
+ * it asked for, or a reason it cannot have it.
  *
  * `min` differs per parameter and the difference is load-bearing: a limit of 0
- * requests nothing, but an OFFSET of 0 is the FIRST PAGE of every pager ever
- * written - `for (let p = 0; ; p++) fetch(?offset=${p * 50})` must not 400 on
- * request one.
+ * requests nothing, but an offset of 0 is the first page of every pager -
+ * `for (let p = 0; ; p++) fetch(?offset=${p * 50})` must not 400 on request one.
  *
  * Number.parseInt rather than Number, matching lib/pagination.ts:49 and
  * app/api/earnings/route.ts:24. Number() also accepts `0x1f4` as 500, `1e2` as
@@ -39,12 +47,8 @@ function parseBoundedInt(
   // malformed request, not a formatting preference.
   const value = Number.parseInt(raw, 10);
   if (Number.isNaN(value) || String(value) !== raw || value < min) {
-    throw new RangeError(
-      `${name} must be an integer >= ${min}`
-    );
+    throw new RangeError(`${name} must be an integer >= ${min}`);
   }
-  // Capped, not clamped: 1e20 survives Number.isInteger and reaches Postgres as
-  // a bigint overflow, which surfaces to the caller as a raw driver message.
   if (value > max) {
     throw new RangeError(`${name} must be <= ${max}`);
   }
@@ -72,32 +76,33 @@ export async function GET(request: Request): Promise<NextResponse> {
     let limit: number | null;
     let offset: number | null;
     try {
-      // Clamped below rather than rejected here, because lib/pagination.ts:53
-      // clamps and X-Total-Count exists so a clamped page is detectable. The
-      // ceiling passed here only rejects values too large to be a real request.
       limit = parseBoundedInt(searchParams.get("limit"), "limit", {
         min: 1,
-        max: MAX_OFFSET,
+        max: MAX_PAGE_SIZE,
       });
       offset = parseBoundedInt(searchParams.get("offset"), "offset", {
         min: 0,
         max: MAX_OFFSET,
       });
     } catch (rangeError) {
-      return NextResponse.json(
-        { error: (rangeError as RangeError).message },
-        { status: 400 }
-      );
+      return apiError({
+        status: 400,
+        code: ApiErrorCodes.INVALID_INPUT,
+        detail: (rangeError as RangeError).message,
+        requestHeaders: request.headers,
+      });
     }
 
     // Offset alone is meaningless: without a limit the response is the whole
     // list either way, so a client paging by offset would re-read page one
     // forever and never learn why.
     if (offset !== null && limit === null) {
-      return NextResponse.json(
-        { error: "offset requires limit" },
-        { status: 400 }
-      );
+      return apiError({
+        status: 400,
+        code: ApiErrorCodes.INVALID_INPUT,
+        detail: "offset requires limit",
+        requestHeaders: request.headers,
+      });
     }
 
     const conditions = [eq(workflows.organizationId, organizationId)];
@@ -128,25 +133,18 @@ export async function GET(request: Request): Promise<NextResponse> {
         updatedAt: workflow.updatedAt.toISOString(),
       }));
 
+    // The response stays a bare array in both cases. docs/api/index.md tells
+    // client authors to key their unwrapping on the endpoint, so the shape has
+    // to be the same whether or not a page was requested. A caller walks until
+    // it receives fewer rows than it asked for; because an over-large limit is
+    // a 400 rather than a clamp, a short page always means the end of the list.
     if (limit === null) {
       return NextResponse.json(map(await baseQuery));
     }
 
-    // The response stays a bare array - an envelope here would be a breaking
-    // shape change - so the total rides in a header. Without it a clamped page
-    // is indistinguishable from a complete list.
-    //
-    // Issued together, not in sequence: the count does not depend on the page,
-    // so awaiting it afterwards spent two serial round trips on one request.
-    // app/api/mcp/workflows/route.ts:159 does the same.
-    const [totalRow, userWorkflows] = await Promise.all([
-      db.select({ value: count() }).from(workflows).where(where),
-      baseQuery.limit(Math.min(limit, MAX_PAGE_SIZE)).offset(offset ?? 0),
-    ]);
-
-    return NextResponse.json(map(userWorkflows), {
-      headers: { "X-Total-Count": String(totalRow[0]?.value ?? 0) },
-    });
+    return NextResponse.json(
+      map(await baseQuery.limit(limit).offset(offset ?? 0))
+    );
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get workflows", error, {
       endpoint: "/api/workflows",

@@ -13,7 +13,8 @@ Manage workflows programmatically.
 GET /api/workflows
 ```
 
-Returns all workflows for the authenticated user (session) or organization (API key), unless `limit` is supplied.
+Returns workflows for the authenticated user (session) or organization (API key).
+Returns every workflow unless `limit` is supplied.
 
 ### Query Parameters
 
@@ -21,23 +22,20 @@ Returns all workflows for the authenticated user (session) or organization (API 
 |-----------|------|-------------|
 | `projectId` | string | Optional. Filter workflows by project ID |
 | `tagId` | string | Optional. Filter workflows by tag ID |
-| `limit` | number | Optional. Page size, clamped to 200. Omit for the complete list |
-| `offset` | number | Optional. Rows to skip, starting at 0. Requires `limit` |
+| `limit` | number | Optional. Page size, 1 to 200. Omit for the complete list |
+| `offset` | number | Optional. Rows to skip, from 0. Requires `limit` |
 
-`limit` must be an integer >= 1. `offset` must be an integer >= 0, because
-offset 0 is the first page. Anything else is a 400, including values above
-`Number.MAX_SAFE_INTEGER`, which would otherwise reach Postgres as a bigint
-overflow and return a raw driver message to the caller.
+`limit` must be a whole number from 1 to 200. `offset` must be a whole number of
+0 or more, because offset 0 is the first page. Values outside those ranges,
+values that are not plain decimal integers (`0x1f4`, `1e2`, `%205`), and `offset`
+supplied without `limit` are each rejected with `400 invalid_input`.
 
-Values are parsed with `Number.parseInt` and must round-trip exactly, so
-`0x1f4`, `1e2` and `%205` are rejected rather than read as 500, 100 and 5.
+A page is never silently shortened. Asking for more than the maximum page size
+is rejected rather than trimmed, so a response holding fewer rows than `limit`
+always means the end of the list. Page by requesting successive offsets until
+that happens.
 
-`offset` without `limit` is a 400, since the response would be the whole list
-either way.
-
-When `limit` is supplied the response carries an `X-Total-Count` header with the
-number of rows matching the query, so a clamped page can be told apart from a
-complete list. The body stays a bare JSON array in every case.
+The body is a bare JSON array whether or not `limit` is supplied.
 
 ### Example
 
