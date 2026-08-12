@@ -9,12 +9,25 @@ vi.mock("viem", () => ({
   http: () => ({}),
 }));
 
+const mockLogSystemWarn = vi.fn();
+const mockLogSystemError = vi.fn();
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { BILLING: "billing" },
+  logSystemWarn: (...args: unknown[]) => mockLogSystemWarn(...args),
+  logSystemError: (...args: unknown[]) => mockLogSystemError(...args),
+}));
+
 vi.mock("@/lib/web3/chainlink-feeds", () => ({
   AGGREGATOR_V3_ABI: [],
   getGasTokenUsdFeedAddress: (chainId: number) => {
     const feeds: Record<number, string> = {
       1: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
       8453: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
+      // Used only by the fallback-logging tests below, which cache a price and
+      // then fail the feed. Kept off 1 and 8453 so that cache write cannot
+      // leak into the tests above, which depend on those chains being uncached.
+      137: "0xAB594600376Ec9fD91F8e885dADF0CE036862dE0",
     };
     return feeds[chainId];
   },
@@ -217,6 +230,54 @@ describe("getGasTokenPriceUsd", () => {
     const price = await getGasTokenPriceUsd("https://rpc.example.com", 8453);
 
     expect(price).toBe(3000);
+  });
+
+  // The fallback is only defensible while it is transient. These two assert the
+  // condition is reported, so a feed that has been dead for a week is
+  // distinguishable from one failed RPC call - previously both were a bare
+  // `catch {}` and every sponsored transaction billed at $3000 in silence.
+  it("logs an error when it bills on the hardcoded fallback", async () => {
+    mockReadContract.mockRejectedValue(new Error("RPC timeout"));
+
+    const price = await getGasTokenPriceUsd("https://rpc.example.com", 137);
+
+    expect(price).toBe(3000);
+    expect(mockLogSystemError).toHaveBeenCalledOnce();
+    const [category, message, , labels] = mockLogSystemError.mock.calls[0];
+    expect(category).toBe("billing");
+    expect(message).toContain("hardcoded fallback");
+    expect(labels).toMatchObject({ chain_id: "137", fallback_usd: "3000" });
+    expect(mockLogSystemWarn).not.toHaveBeenCalled();
+  });
+
+  it("warns rather than errors when a cached price covers the failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const seconds = BigInt(Math.floor(Date.now() / 1000));
+      mockReadContract.mockResolvedValue([
+        BigInt(1),
+        BigInt(250_000_000_000),
+        seconds,
+        seconds,
+        BigInt(1),
+      ]);
+      expect(await getGasTokenPriceUsd("https://rpc.example.com", 137)).toBe(
+        2500
+      );
+
+      // Past the 60s cache TTL, so the next call re-reads the feed and fails.
+      vi.advanceTimersByTime(61_000);
+      mockReadContract.mockRejectedValue(new Error("RPC timeout"));
+
+      const price = await getGasTokenPriceUsd("https://rpc.example.com", 137);
+
+      expect(price).toBe(2500);
+      expect(mockLogSystemWarn).toHaveBeenCalledOnce();
+      expect(mockLogSystemWarn.mock.calls[0][0]).toBe("billing");
+      expect(mockLogSystemError).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

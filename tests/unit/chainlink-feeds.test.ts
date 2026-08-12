@@ -6,6 +6,7 @@ import {
   getGasTokenUsdFeedAddress,
   isTestnetChain,
 } from "@/lib/web3/chainlink-feeds";
+import { SPONSORSHIP_CHAINS } from "@/lib/web3/sponsorship-chains-meta";
 
 describe("getGasTokenUsdFeedAddress", () => {
   it("prices Polygon gas with the POL feed, not an ETH feed", () => {
@@ -43,5 +44,30 @@ describe("isTestnetChain", () => {
     for (const chainId of [1, 137, 8453, 42_161]) {
       expect(isTestnetChain(chainId)).toBe(false);
     }
+  });
+});
+
+describe("every billable sponsorship chain has a price feed", () => {
+  // GAS_TOKEN_USD_FEEDS and SPONSORSHIP_CHAINS are two hand-maintained lists
+  // that have to agree, and nothing at runtime notices when they do not.
+  // getGasTokenPriceUsd returns a hardcoded $3000 for an unmapped chain, so a
+  // mainnet added to SPONSORSHIP_CHAINS without a feed here would bill every
+  // sponsored transaction against a constant, silently and indefinitely.
+  //
+  // This is currently unreachable - the four sponsorship mainnets are all
+  // mapped, and testnets never reach the price lookup because
+  // sponsored-transaction-manager short-circuits them to $0. This test exists
+  // so that stays true: it fails when the chain is added, in CI, rather than
+  // after it ships.
+  const billable = SPONSORSHIP_CHAINS.filter((chain) => !chain.isTestnet);
+
+  it("covers at least one chain, so the filter cannot silently pass empty", () => {
+    expect(billable.length).toBeGreaterThan(0);
+  });
+
+  it.each(billable)("$name ($chainId) resolves a gas-token USD feed", ({
+    chainId,
+  }) => {
+    expect(getGasTokenUsdFeedAddress(chainId)).toBeDefined();
   });
 });

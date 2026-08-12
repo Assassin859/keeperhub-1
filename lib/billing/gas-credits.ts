@@ -6,6 +6,7 @@ import {
   gasCreditAllocations,
   gasCreditUsage,
 } from "@/lib/db/schema-extensions";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   AGGREGATOR_V3_ABI,
   getGasTokenUsdFeedAddress,
@@ -288,10 +289,37 @@ export async function getGasTokenPriceUsd(
 
     ethPriceCache.set(chainId, { usd: price, fetchedAt: now });
     return price;
-  } catch {
+  } catch (error) {
+    // Both branches below were previously a bare `catch {}`, which made a feed
+    // that has been dead for a week indistinguishable from a single failed RPC
+    // call. The fallback is only defensible while it is transient, and nothing
+    // here was checking or reporting whether it was.
     if (cached !== undefined) {
+      // Still a real observed price, just past its TTL. Recoverable, so warn.
+      logSystemWarn(
+        ErrorCategory.BILLING,
+        "[GasCredits] Gas-token price feed unavailable, billing on cached price",
+        error,
+        {
+          chain_id: String(chainId),
+          cached_usd: String(cached.usd),
+          cached_age_ms: String(now - cached.fetchedAt),
+        }
+      );
       return cached.usd;
     }
+    // No observed price at all: every sponsored transaction on this chain is
+    // now billed against a hardcoded constant that tracks nothing. That is a
+    // revenue-affecting condition, not a blip, so it is an error.
+    logSystemError(
+      ErrorCategory.BILLING,
+      "[GasCredits] Gas-token price feed unavailable and no cached price, billing on the hardcoded fallback",
+      error,
+      {
+        chain_id: String(chainId),
+        fallback_usd: String(FALLBACK_ETH_PRICE_USD),
+      }
+    );
     return FALLBACK_ETH_PRICE_USD;
   }
 }
