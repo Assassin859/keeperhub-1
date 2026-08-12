@@ -10,11 +10,13 @@
  * would return a node calldata generation can't encode; the deep validator's
  * ABI-mismatch checks would gate on fields the node doesn't have).
  */
+export const BATCH_WRITE_CONTRACT_ACTION_TYPE = "web3/batch-write-contract";
+
 export function isWriteActionType(actionType: unknown): boolean {
   if (typeof actionType !== "string") {
     return false;
   }
-  if (actionType === "web3/batch-write-contract") {
+  if (actionType === BATCH_WRITE_CONTRACT_ACTION_TYPE) {
     return false;
   }
   return (
