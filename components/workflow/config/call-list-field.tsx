@@ -132,9 +132,12 @@ export function CallListField({
     <div className="space-y-3">
       {entries.map((entry, index) => (
         <CallRow
+          contractInteractionType={field.contractInteractionType}
           disabled={disabled}
           entry={entry}
           fieldKey={field.key}
+          functionFilter={field.functionFilter}
+          hideNetworkColumn={field.hideNetworkColumn}
           index={index}
           key={entry.id}
           onRemove={entries.length > 1 ? () => removeRow(entry.id) : undefined}
@@ -162,6 +165,9 @@ type CallRowProps = {
   index: number;
   fieldKey: string;
   disabled?: boolean;
+  functionFilter?: "read" | "write";
+  contractInteractionType?: "read" | "write";
+  hideNetworkColumn?: boolean;
   onUpdate: (key: keyof Omit<CallEntry, "id">, value: string) => void;
   onRemove?: () => void;
 };
@@ -171,6 +177,9 @@ function CallRow({
   index,
   fieldKey,
   disabled,
+  functionFilter,
+  contractInteractionType,
+  hideNetworkColumn,
   onUpdate,
   onRemove,
 }: CallRowProps): React.ReactNode {
@@ -202,25 +211,27 @@ function CallRow({
         )}
       </div>
 
-      <div className="space-y-1.5">
-        <label
-          className="text-xs font-medium"
-          htmlFor={`${fieldKey}-net-${entry.id}`}
-        >
-          Network
-        </label>
-        <ChainSelectField
-          chainTypeFilter="evm"
-          disabled={disabled}
-          field={{
-            key: `${fieldKey}-net-${entry.id}`,
-            label: "Network",
-            type: "chain-select",
-          }}
-          onChange={(val) => onUpdate("network", String(val))}
-          value={entry.network}
-        />
-      </div>
+      {!hideNetworkColumn && (
+        <div className="space-y-1.5">
+          <label
+            className="text-xs font-medium"
+            htmlFor={`${fieldKey}-net-${entry.id}`}
+          >
+            Network
+          </label>
+          <ChainSelectField
+            chainTypeFilter="evm"
+            disabled={disabled}
+            field={{
+              key: `${fieldKey}-net-${entry.id}`,
+              label: "Network",
+              type: "chain-select",
+            }}
+            onChange={(val) => onUpdate("network", String(val))}
+            value={entry.network}
+          />
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <label
@@ -249,7 +260,7 @@ function CallRow({
         </label>
         <AbiWithAutoFetchField
           config={rowConfig}
-          contractInteractionType="read"
+          contractInteractionType={contractInteractionType}
           disabled={disabled}
           field={{
             key: `${fieldKey}-abi-${entry.id}`,
@@ -277,7 +288,7 @@ function CallRow({
             type: "abi-function-select",
             placeholder: "Select a function",
           }}
-          functionFilter="read"
+          functionFilter={functionFilter}
           onChange={(val) => onUpdate("abiFunction", String(val))}
           value={entry.abiFunction}
         />

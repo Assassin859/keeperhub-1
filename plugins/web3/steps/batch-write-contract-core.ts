@@ -4,12 +4,12 @@
  * exporting helpers from a "use step" file (which breaks the workflow
  * bundler, see plugins/CLAUDE.md).
  *
- * Sends N state-changing calls to potentially different contracts as one
- * atomic transaction via the already-deployed Multicall3 contract's
- * aggregate3(Call3[]) function. Unlike batch-read-contract.ts, which calls
- * aggregate3 via .staticCall for a free read, this broadcasts aggregate3 as
- * a real signed transaction, confirmed payable (not view) in
- * lib/contracts/abis/multicall3.json.
+ * Sends N state-changing calls to potentially different contracts, each with
+ * its own ABI and function, as one atomic transaction via the
+ * already-deployed Multicall3 contract's aggregate3(Call3[]) function.
+ * Unlike batch-read-contract.ts, which calls aggregate3 via .staticCall for
+ * a free read, this broadcasts aggregate3 as a real signed transaction,
+ * confirmed payable (not view) in lib/contracts/abis/multicall3.json.
  */
 import "server-only";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
@@ -65,10 +65,11 @@ export type BatchWriteCallResult = {
 
 export type BatchWriteContractCoreInput = {
   network: string;
-  abi: string;
-  abiFunction: string;
-  // JSON string [{ contractAddress: string, args?: unknown[] }, ...] from the
-  // json-editor UI field, or a native array from a direct/MCP caller.
+  // JSON string [{ contractAddress, abi, abiFunction, args? }, ...] from the
+  // call-list-builder UI field, or a native array from a direct/MCP caller.
+  // Each call carries its own contract, ABI, and function; nothing here is
+  // shared across calls except `network` (a batch is inherently single-chain
+  // since one signed tx can't span chains).
   calls: string | unknown[];
   // "true" (default) or "false" from the workflow UI's string-valued config,
   // but a direct/MCP caller can send a native JSON boolean instead.
@@ -175,7 +176,58 @@ function serializeBigInts(value: unknown): unknown {
   return value;
 }
 
-/** Decode a single aggregate3 Result entry against the batch's shared function. */
+export type Call3 = { target: string; allowFailure: boolean; callData: string };
+
+/**
+ * A single Call3 entry plus the per-call metadata needed to decode its
+ * aggregate3 result: the interface/function/outputs that produced its
+ * callData. Every call carries its own triple since each can target a
+ * different contract, ABI, and function.
+ */
+export type CallWithMeta = Call3 & {
+  iface: ethers.Interface;
+  functionKey: string;
+  outputs: AbiOutputParam[];
+};
+
+/**
+ * Best-effort ethers.Interface for decoding a whole-batch revert (the
+ * aggregate3 call itself reverting, e.g. one sub-call failed with
+ * allowFailure=false). Merges every call's fragments (deduped by signature)
+ * so a custom error from any call in the batch has a chance to decode,
+ * falling back to the first call's interface if merging ever throws (e.g. an
+ * incompatible duplicate signature across two calls' ABIs).
+ */
+function buildRevertDecodeInterface(
+  callsWithMeta: CallWithMeta[]
+): ethers.Interface | undefined {
+  const first = callsWithMeta[0];
+  if (!first) {
+    return;
+  }
+  if (callsWithMeta.length === 1) {
+    return first.iface;
+  }
+  const seen = new Set<string>();
+  const fragments: ethers.Fragment[] = [];
+  for (const call of callsWithMeta) {
+    for (const fragment of call.iface.fragments) {
+      const key = fragment.format();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      fragments.push(fragment);
+    }
+  }
+  try {
+    return new ethers.Interface(fragments);
+  } catch {
+    return first.iface;
+  }
+}
+
+/** Decode a single aggregate3 Result entry against its own call's function. */
 function decodeAggregate3Entry(
   callSuccess: boolean,
   returnData: string,
@@ -226,30 +278,179 @@ function decodeAggregate3Entry(
   }
 }
 
-export type ParsedCall = { contractAddress: string; args: unknown[] };
-
 /**
- * Parse, validate, and coerce the `calls` JSON against the batch's shared
- * function ABI. Fails fast on the first invalid entry (matches
- * batch-read-contract.ts's buildMixedCalls convention).
- *
- * `calls` is a JSON string from the json-editor UI field, but a direct/MCP
- * caller passes a native array (formatConfigValue only stringifies for the
- * workflow editor). Mirrors the string/native normalization in
- * sign-typed-data-core.ts:271.
- *
- * Exported so app/api/gas/estimate/route.ts can build the exact same Call3[]
- * this step would send, instead of duplicating the parse/validate logic.
+ * Reshape, coerce, and validate one call's args against its function ABI.
  */
-export function validateAndParseCalls(
-  callsInput: string | unknown[],
+function coerceAndValidateArgs(
+  rawArgs: unknown,
+  index: number,
   // biome-ignore lint/suspicious/noExplicitAny: ethers ABI fragment shape, mirrors write-contract-core's functionAbi typing
   functionAbi: any
-): { calls: ParsedCall[]; error?: string } {
-  let parsed: unknown = callsInput;
-  if (typeof callsInput === "string") {
+): { args: unknown[]; error?: string } {
+  if (rawArgs !== undefined && !Array.isArray(rawArgs)) {
+    return { args: [], error: `Call at index ${index}: args must be an array` };
+  }
+  let args: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
+  try {
+    args = reshapeArgsForAbi(args, functionAbi);
+    args = coerceArgsForAbi(args, functionAbi);
+    const validation = validateArgsForAbi(args, functionAbi);
+    if (!validation.ok) {
+      return { args: [], error: `Call at index ${index}: ${validation.error}` };
+    }
+  } catch (error) {
+    return { args: [], error: `Call at index ${index}: ${getErrorMessage(error)}` };
+  }
+  return { args };
+}
+
+/**
+ * Derive Call3.allowFailure from the isolateCallFailures config, defaulting
+ * to true (isolated) when absent. Mirrors resolveFailOnError's own
+ * true-boolean-or-string-false guard (lib/utils.ts): the workflow UI always
+ * sends a string, but a direct/MCP caller can send a native JSON boolean, and
+ * `!== "false"` alone would treat boolean false the same as true, the
+ * opposite of what the caller asked for.
+ */
+function resolveIsolateCallFailures(
+  isolateCallFailures: string | boolean | undefined
+): boolean {
+  return isolateCallFailures !== false && isolateCallFailures !== "false";
+}
+
+type RawCallEntry = {
+  contractAddress: string;
+  abi: string;
+  abiFunction: string;
+  args: unknown;
+};
+
+type CallEntryResult =
+  | { ok: true; call: RawCallEntry }
+  | { ok: false; error: string };
+
+/** Validate one call entry's shape (not its args, done later once the entry's own function ABI is resolved). */
+function validateCallEntry(entry: unknown, index: number): CallEntryResult {
+  if (typeof entry !== "object" || entry === null) {
+    return { ok: false, error: `Call at index ${index} must be an object` };
+  }
+  const typedEntry = entry as Record<string, unknown>;
+
+  const contractAddress = typedEntry.contractAddress;
+  if (typeof contractAddress !== "string" || !contractAddress) {
+    return { ok: false, error: `Call at index ${index} missing contractAddress` };
+  }
+  if (!ethers.isAddress(contractAddress)) {
+    return {
+      ok: false,
+      error: `Call at index ${index} has invalid address: ${contractAddress}`,
+    };
+  }
+
+  const abi = typedEntry.abi;
+  if (typeof abi !== "string" || !abi) {
+    return { ok: false, error: `Call at index ${index} missing abi` };
+  }
+
+  const abiFunction = typedEntry.abiFunction;
+  if (typeof abiFunction !== "string" || !abiFunction) {
+    return { ok: false, error: `Call at index ${index} missing abiFunction` };
+  }
+
+  return {
+    ok: true,
+    call: { contractAddress, abi, abiFunction, args: typedEntry.args },
+  };
+}
+
+type CallWithMetaResult =
+  | { ok: true; call: CallWithMeta }
+  | { ok: false; error: string };
+
+/** Parse, validate, and encode one call entry against its own ABI. */
+function buildCallWithMeta(
+  entry: unknown,
+  index: number,
+  allowFailure: boolean
+): CallWithMetaResult {
+  const entryResult = validateCallEntry(entry, index);
+  if (!entryResult.ok) {
+    return entryResult;
+  }
+  const rawCall = entryResult.call;
+
+  let parsedAbi: unknown;
+  try {
+    parsedAbi = JSON.parse(rawCall.abi);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Call at index ${index}: Invalid ABI JSON: ${getErrorMessage(error)}`,
+    };
+  }
+  if (!Array.isArray(parsedAbi)) {
+    return { ok: false, error: `Call at index ${index}: ABI must be a JSON array` };
+  }
+
+  const functionAbi = findAbiFunction(parsedAbi, rawCall.abiFunction);
+  if (!functionAbi) {
+    return {
+      ok: false,
+      error: `Call at index ${index}: Function '${rawCall.abiFunction}' not found in ABI`,
+    };
+  }
+  const functionKey = getAbiFunctionKey(parsedAbi, rawCall.abiFunction, functionAbi);
+
+  const { args, error: argsError } = coerceAndValidateArgs(
+    rawCall.args,
+    index,
+    functionAbi
+  );
+  if (argsError) {
+    return { ok: false, error: argsError };
+  }
+
+  let iface: ethers.Interface;
+  let callData: string;
+  try {
+    iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
+    callData = iface.encodeFunctionData(functionKey, args);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Failed to encode call at index ${index}: ${getErrorMessage(error)}`,
+    };
+  }
+
+  const outputs = (functionAbi as { outputs?: AbiOutputParam[] }).outputs ?? [];
+  return {
+    ok: true,
+    call: {
+      target: rawCall.contractAddress,
+      allowFailure,
+      callData,
+      iface,
+      functionKey,
+      outputs,
+    },
+  };
+}
+
+/**
+ * Build this batch's CallWithMeta[]: each entry in `calls` is parsed,
+ * coerced, and encoded independently against its own contract/ABI/function.
+ * Fails fast on the first invalid entry. Exported so
+ * app/api/gas/estimate/route.ts builds the exact same calls this step would
+ * broadcast, instead of duplicating the parse/encode logic.
+ */
+export function buildCallsWithMeta(input: {
+  calls: string | unknown[];
+  isolateCallFailures?: string | boolean;
+}): { calls: CallWithMeta[]; error?: string } {
+  let parsed: unknown = input.calls;
+  if (typeof input.calls === "string") {
     try {
-      parsed = JSON.parse(callsInput);
+      parsed = JSON.parse(input.calls);
     } catch (error) {
       return { calls: [], error: `Invalid Calls JSON: ${getErrorMessage(error)}` };
     }
@@ -268,95 +469,16 @@ export function validateAndParseCalls(
     };
   }
 
-  const calls: ParsedCall[] = [];
+  const allowFailure = resolveIsolateCallFailures(input.isolateCallFailures);
+  const calls: CallWithMeta[] = [];
   for (const [index, entry] of parsed.entries()) {
-    if (typeof entry !== "object" || entry === null) {
-      return { calls: [], error: `Call at index ${index} must be an object` };
+    const built = buildCallWithMeta(entry, index, allowFailure);
+    if (!built.ok) {
+      return { calls: [], error: built.error };
     }
-    const typedEntry = entry as Record<string, unknown>;
-    const contractAddress = typedEntry.contractAddress;
-    if (typeof contractAddress !== "string" || !contractAddress) {
-      return {
-        calls: [],
-        error: `Call at index ${index} missing contractAddress`,
-      };
-    }
-    if (!ethers.isAddress(contractAddress)) {
-      return {
-        calls: [],
-        error: `Call at index ${index} has invalid address: ${contractAddress}`,
-      };
-    }
-    const rawArgs = typedEntry.args;
-    if (rawArgs !== undefined && !Array.isArray(rawArgs)) {
-      return {
-        calls: [],
-        error: `Call at index ${index}: args must be an array`,
-      };
-    }
-    let args: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
-    try {
-      args = reshapeArgsForAbi(args, functionAbi);
-      args = coerceArgsForAbi(args, functionAbi);
-      const validation = validateArgsForAbi(args, functionAbi);
-      if (!validation.ok) {
-        return {
-          calls: [],
-          error: `Call at index ${index}: ${validation.error}`,
-        };
-      }
-    } catch (error) {
-      return {
-        calls: [],
-        error: `Call at index ${index}: ${getErrorMessage(error)}`,
-      };
-    }
-    calls.push({ contractAddress, args });
+    calls.push(built.call);
   }
-
   return { calls };
-}
-
-export type Call3 = { target: string; allowFailure: boolean; callData: string };
-
-/**
- * Encode each parsed call's calldata against the batch's shared interface.
- * Exported for the same reason as validateAndParseCalls above.
- */
-export function encodeCall3Array(
-  calls: ParsedCall[],
-  iface: ethers.Interface,
-  functionKey: string,
-  allowFailure: boolean
-): { call3Array: Call3[]; error?: string } {
-  const call3Array: Call3[] = [];
-  for (const [index, call] of calls.entries()) {
-    try {
-      const callData = iface.encodeFunctionData(functionKey, call.args);
-      call3Array.push({ target: call.contractAddress, allowFailure, callData });
-    } catch (error) {
-      return {
-        call3Array: [],
-        error: `Failed to encode call at index ${index}: ${getErrorMessage(error)}`,
-      };
-    }
-  }
-  return { call3Array };
-}
-
-/**
- * Derive Call3.allowFailure from the isolateCallFailures config, defaulting
- * to true (isolated) when absent. Mirrors resolveFailOnError's own
- * true-boolean-or-string-false guard (lib/utils.ts): the workflow UI always
- * sends a string, but a direct/MCP caller can send a native JSON boolean, and
- * `!== "false"` alone would treat boolean false the same as true, the
- * opposite of what the caller asked for. Exported so
- * app/api/gas/estimate/route.ts derives the identical value the step would.
- */
-export function resolveIsolateCallFailures(
-  isolateCallFailures: string | boolean | undefined
-): boolean {
-  return isolateCallFailures !== false && isolateCallFailures !== "false";
 }
 
 async function getWorkflowIdFromExecution(
@@ -395,8 +517,6 @@ export async function batchWriteContractCore(
 ): Promise<BatchWriteContractResult> {
   const {
     network,
-    abi,
-    abiFunction,
     calls,
     isolateCallFailures,
     gasLimitMultiplier,
@@ -407,65 +527,22 @@ export async function batchWriteContractCore(
     _context,
   } = input;
 
-  if (!abiFunction || abiFunction.trim() === "") {
-    return {
-      success: false,
-      error: "Missing `abiFunction` in the step config",
-      errorClass: ExecutionErrorType.USER,
-    };
-  }
-
   const { multiplierOverride, gasLimitOverride } =
     resolveGasLimitOverrides(gasLimitMultiplier);
   const priorityFeeOverride = parsePriorityFeeGwei(priorityFeeGwei);
 
-  let parsedAbi: unknown;
-  try {
-    parsedAbi = JSON.parse(abi);
-  } catch (error) {
-    return {
-      success: false,
-      error: `Invalid ABI JSON: ${getErrorMessage(error)}`,
-      errorClass: ExecutionErrorType.USER,
-    };
-  }
-  if (!Array.isArray(parsedAbi)) {
-    return {
-      success: false,
-      error: "ABI must be a JSON array",
-      errorClass: ExecutionErrorType.USER,
-    };
-  }
-
-  const functionAbi = findAbiFunction(parsedAbi, abiFunction);
-  if (!functionAbi) {
-    return {
-      success: false,
-      error: `Function '${abiFunction}' not found in ABI`,
-      errorClass: ExecutionErrorType.USER,
-    };
-  }
-  const abiFunctionKey = getAbiFunctionKey(parsedAbi, abiFunction, functionAbi);
-
-  const { calls: parsedCalls, error: callsError } = validateAndParseCalls(
+  const { calls: callsWithMeta, error: buildError } = buildCallsWithMeta({
     calls,
-    functionAbi
-  );
-  if (callsError) {
-    return { success: false, error: callsError, errorClass: ExecutionErrorType.USER };
+    isolateCallFailures,
+  });
+  if (buildError) {
+    return { success: false, error: buildError, errorClass: ExecutionErrorType.USER };
   }
 
-  const iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
-  const allowFailure = resolveIsolateCallFailures(isolateCallFailures);
-  const { call3Array, error: encodeError } = encodeCall3Array(
-    parsedCalls,
-    iface,
-    abiFunctionKey,
-    allowFailure
+  const call3Array: Call3[] = callsWithMeta.map(
+    ({ target, allowFailure, callData }) => ({ target, allowFailure, callData })
   );
-  if (encodeError) {
-    return { success: false, error: encodeError, errorClass: ExecutionErrorType.USER };
-  }
+  const revertIface = buildRevertDecodeInterface(callsWithMeta);
 
   const orgCtx = await resolveOrganizationContext(
     _context ?? {},
@@ -533,18 +610,18 @@ export async function batchWriteContractCore(
           .aggregate3.staticCall(call3Array) as Promise<[boolean, string][]>
     );
   } catch (error) {
-    const rejection = classifyRevert(error, iface);
+    const rejection = classifyRevert(error, revertIface);
     return {
       success: false,
-      error: formatContractError(error, iface),
+      error: formatContractError(error, revertIface),
       ...(rejection.kind !== "unknown" ? { rejection } : {}),
     };
   }
 
-  const outputs = (functionAbi as { outputs?: AbiOutputParam[] }).outputs ?? [];
-  const results = aggregateResults.map(([ok, data]) =>
-    decodeAggregate3Entry(ok, data, iface, abiFunctionKey, outputs)
-  );
+  const results = aggregateResults.map(([ok, data], index) => {
+    const meta = callsWithMeta[index];
+    return decodeAggregate3Entry(ok, data, meta.iface, meta.functionKey, meta.outputs);
+  });
 
   // Key the abort on the raw on-chain flag, not the decoded `results`
   // success flag. decodeAggregate3Entry also reports success:false when a
@@ -627,14 +704,14 @@ export async function batchWriteContractCore(
         totalCalls: results.length,
       };
     } catch (error) {
-      const rejection = classifyRevert(error, iface);
+      const rejection = classifyRevert(error, revertIface);
       const errorClass = rpcRelayErrorClass(error);
       const hash = (error as { receipt?: { hash?: string }; transactionHash?: string })
         ?.receipt?.hash ??
         (error as { transactionHash?: string })?.transactionHash;
       return {
         success: false,
-        error: formatContractError(error, iface),
+        error: formatContractError(error, revertIface),
         ...(errorClass ? { errorClass } : {}),
         ...(hash ? { transactionHash: hash, chainId } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),

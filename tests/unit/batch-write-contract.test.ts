@@ -168,13 +168,37 @@ const WORK_ABI = JSON.stringify([
   },
 ]);
 
+const APPROVE_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+]);
+
 const JOB_1 = "0x1111111111111111111111111111111111111111";
 const JOB_2 = "0x2222222222222222222222222222222222222222";
 const NETWORK_BYTES32 = `0x${"11".repeat(32)}`;
 const ARGS_BYTES = "0xabcd1234";
 
-function makeCall(contractAddress: string) {
-  return { contractAddress, args: [NETWORK_BYTES32, ARGS_BYTES] };
+type CallOverrides = Partial<{
+  abi: string;
+  abiFunction: string;
+  args: unknown[];
+}>;
+
+function makeCall(contractAddress: string, overrides: CallOverrides = {}) {
+  return {
+    contractAddress,
+    abi: overrides.abi ?? WORK_ABI,
+    abiFunction: overrides.abiFunction ?? "work",
+    args: overrides.args ?? [NETWORK_BYTES32, ARGS_BYTES],
+  };
 }
 
 function baseInput(
@@ -182,8 +206,6 @@ function baseInput(
 ): BatchWriteContractCoreInput {
   return {
     network: "1",
-    abi: WORK_ABI,
-    abiFunction: "work",
     calls: JSON.stringify([makeCall(JOB_1), makeCall(JOB_2)]),
     _context: { organizationId: "org-1" },
     ...overrides,
@@ -248,6 +270,39 @@ describe("batch-write-contract - happy path", () => {
     expect(call3Arg.args[0][0].allowFailure).toBe(true);
     expect(call3Arg.args[0][1].target).toBe(JOB_2);
   });
+
+  it("broadcasts one atomic transaction for calls to different contracts with different ABIs/functions", async () => {
+    const approveIface = new ethers.Interface(JSON.parse(APPROVE_ABI));
+    const approveReturnData = approveIface.encodeFunctionResult("approve", [
+      true,
+    ]);
+    mockStaticCall.mockResolvedValueOnce([
+      SUCCESS_RETURN,
+      [true, approveReturnData],
+    ]);
+
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([
+          makeCall(JOB_1),
+          makeCall(JOB_2, {
+            abi: APPROVE_ABI,
+            abiFunction: "approve",
+            args: [JOB_1, "1000"],
+          }),
+        ]),
+      })
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.totalCalls).toBe(2);
+    expect(result.results?.[0].success).toBe(true);
+    expect(result.results?.[1].success).toBe(true);
+    expect(result.results?.[1].result).toBe(true);
+  });
 });
 
 describe("batch-write-contract - per-call failure isolation", () => {
@@ -295,6 +350,29 @@ describe("batch-write-contract - per-call failure isolation", () => {
     };
     expect(call3Arg.args[0][0].allowFailure).toBe(false);
     expect(call3Arg.args[0][1].allowFailure).toBe(false);
+  });
+
+  it("still applies the shared isolateCallFailures toggle to every call even with different ABIs", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+
+    await batchWriteContractCore(
+      baseInput({
+        isolateCallFailures: "false",
+        calls: JSON.stringify([
+          makeCall(JOB_1),
+          makeCall(JOB_2, {
+            abi: APPROVE_ABI,
+            abiFunction: "approve",
+            args: [JOB_1, "1000"],
+          }),
+        ]),
+      })
+    );
+
+    const call3Array = mockStaticCall.mock.calls[0][0] as {
+      allowFailure: boolean;
+    }[];
+    expect(call3Array.every((c) => c.allowFailure === false)).toBe(true);
   });
 
   it("whole batch revert: pre-broadcast staticCall itself rejects, no errorClass so softenable", async () => {
@@ -360,7 +438,13 @@ describe("batch-write-contract - per-call failure isolation", () => {
     mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
 
     const result = await batchWriteContractCore(
-      baseInput({ abi: boolReturnAbi, isolateCallFailures: "true" })
+      baseInput({
+        calls: JSON.stringify([
+          makeCall(JOB_1, { abi: boolReturnAbi }),
+          makeCall(JOB_2, { abi: boolReturnAbi }),
+        ]),
+        isolateCallFailures: "true",
+      })
     );
 
     expect(result.success).toBe(true);
@@ -488,6 +572,7 @@ describe("batch-write-contract - malformed calls JSON", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error).toContain("Invalid Calls JSON");
+      expect(result.errorClass).toBe(ExecutionErrorType.USER);
     }
   });
 
@@ -523,7 +608,9 @@ describe("batch-write-contract - malformed calls JSON", () => {
   it("fails when contractAddress is missing", async () => {
     const result = await batchWriteContractCore(
       baseInput({
-        calls: JSON.stringify([{ args: [NETWORK_BYTES32, ARGS_BYTES] }]),
+        calls: JSON.stringify([
+          { abi: WORK_ABI, abiFunction: "work", args: [] },
+        ]),
       })
     );
     expect(result.success).toBe(false);
@@ -542,11 +629,39 @@ describe("batch-write-contract - malformed calls JSON", () => {
     }
   });
 
+  it("fails when a call entry is missing abi", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([
+          { contractAddress: JOB_1, abiFunction: "work", args: [] },
+        ]),
+      })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("missing abi");
+    }
+  });
+
+  it("fails when a call entry is missing abiFunction", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([
+          { contractAddress: JOB_1, abi: WORK_ABI, args: [] },
+        ]),
+      })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("missing abiFunction");
+    }
+  });
+
   it("fails when args is present but not an array", async () => {
     const result = await batchWriteContractCore(
       baseInput({
         calls: JSON.stringify([
-          { contractAddress: JOB_1, args: "not-an-array" },
+          makeCall(JOB_1, { args: "not-an-array" as unknown as unknown[] }),
         ]),
       })
     );
@@ -557,19 +672,26 @@ describe("batch-write-contract - malformed calls JSON", () => {
   });
 });
 
-describe("batch-write-contract - ABI/function validation", () => {
-  it("fails on invalid ABI JSON", async () => {
-    const result = await batchWriteContractCore(baseInput({ abi: "not json" }));
+describe("batch-write-contract - per-call ABI/function validation", () => {
+  it("fails when a call's ABI is invalid JSON", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([makeCall(JOB_1, { abi: "not json" })]),
+      })
+    );
     expect(result.success).toBe(false);
     if (!result.success) {
+      expect(result.error).toContain("index 0");
       expect(result.error).toContain("Invalid ABI JSON");
       expect(result.errorClass).toBe(ExecutionErrorType.USER);
     }
   });
 
-  it("fails when ABI is not an array", async () => {
+  it("fails when a call's ABI is not an array", async () => {
     const result = await batchWriteContractCore(
-      baseInput({ abi: '{"not":"array"}' })
+      baseInput({
+        calls: JSON.stringify([makeCall(JOB_1, { abi: '{"not":"array"}' })]),
+      })
     );
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -577,38 +699,48 @@ describe("batch-write-contract - ABI/function validation", () => {
     }
   });
 
-  it("fails when the function is not found in the ABI", async () => {
+  it("fails per-call when the function is not found in that call's own ABI", async () => {
     const result = await batchWriteContractCore(
-      baseInput({ abiFunction: "doesNotExist" })
+      baseInput({
+        calls: JSON.stringify([
+          makeCall(JOB_1, { abiFunction: "doesNotExist" }),
+        ]),
+      })
     );
     expect(result.success).toBe(false);
     if (!result.success) {
+      expect(result.error).toContain("index 0");
       expect(result.error).toContain("not found in ABI");
+      expect(result.errorClass).toBe(ExecutionErrorType.USER);
     }
   });
 
-  it("fails when abiFunction is blank", async () => {
-    const result = await batchWriteContractCore(
-      baseInput({ abiFunction: "  " })
-    );
-
-    expect(result.success).toBe(false);
-    if (result.success) {
-      throw new Error("expected failure");
-    }
-    expect(result.error).toContain("abiFunction");
-    expect(result.errorClass).toBe(ExecutionErrorType.USER);
-  });
-});
-
-describe("batch-write-contract - per-call argument validation", () => {
-  it("fails when a call's args do not match the shared function's arity", async () => {
+  it("reports the correct index when the second call is invalid", async () => {
     const result = await batchWriteContractCore(
       baseInput({
         calls: JSON.stringify([
           makeCall(JOB_1),
-          { contractAddress: JOB_2, args: [] },
+          makeCall(JOB_2, {
+            abi: APPROVE_ABI,
+            abiFunction: "approve",
+            args: ["not-an-address", "1000"],
+          }),
         ]),
+      })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("index 1");
+    }
+    expect(mockGetRpcProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("batch-write-contract - per-call argument validation", () => {
+  it("fails when a call's args do not match its function's arity", async () => {
+    const result = await batchWriteContractCore(
+      baseInput({
+        calls: JSON.stringify([makeCall(JOB_1), makeCall(JOB_2, { args: [] })]),
       })
     );
 
@@ -667,7 +799,9 @@ describe("batch-write-contract - failOnError softening", () => {
 
   it("tags a broadcast failure caused by an RPC relay transport error as EXTERNAL, and still softens it", async () => {
     mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
-    mockExecuteContractCall.mockRejectedValueOnce(new Error("relay unreachable"));
+    mockExecuteContractCall.mockRejectedValueOnce(
+      new Error("relay unreachable")
+    );
     mockRpcRelayErrorClass.mockReturnValueOnce(ExecutionErrorType.EXTERNAL);
 
     const result = await batchWriteContractCore(baseInput({}));

@@ -1248,6 +1248,8 @@ const web3Plugin: IntegrationPlugin = {
           label: "Calls",
           type: "call-list-builder",
           required: true,
+          functionFilter: "read",
+          contractInteractionType: "read",
           helpTip:
             "Add contract calls to batch. Each call has its own network, contract address, ABI, function, and arguments.",
           showWhen: { field: "inputMode", equals: "mixed" },
@@ -1276,7 +1278,7 @@ const web3Plugin: IntegrationPlugin = {
       slug: "batch-write-contract",
       label: "Batch Write Contract",
       description:
-        "Send multiple write calls to different contracts as a single on-chain transaction via Multicall3. Every call executes with msg.sender set to the Multicall3 contract, not your organization wallet: any call whose behavior depends on msg.sender (an approve() sets Multicall3's allowance, not the wallet's; an ownerOnly-style check fails) will not behave like a direct call from your wallet.",
+        "Send multiple write calls as a single on-chain transaction via Multicall3. Each call carries its own contract, ABI, and function. Every call executes with msg.sender set to the Multicall3 contract, not your organization wallet: any call whose behavior depends on msg.sender (an approve() sets Multicall3's allowance, not the wallet's; an ownerOnly-style check fails) will not behave like a direct call from your wallet.",
       category: "Web3",
       requiresCredentials: true,
       stepFunction: "batchWriteContractStep",
@@ -1343,34 +1345,15 @@ const web3Plugin: IntegrationPlugin = {
           required: true,
         },
         {
-          key: "abi",
-          label: "Contract ABI",
-          type: "template-textarea",
-          placeholder:
-            "Paste the ABI containing the shared function every call in the batch invokes",
-          rows: 6,
-          required: true,
-          helpTip:
-            "The ABI must contain the function shared by every call in the batch (e.g. IJob.work(bytes32,bytes)). Every call target must implement this same function signature.",
-        },
-        {
-          key: "abiFunction",
-          label: "Function",
-          type: "abi-function-select",
-          abiField: "abi",
-          functionFilter: "write",
-          placeholder: "Select a function",
-          required: true,
-        },
-        {
           key: "calls",
           label: "Calls",
-          type: "json-editor",
-          placeholder:
-            '[\n  { "contractAddress": "0x1111111111111111111111111111111111111111", "args": ["0x4d616b6572000000000000000000000000000000000000000000000000000000", "0x"] },\n  { "contractAddress": "0x2222222222222222222222222222222222222222", "args": ["0x4d616b6572000000000000000000000000000000000000000000000000000000", "0x"] }\n]',
-          helpTip:
-            'The ABI and Function above apply to every call in the batch. Each entry here supplies only what changes: `contractAddress` is that call\'s target, and `args` is its argument list. `args` is positional, so it must match the selected function\'s inputs in order and in count; omit it for a function that takes no inputs.\n\nExample batching work(bytes32,bytes) across two different job contracts:\n[\n  { "contractAddress": "0x1111111111111111111111111111111111111111", "args": ["0x4d616b6572000000000000000000000000000000000000000000000000000000", "0x"] },\n  { "contractAddress": "0x2222222222222222222222222222222222222222", "args": ["0x4d616b6572000000000000000000000000000000000000000000000000000000", "0x"] }\n]\n\nYou can bind this whole field to a prior step\'s array output, e.g. {{@filter-workable-jobs:Filter Workable Jobs.result.jobs}}, but only if that step already emits objects in exactly this shape.\n\nEvery call runs with msg.sender set to the Multicall3 contract, not your wallet. Avoid batching msg.sender-gated calls (like approve()) here, since they would grant Multicall3 the allowance or permission, not your organization wallet.',
+          type: "call-list-builder",
           required: true,
+          functionFilter: "write",
+          contractInteractionType: "write",
+          hideNetworkColumn: true,
+          helpTip:
+            "Each call carries its own contract address, ABI, and function; args is positional and must match that call's selected function. All calls still run on this action's single selected Network above and broadcast as one signed transaction, with msg.sender set to the Multicall3 contract, not your wallet. Avoid batching msg.sender-gated calls (like approve()) here, since they would grant Multicall3 the allowance or permission, not your organization wallet.",
         },
         {
           key: "isolateCallFailures",

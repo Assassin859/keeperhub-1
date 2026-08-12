@@ -1,7 +1,5 @@
 import { ethers } from "ethers";
 import { NextResponse } from "next/server";
-import { getAbiFunctionKey } from "@/lib/abi/function-key";
-import { findAbiFunction } from "@/lib/abi/utils";
 import { apiError } from "@/lib/api-error";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from "@/lib/contracts/multicall3";
@@ -11,11 +9,7 @@ import { requireScope } from "@/lib/middleware/require-scope";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
-import {
-  encodeCall3Array,
-  resolveIsolateCallFailures,
-  validateAndParseCalls,
-} from "@/plugins/web3/steps/batch-write-contract-core";
+import { buildCallsWithMeta } from "@/plugins/web3/steps/batch-write-contract-core";
 
 type EstimateConfig = {
   contractAddress?: string;
@@ -187,66 +181,36 @@ function estimateWriteContract(
 
 /**
  * Estimate gas for a batch write via Multicall3's aggregate3. Builds the
- * exact same Call3[] the step would broadcast (reusing
- * validateAndParseCalls/encodeCall3Array from batch-write-contract-core.ts)
- * and estimates gas for the aggregate3 call itself, since a batch has no
- * single contractAddress/abiFunction to estimate against the way
- * write-contract does.
+ * exact same CallWithMeta[] the step would broadcast (reusing
+ * buildCallsWithMeta from batch-write-contract-core.ts) and estimates gas
+ * for the aggregate3 call itself, since a batch has no single
+ * contractAddress/abiFunction to estimate against the way write-contract
+ * does.
  */
 function estimateBatchWriteContract(
   config: EstimateConfig,
   provider: ethers.JsonRpcProvider,
   walletAddress: string
 ): Promise<bigint> | NextResponse {
-  if (!(config.abi && config.abiFunction && config.calls)) {
-    return badRequest(
-      "abi, abiFunction, and calls are required for batch-write-contract estimation"
-    );
+  if (!config.calls) {
+    return badRequest("calls is required for batch-write-contract estimation");
   }
 
-  let parsedAbi: unknown;
-  try {
-    parsedAbi = JSON.parse(config.abi);
-  } catch {
-    return badRequest("Invalid ABI JSON");
-  }
-  if (!Array.isArray(parsedAbi)) {
-    return badRequest("ABI must be a JSON array");
+  const { calls: callsWithMeta, error } = buildCallsWithMeta({
+    calls: config.calls,
+    isolateCallFailures: config.isolateCallFailures,
+  });
+  if (error) {
+    return badRequest(error);
   }
 
-  const functionAbi = findAbiFunction(parsedAbi, config.abiFunction);
-  if (!functionAbi) {
-    return badRequest(`Function '${config.abiFunction}' not found in ABI`);
-  }
-  const abiFunctionKey = getAbiFunctionKey(
-    parsedAbi,
-    config.abiFunction,
-    functionAbi
+  const call3Array = callsWithMeta.map(
+    ({ target, allowFailure, callData }) => ({
+      target,
+      allowFailure,
+      callData,
+    })
   );
-
-  const { calls, error: callsError } = validateAndParseCalls(
-    config.calls,
-    functionAbi
-  );
-  if (callsError) {
-    return badRequest(callsError);
-  }
-
-  const iface = new ethers.Interface(parsedAbi as ethers.InterfaceAbi);
-  // Reuses batch-write-contract-core.ts's own derivation exactly, so a
-  // batch with Isolate Call Failures off (a single sub-call revert reverts
-  // the whole aggregate3 call) estimates the same transaction that would
-  // actually broadcast, instead of always the isolated-failure variant.
-  const allowFailure = resolveIsolateCallFailures(config.isolateCallFailures);
-  const { call3Array, error: encodeError } = encodeCall3Array(
-    calls,
-    iface,
-    abiFunctionKey,
-    allowFailure
-  );
-  if (encodeError) {
-    return badRequest(encodeError);
-  }
 
   const multicall = new ethers.Contract(
     MULTICALL3_ADDRESS,

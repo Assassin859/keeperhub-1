@@ -113,7 +113,7 @@ export function GasLimitMultiplierField({
           config.contractAddress && config.abi && config.abiFunction
         );
       case "batch-write-contract":
-        return Boolean(config.abi && config.abiFunction && config.calls);
+        return Boolean(config.calls);
       default:
         return false;
     }

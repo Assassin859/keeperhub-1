@@ -46,16 +46,17 @@ vi.mock("ethers", async () => {
   };
 });
 
-const mockValidateAndParseCalls = vi.fn();
-const mockEncodeCall3Array = vi.fn();
+const mockBuildCallsWithMeta = vi.fn();
 vi.mock("@/plugins/web3/steps/batch-write-contract-core", () => ({
-  validateAndParseCalls: (...args: unknown[]) =>
-    mockValidateAndParseCalls(...args),
-  encodeCall3Array: (...args: unknown[]) => mockEncodeCall3Array(...args),
-  // Real implementation (not a spy): trivial, and the allowFailure-threading
-  // tests below assert on its actual output reaching encodeCall3Array.
-  resolveIsolateCallFailures: (value: unknown) =>
-    value !== false && value !== "false",
+  // Mocked at the module boundary (mirrors batch-write-contract-core.ts's
+  // own extensive mocking in tests/unit/batch-write-contract.test.ts): the
+  // real module transitively imports db/wallet-helpers/chain-adapter/etc,
+  // none of which are available in this route-focused test. The
+  // isolateCallFailures resolution below is a direct copy of
+  // resolveIsolateCallFailures's own one-liner (already covered by
+  // dedicated tests elsewhere), so the allowFailure-threading tests here
+  // assert on real derived output, not a hand-picked mock return.
+  buildCallsWithMeta: (...args: unknown[]) => mockBuildCallsWithMeta(...args),
 }));
 
 const mockGetRpcProvider = vi.fn();
@@ -78,8 +79,17 @@ const WORK_ABI = JSON.stringify([
   },
 ]);
 
+const JOB_1 = "0x1111111111111111111111111111111111111111";
+const NETWORK_BYTES32 = `0x${"11".repeat(32)}`;
+const ARGS_BYTES = "0xabcd1234";
+
 const SAMPLE_CALLS = [
-  { contractAddress: "0x1111111111111111111111111111111111111111", args: [] },
+  {
+    contractAddress: JOB_1,
+    abi: WORK_ABI,
+    abiFunction: "work",
+    args: [NETWORK_BYTES32, ARGS_BYTES],
+  },
 ];
 
 function makeRequest(body: unknown): Request {
@@ -89,23 +99,37 @@ function makeRequest(body: unknown): Request {
   });
 }
 
+function resolveAllowFailure(isolateCallFailures: unknown): boolean {
+  return isolateCallFailures !== false && isolateCallFailures !== "false";
+}
+
+function defaultBuildCallsWithMeta(input: {
+  isolateCallFailures?: string | boolean;
+}) {
+  return {
+    calls: [
+      {
+        target: JOB_1,
+        allowFailure: resolveAllowFailure(input.isolateCallFailures),
+        callData: "0xdeadbeef",
+      },
+    ],
+  };
+}
+
+function callFailureFlags(): boolean[] {
+  const call3Array = mockEstimateGas.mock.calls[0][0] as {
+    allowFailure: boolean;
+  }[];
+  return call3Array.map((c) => c.allowFailure);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetRpcProvider.mockResolvedValue({
     executeWithFailover: (fn: (provider: unknown) => unknown) => fn({}),
   });
-  mockValidateAndParseCalls.mockReturnValue({
-    calls: [{ contractAddress: SAMPLE_CALLS[0].contractAddress, args: [] }],
-  });
-  mockEncodeCall3Array.mockReturnValue({
-    call3Array: [
-      {
-        target: SAMPLE_CALLS[0].contractAddress,
-        allowFailure: true,
-        callData: "0xdeadbeef",
-      },
-    ],
-  });
+  mockBuildCallsWithMeta.mockImplementation(defaultBuildCallsWithMeta);
   mockEstimateGas.mockResolvedValue(BigInt(150_000));
 });
 
@@ -116,8 +140,6 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
         chainId: 1,
         actionSlug: "batch-write-contract",
         config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
           calls: JSON.stringify(SAMPLE_CALLS),
         },
       })
@@ -126,16 +148,14 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(response.status).toBe(200);
     const data = (await response.json()) as { estimatedGas: string };
     expect(data.estimatedGas).toBe("150000");
-    expect(mockValidateAndParseCalls).toHaveBeenCalledWith(
-      JSON.stringify(SAMPLE_CALLS),
-      expect.objectContaining({ name: "work" })
-    );
+    expect(mockBuildCallsWithMeta).toHaveBeenCalledWith({
+      calls: JSON.stringify(SAMPLE_CALLS),
+      isolateCallFailures: undefined,
+    });
     expect(mockEstimateGas).toHaveBeenCalledTimes(1);
-    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      true
+    expect(mockEstimateGas).toHaveBeenCalledWith(
+      [{ target: JOB_1, allowFailure: true, callData: "0xdeadbeef" }],
+      { from: "0xwalletaddress1234567890123456789012345678" }
     );
   });
 
@@ -144,20 +164,11 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
       makeRequest({
         chainId: 1,
         actionSlug: "batch-write-contract",
-        config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
-          calls: JSON.stringify(SAMPLE_CALLS),
-        },
+        config: { calls: JSON.stringify(SAMPLE_CALLS) },
       })
     );
 
-    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      true
-    );
+    expect(callFailureFlags()).toEqual([true]);
   });
 
   it('derives allowFailure=false when isolateCallFailures is "false", matching the step exactly', async () => {
@@ -166,8 +177,6 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
         chainId: 1,
         actionSlug: "batch-write-contract",
         config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
           calls: JSON.stringify(SAMPLE_CALLS),
           isolateCallFailures: "false",
         },
@@ -175,12 +184,7 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      false
-    );
+    expect(callFailureFlags()).toEqual([false]);
   });
 
   it("derives allowFailure=false when isolateCallFailures is the native boolean false, not just the string", async () => {
@@ -189,8 +193,6 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
         chainId: 1,
         actionSlug: "batch-write-contract",
         config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
           calls: JSON.stringify(SAMPLE_CALLS),
           isolateCallFailures: false,
         },
@@ -198,12 +200,7 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mockEncodeCall3Array).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      false
-    );
+    expect(callFailureFlags()).toEqual([false]);
   });
 
   it("rejects when calls is missing", async () => {
@@ -211,56 +208,21 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
       makeRequest({
         chainId: 1,
         actionSlug: "batch-write-contract",
-        config: { abi: WORK_ABI, abiFunction: "work" },
+        config: {},
       })
     );
 
     expect(response.status).toBe(400);
     const data = (await response.json()) as { error: string };
-    expect(data.error).toContain("abi, abiFunction, and calls are required");
+    expect(data.error).toContain("calls is required");
+    expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
     expect(mockEstimateGas).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid ABI JSON", async () => {
-    const response = await POST(
-      makeRequest({
-        chainId: 1,
-        actionSlug: "batch-write-contract",
-        config: {
-          abi: "not json",
-          abiFunction: "work",
-          calls: JSON.stringify(SAMPLE_CALLS),
-        },
-      })
-    );
-
-    expect(response.status).toBe(400);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toBe("Invalid ABI JSON");
-  });
-
-  it("rejects when the function is not found in the ABI", async () => {
-    const response = await POST(
-      makeRequest({
-        chainId: 1,
-        actionSlug: "batch-write-contract",
-        config: {
-          abi: WORK_ABI,
-          abiFunction: "doesNotExist",
-          calls: JSON.stringify(SAMPLE_CALLS),
-        },
-      })
-    );
-
-    expect(response.status).toBe(400);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toContain("not found in ABI");
-  });
-
-  it("propagates a validateAndParseCalls error", async () => {
-    mockValidateAndParseCalls.mockReturnValue({
+  it("propagates a buildCallsWithMeta error", async () => {
+    mockBuildCallsWithMeta.mockReturnValueOnce({
       calls: [],
-      error: "Call at index 0 missing contractAddress",
+      error: "Call at index 0 missing abi",
     });
 
     const response = await POST(
@@ -268,40 +230,16 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
         chainId: 1,
         actionSlug: "batch-write-contract",
         config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
-          calls: JSON.stringify([{ args: [] }]),
+          calls: JSON.stringify([
+            { contractAddress: JOB_1, abiFunction: "work", args: [] },
+          ]),
         },
       })
     );
 
     expect(response.status).toBe(400);
     const data = (await response.json()) as { error: string };
-    expect(data.error).toBe("Call at index 0 missing contractAddress");
-    expect(mockEstimateGas).not.toHaveBeenCalled();
-  });
-
-  it("propagates an encodeCall3Array error", async () => {
-    mockEncodeCall3Array.mockReturnValue({
-      call3Array: [],
-      error: "Failed to encode call at index 0: wrong number of arguments",
-    });
-
-    const response = await POST(
-      makeRequest({
-        chainId: 1,
-        actionSlug: "batch-write-contract",
-        config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
-          calls: JSON.stringify(SAMPLE_CALLS),
-        },
-      })
-    );
-
-    expect(response.status).toBe(400);
-    const data = (await response.json()) as { error: string };
-    expect(data.error).toContain("Failed to encode call at index 0");
+    expect(data.error).toBe("Call at index 0 missing abi");
     expect(mockEstimateGas).not.toHaveBeenCalled();
   });
 
@@ -310,18 +248,14 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
       makeRequest({
         chainId: 1,
         actionSlug: "batch-write-contract",
-        config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
-          calls: "{{@prep:Prep.calls}}",
-        },
+        config: { calls: "{{@prep:Prep.calls}}" },
       })
     );
 
     expect(response.status).toBe(400);
     const data = (await response.json()) as { error: string };
     expect(data.error).toContain("template references");
-    expect(mockValidateAndParseCalls).not.toHaveBeenCalled();
+    expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
   });
 
   it("rejects a native calls array containing a template reference in an arg", async () => {
@@ -330,11 +264,11 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
         chainId: 1,
         actionSlug: "batch-write-contract",
         config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
           calls: [
             {
-              contractAddress: SAMPLE_CALLS[0].contractAddress,
+              contractAddress: JOB_1,
+              abi: WORK_ABI,
+              abiFunction: "work",
               args: ["{{@prep:Prep.arg}}"],
             },
           ],
@@ -345,7 +279,7 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(response.status).toBe(400);
     const data = (await response.json()) as { error: string };
     expect(data.error).toContain("template references");
-    expect(mockValidateAndParseCalls).not.toHaveBeenCalled();
+    expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
   });
 
   it("rejects a native calls array containing a template reference in contractAddress", async () => {
@@ -354,9 +288,14 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
         chainId: 1,
         actionSlug: "batch-write-contract",
         config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
-          calls: [{ contractAddress: "{{@prep:Prep.target}}", args: [] }],
+          calls: [
+            {
+              contractAddress: "{{@prep:Prep.target}}",
+              abi: WORK_ABI,
+              abiFunction: "work",
+              args: [],
+            },
+          ],
         },
       })
     );
@@ -364,7 +303,7 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(response.status).toBe(400);
     const data = (await response.json()) as { error: string };
     expect(data.error).toContain("template references");
-    expect(mockValidateAndParseCalls).not.toHaveBeenCalled();
+    expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
   });
 
   it("accepts calls as a native array in the request body", async () => {
@@ -372,18 +311,14 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
       makeRequest({
         chainId: 1,
         actionSlug: "batch-write-contract",
-        config: {
-          abi: WORK_ABI,
-          abiFunction: "work",
-          calls: SAMPLE_CALLS,
-        },
+        config: { calls: SAMPLE_CALLS },
       })
     );
 
     expect(response.status).toBe(200);
-    expect(mockValidateAndParseCalls).toHaveBeenCalledWith(
-      SAMPLE_CALLS,
-      expect.objectContaining({ name: "work" })
-    );
+    expect(mockBuildCallsWithMeta).toHaveBeenCalledWith({
+      calls: SAMPLE_CALLS,
+      isolateCallFailures: undefined,
+    });
   });
 });
