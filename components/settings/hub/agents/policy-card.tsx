@@ -7,9 +7,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SUPPORTED_SCOPES } from "@/lib/mcp/oauth-scopes";
+import { SUPPORTED_SCOPES, scopeLabel } from "@/lib/mcp/oauth-scopes";
 import { SettingsCard } from "../section";
-import { scopeLabel } from "./connections-table";
 
 /**
  * An unset ceiling and a ceiling of full access permit exactly the same thing,

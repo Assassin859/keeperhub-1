@@ -201,6 +201,17 @@ export function effectiveScope(scopeString: string): OAuthScope {
   return SCOPE_MCP_READ;
 }
 
+/** What each level is called wherever a person reads it, not just the picker. */
+export const SCOPE_LABELS: Record<string, string> = {
+  [SCOPE_MCP_ADMIN]: "Full access",
+  [SCOPE_MCP_READ]: "Read only",
+  [SCOPE_MCP_WRITE]: "Read and write",
+};
+
+export function scopeLabel(scope: string): string {
+  return SCOPE_LABELS[scope] ?? scope;
+}
+
 /** True when `scope` reaches beyond what `ceiling` permits. */
 export function scopeExceeds(scope: string, ceiling: string | null): boolean {
   if (!ceiling) {

@@ -86,6 +86,39 @@ The MCP endpoint supports two authentication methods:
 
 **API keys (headless):** Pass an organization API key (`kh_` prefix) as a Bearer token. Create one at [app.keeperhub.com](https://app.keeperhub.com) under Settings > Developer > API keys > Organisation keys.
 
+## What a Connected Agent May Do
+
+Every agent connected through OAuth appears under Settings > Organization >
+Agents, grouped by the person who connected it, with when each session was last
+used. Any member can end their own sessions; owners and admins can see and end
+everyone's.
+
+What an agent may do is the **lowest** of three things:
+
+| | Set by | Applies |
+|---|---|---|
+| The session's scope | the person, when they approve the client | fixed at that moment |
+| The person's limit | an owner or admin | to every agent that person runs |
+| The organization's limit | an owner or admin | to every agent in the organization |
+
+The limits are checked on every call rather than written into the token, so:
+
+- Lowering a limit takes effect within about a minute. Nothing has to be
+  reconnected and no session is ended.
+- Reconnecting cannot raise what a limit allows. A new approval is clamped to it.
+- Raising a limit again restores what the session and the person already had,
+  because neither is rewritten when a limit moves.
+
+A call beyond the limit returns `403 insufficient_scope` naming what the
+connection is allowed. Reauthorizing does not change it; only an owner or admin
+can raise the limit.
+
+Ending a session is different: the session is deleted and its credentials stop
+working immediately, so that agent has to be connected again.
+
+Organization API keys (`kh_`) are not agent connections and are managed under
+Settings > Developer > API keys.
+
 ## Organization Scoping
 
 Each MCP connection is scoped to a single organization. The org is determined by your authentication method:

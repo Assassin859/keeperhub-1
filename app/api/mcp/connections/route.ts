@@ -1,17 +1,43 @@
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  getMemberScopeCeiling,
   getOrgMaxScope,
   listConnections,
+  listOrgMembers,
+  type McpConnection,
 } from "@/lib/mcp/connections";
-import { resolveCaller, roleOf } from "./_lib/guard";
+import { resolveCaller } from "./_lib/guard";
+
+type UserGroup = {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role: string;
+  maxScope: string | null;
+  /** An admin may not set an owner's access, so the UI must know. */
+  canEdit: boolean;
+  sessions: McpConnection[];
+};
+
+/** Most recently used first, then people who have never connected anything. */
+function lastUsed(group: UserGroup): number {
+  let latest = 0;
+  for (const session of group.sessions) {
+    const at = session.lastUsedAt ? session.lastUsedAt.getTime() : 0;
+    latest = Math.max(latest, at);
+  }
+  return latest;
+}
 
 /**
  * GET /api/mcp/connections
  *
- * The MCP clients connected to this organization. Admins and owners see every
- * connection; a member sees only the ones they consented to, because the
+ * Everyone in the organization and the agents they have connected. The list is
+ * built from the membership rather than from the sessions, so an admin can set
+ * someone's limit before that person has connected anything: a member with no
+ * agent still needs a row to be limited on.
+ *
+ * Admins and owners see everyone; a member sees only themselves, because the
  * filter is applied here rather than left to the client.
  */
 export async function GET(request: Request): Promise<NextResponse> {
@@ -24,53 +50,50 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const connections = await listConnections(
-      caller.organizationId,
-      caller.isAdmin ? undefined : caller.userId
-    );
+    const [connections, members] = await Promise.all([
+      listConnections(
+        caller.organizationId,
+        caller.isAdmin ? undefined : caller.userId
+      ),
+      listOrgMembers(caller.organizationId),
+    ]);
 
-    // Grouped by person, because access is a property of the person while a
-    // session is a thing you revoke. The newest session leads each group.
-    const byUser = new Map<string, (typeof groups)[number]>();
-    const groups: {
-      userId: string;
-      userName: string;
-      userEmail: string;
-      maxScope: string | null;
-      /** An admin may not set an owner's access, so the UI must know. */
-      canEdit: boolean;
-      sessions: typeof connections;
-    }[] = [];
+    const sessionsByUser = new Map<string, McpConnection[]>();
     for (const connection of connections) {
-      let group = byUser.get(connection.userId);
-      if (!group) {
-        const targetRole = await roleOf(
-          connection.userId,
-          caller.organizationId
-        );
-        group = {
-          canEdit:
-            caller.isAdmin &&
-            (targetRole !== "owner" || caller.role === "owner"),
-          maxScope: await getMemberScopeCeiling(
-            connection.userId,
-            caller.organizationId
-          ),
-          sessions: [],
-          userEmail: connection.userEmail,
-          userId: connection.userId,
-          userName: connection.userName,
-        };
-        byUser.set(connection.userId, group);
-        groups.push(group);
-      }
-      group.sessions.push(connection);
+      const list = sessionsByUser.get(connection.userId) ?? [];
+      list.push(connection);
+      sessionsByUser.set(connection.userId, list);
     }
+
+    const visible = caller.isAdmin
+      ? members
+      : members.filter((m) => m.userId === caller.userId);
+
+    const users: UserGroup[] = visible.map((m) => ({
+      canEdit:
+        caller.isAdmin && (m.role !== "owner" || caller.role === "owner"),
+      maxScope: m.maxScope,
+      role: m.role,
+      sessions: sessionsByUser.get(m.userId) ?? [],
+      userEmail: m.userEmail,
+      userId: m.userId,
+      userName: m.userName,
+    }));
+
+    // Whoever has been active most recently leads; people with nothing
+    // connected sort to the end by name, where they are still reachable to be
+    // limited before they connect.
+    users.sort(
+      (a, b) =>
+        lastUsed(b) - lastUsed(a) ||
+        b.sessions.length - a.sessions.length ||
+        (a.userName || a.userEmail).localeCompare(b.userName || b.userEmail)
+    );
 
     return NextResponse.json({
       canManage: caller.isAdmin,
       maxScope: await getOrgMaxScope(caller.organizationId),
-      users: groups,
+      users,
     });
   } catch (error) {
     logSystemError(

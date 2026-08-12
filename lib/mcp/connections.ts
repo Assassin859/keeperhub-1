@@ -161,6 +161,43 @@ export async function setMemberScopeCeiling(
     );
 }
 
+export type OrgMemberRow = {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role: string;
+  maxScope: string | null;
+};
+
+/**
+ * Everyone in the organization, whether or not they have ever connected an
+ * agent. An admin has to be able to set someone's limit before that person
+ * connects anything, so the list cannot be built from the sessions alone.
+ */
+export async function listOrgMembers(
+  organizationId: string
+): Promise<OrgMemberRow[]> {
+  const rows = await db
+    .select({
+      maxScope: member.mcpMaxScope,
+      role: member.role,
+      userEmail: users.email,
+      userId: member.userId,
+      userName: users.name,
+    })
+    .from(member)
+    .leftJoin(users, eq(users.id, member.userId))
+    .where(eq(member.organizationId, organizationId));
+
+  return rows.map((row) => ({
+    maxScope: row.maxScope,
+    role: row.role,
+    userEmail: row.userEmail ?? "",
+    userId: row.userId,
+    userName: row.userName ?? "",
+  }));
+}
+
 export async function getMemberScopeCeiling(
   userId: string,
   organizationId: string

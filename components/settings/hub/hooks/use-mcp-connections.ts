@@ -23,6 +23,7 @@ export type McpUserGroup = {
   userId: string;
   userName: string;
   userEmail: string;
+  role: string;
   /** This person's ceiling, which is what the access control sets. */
   maxScope: string | null;
   /** False when the caller may see this person's access but not set it. */
@@ -45,7 +46,7 @@ export type McpConnectionsState = {
   busyId: string | null;
   savingPolicy: boolean;
   revoke: (connection: McpConnectionRow) => Promise<void>;
-  setScope: (connection: McpConnectionRow, scope: string) => Promise<void>;
+  setScope: (group: McpUserGroup, scope: string) => Promise<void>;
   setMaxScope: (scope: string | null) => Promise<void>;
 };
 
@@ -90,11 +91,13 @@ export function useMcpConnections(): McpConnectionsState {
   );
 
   const setScope = useCallback(
-    async (connection: McpConnectionRow, scope: string): Promise<void> => {
-      setBusyId(connection.id);
+    async (group: McpUserGroup, scope: string): Promise<void> => {
+      // Keyed by the person: the limit is theirs, and somebody who has not
+      // connected an agent yet has no session to address.
+      setBusyId(group.userId);
       try {
         const res = await fetch(
-          `/api/mcp/connections/${encodeURIComponent(connection.id)}`,
+          `/api/mcp/members/${encodeURIComponent(group.userId)}`,
           {
             body: JSON.stringify({ scope }),
             headers: { "Content-Type": "application/json" },
@@ -105,7 +108,7 @@ export function useMcpConnections(): McpConnectionsState {
           const data = (await res.json().catch(() => ({}))) as {
             error?: string;
           };
-          toast.error(data.error ?? "Could not change the scope");
+          toast.error(data.error ?? "Could not change the access");
           return;
         }
         // Changing a scope leaves the refresh token working, so the agent
@@ -131,15 +134,17 @@ export function useMcpConnections(): McpConnectionsState {
         });
         const data = (await res.json().catch(() => ({}))) as {
           error?: string;
-          narrowed?: number;
+          affected?: number;
         };
         if (!res.ok) {
           toast.error(data.error ?? "Could not save the policy");
           return;
         }
+        // Nothing was rewritten: the ceiling holds those agents down, and
+        // their own limits are still whatever was chosen for them.
         toast.success(
-          data.narrowed
-            ? `Saved. ${data.narrowed} connection${data.narrowed === 1 ? "" : "s"} narrowed.`
+          data.affected
+            ? `Saved. ${data.affected} agent${data.affected === 1 ? " is" : "s are"} now limited by this.`
             : "Saved"
         );
         await refetch();

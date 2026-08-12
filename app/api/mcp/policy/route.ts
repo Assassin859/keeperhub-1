@@ -4,7 +4,6 @@ import {
   connectionsAboveCeiling,
   getOrgMaxScope,
   isSupportedScope,
-  setMemberScopeCeiling,
   setOrgMaxScope,
 } from "@/lib/mcp/connections";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -13,10 +12,14 @@ import { resolveCaller } from "../connections/_lib/guard";
 /**
  * PUT /api/mcp/policy
  *
- * The most any MCP connection in this organization may hold. Lowering it
- * narrows the connections that already exceed it, because a ceiling that only
- * applied to future consent would leave the very connections it was set to
- * rein in untouched.
+ * The most any MCP agent in this organization may do.
+ *
+ * This writes one value: the organization's own ceiling. It does not touch a
+ * person's limit or a session's granted scope. Those record decisions somebody
+ * made, and rewriting them to match a ceiling would destroy what was chosen and
+ * leave nothing to return to if the ceiling were raised again. The ceiling binds
+ * anyway, because every call is judged against the lowest of the three, so
+ * lowering it takes hold at once without editing anything else.
  */
 export async function PUT(request: Request): Promise<NextResponse> {
   const caller = await resolveCaller(request);
@@ -44,42 +47,13 @@ export async function PUT(request: Request): Promise<NextResponse> {
     }
 
     const before = await getOrgMaxScope(caller.organizationId);
-    const ceiling = next;
-    const narrowed = ceiling
-      ? await connectionsAboveCeiling(caller.organizationId, ceiling)
-      : [];
+    // Counted for the confirmation only. These are the agents the new ceiling
+    // will hold down, not rows about to be rewritten.
+    const affected = next
+      ? (await connectionsAboveCeiling(caller.organizationId, next)).length
+      : 0;
 
-    await setOrgMaxScope(caller.organizationId, ceiling);
-
-    for (const connection of narrowed) {
-      if (!ceiling) {
-        break;
-      }
-      await setMemberScopeCeiling(
-        connection.userId,
-        caller.organizationId,
-        ceiling
-      );
-      await recordAuditEvent({
-        action: "mcp_connection.scope_changed",
-        actor: {
-          apiKeyId: caller.apiKeyId ?? null,
-          authMethod: caller.authMethod,
-          organizationId: caller.organizationId,
-          userId: caller.userId,
-        },
-        after: { scope: next },
-        before: { scope: connection.scope },
-        metadata: {
-          ...buildAuditMetadata(request),
-          clientName: connection.clientName,
-          reason: "organization ceiling lowered",
-          subjectUserId: connection.userId,
-        },
-        resourceId: connection.id,
-        resourceType: "mcp_connection",
-      });
-    }
+    await setOrgMaxScope(caller.organizationId, next);
 
     await recordAuditEvent({
       action: "mcp_policy.updated",
@@ -91,23 +65,16 @@ export async function PUT(request: Request): Promise<NextResponse> {
       },
       after: { maxScope: next },
       before: { maxScope: before },
-      metadata: {
-        ...buildAuditMetadata(request),
-        narrowedConnections: narrowed.length,
-      },
+      metadata: { ...buildAuditMetadata(request), affectedSessions: affected },
       resourceId: caller.organizationId,
       resourceType: "mcp_policy",
     });
 
-    return NextResponse.json({
-      maxScope: next,
-      narrowed: narrowed.length,
-      success: true,
-    });
+    return NextResponse.json({ affected, maxScope: next, success: true });
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
-      "[McpPolicy] Failed to set the connection ceiling",
+      "[McpPolicy] Failed to set the agent ceiling",
       error,
       { endpoint: "/api/mcp/policy", operation: "put" }
     );

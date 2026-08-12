@@ -25,6 +25,7 @@ import {
   effectiveScope,
   SUPPORTED_SCOPES,
   scopeExceeds,
+  scopeLabel,
 } from "@/lib/mcp/oauth-scopes";
 import { cn } from "@/lib/utils";
 import type {
@@ -34,16 +35,6 @@ import type {
 import { SETTINGS_HEAD_ROW, SETTINGS_ROW } from "../section";
 
 const SKELETON_ROWS = ["a", "b", "c"] as const;
-
-export const SCOPE_LABELS: Record<string, string> = {
-  "mcp:admin": "Full access",
-  "mcp:read": "Read only",
-  "mcp:write": "Read and write",
-};
-
-export function scopeLabel(scope: string): string {
-  return SCOPE_LABELS[scope] ?? scope;
-}
 
 /** An unset ceiling permits everything, which is what full access means. */
 const UNSET_READS_AS = "mcp:admin";
@@ -74,24 +65,42 @@ function lastUsedAcross(group: McpUserGroup): string | null {
   return latest;
 }
 
-function matches(group: McpUserGroup, term: string): boolean {
+/** "2 sessions", or that there is nothing connected yet. */
+function sessionSummary(group: McpUserGroup): string {
+  if (group.sessions.length === 0) {
+    return "No agents connected";
+  }
+  return group.sessions.length === 1
+    ? "1 session"
+    : `${group.sessions.length} sessions`;
+}
+
+/**
+ * Narrows a group to what the term asked for, or null when it asked for
+ * something this person does not have.
+ *
+ * Naming the person keeps all of their sessions, because the question was about
+ * them. Naming a session keeps that one: searching an id and being shown the
+ * others defeats the point of searching for it. The person's row stays either
+ * way, since a session on its own says nothing about whose it is.
+ */
+function narrow(group: McpUserGroup, term: string): McpUserGroup | null {
   if (!term) {
-    return true;
+    return group;
   }
   const needle = term.toLowerCase();
   if (
     group.userName.toLowerCase().includes(needle) ||
     group.userEmail.toLowerCase().includes(needle)
   ) {
-    return true;
+    return group;
   }
-  // A search that names a client keeps the person it belongs to, so the match
-  // is still reachable through its group.
-  return group.sessions.some(
+  const sessions = group.sessions.filter(
     (session) =>
       session.clientName.toLowerCase().includes(needle) ||
       session.clientId.toLowerCase().includes(needle)
   );
+  return sessions.length > 0 ? { ...group, sessions } : null;
 }
 
 export function ConnectionsTable({
@@ -111,13 +120,16 @@ export function ConnectionsTable({
   loading: boolean;
   busyId: string | null;
   onRevoke: (session: McpConnectionRow) => void;
-  onScopeChange: (session: McpConnectionRow, scope: string) => void;
+  onScopeChange: (group: McpUserGroup, scope: string) => void;
 }): React.ReactElement {
   const [term, setTerm] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const shown = useMemo(
-    () => users.filter((group) => matches(group, term)),
+    () =>
+      users
+        .map((group) => narrow(group, term))
+        .filter((group): group is McpUserGroup => group !== null),
     [users, term]
   );
 
@@ -189,22 +201,26 @@ export function ConnectionsTable({
 
           {!loading &&
             shown.map((group) => {
-              // Access belongs to the person: a cap on one session is shed by
-              // reconnecting, since each `mcp add` registers a new client.
-              const anchor = group.sessions[0];
-              const isOpen = !collapsed.has(group.userId);
+              // Somebody with no agent connected still gets a row: an admin
+              // sets their limit before they connect, not after.
+              const hasSessions = group.sessions.length > 0;
+              const isOpen = hasSessions && !collapsed.has(group.userId);
               return [
                 <TableRow className={SETTINGS_ROW} key={group.userId}>
                   <TableCell>
                     <button
                       aria-expanded={isOpen}
                       className="flex min-w-0 items-center gap-2 text-left"
+                      disabled={!hasSessions}
                       onClick={() => toggle(group.userId)}
                       type="button"
                     >
                       <ChevronRight
                         className={cn(
-                          "size-4 shrink-0 text-muted-foreground transition-transform",
+                          "size-4 shrink-0 transition-transform",
+                          hasSessions
+                            ? "text-muted-foreground"
+                            : "text-transparent",
                           isOpen && "rotate-90"
                         )}
                       />
@@ -213,43 +229,44 @@ export function ConnectionsTable({
                           {group.userName || group.userEmail}
                         </span>
                         <span className="truncate text-muted-foreground text-xs">
-                          {group.userEmail} ·{" "}
-                          {group.sessions.length === 1
-                            ? "1 session"
-                            : `${group.sessions.length} sessions`}
+                          {group.userEmail} · {sessionSummary(group)}
                         </span>
                       </span>
                     </button>
                   </TableCell>
                   <TableCell>
-                    {canManage && group.canEdit && anchor ? (
+                    {canManage && group.canEdit ? (
                       <Select
-                        disabled={busyId === anchor.id}
-                        onValueChange={(next) => onScopeChange(anchor, next)}
+                        disabled={busyId === group.userId}
+                        onValueChange={(next) => onScopeChange(group, next)}
                         value={group.maxScope ?? UNSET_READS_AS}
                       >
                         <SelectTrigger className="h-8 w-48">
                           <SelectValue />
                         </SelectTrigger>
+                        {/* The label stays plain: the trigger renders the
+                            selected item's own text, so a reason tacked onto it
+                            would read back as the person's access. */}
                         <SelectContent>
-                          {SUPPORTED_SCOPES.map((scope) => {
-                            const blocked = scopeExceeds(scope, maxScope);
-                            return (
-                              <SelectItem
-                                disabled={blocked}
-                                key={scope}
-                                value={scope}
-                              >
-                                {blocked
-                                  ? `${scopeLabel(scope)} (above the organization limit)`
-                                  : scopeLabel(scope)}
-                              </SelectItem>
-                            );
-                          })}
+                          {SUPPORTED_SCOPES.map((scope) => (
+                            <SelectItem
+                              disabled={scopeExceeds(scope, maxScope)}
+                              key={scope}
+                              value={scope}
+                            >
+                              {scopeLabel(scope)}
+                            </SelectItem>
+                          ))}
+                          {maxScope && (
+                            <span className="block border-t px-2 py-1.5 text-muted-foreground text-xs">
+                              This organization allows at most{" "}
+                              {scopeLabel(maxScope)}.
+                            </span>
+                          )}
                         </SelectContent>
                       </Select>
                     ) : (
-                      <span className="text-sm">
+                      <span className="pl-3 text-sm">
                         {scopeLabel(group.maxScope ?? UNSET_READS_AS)}
                       </span>
                     )}
@@ -287,7 +304,10 @@ export function ConnectionsTable({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="text-muted-foreground text-xs">
+                      {/* Padded to the select trigger above it, so the session's
+                          level lines up with the person's rather than sitting a
+                          step to its left. */}
+                      <span className="pl-3 text-muted-foreground text-xs">
                         {scopeLabel(effectiveScope(session.scope))}
                       </span>
                     </TableCell>

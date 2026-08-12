@@ -37,8 +37,8 @@ export function AgentsSection(): React.ReactElement {
           onRevoke={(connection) => {
             state.revoke(connection).catch(() => undefined);
           }}
-          onScopeChange={(connection, scope) => {
-            state.setScope(connection, scope).catch(() => undefined);
+          onScopeChange={(group, scope) => {
+            state.setScope(group, scope).catch(() => undefined);
           }}
           users={state.users}
         />
