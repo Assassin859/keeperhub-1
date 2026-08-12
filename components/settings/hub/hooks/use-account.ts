@@ -62,8 +62,6 @@ export function useAccount(): AccountState {
     setSavedName(data.name || "");
     setSavedEmail(data.email || "");
     setProviderId(data.providerId ?? null);
-    // dual.reset is a stable closure over useState setters.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   }, [data]);
 
   const reset = useCallback((): void => {
