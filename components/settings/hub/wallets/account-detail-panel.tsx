@@ -116,9 +116,11 @@ export function AccountDetailPanel({
           </EmptyState>
         )}
         {!(isSolana || detail.isLoadingBalances) && visible.length > 0 && (
+          // Withdrawing is the owner's alone, and the endpoint enforces that:
+          // offering it to an admin only walks them into a refusal.
           <AssetsTable
             canAdd={isAdmin && !adding}
-            canWithdraw={isAdmin}
+            canWithdraw={isOwner}
             onAdd={() => setAdding(true)}
             onWithdraw={detail.withdraw}
             rows={visible}
