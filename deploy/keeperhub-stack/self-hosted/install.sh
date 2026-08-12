@@ -52,6 +52,9 @@ warn()    { echo "    warning: $*" >&2; }
 preflight() {
     section "Preflight"
     require_tools kubectl helm
+    # Only the sandbox manifest is substituted, so envsubst is required only
+    # when it is going to be applied.
+    [ "$SANDBOX_ENABLED" = true ] && require_tools envsubst
     require_context
     validate_modes
 
@@ -266,6 +269,42 @@ compose_set() {
 
 # A working-tree chart when CHART_DIR is set, the published one otherwise. The
 # --version flag is meaningless for a directory and helm rejects it there.
+# Applied before the chart, so the Service the app and executor are configured
+# to call already resolves when their first pod starts. Neither blocks on it, so
+# the order is a courtesy rather than a requirement.
+#
+# Not part of the Helm release on purpose: --atomic would then delete the
+# sandbox on any unrelated rollback, and the pod that runs untrusted code is the
+# last one that should come and go with a failed upgrade of something else.
+apply_sandbox() {
+    [ "$SANDBOX_ENABLED" = true ] || return 0
+    section "Applying the sandbox"
+
+    # The chart defaults this when it is empty, but a raw manifest has no such
+    # default and an empty imagePullPolicy is not valid.
+    local pull_policy="${IMAGE_PULL_POLICY:-IfNotPresent}"
+
+    if [ -z "$IMAGE_REPO" ] || [ -z "$IMAGE_TAG" ]; then
+        echo "SANDBOX_ENABLED=true needs IMAGE_REPO and IMAGE_TAG." >&2
+        echo "The sandbox is a plain manifest, so it cannot read them from the chart." >&2
+        exit 1
+    fi
+
+    if [ "$DRY_RUN" = true ]; then
+        NAMESPACE="$NAMESPACE" IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$IMAGE_TAG" \
+            IMAGE_PULL_POLICY="$pull_policy" \
+            envsubst '${NAMESPACE} ${IMAGE_REPO} ${IMAGE_TAG} ${IMAGE_PULL_POLICY}' \
+            <"$SCRIPT_DIR/sandbox.yaml"
+        return 0
+    fi
+
+    NAMESPACE="$NAMESPACE" IMAGE_REPO="$IMAGE_REPO" IMAGE_TAG="$IMAGE_TAG" \
+        IMAGE_PULL_POLICY="$pull_policy" \
+        envsubst '${NAMESPACE} ${IMAGE_REPO} ${IMAGE_TAG} ${IMAGE_PULL_POLICY}' \
+        <"$SCRIPT_DIR/sandbox.yaml" | kube apply -f -
+    ok "keeperhub-sandbox on ${IMAGE_REPO}:sandbox-${IMAGE_TAG}"
+}
+
 chart_ref() {
     if [ -n "$CHART_DIR" ]; then printf '%s' "$CHART_DIR"; else printf '%s' "$CHART_NAME"; fi
 }
@@ -303,6 +342,7 @@ install_chart() {
 main() {
     preflight
     create_aws_credentials_secret
+    apply_sandbox
     compose_values
     compose_set
     install_chart

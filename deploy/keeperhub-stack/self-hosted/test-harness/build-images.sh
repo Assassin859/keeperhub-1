@@ -87,7 +87,9 @@ fi
 
 echo "== Loading into minikube ($MINIKUBE_PROFILE)"
 present=$(minikube -p "$MINIKUBE_PROFILE" image ls 2>/dev/null || true)
-for component in app migrator workflow-runner executor schedule; do
+# Tag prefixes, not bake target names. The metrics collector is tagged
+# "collector-" and the block dispatcher "block-", matching the root bake file.
+for component in app migrator workflow-runner executor schedule block sandbox collector; do
     image="${IMAGE_REPO}:${component}-${IMAGE_TAG}"
     # Anchored: a bare substring match lets ":app-<tag>" match
     # "keeperhub-local:app-<tag>" and report a skip for an image never checked.

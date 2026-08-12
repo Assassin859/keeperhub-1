@@ -56,6 +56,18 @@ IMAGE_REPO="${IMAGE_REPO:-}"
 IMAGE_TAG="${IMAGE_TAG:-}"
 IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
 
+# The Code step's execution sandbox, applied from sandbox.yaml.
+#
+# Off by default, which matches what the chart does: keeperhub-stack does not
+# render a sandbox, so an install has never had one. Everything except the Code
+# step works without it, and the failure is loud and local - that one step ends
+# with a connection error rather than the install misbehaving.
+#
+# On, it needs the sandbox image present in the same repository as the rest, and
+# it adds the one workload in the install that executes code the operator did
+# not write. sandbox.yaml documents what that pod is denied.
+SANDBOX_ENABLED="${SANDBOX_ENABLED:-false}"
+
 # The hostname the app is served on, and how it is exposed.
 #
 # Any hostname works. The application ships a fixed trusted-origin list

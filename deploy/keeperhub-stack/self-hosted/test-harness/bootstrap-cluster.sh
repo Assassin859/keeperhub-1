@@ -30,7 +30,7 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-$MINIKUBE_PROFILE}"
 # to be built before anything is deployed, so there is nothing to read them from
 # yet. assert_overlay keeps the two copies honest.
 TLS_ISSUER="mkcert-ca-issuer"   # values.minikube.yaml: global.tlsIssuer
-APP_HOST="selfhosted.keeperhub.com"  # values.minikube.yaml: global.appHost
+APP_HOST="keeperhub.example.com"  # values.minikube.yaml: global.appHost
 assert_overlay tlsIssuer "$TLS_ISSUER"
 assert_overlay appHost "$APP_HOST"
 
