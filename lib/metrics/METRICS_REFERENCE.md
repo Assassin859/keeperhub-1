@@ -112,6 +112,22 @@ Gauge metrics tracking resource usage and capacity.
 | `workflow.queue.depth` | Pending workflow jobs | - | < 50 | DB |
 | `workflow.concurrent.count` | Concurrent workflow executions | - | gauge | DB |
 
+### Process Memory
+
+Per-pod Node.js memory, emitted from `lib/metrics/instrumentation/process-memory.ts`. These are registered directly on the API-process registry rather than through `setGauge()`, so they appear on `/api/metrics/api` only and have no console-collector equivalent. Prometheus names are listed in full because these gauges are not routed through `MetricNames`.
+
+| Metric Name | Description | Labels | Source |
+|-------------|-------------|--------|--------|
+| `keeperhub_process_memory_rss_bytes` | Resident set size of the process | - | API |
+| `keeperhub_process_memory_heap_used_bytes` | V8 heap in use | - | API |
+| `keeperhub_process_memory_external_bytes` | Memory held by C++ objects bound to JavaScript | - | API |
+| `keeperhub_process_memory_array_buffers_bytes` | Memory held by ArrayBuffers and Buffers, a subset of `external` | - | API |
+| `keeperhub_process_memory_*_peak_bytes` | High-water mark of the matching bucket since the previous scrape | - | API |
+
+Read the `_peak_` variants, not the instantaneous ones, when investigating an OOM kill. A container can cross its memory limit and die entirely between two scrapes: cadvisor samples once per 60s and the app ServiceMonitor scrapes every 30s, so an allocation that starts and ends inside one interval leaves no trace in either. The sampler behind the peak gauges runs every second and reports the highest value it saw, so a spike of a few seconds still reaches the scrape that follows it. Each export opens a new window, which means `delta()` and `rate()` are meaningless on these; graph them with `max_over_time()`.
+
+`prom-client`'s default Node.js metrics are registered on the same registry, so `nodejs_gc_duration_seconds`, the per-space `nodejs_heap_space_size_*_bytes` breakdown, and `nodejs_eventloop_lag_seconds` are available alongside them. The heap-space breakdown plus `external` and `array_buffers` are what separate a burst that returns its memory from growth that does not.
+
 ---
 
 ## Safe Wallet Metrics
