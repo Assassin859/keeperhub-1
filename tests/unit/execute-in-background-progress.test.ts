@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks -- must be defined before any vi.mock() calls
@@ -68,13 +68,17 @@ import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-backgroun
 describe("executeWorkflowInBackground - progress initialization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.WORKFLOW_DISPATCH_VIA_EXECUTOR = undefined;
+    vi.stubEnv("WORKFLOW_DISPATCH_VIA_EXECUTOR", "");
     mockDbUpdateSet.mockReturnValue({
       where: vi.fn().mockResolvedValue(undefined),
     });
     mockDbUpdate.mockReturnValue({ set: mockDbUpdateSet });
     mockStart.mockResolvedValue({ runId: "run-1" });
     mockSqsSend.mockResolvedValue({ MessageId: "msg-1" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("initializes totalSteps from the workflow graph before start() is called (default/fallback dispatch path)", async () => {
@@ -128,9 +132,9 @@ describe("executeWorkflowInBackground - progress initialization", () => {
   });
 
   it("does not initialize progress on the SQS/executor dispatch branch (already handled by initializeExecutionProgress downstream)", async () => {
-    process.env.WORKFLOW_DISPATCH_VIA_EXECUTOR = "1";
-    process.env.SQS_QUEUE_URL = "http://sqs.local/queue";
-    process.env.INTERNAL_SERVICE_HMAC_SECRET = "test-secret";
+    vi.stubEnv("WORKFLOW_DISPATCH_VIA_EXECUTOR", "1");
+    vi.stubEnv("SQS_QUEUE_URL", "http://sqs.local/queue");
+    vi.stubEnv("INTERNAL_SERVICE_HMAC_SECRET", "test-secret");
 
     await executeWorkflowInBackground(
       "exec-2",

@@ -232,6 +232,10 @@ async function startExecutionInBackground(
   // and in-process/SQS dispatch paths already do this before running).
   // Without it, total_steps stays NULL forever and the status endpoint's
   // progress.percentage is stuck at 0 even after a successful run.
+  // This sits between the committed payment (recordPayment, above) and
+  // start() below -- a display-only column must never be able to abort a
+  // paid dispatch, so a transient DB fault here is caught and logged
+  // rather than thrown, and execution proceeds to start() regardless.
   await db
     .update(workflowExecutions)
     .set({
@@ -246,7 +250,15 @@ async function startExecutionInBackground(
       lastSuccessfulNodeId: null,
       lastSuccessfulNodeName: null,
     })
-    .where(eq(workflowExecutions.id, executionId));
+    .where(eq(workflowExecutions.id, executionId))
+    .catch((err: unknown) => {
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[x402/call] Error initializing execution progress",
+        err,
+        { endpoint: "/api/mcp/workflows/[slug]/call", workflowId: workflow.id }
+      );
+    });
 
   start(executeWorkflow, [
     buildExecutorInput(workflow, {

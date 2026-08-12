@@ -1,5 +1,5 @@
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { start } from "workflow/api";
 import { db } from "@/lib/db";
@@ -123,6 +123,11 @@ export async function executeWorkflowInBackground(
     // and in-process/SQS dispatch paths already do this before running).
     // Without it, total_steps stays NULL forever and the status endpoint's
     // progress.percentage is stuck at 0 even after a successful run.
+    // Guarded on totalSteps being unset (like the status flip above is
+    // guarded on status) so a duplicate dispatch naming an already-running
+    // executionId can't reset its completedSteps/executionTrace/last-node
+    // fields back to zero mid-flight: this initializes once and is a no-op
+    // on every subsequent call for the same executionId.
     await db
       .update(workflowExecutions)
       .set({
@@ -134,7 +139,12 @@ export async function executeWorkflowInBackground(
         lastSuccessfulNodeId: null,
         lastSuccessfulNodeName: null,
       })
-      .where(eq(workflowExecutions.id, executionId));
+      .where(
+        and(
+          eq(workflowExecutions.id, executionId),
+          isNull(workflowExecutions.totalSteps)
+        )
+      );
 
     const run = await start(executeWorkflow, [
       {
