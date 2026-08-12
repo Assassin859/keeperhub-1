@@ -64,7 +64,10 @@ describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
   it.each([
     ["an unclosed template", "{{ not closed"],
     ["an empty template body", "{{}}"],
-    ["a template that is only part of the value", "1{{@trigger-1:Manual.network}}"],
+    [
+      "a template that is only part of the value",
+      "1{{@trigger-1:Manual.network}}",
+    ],
   ])("still errors on %s", (_label, network) => {
     // The skip covers a value that is entirely one reference.
     const wf = makeWorkflow({

@@ -174,7 +174,7 @@ export function isTemplateReference(value: string): boolean {
  */
 export function isWholeTemplateReference(value: string): boolean {
   const trimmed = value.trim();
-  if (!trimmed.startsWith("{{") || !trimmed.endsWith("}}")) {
+  if (!(trimmed.startsWith("{{") && trimmed.endsWith("}}"))) {
     return false;
   }
   const body = trimmed.slice(2, -2);
