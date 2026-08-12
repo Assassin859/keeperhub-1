@@ -37,7 +37,12 @@ const {
 }));
 
 vi.mock("@/lib/db", () => ({
-  db: { select: mockDbSelect, insert: vi.fn(), update: vi.fn(), transaction: vi.fn() },
+  db: {
+    select: mockDbSelect,
+    insert: vi.fn(),
+    update: vi.fn(),
+    transaction: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/db/schema", () => ({
@@ -191,9 +196,7 @@ function gateInvokesHandler(protocol: "x402" | "mpp"): void {
 }
 
 async function post(slug: string, body: unknown, headers: HeadersInit = {}) {
-  const { POST } = await import(
-    "@/app/api/mcp/workflows/[slug]/call/route"
-  );
+  const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
   const request = new Request(
     `https://app.keeperhub.com/api/mcp/workflows/${slug}/call`,
     { method: "POST", body: JSON.stringify(body), headers }

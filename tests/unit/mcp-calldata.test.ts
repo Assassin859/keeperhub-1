@@ -311,8 +311,12 @@ describe("generateCalldataForWorkflow", () => {
         id: "read-1",
         data: { actionType: "web3/read-contract", config: {} },
       },
-      makeWriteNode({ contractAddress: "0x3333333333333333333333333333333333333333" }),
-      makeWriteNode({ contractAddress: "0x4444444444444444444444444444444444444444" }),
+      makeWriteNode({
+        contractAddress: "0x3333333333333333333333333333333333333333",
+      }),
+      makeWriteNode({
+        contractAddress: "0x4444444444444444444444444444444444444444",
+      }),
     ];
     const result = generateCalldataForWorkflow(nodes, {});
 
