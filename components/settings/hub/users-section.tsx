@@ -105,6 +105,7 @@ export function UsersSection(): React.ReactElement {
             inviting && (
               <div className="mb-3 rounded-lg border p-4">
                 <InviteMemberForm
+                  compact
                   onDone={() => setInviting(false)}
                   onInvited={() => {
                     members.refetch().catch(() => undefined);
