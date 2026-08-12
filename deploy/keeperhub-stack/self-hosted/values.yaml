@@ -377,11 +377,21 @@ app:
     METRICS_COLLECTOR:
       type: kv
       value: "prometheus"
-    # Outbound email. Without this the app still generates verification codes,
-    # invitations and password resets, but sendEmail returns false and nothing is
-    # delivered, so signup dead-ends at "enter the 6-digit code" with no way to
-    # obtain one. lib/email.ts hardcodes SendGrid's HTTP API, so there is no
-    # local mail-catcher option today - see KEEP-1119 for configurable SMTP.
+    # Outbound email, and a required setting. SendGrid is the only supported
+    # sender, so supply a key from your own account. lib/email.ts posts to
+    # SendGrid's HTTP API, which means there is no SMTP setting and no local
+    # mail-catcher option.
+    #
+    # Without a key the app still generates verification codes, invitations and
+    # password resets, but sendEmail returns false and nothing is delivered, so
+    # signup dead-ends at "enter the 6-digit code" with no way to obtain one.
+    # install.sh refuses to install rather than let you find that out later. A
+    # plain `helm install` has no such check, so supply the key under
+    # secrets.values yourself when you install this file directly.
+    #
+    # SENDGRID_API_URL overrides where the send is posted. Set it only when your
+    # egress policy forbids a direct call to SendGrid, and point it at a relay
+    # that accepts SendGrid's v3 mail/send request shape.
     #
     # The chart always creates this Secret, with an empty value when no key is
     # given, and the app treats an empty key as "no email configured" and returns

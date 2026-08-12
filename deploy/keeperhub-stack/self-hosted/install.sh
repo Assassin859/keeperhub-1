@@ -59,11 +59,20 @@ preflight() {
     # profile overlay is merged, because the overlay supplies these itself and
     # the chart's own `required` is then the accurate check - this one would only
     # report values that are about to be set.
+    #
+    # The two mail settings are the exception: no chart `required` backs them,
+    # so this is the only check. That is deliberate. A profile overlay builds a
+    # throwaway cluster that nobody signs up on, and demanding a real SendGrid
+    # account to bring one up would be a tax with nothing behind it. Every other
+    # install needs mail to complete a signup, so the check is not optional
+    # there.
     if [ -z "$PROFILE" ]; then
         local missing=()
         [ -n "$IMAGE_REPO" ] || missing+=("IMAGE_REPO")
         [ -n "$IMAGE_TAG" ] || missing+=("IMAGE_TAG")
         [ -n "$APP_HOST" ] || missing+=("APP_HOST")
+        [ -n "$SENDGRID_API_KEY" ] || missing+=("SENDGRID_API_KEY")
+        [ -n "$FROM_ADDRESS" ] || missing+=("FROM_ADDRESS")
         if [ "${#missing[@]}" -gt 0 ]; then
             echo "Required settings are not set: ${missing[*]}" >&2
             echo "See config.sh for what each one is." >&2
@@ -232,6 +241,12 @@ compose_set() {
         "global.tlsIssuer=$TLS_ISSUER"
         "global.awsRegion=$AWS_REGION"
         "global.fromAddress=$FROM_ADDRESS"
+        # The mail key is a Secret value rather than a global, so it goes
+        # through secrets.values, which the chart reads before it reads the
+        # cluster and before it generates anything. The chart never generates
+        # this one: an invented API key would replace a clean unconfigured state
+        # with 401s.
+        "secrets.values.SENDGRID_API_KEY=$SENDGRID_API_KEY"
         "global.turnstileSecretKey=$TURNSTILE_SECRET_KEY"
         "global.db.secretName=$DB_SECRET_NAME"
         "global.db.secretKey=$DB_SECRET_KEY"

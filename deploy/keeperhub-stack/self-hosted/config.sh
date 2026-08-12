@@ -70,6 +70,27 @@ IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
 APP_HOST="${APP_HOST:-}"
 INGRESS_CLASS="${INGRESS_CLASS:-}"
 TLS_ISSUER="${TLS_ISSUER:-}"
+
+# Transactional mail. Both are required, and the preflight refuses to install
+# without them.
+#
+# SendGrid is the only supported sender, so bring your own account. The app
+# posts to SendGrid's HTTP API and reads the key at runtime, which means no mail
+# server is involved and there is no SMTP setting to look for.
+#
+# The failure mode without a key is quiet rather than loud: the app still
+# generates verification codes, invitations and password resets and still stores
+# them, but delivers none of them. Signup then stops at the six-digit code
+# prompt with no way to obtain a code, which reads as a broken app rather than
+# an unconfigured one. That is why this is a preflight failure.
+#
+# FROM_ADDRESS must be a sender identity verified in the SAME SendGrid account
+# that issued the key. SendGrid rejects every send from an unverified sender.
+#
+# A separate variable, SENDGRID_API_URL, overrides where the send is posted.
+# Leave it alone unless your egress policy forbids a direct call, in which case
+# point it at a relay of yours that accepts SendGrid's request shape.
+SENDGRID_API_KEY="${SENDGRID_API_KEY:-}"
 FROM_ADDRESS="${FROM_ADDRESS:-}"
 
 # Cloudflare Turnstile.
