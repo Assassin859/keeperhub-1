@@ -5,7 +5,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useOrganizations } from "@/lib/hooks/use-organization";
 import { CreateOrgForm } from "./create-org-form";
+import { useOrgMembers } from "./hooks/use-org-members";
 import { useOrganizationList } from "./hooks/use-organization-list";
+import { LeaveOrgCard } from "./organization/leave-org-card";
 import { OrgDetailsCard } from "./organization/org-details-card";
 import { SectionHeader } from "./section";
 import { useSettingsContext } from "./settings-context";
@@ -14,6 +16,7 @@ export function OrganizationSection(): React.ReactElement {
   const { organizationId, isOwner, role } = useSettingsContext();
   const { organizations } = useOrganizations();
   const { rename, create } = useOrganizationList();
+  const { members } = useOrgMembers();
   const [creating, setCreating] = useState(false);
 
   const org = organizations.find((o) => o.id === organizationId);
@@ -43,6 +46,13 @@ export function OrganizationSection(): React.ReactElement {
         }
         role={role}
         slug={org?.slug ?? ""}
+      />
+
+      <LeaveOrgCard
+        isOwner={isOwner}
+        members={members}
+        organizationId={organizationId}
+        organizationName={org?.name ?? ""}
       />
     </>
   );

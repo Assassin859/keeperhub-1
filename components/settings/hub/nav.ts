@@ -172,6 +172,18 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
               "create organization",
             ],
           },
+          {
+            title: "Leave or delete",
+            tags: [
+              "leave organization",
+              "delete organization",
+              "remove organization",
+              "transfer ownership",
+              "hand over ownership",
+              "new owner",
+              "quit organization",
+            ],
+          },
         ],
         tags: ["team", "org", "workspace", "company"],
       },

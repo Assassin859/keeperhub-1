@@ -71,11 +71,23 @@ Workflows created within an organization are automatically shared with all membe
 
 Members can leave an organization at any time:
 
-1. Open the Manage Organizations modal
-2. Select the organization you want to leave
-3. Click **Leave Organization**
+1. Go to Settings > Organization > General
+2. Under Leave or delete, click **Leave**
+3. Confirm
 
-If you are the sole owner, you must transfer ownership to another accepted member before leaving. Select a member to promote to owner during the leave process.
+An organization has exactly one owner. If that is you, leaving means handing
+it over, so the confirmation asks which accepted member takes it. Pending
+invitations do not count: only someone who has already joined can become the
+owner.
+
+If you are the owner and the only member, there is nobody to hand it to. Leave
+is unavailable and deleting the organization is the way out.
+
+## Deleting an Organization
+
+Only the owner can delete an organization. Go to Settings > Organization >
+General and click **Delete** under Leave or delete. Its workflows, members and
+wallet go with it, and this cannot be undone.
 
 ## Roles
 
