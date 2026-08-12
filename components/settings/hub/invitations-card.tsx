@@ -2,6 +2,7 @@
 
 import { Mail, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsCard } from "./section";
@@ -18,6 +19,8 @@ type InvitationRow = {
 export function InvitationsCard({
   title,
   description,
+  action,
+  before,
   rows,
   loading,
   emptyLabel,
@@ -27,6 +30,10 @@ export function InvitationsCard({
 }: {
   title: string;
   description: string;
+  /** A control in the card's header, e.g. the way to create one of these. */
+  action?: ReactNode;
+  /** Sits above the list, e.g. the form that adds to it. */
+  before?: ReactNode;
   rows: InvitationRow[];
   loading: boolean;
   emptyLabel: string;
@@ -38,7 +45,8 @@ export function InvitationsCard({
   reviewHref?: (id: string) => string;
 }): React.ReactElement {
   return (
-    <SettingsCard description={description} title={title}>
+    <SettingsCard action={action} description={description} title={title}>
+      {before}
       {loading && (
         <ul className="flex flex-col gap-2">
           {["a", "b"].map((key) => (

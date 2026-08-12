@@ -12,6 +12,7 @@ import {
   Shield,
   ShieldCheck,
   User,
+  Users,
   Wallet,
 } from "lucide-react";
 
@@ -75,6 +76,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
               "avatar",
               "profile picture",
               "account status",
+            ],
+          },
+          {
+            title: "Organization invitations",
+            tags: [
+              "accept an invite",
+              "join an organization",
+              "my invites",
+              "invitations for you",
             ],
           },
           {
@@ -162,6 +172,16 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
               "create organization",
             ],
           },
+        ],
+        tags: ["team", "org", "workspace", "company"],
+      },
+      {
+        segment: "users",
+        scope: "org",
+        label: "Users",
+        icon: Users,
+        description: "The people in this organization and the invitations out.",
+        panels: [
           {
             title: "Members",
             tags: [
@@ -177,9 +197,10 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             ],
           },
           {
-            title: "Outstanding invitations",
+            title: "Invitations sent",
             tags: [
               "invite",
+              "outstanding invitations",
               "invite by email",
               "invite by wallet address",
               "pending invites",
@@ -187,12 +208,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
               "cancel invitation",
             ],
           },
-          {
-            title: "Invitations for you",
-            tags: ["accept an invite", "join an organization", "my invites"],
-          },
         ],
-        tags: ["team", "org", "workspace", "company"],
+        tags: ["members", "people", "team"],
       },
       {
         segment: "security",
@@ -433,6 +450,9 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
               "wbf",
               "webhook authentication",
               "webhook trigger",
+              "call a workflow",
+              "third party",
+              "external service",
               "your keys",
               "personal keys",
               "scopes",

@@ -100,12 +100,17 @@ export function SettingsCard({
       id={title ? settingsAnchor(title) : undefined}
       ref={ref}
     >
+      {/* Centred, and the words hold a width of their own: a long description
+          used to push the controls onto a line of their own and leave them
+          pinned to the top of it. */}
       {title && (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
           <div className="flex min-w-0 flex-col gap-1">
             <h2 className="font-semibold text-sm">{title}</h2>
             {description && (
-              <p className="text-muted-foreground text-xs">{description}</p>
+              <p className="max-w-prose text-muted-foreground text-xs">
+                {description}
+              </p>
             )}
           </div>
           {/* The actions keep their size and drop to their own line rather

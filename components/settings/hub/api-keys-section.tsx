@@ -38,7 +38,7 @@ export function ApiKeysSection(): React.ReactElement {
             : null
         }
         canManage
-        description="Authenticate calls into this organization's webhook triggers. Scoped to webhooks only, and valid for this organization."
+        description="Authenticate calls into this organization's webhook triggers, so a third-party service can run a webhook-triggered workflow. Scoped to webhooks only, and valid for this organization."
         keyType="webhook"
         listEndpoint="/api/api-keys"
         showCreator={false}

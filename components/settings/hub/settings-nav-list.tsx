@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useUserInvitations } from "./hooks/use-user-invitations";
 import {
   isSettingsItemActive,
   isSettingsItemVisible,
@@ -17,6 +18,7 @@ const ROW =
 export function SettingsNavList(): React.ReactElement {
   const pathname = usePathname();
   const { isAdmin, isOwner, organizationId } = useSettingsContext();
+  const { invitations } = useUserInvitations();
 
   const groups = SETTINGS_NAV.map((group) => ({
     items: group.items.filter((item) =>
@@ -48,6 +50,14 @@ export function SettingsNavList(): React.ReactElement {
               >
                 <item.icon className="size-4 shrink-0" />
                 <span className="truncate">{item.label}</span>
+                {item.segment === "account" && invitations.length > 0 && (
+                  <span
+                    className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-primary font-medium text-[0.625rem] text-primary-foreground"
+                    title={`${invitations.length} invitations waiting on you`}
+                  >
+                    {invitations.length}
+                  </span>
+                )}
               </Link>
             );
           })}
