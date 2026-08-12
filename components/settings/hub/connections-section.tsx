@@ -32,7 +32,7 @@ export function ConnectionsSection(): React.ReactElement {
             Add connection
           </Button>
         }
-        description="Credentials your workflows reuse: Discord, SendGrid, databases, webhooks and more."
+        description="Credentials your workflows reuse: Discord, Slack, Telegram, Safe and databases."
         title="Connections"
       />
 

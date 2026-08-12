@@ -198,7 +198,7 @@ Your KeeperHub connection is separate. Check it with `/keeperhub:status`, and re
 
 ### What's the difference between `kh_` and `wfb_` API keys?
 
-`kh_` keys are organization-scoped -- used for the REST API, MCP server, and Claude Code plugin. Create them in Settings > API Keys > Organisation tab. `wfb_` keys are user-scoped and used for webhook triggers. Most of the time you want a `kh_` key.
+`kh_` keys are organization-scoped, used for the REST API, MCP server, and Claude Code plugin. Create them in Settings > Developer > API keys > Organisation keys. `wfb_` keys are user-scoped and used for webhook triggers; they live beside the organisation keys under Webhook keys. Most of the time you want a `kh_` key.
 
 ### Can I run the MCP server for remote agents (not just local)?
 
@@ -214,7 +214,7 @@ Yes. The REST API at `app.keeperhub.com/api` covers workflow CRUD, execution, an
 
 ### What notification channels are supported?
 
-[Discord](/plugins/discord) (webhook URL), [Slack](/plugins/slack) (bot token), [Telegram](/plugins/telegram) (bot token), [SendGrid email](/plugins/sendgrid), and generic [webhooks](/plugins/webhook). Set up connections once in account settings and reuse them across workflows.
+[Discord](/plugins/discord) (webhook URL), [Slack](/plugins/slack) (bot token), [Telegram](/plugins/telegram) (bot token), [SendGrid email](/plugins/sendgrid), and generic [webhooks](/plugins/webhook). Set up connections once in Settings > Organization > Connections and reuse them across workflows.
 
 ### Can I export or version-control my workflows?
 

@@ -381,7 +381,8 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         scope: "org",
         label: "Connections",
         icon: Plug,
-        description: "Credentials for Discord, SendGrid, databases and more.",
+        description:
+          "Credentials for Discord, Slack, Telegram, Safe and databases.",
         panels: [
           {
             title: "Configured connections",
@@ -447,7 +448,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
           {
             title: "Webhook keys",
             tags: [
-              "wbf",
+              "wfb",
               "webhook authentication",
               "webhook trigger",
               "call a workflow",
