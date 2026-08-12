@@ -618,6 +618,14 @@ export async function batchWriteContractCore(
     };
   }
 
+  if (aggregateResults.length !== callsWithMeta.length) {
+    return {
+      success: false,
+      error: `Simulation returned ${aggregateResults.length} results for ${callsWithMeta.length} calls`,
+      errorClass: ExecutionErrorType.EXTERNAL,
+    };
+  }
+
   const results = aggregateResults.map(([ok, data], index) => {
     const meta = callsWithMeta[index];
     return decodeAggregate3Entry(ok, data, meta.iface, meta.functionKey, meta.outputs);

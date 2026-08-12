@@ -417,6 +417,26 @@ describe("batch-write-contract - per-call failure isolation", () => {
     expect(mockExecuteContractCall).not.toHaveBeenCalled();
   });
 
+  it("simulation result count mismatch: fails structured instead of throwing on index out of bounds", async () => {
+    mockStaticCall.mockResolvedValueOnce([
+      SUCCESS_RETURN,
+      SUCCESS_RETURN,
+      SUCCESS_RETURN,
+    ]);
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.error).toBe("Simulation returned 3 results for 2 calls");
+    expect(result.errorClass).toBe(ExecutionErrorType.EXTERNAL);
+    expect(result.results).toBeUndefined();
+    expect(result.totalCalls).toBeUndefined();
+    expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+
   it("broadcasts when aggregate3 reports success but declared outputs don't decode against the actual return data", async () => {
     const boolReturnAbi = JSON.stringify([
       {
