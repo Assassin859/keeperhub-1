@@ -498,20 +498,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             ],
           },
           {
-            title: "Maximum access",
-            tags: [
-              "agent policy",
-              "scope ceiling",
-              "limit agents",
-              "read only agents",
-              "restrict mcp",
-            ],
-          },
-          {
-            title: "MCP endpoint",
-            tags: ["mcp url", "server url", "model context protocol"],
-          },
-          {
             title: "Client setup",
             tags: [
               "claude code",
