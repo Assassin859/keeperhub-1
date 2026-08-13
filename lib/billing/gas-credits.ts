@@ -241,6 +241,57 @@ const ETH_PRICE_CACHE_TTL_MS = 60_000;
 const STALE_PRICE_THRESHOLD_MS = 3_600_000; // 1 hour
 const FALLBACK_ETH_PRICE_USD = 3000;
 
+// Minimum gap between two reports of the same condition on the same chain.
+// getGasTokenPriceUsd runs once per sponsored transaction, so an unthrottled
+// report turns a single provider outage into one Sentry event and one metric
+// increment per transaction for its whole duration. Keyed by severity as well
+// as chain so an escalation from warn to error is reported immediately rather
+// than swallowed by a window opened by the warning.
+const FALLBACK_REPORT_INTERVAL_MS = 300_000; // 5 minutes
+const fallbackReportedAt = new Map<string, number>();
+
+/**
+ * Report that a sponsored transaction is about to be billed against something
+ * other than a fresh oracle read.
+ *
+ * `error` means the billed number is a hardcoded constant that tracks nothing,
+ * or a cached price older than the same staleness threshold an oracle answer
+ * itself is held to. `warn` means a real observed price that is merely past
+ * its 60-second TTL.
+ *
+ * Never throws. The caller runs after the sponsored transaction is already
+ * on-chain, where anything escaping is converted into SponsoredTxPendingError
+ * and the org is never billed at all.
+ */
+function reportPriceFallback(args: {
+  severity: "warn" | "error";
+  chainId: number;
+  now: number;
+  message: string;
+  error: unknown;
+  labels: Record<string, string>;
+}): void {
+  const throttleKey = `${args.chainId}:${args.severity}`;
+  const reportedAt = fallbackReportedAt.get(throttleKey);
+  if (
+    reportedAt !== undefined &&
+    args.now - reportedAt < FALLBACK_REPORT_INTERVAL_MS
+  ) {
+    return;
+  }
+  fallbackReportedAt.set(throttleKey, args.now);
+
+  try {
+    const log = args.severity === "error" ? logSystemError : logSystemWarn;
+    log(ErrorCategory.BILLING, args.message, args.error, {
+      chain_id: String(args.chainId),
+      ...args.labels,
+    });
+  } catch {
+    // Reporting is best-effort; settling a confirmed transaction is not.
+  }
+}
+
 /**
  * Fetch the current USD price of a chain's native gas token (ETH on the L1 and
  * ETH L2s, POL on Polygon) from the Chainlink oracle on that chain. Results are
@@ -260,7 +311,16 @@ export async function getGasTokenPriceUsd(
 
   const feedAddress = getGasTokenUsdFeedAddress(chainId);
   if (feedAddress === undefined) {
-    return cached?.usd ?? FALLBACK_ETH_PRICE_USD;
+    reportPriceFallback({
+      severity: "error",
+      chainId,
+      now,
+      message:
+        "[GasCredits] No gas-token USD price feed configured for chain, billing on the hardcoded fallback",
+      error: new Error(`No gas-token USD price feed for chain ${chainId}`),
+      labels: { fallback_usd: String(FALLBACK_ETH_PRICE_USD) },
+    });
+    return FALLBACK_ETH_PRICE_USD;
   }
 
   try {
@@ -290,36 +350,35 @@ export async function getGasTokenPriceUsd(
     ethPriceCache.set(chainId, { usd: price, fetchedAt: now });
     return price;
   } catch (error) {
-    // Both branches below were previously a bare `catch {}`, which made a feed
-    // that has been dead for a week indistinguishable from a single failed RPC
-    // call. The fallback is only defensible while it is transient, and nothing
-    // here was checking or reporting whether it was.
     if (cached !== undefined) {
-      // Still a real observed price, just past its TTL. Recoverable, so warn.
-      logSystemWarn(
-        ErrorCategory.BILLING,
-        "[GasCredits] Gas-token price feed unavailable, billing on cached price",
+      const cachedAgeMs = now - cached.fetchedAt;
+      reportPriceFallback({
+        // A cached price still beats the hardcoded constant, so it is what
+        // gets billed either way. But once it is older than the threshold an
+        // oracle answer itself is rejected at, it has stopped being a recent
+        // observation, and the feed has been failing for at least that long.
+        severity: cachedAgeMs > STALE_PRICE_THRESHOLD_MS ? "error" : "warn",
+        chainId,
+        now,
+        message:
+          "[GasCredits] Gas-token price feed unavailable, billing on cached price",
         error,
-        {
-          chain_id: String(chainId),
+        labels: {
           cached_usd: String(cached.usd),
-          cached_age_ms: String(now - cached.fetchedAt),
-        }
-      );
+          cached_age_ms: String(cachedAgeMs),
+        },
+      });
       return cached.usd;
     }
-    // No observed price at all: every sponsored transaction on this chain is
-    // now billed against a hardcoded constant that tracks nothing. That is a
-    // revenue-affecting condition, not a blip, so it is an error.
-    logSystemError(
-      ErrorCategory.BILLING,
-      "[GasCredits] Gas-token price feed unavailable and no cached price, billing on the hardcoded fallback",
+    reportPriceFallback({
+      severity: "error",
+      chainId,
+      now,
+      message:
+        "[GasCredits] Gas-token price feed unavailable and no cached price, billing on the hardcoded fallback",
       error,
-      {
-        chain_id: String(chainId),
-        fallback_usd: String(FALLBACK_ETH_PRICE_USD),
-      }
-    );
+      labels: { fallback_usd: String(FALLBACK_ETH_PRICE_USD) },
+    });
     return FALLBACK_ETH_PRICE_USD;
   }
 }
