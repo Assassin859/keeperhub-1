@@ -2098,7 +2098,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           currentOutputs: scopedOutputs,
           currentResults: bodyResults,
           currentVisited: bodyVisited,
-          currentEdgesBySource: bodyEdgesBySource,
+          currentEdgesBySource: edgesBySource,
           continueAfterCollect: async (collectId) => {
             const nextNodes = bodyEdgesBySource.get(collectId) ?? [];
             for (const next of nextNodes) {
