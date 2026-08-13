@@ -644,13 +644,29 @@ export const workflowApi = {
     ),
 
   // Version history timeline (admin/owner only).
-  getHistory: (id: string, options?: { page?: number; limit?: number }) => {
+  getHistory: (
+    id: string,
+    options?: {
+      page?: number;
+      limit?: number;
+      // Restrict the timeline to versions touching one node. Filtered on the
+      // server so paging counts only the matching versions.
+      nodeId?: string;
+      nodeLabel?: string | null;
+    }
+  ) => {
     const params = new URLSearchParams();
     if (options?.page !== undefined) {
       params.set("page", String(options.page));
     }
     if (options?.limit !== undefined) {
       params.set("limit", String(options.limit));
+    }
+    if (options?.nodeId) {
+      params.set("nodeId", options.nodeId);
+    }
+    if (options?.nodeLabel) {
+      params.set("nodeLabel", options.nodeLabel);
     }
     const qs = params.toString();
     return apiCall<Page<WorkflowVersionSummary>>(

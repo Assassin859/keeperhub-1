@@ -5,6 +5,10 @@ name: PR Issue Link
 # maintainer approval, which would leave the gate silent exactly where it is
 # needed.
 #
+# The gate applies to outside contributors only: the job skips when the PR
+# author is an OWNER, MEMBER, or COLLABORATOR (team PRs are tracked in Linear,
+# not GitHub issues). A skipped job still satisfies branch protection.
+#
 # SAFETY: pull_request_target runs with the base repository's token. This job
 # therefore never checks out, builds, or executes pull request code. It reads
 # the title, the labels, and the referenced issue through the API and nothing
@@ -24,6 +28,9 @@ permissions:
 
 jobs:
   check-issue-link:
+    if: >-
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+      github.event.pull_request.author_association)
     runs-on: ubuntu-latest
 
     steps:
