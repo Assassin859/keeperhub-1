@@ -319,7 +319,13 @@ Successful broadcast requests return HTTP `202 Accepted`:
 }
 ```
 
-The execution runs synchronously. Status will be `completed` or `failed` when the request returns. `transactionHash` and `transactionLink` are present only when `status` is `completed`.
+The execution runs synchronously. Status will be `completed`, `failed` or
+`unconfirmed` when the request returns. `transactionHash` and `transactionLink`
+are present only when the transfer step reported success, so a `failed` or
+`unconfirmed` response carries neither - including when a transaction was
+broadcast and its receipt could not be confirmed. Retrieve the hash for those
+from `GET /api/execute/{executionId}/status`, which reads the stored execution
+rather than the step result.
 
 ## Call Smart Contract
 
@@ -371,11 +377,23 @@ Read functions return immediately with the result value.
 ```json
 {
   "executionId": "direct_123",
-  "status": "completed"
+  "status": "completed",
+  "transactionHash": "0x...",
+  "transactionLink": "https://etherscan.io/tx/0x..."
 }
 ```
 
-Write functions execute synchronously and return execution status.
+Write functions execute synchronously. `status` is `completed`, `failed` or
+`unconfirmed` by the time the request returns.
+
+`transactionHash` is present whenever a transaction reached the chain, which
+includes `failed` and `unconfirmed`. A call that reverts still produced a
+transaction, and the hash is how you find out what the chain said about it. It
+is absent only when the call never broadcast - a guard, a validation error, or
+a failure before submission.
+
+`transactionLink` accompanies the hash for a successful broadcast. A reverted
+call returns the hash without a link.
 
 ## Check and Execute
 
