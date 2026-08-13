@@ -288,6 +288,21 @@ RUNNER_SECRET_SOURCES=(
     "turnkey-api-public-key|TURNKEY_API_PUBLIC_KEY"
 )
 
+# An OAuth client id is needed twice, under two names, and the two do different
+# jobs. Deriving the second from the first so nobody has to know that.
+#
+#   NEXT_PUBLIC_GITHUB_CLIENT_ID  compiled into the browser bundle. Decides
+#                                 whether the sign-in button is rendered.
+#   GITHUB_CLIENT_ID              read at runtime. lib/auth.ts gates the
+#                                 provider on `enabled: !!process.env.
+#                                 GITHUB_CLIENT_ID`.
+#
+# Set only the public one and the result is the quiet kind of broken: the button
+# appears, because the bundle has an id, and the provider behind it is disabled,
+# so the flow fails after the user has already committed to it.
+GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID:-${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}}"
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}}"
+
 # Third-party configuration passed to the app, each one optional.
 #
 # Rendered into a values fragment at install time, and ONLY when the variable is

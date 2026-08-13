@@ -32,8 +32,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # value it reads. A JSON setting such as CHAIN_RPC_CONFIG does not survive that,
 # and the damage is invisible: the value parses as empty and the install falls
 # back to defaults rather than failing.
+#
+# Guarded by the caller rather than by `|| true`. load_env_file exits on a file
+# it was told to read and cannot find, which is right for ENV_FILE and wrong
+# here, and an `exit` inside a function ends the script no matter what follows
+# it on the line. The symptom was a silent exit 1 with no output at all.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-load_env_file "$REPO_ROOT/.env" 2>/dev/null || true
+if [ -f "$REPO_ROOT/.env" ]; then
+    load_env_file "$REPO_ROOT/.env"
+fi
 
 DRY_RUN=false
 for arg in "$@"; do

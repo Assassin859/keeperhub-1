@@ -16,14 +16,16 @@ source "$SCRIPT_DIR/../config.sh"
 
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-keeperhub}"
 
-# Harness constant, not an install setting.
+# Read from the settings file, like everything else.
 #
-# A bare repository name with no registry host. It resolves only because the
-# images are side-loaded into the node below, which is why a real install has no
-# default for it and must name a registry the cluster can pull from.
-# assert_overlay keeps this in step with the overlay the install reads.
-IMAGE_REPO="keeperhub-local"   # values.minikube.yaml: global.image.repository
-assert_overlay repository "$IMAGE_REPO"
+# On this cluster it is a bare repository name with no registry host, which
+# resolves only because the images are side-loaded into the node below. A real
+# install names a registry the cluster can pull from instead.
+if [ -z "$IMAGE_REPO" ]; then
+    echo "IMAGE_REPO is not set. Put it in the file ENV_FILE names:" >&2
+    echo "    IMAGE_REPO=keeperhub-local" >&2
+    exit 1
+fi
 
 SKIP_BUILD=false
 PRINT_TAG=false
