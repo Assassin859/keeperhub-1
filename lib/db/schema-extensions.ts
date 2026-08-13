@@ -1425,3 +1425,45 @@ export const paygPayments = pgTable(
 
 export type PaygPayment = typeof paygPayments.$inferSelect;
 export type NewPaygPayment = typeof paygPayments.$inferInsert;
+
+/**
+ * Execution quota threshold notifications
+ *
+ * One row per (org, quota period, threshold) that has been announced. The
+ * unique constraint is the debounce: the scan runs hourly and inserts with
+ * ON CONFLICT DO NOTHING, so only the run that wins the insert sends mail and
+ * an org above 80% for three weeks is still told once. `periodStart` is the
+ * start of the UTC month the quota is counted over, so a new month is a new
+ * key and the warning fires again on re-crossing.
+ */
+export const executionQuotaNotifications = pgTable(
+  "execution_quota_notifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    periodStart: timestamp("period_start").notNull(),
+    threshold: integer("threshold").notNull(),
+    usagePercent: integer("usage_percent").notNull(),
+    executionsUsed: integer("executions_used").notNull(),
+    executionLimit: integer("execution_limit").notNull(),
+    recipientCount: integer("recipient_count").notNull().default(0),
+    notifiedAt: timestamp("notified_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("execution_quota_notif_org_period_threshold").on(
+      table.organizationId,
+      table.periodStart,
+      table.threshold
+    ),
+    index("idx_execution_quota_notif_org").on(table.organizationId),
+  ]
+);
+
+export type ExecutionQuotaNotification =
+  typeof executionQuotaNotifications.$inferSelect;
+export type NewExecutionQuotaNotification =
+  typeof executionQuotaNotifications.$inferInsert;
