@@ -762,16 +762,24 @@ Direct execution endpoints return detailed error information:
 - `429`: Rate limit exceeded
 - `400`: Invalid request parameters
 
-An `insufficient_scope` response names both scopes so the caller can reauthorize with the right one:
+An `insufficient_scope` response names the scope the endpoint needs and the one
+this connection is allowed:
 
 ```json
 {
   "error": "insufficient_scope",
-  "message": "This endpoint requires the `mcp:write` OAuth scope. The current token has `mcp:read`.",
+  "message": "This endpoint requires the `mcp:write` OAuth scope. This connection is allowed `mcp:read`. Reconnecting will not raise it: the limit is set by an organization owner or admin under Settings > Developer > Agents. Do not retry; ask them to raise it.",
+  "retryable": false,
   "required_scope": "mcp:write",
   "granted_scope": "mcp:read"
 }
 ```
+
+`granted_scope` is what the connection may do right now, which is not always the
+scope the token was issued with. An organization can cap what its agents may do,
+and a cap is applied on every call, so a token issued with `mcp:admin` reports
+`mcp:read` here while a read-only cap is in force. Reauthorizing with a wider
+scope does not lift a cap; only an owner or admin can, in the Agents settings.
 
 Broadcasting requires `mcp:write`. A dry run (`simulate: true`) neither signs nor broadcasts, so `mcp:read` is sufficient.
 

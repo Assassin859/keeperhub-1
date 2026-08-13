@@ -84,7 +84,40 @@ The MCP endpoint supports two authentication methods:
 
 **OAuth 2.1 (browser-based):** When you add the remote MCP server, Claude Code discovers the OAuth metadata at `/.well-known/oauth-authorization-server` and opens a browser for authorization. Tokens are managed automatically (1-hour access tokens, 30-day refresh tokens).
 
-**API keys (headless):** Pass an organization API key (`kh_` prefix) as a Bearer token. Create one at [app.keeperhub.com](https://app.keeperhub.com) under Settings > API Keys > Organisation tab.
+**API keys (headless):** Pass an organization API key (`kh_` prefix) as a Bearer token. Create one at [app.keeperhub.com](https://app.keeperhub.com) under Settings > Developer > API keys > Organisation keys.
+
+## What a Connected Agent May Do
+
+Every agent connected through OAuth appears under Settings > Developer >
+Agents, grouped by the person who connected it, with when each session was last
+used. Any member can end their own sessions; owners and admins can see and end
+everyone's.
+
+What an agent may do is the **lower** of two things:
+
+| | Set by | Applies |
+|---|---|---|
+| The session's scope | the person, when they approve the client | fixed at that moment |
+| The person's limit | an owner or admin | to every agent that person runs |
+
+The limit is checked on every call rather than written into the token, so:
+
+- Lowering a limit takes effect within about a minute. Nothing has to be
+  reconnected and no session is ended.
+- Reconnecting cannot raise what a limit allows. A fresh approval is recorded
+  as asked for, but every call it makes is still held to the limit.
+- Raising a limit again restores what the session and the person already had,
+  because neither is rewritten when a limit moves.
+
+A call beyond the limit returns `403 insufficient_scope` naming what the
+connection is allowed. Reauthorizing does not change it; only an owner or admin
+can raise the limit.
+
+Ending a session is different: the session is deleted and its credentials stop
+working immediately, so that agent has to be connected again.
+
+Organization API keys (`kh_`) are not agent connections and are managed under
+Settings > Developer > API keys.
 
 ## Organization Scoping
 
