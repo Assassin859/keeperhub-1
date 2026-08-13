@@ -33,12 +33,14 @@ async function openCreateOrgForm(page: Page): Promise<void> {
   if (await orgNameInput.isVisible({ timeout: 1000 }).catch(() => false)) {
     return;
   }
-  // The section header renders before the organization it describes has
-  // loaded, so wait for the control rather than clicking where it will be.
+  // Re-click until the form opens: straight after navigation the first click
+  // can land before the handler is wired and be dropped.
   const openForm = page.getByRole("button", { name: "New organization" });
   await expect(openForm).toBeVisible({ timeout: 20_000 });
-  await openForm.click();
-  await expect(orgNameInput).toBeVisible({ timeout: 20_000 });
+  await expect(async () => {
+    await openForm.click();
+    await expect(orgNameInput).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 // Open the wallet overlay from the user menu
