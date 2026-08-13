@@ -5,8 +5,6 @@ import {
   AgentStarterPrompts,
 } from "@/components/agent/connect-agent-panel";
 import { ConnectionsTable } from "./agents/connections-table";
-import { PolicyCard } from "./agents/policy-card";
-import { McpEndpointCard } from "./api-keys/mcp-endpoint-card";
 import { useMcpConnections } from "./hooks/use-mcp-connections";
 import { SectionHeader, SettingsCard } from "./section";
 
@@ -43,18 +41,6 @@ export function AgentsSection(): React.ReactElement {
           users={state.users}
         />
       </SettingsCard>
-
-      {state.canManage && (
-        <PolicyCard
-          maxScope={state.maxScope}
-          onChange={(scope) => {
-            state.setMaxScope(scope).catch(() => undefined);
-          }}
-          saving={state.savingPolicy}
-        />
-      )}
-
-      <McpEndpointCard />
 
       <SettingsCard
         description="Pick your client and run the command it shows."

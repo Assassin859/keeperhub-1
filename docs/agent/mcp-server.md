@@ -93,15 +93,14 @@ Agents, grouped by the person who connected it, with when each session was last
 used. Any member can end their own sessions; owners and admins can see and end
 everyone's.
 
-What an agent may do is the **lowest** of three things:
+What an agent may do is the **lower** of two things:
 
 | | Set by | Applies |
 |---|---|---|
 | The session's scope | the person, when they approve the client | fixed at that moment |
 | The person's limit | an owner or admin | to every agent that person runs |
-| The organization's limit | an owner or admin | to every agent in the organization |
 
-The limits are checked on every call rather than written into the token, so:
+The limit is checked on every call rather than written into the token, so:
 
 - Lowering a limit takes effect within about a minute. Nothing has to be
   reconnected and no session is ended.

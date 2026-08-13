@@ -39,6 +39,37 @@ const SKELETON_ROWS = ["a", "b", "c"] as const;
 /** An unset ceiling permits everything, which is what full access means. */
 const UNSET_READS_AS = "mcp:admin";
 
+/**
+ * Whether this agent can still reach us. A session lives until its credential
+ * runs out or somebody ends it, so an expired one stays listed but is not
+ * connected to anything.
+ */
+function ConnectedBadge({
+  session,
+}: {
+  session: McpConnectionRow;
+}): React.ReactElement {
+  const live = new Date(session.expiresAt).getTime() > Date.now();
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs",
+        live
+          ? "border-keeperhub-green/20 bg-keeperhub-green/10 text-keeperhub-green"
+          : "border-border bg-muted/40 text-muted-foreground"
+      )}
+    >
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          live ? "bg-keeperhub-green" : "bg-muted-foreground/60"
+        )}
+      />
+      {live ? "Connected" : "Expired"}
+    </span>
+  );
+}
+
 function LastUsed({
   session,
 }: {
@@ -151,7 +182,7 @@ export function ConnectionsTable({
         <Plug className="size-6 text-muted-foreground" />
         <span className="font-medium text-sm">No agents connected yet</span>
         <span className="max-w-sm text-muted-foreground text-xs">
-          Point a client at the endpoint below and sign in. It appears here the
+          Run the command for your client below and sign in. It appears here the
           moment it connects.
         </span>
       </div>
@@ -288,8 +319,9 @@ export function ConnectionsTable({
                   <TableRow className={SETTINGS_ROW} key={session.id}>
                     <TableCell className="pl-10">
                       <div className="flex min-w-0 flex-col">
-                        <span className="truncate text-sm">
-                          {session.clientName}
+                        <span className="flex min-w-0 items-center gap-2 text-sm">
+                          <span className="truncate">{session.clientName}</span>
+                          <ConnectedBadge session={session} />
                         </span>
                         {/* Each `mcp add` registers a fresh client, so one tool
                             can hold several sessions under the same name. The
