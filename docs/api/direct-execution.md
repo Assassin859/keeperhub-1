@@ -642,9 +642,11 @@ Check the status of a direct execution.
   "executionId": "direct_123",
   "status": "completed",
   "type": "transfer",
+  "network": "11155111",
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
   "sponsored": false,
+  "retryCount": 0,
   "receipts": [
     {
       "hash": "0x...",
@@ -657,12 +659,42 @@ Check the status of a direct execution.
     }
   ],
   "gasUsedWei": "21000000000000",
+  "gasPriceWei": "1163827869",
+  "estimatedCostUsd": null,
   "result": {...},
   "error": null,
   "createdAt": "2024-01-01T00:00:00Z",
   "completedAt": "2024-01-01T00:00:15Z"
 }
 ```
+
+**Other fields:**
+
+- `network`: the chain identifier the request supplied, stored verbatim as a
+  string. The form is decided by the value, not by the field: both `chainId`
+  and the deprecated `network` alias accept a numeric chain ID or a known chain
+  name, so `"11155111"` and `"sepolia"` are each reachable through either.
+  Do not key a chain lookup on this without handling both forms. A body
+  carrying neither field is rejected with a 400 before an execution row exists,
+  so this is never `null` on the endpoints documented here.
+  When a body sends both, the routes disagree about which wins: `contract-call`
+  takes `network`, while `transfer` and `check-and-execute` take `chainId`.
+  Send one.
+- `retryCount`: internal re-submissions of a node execution, which is
+  `/api/execute/node` and is not covered by this page. It is always `0` for the
+  transfer, contract-call and check-and-execute endpoints documented here,
+  whatever happened internally - those paths never set it. A `0` is therefore
+  not evidence that no nonce replacement or gas bump occurred.
+- `gasPriceWei`: the effective gas price, as a decimal string. On EVM chains
+  this is in wei. On Solana it is the micro-lamports-per-compute-unit price of
+  the priority component, as described in
+  [Gas Management](../wallet-management/gas.md).
+  Do not multiply it by `gasUsedWei`: that field is already a cost
+  (`gasUsed * effectiveGasPrice`), so the product squares the price. The figure
+  in gas units is the per-receipt `gasUsed` above, and multiplying that is a
+  cost on EVM chains only.
+- `estimatedCostUsd`: reserved, and always `null` today. Nothing populates it;
+  it awaits a price-oracle integration. Do not branch on it being non-null.
 
 **Receipts:**
 
