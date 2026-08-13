@@ -523,6 +523,88 @@ export function evaluateConditionExpression(
   );
 }
 
+type StepFunction = (input: Record<string, unknown>) => Promise<unknown>;
+
+/** Action type -> the step function to invoke for it. */
+export type StepFunctionTable = ReadonlyMap<string, StepFunction>;
+
+/** Resolve the importer for an action type, honoring legacy action renames. */
+function findStepImporter(actionType: string): StepImporter | undefined {
+  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
+    actionType
+  ];
+  if (systemAction) {
+    return systemAction;
+  }
+  const direct = getStepImporter(actionType);
+  if (direct) {
+    return direct;
+  }
+  const mapped = LEGACY_ACTION_MAPPINGS[actionType];
+  return mapped ? getStepImporter(mapped) : undefined;
+}
+
+/**
+ * Resolve every step module the workflow can reach, before any step runs.
+ *
+ * Step identity in the durability layer is assigned by invocation order: the
+ * Nth `useStep` call in a run gets the Nth id, with no name or content
+ * matching. A replay therefore has to invoke steps in exactly the order the
+ * event log recorded, or every id from the divergence point on refers to the
+ * wrong step and the log becomes unreadable.
+ *
+ * `executeActionStep` used to `await importer()` immediately before calling the
+ * step. That await put the step invocation into a racing microtask: on the
+ * first pass the module load is real I/O, on a replay it is an already-resolved
+ * cache hit, so N branches fanned out in parallel reach their step calls in
+ * different orders on different passes. Resolving the modules here -- once, up
+ * front, before any step is invoked -- leaves the fan-out path synchronous from
+ * `executeNode` through to the step call, so invocation order follows the graph
+ * instead of module-load timing.
+ *
+ * Iterating a sorted list keeps this preload itself order-stable. It invokes no
+ * steps, so it contributes nothing to the event log.
+ */
+export async function preloadStepFunctions(
+  nodes: WorkflowNode[]
+): Promise<StepFunctionTable> {
+  const actionTypes = new Set<string>();
+  for (const node of nodes) {
+    if (node.data.type !== "action") {
+      continue;
+    }
+    const actionType = node.data.config?.actionType as string | undefined;
+    if (actionType) {
+      actionTypes.add(actionType);
+    }
+  }
+
+  const table = new Map<string, StepFunction>();
+  for (const actionType of [...actionTypes].sort()) {
+    const importer = findStepImporter(actionType);
+    if (!importer) {
+      continue;
+    }
+    try {
+      const module = await importer.importer();
+      const stepFunction = module[importer.stepFunction];
+      if (typeof stepFunction === "function") {
+        table.set(actionType, stepFunction as StepFunction);
+      }
+    } catch (error) {
+      // A module that fails to load here fails again at call time, where the
+      // error is attributed to the node instead of aborting the whole run.
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Executor] Failed to preload step module",
+        error instanceof Error ? error : new Error(String(error)),
+        { action_type: actionType }
+      );
+    }
+  }
+  return table;
+}
+
 /**
  * Execute a single action step with logging via stepHandler
  * IMPORTANT: Steps receive only the integration ID as a reference to fetch credentials.
@@ -533,10 +615,11 @@ async function executeActionStep(input: {
   config: Record<string, unknown>;
   outputs: NodeOutputs;
   context: StepContext;
+  stepFunctions: StepFunctionTable;
   nodeMap?: ReadonlyMap<string, unknown>;
   executionResults?: Record<string, ExecutionResult>;
 }) {
-  const { actionType, config, outputs, context } = input;
+  const { actionType, config, outputs, context, stepFunctions } = input;
 
   // Build step input WITHOUT credentials, but WITH integrationId reference and logging context
   const stepInput: Record<string, unknown> = {
@@ -545,10 +628,19 @@ async function executeActionStep(input: {
     _context: context,
   };
 
+  // Resolved by preloadStepFunctions before any step ran. Looking it up
+  // synchronously is what keeps the step invocation in program order -- an
+  // await here would hand the ordering back to microtask scheduling.
+  const stepFunction = stepFunctions.get(actionType);
+  if (!stepFunction) {
+    return {
+      success: false,
+      error: `Unknown action type: "${actionType}". This action is not registered in the plugin system. Available system actions: ${Object.keys(SYSTEM_ACTIONS).join(", ")}.`,
+    };
+  }
+
   // Special handling for Condition action - needs template evaluation
   if (actionType === "Condition") {
-    const systemAction = SYSTEM_ACTIONS.Condition;
-    const module = await systemAction.importer();
     const originalExpression =
       resolveConditionExpression(stepInput) ?? stepInput.condition;
 
@@ -574,7 +666,7 @@ async function executeActionStep(input: {
 
     console.log("[Condition] Final result:", evaluatedCondition);
 
-    return await module[systemAction.stepFunction]({
+    return await stepFunction({
       condition: evaluatedCondition,
       // Include original expression only when evaluation succeeded (avoid raw template in UI on failure)
       expression:
@@ -589,45 +681,7 @@ async function executeActionStep(input: {
     });
   }
 
-  // Check system actions first (Database Query, HTTP Request)
-  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
-    actionType
-  ];
-  if (systemAction) {
-    const module = await systemAction.importer();
-    const stepFunction = module[systemAction.stepFunction];
-    return await stepFunction(stepInput);
-  }
-
-  // Look up plugin action from the generated step registry
-  let stepImporter = getStepImporter(actionType);
-
-  // Fallback: check legacy action mappings (e.g. "safe-wallet/get-owners" -> "safe/get-owners")
-  if (!stepImporter) {
-    const mapped = LEGACY_ACTION_MAPPINGS[actionType];
-    if (mapped) {
-      stepImporter = getStepImporter(mapped);
-    }
-  }
-
-  if (stepImporter) {
-    const module = await stepImporter.importer();
-    const stepFunction = module[stepImporter.stepFunction];
-    if (stepFunction) {
-      return await stepFunction(stepInput);
-    }
-
-    return {
-      success: false,
-      error: `Step function "${stepImporter.stepFunction}" not found in module for action "${actionType}". Check that the plugin exports the correct function name.`,
-    };
-  }
-
-  // Fallback for unknown action types
-  return {
-    success: false,
-    error: `Unknown action type: "${actionType}". This action is not registered in the plugin system. Available system actions: ${Object.keys(SYSTEM_ACTIONS).join(", ")}.`,
-  };
+  return await stepFunction(stepInput);
 }
 
 /**
@@ -1876,6 +1930,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
   }
 
+  // Must complete before the first step runs: it invokes no steps itself, and
+  // once it has, every step call downstream is reached synchronously, so the
+  // order they are invoked in follows the graph rather than module-load timing.
+  const stepFunctions = await preloadStepFunctions(nodes);
+
   // Find trigger nodes
   const nodesWithIncoming = new Set(edges.map((e) => e.target));
   const triggerNodes = nodes.filter(
@@ -2089,6 +2148,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           config: processedConfig,
           outputs,
           context: stepContext,
+          stepFunctions,
           nodeMap,
           executionResults: results,
         }),
@@ -2840,6 +2900,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           config: processedConfig,
           outputs: liveOutputs,
           context: stepContext,
+          stepFunctions,
           nodeMap,
           executionResults: results,
         });
