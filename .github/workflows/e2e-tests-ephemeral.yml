@@ -59,16 +59,22 @@ permissions:
   actions: read
 
 env:
-  # Digest-pinned so CI never tracks a moving upstream tag. On GHCR
-  # `latest` is an alias for `nightly`, not a release, so every run used
-  # to pull whatever nightly was built that morning - which is how a
-  # foundry refactor that dropped OP-stack from the released feature set
-  # (foundry-rs/foundry#15343) broke the Base leg mid-day with no commit
-  # on our side - anvil refused to fork 8453 with "network family
-  # optimism is not enabled in this build", and there is no runtime flag
-  # to re-enable it. Bump deliberately, and re-verify a Base fork when
-  # doing so. This digest is anvil 1.5.1-stable.
-  FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+  # anvil 1.7.1, the newest foundry release, pinned by digest.
+  #
+  # This used to be `ghcr.io/foundry-rs/foundry:latest`, which on GHCR is
+  # an alias for `nightly` rather than a release - so every run pulled
+  # whatever nightly was built that morning and the staging gate rode on
+  # an unreviewed upstream build. The 2026-08-13 nightly put OP-stack
+  # behind a compile-time feature it does not enable (the tail of
+  # foundry-rs/foundry#15343), and the Base leg started failing mid-day
+  # with "network family optimism is not enabled in this build" and no
+  # commit on our side. No released image carries that regression: 1.7.1
+  # still accepts `--network optimism`.
+  #
+  # Prefer an explicit version tag over `stable`, which is unmaintained -
+  # it has pointed at 1.5.1 (2025-12-22) since well before 1.7.1 shipped.
+  # When bumping, re-verify a Base (8453) fork actually starts.
+  FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd
 
 jobs:
   should-run:

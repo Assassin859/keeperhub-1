@@ -25,11 +25,12 @@ permissions:
   id-token: write
 
 env:
-  # Keep in step with e2e-tests-ephemeral.yml, which carries the rationale:
-  # `latest` on GHCR is the nightly tag, so CI used to track an untested
-  # daily build. The fork-cache this job warms is consumed there, so both
-  # must run the same anvil. Grep the digest to find every pin.
-  FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+  # MUST match e2e-tests-ephemeral.yml's FOUNDRY_IMAGE, which carries the
+  # rationale. The fork cache this job warms is mounted into the anvil
+  # that e2e-tests-ephemeral starts, and the consumer only checks that
+  # storage.json exists - a version skew degrades silently to full
+  # upstream refetch rather than failing. Bump both together.
+  FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd
 
 jobs:
   e2e-full:

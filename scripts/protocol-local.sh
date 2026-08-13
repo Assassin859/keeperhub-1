@@ -49,12 +49,14 @@ DB_NAME="${PROTOCOL_LOCAL_DB:-keeperhub_protocol_local}"
 DB_PORT="${PROTOCOL_LOCAL_DB_PORT:-5433}"
 APP_CONTAINER=kh-protocol-local-app
 NODE_IMAGE=node:22
-# Digest-pinned, and the same pin CI runs (see e2e-tests-ephemeral.yml):
-# `latest` on GHCR is foundry's nightly tag, not a release, so this rig
-# used to run a different anvil every day than the one that produced a
-# cached fork - and a nightly that dropped OP-stack from the released
-# feature set broke every Base fork outright. Override to try a newer one.
-FOUNDRY_IMAGE="${FOUNDRY_IMAGE:-ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46}"
+# anvil 1.7.1, the newest foundry release, pinned by digest - the same
+# pin CI runs (see e2e-tests-ephemeral.yml). `latest` on GHCR is
+# foundry's nightly tag, not a release, so this rig used to run a
+# different anvil every day than the one that had produced a cached
+# fork, and one nightly could not fork any OP-stack chain at all.
+# `stable` is unmaintained (still 1.5.1, 2025-12-22). Override to try a
+# different anvil; a fork cache is only reusable across matching ones.
+FOUNDRY_IMAGE="${FOUNDRY_IMAGE:-ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATABASE_URL="postgresql://postgres:postgres@localhost:${DB_PORT}/${DB_NAME}"
 RESULTS_FILE=".claude/protocol-local-results.json"
@@ -132,8 +134,11 @@ start_fork() {
   local -a pin_args=() mount_args=()
   if [ -n "$cache_dir" ]; then
     # Fork RPC fetch cache (see cmd_snapshot). Measured behavior
-    # (then-current foundry nightly, 2026-07-07; re-verified on the
-    # pinned stable image, which writes the same cache layout):
+    # (then-current foundry nightly, 2026-07-07; the pinned 1.7.1 writes
+    # the same rpc/<chain>/<block>/storage.json layout, but the file is
+    # zstd-compressed and its schema is not guaranteed stable across
+    # anvil versions - treat a cache as reusable only by the version
+    # that wrote it):
     # - anvil (uid 1000, HOME=/home/foundry in the image) persists its
     #   upstream fetches to
     #   $HOME/.foundry/cache/rpc/<chain>/<block>/storage.json, and only
