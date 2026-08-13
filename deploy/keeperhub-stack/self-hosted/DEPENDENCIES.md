@@ -86,7 +86,7 @@ install either. It does not use External Secrets, and needs no AWS credentials.
 | Blockchain RPC | ~17 public endpoints, e.g. `ethereum-rpc.publicnode.com`, `mainnet.base.org`, `api.mainnet-beta.solana.com` | wallet and contract addresses, calldata, signed transactions | `CHAIN_RPC_CONFIG`, or per-chain `CHAIN_<NAME>_PRIMARY_RPC`. None of the defaults is a host KeeperHub operates, and a test enforces that |
 | Queue | `sqs.<region>.amazonaws.com` | workflow and execution ids, trigger payloads | Set `AWS_ENDPOINT_URL` to use the bundled in-cluster queue instead, which is what the bundled mode does |
 | Cloudflare Turnstile | `challenges.cloudflare.com` | a captcha token and the client IP, on signup | See below |
-| Email delivery | `api.sendgrid.com` | recipient address, signup codes, invite links | `SENDGRID_API_URL` points at any relay accepting SendGrid's v3 `mail/send` shape |
+| Email delivery | `api.sendgrid.com` | recipient address, signup codes, invite links | Required. Supply `SENDGRID_API_KEY` from your own SendGrid account and `FROM_ADDRESS` as a sender verified in it. The installer refuses without both. `SENDGRID_API_URL` points at any relay accepting SendGrid's v3 `mail/send` shape |
 | Wallet signing | `api.turnkey.com` | wallet addresses and the payloads to be signed | `TURNKEY_API_BASE_URL`. Only used when wallets are configured |
 
 **About Turnstile.** The server refuses to start without `TURNSTILE_SECRET_KEY`. That check runs
@@ -144,8 +144,17 @@ discover them.
 
 - **No sandbox is deployed.** The Code step needs one and fails with a connection error without
   it. Everything else works.
-- **Signup needs working email.** Verification codes, invitations, password resets and MFA
-  step-up all go through the mail path, so an install with no mail relay cannot complete a signup.
+- **Signup needs working email, so SendGrid is required.** Verification codes, invitations,
+  password resets and MFA step-up all go through the mail path, so an install with no working mail
+  cannot complete a signup. `install.sh` therefore refuses to install without `SENDGRID_API_KEY`
+  and `FROM_ADDRESS`. SendGrid is the only supported sender and there is no SMTP option.
+- **A failed invitation send is invisible to the sender.** `sendInvitationEmail` returns false on
+  failure rather than throwing, and the caller ignores that return value, so the only trace is a
+  log line at warning level. The invitation row is written either way, so the inviter sees a sent
+  invitation that nobody received. A revoked or wrong key looks the same as a working one on that
+  path. Signup and MFA step-up do surface the failure, and the forgot-password route ignores it on
+  purpose so it cannot be used to enumerate accounts. This is application behaviour and this
+  profile does not change it.
 
 ## About this document
 

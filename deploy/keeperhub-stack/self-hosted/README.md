@@ -261,13 +261,16 @@ What the wrapper adds over plain helm:
   missing operator is a message rather than a rolled-back release
 - it checks the bring-your-own database Secret exists, for the same reason
 - it refuses half an AWS key pair
+- it refuses to install without a SendGrid key and a sender address, because an
+  install without mail cannot complete a signup
 - it puts real AWS credentials in a Secret rather than a values file
 - it reports which optional runner credentials are absent, which nothing else does
 
 Every setting lives in `config.sh` and can be overridden in the environment:
 `NAMESPACE`, `APP_HOST`, `INGRESS_CLASS`, `TLS_ISSUER`, `IMAGE_REPO`,
-`FROM_ADDRESS`, `TURNSTILE_SECRET_KEY`, the `DB_MODE`/`QUEUE_MODE` settings
-above, and the `PG_*` and `SQS_*` values behind them.
+`SENDGRID_API_KEY`, `FROM_ADDRESS`, `TURNSTILE_SECRET_KEY`, the
+`DB_MODE`/`QUEUE_MODE` settings above, and the `PG_*` and `SQS_*` values behind
+them.
 
 `--dry-run` renders the chart without touching the cluster. `PROFILE=minikube`
 merges the test-harness overlay. `CHART_DIR` points the install at a working-tree
@@ -288,7 +291,9 @@ a key.
 
 `SENDGRID_API_KEY` and the three `TURNKEY_` keys are never generated. They are
 rendered empty, because an invented API key replaces a clean unconfigured state
-with 401s. Supply them under `secrets.values` when you have them.
+with 401s. They come from `secrets.values`, and `install.sh` passes
+`SENDGRID_API_KEY` there for you. Supply the `TURNKEY_` keys yourself when you
+have them.
 
 Two things to know before relying on this:
 
@@ -349,11 +354,28 @@ domain is trusted without further configuration. Set it yourself only if the app
 is reached on more origins than that one - a vanity domain, or a separate
 hostname for an internal network.
 
-**There is no email.** `lib/email.ts` posts to SendGrid's HTTP API, so there is
-no SMTP setting and no local mail-catcher option. Without `SENDGRID_API_KEY`,
-verification codes, invitations and password resets are generated and stored but
-never delivered, and signup dead-ends at "enter the 6-digit code". Configurable
-SMTP is KEEP-1119.
+**Email needs a SendGrid account of your own.** `lib/email.ts` posts to
+SendGrid's HTTP API, so there is no SMTP setting and no local mail-catcher
+option. SendGrid is the only supported sender, and it is a required dependency
+rather than an optional one: verification codes, invitations, password resets
+and MFA step-up codes all go through it.
+
+Set `SENDGRID_API_KEY` to a key from your own account, and `FROM_ADDRESS` to a
+sender identity verified in that same account. `install.sh` refuses to install
+without both, because the failure mode otherwise is quiet - everything is
+generated and stored, nothing is delivered, and signup dead-ends at "enter the
+6-digit code".
+
+If your egress policy forbids a direct call to SendGrid, set `SENDGRID_API_URL`
+to a relay of yours that accepts SendGrid's v3 `mail/send` request shape. That
+changes where the request goes, not what speaks it.
+
+One thing the product does not tell you: a failed send on the invitation path is
+invisible to the person who sent the invitation. `sendInvitationEmail` returns
+false rather than throwing, the caller ignores the return value, and the log line
+is a warning that does not page. The invitation row is still written, so a
+revoked or wrong key looks exactly like a working one there. Test a real
+invitation after you change the key.
 
 **Code action nodes fail.** No sandbox is deployed, so `SANDBOX_URL` points at
 nothing. Everything else runs.
@@ -383,7 +405,7 @@ kubectl -n keeperhub create secret generic keeperhub-executor-openai-api-key \
 | `etherscan-api-key` | contract ABI auto-fetch fails, so web3 steps needing an ABI fail |
 | `metrics-ingest-token` | runner metrics are not shipped, so executions are invisible |
 | `openai-api-key` | AI steps and AI workflow generation fail |
-| `sendgrid-api-key` | email steps send nothing |
+| `sendgrid-api-key` | email steps send nothing. This is the workflow plugin's key, not the one transactional mail uses. The two are separate settings and may hold different keys |
 | `simple-account-7702-address` | EIP-7702 smart-account steps fail |
 | `turnkey-api-private-key` | managed wallet signing fails |
 | `turnkey-api-public-key` | managed wallet signing fails |
