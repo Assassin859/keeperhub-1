@@ -7,7 +7,12 @@ import {
   applyBigIntConversion,
   needsBigIntMode,
 } from "@/lib/bigint-condition-utils";
-import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
+import {
+  ErrorCategory,
+  logSystemError,
+  logSystemWarn,
+  logUserError,
+} from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   decrementConcurrentExecutions,
@@ -46,6 +51,7 @@ import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context
 import {
   computeFinalSuccess,
   type ExecutionResult,
+  findOrphanedNodes,
 } from "@/lib/workflow/executor/final-success";
 import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
 import {
@@ -1828,6 +1834,48 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   // and failed is never masked as skipped.
   const skippedNodes = new Set<string>();
 
+  // Every node executeNode was entered for, across all branches. The per-branch
+  // `visited` sets cannot answer "was this node ever reached" on their own, and
+  // `results` misses disabled nodes (which return before recording one), so
+  // orphan detection needs its own run-wide record.
+  const attemptedNodes = new Set<string>();
+
+  // Nodes whose execution is gated by a condition's routing decision, excluded
+  // from orphan detection.
+  const conditionNodeIds = new Set(
+    nodes
+      .filter(
+        (n) =>
+          n.data.type === "action" && n.data.config?.actionType === "Condition"
+      )
+      .map((n) => n.id)
+  );
+
+  // For Each body nodes run through runBodyNode, not executeNode, so they never
+  // reach attemptedNodes and would otherwise all read as orphans. Their failures
+  // are already accounted for by the For Each node's failedIterations.
+  const loopBodyNodeIds = new Set<string>();
+  for (const node of nodes) {
+    if (
+      node.data.type !== "action" ||
+      node.data.config?.actionType !== "For Each"
+    ) {
+      continue;
+    }
+    const body = identifyLoopBody(
+      node.id,
+      edgesBySource,
+      nodeMap,
+      edgesBySourceHandle
+    );
+    for (const bodyNodeId of body.bodyNodeIds) {
+      loopBodyNodeIds.add(bodyNodeId);
+    }
+    if (body.collectNodeId) {
+      loopBodyNodeIds.add(body.collectNodeId);
+    }
+  }
+
   // Find trigger nodes
   const nodesWithIncoming = new Set(edges.map((e) => e.target));
   const triggerNodes = nodes.filter(
@@ -2569,6 +2617,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       return; // Prevent cycles
     }
     visited.add(nodeId);
+    attemptedNodes.add(nodeId);
 
     const node = nodeMap.get(nodeId);
     if (!node) {
@@ -2964,15 +3013,31 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       // late-landing success inside a step boundary (DB-backed, replay-safe via
       // memoization) before giving up, so the reconcile path below recovers it
       // instead of nullifying the node and unblocking convergence with no data.
+      // The poll itself is a step and can throw its own max-retries error. An
+      // escape here would abort the rest of this catch, and the convergence
+      // signal at the bottom is what keeps a fan-in join from waiting forever
+      // on an arrival that never comes -- so swallow the failure and fall
+      // through to the normal failure path instead.
       if (isSpuriousMaxRetries && executionId && recordedOutput === undefined) {
-        recordedOutput = (
-          await awaitCompletedStepOutputStep(
-            executionId,
-            nodeId,
-            SPURIOUS_RECOVERY_POLL_TIMEOUT_MS,
-            SPURIOUS_RECOVERY_POLL_INTERVAL_MS
-          )
-        )?.outputRaw;
+        try {
+          recordedOutput = (
+            await awaitCompletedStepOutputStep(
+              executionId,
+              nodeId,
+              SPURIOUS_RECOVERY_POLL_TIMEOUT_MS,
+              SPURIOUS_RECOVERY_POLL_INTERVAL_MS
+            )
+          )?.outputRaw;
+        } catch (pollError) {
+          logSystemWarn(
+            ErrorCategory.WORKFLOW_ENGINE,
+            "[Workflow Executor] Spurious-recovery poll failed; falling back to failure path",
+            pollError instanceof Error
+              ? pollError
+              : new Error(String(pollError)),
+            { ...baseLogLabels, node_id: nodeId }
+          );
+        }
       }
       if (isSpuriousMaxRetries && recordedOutput !== undefined) {
         // Recovered execution: the step body succeeded, only the SDK's
@@ -3177,6 +3242,38 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       organizationId,
       organizationPlan,
     });
+
+    // A node the executor never scheduled is absent from `results`, so on its
+    // own it cannot fail the run. Record one failure per orphan before the
+    // final tally so a fan-in join that never fired -- and the alerting steps
+    // behind it -- surface as an error instead of a green run.
+    const orphanedNodes = findOrphanedNodes({
+      attempted: attemptedNodes,
+      results,
+      skipped: skippedNodes,
+      edgesByTarget,
+      conditionNodeIds,
+      excludedNodeIds: loopBodyNodeIds,
+    });
+    for (const orphanId of orphanedNodes) {
+      const orphanNode = nodeMap.get(orphanId);
+      const upstreamCount = edgesByTarget.get(orphanId)?.length ?? 0;
+      results[orphanId] = {
+        success: false,
+        error: `Node "${orphanNode ? getNodeName(orphanNode) : orphanId}" never executed although all ${upstreamCount} upstream branches completed`,
+      };
+    }
+    if (orphanedNodes.length > 0) {
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Executor] Nodes never scheduled despite a clean upstream",
+        new Error(`orphaned_nodes=${orphanedNodes.join(",")}`),
+        {
+          ...baseLogLabels,
+          orphaned_node_count: String(orphanedNodes.length),
+        }
+      );
+    }
 
     // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches.
     // KEEP-395 Bug 2 hardening: re-evaluated AFTER drain so any failures from
