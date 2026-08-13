@@ -210,12 +210,20 @@ export class BlockIngestor {
     if (alreadyProcessed) {
       return;
     }
-    const executionId = await createPhantomExecution(
+    const { executionId, refused } = await createPhantomExecution(
       fire.workflowId,
       fire.userId,
       "event",
       "events",
     );
+    // Refused on plan grounds: the executor would refuse the same run, so skip
+    // the enqueue instead of paying for the round-trip on every match.
+    if (refused) {
+      logger.log(
+        `[ingestor] skipping refused event dispatch for ${fire.workflowId} (${refused})`,
+      );
+      return;
+    }
     try {
       await enqueueWorkflowEventTrigger(this.deps.sqs, this.deps.sqsQueueUrl, {
         executionId,
@@ -266,12 +274,18 @@ export class BlockIngestor {
     if (alreadyProcessed) {
       return;
     }
-    const executionId = await createPhantomExecution(
+    const { executionId, refused } = await createPhantomExecution(
       fire.workflowId,
       fire.userId,
       "block",
       "scheduler",
     );
+    if (refused) {
+      logger.log(
+        `[ingestor] skipping refused block dispatch for ${fire.workflowId} (${refused})`,
+      );
+      return;
+    }
     try {
       await enqueueWorkflowBlockTrigger(this.deps.sqs, this.deps.sqsQueueUrl, {
         executionId,

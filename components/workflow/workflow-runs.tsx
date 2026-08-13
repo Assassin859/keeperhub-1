@@ -12,6 +12,7 @@ import {
   GitBranch,
   Loader2,
   Play,
+  SkipForward,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -66,7 +67,14 @@ type ExecutionLog = {
 type WorkflowExecution = {
   id: string;
   workflowId: string;
-  status: "pending" | "running" | "success" | "error" | "cancelled" | "phantom";
+  status:
+    | "pending"
+    | "running"
+    | "success"
+    | "error"
+    | "skipped"
+    | "cancelled"
+    | "phantom";
   startedAt: Date;
   completedAt: Date | null;
   duration: string | null;
@@ -799,6 +807,8 @@ function getStatusLabel(status: string): string {
       return "Running";
     case "cancelled":
       return "Cancelled before it finished";
+    case "skipped":
+      return "Skipped - expand for why it did not run";
     default:
       return "Pending - has not run yet";
   }
@@ -1226,6 +1236,8 @@ export function WorkflowRuns({
         return <Loader2 className="h-3 w-3 animate-spin text-white" />;
       case "cancelled":
         return <Ban className="h-3 w-3 text-white" />;
+      case "skipped":
+        return <SkipForward className="h-3 w-3 text-white" />;
       default:
         return <Clock className="h-3 w-3 text-white" />;
     }
@@ -1243,6 +1255,9 @@ export function WorkflowRuns({
         return "bg-blue-600";
       case "cancelled":
         return "bg-orange-500";
+      // Neutral: refused before it started, not a failure.
+      case "skipped":
+        return "bg-muted-foreground";
       default:
         return "bg-muted-foreground";
     }

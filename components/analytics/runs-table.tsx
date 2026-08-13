@@ -178,6 +178,8 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
     "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20",
   cancelled:
     "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20",
+  // Refused before it started: neutral, not a failure colour.
+  skipped: "bg-muted text-muted-foreground border-border",
   running: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20",
   pending: "bg-gray-500/10 text-gray-700 dark:text-gray-400 border-gray-500/20",
 } as const;
@@ -185,6 +187,7 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
 const STATUS_LABELS: Partial<Record<NormalizedStatus, string>> = {
   system_error: "System Error",
   external_error: "External",
+  skipped: "Skipped",
 };
 
 function StatusBadge({ status }: { status: NormalizedStatus }): ReactNode {

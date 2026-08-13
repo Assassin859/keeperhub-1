@@ -226,7 +226,13 @@ export class EventListener {
 
       const args = extractEventArgs(parsed, this.opts.rawEventsAbi);
       const payload = buildEventPayload(log, parsed, args);
-      await this.sendToSqs(payload);
+      const sent = await this.sendToSqs(payload);
+
+      // Nothing was sent because the dispatch was refused: leave the event
+      // unmarked rather than spending a dedup write on it.
+      if (!sent) {
+        return;
+      }
 
       // Mark after the send. A crash between send and mark would re-fire
       // the event on the next reconnect (documented best-effort trade).
@@ -245,14 +251,24 @@ export class EventListener {
     }
   }
 
-  private async sendToSqs(payload: unknown): Promise<void> {
+  /** Returns false when the dispatch was refused and nothing was enqueued. */
+  private async sendToSqs(payload: unknown): Promise<boolean> {
     // KEEP-693: pre-create a phantom row (best-effort) so the run is visible
     // even if it never reaches the executor, and carry its id so the executor
     // upgrades that row instead of inserting.
-    const executionId = await createPhantomExecution(
+    const { executionId, refused } = await createPhantomExecution(
       this.opts.workflowId,
       this.opts.userId,
     );
+
+    // Refused on plan grounds: the executor would refuse the same run, and a
+    // busy contract would otherwise pay for that round-trip on every match.
+    if (refused) {
+      logger.log(
+        `[EventListener:${this.opts.workflowId}] skipping refused dispatch (${refused})`,
+      );
+      return false;
+    }
 
     try {
       await enqueueWorkflowEventTrigger(this.opts.sqs, this.opts.sqsQueueUrl, {
@@ -273,5 +289,6 @@ export class EventListener {
     }
 
     logger.log(`[EventListener:${this.opts.workflowId}] enqueued to SQS`);
+    return true;
   }
 }

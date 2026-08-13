@@ -672,6 +672,11 @@ export const workflowExecutions = pgTable(
       | "unconfirmed"
       | "success"
       | "error"
+      // Refused before it started: over the plan's execution limit, a gated
+      // action, or an unpaid pay-as-you-go charge. Terminal, never billable,
+      // and not a failure - the run did not happen, so it belongs outside both
+      // the error count and the success-rate denominator.
+      | "skipped"
       | "cancelled"
       | "phantom"
       | "system_error"

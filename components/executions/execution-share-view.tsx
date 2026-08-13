@@ -13,6 +13,7 @@ const TERMINAL_STATUSES = new Set([
   "success",
   "error",
   "system_error",
+  "skipped",
   "cancelled",
 ]);
 
