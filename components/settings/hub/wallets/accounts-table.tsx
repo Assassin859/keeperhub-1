@@ -86,11 +86,11 @@ export function AccountsTable({
           accounts.all.map((account) => {
             const isSafe = account.kind === "safe";
             const isSolana = !isSafe && account.family === "solana";
-            const signerName = isSolana
-              ? "Turnkey signer (Solana)"
-              : "Turnkey signer (EVM)";
+            // Named for the family, matching the toolbar wallet. The custody
+            // provider is not something a person picks or acts on here.
+            const signerName = isSolana ? "Solana" : "EVM";
             const name = isSafe ? `Safe on ${account.chainName}` : signerName;
-            const network = isSolana ? "Solana" : "All EVM networks";
+            const network = isSolana ? "Solana" : "EVM networks";
             return (
               <TableRow
                 className={cn("group cursor-pointer", SETTINGS_ROW)}

@@ -36,9 +36,9 @@ export function accountTitle(account: WalletAccountKind): string {
   if (account.kind === "safe") {
     return `Safe · ${account.chainName}`;
   }
-  return account.family === "solana"
-    ? "Turnkey EOA (SVM Compatible)"
-    : "Turnkey EOA (EVM Compatible)";
+  // Named for the family the address belongs to. Which custody provider holds
+  // the key is not something a person picks or acts on from here.
+  return account.family === "solana" ? "Solana" : "EVM";
 }
 
 /**

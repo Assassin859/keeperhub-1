@@ -145,7 +145,7 @@ export function AccountDetailPanel({
 
       {isSafe && (
         <SettingsCard
-          description="Workflow transactions are sent from this Safe when it is on. The Turnkey signer signs either way; this only decides which account the transaction comes from."
+          description="Workflow transactions are sent from this Safe when it is on. The managed signer signs either way; this only decides which account the transaction comes from."
           title="Send from this Safe"
         >
           <SafeSigningToggle

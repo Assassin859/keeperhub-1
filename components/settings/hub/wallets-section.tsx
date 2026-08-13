@@ -41,7 +41,7 @@ export function WalletsSection(): React.ReactElement {
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
-          hint="Turnkey signer plus any Safes"
+          hint="Managed signer plus any Safes"
           label="Accounts"
           loading={state.walletLoading}
           value={String(accounts.all.length)}
@@ -91,7 +91,7 @@ export function WalletsSection(): React.ReactElement {
 
       {deploying && (
         <SettingsCard
-          description="Deploy a Safe smart wallet per network. Safes hold funds and sign workflow transactions independently from the Turnkey EOA."
+          description="Deploy a Safe smart wallet per network. Safes hold funds and sign workflow transactions independently from the EVM account."
           title="Deploy a Safe"
         >
           {isOwner ? (

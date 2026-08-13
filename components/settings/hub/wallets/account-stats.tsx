@@ -23,14 +23,14 @@ export function AccountStats({
   if (isSolana) {
     return (
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile hint="Turnkey signer" label="Account type" value="EOA" />
+        <StatTile hint="Managed signer" label="Account type" value="EOA" />
         <StatTile
           hint={solanaIsTestnet ? "Devnet cluster" : "Mainnet cluster"}
           label="Network"
           value="Solana"
         />
         <StatTile
-          hint="Shares the org's Turnkey wallet"
+          hint="Shares the org's wallet"
           label="Key material"
           value="Managed"
         />
@@ -51,7 +51,7 @@ export function AccountStats({
         value={String(funded.length)}
       />
       <StatTile
-        hint={isSafe ? "Safe smart account" : "Turnkey signer"}
+        hint={isSafe ? "Safe smart account" : "Managed signer"}
         label="Account type"
         value={isSafe ? "Safe" : "EOA"}
       />
