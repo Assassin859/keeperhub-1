@@ -28,6 +28,7 @@ import {
   scopeLabel,
 } from "@/lib/mcp/oauth-scopes";
 import { cn } from "@/lib/utils";
+import { ConfirmDeleteDialog } from "../confirm-delete-dialog";
 import type {
   McpConnectionRow,
   McpUserGroup,
@@ -155,6 +156,7 @@ export function ConnectionsTable({
 }): React.ReactElement {
   const [term, setTerm] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState<McpConnectionRow | null>(null);
 
   const shown = useMemo(
     () =>
@@ -350,7 +352,7 @@ export function ConnectionsTable({
                       <Button
                         className="h-7 text-xs"
                         disabled={busyId === session.id}
-                        onClick={() => onRevoke(session)}
+                        onClick={() => setPending(session)}
                         size="sm"
                         variant="outline"
                       >
@@ -363,6 +365,19 @@ export function ConnectionsTable({
             })}
         </TableBody>
       </Table>
+
+      <ConfirmDeleteDialog
+        confirmLabel="Revoke"
+        description={`${pending?.clientName ?? "This agent"} stops working straight away and has to be connected again to come back.`}
+        onConfirm={() => {
+          if (pending) {
+            onRevoke(pending);
+          }
+        }}
+        onOpenChange={(next) => !next && setPending(null)}
+        open={pending !== null}
+        title="Revoke this session"
+      />
     </div>
   );
 }
