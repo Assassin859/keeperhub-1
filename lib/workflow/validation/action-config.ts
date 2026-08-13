@@ -4,6 +4,7 @@ import {
   type ActionConfigField,
   type ActionConfigFieldBase,
   findActionById,
+  getAllActions,
 } from "@/plugins/registry";
 
 const SYSTEM_ACTION_TYPES = new Set([
@@ -49,6 +50,9 @@ export type ActionConfigValidationIssue = {
   field?: string;
   expected?: string;
   received?: unknown;
+  nodeId?: string;
+  nodeLabel?: string;
+  suggestion?: string;
 };
 
 export type ActionConfigValidationResult = {
@@ -61,6 +65,7 @@ export type WorkflowNodeForValidation = {
   type?: unknown;
   data?: {
     type?: unknown;
+    label?: unknown;
     config?: Record<string, unknown>;
   };
 };
@@ -75,6 +80,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isActionNode(node: WorkflowNodeForValidation): boolean {
   return node.type === "action" || node.data?.type === "action";
+}
+
+function nodeIdentity(
+  node: WorkflowNodeForValidation,
+  fallback: string
+): { nodeId?: string; nodeLabel?: string } {
+  const nodeId =
+    typeof node.id === "string" && node.id !== "" ? node.id : undefined;
+  const rawLabel = node.data?.label;
+  const nodeLabel =
+    typeof rawLabel === "string" && rawLabel !== "" ? rawLabel : nodeId;
+  return {
+    nodeId,
+    nodeLabel: nodeLabel ?? fallback,
+  };
+}
+
+// Best-effort "did you mean" for a mistyped actionType. Matches system action
+// types (e.g. "condition" -> "Condition") and plugin action ids
+// case-insensitively. Returns undefined when the input is empty or ambiguous.
+function suggestActionType(input: string): string | undefined {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  const candidates = new Set<string>();
+  for (const action of getAllActions()) {
+    candidates.add(action.id);
+  }
+  for (const systemActionType of SYSTEM_ACTION_TYPES) {
+    candidates.add(systemActionType);
+  }
+  for (const candidate of candidates) {
+    if (candidate.toLowerCase() === normalized) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 function isMissingRequiredValue(value: unknown): boolean {
@@ -359,12 +402,19 @@ export function validateWorkflowActionConfigs(
 
     const action = findActionById(actionType);
     if (!action) {
+      const suggestion = suggestActionType(actionType);
+      const identity = nodeIdentity(node, `nodes[${nodeIndex}]`);
       issues.push({
         code: "UNKNOWN_ACTION_TYPE",
         path: `nodes[${nodeIndex}].data.config.actionType`,
         actionType,
+        nodeId: identity.nodeId,
+        nodeLabel: identity.nodeLabel,
         received: actionType,
-        message: `Unknown action type "${actionType}".`,
+        suggestion,
+        message: suggestion
+          ? `Unknown action type "${actionType}". Did you mean "${suggestion}"?`
+          : `Unknown action type "${actionType}".`,
       });
       continue;
     }
@@ -403,11 +453,14 @@ export function validateWorkflowActionConfigs(
       if (isLegacyIgnoredField(actionType, key)) {
         continue;
       }
+      const unknownIdentity = nodeIdentity(node, `nodes[${nodeIndex}]`);
       issues.push({
         code: "UNKNOWN_FIELD",
         path: `nodes[${nodeIndex}].data.config.${key}`,
         actionType,
         field: key,
+        nodeId: unknownIdentity.nodeId,
+        nodeLabel: unknownIdentity.nodeLabel,
         received: value,
         message: `Unknown field "${key}" for action "${actionType}".`,
       });
@@ -430,11 +483,14 @@ export function validateWorkflowActionConfigs(
           : config[legacyKey];
 
       if (field.required && isMissingRequiredValue(value)) {
+        const missingIdentity = nodeIdentity(node, `nodes[${nodeIndex}]`);
         issues.push({
           code: "MISSING_REQUIRED_FIELD",
           path: `nodes[${nodeIndex}].data.config.${field.key}`,
           actionType,
           field: field.key,
+          nodeId: missingIdentity.nodeId,
+          nodeLabel: missingIdentity.nodeLabel,
           expected: field.label,
           message: `Missing required field "${field.key}" for action "${actionType}".`,
         });
@@ -443,11 +499,14 @@ export function validateWorkflowActionConfigs(
 
       const fieldCheck = validateFieldValue(field, value);
       if (!fieldCheck.valid) {
+        const typeIdentity = nodeIdentity(node, `nodes[${nodeIndex}]`);
         issues.push({
           code: "INVALID_FIELD_TYPE",
           path: `nodes[${nodeIndex}].data.config.${field.key}`,
           actionType,
           field: field.key,
+          nodeId: typeIdentity.nodeId,
+          nodeLabel: typeIdentity.nodeLabel,
           expected: fieldCheck.expected,
           received: fieldCheck.received,
           message: `Invalid value for field "${field.key}" on action "${actionType}".`,
@@ -497,10 +556,18 @@ export function hasDraftActionNodes(
 export function formatActionConfigValidationResponse(
   validation: ActionConfigValidationResult
 ) {
+  const summary =
+    validation.issues.length > 0
+      ? `Invalid node(s): ${validation.issues
+          .map(
+            (issue) =>
+              `"${issue.nodeLabel ?? issue.nodeId ?? issue.path}" (${issue.actionType ?? "node"}): ${issue.message}`
+          )
+          .join(" ")} `
+      : "";
   return {
     error: "INVALID_ACTION_CONFIG",
-    message:
-      "Workflow contains invalid action configuration. Fix the listed fields and save again.",
+    message: `Workflow contains invalid action configuration. ${summary}Fix the listed fields and save again.`,
     invalidFields: validation.issues,
   };
 }

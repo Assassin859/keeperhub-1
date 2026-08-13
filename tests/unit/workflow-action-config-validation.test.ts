@@ -57,6 +57,53 @@ describe("validateWorkflowActionConfigs", () => {
     ]);
   });
 
+  it("names the offending node and suggests a case-mismatched system action type", () => {
+    const result = validateWorkflowActionConfigs([
+      {
+        id: "reserve-condition",
+        type: "action",
+        data: {
+          label: "Reserve condition",
+          type: "action",
+          config: { actionType: "condition" },
+        },
+      },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "UNKNOWN_ACTION_TYPE",
+        nodeId: "reserve-condition",
+        nodeLabel: "Reserve condition",
+        suggestion: "Condition",
+        message: 'Unknown action type "condition". Did you mean "Condition"?',
+      }),
+    ]);
+  });
+
+  it("attaches node identity to unknown-field issues", () => {
+    const result = validateWorkflowActionConfigs([
+      actionNode(
+        "web3/check-balance",
+        { bogusField: "x", network: "11155111", address: "0xabc" },
+        "balance-check"
+      ),
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNKNOWN_FIELD",
+          field: "bogusField",
+          nodeId: "balance-check",
+          nodeLabel: "web3/check-balance",
+        }),
+      ])
+    );
+  });
+
   it("rejects wrong config keys and missing required fields", () => {
     const result = validateWorkflowActionConfigs([
       actionNode("discord/send-message", { Message: "hello" }),
@@ -1285,8 +1332,26 @@ describe("formatActionConfigValidationResponse", () => {
     expect(formatActionConfigValidationResponse(validation)).toEqual({
       error: "INVALID_ACTION_CONFIG",
       message:
-        "Workflow contains invalid action configuration. Fix the listed fields and save again.",
+        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send" (webhook/send): Unknown action type "webhook/send". Fix the listed fields and save again.',
       invalidFields: validation.issues,
     });
+  });
+
+  it("names the invalid node and suggestion in the top-level message", () => {
+    const validation = validateWorkflowActionConfigs([
+      {
+        id: "reserve-condition",
+        type: "action",
+        data: {
+          label: "Reserve condition",
+          type: "action",
+          config: { actionType: "condition" },
+        },
+      },
+    ]);
+
+    expect(formatActionConfigValidationResponse(validation).message).toContain(
+      '"Reserve condition" (condition): Unknown action type "condition". Did you mean "Condition"?'
+    );
   });
 });
