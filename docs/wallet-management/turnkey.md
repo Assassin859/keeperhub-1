@@ -56,7 +56,7 @@ account to hold that asset, whether or not the gas is sponsored.
 
 The EOA plays two distinct roles in a workflow write. Keep them separate when topping up.
 
-1. **Gas (always the EOA).** Every workflow transaction is signed and broadcast by the EOA, and the gas fee is paid from the EOA's native balance. This is true whether or not you have a Safe configured as the Sender.
+1. **Gas (depends on the route).** The EOA always signs. On an unsponsored route it also broadcasts and pays the fee from its own native balance. On a sponsored route the transaction is submitted on the wallet's behalf and the gas is paid for it, so the EOA's native balance is untouched. See [Wallet Funding](#wallet-funding) above and [Gas Management](/wallet-management/gas). Either way, this is independent of whether you have a Safe configured as the Sender.
 
 2. **Transactable balance (the active Sender).** If you have a [Safe](/wallet-management/safe) deployed and marked as the Sender on a chain, the Safe's balance is what gets debited when the workflow transfers a native token, approves or transfers an ERC20, swaps, or deposits into a protocol. If no Safe is the Sender, the EOA's own token balance is used instead.
 
