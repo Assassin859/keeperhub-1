@@ -68,15 +68,41 @@ if [ "$SKIP_BUILD" = false ]; then
     # bake reads them as HCL variables. shellcheck loses track of that across
     # the line continuations and reports them unused, which fails the
     # --severity=warning gate in maintainability.yml.
-    # shellcheck disable=SC2034
-    NEXT_PUBLIC_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
-    IMAGE_TAG="$IMAGE_TAG" \
-    LOCAL_IMAGE_REPO="$IMAGE_REPO" \
+    # NOTHING MAY GO BETWEEN THE ASSIGNMENTS AND `docker` BELOW, not even a
+    # comment. An assignment prefix has to touch the command it applies to. A
+    # comment after a trailing backslash ends the prefix, so the assignments
+    # become ordinary shell variables - set, unexported, invisible to the child
+    # process - and bake silently falls back to every default.
+    #
+    # That is not hypothetical. It is what this script did until now, and both
+    # consequences are the ones the comments here warn about: the tag resolved
+    # to "app-latest", the ":latest" this file forbids because kubelet then
+    # defaults initContainers to imagePullPolicy Always and cannot pull a
+    # side-loaded image, and NEXT_PUBLIC_TURNSTILE_SITE_KEY resolved to empty,
+    # so the captcha never rendered and signup failed with "Missing CAPTCHA
+    # response". Keep the block contiguous. Put explanations above it.
+    #
     # DOCS_BASE_URL is emptied so the image does not redirect /llms.txt to
     # docs.keeperhub.com. next.config.ts bakes redirects into the build, so this
     # cannot be a Helm value - it has to be decided here. Set on every target
     # rather than just app: the four that run `next build` share one builder
     # stage and BuildKit only deduplicates it while their args match.
+    #
+    # Every NEXT_PUBLIC_* below is compiled into the browser bundle and cannot be
+    # changed by any Helm value afterwards. An unset one is not neutral: it
+    # becomes the empty string in the bundle, which is how a missing site key
+    # turns into a signup form that renders and then refuses to submit.
+    #
+    # shellcheck disable=SC2034
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
+    NEXT_PUBLIC_GITHUB_CLIENT_ID="${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}" \
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID="${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" \
+    NEXT_PUBLIC_AUTH_PROVIDERS="${NEXT_PUBLIC_AUTH_PROVIDERS:-}" \
+    NEXT_PUBLIC_BILLING_ENABLED="${NEXT_PUBLIC_BILLING_ENABLED:-false}" \
+    NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED="${NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:-false}" \
+    NEXT_PUBLIC_SENTRY_DSN="" \
+    IMAGE_TAG="$IMAGE_TAG" \
+    LOCAL_IMAGE_REPO="$IMAGE_REPO" \
     docker buildx bake \
         -f docker-bake.hcl \
         -f "$SCRIPT_DIR/docker-bake.hcl" \

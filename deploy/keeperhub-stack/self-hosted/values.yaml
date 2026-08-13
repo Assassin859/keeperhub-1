@@ -171,6 +171,24 @@ app:
     SANDBOX_URL:
       type: template
       value: 'http://keeperhub-sandbox.{{ .Release.Namespace }}.svc.cluster.local:8787'
+    # In shared_env specifically because the db-migration initContainer needs
+    # it. scripts/seed/seed-chains.ts calls getWssUrl and writes the result into
+    # the chains table, so a value that arrives after the install is too late:
+    # the columns are already empty and the dispatchers connect to nothing.
+    #
+    # install.sh always creates this Secret key, empty when unset. Empty is safe
+    # to read - parseRpcConfig evaluates `envValue || "{}"` and falls through to
+    # the public RPC defaults - whereas an absent key would leave every pod in
+    # CreateContainerConfigError.
+    #
+    # This is also the ONLY way to configure a websocket endpoint. The per-chain
+    # CHAIN_<NAME>_PRIMARY_RPC variables are HTTP-only; ChainConfigEntry in
+    # lib/rpc/rpc-config.ts has no websocket field. The Block and Event triggers
+    # both need one, and only the Tempo chains ship a public default.
+    CHAIN_RPC_CONFIG:
+      type: secret
+      name: keeperhub-integrations
+      key: CHAIN_RPC_CONFIG
 
   replicaCount: 1
 
@@ -366,9 +384,14 @@ app:
     # in the app log - which looks like the app is broken rather than
     # unconfigured. Set from the same value as the URLs above so the three
     # cannot disagree.
+    #
+    # global.appAliasHost is appended when the install serves a second hostname.
+    # The list is comma-separated, and lib/trusted-origins.ts filters each entry
+    # through isSafeOriginPattern, so an empty trailing entry is dropped rather
+    # than trusted.
     ADDITIONAL_TRUSTED_ORIGINS:
       type: template
-      value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
+      value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}{{ if .Values.global.appAliasHost }},https://{{ .Values.global.appAliasHost }}{{ end }}'
     # Nothing is gated in a self-hosted install; this short-circuits both the
     # execution guard and the feature route-guard.
     NEXT_PUBLIC_BILLING_ENABLED:

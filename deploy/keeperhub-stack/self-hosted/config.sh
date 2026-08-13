@@ -105,6 +105,18 @@ TLS_ISSUER="${TLS_ISSUER:-}"
 SENDGRID_API_KEY="${SENDGRID_API_KEY:-}"
 FROM_ADDRESS="${FROM_ADDRESS:-}"
 
+# A second hostname served by the same app, added to the ingress and to
+# ADDITIONAL_TRUSTED_ORIGINS alongside APP_HOST.
+#
+# It exists because some third parties will only accept a hostname whose domain
+# you can prove you own. A Google OAuth redirect and a Turnstile widget both
+# want that, and a reserved domain such as example.com cannot be proved. So the
+# install can serve the reserved name it is evaluated on and a real name the
+# third parties accept, at the same time, without choosing between them.
+#
+# Leave empty for a single-host install, which is the normal case.
+APP_ALIAS_HOST="${APP_ALIAS_HOST:-}"
+
 # Cloudflare Turnstile.
 #
 # The two keys are NOT delivered the same way, and getting that wrong yields a
@@ -191,6 +203,58 @@ DB_SECRET_KEY="${DB_SECRET_KEY:-DATABASE_URL}"
 # rather than after a confusing execution.
 RUNNER_SECRET_PREFIX="${RUNNER_SECRET_PREFIX:-keeperhub-executor}"
 STRICT_RUNNER_SECRETS="${STRICT_RUNNER_SECRETS:-false}"
+
+# Which environment variable supplies each runner slug.
+#
+# check_runner_secrets below only reports what is absent. This list is what lets
+# install.sh create them, so an operator who has the credentials does not have to
+# run eight kubectl commands by hand and get the "key equals the name" convention
+# right eight times.
+#
+# slug|environment variable
+RUNNER_SECRET_SOURCES=(
+    "chain-rpc-config|CHAIN_RPC_CONFIG"
+    "etherscan-api-key|ETHERSCAN_API_KEY"
+    "openai-api-key|OPENAI_API_KEY"
+    "sendgrid-api-key|SENDGRID_API_KEY"
+    "turnkey-api-private-key|TURNKEY_API_PRIVATE_KEY"
+    "turnkey-api-public-key|TURNKEY_API_PUBLIC_KEY"
+)
+
+# Third-party configuration passed to the app, each one optional.
+#
+# Rendered into a values fragment at install time, and ONLY when the variable is
+# actually set. That is deliberate rather than tidy: several of these are read
+# with `??`, which falls back on undefined but NOT on an empty string, so
+# supplying an empty value would replace a working default with nothing.
+# BASE_RPC_URL is the clearest case - lib/payments/x402/reconcile.ts reads
+# `process.env.BASE_RPC_URL ?? "https://mainnet.base.org"`.
+APP_INTEGRATION_VARS=(
+    AGENT_ID
+    AGENT_REGISTRY_CHAIN_ID
+    ANTHROPIC_API_KEY
+    BASE_RPC_URL
+    CDP_API_KEY_ID
+    CDP_API_KEY_SECRET
+    EMAIL_LOGO_URL
+    ETHERSCAN_API_KEY
+    GEOIP_ENABLED
+    GITHUB_CLIENT_ID
+    GITHUB_CLIENT_SECRET
+    GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_SECRET
+    MPP_SECRET_KEY
+    OPENAI_API_KEY
+    PAYG_RESOURCE_URL
+    SENDGRID_API_URL
+    TURNKEY_API_BASE_URL
+    X402_FACILITATOR_URL
+    ZERION_API_KEY
+)
+
+# Sent to every geo provider by default, and none of them needs a credential, so
+# configuring nothing is not the same as sending nothing. Off unless overridden.
+GEOIP_ENABLED="${GEOIP_ENABLED:-false}"
 
 # slug|what stops working without it
 RUNNER_OPTIONAL_SECRETS=(
