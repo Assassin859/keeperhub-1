@@ -20,27 +20,24 @@ global:
     # it lives here rather than in the base profile.
     pullPolicy: Never
 
-  # A real domain the operator owns, and deliberately NOT a keeperhub.com name.
+  # NO appHost HERE, deliberately. The hostname is written down in exactly one
+  # place, the settings file named by ENV_FILE, and install.sh passes it through
+  # as --set global.appHost. A value here would be a second place to change and
+  # a silent winner whenever someone forgot the first.
   #
-  # The M0 gate has to show the product running with no KeeperHub-operated host
-  # involved, so an ingress on *.keeperhub.com would undercut the claim even
-  # though the name only ever resolves through /etc/hosts.
+  # Leaving it out means a plain `helm install -f values.minikube.yaml` with no
+  # host stops on the `required` in values.yaml and names the value it wants.
+  # That is the intended behaviour: refusing to install is better than serving
+  # on whatever hostname the profile happened to ship with.
   #
-  # It also exercises the ADDITIONAL_TRUSTED_ORIGINS seam for real, which a
-  # keeperhub.com host would not. The built-in list in lib/trusted-origins.ts
-  # compiles `https://*.keeperhub.com` to the anchored `^https://[^/\\]*\
-  # .keeperhub\.com$`, and app.keeperhub.co does not match it: the pattern
-  # requires the origin to end in .keeperhub.com. So the CSRF guard passes here
-  # only because the configured origin was added, which is the thing under test.
-  #
-  # A real domain rather than a reserved one because the third parties an
-  # install talks to verify ownership. SendGrid authenticates the sending
-  # domain, and a Turnstile widget and an OAuth callback are both bound to a
-  # host. None of that can be done for a reserved name.
+  # Use a hostname you own and not a keeperhub.com one. Two reasons. The gate
+  # has to show the product running with no KeeperHub-operated host involved.
+  # And a keeperhub.com host would not exercise the trusted-origin seam at all:
+  # lib/trusted-origins.ts compiles the built-in `https://*.keeperhub.com` to an
+  # anchored regex, so such a host passes the CSRF guard on the built-in entry
+  # rather than on the one the install configured.
   #
   # Reaching it needs `minikube tunnel -p keeperhub` and an /etc/hosts entry.
-  # bootstrap-cluster.sh holds the same value and assert_overlay keeps them level.
-  appHost: app.keeperhub.co
 
   # The minikube ingress addon.
   ingressClassName: nginx

@@ -30,9 +30,13 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-$MINIKUBE_PROFILE}"
 # to be built before anything is deployed, so there is nothing to read them from
 # yet. assert_overlay keeps the two copies honest.
 TLS_ISSUER="mkcert-ca-issuer"   # values.minikube.yaml: global.tlsIssuer
-APP_HOST="app.keeperhub.co"  # values.minikube.yaml: global.appHost
 assert_overlay tlsIssuer "$TLS_ISSUER"
-assert_overlay appHost "$APP_HOST"
+
+# APP_HOST is NOT a harness constant. It comes from the settings file that
+# config.sh loaded, which is the only place a hostname is written down. This
+# script needs it only to print the /etc/hosts line at the end, so an unset one
+# is not an error here - it just makes that line generic.
+APP_HOST="${APP_HOST:-<your-app-host>}"
 
 # Measured pod requests for the full stack come to roughly 3.3Gi, with
 # steady-state RSS around 4.5-5.5Gi under real use. 4GB cannot schedule it.

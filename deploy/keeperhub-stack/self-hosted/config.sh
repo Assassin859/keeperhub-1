@@ -24,6 +24,73 @@
 # shellcheck disable=SC2034
 # Most variables here are consumed by the scripts that source this file.
 
+# ---------------------------------------------------------------------------
+# The settings file
+# ---------------------------------------------------------------------------
+# ENV_FILE names one file that holds every setting for an install. It is the
+# single place a hostname, a credential or a mode is written down; install.sh,
+# bootstrap-cluster.sh and build-images.sh all read the same one, so they cannot
+# disagree about what is being built or where it is served.
+#
+#   ENV_FILE=/path/to/my-install.env ./install.sh
+#
+# Anything already set in the environment wins, so a one-off override still
+# works: APP_HOST=other.example ./install.sh
+ENV_FILE="${ENV_FILE:-}"
+
+# Read a settings file WITHOUT letting the shell parse the values.
+#
+# `set -a; . file` cannot be used and this is not a style preference. A shell
+# assignment performs quote removal, so an unquoted JSON value silently loses
+# its double quotes. CHAIN_RPC_CONFIG went from 493 characters to 453 that way
+# and stopped being valid JSON, which parseRpcConfig catches and turns into an
+# empty config - the install then falls back to public RPC defaults with no
+# websocket URLs, and the Block and Event triggers connect to nothing while
+# every pod stays green.
+#
+# Assigning from a variable never re-parses the bytes, so the value arrives
+# exactly as written.
+load_env_file() {
+    local file="$1" line name value
+    [ -n "$file" ] || return 0
+    if [ ! -f "$file" ]; then
+        echo "ENV_FILE=$file does not exist." >&2
+        exit 1
+    fi
+
+    # The `|| [ -n "$line" ]` tail reads a final line with no newline.
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in
+            ''|'#'*|' '*'#'*|$'\t'*) continue ;;
+        esac
+        case "$line" in *=*) ;; *) continue ;; esac
+
+        name="${line%%=*}"
+        value="${line#*=}"
+
+        # A commented-out assignment is an opt-out, not a value, and anything
+        # that is not a plain identifier is prose that happened to contain "=".
+        case "$name" in
+            [A-Za-z_]*) ;;
+            *) continue ;;
+        esac
+        case "$name" in *[!A-Za-z0-9_]*) continue ;; esac
+
+        # An empty entry stays unset rather than becoming "". Several settings
+        # are read with `??`, which falls back on undefined but not on an empty
+        # string, so exporting "" would replace a working default with nothing.
+        [ -n "$value" ] || continue
+
+        # Already set in the environment wins, so a per-run override holds.
+        [ -n "${!name:-}" ] && continue
+
+        export "$name=$value"
+    done <"$file"
+}
+
+load_env_file "$ENV_FILE"
+
 # The cluster and namespace to install into. KUBE_CONTEXT is required rather
 # than defaulted, because a bare kubectl follows whatever context happens to be
 # current, and on a machine with production access that is how an install lands

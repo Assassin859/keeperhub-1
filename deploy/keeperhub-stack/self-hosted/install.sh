@@ -22,18 +22,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Sourced BEFORE config.sh, deliberately, so a stale .env cannot silently
-# repoint the queue - which would surface only as bad_signature on every trigger.
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-if [ -f "$REPO_ROOT/.env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . "$REPO_ROOT/.env"
-    set +a
-fi
-
 # shellcheck source=deploy/keeperhub-stack/self-hosted/config.sh
 . "$SCRIPT_DIR/config.sh"
+
+# The repository .env, if there is one, read through the same quote-safe loader
+# and AFTER ENV_FILE so it can only fill gaps.
+#
+# It used to be sourced with `set -a; . file`, which strips quotes from every
+# value it reads. A JSON setting such as CHAIN_RPC_CONFIG does not survive that,
+# and the damage is invisible: the value parses as empty and the install falls
+# back to defaults rather than failing.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+load_env_file "$REPO_ROOT/.env" 2>/dev/null || true
 
 DRY_RUN=false
 for arg in "$@"; do
