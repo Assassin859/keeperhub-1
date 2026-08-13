@@ -20,21 +20,27 @@ global:
     # it lives here rather than in the base profile.
     pullPolicy: Never
 
-  # A reserved example domain, deliberately not a keeperhub.com name.
+  # A real domain the operator owns, and deliberately NOT a keeperhub.com name.
   #
   # The M0 gate has to show the product running with no KeeperHub-operated host
-  # involved, and an ingress on *.keeperhub.com undercuts that claim even when
-  # the name only ever resolves through /etc/hosts. RFC 2606 reserves
-  # example.com precisely for this, so it can never collide with a real host.
+  # involved, so an ingress on *.keeperhub.com would undercut the claim even
+  # though the name only ever resolves through /etc/hosts.
   #
-  # It also exercises the ADDITIONAL_TRUSTED_ORIGINS seam for real. The built-in
-  # trusted-origin list in lib/trusted-origins.ts covers localhost and
-  # *.keeperhub.com only, so a keeperhub.com host would have passed the CSRF
-  # guard on the built-in entry and proved nothing.
+  # It also exercises the ADDITIONAL_TRUSTED_ORIGINS seam for real, which a
+  # keeperhub.com host would not. The built-in list in lib/trusted-origins.ts
+  # compiles `https://*.keeperhub.com` to the anchored `^https://[^/\\]*\
+  # .keeperhub\.com$`, and app.keeperhub.co does not match it: the pattern
+  # requires the origin to end in .keeperhub.com. So the CSRF guard passes here
+  # only because the configured origin was added, which is the thing under test.
+  #
+  # A real domain rather than a reserved one because the third parties an
+  # install talks to verify ownership. SendGrid authenticates the sending
+  # domain, and a Turnstile widget and an OAuth callback are both bound to a
+  # host. None of that can be done for a reserved name.
   #
   # Reaching it needs `minikube tunnel -p keeperhub` and an /etc/hosts entry.
   # bootstrap-cluster.sh holds the same value and assert_overlay keeps them level.
-  appHost: keeperhub.example.com
+  appHost: app.keeperhub.co
 
   # The minikube ingress addon.
   ingressClassName: nginx
