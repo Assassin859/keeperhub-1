@@ -132,7 +132,7 @@ export function AssetsTable({
                   </div>
                 ) : (
                   // A native coin is the network itself; there is no contract.
-                  <span className="text-muted-foreground text-xs">--</span>
+                  <span className="text-muted-foreground text-xs">-</span>
                 )}
               </TableCell>
               <TableCell className="text-right">

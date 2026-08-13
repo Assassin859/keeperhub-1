@@ -5,13 +5,11 @@ import {
   ArrowUpRight,
   Check,
   ChevronDown,
-  ChevronRight,
   Copy,
   Pin,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -60,16 +58,16 @@ function isEvmAccount(account: WalletAccountKind): boolean {
 }
 
 /**
- * The short name a person reads, not the full technical title. The EVM signer
- * is named for the family rather than a chain: it is the same address on every
- * EVM network, so naming it "Ethereum" would both understate it and collide
- * with the Ethereum row in the asset list.
+ * The short name a person reads. The signer is named for its family rather
+ * than a chain: it is the same address on every EVM network, so naming it
+ * "Ethereum" would both understate it and collide with the Ethereum row in the
+ * asset list.
  */
 function shortTitle(account: WalletAccountKind): string {
   if (account.kind === "safe") {
     return `Safe · ${account.chainName}`;
   }
-  return account.family === "solana" ? "Solana" : "EVM networks";
+  return account.family === "solana" ? "Solana" : "EVM";
 }
 
 function CopyButton({
@@ -118,16 +116,23 @@ function SwitcherRow({
   account,
   isDefault,
   onPin,
+  striped,
 }: {
   account: WalletAccountKind;
   isDefault: boolean;
   onPin: () => void;
+  striped: boolean;
 }): React.ReactElement {
   const evm = isEvmAccount(account);
   const display = evm ? toChecksumAddress(account.address) : account.address;
 
   return (
-    <div className="flex items-center gap-2 rounded-sm py-1.5 pr-1 pl-8 hover:bg-accent">
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-sm py-1.5 pr-1 pl-8 hover:bg-accent",
+        striped && "bg-muted/40"
+      )}
+    >
       <span className="min-w-0 flex-1 truncate text-sm">
         {shortTitle(account)}
       </span>
@@ -186,9 +191,20 @@ function TotalBalance({
   );
 }
 
-function AssetRow({ asset }: { asset: DigestAsset }): React.ReactElement {
+function AssetRow({
+  asset,
+  striped,
+}: {
+  asset: DigestAsset;
+  striped: boolean;
+}): React.ReactElement {
   return (
-    <div className="flex items-center justify-between gap-3 py-1">
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-sm px-2 py-1",
+        striped && "bg-muted/40"
+      )}
+    >
       <div className="flex min-w-0 flex-col">
         <span className="truncate font-medium text-sm">
           {formatBalance(asset.balance)} {asset.symbol}
@@ -198,7 +214,11 @@ function AssetRow({ asset }: { asset: DigestAsset }): React.ReactElement {
           {asset.isTestnet && " · Testnet"}
         </span>
       </div>
-      {asset.usdValue !== null && (
+      {/* A placeholder rather than an empty column: nothing there reads as a
+          value that failed to load, when the asset simply has no price. */}
+      {asset.usdValue === null ? (
+        <span className="shrink-0 text-muted-foreground text-sm">-</span>
+      ) : (
         <span className="shrink-0 font-mono text-sm tabular-nums">
           {USD.format(asset.usdValue)}
         </span>
@@ -213,11 +233,9 @@ function AssetRow({ asset }: { asset: DigestAsset }): React.ReactElement {
  */
 export function WalletDigestMenu({
   organizationId,
-  walletsHref,
   onClose,
 }: {
   organizationId: string | null;
-  walletsHref: string;
   /** Anything that takes over the screen dismisses the menu behind it. */
   onClose: () => void;
 }): React.ReactElement {
@@ -300,12 +318,13 @@ export function WalletDigestMenu({
 
       {switcherOpen && (
         <div className="flex flex-col gap-0.5 px-2 pb-2">
-          {digest.accounts.map((row) => (
+          {digest.accounts.map((row, index) => (
             <SwitcherRow
               account={row}
               isDefault={isDefault(row)}
               key={accountSlug(row)}
               onPin={() => setDefault(row)}
+              striped={index % 2 === 1}
             />
           ))}
         </div>
@@ -355,21 +374,19 @@ export function WalletDigestMenu({
           </span>
         )}
         {!digest.balancesLoading &&
-          shown.map((asset) => <AssetRow asset={asset} key={asset.key} />)}
+          shown.map((asset, index) => (
+            <AssetRow asset={asset} key={asset.key} striped={index % 2 === 1} />
+          ))}
+        {/* No link out: the gear in the pill already goes to the wallets page.
+            The count stays so a truncated list does not read as the whole of
+            what the wallet holds. */}
+        {!digest.balancesLoading && hidden > 0 && (
+          <span className="px-2 py-1 text-muted-foreground text-xs">
+            + {hidden} more
+          </span>
+        )}
       </div>
 
-      <DropdownMenuSeparator className="mx-0" />
-
-      {/* One row, one destination. The pill already carries a gear to the same
-          page, so a second control here was the same click twice. */}
-      <Link
-        className="flex items-center justify-between px-3 py-2.5 text-sm transition-colors hover:bg-accent"
-        href={walletsHref}
-        onClick={onClose}
-      >
-        {hidden > 0 ? `View all ${digest.assets.length} assets` : "View all"}
-        <ChevronRight className="size-4 text-muted-foreground" />
-      </Link>
     </div>
   );
 }

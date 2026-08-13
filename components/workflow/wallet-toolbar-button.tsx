@@ -155,7 +155,6 @@ function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
           <WalletDigestMenu
             onClose={() => setMenuOpen(false)}
             organizationId={activeOrg?.id ?? null}
-            walletsHref={walletsHref}
           />
         </DropdownMenuContent>
       </DropdownMenu>
