@@ -421,7 +421,7 @@ test.describe("Organization Invitations", () => {
       const popover = page.locator('[role="listbox"]');
       await expect(popover).toBeVisible({ timeout: 5000 });
       const orgItems = popover.locator('[role="option"]');
-      await expect(orgItems).toHaveCount(3);
+      await expect(orgItems).toHaveCount(2); // the two organizations, and nothing else
     });
 
     test("ORG-3: user can leave an org", async ({ page, context }) => {
