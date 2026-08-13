@@ -95,9 +95,13 @@ A scripted smoke test broadcasts a real `mintFrxEth` against forked mainnet byte
 In one terminal, start anvil with your mainnet RPC:
 
 ```bash
-docker run --rm -p 8545:8545 ghcr.io/foundry-rs/foundry:latest \
+docker run --rm -p 8545:8545 ghcr.io/foundry-rs/foundry:stable \
   "anvil --host 0.0.0.0 --fork-url <YOUR_MAINNET_RPC_URL>"
 ```
+
+Use the `stable` tag rather than `latest`: on GHCR, `latest` is foundry's nightly
+build, which changes daily and has shipped versions of anvil that cannot fork
+some chains.
 
 In another terminal, run the smoke test:
 

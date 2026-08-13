@@ -710,7 +710,12 @@ services:
       - test
 
   test-anvil:
-    image: ghcr.io/foundry-rs/foundry:latest
+    # Digest-pinned: `latest` on GHCR is foundry's nightly tag, not a
+    # release, so this used to be whatever was built that morning. A
+    # nightly that dropped OP-stack from the released feature set broke
+    # every Base fork outright ("network family optimism is not enabled
+    # in this build"). Override with FOUNDRY_IMAGE to try a newer anvil.
+    image: ${FOUNDRY_IMAGE:-ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46}
     container_name: keeperhub-test-anvil
     ports:
       - "8546:8545"
@@ -736,7 +741,7 @@ services:
   # Set ANVIL_FORK_MAINNET_URL to a private node that serves historical
   # state for higher rate limits and consistent block pinning.
   test-anvil-fork-mainnet:
-    image: ghcr.io/foundry-rs/foundry:latest
+    image: ${FOUNDRY_IMAGE:-ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46}
     container_name: keeperhub-test-anvil-fork-mainnet
     ports:
       - "8548:8545"

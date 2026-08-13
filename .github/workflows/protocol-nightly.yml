@@ -24,6 +24,13 @@ permissions:
   # which is why this nightly never once ran since the reusable call was added.
   id-token: write
 
+env:
+  # Keep in step with e2e-tests-ephemeral.yml, which carries the rationale:
+  # `latest` on GHCR is the nightly tag, so CI used to track an untested
+  # daily build. The fork-cache this job warms is consumed there, so both
+  # must run the same anvil. Grep the digest to find every pin.
+  FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+
 jobs:
   e2e-full:
     uses: ./.github/workflows/e2e-tests-ephemeral.yml
@@ -83,7 +90,7 @@ jobs:
           chmod 777 fork-cache
           docker run -d --name fork-cache-anvil-mainnet -p 8548:8545 \
             -v "$PWD/fork-cache:/home/foundry/.foundry/cache" \
-            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --entrypoint anvil "$FOUNDRY_IMAGE" \
             --host 0.0.0.0 --fork-url "$UPSTREAM" --fork-block-number "$PIN" \
             --chain-id 1 --block-time 1
           retries=0

@@ -49,6 +49,12 @@ DB_NAME="${PROTOCOL_LOCAL_DB:-keeperhub_protocol_local}"
 DB_PORT="${PROTOCOL_LOCAL_DB_PORT:-5433}"
 APP_CONTAINER=kh-protocol-local-app
 NODE_IMAGE=node:22
+# Digest-pinned, and the same pin CI runs (see e2e-tests-ephemeral.yml):
+# `latest` on GHCR is foundry's nightly tag, not a release, so this rig
+# used to run a different anvil every day than the one that produced a
+# cached fork - and a nightly that dropped OP-stack from the released
+# feature set broke every Base fork outright. Override to try a newer one.
+FOUNDRY_IMAGE="${FOUNDRY_IMAGE:-ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATABASE_URL="postgresql://postgres:postgres@localhost:${DB_PORT}/${DB_NAME}"
 RESULTS_FILE=".claude/protocol-local-results.json"
@@ -126,7 +132,8 @@ start_fork() {
   local -a pin_args=() mount_args=()
   if [ -n "$cache_dir" ]; then
     # Fork RPC fetch cache (see cmd_snapshot). Measured behavior
-    # (foundry:latest, 2026-07-07):
+    # (then-current foundry nightly, 2026-07-07; re-verified on the
+    # pinned stable image, which writes the same cache layout):
     # - anvil (uid 1000, HOME=/home/foundry in the image) persists its
     #   upstream fetches to
     #   $HOME/.foundry/cache/rpc/<chain>/<block>/storage.json, and only
@@ -188,7 +195,7 @@ start_fork() {
     fi
   fi
   docker run -d --name "$name" -p "${port}:8545" ${mount_args[@]+"${mount_args[@]}"} --entrypoint anvil \
-    ghcr.io/foundry-rs/foundry:latest \
+    "$FOUNDRY_IMAGE" \
     --host 0.0.0.0 --fork-url "$upstream" ${pin_args[@]+"${pin_args[@]}"} --chain-id "$chain_id" --block-time 1 >/dev/null
   wait_for_fork "$port" "$chain_hex" "$name"
 }
@@ -231,7 +238,7 @@ start_pinned_mainnet_fork() {
   local port="${PINNED_FORK_PORT:-8549}"
   docker rm -f "$name" 2>/dev/null || true
   docker run -d --name "$name" -p "${port}:8545" --entrypoint anvil \
-    ghcr.io/foundry-rs/foundry:latest \
+    "$FOUNDRY_IMAGE" \
     --host 0.0.0.0 --fork-url "$ANVIL_FORK_MAINNET_URL" \
     --fork-block-number "$pin" --chain-id 1 --block-time 1 >/dev/null
   wait_for_fork "$port" "0x1" "$name"

@@ -58,6 +58,18 @@ permissions:
   # callers must grant it too or the download falls back to a live fork.
   actions: read
 
+env:
+  # Digest-pinned so CI never tracks a moving upstream tag. On GHCR
+  # `latest` is an alias for `nightly`, not a release, so every run used
+  # to pull whatever nightly was built that morning - which is how a
+  # foundry refactor that dropped OP-stack from the released feature set
+  # (foundry-rs/foundry#15343) broke the Base leg mid-day with no commit
+  # on our side - anvil refused to fork 8453 with "network family
+  # optimism is not enabled in this build", and there is no runtime flag
+  # to re-enable it. Bump deliberately, and re-verify a Base fork when
+  # doing so. This digest is anvil 1.5.1-stable.
+  FOUNDRY_IMAGE: ghcr.io/foundry-rs/foundry:stable@sha256:043752653d5be351c71709091b3db97c4421c907eb40ea294195e7f532aadf46
+
 jobs:
   should-run:
     runs-on: ubuntu-latest
@@ -297,7 +309,7 @@ jobs:
             # documented in scripts/protocol-local.sh (start_fork).
             docker run -d --name keeperhub-test-anvil-fork-mainnet -p 8548:8545 \
               -v "$PWD/$CACHE_DIR:/home/foundry/.foundry/cache" \
-              --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+              --entrypoint anvil "$FOUNDRY_IMAGE" \
               --host 0.0.0.0 \
               --fork-url "$ANVIL_FORK_MAINNET_URL" \
               --fork-block-number "${{ steps.fork-cache.outputs.block }}" \
@@ -342,7 +354,7 @@ jobs:
           fi
           pin=$(pnpm tsx scripts/protocol-pinned-block.ts 1)
           docker run -d --name keeperhub-test-anvil-fork-mainnet-pinned -p 8549:8545 \
-            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --entrypoint anvil "$FOUNDRY_IMAGE" \
             --host 0.0.0.0 \
             --fork-url "$ANVIL_FORK_MAINNET_URL" \
             --fork-block-number "$pin" \
@@ -512,7 +524,7 @@ jobs:
             PIN_ARGS="--fork-block-number $PIN"
           fi
           docker run -d --name keeperhub-test-anvil-fork-${{ matrix.name }} -p 8545:8545 \
-            --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+            --entrypoint anvil "$FOUNDRY_IMAGE" \
             --host 0.0.0.0 --fork-url "$UPSTREAM" $PIN_ARGS \
             --chain-id ${{ matrix.chain_id }} --block-time 1
           retries=0
@@ -1076,7 +1088,7 @@ jobs:
             # over --network host at localhost:8548, same as the compose path.
             docker run -d --name keeperhub-test-anvil-fork-mainnet -p 8548:8545 \
               -v "$PWD/$CACHE_DIR:/home/foundry/.foundry/cache" \
-              --entrypoint anvil ghcr.io/foundry-rs/foundry:latest \
+              --entrypoint anvil "$FOUNDRY_IMAGE" \
               --host 0.0.0.0 \
               --fork-url "$ANVIL_FORK_MAINNET_URL" \
               --fork-block-number "${{ steps.fork-cache.outputs.block }}" \
