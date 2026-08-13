@@ -768,7 +768,7 @@ this connection is allowed:
 ```json
 {
   "error": "insufficient_scope",
-  "message": "This endpoint requires the `mcp:write` OAuth scope. This connection is allowed `mcp:read`. Reconnecting will not raise it: the limit is set by an organization owner or admin under Settings > Organization > Agents. Do not retry; ask them to raise it.",
+  "message": "This endpoint requires the `mcp:write` OAuth scope. This connection is allowed `mcp:read`. Reconnecting will not raise it: the limit is set by an organization owner or admin under Settings > Developer > Agents. Do not retry; ask them to raise it.",
   "retryable": false,
   "required_scope": "mcp:write",
   "granted_scope": "mcp:read"

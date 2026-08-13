@@ -24,7 +24,7 @@ export function requireScope(
       // do, that reconnecting cannot widen it, and who can. Naming the token
       // instead would send an agent round a loop of re-consenting with a wider
       // scope that the limit would keep clamping back.
-      message: `This endpoint requires the \`${required}\` OAuth scope. This connection is allowed \`${grantedScope || "(none)"}\`. Reconnecting will not raise it: the limit is set by an organization owner or admin under Settings > Organization > Agents. Do not retry; ask them to raise it.`,
+      message: `This endpoint requires the \`${required}\` OAuth scope. This connection is allowed \`${grantedScope || "(none)"}\`. Reconnecting will not raise it: the limit is set by an organization owner or admin under Settings > Developer > Agents. Do not retry; ask them to raise it.`,
       retryable: false,
       required_scope: required,
       granted_scope: grantedScope ?? "",

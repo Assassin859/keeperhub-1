@@ -88,7 +88,7 @@ The MCP endpoint supports two authentication methods:
 
 ## What a Connected Agent May Do
 
-Every agent connected through OAuth appears under Settings > Organization >
+Every agent connected through OAuth appears under Settings > Developer >
 Agents, grouped by the person who connected it, with when each session was last
 used. Any member can end their own sessions; owners and admins can see and end
 everyone's.
@@ -104,7 +104,8 @@ The limit is checked on every call rather than written into the token, so:
 
 - Lowering a limit takes effect within about a minute. Nothing has to be
   reconnected and no session is ended.
-- Reconnecting cannot raise what a limit allows. A new approval is clamped to it.
+- Reconnecting cannot raise what a limit allows. A fresh approval is recorded
+  as asked for, but every call it makes is still held to the limit.
 - Raising a limit again restores what the session and the person already had,
   because neither is rewritten when a limit moves.
 
