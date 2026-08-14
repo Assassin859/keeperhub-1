@@ -374,6 +374,24 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
   });
 
+  it("rejects an unresolved template reference in isolateCallFailures", async () => {
+    const response = await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: {
+          calls: JSON.stringify(SAMPLE_CALLS),
+          isolateCallFailures: "{{@prep:Prep.isolate}}",
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as { error: string };
+    expect(data.error).toContain("template references");
+    expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
+  });
+
   it("accepts calls as a native array in the request body", async () => {
     const response = await POST(
       makeRequest({

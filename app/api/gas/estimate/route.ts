@@ -294,6 +294,11 @@ async function validateRequest(request: Request): Promise<
     config.functionArgs,
     config.recipientAddress,
     config.amount,
+    // isolateCallFailures is string | boolean | undefined; only the string
+    // form (what the workflow UI sends) can carry a template reference.
+    typeof config.isolateCallFailures === "string"
+      ? config.isolateCallFailures
+      : undefined,
   ];
   if (
     configValues.some(hasTemplateRefs) ||
