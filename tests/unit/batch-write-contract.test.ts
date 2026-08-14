@@ -822,11 +822,14 @@ describe("batch-write-contract - failOnError softening", () => {
       throw new Error("expected softened success");
     }
     expect(softened.error).toContain("nonce too low");
-    // The pre-broadcast simulation already decoded both calls successfully
-    // before the broadcast itself failed, so the failure carries them
-    // forward (matches the type doc: present whenever simulation ran) and
-    // the softened success value does too.
+    // The pre-broadcast simulation decoded both calls successfully, but the
+    // broadcast itself failed, so neither call actually executed. results
+    // must say so (success:false) rather than carry forward the simulation's
+    // success:true, which would contradict the top-level failure.
     expect(softened.results).toHaveLength(2);
+    for (const call of softened.results ?? []) {
+      expect(call.success).toBe(false);
+    }
     expect(softened.totalCalls).toBe(2);
     expect(softened.transactionHash).toBeUndefined();
   });

@@ -719,18 +719,22 @@ export async function batchWriteContractCore(
       const hash = (error as { receipt?: { hash?: string }; transactionHash?: string })
         ?.receipt?.hash ??
         (error as { transactionHash?: string })?.transactionHash;
+      const notExecutedResults: BatchWriteCallResult[] = results.map((r) => ({
+        // If we get here, ALL calls were unsuccessful since they were
+        // sent as a single tx (if one fails, the whole thing reverts),
+        // so it's OK to hardcode `success: false` for each call.
+        success: false,
+        result: undefined,
+        error: `Not broadcast: ${r.error ?? "the batch transaction failed before confirmation"}`,
+      }));
       return {
         success: false,
         error: formatContractError(error, revertIface),
         ...(errorClass ? { errorClass } : {}),
         ...(hash ? { transactionHash: hash, chainId } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
-        // Already computed by the pre-broadcast simulation, which always
-        // runs before this catch is reachable; carrying them forward matches
-        // the failure variant's own type doc (results/totalCalls "present
-        // when the pre-broadcast simulation ran").
-        results,
-        totalCalls: results.length,
+        results: notExecutedResults,
+        totalCalls: notExecutedResults.length,
       };
     }
   });
