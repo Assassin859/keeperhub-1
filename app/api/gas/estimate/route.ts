@@ -7,6 +7,7 @@ import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
 import { buildCallsWithMeta } from "@/plugins/web3/steps/batch-write-contract-core";
@@ -21,6 +22,7 @@ type EstimateConfig = {
   tokenConfig?: unknown;
   calls?: string | unknown[];
   isolateCallFailures?: string | boolean;
+  web3Connection?: string;
 };
 
 type ActionSlug =
@@ -186,14 +188,33 @@ function estimateWriteContract(
  * for the aggregate3 call itself, since a batch has no single
  * contractAddress/abiFunction to estimate against the way write-contract
  * does.
+ *
+ * Checks the EOA-only gate first, matching batchWriteContractCore's own
+ * hard gate. Unlike write-contract (which supports Safe/Safe-Role at
+ * broadcast), a batch is EOA-only, so a Safe/Safe-Role org would otherwise
+ * get a plausible gas number here for a config guaranteed to fail at
+ * execution with a USER error.
  */
-function estimateBatchWriteContract(
+async function estimateBatchWriteContract(
   config: EstimateConfig,
   provider: ethers.JsonRpcProvider,
-  walletAddress: string
-): Promise<bigint> | NextResponse {
+  walletAddress: string,
+  organizationId: string,
+  chainId: number
+): Promise<bigint | NextResponse> {
   if (!config.calls) {
     return badRequest("calls is required for batch-write-contract estimation");
+  }
+
+  const signerMode = await resolveSignerForNode({
+    organizationId,
+    chainId,
+    web3Connection: config.web3Connection,
+  });
+  if (signerMode.kind !== SIGNER_MODE.EOA) {
+    return badRequest(
+      "Batch Write Contract only supports the default EOA Web3 Connection. Safe/Role routing would change msg.sender for every batched call, which is not supported here. Use individual Write Contract nodes for Safe execution instead."
+    );
   }
 
   const { calls: callsWithMeta, error } = buildCallsWithMeta({
@@ -327,7 +348,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           return await estimateBatchWriteContract(
             config,
             provider,
-            walletAddress
+            walletAddress,
+            activeOrgId,
+            chainId
           );
         default:
           return badRequest(`Unsupported action: ${actionSlug as string}`);

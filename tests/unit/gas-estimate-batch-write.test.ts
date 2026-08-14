@@ -64,6 +64,13 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
   getRpcProvider: (...args: unknown[]) => mockGetRpcProvider(...args),
 }));
 
+const mockResolveSignerForNode = vi.fn();
+vi.mock("@/lib/safe/signer-resolver", () => ({
+  SIGNER_MODE: { EOA: "eoa", SAFE: "safe", SAFE_ROLE: "safe-role" },
+  resolveSignerForNode: (...args: unknown[]) =>
+    mockResolveSignerForNode(...args),
+}));
+
 import { POST } from "@/app/api/gas/estimate/route";
 
 const WORK_ABI = JSON.stringify([
@@ -131,6 +138,10 @@ beforeEach(() => {
   });
   mockBuildCallsWithMeta.mockImplementation(defaultBuildCallsWithMeta);
   mockEstimateGas.mockResolvedValue(BigInt(150_000));
+  mockResolveSignerForNode.mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress1234567890123456789012345678",
+  });
 });
 
 describe("POST /api/gas/estimate - batch-write-contract", () => {
@@ -229,6 +240,51 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(data.error).toContain("calls is required");
     expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
     expect(mockEstimateGas).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-EOA signer mode instead of returning a plausible-looking estimate", async () => {
+    // batchWriteContractCore hard-gates to EOA-only (Safe/Safe-Role would
+    // change msg.sender for every batched call). Unlike write-contract,
+    // which supports Safe/Safe-Role at broadcast, a batch estimate for a
+    // Safe org is guaranteed to fail at execution, so it must not succeed
+    // here either.
+    mockResolveSignerForNode.mockResolvedValueOnce({
+      kind: "safe",
+      safeAddress: "0xsafe",
+    });
+
+    const response = await POST(
+      makeRequest({
+        chainId: 1,
+        actionSlug: "batch-write-contract",
+        config: { calls: JSON.stringify(SAMPLE_CALLS) },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const data = (await response.json()) as { error: string };
+    expect(data.error).toContain("EOA");
+    expect(mockBuildCallsWithMeta).not.toHaveBeenCalled();
+    expect(mockEstimateGas).not.toHaveBeenCalled();
+  });
+
+  it("passes chainId and the node's web3Connection to resolveSignerForNode", async () => {
+    await POST(
+      makeRequest({
+        chainId: 137,
+        actionSlug: "batch-write-contract",
+        config: {
+          calls: JSON.stringify(SAMPLE_CALLS),
+          web3Connection: "safe-connection-1",
+        },
+      })
+    );
+
+    expect(mockResolveSignerForNode).toHaveBeenCalledWith({
+      organizationId: "org-1",
+      chainId: 137,
+      web3Connection: "safe-connection-1",
+    });
   });
 
   it("propagates a buildCallsWithMeta error", async () => {
