@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
         : null;
     },
     sendExecutionQuotaEmail: vi.fn(async () => true),
+    redisSet: vi.fn(async (): Promise<string | null> => "OK"),
     db: {
       select: () => chain,
       insert: () => ({
@@ -78,9 +79,15 @@ vi.mock("@/lib/billing/payg/pricing", () => ({
 vi.mock("@/lib/billing/payg/treasury", () => ({
   getPaygTreasuryOrNull: () => mocks.paygTreasury(),
 }));
+vi.mock("@/lib/redis", () => ({
+  getRedis: () => ({ set: mocks.redisSet }),
+}));
 
 import type { QuotaStatus } from "@/lib/billing/quota-threshold";
-import { notifyOrgQuotaThreshold } from "@/lib/notifications/quota-threshold";
+import {
+  maybeNotifyQuotaThreshold,
+  notifyOrgQuotaThreshold,
+} from "@/lib/notifications/quota-threshold";
 
 const APP_URL = "https://app.example.com";
 
@@ -108,6 +115,8 @@ beforeEach(() => {
   mocks.sendExecutionQuotaEmail.mockClear();
   mocks.setInsertResult([]);
   mocks.setPaygConfigured(true);
+  mocks.redisSet.mockClear();
+  mocks.redisSet.mockResolvedValue("OK");
 });
 
 describe("notifyOrgQuotaThreshold", () => {
@@ -290,5 +299,66 @@ describe("notifyOrgQuotaThreshold", () => {
 
     expect(result?.recipients).toBe(1);
     expect(mocks.sendExecutionQuotaEmail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("maybeNotifyQuotaThreshold", () => {
+  it("does nothing below every threshold", async () => {
+    maybeNotifyQuotaThreshold({
+      organizationId: "org_1",
+      plan: "free",
+      tier: null,
+      planOverrides: null,
+      used: 100,
+      debtExecutions: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+    expect(mocks.sendExecutionQuotaEmail).not.toHaveBeenCalled();
+  });
+
+  it("claims a cooldown that expires with the quota month", async () => {
+    mocks.selectQueue.push(
+      [{ email: "owner@example.com", stepUpEmail: null }],
+      [{ name: "Acme" }]
+    );
+    mocks.setInsertResult([{ id: "notif_1" }]);
+
+    maybeNotifyQuotaThreshold({
+      organizationId: "org_1",
+      plan: "free",
+      tier: null,
+      planOverrides: null,
+      used: 4000,
+      debtExecutions: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mocks.redisSet).toHaveBeenCalledWith(
+      expect.stringContaining("quota-notify:org_1:"),
+      "1",
+      "EX",
+      expect.any(Number),
+      "NX"
+    );
+    expect(mocks.sendExecutionQuotaEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent when another caller holds the cooldown", async () => {
+    // This is the case that runs on every execution for the rest of the month:
+    // no DB claim attempt and no send.
+    mocks.redisSet.mockResolvedValueOnce(null);
+
+    maybeNotifyQuotaThreshold({
+      organizationId: "org_1",
+      plan: "free",
+      tier: null,
+      planOverrides: null,
+      used: 4000,
+      debtExecutions: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mocks.sendExecutionQuotaEmail).not.toHaveBeenCalled();
   });
 });

@@ -7,10 +7,12 @@ import { getPaygSettings } from "@/lib/billing/payg/config-store";
 import { getPaygExecutionPriceRaw } from "@/lib/billing/payg/pricing";
 import { getPaygTreasuryOrNull } from "@/lib/billing/payg/treasury";
 import { usdcRawToDecimal } from "@/lib/billing/payg/usdc";
-import type {
-  QuotaStatus,
-  QuotaThreshold,
-} from "@/lib/billing/quota-threshold";
+import type { PlanLimits, PlanName, TierKey } from "@/lib/billing/plans";
+import {
+  buildQuotaStatus,
+  type QuotaStatus,
+  type QuotaThreshold,
+} from "@/lib/billing/quota-threshold-core";
 import { getChainName } from "@/lib/chain-utils";
 import { db } from "@/lib/db";
 import {
@@ -23,6 +25,9 @@ import {
   type ExecutionQuotaPaygDetails,
   sendExecutionQuotaEmail,
 } from "@/lib/email";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
+import { getRedis } from "@/lib/redis";
+import { quotaNotifyClaimKey } from "@/lib/redis-keys";
 
 /**
  * Delivery side of the execution-quota warning: who gets told, once each, and
@@ -226,4 +231,99 @@ export async function notifyOrgQuotaThreshold(
     usagePercent: status.usagePercent,
     recipients: emails.length,
   };
+}
+
+/** Never hold a cooldown longer than a quota month, even on a clock skew. */
+const MAX_COOLDOWN_SECONDS = 32 * 24 * 60 * 60;
+
+/**
+ * Whether this process should do the work for (org, period, threshold).
+ *
+ * Admission runs on every execution, so without this an org over 80% would
+ * attempt a DB claim per run for the rest of the month. The Redis `SET NX` is
+ * held until the quota resets, so the attempt happens once and the hot path
+ * pays a single Redis round trip after that.
+ *
+ * Returns false when another caller holds it, when Redis is absent, and on a
+ * Redis error. With no cooldown authority the inline path stays quiet rather
+ * than risking a send per execution; the scheduled scan still catches the org.
+ */
+async function claimQuotaNotifyCooldown(
+  status: QuotaStatus,
+  threshold: QuotaThreshold,
+  now: Date
+): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) {
+    return false;
+  }
+  const secondsLeft = Math.ceil(
+    (status.periodEnd.getTime() - now.getTime()) / 1000
+  );
+  const ttl = Math.min(Math.max(secondsLeft, 60), MAX_COOLDOWN_SECONDS);
+  try {
+    const result = await redis.set(
+      quotaNotifyClaimKey(
+        status.organizationId,
+        status.periodStart.toISOString(),
+        threshold
+      ),
+      "1",
+      "EX",
+      ttl,
+      "NX"
+    );
+    return result === "OK";
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.INFRASTRUCTURE,
+      "[QuotaThreshold] cooldown claim failed; leaving it to the scheduled scan",
+      error,
+      { organization_id: status.organizationId }
+    );
+    return false;
+  }
+}
+
+/**
+ * Notify on the execution that crosses a threshold, rather than waiting for the
+ * next scheduled scan.
+ *
+ * Fire and forget: admission must not wait on Redis, a recipient lookup or
+ * SendGrid, and a failure here must never refuse an execution. Guarded by the
+ * cooldown above so the cost on a normal run is one Redis GET-equivalent, and
+ * by the same unique row the scan uses so the two paths cannot double send.
+ */
+export function maybeNotifyQuotaThreshold(params: {
+  organizationId: string;
+  plan: PlanName;
+  tier: TierKey | null;
+  planOverrides: Partial<PlanLimits> | null | undefined;
+  used: number;
+  debtExecutions: number;
+}): void {
+  const now = new Date();
+  const status = buildQuotaStatus({ ...params, now });
+  if (!(status && status.threshold !== null)) {
+    return;
+  }
+
+  const threshold = status.threshold;
+  claimQuotaNotifyCooldown(status, threshold, now)
+    .then(async (claimed) => {
+      if (!claimed) {
+        return;
+      }
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
+      await notifyOrgQuotaThreshold(status, appUrl);
+    })
+    .catch((error) => {
+      logSystemWarn(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "[QuotaThreshold] inline notification failed; the scheduled scan will retry",
+        error,
+        { organization_id: params.organizationId }
+      );
+    });
 }
