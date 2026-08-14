@@ -149,6 +149,7 @@ vi.mock("ethers", async () => {
 
 import { ethers } from "ethers";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import { OnChainRevertError } from "@/lib/web3/onchain-revert";
 import {
   applyBatchFailOnError,
   type BatchWriteContractCoreInput,
@@ -822,16 +823,42 @@ describe("batch-write-contract - failOnError softening", () => {
       throw new Error("expected softened success");
     }
     expect(softened.error).toContain("nonce too low");
-    // The pre-broadcast simulation decoded both calls successfully, but the
-    // broadcast itself failed, so neither call actually executed. results
-    // must say so (success:false) rather than carry forward the simulation's
-    // success:true, which would contradict the top-level failure.
-    expect(softened.results).toHaveLength(2);
-    for (const call of softened.results ?? []) {
-      expect(call.success).toBe(false);
-    }
-    expect(softened.totalCalls).toBe(2);
+    // A plain broadcast-time Error isn't a confirmed on-chain revert: the
+    // transaction may never have been submitted, or may have been submitted
+    // and its confirmation lost to a timeout, so the per-call outcome is
+    // genuinely unknown. results/totalCalls must be omitted rather than
+    // asserting success:false, which would falsely claim certainty.
+    expect(softened.results).toBeUndefined();
+    expect(softened.totalCalls).toBeUndefined();
     expect(softened.transactionHash).toBeUndefined();
+  });
+
+  it("reports every call as failed, with the reverted transaction hash, on a confirmed on-chain revert", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+    mockExecuteContractCall.mockRejectedValueOnce(
+      new OnChainRevertError({
+        message:
+          "Transaction 0xdeadbeef reverted on-chain (status 0, block 100)",
+        transactionHash: "0xdeadbeef",
+        blockNumber: 100,
+      })
+    );
+
+    const result = await batchWriteContractCore(baseInput({}));
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.transactionHash).toBe("0xdeadbeef");
+    // aggregate3 is atomic: a confirmed revert means neither call took
+    // effect, so unlike the unknown-outcome case above, results can safely
+    // assert success:false for each.
+    expect(result.results).toHaveLength(2);
+    for (const call of result.results ?? []) {
+      expect(call.success).toBe(false);
+      expect(call.error).toContain("Reverted on-chain");
+    }
+    expect(result.totalCalls).toBe(2);
   });
 
   it("tags a broadcast failure caused by an RPC relay transport error as EXTERNAL, and still softens it", async () => {

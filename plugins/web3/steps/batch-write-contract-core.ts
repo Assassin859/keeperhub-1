@@ -43,6 +43,7 @@ import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
 } from "@/lib/web3/gas-defaults";
+import { isOnChainRevertError, revertedTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import type { TransactionContext } from "@/lib/web3/transaction-manager";
 import { withNonceSession } from "@/lib/web3/transaction-manager";
@@ -716,25 +717,34 @@ export async function batchWriteContractCore(
     } catch (error) {
       const rejection = classifyRevert(error, revertIface);
       const errorClass = rpcRelayErrorClass(error);
-      const hash = (error as { receipt?: { hash?: string }; transactionHash?: string })
-        ?.receipt?.hash ??
-        (error as { transactionHash?: string })?.transactionHash;
-      const notExecutedResults: BatchWriteCallResult[] = results.map((r) => ({
-        // If we get here, ALL calls were unsuccessful since they were
-        // sent as a single tx (if one fails, the whole thing reverts),
-        // so it's OK to hardcode `success: false` for each call.
-        success: false,
-        result: undefined,
-        error: `Not broadcast: ${r.error ?? "the batch transaction failed before confirmation"}`,
-      }));
-      return {
-        success: false,
+      const revertedHash = revertedTransactionHash(error);
+      const base = {
+        success: false as const,
         error: formatContractError(error, revertIface),
         ...(errorClass ? { errorClass } : {}),
-        ...(hash ? { transactionHash: hash, chainId } : {}),
+        ...(revertedHash ? { transactionHash: revertedHash, chainId } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
-        results: notExecutedResults,
-        totalCalls: notExecutedResults.length,
+      };
+      // aggregate3 is atomic, so a confirmed on-chain revert (receipt status
+      // 0) is the one case where every call's outcome is actually known:
+      // none of them took effect. Any other failure (a pre-broadcast
+      // rejection, or a post-submission confirmation timeout where the
+      // transaction may already be mined) has an unknown per-call outcome,
+      // so results/totalCalls are left out rather than guessed here, same as
+      // every other write action already does when the true outcome can't
+      // be determined.
+      if (!isOnChainRevertError(error)) {
+        return base;
+      }
+      const revertedResults: BatchWriteCallResult[] = results.map((r) => ({
+        success: false,
+        result: undefined,
+        error: `Reverted on-chain: ${r.error ?? "the batch transaction was broadcast and mined but reverted"}`,
+      }));
+      return {
+        ...base,
+        results: revertedResults,
+        totalCalls: revertedResults.length,
       };
     }
   });
