@@ -124,6 +124,13 @@ vi.mock("@/lib/web3/gas-defaults", () => ({
     mockParsePriorityFeeGwei(...args),
 }));
 
+const mockPreflightGasBalance = vi.fn();
+vi.mock("@/lib/web3/gas-preflight", () => ({
+  preflightGasBalance: (...args: unknown[]) => mockPreflightGasBalance(...args),
+  resolveFundingHolder: (_signerMode: unknown, walletAddress: string) =>
+    walletAddress,
+}));
+
 vi.mock("@/lib/web3/transaction-manager", () => ({
   withNonceSession: (
     _txContext: unknown,
@@ -242,6 +249,7 @@ beforeEach(() => {
   });
   mockParsePriorityFeeGwei.mockReturnValue(undefined);
   mockExecuteContractCall.mockResolvedValue(RECEIPT);
+  mockPreflightGasBalance.mockResolvedValue({ affordable: true });
 });
 
 describe("batch-write-contract - happy path", () => {
@@ -545,6 +553,42 @@ describe("batch-write-contract - EOA-only gate", () => {
     expect(result.errorClass).toBe(ExecutionErrorType.USER);
     expect(mockStaticCall).not.toHaveBeenCalled();
     expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("batch-write-contract - gas preflight", () => {
+  it("rejects before acquiring the nonce lock when the org wallet cannot afford gas", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+    mockPreflightGasBalance.mockResolvedValueOnce({
+      affordable: false,
+      message: "Insufficient MATIC balance to cover gas on Polygon",
+    });
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
+    expect(result.error).toBe(
+      "Insufficient MATIC balance to cover gas on Polygon"
+    );
+    // Runs after the free pre-broadcast simulation, but must reject before
+    // the nonce lock/broadcast: a wallet that can't pay must not take the
+    // lock, run a full RPC failover round, and only fail at send, stalling
+    // every other execution queued behind the same wallet.
+    expect(mockStaticCall).toHaveBeenCalled();
+    expect(mockExecuteContractCall).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts normally when the org wallet can afford gas", async () => {
+    mockStaticCall.mockResolvedValueOnce([SUCCESS_RETURN, SUCCESS_RETURN]);
+    mockPreflightGasBalance.mockResolvedValueOnce({ affordable: true });
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(true);
+    expect(mockExecuteContractCall).toHaveBeenCalledOnce();
   });
 });
 

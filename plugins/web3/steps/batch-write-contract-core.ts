@@ -35,6 +35,10 @@ import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { rpcRelayErrorClass } from "@/lib/rpc/providers";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
+  preflightGasBalance,
+  resolveFundingHolder,
+} from "@/lib/web3/gas-preflight";
+import {
   classifyRevert,
   formatContractError,
   type RevertKind,
@@ -669,6 +673,21 @@ export async function batchWriteContractCore(
   };
 
   const adapter = getChainAdapter(chainId);
+
+  // Answer affordability before queueing on the wallet's nonce lock. A holder
+  // that cannot pay would otherwise take the lock, spend a full failover
+  // round discovering that at broadcast, and stall every other execution for
+  // the same wallet behind it. Mirrors write-contract-core's own preflight;
+  // resolveFundingHolder always resolves to walletAddress here since the EOA
+  // gate above already rejects Safe/Safe-Role connections.
+  const gasCheck = await preflightGasBalance({
+    rpcManager,
+    chainId,
+    holderAddress: resolveFundingHolder(signerMode, walletAddress),
+  });
+  if (!gasCheck.affordable) {
+    return { success: false, error: gasCheck.message };
+  }
 
   return withNonceSession(txContext, walletAddress, async (session) => {
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
