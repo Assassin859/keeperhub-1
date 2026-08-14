@@ -4,6 +4,7 @@
 #   docker buildx bake \
 #     -f docker-bake.hcl \
 #     -f deploy/keeperhub-stack/self-hosted/docker-bake.hcl \
+#     --set "*.cache-from=" --set "*.cache-to=" \
 #     --push keeperhub
 #
 # It exists so the settings file has one image setting rather than six. The root
@@ -38,38 +39,48 @@ group "keeperhub" {
   ]
 }
 
-# One repository, one tag prefix per component, matching what the chart looks
-# for. Never ":latest": the common chart does not render imagePullPolicy on
-# initContainers, so kubelet defaults to Always for a ":latest" tag and will
-# re-pull an image on every start.
+# One tag per component, which is what the chart looks for.
+#
+# The two --set flags in the invocation above are not optional. The root file
+# exports its build cache to ${ECR_REGISTRY}/...:cache, and Docker's default
+# builder cannot do that at all: the build stops with "Cache export is not
+# supported for the docker driver". They cannot be cleared from this file
+# either - buildx merges list fields across -f files, and an empty list here
+# does not override an inherited one. The command line is the only place that
+# works.
+#
+# Never ":latest": the common chart does not render imagePullPolicy on
+# initContainers, so kubelet defaults to Always for a ":latest" tag and re-pulls
+# on every start.
+
 target "app" {
-  tags = ["${IMAGE_REPO}:app-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:app-${IMAGE_TAG}"]
 }
 
 target "migrator" {
-  tags = ["${IMAGE_REPO}:migrator-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:migrator-${IMAGE_TAG}"]
 }
 
 target "workflow-runner" {
-  tags = ["${IMAGE_REPO}:workflow-runner-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:workflow-runner-${IMAGE_TAG}"]
 }
 
 target "executor" {
-  tags = ["${IMAGE_REPO}:executor-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:executor-${IMAGE_TAG}"]
 }
 
 target "schedule-dispatcher" {
-  tags = ["${IMAGE_REPO}:schedule-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:schedule-${IMAGE_TAG}"]
 }
 
 target "block-dispatcher" {
-  tags = ["${IMAGE_REPO}:block-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:block-${IMAGE_TAG}"]
 }
 
 target "metrics-collector" {
-  tags = ["${IMAGE_REPO}:collector-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:collector-${IMAGE_TAG}"]
 }
 
 target "sandbox" {
-  tags = ["${IMAGE_REPO}:sandbox-${IMAGE_TAG}"]
+  tags       = ["${IMAGE_REPO}:sandbox-${IMAGE_TAG}"]
 }
