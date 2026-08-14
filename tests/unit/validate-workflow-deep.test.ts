@@ -420,6 +420,47 @@ describe("validateWorkflowDeep — ABI mismatch (Pitfall 1)", () => {
     expect(result.valid).toBe(true);
   });
 
+  it("emits nodes[i].config.calls[j].abi for a mismatched ABI nested in a batch-write-contract node", async () => {
+    // Two calls at node index 1 (after the trigger): call 0 matches, call 1's
+    // declared ABI (transfer) mismatches the resolved one (approve). Only
+    // call 1 should warn, and its parameterPath must point at calls[1], not
+    // the batch node's own (nonexistent) top-level config.abi.
+    const batchNode = makeBatchNode(0, "1", [
+      {
+        contractAddress: "0x1111111111111111111111111111111111111111",
+        abi: SIMPLE_ABI_APPROVE,
+        abiFunction: "approve",
+      },
+      {
+        contractAddress: "0x2222222222222222222222222222222222222222",
+        abi: SIMPLE_ABI_TRANSFER,
+        abiFunction: "transfer",
+      },
+    ]);
+    const workflow = makeWorkflow({
+      nodes: [makeTriggerNode(), batchNode],
+      workflowType: "write",
+    });
+    // Every call resolves to the same on-chain ABI (approve): call 0's
+    // declared ABI already is approve, so it matches; call 1 declared
+    // transfer, so it mismatches.
+    const mockResolve = vi.fn().mockResolvedValue({
+      abi: SIMPLE_ABI_APPROVE,
+      source: "explorer",
+    });
+    const result = await validateWorkflowDeep(workflow, {
+      resolveAbiOverride: mockResolve,
+    });
+
+    const abiWarnings = result.warnings.filter(
+      (w) => w.code === "low-confidence-abi-match"
+    );
+    expect(abiWarnings).toHaveLength(1);
+    expect(abiWarnings[0].parameterPath).toBe("nodes[1].config.calls[1].abi");
+    expectNoAbiErrors(result);
+    expect(result.valid).toBe(true);
+  });
+
   it("mismatch result lands in warnings[], NEVER errors[] (assertion on errors array explicitly)", async () => {
     const writeNode = makeWriteNode(
       0,
