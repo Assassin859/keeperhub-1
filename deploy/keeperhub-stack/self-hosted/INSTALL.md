@@ -128,7 +128,16 @@ the route that needs the CloudNativePG operator installed cluster-wide:
 ```bash
 kubectl apply --server-side -f \
   https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.1.yaml
+
+# The apply returns before the operator is running. Wait for it.
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 ```
+
+That wait matters. The operator serves an admission webhook, and installing
+before it answers fails partway through the release with
+`failed calling webhook "mcluster.cnpg.io" ... connection refused`. The
+installer waits for it too, so this is belt and braces rather than strictly
+required.
 
 Nothing else to do: the chart generates the credentials and writes the Secret
 itself. Size it with `PG_INSTANCES` and `PG_STORAGE_SIZE` in `.env`.

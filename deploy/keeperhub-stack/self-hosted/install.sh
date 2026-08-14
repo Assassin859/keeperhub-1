@@ -106,7 +106,7 @@ Or set DB_MODE=byo and supply your own database.
 EOF
             exit 1
         fi
-        ok "cloudnative-pg operator present"
+        wait_for_cnpg_webhook
     fi
 
     if [ "$DB_MODE" = byo ] && [ "$DRY_RUN" = false ]; then
@@ -130,6 +130,51 @@ EOF
     fi
 
     ok "context $KUBE_CONTEXT, namespace $NAMESPACE, db=$DB_MODE queue=$QUEUE_MODE"
+}
+
+# Wait for the CloudNativePG admission webhook to be able to answer.
+#
+# The CRD exists the instant its manifest is applied, so a check for the CRD
+# passes immediately and says nothing about whether the operator behind it is
+# running. Applying the operator and installing straight afterwards therefore
+# gets through the preflight and fails in the middle of the release:
+#
+#   Internal error occurred: failed calling webhook "mcluster.cnpg.io":
+#   dial tcp ...:443: connect: connection refused
+#
+# With --atomic that rolls the whole release back, so the error names a webhook
+# rather than the thing that was actually wrong, which is timing.
+#
+# The service is read from the webhook configuration rather than assumed, so an
+# operator installed into a different namespace still works. Absent webhook
+# configuration means an install that does not use one; nothing to wait for.
+wait_for_cnpg_webhook() {
+    local ns name addrs i
+    ns=$(kube get mutatingwebhookconfiguration cnpg-mutating-webhook-configuration \
+        -o jsonpath='{.webhooks[0].clientConfig.service.namespace}' 2>/dev/null || true)
+    name=$(kube get mutatingwebhookconfiguration cnpg-mutating-webhook-configuration \
+        -o jsonpath='{.webhooks[0].clientConfig.service.name}' 2>/dev/null || true)
+
+    if [ -z "$name" ] || [ -z "$ns" ]; then
+        ok "cloudnative-pg operator present"
+        return 0
+    fi
+
+    for i in $(seq 1 60); do
+        addrs=$(kube get endpoints "$name" -n "$ns" \
+            -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
+        if [ -n "$addrs" ]; then
+            ok "cloudnative-pg operator present and its webhook is serving"
+            return 0
+        fi
+        [ "$i" = 1 ] && ok "waiting for the cloudnative-pg webhook to come up"
+        sleep 2
+    done
+
+    echo "The CloudNativePG webhook ($ns/$name) has no endpoints after 2 minutes." >&2
+    echo "The operator is installed but not running. Check it with:" >&2
+    echo "    kubectl --context $KUBE_CONTEXT -n $ns get pods" >&2
+    exit 1
 }
 
 # Create the namespace before anything is put into it.
