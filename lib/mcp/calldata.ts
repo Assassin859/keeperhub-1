@@ -138,14 +138,24 @@ function generateSingleWriteCalldata(
   const functionArgs = config.functionArgs;
   const ethValue = config.ethValue;
 
+  // A write node with a missing, templated, or malformed contractAddress
+  // used to serialize to a 200 whose `to` key was simply absent. A priced
+  // write listing charges for this artifact with no refund path, so reject
+  // an unusable address before any money can move.
   if (
     typeof contractAddress !== "string" ||
-    typeof abi !== "string" ||
-    typeof abiFunction !== "string"
+    !ethers.isAddress(contractAddress)
   ) {
     return {
       success: false,
-      error: "Missing contractAddress, abi, or abiFunction in workflow node",
+      error: `Invalid or missing contract address in workflow node: ${String(contractAddress)}`,
+    };
+  }
+
+  if (typeof abi !== "string" || typeof abiFunction !== "string") {
+    return {
+      success: false,
+      error: "Missing abi or abiFunction in workflow node",
     };
   }
 
