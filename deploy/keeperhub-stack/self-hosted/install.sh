@@ -132,6 +132,26 @@ EOF
     ok "context $KUBE_CONTEXT, namespace $NAMESPACE, db=$DB_MODE queue=$QUEUE_MODE"
 }
 
+# Create the namespace before anything is put into it.
+#
+# helm passes --create-namespace, but that happens at the end. The Secrets and
+# the sandbox manifest go in first, so on a cluster where the namespace does not
+# already exist the install stops on the first of them with
+# `namespaces "keeperhub" not found` - after the preflight has reported
+# everything fine.
+#
+# It only ever showed up on a genuinely fresh cluster. Any re-install found the
+# namespace left behind by the previous one.
+#
+# Idempotent through apply, so an existing namespace is untouched rather than an
+# error.
+ensure_namespace() {
+    [ "$DRY_RUN" = false ] || return 0
+    kubectl --context "$KUBE_CONTEXT" create namespace "$NAMESPACE" \
+        --dry-run=client -o yaml | kube apply -f - >/dev/null
+    ok "namespace $NAMESPACE"
+}
+
 # Real AWS credentials for a real SQS queue. Kept out of the values files, which
 # are committed and readable through `helm get values`.
 create_aws_credentials_secret() {
@@ -502,6 +522,7 @@ install_chart() {
 
 main() {
     preflight
+    ensure_namespace
     create_aws_credentials_secret
     create_integrations_secret
     create_runner_secrets
