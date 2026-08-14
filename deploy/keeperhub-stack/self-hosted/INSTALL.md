@@ -99,21 +99,43 @@ internal one.
 cert-manager entirely, leave `TLS_ISSUER` empty, and pass
 `--set app.service.tls.enabled=false` when you install. Nothing else changes.
 
-**d) A database.**
+**d) PostgreSQL. Required — there is no third option.**
 
-*Chart-managed* (`DB_MODE=bundled`) runs PostgreSQL for you and needs the
-CloudNativePG operator installed cluster-wide:
+The product stores everything in PostgreSQL. You either give the chart one, or
+you let it run one. Decide now, because the choice changes what you install here
+and what you put in `.env`.
+
+*Option 1 — bring your own* (`DB_MODE=byo`). Use a database you already run: a
+managed one from your cloud, or your own server. Nothing to install in the
+cluster. Put the connection string in a Secret before you install, because the
+chart reads it and the install refuses to start without it:
+
+```bash
+kubectl create namespace keeperhub
+
+kubectl -n keeperhub create secret generic keeperhub-db \
+  --from-literal=DATABASE_URL='postgresql://user:password@host:5432/keeperhub'
+```
+
+Then in `.env` set `DB_MODE="byo"`. The Secret's name and key are configurable
+there too, as `DB_SECRET_NAME` and `DB_SECRET_KEY`, if `keeperhub-db` and
+`DATABASE_URL` do not suit you.
+
+*Option 2 — let the chart run one* (`DB_MODE=bundled`). It creates and manages a
+PostgreSQL cluster for you, which brings failover and backups with it. This is
+the route that needs the CloudNativePG operator installed cluster-wide:
 
 ```bash
 kubectl apply --server-side -f \
   https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.1.yaml
 ```
 
-*Bring your own* (`DB_MODE=byo`) uses any PostgreSQL you already run. Put its
-connection string in a Secret and name it in `.env`.
+Nothing else to do: the chart generates the credentials and writes the Secret
+itself. Size it with `PG_INSTANCES` and `PG_STORAGE_SIZE` in `.env`.
 
-The queue works the same way: chart-managed by default, or point
-`QUEUE_MODE=byo` at any SQS-compatible endpoint you operate.
+**e) A queue.** Same shape, and also required. `QUEUE_MODE=bundled` runs one for
+you with nothing to install first. `QUEUE_MODE=byo` points at any SQS-compatible
+endpoint you operate, named by `SQS_QUEUE_URL` and `SQS_DLQ_URL` in `.env`.
 
 ---
 
