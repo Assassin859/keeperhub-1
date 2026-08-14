@@ -171,7 +171,13 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     expect(callFailureFlags()).toEqual([true]);
   });
 
-  it('derives allowFailure=false when isolateCallFailures is "false", matching the step exactly', async () => {
+  it('forwards string "false" to buildCallsWithMeta unchanged', async () => {
+    // Asserts the route's own contract (it forwards the raw config value),
+    // not the mock's resolution copy of resolveIsolateCallFailures, which
+    // has its own dedicated coverage in batch-write-contract.test.ts. A test
+    // reading callFailureFlags() here would still pass even if the route
+    // forwarded the wrong value, since that helper reads back whatever this
+    // file's own mock derived from it, not what the route actually sent.
     const response = await POST(
       makeRequest({
         chainId: 1,
@@ -184,10 +190,13 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(callFailureFlags()).toEqual([false]);
+    expect(mockBuildCallsWithMeta).toHaveBeenCalledWith({
+      calls: JSON.stringify(SAMPLE_CALLS),
+      isolateCallFailures: "false",
+    });
   });
 
-  it("derives allowFailure=false when isolateCallFailures is the native boolean false, not just the string", async () => {
+  it("forwards native boolean false to buildCallsWithMeta unchanged", async () => {
     const response = await POST(
       makeRequest({
         chainId: 1,
@@ -200,7 +209,10 @@ describe("POST /api/gas/estimate - batch-write-contract", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(callFailureFlags()).toEqual([false]);
+    expect(mockBuildCallsWithMeta).toHaveBeenCalledWith({
+      calls: JSON.stringify(SAMPLE_CALLS),
+      isolateCallFailures: false,
+    });
   });
 
   it("rejects when calls is missing", async () => {
