@@ -135,6 +135,22 @@ IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
 # not write. sandbox.yaml documents what that pod is denied.
 SANDBOX_ENABLED="${SANDBOX_ENABLED:-false}"
 
+# The egress policy in networkpolicy.yaml: deny everything, then allow DNS, the
+# install's own namespace, the API server and the public internet minus every
+# private range.
+#
+# Off by default for two reasons. It does nothing at all on a cluster whose CNI
+# ignores NetworkPolicy, which is most default installs and includes minikube
+# without --cni=calico, so an operator could believe they were protected when
+# they were not. And a policy that silently drops traffic is a poor first
+# experience; better to install, confirm the product works, then close it down.
+EGRESS_POLICY="${EGRESS_POLICY:-false}"
+
+# The cluster's API server service address, for the egress policy. Read it with
+#   kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}'
+# The default is the kubeadm convention that minikube follows.
+APISERVER_CIDR="${APISERVER_CIDR:-10.96.0.1/32}"
+
 # The hostname the app is served on, and how it is exposed.
 #
 # Any hostname works. The application ships a fixed trusted-origin list
@@ -302,6 +318,25 @@ RUNNER_SECRET_SOURCES=(
 # so the flow fails after the user has already committed to it.
 GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID:-${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}}"
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}}"
+
+# Secret material the chart stores rather than generates.
+#
+# These reach the app through secrets.values in the chart, which writes them
+# into keeperhub-shared and keeperhub-email. Everything else in those Secrets is
+# generated and must not be overridden here: regenerating an encryption key
+# orphans the data encrypted with the old one.
+#
+# Creating only the runner copies is not enough and the failure is quiet. The
+# runner Secrets serve workflow steps inside Job pods; the app reads these. Miss
+# them and the app logs "SENDGRID_API_KEY environment variable is not
+# configured" while the variable is demonstrably mounted, because what is
+# mounted is an empty string the chart wrote.
+CHART_SECRET_VARS=(
+    SENDGRID_API_KEY
+    TURNKEY_API_PRIVATE_KEY
+    TURNKEY_API_PUBLIC_KEY
+    TURNKEY_ORGANIZATION_ID
+)
 
 # Third-party configuration passed to the app, each one optional.
 #
