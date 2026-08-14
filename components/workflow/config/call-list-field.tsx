@@ -21,6 +21,7 @@ type CallEntry = {
   abi: string;
   abiFunction: string;
   args: string;
+  useManualAbi: string;
 };
 
 function createEmptyEntry(id: number): CallEntry {
@@ -31,6 +32,7 @@ function createEmptyEntry(id: number): CallEntry {
     abi: "",
     abiFunction: "",
     args: "",
+    useManualAbi: "false",
   };
 }
 
@@ -50,6 +52,7 @@ function parseCallsValue(value: string, nextId: () => number): CallEntry[] {
       abi: String(item.abi ?? ""),
       abiFunction: String(item.abiFunction ?? ""),
       args: Array.isArray(item.args) ? JSON.stringify(item.args) : "",
+      useManualAbi: String(item.useManualAbi ?? "false"),
     }));
   } catch {
     return [createEmptyEntry(nextId())];
@@ -75,6 +78,7 @@ function serializeCalls(entries: CallEntry[]): string {
         abi: e.abi,
         abiFunction: e.abiFunction,
         args,
+        useManualAbi: e.useManualAbi,
       };
     });
   return calls.length > 0 ? JSON.stringify(calls) : "";
@@ -204,8 +208,9 @@ function CallRow({
     () => ({
       contractAddress: entry.contractAddress,
       network: abiFetchNetwork,
+      useManualAbi: entry.useManualAbi,
     }),
-    [entry.contractAddress, abiFetchNetwork]
+    [entry.contractAddress, abiFetchNetwork, entry.useManualAbi]
   );
 
   return (
@@ -285,6 +290,9 @@ function CallRow({
             type: "abi-with-auto-fetch",
           }}
           onChange={(val) => onUpdate("abi", String(val))}
+          onUpdateConfig={(key, val) =>
+            onUpdate(key as keyof Omit<CallEntry, "id">, String(val))
+          }
           value={entry.abi}
         />
       </div>
