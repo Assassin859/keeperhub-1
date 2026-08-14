@@ -77,6 +77,19 @@ load_env_file() {
         esac
         case "$name" in *[!A-Za-z0-9_]*) continue ;; esac
 
+        # Strip one layer of matching surrounding quotes.
+        #
+        # The settings file has to survive two different readers. This one takes
+        # each line literally, while the image build is a plain
+        # `set -a; . .env`, and the shell performs quote removal. An unquoted
+        # JSON value therefore loses its double quotes on the build side, and a
+        # quoted one keeps its outer quotes on this side. Quoting the file and
+        # stripping here is the only form that means the same thing to both.
+        case "$value" in
+            \'*\') value="${value#\'}"; value="${value%\'}" ;;
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+        esac
+
         # An empty entry stays unset rather than becoming "". Several settings
         # are read with `??`, which falls back on undefined but not on an empty
         # string, so exporting "" would replace a working default with nothing.
