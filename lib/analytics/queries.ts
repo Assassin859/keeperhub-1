@@ -1009,10 +1009,20 @@ async function fetchWorkflowRuns(
         sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`.as(
           "gasUsedWei"
         ),
-      network: sql<string | null>`MIN(
-        CASE WHEN ${logOutputField("gasUsed")} IS NOT NULL
-        THEN ${logInputField("network")}
-        END
+      // A gas-bearing step names the chain the run actually spent on, so it
+      // wins. Falling back to any step that names one keeps the chain on a run
+      // that never reached broadcast: a pre-flight failure (insufficient
+      // balance, spend cap, a bad address) produces no gasUsed, so the CASE
+      // alone returned NULL and the run came back with no chain at all - even
+      // when its own error names one ("Insufficient BASE balance"). A consumer
+      // of the audit trail could not tell which chain a failed run was on.
+      network: sql<string | null>`COALESCE(
+        MIN(
+          CASE WHEN ${logOutputField("gasUsed")} IS NOT NULL
+          THEN ${logInputField("network")}
+          END
+        ),
+        MIN(${logInputField("network")})
       )`.as("network"),
       networks: sql<
         string[]
