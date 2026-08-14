@@ -108,12 +108,20 @@ vi.mock("@/lib/web3/chain-adapter", () => ({
   }),
 }));
 
-vi.mock("@/lib/web3/decode-revert-error", () => ({
-  classifyRevert: vi.fn().mockReturnValue({ kind: "unknown" }),
-  formatContractError: vi.fn((error: unknown) =>
-    error instanceof Error ? error.message : String(error)
-  ),
-}));
+vi.mock("@/lib/web3/decode-revert-error", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/web3/decode-revert-error")>();
+  return {
+    ...actual,
+    classifyRevert: vi.fn().mockReturnValue({ kind: "unknown" }),
+    formatContractError: vi.fn((error: unknown) =>
+      error instanceof Error ? error.message : String(error)
+    ),
+    // decodeRevertReason is kept real: decodeAggregate3Entry's fallback
+    // chain (own ABI -> common OZ selectors -> string revert) is exactly
+    // what's under test in the "decoded results" describe block below.
+  };
+});
 
 const mockResolveGasLimitOverrides = vi.fn();
 const mockParsePriorityFeeGwei = vi.fn();
@@ -974,6 +982,30 @@ describe("batch-write-contract - decoded results", () => {
     }
     expect(result.results?.[0].success).toBe(false);
     expect(result.results?.[0].error).toContain("Splitter/kicked-too-soon");
+    expect(result.results?.[1].success).toBe(true);
+  });
+
+  it("decodes a common OZ custom error not declared in that call's own ABI", async () => {
+    // OwnableUnauthorizedAccount is a real OpenZeppelin error, but WORK_ABI
+    // (this call's declared ABI) doesn't include it. Without the
+    // common-error-selector fallback, this would just say "Call reverted".
+    const commonErrorsIface = new ethers.Interface([
+      "error OwnableUnauthorizedAccount(address account)",
+    ]);
+    const revertData = commonErrorsIface.encodeErrorResult(
+      "OwnableUnauthorizedAccount",
+      [JOB_1]
+    );
+    mockStaticCall.mockResolvedValueOnce([[false, revertData], SUCCESS_RETURN]);
+
+    const result = await batchWriteContractCore(baseInput({}));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
+    expect(result.results?.[0].success).toBe(false);
+    expect(result.results?.[0].error).toContain("OwnableUnauthorizedAccount");
     expect(result.results?.[1].success).toBe(true);
   });
 });

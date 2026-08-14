@@ -40,6 +40,7 @@ import {
 } from "@/lib/web3/gas-preflight";
 import {
   classifyRevert,
+  decodeRevertReason,
   formatContractError,
   type RevertKind,
 } from "@/lib/web3/decode-revert-error";
@@ -241,25 +242,15 @@ function decodeAggregate3Entry(
   outputs: AbiOutputParam[]
 ): BatchWriteCallResult {
   if (!callSuccess) {
-    let revertReason = "Call reverted";
-    try {
-      const decoded = iface.parseError(returnData);
-      if (decoded) {
-        revertReason = `Call reverted: ${decoded.name}(${decoded.args.join(", ")})`;
-      }
-    } catch {
-      if (returnData && returnData !== "0x") {
-        try {
-          const reason = ethers.AbiCoder.defaultAbiCoder().decode(
-            ["string"],
-            ethers.dataSlice(returnData, 4)
-          );
-          revertReason = `Call reverted: ${reason[0]}`;
-        } catch {
-          // Raw bytes, no decodable reason
-        }
-      }
-    }
+    // decodeRevertReason expects an ethers-error-shaped object; { data }
+    // is enough for extractRevertData to find it. Reuses the same
+    // own-ABI -> common-OZ-selector -> string-revert fallback chain the
+    // whole-batch-revert path already gets via formatContractError, so a
+    // custom error not declared in this call's own ABI (e.g. an inherited
+    // OwnableUnauthorizedAccount) still decodes here instead of falling
+    // back to a bare "Call reverted".
+    const decoded = decodeRevertReason({ data: returnData }, iface);
+    const revertReason = decoded ? `Call reverted: ${decoded}` : "Call reverted";
     return { success: false, result: undefined, error: revertReason };
   }
 
