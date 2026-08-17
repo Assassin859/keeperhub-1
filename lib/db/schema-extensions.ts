@@ -18,6 +18,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -1442,9 +1443,7 @@ export const executionQuotaNotifications = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => generateId()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").notNull(),
     periodStart: timestamp("period_start").notNull(),
     threshold: integer("threshold").notNull(),
     usagePercent: integer("usage_percent").notNull(),
@@ -1454,6 +1453,15 @@ export const executionQuotaNotifications = pgTable(
     notifiedAt: timestamp("notified_at").notNull().defaultNow(),
   },
   (table) => [
+    // Named explicitly rather than left to the derived
+    // <table>_<column>_<ref table>_<ref column>_fk, which is 65 characters here
+    // and would be silently truncated to 63 by Postgres. A later DROP CONSTRAINT
+    // generated against the untruncated name would then not find it.
+    foreignKey({
+      columns: [table.organizationId],
+      foreignColumns: [organization.id],
+      name: "execution_quota_notif_org_fk",
+    }).onDelete("cascade"),
     unique("execution_quota_notif_org_period_threshold").on(
       table.organizationId,
       table.periodStart,
