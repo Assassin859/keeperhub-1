@@ -79,9 +79,9 @@ description: "The response shape of the get_execution MCP tool: the nested statu
 
 `status` and `logs` are independent reads of the same execution (a status-table read and a logs-table read), not one derived from the other. Two things fall out of that worth knowing before you write a decoder:
 
-### `totalSteps`, `completedSteps`, and `duration` are numbers in `status.progress`, strings in `logs.execution`
+### `totalSteps` and `completedSteps` are numbers in `status.progress`, strings in `logs.execution`; `duration` only exists in `logs.execution`
 
-`status.progress.totalSteps` / `completedSteps` are parsed to real numbers before being returned. The same fields on `logs.execution` are not — they come straight off the `workflow_executions` row, where `total_steps` and `completed_steps` are `text` columns and `duration` is `numeric` (Postgres numeric columns serialize as strings to avoid precision loss). So `status.progress.completedSteps === 2` (number) and `logs.execution.completedSteps === "2"` (string) describe the same run. If you read progress, read it from `status.progress`, not `logs.execution`.
+`status.progress.totalSteps` / `completedSteps` are parsed to real numbers before being returned. The same fields on `logs.execution` are not — they come straight off the `workflow_executions` row, where `total_steps` and `completed_steps` are `text` columns (Postgres numeric columns serialize as strings to avoid precision loss). So `status.progress.completedSteps === 2` (number) and `logs.execution.completedSteps === "2"` (string) describe the same run. `duration` has no equivalent on `status.progress` at all — it's a `logs.execution`-only field. If you read progress, read it from `status.progress`, not `logs.execution`.
 
 ### `logs.logs` arrives newest-first, not in execution order
 
