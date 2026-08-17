@@ -181,6 +181,50 @@ describe("findOrphanedNodes", () => {
     expect(orphaned).toEqual([]);
   });
 
+  it("flags a single-predecessor node stranded after its join succeeded", () => {
+    // Observed in prod on a six-branch monitor: the join itself completed, and
+    // the condition hanging off it on one edge never ran. Stranding is not
+    // confined to the join -- any lost continuation leaves the run short.
+    const reads = ["r0", "r1", "r2", "r3", "r4", "r5"];
+    const edges: Edge[] = [
+      ...reads.map((id) => ({ source: "trigger", target: id })),
+      ...reads.map((id) => ({ source: id, target: "join" })),
+      { source: "join", target: "condition" },
+      { source: "condition", target: "alert" },
+    ];
+
+    const orphaned = findOrphanedNodes({
+      attempted: new Set(["trigger", ...reads, "join"]),
+      results: succeeded(["trigger", ...reads, "join"]),
+      skipped: new Set(),
+      edgesByTarget: edgesByTarget(edges),
+      conditionNodeIds: new Set(["condition"]),
+    });
+
+    expect(orphaned).toEqual(["condition"]);
+  });
+
+  it("does not flag an alert the condition legitimately routed away from", () => {
+    // The same workflow on a clean run: the join and condition both ran, the
+    // condition evaluated false, and the alert was correctly never reached.
+    const edges: Edge[] = [
+      { source: "a", target: "join" },
+      { source: "b", target: "join" },
+      { source: "join", target: "condition" },
+      { source: "condition", target: "alert" },
+    ];
+
+    const orphaned = findOrphanedNodes({
+      attempted: new Set(["a", "b", "join", "condition"]),
+      results: succeeded(["a", "b", "join", "condition"]),
+      skipped: new Set(),
+      edgesByTarget: edgesByTarget(edges),
+      conditionNodeIds: new Set(["condition"]),
+    });
+
+    expect(orphaned).toEqual([]);
+  });
+
   it("does not flag For Each body nodes, which run outside the main traversal", () => {
     const edges: Edge[] = [
       { source: "trigger", target: "foreach" },
