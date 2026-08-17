@@ -86,6 +86,7 @@ import {
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
 // System actions that don't have plugins - maps to module import functions.
@@ -264,10 +265,10 @@ function replaceTemplateVariable(
     );
   }
 
-  const dotIndex = rest.indexOf(".");
+  const { fieldPath } = splitTemplateRef(rest, output.label);
   let value: unknown;
 
-  if (dotIndex === -1) {
+  if (!fieldPath) {
     value = output.data;
   } else if (output.data === null || output.data === undefined) {
     // KEEP-1284: Throw error when node data is null/undefined
@@ -275,8 +276,6 @@ function replaceTemplateVariable(
       `Condition references "${rest}" but the node output data is ${output.data === null ? "null" : "undefined"}. Ensure the referenced node produces valid output.`
     );
   } else {
-    const fieldPath = rest.substring(dotIndex + 1);
-
     // Wrapper-aware lookup: matches resolveFromOutputData's three-shape walk
     // (top-level → { data: ... } → { result: ... }) so paths like
     // "args.value" resolve through the trigger node's
