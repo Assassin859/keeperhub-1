@@ -295,6 +295,32 @@ function simulationRevertMessage(
   return `${label} would revert. ${revertGuidance(context.actionType)}`;
 }
 
+/**
+ * Message for a preflight failure the simulator attributed to a specific
+ * cause, such as a native-value shortfall.
+ *
+ * The attributed reason names the account to fund and the amount it is short
+ * by, neither of which the editor can derive on its own, so it is surfaced
+ * verbatim rather than replaced with generic input guidance.
+ *
+ * An earlier reachable write may be what funds the account. Simulation reads
+ * current state, not the state the workflow will have produced by the time
+ * this node runs, so the claim is softened the same way a revert is.
+ */
+function simulationPreflightMessage(
+  context: NodeSimulationContext,
+  label: string,
+  reason: string
+): string {
+  if (!context.hasEarlierReachableWrite) {
+    return `${label} cannot run: ${reason}`;
+  }
+
+  const sentence = reason.endsWith(".") ? reason : `${reason}.`;
+
+  return `${label} may not run: ${sentence} This may depend on an earlier step in this workflow.`;
+}
+
 function makeIssue(
   context: NodeSimulationContext,
   input: {
@@ -636,6 +662,27 @@ async function simulateNode(
         code: "SIMULATION_WOULD_REVERT",
         fieldKey: failureField(context),
         message: simulationRevertMessage(context, label, reason),
+      }),
+    };
+  }
+
+  // A machine-readable `code` means the simulator attributed the failure to a
+  // specific cause it could name, currently a native-value shortfall. Such a
+  // failure keeps `failureKind: "validation"` because gas estimation rejects
+  // the call before the EVM returns revert data, so it reaches here rather
+  // than the revert arm above - but the configured inputs are not what is
+  // wrong with it, and its reason is the actionable answer.
+  if (result.code !== undefined) {
+    return {
+      status: "failed",
+      issue: makeIssue(context, {
+        code: "SIMULATION_PREFLIGHT_FAILED",
+        fieldKey: failureField(context),
+        message: simulationPreflightMessage(
+          context,
+          label,
+          result.revertReason
+        ),
       }),
     };
   }
