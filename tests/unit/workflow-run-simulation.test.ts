@@ -682,7 +682,6 @@ describe("runWorkflowSimulation", () => {
 
     expect(result.warnings[0]).toMatchObject({
       code: "SIMULATION_PREFLIGHT_FAILED",
-      fieldKey: "amount",
     });
     // The address to fund and the amount to fund it by are the two facts the
     // editor cannot derive on its own, so both have to survive.
@@ -692,20 +691,18 @@ describe("runWorkflowSimulation", () => {
     expect(result.warnings[0]?.message).not.toContain(
       "has invalid transaction inputs"
     );
-    // Not a revert: nothing reached the EVM.
-    expect(result.warnings[0]?.message).not.toContain("revert");
+    // The wallet is short; no configured field is wrong. The overlay renders
+    // parameterPath under the message and points its Fix button at fieldKey,
+    // so naming a field here would send the user to an input that is fine.
+    expect(result.warnings[0]?.fieldKey).toBeUndefined();
+    expect(result.warnings[0]?.parameterPath).toBe("nodes[0].data.config");
+    // Gas estimation rejected the call, so it is not reported as a revert.
+    expect(result.warnings[0]?.message).not.toContain("would revert");
   });
 
   it("softens an attributed shortfall when an earlier step may fund it", async () => {
     spies.simulateNativeTransfer
-      .mockResolvedValueOnce({
-        success: true,
-        status: "simulated",
-        from: "0xaa0000000000000000000000000000000000aa00",
-        to: "0xbb0000000000000000000000000000000000bb00",
-        value: "1",
-        wouldRevert: false,
-      })
+      .mockResolvedValueOnce(SUCCESS_RESULT)
       .mockResolvedValueOnce({
         success: false,
         status: "simulated",

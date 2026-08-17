@@ -806,7 +806,7 @@ Broadcasting requires `mcp:write`. A dry run (`simulate: true`) neither signs no
 
 Before an interactive Run, the workflow editor calls `POST /api/workflows/{workflowId}/simulate` to perform a read-only preflight of reachable EVM write nodes.
 
-The simulation is advisory and never blocks execution. Reverts, invalid simulation inputs, unsupported signers, RPC failures, timeouts, and unavailable simulation services are shown in the issues overlay with **Run Anyway** available.
+The simulation is advisory and never blocks execution. Reverts, funding shortfalls, invalid simulation inputs, unsupported signers, RPC failures, timeouts, and unavailable simulation services are shown in the issues overlay with **Run Anyway** available. A funding shortfall reports the account to fund and the amount it is short by, and names no configured field, because no configured field is wrong.
 
 Only write nodes reachable from a trigger are simulated. Disconnected write nodes are ignored.
 

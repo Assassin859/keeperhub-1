@@ -312,11 +312,11 @@ function simulationPreflightMessage(
   label: string,
   reason: string
 ): string {
-  if (!context.hasEarlierReachableWrite) {
-    return `${label} cannot run: ${reason}`;
-  }
-
   const sentence = reason.endsWith(".") ? reason : `${reason}.`;
+
+  if (!context.hasEarlierReachableWrite) {
+    return `${label} cannot run: ${sentence}`;
+  }
 
   return `${label} may not run: ${sentence} This may depend on an earlier step in this workflow.`;
 }
@@ -673,11 +673,14 @@ async function simulateNode(
   // than the revert arm above - but the configured inputs are not what is
   // wrong with it, and its reason is the actionable answer.
   if (result.code !== undefined) {
+    // No fieldKey: the shortfall is a fact about the funding account, not
+    // about any configured field. Naming one would point the issues overlay's
+    // parameter path and its Fix button at an input that is not wrong, which
+    // is the misdirection this branch exists to remove.
     return {
       status: "failed",
       issue: makeIssue(context, {
         code: "SIMULATION_PREFLIGHT_FAILED",
-        fieldKey: failureField(context),
         message: simulationPreflightMessage(
           context,
           label,
