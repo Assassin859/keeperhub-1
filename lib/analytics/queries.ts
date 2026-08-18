@@ -13,7 +13,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
+import { logInputField } from "@/lib/db/execution-log-fields";
 import {
   workflowExecutionLogs,
   workflowExecutions,
@@ -1002,41 +1002,46 @@ async function fetchWorkflowRuns(
   // workflow_execution_logs was a workaround that picked an arbitrary single
   // hash per run; multi-tx workflows (approve+swap, fan-outs) silently lost
   // every hash but one.
+  // Reads the denormalised network / gas_used_wei columns rather than
+  // re-parsing the double-encoded input/output JSONB per row - the cost the
+  // comment above fetchNetworkBreakdown records as the networks-endpoint 524.
+  // That matters more here now that the subquery no longer filters on gas and
+  // so covers every step row of the page. Columns are written by
+  // lib/workflow/executor/logging.ts and backfilled for legacy rows by
+  // scripts/backfill-exec-log-network-gas.ts.
   const logSummary = db
     .select({
       executionId: workflowExecutionLogs.executionId,
       gasUsedWei:
-        sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`.as(
+        sql<string>`COALESCE(SUM(${workflowExecutionLogs.gasUsedWei}), 0)::text`.as(
           "gasUsedWei"
         ),
       // A gas-bearing step names the chain the run actually spent on, so it
-      // wins. Falling back to any step that names one keeps the chain on a run
-      // that never reached broadcast: a pre-flight failure (insufficient
-      // balance, spend cap, a bad address) produces no gasUsed, so the CASE
-      // alone returned NULL and the run came back with no chain at all - even
-      // when its own error names one ("Insufficient BASE balance"). A consumer
-      // of the audit trail could not tell which chain a failed run was on.
+      // wins; any step that named one is the fallback. Both arms only matter
+      // because this subquery no longer filters on gas: it used to require
+      // gas_used_wei IS NOT NULL, and since WHERE runs before GROUP BY, a run
+      // that never reached broadcast contributed no rows, formed no group, and
+      // left the join NULL - so a pre-flight failure (insufficient balance,
+      // spend cap, a bad address) came back with no chain at all, even when
+      // its own error named one ("Insufficient BASE balance"). A consumer of
+      // the audit trail could not tell which chain a failed run was on.
+      // logging.ts writes network at step start, before any such failure.
       network: sql<string | null>`COALESCE(
         MIN(
-          CASE WHEN ${logOutputField("gasUsed")} IS NOT NULL
-          THEN ${logInputField("network")}
+          CASE WHEN ${workflowExecutionLogs.gasUsedWei} IS NOT NULL
+          THEN ${workflowExecutionLogs.network}
           END
         ),
-        MIN(${logInputField("network")})
+        MIN(${workflowExecutionLogs.network})
       )`.as("network"),
       networks: sql<
         string[]
-      >`COALESCE(ARRAY_AGG(DISTINCT ${logInputField("network")}) FILTER (WHERE ${logInputField("network")} IS NOT NULL), '{}')`.as(
+      >`COALESCE(ARRAY_AGG(DISTINCT ${workflowExecutionLogs.network}) FILTER (WHERE ${workflowExecutionLogs.network} IS NOT NULL), '{}')`.as(
         "networks"
       ),
     })
     .from(workflowExecutionLogs)
-    .where(
-      and(
-        sql`${workflowExecutionLogs.executionId} IN (${pagedExecutionIds})`,
-        sql`${logOutputField("gasUsed")} IS NOT NULL`
-      )
-    )
+    .where(sql`${workflowExecutionLogs.executionId} IN (${pagedExecutionIds})`)
     .groupBy(workflowExecutionLogs.executionId)
     .as("log_summary");
 

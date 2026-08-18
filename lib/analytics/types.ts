@@ -45,7 +45,13 @@ export type UnifiedRun = {
   workflowName: string | null;
   directType: DirectType | null;
   network: string | null;
-  /** Distinct networks (chain ids) the run produced on-chain writes on. */
+  /**
+   * Distinct networks (chain ids) the run's steps targeted - not only the ones
+   * it produced on-chain writes on. A run that fails before broadcast still
+   * names its chain here, which is the point: a chainless failed run is
+   * unattributable in the audit trail. The widening is visible on mixed-chain
+   * runs, where a read-only step on another chain now joins the list.
+   */
   networks: string[];
   /** Total native gas cost (wei) sponsored across the run's transactions. */
   gasCostWei: string | null;
