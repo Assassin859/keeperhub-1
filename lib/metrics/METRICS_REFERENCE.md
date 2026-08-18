@@ -112,6 +112,41 @@ Gauge metrics tracking resource usage and capacity.
 | `workflow.queue.depth` | Pending workflow jobs | - | < 50 | DB |
 | `workflow.concurrent.count` | Concurrent workflow executions | - | gauge | DB |
 
+### Process Memory
+
+Per-pod Node.js memory, emitted from `lib/metrics/instrumentation/process-memory.ts`. These are registered directly on the API-process registry rather than through `setGauge()`, so they appear on `/api/metrics/api` only and have no console-collector equivalent. Prometheus names are listed in full because these gauges are not routed through `MetricNames`.
+
+| Metric Name | Description | Labels | Source |
+|-------------|-------------|--------|--------|
+| `keeperhub_process_memory_rss_bytes` | Resident set size of the process | - | API |
+| `keeperhub_process_memory_heap_used_bytes` | V8 heap in use | - | API |
+| `keeperhub_process_memory_external_bytes` | Memory held by C++ objects bound to JavaScript | - | API |
+| `keeperhub_process_memory_array_buffers_bytes` | Memory held by ArrayBuffers and Buffers, a subset of `external` | - | API |
+| `keeperhub_process_memory_*_peak_bytes` | High-water mark of the matching bucket since the previous scrape | - | API |
+
+Alongside these, the cgroup v2 accounting for the container itself, read from `lib/metrics/cgroup-memory.ts`. These are absent off-cluster, where the files do not exist.
+
+| Metric Name | Description | Labels | Source |
+|-------------|-------------|--------|--------|
+| `keeperhub_container_memory_current_bytes` | Current cgroup charge for the container | - | API |
+| `keeperhub_container_memory_peak_bytes` | Kernel high-water mark since the container started | - | API |
+| `keeperhub_container_memory_limit_bytes` | The cgroup limit, from `memory.max` | - | API |
+| `keeperhub_container_memory_oom_kills` | OOM kills the kernel performed in this cgroup | - | API |
+
+### Which one to read
+
+**`keeperhub_container_memory_peak_bytes` answers "how close did this container get to being killed".** The kernel maintains that high-water mark continuously, so unlike everything else here it cannot miss a spike that opens and closes between two reads. `container_memory_working_set_bytes` from cadvisor can and does: it samples once per 60s, `container_memory_max_usage_bytes` is not shipped to our Mimir tenant, and prod containers have crossed the limit and died inside a single sample gap leaving nothing behind. Prefer the cgroup number over cadvisor and over `rss` - the cgroup charge is what the OOM killer compares, and it counts page cache that RSS does not.
+
+**The `_peak_bytes` process buckets answer "which part of the process grew".** The cgroup cannot say, and that is the question when deciding whether a change is a heap problem or an off-heap one. These are sampled every second, so a spike shorter than that interval can still slip past them.
+
+Each export of the process buckets opens a new window, so `delta()` and `rate()` are meaningless on them; graph with `max_over_time()`. The cgroup peak is monotonic for the life of the container instead, and resets on restart.
+
+### The gap none of these close
+
+A container killed mid-burst never reaches the scrape that would have carried its window, so **no gauge here can describe the burst that actually kills a pod** - only near misses. For that case the sampler writes a log line when the cgroup charge crosses 75% of the limit, carrying the bucket split, and re-arms once it falls below 65%. That line ships as it is written and outlives the kill. Search Loki for `[ProcessMemory]`.
+
+`prom-client`'s default Node.js metrics are registered on the same registry, so `nodejs_gc_duration_seconds`, the per-space `nodejs_heap_space_size_*_bytes` breakdown, and `nodejs_eventloop_lag_seconds` are available alongside them.
+
 ---
 
 ## Safe Wallet Metrics
@@ -171,8 +206,8 @@ Billing-aware observability layered onto the org model. Plan distribution, per-o
 | `org.executions.30d` | Workflow executions per org in the last 30 days | `org_slug`, `plan` | DB |
 | `org.executions.month` | Workflow executions per org since start of current calendar month | `org_slug`, `plan` | DB |
 | `org.plan_usage_ratio` | Current-month executions / monthly plan limit (0 when unlimited) | `org_slug`, `plan` | DB |
-| `mrr.usd_cents` | Approximate MRR in USD cents per plan (PLANS table * current tier) | `plan` | DB |
-| `mrr.usd_cents.total` | Approximate total MRR across all plans | - | DB |
+| `mrr.usd_cents` | Approximate MRR in USD cents per plan (PLANS table * current tier) | `plan`, `tier`, `billing_status` | DB |
+| `mrr.usd_cents.total` | Approximate committed MRR across all plans (excludes trials) | - | DB |
 | `billing.subscription.created` | Subscriptions created (paid plan attached after checkout) | `plan`, `tier` | API |
 | `billing.subscription.updated` | Subscription update events from the billing provider | `plan` | API |
 | `billing.subscription.canceled` | Subscriptions canceled (provider-side or downgraded to free) | `plan`, `tier` | API |
@@ -183,7 +218,19 @@ Billing-aware observability layered onto the org model. Plan distribution, per-o
 
 **Billing status values** (`billing_status` label): `active`, `trialing`, `past_due`, `canceled`, `unpaid`, `paused`, `none` (orgs without a subscription row).
 
-**MRR caveat:** `mrr.usd_cents` is computed from `lib/billing/plans.ts` × the org's current `(plan, tier)` tuple, summed across subscriptions in `active`, `trialing`, or `past_due` status. Stripe Dashboard remains the source of truth for accounting; this gauge exists for trend visibility only.
+**MRR caveat:** `mrr.usd_cents` is computed from `lib/billing/plans.ts` × the org's current `(plan, tier)` tuple, for every subscription in `active`, `trialing`, or `past_due` status. Stripe Dashboard remains the source of truth for accounting; this gauge exists for trend visibility only.
+
+**Committed vs trial MRR:** `mrr.usd_cents.total` sums `active` and `past_due` subscriptions only. A trialing org has not been charged, so it must not appear in a revenue figure. Its list price still ships on `mrr.usd_cents` under `billing_status="trialing"`, so trial pipeline revenue stays visible:
+
+```promql
+# committed revenue in USD
+max(keeperhub_mrr_usd_cents_total{cluster=~"$cluster", namespace="keeperhub"}) / 100
+
+# trial pipeline revenue in USD, not yet earned
+sum(max by (plan, tier, billing_status) (keeperhub_mrr_usd_cents{cluster=~"$cluster", namespace="keeperhub", billing_status="trialing"})) / 100
+```
+
+`past_due` counts as committed because the subscription is still on the plan and the invoice is being retried.
 
 ### Workflow Definition Metrics
 
