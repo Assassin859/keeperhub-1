@@ -122,7 +122,14 @@ beforeEach(() => {
 describe("notifyOrgQuotaThreshold", () => {
   it("emails the org owner and reports the send", async () => {
     mocks.selectQueue.push(
-      [{ email: "owner@example.com", stepUpEmail: null }],
+      [
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+      ],
       [{ name: "Acme" }]
     );
     mocks.setInsertResult([{ id: "notif_1" }]);
@@ -150,7 +157,14 @@ describe("notifyOrgQuotaThreshold", () => {
 
   it("deep-links to the org's own settings pages", async () => {
     mocks.selectQueue.push(
-      [{ email: "owner@example.com", stepUpEmail: null }],
+      [
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+      ],
       [{ name: "Acme" }]
     );
     mocks.setInsertResult([{ id: "notif_1" }]);
@@ -167,7 +181,14 @@ describe("notifyOrgQuotaThreshold", () => {
 
   it("quotes the real pay-as-you-go price and caps for a free org", async () => {
     mocks.selectQueue.push(
-      [{ email: "owner@example.com", stepUpEmail: null }],
+      [
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+      ],
       [{ name: "Acme" }]
     );
     mocks.setInsertResult([{ id: "notif_1" }]);
@@ -193,7 +214,14 @@ describe("notifyOrgQuotaThreshold", () => {
     // the owner to fund a wallet would be wrong.
     mocks.setPaygConfigured(false);
     mocks.selectQueue.push(
-      [{ email: "owner@example.com", stepUpEmail: null }],
+      [
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+      ],
       [{ name: "Acme" }]
     );
     mocks.setInsertResult([{ id: "notif_1" }]);
@@ -207,7 +235,14 @@ describe("notifyOrgQuotaThreshold", () => {
 
   it("sends no top-up block to an overage plan, and passes its rate", async () => {
     mocks.selectQueue.push(
-      [{ email: "owner@example.com", stepUpEmail: null }],
+      [
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+      ],
       [{ name: "Acme" }]
     );
     mocks.setInsertResult([{ id: "notif_1" }]);
@@ -233,7 +268,14 @@ describe("notifyOrgQuotaThreshold", () => {
   });
 
   it("sends nothing when the threshold row already exists", async () => {
-    mocks.selectQueue.push([{ email: "owner@example.com", stepUpEmail: null }]);
+    mocks.selectQueue.push([
+      {
+        email: "owner@example.com",
+        emailVerified: true,
+        stepUpEmail: null,
+        name: "Owner",
+      },
+    ]);
     // No row returned by the insert: another run already claimed this threshold.
     mocks.setInsertResult([]);
 
@@ -246,7 +288,12 @@ describe("notifyOrgQuotaThreshold", () => {
   it("does not claim when the org has no reachable owner", async () => {
     // A wallet owner with no enrolled step-up email is unreachable.
     mocks.selectQueue.push([
-      { email: "0xabc@wallet.keeperhub.com", stepUpEmail: null },
+      {
+        email: "0xabc@wallet.keeperhub.com",
+        emailVerified: true,
+        stepUpEmail: null,
+        name: "0xabc",
+      },
     ]);
     mocks.setInsertResult([{ id: "notif_1" }]);
 
@@ -261,7 +308,9 @@ describe("notifyOrgQuotaThreshold", () => {
       [
         {
           email: "0xabc@wallet.keeperhub.com",
+          emailVerified: true,
           stepUpEmail: "real@example.com",
+          name: "0xabc",
         },
       ],
       [{ name: "Acme" }]
@@ -288,8 +337,18 @@ describe("notifyOrgQuotaThreshold", () => {
   it("deduplicates repeated owner addresses into one send", async () => {
     mocks.selectQueue.push(
       [
-        { email: "owner@example.com", stepUpEmail: null },
-        { email: "owner@example.com", stepUpEmail: null },
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
       ],
       [{ name: "Acme" }]
     );
@@ -319,7 +378,14 @@ describe("maybeNotifyQuotaThreshold", () => {
 
   it("claims a cooldown that expires with the quota month", async () => {
     mocks.selectQueue.push(
-      [{ email: "owner@example.com", stepUpEmail: null }],
+      [
+        {
+          email: "owner@example.com",
+          emailVerified: true,
+          stepUpEmail: null,
+          name: "Owner",
+        },
+      ],
       [{ name: "Acme" }]
     );
     mocks.setInsertResult([{ id: "notif_1" }]);
@@ -360,5 +426,67 @@ describe("maybeNotifyQuotaThreshold", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(mocks.sendExecutionQuotaEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("only reachable, user supplied addresses are mailed", () => {
+  it("skips an unverified login email", async () => {
+    mocks.selectQueue.push([
+      {
+        email: "unverified@example.com",
+        emailVerified: false,
+        stepUpEmail: null,
+        name: "Someone",
+      },
+    ]);
+    mocks.setInsertResult([{ id: "notif_1" }]);
+
+    const result = await notifyOrgQuotaThreshold(quotaStatus(), APP_URL);
+
+    expect(result).toBeNull();
+    expect(mocks.sendExecutionQuotaEmail).not.toHaveBeenCalled();
+  });
+
+  it("skips an anonymous account's placeholder address", async () => {
+    mocks.selectQueue.push([
+      {
+        email: "temp-123@http://localhost",
+        emailVerified: true,
+        stepUpEmail: null,
+        name: "Anonymous",
+      },
+    ]);
+    mocks.setInsertResult([{ id: "notif_1" }]);
+
+    const result = await notifyOrgQuotaThreshold(quotaStatus(), APP_URL);
+
+    expect(result).toBeNull();
+    expect(mocks.sendExecutionQuotaEmail).not.toHaveBeenCalled();
+  });
+
+  it("never mails the synthetic wallet address itself", async () => {
+    mocks.selectQueue.push(
+      [
+        {
+          email: "0xabc@wallet.keeperhub.com",
+          emailVerified: true,
+          stepUpEmail: "enrolled@example.com",
+          name: "0xabc",
+        },
+      ],
+      [{ name: "Acme" }]
+    );
+    mocks.setInsertResult([{ id: "notif_1" }]);
+
+    await notifyOrgQuotaThreshold(quotaStatus(), APP_URL);
+
+    expect(mocks.sendExecutionQuotaEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "enrolled@example.com" })
+    );
+    expect(mocks.sendExecutionQuotaEmail).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: expect.stringContaining("wallet.keeperhub.com"),
+      })
+    );
   });
 });
