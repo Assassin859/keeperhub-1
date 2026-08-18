@@ -84,11 +84,20 @@ describe("validateWorkflowActionConfigs", () => {
 
   it("attaches node identity to unknown-field issues", () => {
     const result = validateWorkflowActionConfigs([
-      actionNode(
-        "web3/check-balance",
-        { bogusField: "x", network: "11155111", address: "0xabc" },
-        "balance-check"
-      ),
+      {
+        id: "balance-check",
+        type: "action",
+        data: {
+          label: "Check ETH Balance",
+          type: "action",
+          config: {
+            actionType: "web3/check-balance",
+            bogusField: "x",
+            network: "11155111",
+            address: "0xabc",
+          },
+        },
+      },
     ]);
 
     expect(result.valid).toBe(false);
@@ -98,7 +107,7 @@ describe("validateWorkflowActionConfigs", () => {
           code: "UNKNOWN_FIELD",
           field: "bogusField",
           nodeId: "balance-check",
-          nodeLabel: "web3/check-balance",
+          nodeLabel: "Check ETH Balance",
         }),
       ])
     );
@@ -1332,7 +1341,7 @@ describe("formatActionConfigValidationResponse", () => {
     expect(formatActionConfigValidationResponse(validation)).toEqual({
       error: "INVALID_ACTION_CONFIG",
       message:
-        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send" (webhook/send): Unknown action type "webhook/send". Fix the listed fields and save again.',
+        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send" Fix the listed fields and save again.',
       invalidFields: validation.issues,
     });
   });
@@ -1351,7 +1360,107 @@ describe("formatActionConfigValidationResponse", () => {
     ]);
 
     expect(formatActionConfigValidationResponse(validation).message).toContain(
-      '"Reserve condition" (condition): Unknown action type "condition". Did you mean "Condition"?'
+      '"Reserve condition"'
     );
+  });
+
+  it("caps node labels in the summary", () => {
+    const longLabel = "A".repeat(200);
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: longLabel,
+        },
+      ],
+    });
+
+    expect(result.message).toContain("...");
+    expect(result.message).not.toContain("A".repeat(101));
+  });
+
+  it("strips control characters from node labels in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: "My\x00Node",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"My Node"');
+  });
+
+  it("escapes format delimiters in node labels to prevent fake entries", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: 'A" (webhook/send)',
+        },
+      ],
+    });
+
+    expect(result.message).not.toContain("(webhook/send):");
+  });
+
+  it("shows at most three distinct nodes in the summary", () => {
+    const issues = Array.from({ length: 10 }, (_, i) => ({
+      code: "UNKNOWN_FIELD" as const,
+      path: `nodes[${i}].data.config.bogus`,
+      actionType: "discord/send-message",
+      field: "bogus",
+      message: "Unknown field",
+      nodeLabel: `Node ${i}`,
+    }));
+
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues,
+    });
+
+    expect(result.message).toContain("and 7 more");
+  });
+
+  it("deduplicates repeated node labels in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.a",
+          actionType: "discord/send-message",
+          field: "a",
+          message: "Unknown field a",
+          nodeLabel: "Send Notification",
+        },
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.b",
+          actionType: "discord/send-message",
+          field: "b",
+          message: "Unknown field b",
+          nodeLabel: "Send Notification",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"Send Notification" (2 issues)');
   });
 });

@@ -36,6 +36,31 @@ const INTEGER_PATTERN = /^-?\d+$/;
 const UNSIGNED_INTEGER_PATTERN = /^\d+$/;
 const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 
+// Maximum characters for a node label rendered into the top-level message.
+// Matches the 500-char cap in export-schema.ts but shorter for readability.
+const NODE_LABEL_MAX_CHARS = 100;
+
+// Control characters and Unicode bidi overrides that can inject invisible
+// text or alter rendering order in error messages. Stripped from node
+// labels before interpolation into the summary.
+const NODE_LABEL_CONTROL_CHARS_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e]/g;
+
+function sanitiseNodeLabel(label: string): string {
+  let stripped = label.replace(NODE_LABEL_CONTROL_CHARS_RE, " ");
+  // Escape format delimiters to prevent a malicious label from rendering a
+  // convincing fake entry in the summary.
+  stripped = stripped
+    .replace(/"/g, "'")
+    .replace(/\(/g, "[")
+    .replace(/\)/g, "]");
+  if (stripped.length > NODE_LABEL_MAX_CHARS) {
+    return `${stripped.slice(0, NODE_LABEL_MAX_CHARS - 3)}...`;
+  }
+  return stripped;
+}
+
 export type ActionConfigValidationIssueCode =
   | "UNKNOWN_ACTION_TYPE"
   | "UNKNOWN_FIELD"
@@ -99,20 +124,23 @@ function nodeIdentity(
 
 // Best-effort "did you mean" for a mistyped actionType. Matches system action
 // types (e.g. "condition" -> "Condition") and plugin action ids
-// case-insensitively. Returns undefined when the input is empty or ambiguous.
+// case-insensitively. Returns undefined when the input is empty.
+let _candidateSet: Set<string> | undefined;
 function suggestActionType(input: string): string | undefined {
   const normalized = input.trim().toLowerCase();
   if (!normalized) {
     return undefined;
   }
-  const candidates = new Set<string>();
-  for (const action of getAllActions()) {
-    candidates.add(action.id);
+  if (!_candidateSet) {
+    _candidateSet = new Set<string>();
+    for (const action of getAllActions()) {
+      _candidateSet.add(action.id);
+    }
+    for (const systemActionType of SYSTEM_ACTION_TYPES) {
+      _candidateSet.add(systemActionType);
+    }
   }
-  for (const systemActionType of SYSTEM_ACTION_TYPES) {
-    candidates.add(systemActionType);
-  }
-  for (const candidate of candidates) {
+  for (const candidate of _candidateSet) {
     if (candidate.toLowerCase() === normalized) {
       return candidate;
     }
@@ -430,6 +458,7 @@ export function validateWorkflowActionConfigs(
       continue;
     }
 
+    const identity = nodeIdentity(node, `nodes[${nodeIndex}]`);
     const fields = flattenConfigFields(action.configFields);
     const fieldsByKey = new Map(fields.map((field) => [field.key, field]));
     const aliasMap = getLegacyAliasMap(actionType);
@@ -453,14 +482,13 @@ export function validateWorkflowActionConfigs(
       if (isLegacyIgnoredField(actionType, key)) {
         continue;
       }
-      const unknownIdentity = nodeIdentity(node, `nodes[${nodeIndex}]`);
       issues.push({
         code: "UNKNOWN_FIELD",
         path: `nodes[${nodeIndex}].data.config.${key}`,
         actionType,
         field: key,
-        nodeId: unknownIdentity.nodeId,
-        nodeLabel: unknownIdentity.nodeLabel,
+        nodeId: identity.nodeId,
+        nodeLabel: identity.nodeLabel,
         received: value,
         message: `Unknown field "${key}" for action "${actionType}".`,
       });
@@ -483,14 +511,13 @@ export function validateWorkflowActionConfigs(
           : config[legacyKey];
 
       if (field.required && isMissingRequiredValue(value)) {
-        const missingIdentity = nodeIdentity(node, `nodes[${nodeIndex}]`);
         issues.push({
           code: "MISSING_REQUIRED_FIELD",
           path: `nodes[${nodeIndex}].data.config.${field.key}`,
           actionType,
           field: field.key,
-          nodeId: missingIdentity.nodeId,
-          nodeLabel: missingIdentity.nodeLabel,
+          nodeId: identity.nodeId,
+          nodeLabel: identity.nodeLabel,
           expected: field.label,
           message: `Missing required field "${field.key}" for action "${actionType}".`,
         });
@@ -499,14 +526,13 @@ export function validateWorkflowActionConfigs(
 
       const fieldCheck = validateFieldValue(field, value);
       if (!fieldCheck.valid) {
-        const typeIdentity = nodeIdentity(node, `nodes[${nodeIndex}]`);
         issues.push({
           code: "INVALID_FIELD_TYPE",
           path: `nodes[${nodeIndex}].data.config.${field.key}`,
           actionType,
           field: field.key,
-          nodeId: typeIdentity.nodeId,
-          nodeLabel: typeIdentity.nodeLabel,
+          nodeId: identity.nodeId,
+          nodeLabel: identity.nodeLabel,
           expected: fieldCheck.expected,
           received: fieldCheck.received,
           message: `Invalid value for field "${field.key}" on action "${actionType}".`,
@@ -558,12 +584,28 @@ export function formatActionConfigValidationResponse(
 ) {
   const summary =
     validation.issues.length > 0
-      ? `Invalid node(s): ${validation.issues
-          .map(
-            (issue) =>
-              `"${issue.nodeLabel ?? issue.nodeId ?? issue.path}" (${issue.actionType ?? "node"}): ${issue.message}`
-          )
-          .join(" ")} `
+      ? (() => {
+          const labels = new Map<string, number>();
+          for (const issue of validation.issues) {
+            const label = sanitiseNodeLabel(
+              issue.nodeLabel ?? issue.nodeId ?? issue.path
+            );
+            labels.set(label, (labels.get(label) ?? 0) + 1);
+          }
+          const entries: string[] = [];
+          let shown = 0;
+          for (const [label, count] of labels) {
+            if (shown >= 3) {
+              entries.push(`and ${labels.size - 3} more`);
+              break;
+            }
+            entries.push(
+              count > 1 ? `"${label}" (${count} issues)` : `"${label}"`
+            );
+            shown++;
+          }
+          return `Invalid node(s): ${entries.join(", ")} `;
+        })()
       : "";
   return {
     error: "INVALID_ACTION_CONFIG",
