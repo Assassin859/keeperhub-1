@@ -1602,7 +1602,7 @@ export async function sendExecutionQuotaEmail(
   // deposit address from the app, never from an email, or we train them into
   // exactly the swap an address-substitution phish relies on.
   const topUpText = payg
-    ? `In Billing, under "Pay per execution", send USDC on ${payg.chainName} to the wallet address shown there. No ETH needed, we cover gas. Your spend caps are on the same screen.`
+    ? `Top up by sending USDC on ${payg.chainName} to the wallet address in Billing. No ETH needed, we cover gas.`
     : "";
 
   const genericUpgradeText =
@@ -1656,7 +1656,7 @@ export async function sendExecutionQuotaEmail(
     </table>
 
     <p style="margin:20px 0 0;">${escapeHtml(topUpText)}</p>
-    <p style="margin:8px 0 0; color:#999; font-size:13px;">Charges settle in <a href="${payg.assetUrl}" style="color:#666;" target="_blank" rel="noopener">USDC on ${escapeHtml(payg.chainName)}</a>. Anything else you send still arrives in the wallet and stays yours, it is just not what executions draw from.</p>
+    <p style="margin:8px 0 0; color:#999; font-size:13px;">Only <a href="${payg.assetUrl}" style="color:#666;" target="_blank" rel="noopener">USDC on ${escapeHtml(payg.chainName)}</a> pays for executions. Anything else you send stays in the wallet, unused.</p>
     ${ctaButton(billingUrl, "Top up your wallet", true)}`
     : "";
 
@@ -1671,7 +1671,7 @@ ${runConditions.map((row) => `  ${row.label}: ${row.detail}`).join("\n")}
 
 ${topUpText}
 
-Charges settle in USDC on ${payg.chainName} (${payg.assetUrl}). Anything else you send still arrives in the wallet and stays yours, it is just not what executions draw from.
+Only USDC on ${payg.chainName} pays for executions (${payg.assetUrl}). Anything else you send stays in the wallet, unused.
 
 Top up your wallet: ${billingUrl}
 `
