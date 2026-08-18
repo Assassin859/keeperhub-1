@@ -166,9 +166,7 @@ describe("free plan on pay-as-you-go", () => {
       overageRatePerThousand: null,
     });
     const email = captured as unknown as Captured;
-    expect(email.text).toContain(
-      "Pro gets you 5x more executions than your 5,000 free"
-    );
+    expect(email.text).toContain("Pro gets you 5x your 5,000 free executions");
     // The gain carries the emphasis in HTML only.
     expect(email.html).toContain("<strong");
     expect(email.text).not.toContain("<strong");

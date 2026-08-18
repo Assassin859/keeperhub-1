@@ -1467,9 +1467,9 @@ function paygUpgradeComparison(
 
   // The gain is the point of the paragraph, so it carries the emphasis in HTML
   // while the plain-text alternative stays free of markup.
-  const gain = `${PLANS.pro.name} gets you ${headroom}x more executions than your ${formatCount(
+  const gain = `${PLANS.pro.name} gets you ${headroom}x your ${formatCount(
     currentLimit
-  )} free`;
+  )} free executions`;
   const rest = `${formatCount(entryTier.executions)} a month for ${formatDollars(
     entryTier.monthlyPrice
   )}. That is roughly what pay-as-you-go costs you at ${formatCount(
