@@ -490,8 +490,8 @@ services:
           echo "[QuotaThresholdScan] Running at $$(date)"
           sh /scripts/reaper.sh http://app-dev:3000/api/internal/quota-threshold-scan || echo "[QuotaThresholdScan] Failed"
           echo ""
-          echo "[QuotaThresholdScan] Sleeping 12h..."
-          sleep 43200
+          echo "[QuotaThresholdScan] Sleeping 3600s..."
+          sleep 3600
         done'
     profiles:
       - dev

@@ -724,7 +724,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "37 3,15 * * *" # twice daily; the notification table debounces, so this only needs to catch executor-driven crossings
+        schedule: "37 * * * *" # hourly; the notification table debounces, so this only needs to catch executor-driven crossings
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"
