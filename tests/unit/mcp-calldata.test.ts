@@ -25,7 +25,9 @@ vi.mock("ethers", () => {
       Interface: MockInterface,
       parseEther: mockParseEther,
       // Faithful enough to exercise the contract-address guard: the real
-      // ethers.isAddress rejects anything that is not 20 hex bytes.
+      // ethers.isAddress rejects anything that is not 20 hex bytes, and the
+      // guard is the thing standing between a malformed node and a paid-for
+      // unusable response.
       isAddress: (value: unknown): boolean =>
         typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value),
     },
@@ -211,10 +213,10 @@ describe("generateCalldataForWorkflow", () => {
     }
   });
 
-  // A write node with a missing or templated contractAddress used to
-  // produce a "successful" response whose `to` key was simply absent. A
-  // priced write listing charges for this artifact with no refund path, so
-  // an unusable address must fail before any money can move.
+  // A write node with a missing or templated contractAddress used to produce
+  // a "successful" response whose `to` key was simply absent. Now that a paid
+  // write listing charges for this artifact and there is no refund path, an
+  // unusable address must fail before any money can move.
   it.each([
     ["missing", undefined],
     ["an unresolved template", "{{@trigger:Trigger.contract}}"],
