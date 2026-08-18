@@ -60,28 +60,31 @@ function parseCallsValue(value: string, nextId: () => number): CallEntry[] {
 }
 
 function serializeCalls(entries: CallEntry[]): string {
-  const calls = entries
-    .filter((e) => e.contractAddress.trim() || e.abiFunction.trim())
-    .map((e) => {
-      let args: unknown[] = [];
-      if (e.args.trim()) {
-        try {
-          const parsed: unknown = JSON.parse(e.args);
-          args = Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
-          args = [e.args];
-        }
+  // Every row the user has added is persisted as-is, including an empty one:
+  // dropping "blank" rows here lets an incomplete call silently vanish from
+  // the saved config instead of being caught as having a missing required
+  // field (contractAddress/abi/abiFunction), which lets a batch run with
+  // fewer calls than the UI shows.
+  const calls = entries.map((e) => {
+    let args: unknown[] = [];
+    if (e.args.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(e.args);
+        args = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        args = [e.args];
       }
-      return {
-        network: e.network,
-        contractAddress: e.contractAddress,
-        abi: e.abi,
-        abiFunction: e.abiFunction,
-        args,
-        useManualAbi: e.useManualAbi,
-      };
-    });
-  return calls.length > 0 ? JSON.stringify(calls) : "";
+    }
+    return {
+      network: e.network,
+      contractAddress: e.contractAddress,
+      abi: e.abi,
+      abiFunction: e.abiFunction,
+      args,
+      useManualAbi: e.useManualAbi,
+    };
+  });
+  return JSON.stringify(calls);
 }
 
 type CallListFieldProps = {
