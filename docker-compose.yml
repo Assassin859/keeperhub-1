@@ -466,9 +466,10 @@ services:
 
   # ===========================================================================
   # Quota Threshold Scan
-  # Emails org owners once they reach 80% / 100% of their monthly execution
-  # quota. The endpoint debounces on its own notification table, so polling
-  # more often than the real schedule only affects how soon a crossing is sent.
+  # Backstop for the quota threshold emails. Admission notifies inline when an
+  # execution crosses 80% / 100%; this catches executor-driven runs, which do
+  # not go through that path. The endpoint debounces on its own notification
+  # table, so a run normally finds nothing to claim.
   # ===========================================================================
   quota-threshold-scan:
     image: alpine:3.20
@@ -489,8 +490,8 @@ services:
           echo "[QuotaThresholdScan] Running at $$(date)"
           sh /scripts/reaper.sh http://app-dev:3000/api/internal/quota-threshold-scan || echo "[QuotaThresholdScan] Failed"
           echo ""
-          echo "[QuotaThresholdScan] Sleeping 3600s..."
-          sleep 3600
+          echo "[QuotaThresholdScan] Sleeping 12h..."
+          sleep 43200
         done'
     profiles:
       - dev

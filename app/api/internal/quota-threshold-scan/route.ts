@@ -3,11 +3,19 @@
  *
  * Finds every organization that has reached 80% or 100% of its monthly
  * execution quota and emails the owners once per threshold per quota month.
- * Authenticated as an internal service (HMAC) and invoked hourly by the
+ * Authenticated as an internal service (HMAC) and invoked twice daily by the
  * `quota-threshold-scan` k8s CronJob via deploy/scripts/reaper.sh.
  *
- * The debounce is the unique row in execution_quota_notifications, so running
- * this more often than hourly is safe: it just finds nothing new to claim.
+ * This is a backstop, not the primary trigger. Admission notifies inline the
+ * moment an execution crosses a threshold, which covers everything running
+ * through the app. The scan exists for executor-driven runs (schedule, event,
+ * block), which never reach that path.
+ *
+ * Twice daily rather than every few minutes because the first query here is a
+ * month-wide COUNT grouped by organization, the shape of aggregate that has
+ * already cost this database once. The unique row in
+ * execution_quota_notifications means a run finds nothing new to claim, so
+ * frequency buys nothing except load.
  */
 import { NextResponse } from "next/server";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";

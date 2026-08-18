@@ -32,7 +32,7 @@ import { quotaNotifyClaimKey } from "@/lib/redis-keys";
 
 /**
  * Delivery side of the execution-quota warning: who gets told, once each, and
- * the record that stops the hourly scan telling them again.
+ * the record that stops the scan telling them again.
  *
  * The threshold arithmetic itself lives in lib/billing/quota-threshold.ts and
  * is shared with the in-app banner, so the email and the banner can never
@@ -98,9 +98,9 @@ function deliverableAddress(row: {
 /**
  * Record that this org has been told about this threshold for this quota month.
  *
- * Returns false when a row already exists, which is the debounce: the scan runs
- * hourly and an org sitting above 80% for weeks still only gets one email. The
- * insert is the claim, so two concurrent scans cannot both send.
+ * Returns false when a row already exists, which is the debounce: an org sitting
+ * above 80% for weeks still only gets one email, however often the scan runs.
+ * The insert is the claim, so the inline path and the scan cannot both send.
  */
 export async function claimQuotaNotification(
   status: QuotaStatus,
@@ -200,7 +200,7 @@ function paygAssetUrl(): string {
  * Send one org's quota warning if it has not already been sent this month.
  *
  * Claims before sending, so a delivery failure is not retried into a duplicate
- * on the next hourly run. Returns null when the org is below every threshold,
+ * on the next run. Returns null when the org is below every threshold,
  * has no reachable owner, or was already notified.
  */
 export async function notifyOrgQuotaThreshold(
