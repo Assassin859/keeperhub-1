@@ -223,7 +223,7 @@ mid-flight.
 |------|-------------|
 | `execute_transfer` | Transfer native or ERC20 tokens to a recipient. Requires a wallet integration. |
 | `execute_contract_call` | Call a smart contract function. Returns the result for view/pure calls, or an execution ID for state-changing calls. |
-| `execute_check_and_execute` | Read a contract value, evaluate a condition, and execute an action if it is met. |
+| `execute_check_and_execute` | Read one Solidity integer, evaluate a numeric condition, and execute an action if it is met. |
 | `get_direct_execution_status` | Get the status of a direct execution (transfer or contract call), including the transaction hash and result. |
 
 ### Safely preflight direct writes

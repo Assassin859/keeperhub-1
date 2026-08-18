@@ -435,6 +435,13 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
 - `gte`: Greater than or equal to
 - `lte`: Less than or equal to
 
+The check function must resolve to exactly one Solidity integer output, and
+`condition.value` must be an integer-compatible string. KeeperHub rejects
+unsupported ABI return shapes with HTTP `400` before the check RPC call. A
+result that cannot be compared numerically is likewise rejected before the
+action executes. The action leg never forwards native value; `action.value` is
+not part of the supported request shape.
+
 ### Response
 
 **Condition Not Met:**

@@ -145,6 +145,22 @@ const VIEW_ABI = JSON.stringify([
   },
 ]);
 
+const MULTI_OUTPUT_VIEW_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "latestRoundData",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "roundId", type: "uint80" },
+      { name: "answer", type: "int256" },
+      { name: "startedAt", type: "uint256" },
+      { name: "updatedAt", type: "uint256" },
+      { name: "answeredInRound", type: "uint80" },
+    ],
+  },
+]);
+
 const WRITE_ABI = JSON.stringify([
   {
     type: "function",
@@ -858,6 +874,182 @@ describe("Direct Execution API", () => {
       expect(response.status).toBe(400);
       const data = await response.json();
       expect(data.field).toBe("condition.operator");
+    });
+
+    it("returns 400 for a non-numeric condition value", async () => {
+      setupPassingGuards();
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          condition: { operator: "neq", value: "not-a-number" },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.field).toBe("condition.value");
+      expect(mocks.readContractCore).not.toHaveBeenCalled();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when a validated integer check returns an unexpected value", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: { balance: "not-a-number" },
+      });
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          condition: { operator: "neq", value: "0" },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe(
+        "Check function result could not be compared numerically"
+      );
+      expect(mocks.readContractCore).toHaveBeenCalledOnce();
+      expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("fails closed before reading or writing when the check function has multiple outputs", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: {
+          roundId: "10",
+          answer: "2000",
+          startedAt: "100",
+          updatedAt: "101",
+          answeredInRound: "10",
+        },
+      });
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          functionName: "latestRoundData",
+          functionArgs: "[]",
+          abi: MULTI_OUTPUT_VIEW_ABI,
+          condition: { operator: "neq", value: "0" },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe("Check function must return a single integer");
+      expect(data.field).toBe("functionName");
+      expect(mocks.readContractCore).not.toHaveBeenCalled();
+      expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("accepts a single non-256-bit integer output", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: "500",
+      });
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          abi: JSON.stringify([
+            {
+              type: "function",
+              name: "balanceOf",
+              stateMutability: "view",
+              inputs: [{ name: "account", type: "address" }],
+              outputs: [{ name: "balance", type: "uint80" }],
+            },
+          ]),
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.readContractCore).toHaveBeenCalledOnce();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("accepts a signed integer output", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: "-5",
+      });
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          abi: JSON.stringify([
+            {
+              type: "function",
+              name: "balanceOf",
+              stateMutability: "view",
+              inputs: [{ name: "account", type: "address" }],
+              outputs: [{ name: "balance", type: "int256" }],
+            },
+          ]),
+          condition: { operator: "gt", value: "0" },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.conditionResult).toMatchObject({
+        met: false,
+        observedValue: "-5",
+      });
+      expect(mocks.readContractCore).toHaveBeenCalledOnce();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("rejects a single non-integer check output", async () => {
+      setupPassingGuards();
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          abi: JSON.stringify([
+            {
+              type: "function",
+              name: "balanceOf",
+              stateMutability: "view",
+              inputs: [{ name: "account", type: "address" }],
+              outputs: [{ name: "allowed", type: "bool" }],
+            },
+          ]),
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.readContractCore).not.toHaveBeenCalled();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("validates an auto-resolved check ABI before reading or writing", async () => {
+      setupPassingGuards();
+      mocks.resolveAbi.mockResolvedValue({ abi: MULTI_OUTPUT_VIEW_ABI });
+
+      const bodyWithoutAbi = { ...validBody, abi: undefined };
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...bodyWithoutAbi,
+          functionName: "latestRoundData",
+          functionArgs: "[]",
+          condition: { operator: "neq", value: "0" },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.resolveAbi).toHaveBeenCalledOnce();
+      expect(mocks.readContractCore).not.toHaveBeenCalled();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
     });
 
     it("returns 200 with executed=false when condition not met", async () => {

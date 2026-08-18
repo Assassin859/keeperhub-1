@@ -4,6 +4,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
+import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
@@ -63,6 +64,66 @@ async function resolveAbiFromField(
       error: `ABI is required. Could not auto-fetch ABI: ${getErrorMessage(err)}`,
     };
   }
+}
+
+const INTEGER_ABI_TYPE_REGEX = /^(?:u?int)(\d{0,3})$/u;
+
+function isIntegerAbiType(type: unknown): boolean {
+  if (typeof type !== "string") {
+    return false;
+  }
+
+  const match = INTEGER_ABI_TYPE_REGEX.exec(type);
+  if (!match) {
+    return false;
+  }
+
+  const widthText = match[1];
+  if (widthText === "") {
+    return true;
+  }
+
+  const width = Number(widthText);
+  return (
+    String(width) === widthText &&
+    width >= 8 &&
+    width <= 256 &&
+    width % 8 === 0
+  );
+}
+
+function unsupportedCheckOutputError(
+  abi: string,
+  functionName: string
+): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(abi);
+  } catch {
+    // readContractCore preserves the established malformed-ABI response.
+    return null;
+  }
+
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+
+  const checkFunction = findAbiFunction(parsed as AbiItem[], functionName);
+  if (!checkFunction) {
+    // readContractCore preserves the established function-not-found response.
+    return null;
+  }
+
+  const { outputs } = checkFunction;
+  if (
+    !Array.isArray(outputs) ||
+    outputs.length !== 1 ||
+    !isIntegerAbiType(outputs[0]?.type)
+  ) {
+    return "Check function must return a single integer";
+  }
+
+  return null;
 }
 
 // Every dry-run response says whether the run itself completed, so a caller
@@ -321,6 +382,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  const checkFunctionOutputError = unsupportedCheckOutputError(
+    readAbiResult.abi,
+    body.functionName as string
+  );
+  if (checkFunctionOutputError) {
+    return NextResponse.json(
+      {
+        error: checkFunctionOutputError,
+        field: "functionName",
+      },
+      { status: HttpStatus.BAD_REQUEST }
+    );
+  }
+
   const readResult = await readContractCore({
     contractAddress: body.contractAddress as string,
     network,
@@ -338,6 +413,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const conditionResult = evaluateCondition(readResult.result, condition);
+
+  if (!conditionResult) {
+    return NextResponse.json(
+      {
+        error: "Check function result could not be compared numerically",
+        field: "functionName",
+        details: "The check function must return a single integer value.",
+      },
+      { status: HttpStatus.BAD_REQUEST }
+    );
+  }
 
   if (!conditionResult.met) {
     // No `wouldRevert`: the action was never encoded or estimated, so we have
