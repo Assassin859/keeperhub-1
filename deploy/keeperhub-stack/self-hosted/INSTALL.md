@@ -106,7 +106,7 @@ you let it run one. Decide now, because the choice changes what you install here
 and what you put in `.env`.
 
 *Option 1 — bring your own* (`DB_MODE=byo`). Use a database you already run: a
-managed one from your cloud, or your own server. Nothing to install in the
+managed one from your provider, or your own server. Nothing to install in the
 cluster. Put the connection string in a Secret before you install, because the
 chart reads it and the install refuses to start without it:
 
@@ -114,12 +114,57 @@ chart reads it and the install refuses to start without it:
 kubectl create namespace keeperhub
 
 kubectl -n keeperhub create secret generic keeperhub-db \
-  --from-literal=DATABASE_URL='postgresql://user:password@host:5432/keeperhub'
+  --from-literal=DATABASE_URL='postgresql://user:password@host:5432/keeperhub?sslmode=verify-full'
 ```
 
 Then in `.env` set `DB_MODE="byo"`. The Secret's name and key are configurable
 there too, as `DB_SECRET_NAME` and `DB_SECRET_KEY`, if `keeperhub-db` and
 `DATABASE_URL` do not suit you.
+
+Four things decide whether a bring-your-own database works. Get them right
+before you install; each one fails in a way that does not name itself.
+
+**PostgreSQL 13 or newer, and the role you connect as must own the database.**
+The install creates schemas (`workflow`, `drizzle`, `workflow_drizzle`,
+`graphile_worker`) and, on PostgreSQL 15 and later, the `public` schema is not
+writable by a role that does not own it. A least-privilege role fails at the
+first `CREATE TABLE`. Create the database *as* the role in the connection
+string, or grant it ownership:
+
+```sql
+ALTER SCHEMA public OWNER TO <your_role>;
+GRANT ALL ON SCHEMA public TO <your_role>;
+```
+
+No superuser is needed, and no extensions are installed, so an ordinary managed
+admin account is enough.
+
+**Put an explicit `sslmode` in the URL.** Without one the driver defaults to a
+plaintext connection. A managed database that requires TLS then refuses it, and
+the symptom is the install sitting in `wait-for-db` for five minutes before
+rolling the whole release back — an error about a timeout, not about TLS. Use
+`sslmode=verify-full` unless you have a reason not to; the application forces it
+for any host outside the cluster anyway. Verification uses the system trust
+store, so a database whose certificate chains to a public root needs nothing
+extra. A private CA needs it mounted and named in `NODE_EXTRA_CA_CERTS`.
+
+**Size for connections, not for data.** This is small on disk and wide on
+connections, because each per-execution runner Job opens its own:
+
+| | connections |
+| --- | --- |
+| At rest | about 45 |
+| With four concurrent executions | about 85 |
+| Recommended `max_connections` | 200 or more |
+
+The chart-managed database is configured for 200. Entry-level managed tiers are
+often capped near 50 or 100, which survives an idle install and fails the first
+time several workflows run at once. Lower `MAX_CONCURRENT_JOBS` if you must use
+a small tier.
+
+**Do not put a transaction-mode connection pooler in front of it.** The workflow
+engine relies on `LISTEN`/`NOTIFY`, which transaction pooling breaks. Connect
+directly, or use session-mode pooling.
 
 *Option 2 — let the chart run one* (`DB_MODE=bundled`). It creates and manages a
 PostgreSQL cluster for you, which brings failover and backups with it. This is
@@ -256,6 +301,10 @@ These fail quietly, leaving every pod green.
 | The UI loads and reads, but every save returns 403 | `APP_HOST` does not match the hostname you are using |
 | Block or Event triggers never fire | `CHAIN_RPC_CONFIG` was set after installing, or a chain key is misspelled. The keys are exact: Ethereum's testnet is `eth-sepolia`, Base's is `base-testnet` |
 | A sign-in button appears but the flow fails | a client id is set and its secret is not, or the reverse |
+| Install hangs in `wait-for-db`, then the release rolls back | with `DB_MODE=byo`, usually a missing `sslmode` in the URL against a database that requires TLS. Also check the firewall actually allows the cluster |
+| Install reaches the migration and fails on `CREATE TABLE` or `CREATE SCHEMA` | the role in the URL does not own the database. See the ownership note in step 2d |
+| Workflows fail only when several run at once | the database ran out of connections. Raise `max_connections` or lower `MAX_CONCURRENT_JOBS` |
+| Scheduled workflows stop firing for no obvious reason | a transaction-mode pooler between the app and the database is swallowing `LISTEN`/`NOTIFY` |
 
 ---
 
