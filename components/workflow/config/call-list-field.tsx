@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import {
@@ -114,18 +114,33 @@ export function CallListField({
     parseCallsValue(value, nextId)
   );
 
-  function updateEntries(updated: CallEntry[]): void {
-    setEntries(updated);
-    onChange(serializeCalls(updated));
-  }
+  // Notifies the parent from the committed `entries` state rather than
+  // inline in each mutator. A field like AbiWithAutoFetchField's manual-ABI
+  // toggle can call onUpdateConfig and onChange back to back in the same
+  // handler; deriving each mutator's next array from a stale `entries`
+  // closure would let the second call silently clobber the first. Reacting
+  // to the committed state instead means every functional setEntries update
+  // below composes correctly no matter how many fire in one event.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    onChangeRef.current(serializeCalls(entries));
+  }, [entries]);
 
   function addRow(): void {
-    updateEntries([...entries, createEmptyEntry(nextId())]);
+    setEntries((prev) => [...prev, createEmptyEntry(nextId())]);
   }
 
   function removeRow(targetId: number): void {
-    const updated = entries.filter((e) => e.id !== targetId);
-    updateEntries(updated.length > 0 ? updated : [createEmptyEntry(nextId())]);
+    setEntries((prev) => {
+      const updated = prev.filter((e) => e.id !== targetId);
+      return updated.length > 0 ? updated : [createEmptyEntry(nextId())];
+    });
   }
 
   function updateField(
@@ -133,10 +148,11 @@ export function CallListField({
     key: keyof Omit<CallEntry, "id">,
     fieldValue: string
   ): void {
-    const updated = entries.map((entry) =>
-      entry.id === targetId ? { ...entry, [key]: fieldValue } : entry
+    setEntries((prev) =>
+      prev.map((entry) =>
+        entry.id === targetId ? { ...entry, [key]: fieldValue } : entry
+      )
     );
-    updateEntries(updated);
   }
 
   const actionNetwork = String(
