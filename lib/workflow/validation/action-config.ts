@@ -86,9 +86,12 @@ function isMissingRequiredValue(value: unknown): boolean {
 // the same three fields that are `required` on the equivalent standalone
 // write-contract/read-contract node. Validated independently per call so an
 // incomplete call added after a valid one is never silently treated as
-// optional.
+// optional. Network is required too, but only when the field renders a
+// per-row Network selector: batch-write-contract sets hideNetworkColumn and
+// reads the action-level network instead, so a blank per-call network there
+// is not a config error.
 const BATCH_CALL_REQUIRED_FIELDS: Array<{
-  key: "contractAddress" | "abi" | "abiFunction";
+  key: "contractAddress" | "abi" | "abiFunction" | "network";
   label: string;
 }> = [
   { key: "contractAddress", label: "Contract Address" },
@@ -115,16 +118,20 @@ function safeParseJsonArray(value: unknown): unknown[] {
 
 export type BatchCallMissingField = {
   callIndex: number;
-  fieldKey: "contractAddress" | "abi" | "abiFunction";
+  fieldKey: "contractAddress" | "abi" | "abiFunction" | "network";
   fieldLabel: string;
 };
 
 export function getMissingBatchCallFields(
-  callsValue: unknown
+  callsValue: unknown,
+  hideNetworkColumn?: boolean
 ): BatchCallMissingField[] {
+  const requiredFields = hideNetworkColumn
+    ? BATCH_CALL_REQUIRED_FIELDS
+    : [...BATCH_CALL_REQUIRED_FIELDS, { key: "network", label: "Network" } as const];
   const missing: BatchCallMissingField[] = [];
   for (const [callIndex, call] of parseBatchCalls(callsValue).entries()) {
-    for (const { key, label } of BATCH_CALL_REQUIRED_FIELDS) {
+    for (const { key, label } of requiredFields) {
       if (isMissingRequiredValue(call[key])) {
         missing.push({ callIndex, fieldKey: key, fieldLabel: label });
       }
@@ -494,7 +501,10 @@ export function validateWorkflowActionConfigs(
       }
 
       if (field.type === "call-list-builder") {
-        for (const missingCall of getMissingBatchCallFields(value)) {
+        for (const missingCall of getMissingBatchCallFields(
+          value,
+          field.hideNetworkColumn
+        )) {
           issues.push({
             code: "MISSING_REQUIRED_FIELD",
             path: `nodes[${nodeIndex}].data.config.${field.key}[${missingCall.callIndex}].${missingCall.fieldKey}`,

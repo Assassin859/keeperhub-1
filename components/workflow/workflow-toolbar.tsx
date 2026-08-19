@@ -362,7 +362,10 @@ function getNodeMissingFields(
         shouldShowField(field, config || {})
     )
     .flatMap((field) =>
-      getMissingBatchCallFields(config?.[field.key]).map((missingCall) => ({
+      getMissingBatchCallFields(
+        config?.[field.key],
+        field.hideNetworkColumn
+      ).map((missingCall) => ({
         fieldKey: `${field.key}[${missingCall.callIndex}].${missingCall.fieldKey}`,
         fieldLabel: `Call ${missingCall.callIndex + 1}: ${missingCall.fieldLabel}`,
       }))
