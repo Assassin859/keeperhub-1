@@ -676,6 +676,11 @@ function buildComparisonColumns(): PkgComparisonColumn[] {
   }));
 }
 
+/** A card nobody can act on: the price and what it includes still read. */
+function withoutCta(card: PkgPricingCard): PkgPricingCard {
+  return { ...card, cta: { ...card.cta, disabled: true } };
+}
+
 // -- Confirm dialog derived data --
 
 type DialogData = ConfirmTarget & {
@@ -741,6 +746,7 @@ export function PricingTable({
   gasCreditCaps,
   trial,
   onPlanUpdated,
+  canManage = true,
 }: PricingTableProps): React.ReactElement {
   const [interval, setInterval] = useState<BillingInterval>("monthly");
   const [selectedTierByCard, setSelectedTierByCard] = useState<
@@ -819,7 +825,7 @@ export function PricingTable({
   const proTrialDays = isTrialSelection(trial, "pro", selectedTierByCard.pro)
     ? (trial?.days ?? null)
     : null;
-  const cards = buildCards({
+  const builtCards = buildCards({
     currentPlan,
     currentTier,
     currentInterval,
@@ -832,6 +838,7 @@ export function PricingTable({
     proTrialDays,
     onSelect: onCardCta,
   });
+  const cards = canManage ? builtCards : builtCards.map(withoutCta);
 
   const comparisonColumns = buildComparisonColumns();
   const comparisonRows = buildComparisonRows(
