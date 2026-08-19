@@ -40,12 +40,17 @@ const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 // Matches the 500-char cap in export-schema.ts but shorter for readability.
 const NODE_LABEL_MAX_CHARS = 100;
 
-// Control characters and Unicode bidi overrides that can inject invisible
-// text or alter rendering order in error messages. Stripped from node
-// labels before interpolation into the summary.
+// Control characters, Unicode bidi overrides and isolates that can inject
+// invisible text or alter rendering order in error messages. Stripped from
+// node labels before interpolation into the summary.
+//
+// Covers: C0 + DEL + C1 controls, line/paragraph separators, zero-width
+// chars (ZWSP/ZWNJ/ZWJ/LRM/RLM), bidi overrides (LRE/RLE/PDF/LRO/RLO),
+// bidi isolates (LRI/RLI/FSI/PDI), Arabic letter mark, BOM, and soft
+// hyphen.
 const NODE_LABEL_CONTROL_CHARS_RE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
-  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e]/g;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides/isolates to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
+  /[\u0000-\u001f\u007f-\u009f\u00ad\ufeff\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 
 function sanitiseNodeLabel(label: string): string {
   let stripped = label.replace(NODE_LABEL_CONTROL_CHARS_RE, " ");
@@ -55,6 +60,7 @@ function sanitiseNodeLabel(label: string): string {
     .replace(/"/g, "'")
     .replace(/\(/g, "[")
     .replace(/\)/g, "]");
+  stripped = stripped.trim();
   if (stripped.length > NODE_LABEL_MAX_CHARS) {
     return `${stripped.slice(0, NODE_LABEL_MAX_CHARS - 3)}...`;
   }
@@ -585,26 +591,36 @@ export function formatActionConfigValidationResponse(
   const summary =
     validation.issues.length > 0
       ? (() => {
-          const labels = new Map<string, number>();
+          const labels = new Map<string, { count: number; fallback: string }>();
           for (const issue of validation.issues) {
-            const label = sanitiseNodeLabel(
-              issue.nodeLabel ?? issue.nodeId ?? issue.path
-            );
-            labels.set(label, (labels.get(label) ?? 0) + 1);
+            const raw = issue.nodeLabel ?? issue.nodeId ?? issue.path;
+            const existing = labels.get(raw);
+            if (existing) {
+              existing.count++;
+            } else {
+              labels.set(raw, {
+                count: 1,
+                fallback: issue.nodeId ?? issue.path,
+              });
+            }
           }
           const entries: string[] = [];
           let shown = 0;
-          for (const [label, count] of labels) {
+          for (const [raw, { count, fallback }] of labels) {
             if (shown >= 3) {
               entries.push(`and ${labels.size - 3} more`);
               break;
+            }
+            let label = sanitiseNodeLabel(raw);
+            if (!label.trim()) {
+              label = fallback;
             }
             entries.push(
               count > 1 ? `"${label}" (${count} issues)` : `"${label}"`
             );
             shown++;
           }
-          return `Invalid node(s): ${entries.join(", ")} `;
+          return `Invalid node(s): ${entries.join(", ")}. `;
         })()
       : "";
   return {

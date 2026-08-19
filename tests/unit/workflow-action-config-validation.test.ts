@@ -1341,12 +1341,12 @@ describe("formatActionConfigValidationResponse", () => {
     expect(formatActionConfigValidationResponse(validation)).toEqual({
       error: "INVALID_ACTION_CONFIG",
       message:
-        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send" Fix the listed fields and save again.',
+        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send". Fix the listed fields and save again.',
       invalidFields: validation.issues,
     });
   });
 
-  it("names the invalid node and suggestion in the top-level message", () => {
+  it("names the invalid node in the top-level message", () => {
     const validation = validateWorkflowActionConfigs([
       {
         id: "reserve-condition",
@@ -1402,6 +1402,24 @@ describe("formatActionConfigValidationResponse", () => {
     expect(result.message).toContain('"My Node"');
   });
 
+  it("strips bidi isolates from node labels in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: "\u2067Send Payout\u2069",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"Send Payout"');
+  });
+
   it("escapes format delimiters in node labels to prevent fake entries", () => {
     const result = formatActionConfigValidationResponse({
       valid: false,
@@ -1417,7 +1435,26 @@ describe("formatActionConfigValidationResponse", () => {
       ],
     });
 
-    expect(result.message).not.toContain("(webhook/send):");
+    expect(result.message).toContain('"A\' [webhook/send]"');
+  });
+
+  it("falls back to nodeId when sanitised label is blank", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeId: "my-node",
+          nodeLabel: "\u200b",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"my-node"');
   });
 
   it("shows at most three distinct nodes in the summary", () => {
