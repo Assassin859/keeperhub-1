@@ -420,10 +420,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     condition.operator
   );
   if (checkFunctionOutputError) {
-    return NextResponse.json(
-      checkFunctionOutputError,
-      { status: HttpStatus.BAD_REQUEST }
-    );
+    return NextResponse.json(checkFunctionOutputError, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   const readResult = await readContractCore({
