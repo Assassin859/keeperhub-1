@@ -128,7 +128,10 @@ export function getMissingBatchCallFields(
 ): BatchCallMissingField[] {
   const requiredFields = hideNetworkColumn
     ? BATCH_CALL_REQUIRED_FIELDS
-    : [...BATCH_CALL_REQUIRED_FIELDS, { key: "network", label: "Network" } as const];
+    : [
+        ...BATCH_CALL_REQUIRED_FIELDS,
+        { key: "network", label: "Network" } as const,
+      ];
   const missing: BatchCallMissingField[] = [];
   for (const [callIndex, call] of parseBatchCalls(callsValue).entries()) {
     for (const { key, label } of requiredFields) {
