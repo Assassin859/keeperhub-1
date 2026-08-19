@@ -442,7 +442,7 @@ function runAllowancePreflightCheck(
         if (method !== null && ALLOWANCE_SPEND_METHODS.has(method)) {
           warnings.push({
             code: VALIDATION_WARNING_CODES.MISSING_ALLOWANCE_PREFLIGHT,
-            message: `nodes[${idx}].config.calls[${callIdx}] calls "${method}", which moves tokens via an existing allowance, but the workflow has no web3/check-allowance node. Add an upstream web3/check-allowance node before this write to avoid an "insufficient allowance" revert at execution time. Note: batch calls run with msg.sender set to the Multicall3 contract, not your wallet, so the allowance must be granted to Multicall3.`,
+            message: `nodes[${idx}].config.calls[${callIdx}] calls "${method}", which moves tokens via an existing allowance, but the workflow has no web3/check-allowance node. Add an upstream web3/check-allowance node before this write to avoid an "insufficient allowance" revert at execution time. Note: batch calls run with msg.sender set to the Multicall3 contract, not your wallet, so a "${method}" call that relies on a wallet allowance will not work in a batch; keep it in a standalone write node instead.`,
             parameterPath: `nodes[${idx}].config.calls[${callIdx}].abiFunction`,
           });
         }
