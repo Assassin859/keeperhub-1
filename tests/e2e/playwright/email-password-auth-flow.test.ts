@@ -18,6 +18,13 @@ const CHANGED_PASSWORD = "ChangedPass789!";
  * tests cannot see a form wired to a field that no longer renders.
  */
 test.describe("email and password auth flow", () => {
+  // The chromium project loads a signed-in storageState. These tests create
+  // their own users and start from /welcome, which only serves the sign-up view
+  // to logged-out visitors, so the inherited session has to go first.
+  test.beforeEach(async ({ context }) => {
+    await context.clearCookies();
+  });
+
   test("signup verifies email and enrolls TOTP before granting a session", async ({
     page,
   }) => {
