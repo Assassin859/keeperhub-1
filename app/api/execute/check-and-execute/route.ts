@@ -84,12 +84,7 @@ function isIntegerAbiType(type: unknown): boolean {
   }
 
   const width = Number(widthText);
-  return (
-    String(width) === widthText &&
-    width >= 8 &&
-    width <= 256 &&
-    width % 8 === 0
-  );
+  return String(width) === widthText && width >= 8 && width <= 256 && width % 8 === 0;
 }
 
 function unsupportedCheckOutputError(

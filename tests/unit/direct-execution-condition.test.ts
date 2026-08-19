@@ -29,14 +29,11 @@ describe("direct-execution condition evaluation", () => {
     ["an array output", ["100"]],
     ["a tuple output", { quote: { answer: "100" } }],
     ["a non-numeric scalar", "not-a-number"],
-  ])(
-    "rejects %s instead of falling back to string inequality",
-    (_label, value) => {
-      expect(
-        evaluateCondition(value, { operator: "neq", value: "0" })
-      ).toBeNull();
-    }
-  );
+  ])("rejects %s instead of falling back to string inequality", (_label, value) => {
+    expect(
+      evaluateCondition(value, { operator: "neq", value: "0" })
+    ).toBeNull();
+  });
 
   it("rejects a non-numeric target instead of falling back to string inequality", () => {
     expect(
