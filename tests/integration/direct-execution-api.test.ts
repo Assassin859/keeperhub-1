@@ -161,6 +161,10 @@ const MULTI_OUTPUT_VIEW_ABI = JSON.stringify([
   },
 ]);
 
+const OWNER_ADDRESS = "0xAbCdEf0123456789AbCdEf0123456789AbCdEf01";
+const FIXED_BYTES_VALUE =
+  "0xAbCdEf0123456789AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789";
+
 const WRITE_ABI = JSON.stringify([
   {
     type: "function",
@@ -910,7 +914,7 @@ describe("Direct Execution API", () => {
       expect(response.status).toBe(400);
       const data = await response.json();
       expect(data.error).toBe(
-        "Check function result could not be compared numerically"
+        "Check function result could not be compared"
       );
       expect(mocks.readContractCore).toHaveBeenCalledOnce();
       expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
@@ -942,7 +946,37 @@ describe("Direct Execution API", () => {
 
       expect(response.status).toBe(400);
       const data = await response.json();
-      expect(data.error).toBe("Check function must return a single integer");
+      expect(data.error).toBe("Unsupported check function output");
+      expect(data.field).toBe("functionName");
+      expect(mocks.readContractCore).not.toHaveBeenCalled();
+      expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+      expect(mocks.writeContractCore).not.toHaveBeenCalled();
+    });
+
+    it("rejects a zero-output check before reading or writing", async () => {
+      setupPassingGuards();
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          functionName: "emptyCheck",
+          functionArgs: "[]",
+          abi: JSON.stringify([
+            {
+              type: "function",
+              name: "emptyCheck",
+              stateMutability: "view",
+              inputs: [],
+              outputs: [],
+            },
+          ]),
+          condition: { operator: "eq", value: "0" },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe("Unsupported check function output");
       expect(data.field).toBe("functionName");
       expect(mocks.readContractCore).not.toHaveBeenCalled();
       expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
@@ -1028,9 +1062,108 @@ describe("Direct Execution API", () => {
       );
 
       expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe("Unsupported check function output");
+      expect(data.field).toBe("functionName");
       expect(mocks.readContractCore).not.toHaveBeenCalled();
       expect(mocks.writeContractCore).not.toHaveBeenCalled();
     });
+
+    it.each([
+      {
+        label: "address",
+        functionName: "owner",
+        outputName: "owner",
+        outputType: "address",
+        observed: OWNER_ADDRESS,
+      },
+      {
+        label: "fixed bytes",
+        functionName: "key",
+        outputName: "key",
+        outputType: "bytes32",
+        observed: FIXED_BYTES_VALUE,
+      },
+    ])(
+      "preserves case-insensitive $label equality checks",
+      async ({ functionName, outputName, outputType, observed }) => {
+        setupPassingGuards();
+        mocks.readContractCore.mockResolvedValue({
+          success: true,
+          result: { [outputName]: observed },
+        });
+
+        const response = await checkAndExecutePOST(
+          postRequest("/check-and-execute", {
+            ...validBody,
+            functionName,
+            functionArgs: "[]",
+            abi: JSON.stringify([
+              {
+                type: "function",
+                name: functionName,
+                stateMutability: "view",
+                inputs: [],
+                outputs: [{ name: outputName, type: outputType }],
+              },
+            ]),
+            condition: { operator: "neq", value: observed.toLowerCase() },
+          })
+        );
+
+        expect(response.status).toBe(200);
+        const data = await response.json();
+        expect(data).toMatchObject({
+          executed: false,
+          conditionResult: { met: false, observedValue: observed },
+        });
+        expect(mocks.readContractCore).toHaveBeenCalledOnce();
+        expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+        expect(mocks.writeContractCore).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      { label: "address", outputType: "address", target: OWNER_ADDRESS },
+      {
+        label: "fixed bytes",
+        outputType: "bytes32",
+        target: FIXED_BYTES_VALUE,
+      },
+    ])(
+      "rejects ordering operators for a $label output before reading",
+      async ({ outputType, target }) => {
+        setupPassingGuards();
+
+        const response = await checkAndExecutePOST(
+          postRequest("/check-and-execute", {
+            ...validBody,
+            functionName: "checkValue",
+            functionArgs: "[]",
+            abi: JSON.stringify([
+              {
+                type: "function",
+                name: "checkValue",
+                stateMutability: "view",
+                inputs: [],
+                outputs: [{ name: "value", type: outputType }],
+              },
+            ]),
+            condition: { operator: "gt", value: target },
+          })
+        );
+
+        expect(response.status).toBe(400);
+        const data = await response.json();
+        expect(data.error).toBe(
+          "Unsupported condition operator for check output"
+        );
+        expect(data.field).toBe("condition.operator");
+        expect(mocks.readContractCore).not.toHaveBeenCalled();
+        expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+        expect(mocks.writeContractCore).not.toHaveBeenCalled();
+      }
+    );
 
     it("validates an auto-resolved check ABI before reading or writing", async () => {
       setupPassingGuards();

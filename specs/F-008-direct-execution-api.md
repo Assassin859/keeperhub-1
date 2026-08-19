@@ -156,8 +156,10 @@ The contract-call endpoint auto-detects read vs write operations:
 
 The check-and-execute gate evaluates conditions against contract read results:
 - Supports 6 operators: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`
-- Requires exactly one Solidity integer check output and compares with BigInt
-- Rejects non-numeric values instead of falling back to string comparison
+- Accepts exactly one Solidity integer output for all six operators
+- Preserves `eq`/`neq` checks for exactly one `address` or `bytes1` through `bytes32` output
+- Rejects empty, multi-output, compound, and unsupported scalar return shapes before the RPC read
+- Rejects values that cannot be parsed by `BigInt` instead of falling back to string comparison
 - Extracts values from named single-output objects (`{ result: value }`)
 - Returns `ConditionResult` with `met`, `observedValue`, `targetValue`, `operator`
 

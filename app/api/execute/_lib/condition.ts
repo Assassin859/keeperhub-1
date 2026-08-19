@@ -58,9 +58,6 @@ function extractObservedString(observed: unknown): string | null {
   if (typeof scalar === "bigint") {
     return scalar.toString();
   }
-  if (typeof scalar === "number" && Number.isSafeInteger(scalar)) {
-    return String(scalar);
-  }
   return null;
 }
 

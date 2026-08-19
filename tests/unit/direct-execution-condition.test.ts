@@ -25,6 +25,43 @@ describe("direct-execution condition evaluation", () => {
   });
 
   it.each([
+    ["eq", true],
+    ["neq", false],
+  ] as const)(
+    "compares hexadecimal address values case-insensitively with %s",
+    (operator, met) => {
+      expect(
+        evaluateCondition(
+          "0xAbCdEf0123456789AbCdEf0123456789AbCdEf01",
+          {
+            operator,
+            value: "0xabcdef0123456789abcdef0123456789abcdef01",
+          }
+        )
+      ).toMatchObject({ met });
+    }
+  );
+
+  it.each([
+    ["eq", true],
+    ["neq", false],
+  ] as const)(
+    "compares fixed-bytes values case-insensitively with %s",
+    (operator, met) => {
+      expect(
+        evaluateCondition(
+          "0xAbCdEf0123456789AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789",
+          {
+            operator,
+            value:
+              "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+          }
+        )
+      ).toMatchObject({ met });
+    }
+  );
+
+  it.each([
     ["a multi-output object", { roundId: "1", answer: "2" }],
     ["an array output", ["100"]],
     ["a tuple output", { quote: { answer: "100" } }],
@@ -38,6 +75,12 @@ describe("direct-execution condition evaluation", () => {
   it("rejects a non-numeric target instead of falling back to string inequality", () => {
     expect(
       evaluateCondition("100", { operator: "neq", value: "not-a-number" })
+    ).toBeNull();
+  });
+
+  it("rejects JavaScript numbers because readContractCore returns strings", () => {
+    expect(
+      evaluateCondition(100, { operator: "eq", value: "100" })
     ).toBeNull();
   });
 });

@@ -67,6 +67,7 @@ async function resolveAbiFromField(
 }
 
 const INTEGER_ABI_TYPE_REGEX = /^(?:u?int)(\d{0,3})$/u;
+const FIXED_BYTES_ABI_TYPE_REGEX = /^bytes(?:[1-9]|[12]\d|3[0-2])$/u;
 
 function isIntegerAbiType(type: unknown): boolean {
   if (typeof type !== "string") {
@@ -89,10 +90,21 @@ function isIntegerAbiType(type: unknown): boolean {
   );
 }
 
+function isFixedBytesAbiType(type: unknown): boolean {
+  return typeof type === "string" && FIXED_BYTES_ABI_TYPE_REGEX.test(type);
+}
+
+type CheckOutputError = {
+  error: string;
+  field: "condition.operator" | "functionName";
+  details: string;
+};
+
 function unsupportedCheckOutputError(
   abi: string,
-  functionName: string
-): string | null {
+  functionName: string,
+  operator: ConditionInput["operator"]
+): CheckOutputError | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(abi);
@@ -112,15 +124,38 @@ function unsupportedCheckOutputError(
   }
 
   const { outputs } = checkFunction;
-  if (
-    !Array.isArray(outputs) ||
-    outputs.length !== 1 ||
-    !isIntegerAbiType(outputs[0]?.type)
-  ) {
-    return "Check function must return a single integer";
+  if (!Array.isArray(outputs) || outputs.length !== 1) {
+    return {
+      error: "Unsupported check function output",
+      field: "functionName",
+      details:
+        "The check function must return exactly one Solidity integer, address, or bytes1..bytes32 value.",
+    };
   }
 
-  return null;
+  const outputType = outputs[0]?.type;
+  if (isIntegerAbiType(outputType)) {
+    return null;
+  }
+
+  if (outputType === "address" || isFixedBytesAbiType(outputType)) {
+    if (operator === "eq" || operator === "neq") {
+      return null;
+    }
+
+    return {
+      error: "Unsupported condition operator for check output",
+      field: "condition.operator",
+      details: "address and bytes1..bytes32 outputs support only eq and neq.",
+    };
+  }
+
+  return {
+    error: "Unsupported check function output",
+    field: "functionName",
+    details:
+      "The check function must return exactly one Solidity integer, or one address or bytes1..bytes32 value with eq or neq.",
+  };
 }
 
 // Every dry-run response says whether the run itself completed, so a caller
@@ -381,14 +416,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const checkFunctionOutputError = unsupportedCheckOutputError(
     readAbiResult.abi,
-    body.functionName as string
+    body.functionName as string,
+    condition.operator
   );
   if (checkFunctionOutputError) {
     return NextResponse.json(
-      {
-        error: checkFunctionOutputError,
-        field: "functionName",
-      },
+      checkFunctionOutputError,
       { status: HttpStatus.BAD_REQUEST }
     );
   }
@@ -414,9 +447,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!conditionResult) {
     return NextResponse.json(
       {
-        error: "Check function result could not be compared numerically",
+        error: "Check function result could not be compared",
         field: "functionName",
-        details: "The check function must return a single integer value.",
+        details:
+          "The check function must return one supported scalar value for the selected operator.",
       },
       { status: HttpStatus.BAD_REQUEST }
     );
