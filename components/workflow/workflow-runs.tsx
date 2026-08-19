@@ -23,6 +23,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import type {
+  NodeExecutionStatus,
+  WorkflowExecutionStatus,
+} from "@/lib/errors/execution-status";
 import {
   FOR_EACH_GROUP_TYPE,
   buildChildLogsLookup,
@@ -53,7 +57,7 @@ type ExecutionLog = {
   nodeId: string;
   nodeName: string;
   nodeType: string;
-  status: "pending" | "running" | "success" | "error" | "cancelled";
+  status: NodeExecutionStatus;
   startedAt: Date;
   completedAt: Date | null;
   duration: string | null;
@@ -67,14 +71,7 @@ type ExecutionLog = {
 type WorkflowExecution = {
   id: string;
   workflowId: string;
-  status:
-    | "pending"
-    | "running"
-    | "success"
-    | "error"
-    | "skipped"
-    | "cancelled"
-    | "phantom";
+  status: WorkflowExecutionStatus;
   startedAt: Date;
   completedAt: Date | null;
   duration: string | null;
@@ -153,7 +150,7 @@ function createExecutionLogsMap(logs: ExecutionLog[]): Record<
     nodeId: string;
     nodeName: string;
     nodeType: string;
-    status: "pending" | "running" | "success" | "error" | "cancelled";
+    status: NodeExecutionStatus;
     output?: unknown;
   }
 > {
@@ -163,7 +160,7 @@ function createExecutionLogsMap(logs: ExecutionLog[]): Record<
       nodeId: string;
       nodeName: string;
       nodeType: string;
-      status: "pending" | "running" | "success" | "error" | "cancelled";
+      status: NodeExecutionStatus;
       output?: unknown;
     }
   > = {};
@@ -1027,7 +1024,7 @@ export function WorkflowRuns({
         nodeId: string;
         nodeName: string;
         nodeType: string;
-        status: "pending" | "running" | "success" | "error" | "cancelled";
+        status: NodeExecutionStatus;
         input: unknown;
         output: unknown;
         error: string | null;
@@ -1159,6 +1156,7 @@ export function WorkflowRuns({
           "success",
           "error",
           "system_error",
+          "skipped",
         ]);
         const executionMap = new Map(data.map((e) => [e.id, e]));
         for (const executionId of expandedRuns) {

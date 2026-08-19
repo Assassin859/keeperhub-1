@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, inArray, ne, or } from "drizzle-orm";
+import { and, eq, inArray, notInArray, or } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
@@ -225,18 +225,23 @@ export async function updateExecutionStatus(
   // backstop: if the engine's own write landed, the row is already
   // success/error/cancelled and this update is a no-op; if that write was lost
   // (it can throw and only be logged), this closes the row instead of leaving
-  // it stuck "running". Excluding all three terminal states keeps the backstop
-  // from clobbering the engine's richer fields (KEEP-431).
+  // it stuck "running". Excluding every terminal state keeps the backstop from
+  // clobbering the engine's richer fields (KEEP-431). 'skipped' is in the list
+  // for the same reason: a run the platform refused must not be reopened as a
+  // failure by a late backstop write.
   const updated = await db
     .update(workflowExecutions)
     .set(updateData)
     .where(
       and(
         eq(workflowExecutions.id, executionId),
-        ne(workflowExecutions.status, "success"),
-        ne(workflowExecutions.status, "error"),
-        ne(workflowExecutions.status, "system_error"),
-        ne(workflowExecutions.status, "cancelled")
+        notInArray(workflowExecutions.status, [
+          "success",
+          "error",
+          "system_error",
+          "skipped",
+          "cancelled",
+        ])
       )
     )
     .returning({ workflowId: workflowExecutions.workflowId });

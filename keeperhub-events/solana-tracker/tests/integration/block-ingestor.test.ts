@@ -160,6 +160,11 @@ describe("BlockIngestor end-to-end fan-out", () => {
 
     expect(mocks.enqueueEvent).not.toHaveBeenCalled();
     expect(mocks.enqueueBlock).not.toHaveBeenCalled();
+    // A refusal is settled, so it is marked: re-processing the block would
+    // otherwise pay for the admission round-trip again and reach the same
+    // answer.
+    expect(dedup.markProcessed).toHaveBeenCalledWith("wf-event", "sig-1");
+    expect(dedup.markProcessed).toHaveBeenCalledWith("wf-block", "block:10");
   });
 
   it("skips the event enqueue when its signature is already processed", async () => {

@@ -68,6 +68,7 @@ import {
   resolveToSkipped,
 } from "./lib/db-helpers";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
+import { recordSkippedSample } from "./lib/terminal-counters";
 import { toJsonSafe } from "./lib/serialize";
 import { executorMessageSchema } from "./message-schema";
 import {
@@ -140,7 +141,7 @@ async function settlePaygOverflow(params: {
     `[Executor] PAYG charge blocked ${params.triggerType} trigger for workflow ${params.workflowId}: org=${params.organizationId} reason=${charge.reason}`
   );
   if (params.claimedStatus === "running") {
-    await db
+    const resolved = await db
       .update(workflowExecutions)
       .set({
         // Refused before it started: 'skipped', not 'error'. Same reasoning as
@@ -158,7 +159,17 @@ async function settlePaygOverflow(params: {
           eq(workflowExecutions.id, params.executionId),
           eq(workflowExecutions.status, "running")
         )
-      );
+      )
+      .returning({ id: workflowExecutions.id });
+
+    // The row no longer carries an error status, so nothing else counts it.
+    // Gated on the CAS matching so a re-delivery cannot double-count.
+    if (resolved.length > 0) {
+      await recordSkippedSample(db, {
+        workflowId: params.workflowId,
+        reason: "payg_unpaid",
+      });
+    }
   } else {
     await resolveToSkipped(db, params.executionId, {
       error: charge.message,
@@ -483,6 +494,10 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
           })
       );
     }
+
+    // Exactly one row was written above, by whichever branch ran, and it is no
+    // longer an error row, so this is the only thing that counts the refusal.
+    await recordSkippedSample(db, { workflowId, reason: "plan_feature" });
     return;
   }
 

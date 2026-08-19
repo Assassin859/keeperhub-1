@@ -55,10 +55,38 @@ type OrgStanding = { plan: PlanName; limitBlocked: boolean };
 // TTL, which is why the TTL is seconds rather than minutes.
 const STANDING_TTL_MS = 30_000;
 
+// Nothing reads an entry back once it has expired, so without a bound the map
+// would retain one entry per org that has ever dispatched for the lifetime of
+// the pod. The cap is well above the number of orgs dispatching inside any one
+// TTL window, so eviction is a safety net rather than part of the hot path.
+const STANDING_CACHE_MAX = 5000;
+
 const standingCache = new Map<
   string,
   { expiresAt: number; standing: OrgStanding }
 >();
+
+/**
+ * Drop expired entries, then the oldest writes if the cap is still exceeded.
+ * Insertion order is write order (every write re-inserts), so the oldest keys
+ * are also the closest to expiring.
+ */
+function evictStandings(now: number): void {
+  for (const [orgId, entry] of standingCache) {
+    if (entry.expiresAt <= now) {
+      standingCache.delete(orgId);
+    }
+  }
+
+  let overflow = standingCache.size - STANDING_CACHE_MAX;
+  for (const orgId of standingCache.keys()) {
+    if (overflow <= 0) {
+      return;
+    }
+    standingCache.delete(orgId);
+    overflow--;
+  }
+}
 
 async function readOrgStanding(organizationId: string): Promise<OrgStanding> {
   const cached = standingCache.get(organizationId);
@@ -72,6 +100,11 @@ async function readOrgStanding(organizationId: string): Promise<OrgStanding> {
     checkExecutionLimit(organizationId),
   ]);
   const standing: OrgStanding = { plan, limitBlocked: !limit.allowed };
+  if (standingCache.size >= STANDING_CACHE_MAX) {
+    evictStandings(now);
+  }
+  // Re-insert so the key moves to the back of the eviction order.
+  standingCache.delete(organizationId);
   standingCache.set(organizationId, {
     expiresAt: now + STANDING_TTL_MS,
     standing,

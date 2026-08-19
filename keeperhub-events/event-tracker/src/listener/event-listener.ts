@@ -226,17 +226,14 @@ export class EventListener {
 
       const args = extractEventArgs(parsed, this.opts.rawEventsAbi);
       const payload = buildEventPayload(log, parsed, args);
-      const sent = await this.sendToSqs(payload);
+      await this.sendToSqs(payload);
 
-      // Nothing was sent because the dispatch was refused: leave the event
-      // unmarked rather than spending a dedup write on it.
-      if (!sent) {
-        return;
-      }
-
-      // Mark after the send. A crash between send and mark would re-fire
-      // the event on the next reconnect (documented best-effort trade).
-      // A mark failure here does not un-send SQS - fine, dedup is best-effort.
+      // Mark after the send, and after a refusal too: a refused event is
+      // settled, and leaving it unmarked only buys another admission
+      // round-trip the next time a reconnect replays the log.
+      // A crash between send and mark would re-fire the event on the next
+      // reconnect (documented best-effort trade). A mark failure here does not
+      // un-send SQS - fine, dedup is best-effort.
       try {
         await this.opts.dedup.markProcessed(this.opts.workflowId, txHash);
       } catch (err) {
@@ -251,8 +248,7 @@ export class EventListener {
     }
   }
 
-  /** Returns false when the dispatch was refused and nothing was enqueued. */
-  private async sendToSqs(payload: unknown): Promise<boolean> {
+  private async sendToSqs(payload: unknown): Promise<void> {
     // KEEP-693: pre-create a phantom row (best-effort) so the run is visible
     // even if it never reaches the executor, and carry its id so the executor
     // upgrades that row instead of inserting.
@@ -267,7 +263,7 @@ export class EventListener {
       logger.log(
         `[EventListener:${this.opts.workflowId}] skipping refused dispatch (${refused})`,
       );
-      return false;
+      return;
     }
 
     try {
@@ -289,6 +285,5 @@ export class EventListener {
     }
 
     logger.log(`[EventListener:${this.opts.workflowId}] enqueued to SQS`);
-    return true;
   }
 }

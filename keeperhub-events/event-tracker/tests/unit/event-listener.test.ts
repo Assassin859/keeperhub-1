@@ -284,10 +284,11 @@ describe("EventListener", () => {
       createPhantomExecution.mockResolvedValue({ refused: "execution_limit" });
       const providerMock = makeProviderManagerMock();
       const sqs = makeSqsMock();
+      const dedup = makeDedupMock();
       const listener = new EventListener(
         buildOptions({
           providerManager: providerMock.manager,
-          dedup: makeDedupMock(),
+          dedup,
           sqs,
         }),
       );
@@ -303,6 +304,9 @@ describe("EventListener", () => {
 
       expect(sqs.send).not.toHaveBeenCalled();
       expect(failPhantomExecution).not.toHaveBeenCalled();
+      // A refusal is settled, so the event is marked: leaving it unmarked
+      // only buys another admission round-trip on the next reconnect.
+      expect(dedup.markProcessed).toHaveBeenCalledTimes(1);
     });
 
     it("marks the phantom failed with ES-0001 when the enqueue fails", async () => {

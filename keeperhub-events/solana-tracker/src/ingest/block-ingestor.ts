@@ -217,11 +217,14 @@ export class BlockIngestor {
       "events",
     );
     // Refused on plan grounds: the executor would refuse the same run, so skip
-    // the enqueue instead of paying for the round-trip on every match.
+    // the enqueue instead of paying for the round-trip on every match. The
+    // event is still marked: it is settled, and leaving it unmarked only buys
+    // another admission round-trip when the block is re-processed.
     if (refused) {
       logger.log(
         `[ingestor] skipping refused event dispatch for ${fire.workflowId} (${refused})`,
       );
+      await this.markProcessed(fire.workflowId, fire.signature);
       return;
     }
     try {
@@ -245,13 +248,7 @@ export class BlockIngestor {
     logger.log(
       `[ingestor] chain ${this.registration.chainId} enqueued event ${fire.workflowId}/${fire.signature.slice(0, 12)} (slot ${fire.payload.slot})`,
     );
-    try {
-      await this.deps.dedup.markProcessed(fire.workflowId, fire.signature);
-    } catch (err) {
-      logger.warn(
-        `[ingestor] dedup mark failed for ${fire.workflowId}/${fire.signature}: ${formatError(err)}`,
-      );
-    }
+    await this.markProcessed(fire.workflowId, fire.signature);
   }
 
   private async enqueueBlock(fire: BlockFire): Promise<void> {
@@ -284,6 +281,7 @@ export class BlockIngestor {
       logger.log(
         `[ingestor] skipping refused block dispatch for ${fire.workflowId} (${refused})`,
       );
+      await this.markProcessed(fire.workflowId, dedupKey);
       return;
     }
     try {
@@ -307,11 +305,16 @@ export class BlockIngestor {
     logger.log(
       `[ingestor] chain ${this.registration.chainId} enqueued block ${fire.workflowId} (height ${fire.payload.blockHeight})`,
     );
+    await this.markProcessed(fire.workflowId, dedupKey);
+  }
+
+  /** Best-effort dedup mark: a failure is logged and never blocks the caller. */
+  private async markProcessed(workflowId: string, key: string): Promise<void> {
     try {
-      await this.deps.dedup.markProcessed(fire.workflowId, dedupKey);
+      await this.deps.dedup.markProcessed(workflowId, key);
     } catch (err) {
       logger.warn(
-        `[ingestor] dedup mark failed for ${fire.workflowId}/${dedupKey}: ${formatError(err)}`,
+        `[ingestor] dedup mark failed for ${workflowId}/${key}: ${formatError(err)}`,
       );
     }
   }
