@@ -7,7 +7,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import type { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
 
-function parsePublicKey(value: string): PublicKey | null {
+export function parsePublicKey(value: string): PublicKey | null {
   try {
     return new PublicKey(value);
   } catch {

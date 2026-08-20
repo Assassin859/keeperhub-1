@@ -196,4 +196,38 @@ describe("readSolanaProgramCore", () => {
       'Failed to decode account as "Vault"'
     );
   });
+
+  it("tolerates whitespace around accountType", async () => {
+    mockAdapter.executeWithSolanaFailover.mockResolvedValue({
+      executable: false,
+      owner: new PublicKey(PROGRAM),
+      lamports: 2_039_280,
+      data: await encodedVault(AUTHORITY, "1000000"),
+      rentEpoch: 1,
+    });
+
+    const result = await readSolanaProgramCore({
+      ...validInput,
+      accountType: "  Vault\n",
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      result: { authority: AUTHORITY, amount: "1000000" },
+    });
+  });
+
+  it("rejects a malformed IDL where accounts is not an array, without throwing", async () => {
+    const idl = { ...fixtureIdl(), accounts: {} };
+
+    const result = await readSolanaProgramCore({
+      ...validInput,
+      idl: JSON.stringify(idl),
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect((result as { error: string }).error).toContain(
+      'Account type "Vault" not found'
+    );
+  });
 });

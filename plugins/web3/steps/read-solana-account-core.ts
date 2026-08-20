@@ -40,15 +40,23 @@ export async function readSolanaAccountCore(
   if ("error" in resolved) {
     return { success: false, error: resolved.error };
   }
-  const { adapter, pubkey } = resolved;
+  const { adapter, pubkey, chainId } = resolved;
 
-  const fetched = await fetchSolanaAccountInfo(adapter, pubkey);
+  const [fetched, addressLink] = await Promise.all([
+    fetchSolanaAccountInfo(adapter, pubkey),
+    adapter.getAddressUrl(accountAddress),
+  ]);
+
   if ("error" in fetched) {
     logUserError(
       ErrorCategory.NETWORK_RPC,
       "[Read Solana Account] Failed to read account",
       fetched.error,
-      { plugin_name: "web3", action_name: "read-solana-account" }
+      {
+        plugin_name: "web3",
+        action_name: "read-solana-account",
+        chain_id: String(chainId),
+      }
     );
     return { success: false, error: fetched.error };
   }
@@ -59,7 +67,6 @@ export async function readSolanaAccountCore(
 
   const { executable, owner, lamports, data, rentEpoch } =
     fetched.accountInfo;
-  const addressLink = await adapter.getAddressUrl(accountAddress);
 
   return {
     success: true,

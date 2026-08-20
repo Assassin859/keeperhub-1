@@ -11,6 +11,7 @@ import { getErrorMessage } from "@/lib/utils";
 import { parseAnchorIdl } from "@/lib/web3/anchor-idl";
 import {
   fetchSolanaAccountInfo,
+  parsePublicKey,
   resolveSolanaAccountAddress,
 } from "@/lib/web3/solana-account-reader";
 
@@ -32,14 +33,6 @@ export type ReadSolanaProgramResult =
       addressLink: string;
     }
   | { success: false; error: string };
-
-function parsePublicKey(value: string): PublicKey | null {
-  try {
-    return new PublicKey(value);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Recursively converts Anchor's decoded value tree into JSON-safe values:
@@ -86,7 +79,7 @@ export async function readSolanaProgramCore(
   if ("error" in resolved) {
     return { success: false, error: resolved.error };
   }
-  const { adapter, pubkey } = resolved;
+  const { adapter, pubkey, chainId } = resolved;
 
   const programPk = parsePublicKey(programId);
   if (!programPk) {
@@ -101,19 +94,22 @@ export async function readSolanaProgramCore(
     return { success: false, error: idlResult.error };
   }
 
-  if (!accountType || accountType.trim() === "") {
+  const trimmedAccountType = accountType?.trim() ?? "";
+  if (trimmedAccountType === "") {
     return { success: false, error: "Missing account type" };
   }
 
-  const accountDef = idlResult.idl.accounts?.find(
-    (entry) => entry.name === accountType
+  const idlAccounts = Array.isArray(idlResult.idl.accounts)
+    ? idlResult.idl.accounts
+    : [];
+  const accountDef = idlAccounts.find(
+    (entry) => entry.name === trimmedAccountType
   );
   if (!accountDef) {
-    const available =
-      idlResult.idl.accounts?.map((entry) => entry.name).join(", ") || "none";
+    const available = idlAccounts.map((entry) => entry.name).join(", ") || "none";
     return {
       success: false,
-      error: `Account type "${accountType}" not found in IDL. Available: ${available}`,
+      error: `Account type "${trimmedAccountType}" not found in IDL. Available: ${available}`,
     };
   }
 
@@ -123,7 +119,11 @@ export async function readSolanaProgramCore(
       ErrorCategory.NETWORK_RPC,
       "[Read Solana Program] Failed to read account",
       fetched.error,
-      { plugin_name: "web3", action_name: "read-solana-program-anchor" }
+      {
+        plugin_name: "web3",
+        action_name: "read-solana-program-anchor",
+        chain_id: String(chainId),
+      }
     );
     return { success: false, error: fetched.error };
   }
@@ -139,13 +139,17 @@ export async function readSolanaProgramCore(
     };
   }
 
-  let decoded: unknown;
+  let result: unknown;
   try {
-    decoded = new BorshAccountsCoder(idlResult.idl).decode(accountType, data);
+    const decoded = new BorshAccountsCoder(idlResult.idl).decode(
+      trimmedAccountType,
+      data
+    );
+    result = serializeAnchorValue(decoded);
   } catch (error) {
     return {
       success: false,
-      error: `Failed to decode account as "${accountType}": ${getErrorMessage(error)}`,
+      error: `Failed to decode account as "${trimmedAccountType}": ${getErrorMessage(error)}`,
     };
   }
 
@@ -153,7 +157,7 @@ export async function readSolanaProgramCore(
 
   return {
     success: true,
-    result: serializeAnchorValue(decoded),
+    result,
     owner: owner.toBase58(),
     lamports,
     addressLink,

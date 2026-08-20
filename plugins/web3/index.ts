@@ -657,6 +657,10 @@ const web3Plugin: IntegrationPlugin = {
           description: "Length of the account's raw data in bytes",
         },
         {
+          field: "addressLink",
+          description: "Explorer link to view the account",
+        },
+        {
           field: "error",
           description: "Error message if the read failed",
         },
@@ -704,6 +708,10 @@ const web3Plugin: IntegrationPlugin = {
         {
           field: "lamports",
           description: "Number of lamports assigned to the account",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to view the account",
         },
         {
           field: "error",
