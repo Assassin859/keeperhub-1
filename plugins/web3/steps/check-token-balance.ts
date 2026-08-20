@@ -1,26 +1,31 @@
 import "server-only";
 
 import {
-  getAccount,
-  getAssociatedTokenAddress,
-  getMint,
-  TokenAccountNotFoundError,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+  unpackAccount,
 } from "@solana/spl-token";
 import { type Connection, PublicKey } from "@solana/web3.js";
 import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
+import { isSolanaAddressFormat } from "@/lib/address-utils";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { db } from "@/lib/db";
 import { supportedTokens, workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
+import {
+  getRpcProvider,
+  getSolanaProvider,
+  isSolanaChain,
+} from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { CustomToken, TokenFieldValue } from "@/lib/wallet/types";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import type { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
+import { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
+import { parseSolanaMintAccount } from "@/lib/web3/solana-mint";
 import { validateChainAddress } from "@/lib/web3/validate-chain-address";
 
 /**
@@ -210,8 +215,12 @@ function parseTokenConfig(input: CheckTokenBalanceInput): TokenFieldValue {
       customToken: extractCustomToken(parsed),
     };
   } catch {
-    // If parsing fails and it looks like an address, treat as custom
-    if (input.tokenConfig.startsWith("0x")) {
+    // If parsing fails and it looks like an address (EVM 0x-hex or Solana
+    // base58), treat as custom.
+    if (
+      input.tokenConfig.startsWith("0x") ||
+      isSolanaAddressFormat(input.tokenConfig)
+    ) {
       return {
         mode: "custom",
         customToken: { address: input.tokenConfig, symbol: "???" },
@@ -326,7 +335,10 @@ async function getSolanaTokenDisplayInfo(
   chainId: number,
   tokenAddress: string
 ): Promise<{ symbol: string; name: string }> {
-  if (tokenConfig.customToken?.symbol) {
+  // "???" is this file's own unknown-symbol sentinel (see extractCustomToken /
+  // parseTokenConfig's legacy fallbacks above) - it is not a real symbol, so
+  // it must fall through to the DB lookup below rather than short-circuit it.
+  if (tokenConfig.customToken?.symbol && tokenConfig.customToken.symbol !== "???") {
     return {
       symbol: tokenConfig.customToken.symbol,
       name: tokenConfig.customToken.symbol,
@@ -365,21 +377,34 @@ async function fetchSolanaTokenBalance(
   const mintPubkey = new PublicKey(tokenAddress);
   const ownerPubkey = new PublicKey(walletAddress);
 
-  const mint = await getMint(connection, mintPubkey);
-  const associatedTokenAddress = await getAssociatedTokenAddress(
+  const mintInfo = await connection.getAccountInfo(mintPubkey, "confirmed");
+  if (!mintInfo) {
+    throw new Error(`Mint account not found: ${mintPubkey.toBase58()}`);
+  }
+  const resolved = parseSolanaMintAccount(mintPubkey, mintInfo);
+  if ("error" in resolved) {
+    throw new Error(resolved.error);
+  }
+  const { mint, programId } = resolved;
+
+  // Off-curve owners (PDA/program-owned wallets, e.g. a multisig treasury)
+  // are legitimate holders to check - matching transfer-spl-token-core.ts's
+  // handling of off-curve recipients. Derivation is synchronous (no RPC).
+  const associatedTokenAddress = getAssociatedTokenAddressSync(
     mintPubkey,
-    ownerPubkey
+    ownerPubkey,
+    true,
+    programId,
+    ASSOCIATED_TOKEN_PROGRAM_ID
   );
 
-  let balanceRaw = BigInt(0);
-  try {
-    const account = await getAccount(connection, associatedTokenAddress);
-    balanceRaw = account.amount;
-  } catch (error) {
-    if (!(error instanceof TokenAccountNotFoundError)) {
-      throw error;
-    }
-  }
+  const accountInfo = await connection.getAccountInfo(
+    associatedTokenAddress,
+    "confirmed"
+  );
+  const balanceRaw = accountInfo
+    ? unpackAccount(associatedTokenAddress, accountInfo, programId).amount
+    : BigInt(0);
 
   const balance = ethers.formatUnits(balanceRaw, mint.decimals);
 
@@ -391,6 +416,116 @@ async function fetchSolanaTokenBalance(
     name,
     tokenAddress,
   };
+}
+
+/**
+ * EVM branch: resolve an RPC provider and read the ERC20 balance/metadata.
+ */
+async function checkEvmTokenBalance(
+  address: string,
+  tokenAddress: string,
+  chainId: number,
+  userId: string | undefined
+): Promise<CheckTokenBalanceResult> {
+  let rpcManager: RpcProviderManager;
+  try {
+    rpcManager = await getRpcProvider({ chainId, userId });
+  } catch (error) {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Check Token Balance] Failed to resolve RPC config:",
+      error,
+      {
+        plugin_name: "web3",
+        action_name: "check-token-balance",
+        chain_id: String(chainId),
+      }
+    );
+    return {
+      success: false,
+      error: getErrorMessage(error),
+    };
+  }
+
+  const adapter = getChainAdapter(chainId);
+
+  try {
+    const balance = await adapter.executeWithFailover(
+      rpcManager,
+      async (provider) => fetchTokenBalance(provider, address, tokenAddress)
+    );
+    const addressLink = await adapter.getAddressUrl(address);
+
+    return { success: true, balance, address, addressLink };
+  } catch (error) {
+    logUserError(
+      ErrorCategory.NETWORK_RPC,
+      "[Check Token Balance] Failed to check token balance:",
+      error,
+      {
+        plugin_name: "web3",
+        action_name: "check-token-balance",
+        chain_id: String(chainId),
+      }
+    );
+    return {
+      success: false,
+      error: `Failed to check token balance: ${getErrorMessage(error)}`,
+    };
+  }
+}
+
+/**
+ * Solana branch: a fresh, userId-aware adapter is constructed directly
+ * (bypassing getChainAdapter's chainId-only cache) so a user's custom RPC
+ * preference is actually honored here, the same way getRpcProvider({chainId,
+ * userId}) already honors it on the EVM branch above.
+ */
+async function checkSolanaTokenBalance(
+  address: string,
+  tokenAddress: string,
+  chainId: number,
+  userId: string | undefined,
+  tokenConfig: TokenFieldValue
+): Promise<CheckTokenBalanceResult> {
+  const adapter = new SolanaChainAdapter(chainId, () =>
+    getSolanaProvider({ chainId, userId })
+  );
+
+  try {
+    const displayInfo = await getSolanaTokenDisplayInfo(
+      tokenConfig,
+      chainId,
+      tokenAddress
+    );
+    const balance = await adapter.executeWithSolanaFailover((connection) =>
+      fetchSolanaTokenBalance(
+        connection,
+        address,
+        tokenAddress,
+        displayInfo.symbol,
+        displayInfo.name
+      )
+    );
+    const addressLink = await adapter.getAddressUrl(address);
+
+    return { success: true, balance, address, addressLink };
+  } catch (error) {
+    logUserError(
+      ErrorCategory.NETWORK_RPC,
+      "[Check Token Balance] Failed to check token balance:",
+      error,
+      {
+        plugin_name: "web3",
+        action_name: "check-token-balance",
+        chain_id: String(chainId),
+      }
+    );
+    return {
+      success: false,
+      error: `Failed to check token balance: ${getErrorMessage(error)}`,
+    };
+  }
 }
 
 /**
@@ -439,8 +574,6 @@ async function stepHandler(
       error: getErrorMessage(error),
     };
   }
-
-  const isSolana = isSolanaChain(chainId);
 
   // Validate wallet address
   if (!validateChainAddress(address, chainId)) {
@@ -491,83 +624,9 @@ async function stepHandler(
     };
   }
 
-  // Resolve RPC provider with failover support (EVM only). SolanaChainAdapter
-  // owns its own provider manager, so the Solana path skips this entirely.
-  let rpcManager: RpcProviderManager | undefined;
-  if (!isSolana) {
-    try {
-      rpcManager = await getRpcProvider({ chainId, userId });
-    } catch (error) {
-      logUserError(
-        ErrorCategory.VALIDATION,
-        "[Check Token Balance] Failed to resolve RPC config:",
-        error,
-        {
-          plugin_name: "web3",
-          action_name: "check-token-balance",
-          chain_id: String(chainId),
-        }
-      );
-      return {
-        success: false,
-        error: getErrorMessage(error),
-      };
-    }
-  }
-
-  const adapter = getChainAdapter(chainId);
-
-  // Check balance for the token
-  try {
-    let balance: TokenBalance;
-    if (isSolana) {
-      const displayInfo = await getSolanaTokenDisplayInfo(
-        tokenConfig,
-        chainId,
-        tokenAddress
-      );
-      balance = await (
-        adapter as SolanaChainAdapter
-      ).executeWithSolanaFailover((connection) =>
-        fetchSolanaTokenBalance(
-          connection,
-          address,
-          tokenAddress,
-          displayInfo.symbol,
-          displayInfo.name
-        )
-      );
-    } else {
-      balance = await adapter.executeWithFailover(
-        rpcManager as RpcProviderManager,
-        async (provider) => fetchTokenBalance(provider, address, tokenAddress)
-      );
-    }
-
-    const addressLink = await adapter.getAddressUrl(address);
-
-    return {
-      success: true,
-      balance,
-      address,
-      addressLink,
-    };
-  } catch (error) {
-    logUserError(
-      ErrorCategory.NETWORK_RPC,
-      "[Check Token Balance] Failed to check token balance:",
-      error,
-      {
-        plugin_name: "web3",
-        action_name: "check-token-balance",
-        chain_id: String(chainId),
-      }
-    );
-    return {
-      success: false,
-      error: `Failed to check token balance: ${getErrorMessage(error)}`,
-    };
-  }
+  return isSolanaChain(chainId)
+    ? checkSolanaTokenBalance(address, tokenAddress, chainId, userId, tokenConfig)
+    : checkEvmTokenBalance(address, tokenAddress, chainId, userId);
 }
 
 /**

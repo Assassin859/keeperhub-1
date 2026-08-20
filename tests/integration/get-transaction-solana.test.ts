@@ -8,19 +8,32 @@ vi.mock("ethers", () => ({
   },
 }));
 
-const { mockConnectionGetTransaction } = vi.hoisted(() => ({
-  mockConnectionGetTransaction: vi.fn(),
-}));
+const { mockConnectionGetTransaction, mockGetSolanaProvider } = vi.hoisted(
+  () => ({
+    mockConnectionGetTransaction: vi.fn(),
+    mockGetSolanaProvider: vi.fn(),
+  })
+);
 
-// Fake Solana adapter: the real one would resolve an on-chain RPC connection.
-vi.mock("@/lib/web3/chain-adapter", () => ({
-  getChainAdapter: () => ({
-    executeWithSolanaFailover: (fn: (connection: unknown) => unknown) =>
-      fn({
+// Fake adapter: constructed directly (not via the shared registry) so the
+// step can thread userId into getSolanaProvider - see fetchSolanaTransaction
+// in get-transaction.ts. executeWithSolanaFailover both exercises the
+// userId-carrying provider factory (for assertions below) and hands back a
+// fake connection.
+vi.mock("@/lib/web3/chain-adapter/solana", () => ({
+  SolanaChainAdapter: class MockSolanaChainAdapter {
+    private readonly providerFactory: () => unknown;
+    constructor(_chainId: number, providerFactory: () => unknown) {
+      this.providerFactory = providerFactory;
+    }
+    async executeWithSolanaFailover(fn: (connection: unknown) => unknown) {
+      await this.providerFactory();
+      return fn({
         getTransaction: (...args: unknown[]) =>
           mockConnectionGetTransaction(...args),
-      }),
-  }),
+      });
+    }
+  },
 }));
 
 vi.mock("@/lib/rpc/network-utils", () => ({
@@ -34,6 +47,7 @@ vi.mock("@/lib/rpc/network-utils", () => ({
 
 vi.mock("@/lib/rpc/provider-factory", () => ({
   getRpcProvider: vi.fn(),
+  getSolanaProvider: (...args: unknown[]) => mockGetSolanaProvider(...args),
   isSolanaChain: (chainId: number) => chainId === 101 || chainId === 103,
 }));
 
@@ -122,6 +136,7 @@ const context = () => ({
 describe("getTransactionStep - Solana", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetSolanaProvider.mockResolvedValue({ executeWithFailover: vi.fn() });
   });
 
   it("fetches a Solana transaction and maps fee payer, slot, and compute units", async () => {
@@ -139,8 +154,25 @@ describe("getTransactionStep - Solana", () => {
       expect(result.from).toBe(FEE_PAYER);
       expect(result.to).toBeNull();
       expect(result.blockNumber).toBe(12_345);
-      expect(result.gasLimit).toBe("5000");
+      // gasLimit has no Solana equivalent; actual usage is a separate field.
+      expect(result.gasLimit).toBe("0");
+      expect(result.computeUnitsConsumed).toBe("5000");
     }
+  });
+
+  it("threads the caller's userId into the Solana RPC provider", async () => {
+    mockConnectionGetTransaction.mockResolvedValue(fakeSolanaTx());
+
+    await getTransactionStep({
+      network: "solana-devnet",
+      transactionHash: VALID_SIGNATURE,
+      _context: context(),
+    });
+
+    expect(mockGetSolanaProvider).toHaveBeenCalledWith({
+      chainId: 103,
+      userId: "user_1",
+    });
   });
 
   it("returns not-found when the signature doesn't resolve to a transaction", async () => {

@@ -7,10 +7,11 @@ import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
+import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
+import { evmOnlyGuard } from "@/lib/web3/validate-chain-address";
 import {
   type AbiEntry,
   isNearHeadBatch,
@@ -302,13 +303,11 @@ async function stepHandler(
     return { success: false, error: getErrorMessage(error) };
   }
 
-  if (isSolanaChain(chainId)) {
-    // Event querying decodes EVM ABI logs, which have no Solana equivalent
-    // (Solana program logs are untyped and unindexed) - not yet supported.
-    return {
-      success: false,
-      error: "Solana is not supported for this action yet",
-    };
+  // Event querying decodes EVM ABI logs, which have no Solana equivalent
+  // (Solana program logs are untyped and unindexed) - not yet supported.
+  const evmOnlyResult = evmOnlyGuard(chainId);
+  if (evmOnlyResult) {
+    return evmOnlyResult;
   }
 
   if (!ethers.isAddress(contractAddress)) {

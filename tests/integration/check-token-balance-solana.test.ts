@@ -1,3 +1,4 @@
+import { PublicKey } from "@solana/web3.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -11,39 +12,81 @@ vi.mock("ethers", () => ({
   },
 }));
 
-const {
-  mockGetMint,
-  mockGetAssociatedTokenAddress,
-  mockGetAccount,
-  MockTokenAccountNotFoundError,
-} = vi.hoisted(() => {
-  class TokenAccountNotFoundErrorStub extends Error {}
+// Real, well-known program IDs - needed so parseSolanaMintAccount's
+// programId.equals(TOKEN_PROGRAM_ID) checks behave like the real library.
+const TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+);
+const TOKEN_2022_PROGRAM_ID = new PublicKey(
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+);
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+);
+
+const { mockUnpackMint, mockUnpackAccount, mockGetAssociatedTokenAddressSync } =
+  vi.hoisted(() => ({
+    mockUnpackMint: vi.fn(),
+    mockUnpackAccount: vi.fn(),
+    mockGetAssociatedTokenAddressSync: vi.fn(),
+  }));
+
+vi.mock("@solana/spl-token", async () => {
+  const actual =
+    await vi.importActual<typeof import("@solana/spl-token")>(
+      "@solana/spl-token"
+    );
   return {
-    mockGetMint: vi.fn(),
-    mockGetAssociatedTokenAddress: vi.fn(),
-    mockGetAccount: vi.fn(),
-    MockTokenAccountNotFoundError: TokenAccountNotFoundErrorStub,
+    TOKEN_PROGRAM_ID: actual.TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID: actual.TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID: actual.ASSOCIATED_TOKEN_PROGRAM_ID,
+    unpackMint: (...args: unknown[]) => mockUnpackMint(...args),
+    unpackAccount: (...args: unknown[]) => mockUnpackAccount(...args),
+    getAssociatedTokenAddressSync: (...args: unknown[]) =>
+      mockGetAssociatedTokenAddressSync(...args),
   };
 });
 
-vi.mock("@solana/spl-token", () => ({
-  getMint: (...args: unknown[]) => mockGetMint(...args),
-  getAssociatedTokenAddress: (...args: unknown[]) =>
-    mockGetAssociatedTokenAddress(...args),
-  getAccount: (...args: unknown[]) => mockGetAccount(...args),
-  TokenAccountNotFoundError: MockTokenAccountNotFoundError,
-}));
-
-const { mockGetAddressUrl } = vi.hoisted(() => ({
+const {
+  mockConnectionGetAccountInfo,
+  mockGetAddressUrl,
+  mockGetSolanaProvider,
+} = vi.hoisted(() => ({
+  mockConnectionGetAccountInfo: vi.fn(),
   mockGetAddressUrl: vi.fn(),
+  mockGetSolanaProvider: vi.fn(),
 }));
 
-// Fake Solana adapter: the real one would resolve an on-chain RPC connection.
+// check-token-balance.ts's (unexercised here) EVM branch still imports the
+// real registry, which pulls in EvmChainAdapter -> nonce-manager -> schema's
+// drizzle sql() helper. Stub it so that module-load chain never runs.
 vi.mock("@/lib/web3/chain-adapter", () => ({
-  getChainAdapter: () => ({
-    executeWithSolanaFailover: (fn: (connection: unknown) => unknown) => fn({}),
-    getAddressUrl: (...args: unknown[]) => mockGetAddressUrl(...args),
-  }),
+  getChainAdapter: vi.fn(),
+}));
+
+// Fake adapter: constructed directly (not via the shared registry) so the
+// step can thread userId into getSolanaProvider - see checkSolanaTokenBalance
+// in check-token-balance.ts. The real adapter would resolve an on-chain RPC
+// connection; here executeWithSolanaFailover both exercises the
+// userId-carrying provider factory (for assertions below) and hands back a
+// fake connection.
+vi.mock("@/lib/web3/chain-adapter/solana", () => ({
+  SolanaChainAdapter: class MockSolanaChainAdapter {
+    private readonly providerFactory: () => unknown;
+    constructor(_chainId: number, providerFactory: () => unknown) {
+      this.providerFactory = providerFactory;
+    }
+    async executeWithSolanaFailover(fn: (connection: unknown) => unknown) {
+      await this.providerFactory();
+      return fn({
+        getAccountInfo: (...args: unknown[]) =>
+          mockConnectionGetAccountInfo(...args),
+      });
+    }
+    getAddressUrl(...args: unknown[]) {
+      return mockGetAddressUrl(...args);
+    }
+  },
 }));
 
 vi.mock("@/lib/rpc/network-utils", () => ({
@@ -57,6 +100,7 @@ vi.mock("@/lib/rpc/network-utils", () => ({
 
 vi.mock("@/lib/rpc/provider-factory", () => ({
   getRpcProvider: vi.fn(),
+  getSolanaProvider: (...args: unknown[]) => mockGetSolanaProvider(...args),
   isSolanaChain: (chainId: number) => chainId === 101 || chainId === 103,
 }));
 
@@ -101,8 +145,13 @@ vi.mock("@/lib/utils", () => ({
 import { checkTokenBalanceStep } from "@/plugins/web3/steps/check-token-balance";
 
 const WALLET = "4zYdhhTJJKbYJ3Yqa2WGpBi25V1JcZVVBQWYKAY9tegL";
+const OFF_CURVE_WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const ATA = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+const ATA = "4gZfWA6UftMD8W3XqPB8p7cN8G2p9J4ELuTFCe4gTaeM";
+
+function fakeAccountInfo(owner: PublicKey) {
+  return { owner, data: Buffer.alloc(0), lamports: 0, executable: false };
+}
 
 const context = () => ({
   executionId: "exec_1",
@@ -124,15 +173,21 @@ const input = () => ({
 describe("checkTokenBalanceStep - Solana", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetAssociatedTokenAddress.mockResolvedValue(ATA);
+    mockGetSolanaProvider.mockResolvedValue({
+      executeWithFailover: vi.fn(),
+    });
+    mockGetAssociatedTokenAddressSync.mockReturnValue(new PublicKey(ATA));
     mockGetAddressUrl.mockResolvedValue(
       "https://solscan.io/account/x?cluster=devnet"
     );
   });
 
-  it("fetches an SPL token balance for a funded associated token account", async () => {
-    mockGetMint.mockResolvedValue({ decimals: 6 });
-    mockGetAccount.mockResolvedValue({ amount: BigInt(5_000_000) });
+  it("fetches a legacy SPL token balance for a funded associated token account", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)) // mint account
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)); // ATA account
+    mockUnpackMint.mockReturnValue({ decimals: 6 });
+    mockUnpackAccount.mockReturnValue({ amount: BigInt(5_000_000) });
 
     const result = await checkTokenBalanceStep(input());
 
@@ -143,13 +198,43 @@ describe("checkTokenBalanceStep - Solana", () => {
       expect(result.balance.decimals).toBe(6);
       expect(result.balance.symbol).toBe("TEST");
       expect(result.balance.tokenAddress).toBe(MINT);
-      expect(result.address).toBe(WALLET);
     }
+    // getAssociatedTokenAddressSync's allowOwnerOffCurve argument (3rd) must
+    // be true - checking a PDA-owned wallet's balance is legitimate.
+    expect(mockGetAssociatedTokenAddressSync).toHaveBeenCalledWith(
+      expect.any(PublicKey),
+      expect.any(PublicKey),
+      true,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+  });
+
+  it("fetches a Token-2022 mint's balance instead of failing with an owner-mismatch error", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_2022_PROGRAM_ID))
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_2022_PROGRAM_ID));
+    mockUnpackMint.mockReturnValue({ decimals: 9 });
+    mockUnpackAccount.mockReturnValue({ amount: BigInt(1_000_000_000) });
+
+    const result = await checkTokenBalanceStep(input());
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.balance.balance).toBe("1");
+    }
+    expect(mockUnpackMint).toHaveBeenCalledWith(
+      expect.any(PublicKey),
+      expect.anything(),
+      TOKEN_2022_PROGRAM_ID
+    );
   });
 
   it("returns a zero balance when the wallet has no associated token account", async () => {
-    mockGetMint.mockResolvedValue({ decimals: 9 });
-    mockGetAccount.mockRejectedValue(new MockTokenAccountNotFoundError());
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)) // mint account
+      .mockResolvedValueOnce(null); // no ATA yet
+    mockUnpackMint.mockReturnValue({ decimals: 9 });
 
     const result = await checkTokenBalanceStep(input());
 
@@ -158,15 +243,60 @@ describe("checkTokenBalanceStep - Solana", () => {
       expect(result.balance.balance).toBe("0");
       expect(result.balance.balanceRaw).toBe("0");
     }
+    expect(mockUnpackAccount).not.toHaveBeenCalled();
+  });
+
+  it("fetches the balance of an off-curve (PDA-owned) wallet address", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID))
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID));
+    mockUnpackMint.mockReturnValue({ decimals: 6 });
+    mockUnpackAccount.mockReturnValue({ amount: BigInt(2_000_000) });
+
+    const result = await checkTokenBalanceStep({
+      ...input(),
+      address: OFF_CURVE_WALLET,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("threads the caller's userId into the Solana RPC provider", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID))
+      .mockResolvedValueOnce(null);
+    mockUnpackMint.mockReturnValue({ decimals: 6 });
+
+    await checkTokenBalanceStep(input());
+
+    expect(mockGetSolanaProvider).toHaveBeenCalledWith({
+      chainId: 103,
+      userId: "user_1",
+    });
   });
 
   it("propagates a real RPC error instead of treating it as a zero balance", async () => {
-    mockGetMint.mockResolvedValue({ decimals: 9 });
-    mockGetAccount.mockRejectedValue(new Error("RPC timeout"));
+    mockConnectionGetAccountInfo.mockRejectedValue(new Error("RPC timeout"));
 
     const result = await checkTokenBalanceStep(input());
 
     expect(result.success).toBe(false);
+  });
+
+  it("rejects a mint that is not owned by an SPL token program", async () => {
+    const NOT_A_TOKEN_PROGRAM = new PublicKey(
+      "11111111111111111111111111111111"
+    );
+    mockConnectionGetAccountInfo.mockResolvedValueOnce(
+      fakeAccountInfo(NOT_A_TOKEN_PROGRAM)
+    );
+
+    const result = await checkTokenBalanceStep(input());
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("not an SPL token mint");
+    }
   });
 
   it("rejects an invalid Solana wallet address before touching the chain", async () => {
@@ -179,7 +309,6 @@ describe("checkTokenBalanceStep - Solana", () => {
     if (!result.success) {
       expect(result.error).toContain("Invalid wallet address");
     }
-    expect(mockGetMint).not.toHaveBeenCalled();
-    expect(mockGetAccount).not.toHaveBeenCalled();
+    expect(mockConnectionGetAccountInfo).not.toHaveBeenCalled();
   });
 });

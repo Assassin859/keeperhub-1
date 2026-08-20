@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
+  evmOnlyGuard,
   validateChainAddress,
   validateChainTxHash,
 } from "@/lib/web3/validate-chain-address";
@@ -70,5 +71,18 @@ describe("validateChainTxHash", () => {
   it("rejects garbage input on either chain family", () => {
     expect(validateChainTxHash("not a hash", EVM_CHAIN_ID)).toBe(false);
     expect(validateChainTxHash("not a hash", SOLANA_CHAIN_ID)).toBe(false);
+  });
+});
+
+describe("evmOnlyGuard", () => {
+  it("returns null for an EVM chain", () => {
+    expect(evmOnlyGuard(EVM_CHAIN_ID)).toBeNull();
+  });
+
+  it("returns a failure result for a Solana chain", () => {
+    const result = evmOnlyGuard(SOLANA_CHAIN_ID);
+    expect(result).not.toBeNull();
+    expect(result?.success).toBe(false);
+    expect(result?.error).toContain("Solana is not supported");
   });
 });

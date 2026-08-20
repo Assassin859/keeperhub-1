@@ -12,9 +12,10 @@ import {
   resolveExplorerUrlConfig,
 } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
+import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { serializeArg } from "@/lib/web3/serialize-arg";
+import { evmOnlyGuard } from "@/lib/web3/validate-chain-address";
 import { getErrorMessage } from "@/lib/utils";
 
 const DEFAULT_BLOCK_LOOKBACK = 6500;
@@ -365,13 +366,11 @@ function validateInputs(
     return { success: false, error: getErrorMessage(error) };
   }
 
-  if (isSolanaChain(chainId)) {
-    // Transaction querying decodes calls via an EVM ABI function selector,
-    // which has no Solana equivalent - not yet supported.
-    return {
-      success: false,
-      error: "Solana is not supported for this action yet",
-    };
+  // Transaction querying decodes calls via an EVM ABI function selector,
+  // which has no Solana equivalent - not yet supported.
+  const evmOnlyResult = evmOnlyGuard(chainId);
+  if (evmOnlyResult) {
+    return evmOnlyResult;
   }
 
   if (!ethers.isAddress(contractAddress)) {

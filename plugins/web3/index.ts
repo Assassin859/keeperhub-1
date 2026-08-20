@@ -720,7 +720,13 @@ const web3Plugin: IntegrationPlugin = {
         },
         {
           field: "gasLimit",
-          description: "Gas limit for the transaction",
+          description:
+            "Gas limit for the transaction (EVM only; 0 for Solana, which has no comparable ceiling)",
+        },
+        {
+          field: "computeUnitsConsumed",
+          description:
+            "Solana only: actual compute units consumed by the transaction",
         },
         {
           field: "blockNumber",
