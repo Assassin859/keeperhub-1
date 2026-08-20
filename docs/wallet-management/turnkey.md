@@ -27,15 +27,19 @@ before concluding a run did not work.
 
 ## Wallet Funding
 
-Whether your Turnkey EOA needs native gas tokens (ETH on Ethereum, ETH on Base, MATIC on
-Polygon, SOL on Solana, etc.) depends on the route the write takes.
+Whether your Turnkey EOA needs native gas tokens depends on the route the write takes. This
+route condition applies to EVM chains (ETH on Ethereum, ETH on Base, MATIC on Polygon, etc.)
+only -- there is no sponsored route on Solana, so a Solana account always pays its own
+transaction fee from its SOL balance.
 
-- **On a sponsored route**, the transaction is submitted on your wallet's behalf and the gas is
-  paid for you, so the EOA can hold zero native balance. Eligibility is per organization and is
-  metered against your gas credits, so it is a condition rather than a guarantee. See
+- **On a sponsored EVM route**, the transaction is submitted on your wallet's behalf and the gas
+  is paid for you, so the EOA can hold zero native balance. Eligibility is per organization and
+  is metered against your gas credits, so it is a condition rather than a guarantee. See
   [Gas Management](/wallet-management/gas) for what sponsorship covers and when it applies.
-- **On an unsponsored route**, the wallet that signs and broadcasts pays the fee, so it needs
-  native gas.
+- **On an unsponsored EVM route**, the wallet that signs and broadcasts pays the fee, so it
+  needs native gas.
+- **On Solana**, fund the account with SOL to cover the transaction fee; sponsorship does not
+  apply.
 
 Value is a separate question from gas. Any transaction that moves ETH or tokens needs the sending
 account to hold that asset, whether or not the gas is sponsored.
@@ -56,7 +60,7 @@ account to hold that asset, whether or not the gas is sponsored.
 
 The EOA plays two distinct roles in a workflow write. Keep them separate when topping up.
 
-1. **Gas (depends on the route).** The EOA always signs. On an unsponsored route it also broadcasts and pays the fee from its own native balance. On a sponsored route the transaction is submitted on the wallet's behalf and the gas is paid for it, so the EOA's native balance is untouched. See [Wallet Funding](#wallet-funding) above and [Gas Management](/wallet-management/gas). Either way, this is independent of whether you have a Safe configured as the Sender.
+1. **Gas (depends on the route).** The EOA always signs. On an unsponsored route it also broadcasts and pays the fee from its own native balance. On a sponsored route the transaction is submitted on the wallet's behalf and the gas is paid for it, so the EOA's native balance is untouched. See [Wallet Funding](#wallet-funding) above and [Gas Management](/wallet-management/gas). A Safe configured as the Sender forces the unsponsored route, so the EOA needs native gas whenever a Safe is the Sender -- see [Safe wallets](/wallet-management/gas#safe-wallets).
 
 2. **Transactable balance (the active Sender).** If you have a [Safe](/wallet-management/safe) deployed and marked as the Sender on a chain, the Safe's balance is what gets debited when the workflow transfers a native token, approves or transfers an ERC20, swaps, or deposits into a protocol. If no Safe is the Sender, the EOA's own token balance is used instead.
 
