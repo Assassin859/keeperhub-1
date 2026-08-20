@@ -616,6 +616,122 @@ const web3Plugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "query-solana-program-events",
+      label: "Query Solana Program Events",
+      description:
+        "Query historical Solana program events for backfill/reconciliation, paging backward through recent signatures",
+      category: "Web3",
+      stepFunction: "querySolanaProgramEventsStep",
+      stepImportPath: "query-solana-program-events",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the query succeeded",
+        },
+        {
+          field: "events",
+          description:
+            "Array of events found, each with signature, slot, blockTime, and either a decoded eventName/args (Anchor IDL provided) or raw log lines (no IDL)",
+        },
+        {
+          field: "oldestSignature",
+          description: "The oldest signature scanned in this query",
+        },
+        {
+          field: "newestSignature",
+          description: "The newest signature scanned in this query",
+        },
+        {
+          field: "signatureCount",
+          description: "Number of signatures scanned",
+        },
+        {
+          field: "eventCount",
+          description: "Number of events returned",
+        },
+        {
+          field: "truncated",
+          description:
+            "Whether the scan hit its page/signature cap before exhausting the window - if true, more history may exist behind nextBeforeSignature",
+        },
+        {
+          field: "nextBeforeSignature",
+          description:
+            "Pass this as beforeSignature on a follow-up call to continue paging further back",
+        },
+        {
+          field: "error",
+          description: "Error message if the query failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "programId",
+          label: "Program ID",
+          type: "template-input",
+          placeholder: "Program address (base58) or {{NodeName.programId}}",
+          example: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          required: true,
+        },
+        {
+          key: "idl",
+          label: "Anchor IDL",
+          type: "json-editor",
+          placeholder:
+            '{ "address": "...", "metadata": {...}, "instructions": [...], "events": [...] }',
+          helpTip:
+            "The program's Anchor IDL as JSON. Used to decode event args. If omitted or invalid, events are returned as raw log lines instead of decoded fields.",
+        },
+        {
+          key: "eventName",
+          label: "Event Name",
+          type: "template-input",
+          placeholder: "Event name, e.g. Transfer",
+          helpTip:
+            "Only return events with this name (as it appears in the IDL's events array). Requires a valid Anchor IDL. Leave empty to return all decoded events.",
+        },
+        {
+          type: "group",
+          label: "Pagination",
+          defaultExpanded: true,
+          fields: [
+            {
+              key: "signatureLookback",
+              label: "Signature Lookback",
+              type: "template-input",
+              placeholder: "Number of signatures to scan (default: 1000)",
+              helpTip:
+                "How many recent signatures to scan backward from beforeSignature (or the newest signature). Default: 1000. Capped at 10000 per call.",
+            },
+            {
+              key: "beforeSignature",
+              label: "Before Signature",
+              type: "template-input",
+              placeholder: "Signature to page backward from (exclusive)",
+              helpTip:
+                "Start scanning just older than this signature. Pass a previous call's nextBeforeSignature here to continue a backfill. Defaults to the newest signature.",
+            },
+            {
+              key: "untilSignature",
+              label: "Until Signature",
+              type: "template-input",
+              placeholder: "Signature to stop at (inclusive lower bound)",
+              helpTip:
+                "Stop scanning once this signature is reached. Leave empty to stop only at the Signature Lookback cap.",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "read-contract",
       label: "Read Contract",
       description: "Read data from a smart contract (view/pure functions)",
