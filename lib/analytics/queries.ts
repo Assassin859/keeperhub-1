@@ -8,7 +8,6 @@ import {
   gte,
   inArray,
   isNotNull,
-  isNull,
   lt,
   type SQL,
   sql,
@@ -32,6 +31,7 @@ import {
   sumOrgValueTodayWei,
 } from "@/lib/execute/value-ledger";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
+import { executionLogNotDeleted } from "@/lib/workflow/soft-delete";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -1355,7 +1355,7 @@ export async function getStepLogs(
         eq(workflows.organizationId, organizationId),
         // Purged steps stay in the table for the gas aggregates, but this is
         // the run detail a user reads, so it shows what they kept.
-        isNull(workflowExecutionLogs.deletedAt)
+        executionLogNotDeleted()
       )
     )
     .orderBy(workflowExecutionLogs.startedAt);

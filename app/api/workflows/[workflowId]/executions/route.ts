@@ -7,6 +7,10 @@ import { requireScope } from "@/lib/middleware/require-scope";
 import { db } from "@/lib/db";
 import { workflowExecutions, workflowHistory, workflows } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import {
+  executionLogNotDeleted,
+  executionLogSoftDeleteValues,
+} from "@/lib/workflow/soft-delete";
 
 function parseIntOrNull(value: string | null): number | null {
   if (value === null) {
@@ -207,11 +211,11 @@ export async function DELETE(
       // org-level total does not share and nothing can reconcile.
       await db
         .update(workflowExecutionLogs)
-        .set({ deletedAt: purgedAt })
+        .set(executionLogSoftDeleteValues(purgedAt))
         .where(
           and(
             inArray(workflowExecutionLogs.executionId, executionIds),
-            isNull(workflowExecutionLogs.deletedAt)
+            executionLogNotDeleted()
           )
         );
 

@@ -33,7 +33,11 @@ import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
-import { softDeleteValues } from "@/lib/workflow/soft-delete";
+import {
+  executionLogNotDeleted,
+  executionLogSoftDeleteValues,
+  softDeleteValues,
+} from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 import {
   formatActionConfigValidationResponse,
@@ -985,11 +989,11 @@ export async function DELETE(
 
           await tx
             .update(workflowExecutionLogs)
-            .set({ deletedAt: purgedAt })
+            .set(executionLogSoftDeleteValues(purgedAt))
             .where(
               and(
                 inArray(workflowExecutionLogs.executionId, executionIds),
-                isNull(workflowExecutionLogs.deletedAt)
+                executionLogNotDeleted()
               )
             );
 
