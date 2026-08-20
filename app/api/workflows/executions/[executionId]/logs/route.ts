@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -76,7 +76,10 @@ export async function GET(
     };
 
     const logs = await db.query.workflowExecutionLogs.findMany({
-      where: eq(workflowExecutionLogs.executionId, executionId),
+      where: and(
+        eq(workflowExecutionLogs.executionId, executionId),
+        isNull(workflowExecutionLogs.deletedAt)
+      ),
       orderBy: [desc(workflowExecutionLogs.timestamp)],
     });
 

@@ -200,19 +200,27 @@ export async function DELETE(
 
     if (executionIds.length > 0) {
       const { workflowExecutionLogs } = await import("@/lib/db/schema");
+      const purgedAt = new Date();
 
-      // Per-step logs are the bulky payloads and are not billing-relevant, so
-      // hard-delete them to reclaim storage.
+      // Soft-delete the per-step logs. They carry the per-network gas the
+      // analytics breakdown aggregates, so erasing them leaves a gap the
+      // org-level total does not share and nothing can reconcile.
       await db
-        .delete(workflowExecutionLogs)
-        .where(inArray(workflowExecutionLogs.executionId, executionIds));
+        .update(workflowExecutionLogs)
+        .set({ deletedAt: purgedAt })
+        .where(
+          and(
+            inArray(workflowExecutionLogs.executionId, executionIds),
+            isNull(workflowExecutionLogs.deletedAt)
+          )
+        );
 
       // Soft-delete the runs themselves: usage counters count every row, so the
       // billing total cannot be reset by purging history. Listings filter
       // deleted_at IS NULL.
       await db
         .update(workflowExecutions)
-        .set({ deletedAt: new Date() })
+        .set({ deletedAt: purgedAt })
         .where(inArray(workflowExecutions.id, executionIds));
     }
 

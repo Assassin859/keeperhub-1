@@ -8,6 +8,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   lt,
   type SQL,
   sql,
@@ -1351,7 +1352,10 @@ export async function getStepLogs(
     .where(
       and(
         eq(workflowExecutionLogs.executionId, executionId),
-        eq(workflows.organizationId, organizationId)
+        eq(workflows.organizationId, organizationId),
+        // Purged steps stay in the table for the gas aggregates, but this is
+        // the run detail a user reads, so it shows what they kept.
+        isNull(workflowExecutionLogs.deletedAt)
       )
     )
     .orderBy(workflowExecutionLogs.startedAt);

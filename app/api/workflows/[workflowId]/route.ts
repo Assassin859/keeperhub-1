@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
@@ -962,17 +962,15 @@ export async function DELETE(
 
     // KEEP-440: soft-delete the workflow row instead of hard-deleting it. The
     // surviving row keeps its listedSlug bound in idx_workflows_listed_slug, so
-    // the slug can never be re-claimed by another workflow. On force, the bulky
-    // per-step logs are hard-deleted to reclaim storage but the execution runs
-    // are soft-deleted (deleted_at) so usage counters, which count every row,
-    // stay accurate; schedules are removed explicitly -- the ON DELETE CASCADE
-    // that used to clean them up no longer fires now that the row is not
-    // actually deleted.
+    // the slug can never be re-claimed by another workflow. On force, the runs
+    // and their per-step logs are soft-deleted (deleted_at) so usage counters
+    // and the analytics gas history, which both count every row, stay whole;
+    // schedules are removed explicitly -- the ON DELETE CASCADE that used to
+    // clean them up no longer fires now that the row is not actually deleted.
     const softDelete = softDeleteValues();
 
     if (hasExecutions && force) {
       const { workflowExecutionLogs } = await import("@/lib/db/schema");
-      const { inArray } = await import("drizzle-orm");
 
       await db.transaction(async (tx) => {
         const executions = await tx.query.workflowExecutions.findMany({
@@ -983,13 +981,21 @@ export async function DELETE(
         const executionIds = executions.map((e) => e.id);
 
         if (executionIds.length > 0) {
+          const purgedAt = new Date();
+
           await tx
-            .delete(workflowExecutionLogs)
-            .where(inArray(workflowExecutionLogs.executionId, executionIds));
+            .update(workflowExecutionLogs)
+            .set({ deletedAt: purgedAt })
+            .where(
+              and(
+                inArray(workflowExecutionLogs.executionId, executionIds),
+                isNull(workflowExecutionLogs.deletedAt)
+              )
+            );
 
           await tx
             .update(workflowExecutions)
-            .set({ deletedAt: new Date() })
+            .set({ deletedAt: purgedAt })
             .where(eq(workflowExecutions.workflowId, workflowId));
         }
 
