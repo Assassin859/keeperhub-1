@@ -81,16 +81,16 @@ description: "The response shape of the get_execution MCP tool: the nested statu
 
 ### `totalSteps` and `completedSteps` are numbers in `status.progress`, strings in `logs.execution`; `duration` only exists in `logs.execution`
 
-`status.progress.totalSteps` / `completedSteps` are parsed to real numbers before being returned. The same fields on `logs.execution` are not — they come straight off the `workflow_executions` row, where `total_steps` and `completed_steps` are `text` columns (Postgres numeric columns serialize as strings to avoid precision loss). So `status.progress.completedSteps === 2` (number) and `logs.execution.completedSteps === "2"` (string) describe the same run. `duration` has no equivalent on `status.progress` at all — it's a `logs.execution`-only field. If you read progress, read it from `status.progress`, not `logs.execution`.
+`status.progress.totalSteps` / `completedSteps` are parsed to real numbers before being returned. The same fields on `logs.execution` are not — they come straight off the `workflow_executions` row, where `total_steps` and `completed_steps` are `text` columns. So `status.progress.completedSteps === 2` (number) and `logs.execution.completedSteps === "2"` (string) describe the same run. `duration` has no equivalent on `status.progress` at all — it's a `logs.execution`-only field, stored as a Postgres `numeric` column that serializes as a string to avoid precision loss. If you read progress, read it from `status.progress`, not `logs.execution`.
 
 ### `logs.logs` arrives newest-first, not in execution order
 
 The per-node entries in `logs.logs` are ordered by `timestamp` descending — the most recently completed node first. That is reverse-chronological, not the order the workflow actually ran in. If you need execution order:
 
 - Sort `logs.logs` by `startedAt` ascending yourself, or
-- Read `logs.execution.executionTrace`, an array of node IDs in the order the executor actually ran them, populated on every execution regardless of outcome.
+- Read `logs.execution.executionTrace`, an array of node IDs in the order the executor actually ran them, populated once the first step completes — `null` on an execution that terminates before any step finishes (never dispatched, immediate validation failure).
 
-`status.errorContext.executionTrace` carries the same array, but only when the run ended in `error` or `system_error` — `logs.execution.executionTrace` is the one field present on every execution.
+`status.errorContext.executionTrace` carries the same array, but only when the run ended in `error` or `system_error`. If you're polling an execution that may still be `pending`, treat `logs.execution.executionTrace` as `null`-until-first-completion rather than always-present.
 
 ### `errorContext` is `null` on every non-error status
 
