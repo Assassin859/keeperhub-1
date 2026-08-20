@@ -79,7 +79,7 @@ const web3Plugin: IntegrationPlugin = {
     {
       slug: "check-token-balance",
       label: "Get ERC20 Token Balance",
-      description: "Get ERC20 token balance of any address",
+      description: "Get the token balance (ERC20 or SPL) of any address",
       category: "Web3",
       stepFunction: "checkTokenBalanceStep",
       stepImportPath: "check-token-balance",
@@ -134,7 +134,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // No chainType filter: supports EVM (ERC20) and Solana (SPL) tokens.
           placeholder: "Select network",
           required: true,
         },
@@ -142,7 +142,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "address",
           label: "Address",
           type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
+          placeholder: "0x... / Solana address / {{NodeName.address}}",
           example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
           required: true,
         },
@@ -748,7 +748,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // No chainType filter: supports EVM and Solana transaction lookups.
           placeholder: "Select network",
           required: true,
         },
@@ -756,7 +756,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "transactionHash",
           label: "Transaction Hash",
           type: "template-input",
-          placeholder: "0x... or {{NodeName.transactionHash}}",
+          placeholder: "0x... / Solana signature / {{NodeName.transactionHash}}",
           example:
             "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060",
           required: true,

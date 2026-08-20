@@ -7,7 +7,7 @@ import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
@@ -293,6 +293,24 @@ async function stepHandler(
 
   const { contractAddress, network, abi, eventName, _context } = input;
 
+  // Resolve the chain first so the address check and the Solana guard below
+  // can branch on the chain family.
+  let chainId: number;
+  try {
+    chainId = getChainIdFromNetwork(network);
+  } catch (error) {
+    return { success: false, error: getErrorMessage(error) };
+  }
+
+  if (isSolanaChain(chainId)) {
+    // Event querying decodes EVM ABI logs, which have no Solana equivalent
+    // (Solana program logs are untyped and unindexed) - not yet supported.
+    return {
+      success: false,
+      error: "Solana is not supported for this action yet",
+    };
+  }
+
   if (!ethers.isAddress(contractAddress)) {
     return {
       success: false,
@@ -310,13 +328,6 @@ async function stepHandler(
   );
   if (!eventAbiEntry) {
     return { success: false, error: `Event '${eventName}' not found in ABI` };
-  }
-
-  let chainId: number;
-  try {
-    chainId = getChainIdFromNetwork(network);
-  } catch (error) {
-    return { success: false, error: getErrorMessage(error) };
   }
 
   const userId = await getUserIdFromExecution(_context?.executionId);

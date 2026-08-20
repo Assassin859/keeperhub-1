@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { VersionedTransactionResponse } from "@solana/web3.js";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
@@ -7,12 +8,30 @@ import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getAddressUrl, getTransactionUrl } from "@/lib/explorer";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
+import { getChainAdapter } from "@/lib/web3/chain-adapter";
+import type { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
+import { validateChainTxHash } from "@/lib/web3/validate-chain-address";
 
-const TX_HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/;
+/**
+ * Index 0 of a transaction's account keys is always the fee payer - the
+ * same convention SolanaChainAdapter relies on when reading back simulated
+ * fee-payer state (see solana.ts's buildSignAndSimulate).
+ */
+function getSolanaFeePayer(tx: VersionedTransactionResponse): string {
+  const feePayer = tx.transaction.message
+    .getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses })
+    .get(0);
+  if (!feePayer) {
+    throw new Error(
+      "[Get Transaction] Transaction has no fee payer account key"
+    );
+  }
+  return feePayer.toBase58();
+}
 
 async function getUserIdFromExecution(
   executionId: string | undefined
@@ -67,15 +86,9 @@ async function stepHandler(
   }
 
   const hash = transactionHash.trim();
-  if (!TX_HASH_PATTERN.test(hash)) {
-    return {
-      success: false,
-      error: `Invalid transaction hash format: ${hash}`,
-    };
-  }
 
-  const userId = await getUserIdFromExecution(_context?.executionId);
-
+  // Resolve the chain first so hash-format validation can branch on the
+  // chain family (EVM vs Solana) - see lib/web3/validate-chain-address.ts.
   let chainId: number;
   try {
     chainId = getChainIdFromNetwork(network);
@@ -86,19 +99,82 @@ async function stepHandler(
     };
   }
 
-  let rpcManager: RpcProviderManager;
-  try {
-    rpcManager = await getRpcProvider({ chainId, userId });
-  } catch (error) {
+  if (!validateChainTxHash(hash, chainId)) {
     return {
       success: false,
-      error: getErrorMessage(error),
+      error: `Invalid transaction hash format: ${hash}`,
     };
   }
 
+  const isSolana = isSolanaChain(chainId);
+  const userId = await getUserIdFromExecution(_context?.executionId);
+
+  // Resolve RPC provider with failover support (EVM only). SolanaChainAdapter
+  // owns its own provider manager, so the Solana path skips this entirely.
+  let rpcManager: RpcProviderManager | undefined;
+  if (!isSolana) {
+    try {
+      rpcManager = await getRpcProvider({ chainId, userId });
+    } catch (error) {
+      return {
+        success: false,
+        error: getErrorMessage(error),
+      };
+    }
+  }
+
   try {
-    const tx = await rpcManager.executeWithFailover(async (provider) =>
-      provider.getTransaction(hash)
+    const explorerConfig = await db.query.explorerConfigs.findFirst({
+      where: eq(explorerConfigs.chainId, chainId),
+    });
+
+    if (isSolana) {
+      const adapter = getChainAdapter(chainId) as SolanaChainAdapter;
+      const tx = await adapter.executeWithSolanaFailover((connection) =>
+        connection.getTransaction(hash, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        })
+      );
+
+      if (!tx) {
+        return {
+          success: false,
+          error: `Transaction not found: ${hash}`,
+        };
+      }
+
+      const feePayer = getSolanaFeePayer(tx);
+      const transactionLink = explorerConfig
+        ? getTransactionUrl(explorerConfig, hash)
+        : "";
+      const fromLink = explorerConfig
+        ? getAddressUrl(explorerConfig, feePayer)
+        : "";
+
+      return {
+        success: true,
+        hash,
+        from: feePayer,
+        // Solana has no single recipient: a transaction is a list of
+        // instructions, each with its own accounts.
+        to: null,
+        // Solana has no single top-level transfer amount the way an EVM
+        // transaction does.
+        value: "0",
+        input: "",
+        nonce: 0,
+        // Compute units are the closest Solana analogue to an EVM gas limit.
+        gasLimit: String(tx.meta?.computeUnitsConsumed ?? 0),
+        blockNumber: tx.slot,
+        transactionLink,
+        fromLink,
+        toLink: "",
+      };
+    }
+
+    const tx = await (rpcManager as RpcProviderManager).executeWithFailover(
+      async (provider) => provider.getTransaction(hash)
     );
 
     if (!tx) {
@@ -107,10 +183,6 @@ async function stepHandler(
         error: `Transaction not found: ${hash}`,
       };
     }
-
-    const explorerConfig = await db.query.explorerConfigs.findFirst({
-      where: eq(explorerConfigs.chainId, chainId),
-    });
 
     const transactionLink = explorerConfig
       ? getTransactionUrl(explorerConfig, hash)
