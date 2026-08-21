@@ -4,9 +4,16 @@
 // — without round-tripping through MCP or the on-chain registry directly.
 //
 // KEEP-475: this endpoint used to return 404, forcing callers to query the
-// canonical Base Sepolia ReputationRegistry on chain to find KH. The agent
-// already exists (mcp.json route lines 76-81); only the well-known wrapper
-// was missing.
+// canonical Ethereum mainnet registries on chain to find KH. The agent
+// already exists (see the erc8004 block in the mcp.json route); only the
+// well-known wrapper was missing.
+//
+// Identity and reputation are SEPARATE ERC-8004 contracts. The identity block
+// comes from lib/agent-identity.ts, so a deployment can publish its own
+// registration. The reputation address is imported from
+// lib/agentic-wallet/constants.ts — the same source of truth the feedback route
+// and the Turnkey policy use — so the pointer we publish cannot drift from
+// where feedback is actually written on chain.
 
 import {
   agentDescription,
@@ -14,6 +21,10 @@ import {
   deriveBaseUrl,
   onChainIdentity,
 } from "@/lib/agent-identity";
+import {
+  ERC_8004_REPUTATION_REGISTRY_ADDRESS,
+  ETHEREUM_MAINNET_CHAIN_ID,
+} from "@/lib/agentic-wallet/constants";
 
 export function GET(request: Request): Response {
   const onChain = onChainIdentity();
@@ -50,9 +61,12 @@ export function GET(request: Request): Response {
     reputation: {
       type: "erc-8004",
       // Feedback writes flow through the agentic-wallet path; consumers
-      // read directly from the on-chain registry.
-      registry: onChain.registry,
-      chain_id: onChain.chainId,
+      // read directly from the on-chain ReputationRegistry — a different
+      // contract from the IdentityRegistry above. Not part of the deployment
+      // identity seam: the reputation contract is a fixed public deployment,
+      // not something an operator registers.
+      registry: ERC_8004_REPUTATION_REGISTRY_ADDRESS,
+      chain_id: ETHEREUM_MAINNET_CHAIN_ID,
     },
   };
 

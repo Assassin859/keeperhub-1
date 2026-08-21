@@ -10,16 +10,12 @@ import {
   Link2,
   Loader2,
   Lock,
-  Share2,
   Play,
-  Plus,
-  Redo2,
   Save,
   Settings2,
   Square,
   Store,
   Trash2,
-  Undo2,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { usePathname, useRouter } from "next/navigation";
@@ -28,12 +24,6 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { OrgSwitcher } from "@/components/organization/org-switcher";
 import { GoLiveOverlay } from "@/components/overlays/go-live-overlay";
 import { ListingOverlay } from "@/components/overlays/listing-overlay";
@@ -43,6 +33,7 @@ import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
+import { useProjects, useTags } from "@/lib/hooks/use-org-data";
 import { VersionPreviewBanner } from "./version-preview-banner";
 import { useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
@@ -50,8 +41,9 @@ import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import { cn } from "@/lib/utils";
-import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
 import { runWorkflowValidationPreflight } from "@/lib/workflow/editor/run-validation";
+import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
+import { getMissingBatchCallFields } from "@/lib/workflow/validation/action-config";
 import { ensureSavedBeforeRun } from "@/lib/workflow/run-preflight";
 import {
   addNodeAtom,
@@ -359,14 +351,36 @@ function getNodeMissingFields(
       fieldLabel: field.label,
     }));
 
-  if (missingFields.length === 0) {
+  // Each call inside a batch-write-contract/batch-read-contract `calls[]` is
+  // its own contract/ABI/function trio, required the same as a standalone
+  // write-contract/read-contract node. An incomplete call blocks Run the
+  // same way a missing top-level required field does.
+  const missingCallFields = flatFields
+    .filter(
+      (field) =>
+        field.type === "call-list-builder" &&
+        shouldShowField(field, config || {})
+    )
+    .flatMap((field) =>
+      getMissingBatchCallFields(
+        config?.[field.key],
+        field.hideNetworkColumn
+      ).map((missingCall) => ({
+        fieldKey: `${field.key}[${missingCall.callIndex}].${missingCall.fieldKey}`,
+        fieldLabel: `Call ${missingCall.callIndex + 1}: ${missingCall.fieldLabel}`,
+      }))
+    );
+
+  const allMissingFields = [...missingFields, ...missingCallFields];
+
+  if (allMissingFields.length === 0) {
     return null;
   }
 
   return {
     nodeId: node.id,
     nodeLabel: node.data.label || action.label || "Unnamed Step",
-    missingFields,
+    missingFields: allMissingFields,
   };
 }
 
@@ -908,6 +922,16 @@ function useWorkflowState() {
   >([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
+  // Projects and tags are shared app-wide; mirror them into the existing state
+  // so everything reading `allProjects` / `allTags` keeps working unchanged.
+  const { data: storeProjects } = useProjects();
+  const { data: storeTags } = useTags();
+  useEffect(() => {
+    setAllProjects(storeProjects);
+  }, [storeProjects]);
+  useEffect(() => {
+    setAllTags(storeTags);
+  }, [storeTags]);
   const [isEnabled, setIsEnabled] = useAtom(isWorkflowEnabled);
 
   // v1.7 listing state
@@ -933,14 +957,8 @@ function useWorkflowState() {
     }
     const loadAllWorkflows = async () => {
       try {
-        const [workflows, projects, tags] = await Promise.all([
-          api.workflow.getAll(),
-          api.project.getAll().catch(() => [] as Project[]),
-          api.tag.getAll().catch(() => [] as Tag[]),
-        ]);
+        const workflows = await api.workflow.getAll();
         setAllWorkflows(workflows);
-        setAllProjects(projects);
-        setAllTags(tags);
       } catch (error) {
         console.error("Failed to load workflows:", error);
       }
@@ -1190,14 +1208,8 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
 
   const loadWorkflows = async () => {
     try {
-      const [workflows, projects, tags] = await Promise.all([
-        api.workflow.getAll(),
-        api.project.getAll().catch(() => [] as Project[]),
-        api.tag.getAll().catch(() => [] as Tag[]),
-      ]);
+      const workflows = await api.workflow.getAll();
       setAllWorkflows(workflows);
-      setAllProjects(projects);
-      setAllTags(tags);
     } catch (error) {
       console.error("Failed to load workflows:", error);
     }

@@ -157,15 +157,32 @@ const ACCEPT_CONTROL_CHARS_RE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
   /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e]/g;
 
-function sanitiseAcceptField(value: unknown, fallback: string): string {
+/**
+ * Strip control/invisible/reordering characters from an upstream-supplied
+ * string and cap its length before it is rendered into an error message.
+ *
+ * Shared by every augmentation that echoes bytes chosen by something outside
+ * this process (an x402 challenge, a contract's revert string), so the
+ * log-injection and hidden-text defences documented on ACCEPT_CONTROL_CHARS_RE
+ * apply uniformly instead of being re-implemented per call site.
+ */
+function sanitiseUpstreamField(
+  value: unknown,
+  maxChars: number,
+  fallback: string
+): string {
   if (typeof value !== "string") {
     return fallback;
   }
   const stripped = value.replace(ACCEPT_CONTROL_CHARS_RE, " ");
-  if (stripped.length > MAX_ACCEPT_FIELD_CHARS) {
-    return `${stripped.slice(0, MAX_ACCEPT_FIELD_CHARS - 3)}...`;
+  if (stripped.length > maxChars) {
+    return `${stripped.slice(0, maxChars - 3)}...`;
   }
   return stripped;
+}
+
+function sanitiseAcceptField(value: unknown, fallback: string): string {
+  return sanitiseUpstreamField(value, MAX_ACCEPT_FIELD_CHARS, fallback);
 }
 
 function formatAcceptOption(accept: X402Accept): string {
@@ -252,6 +269,170 @@ function buildPaymentRequiredHint(
     "  - agentcash: `mcp__agentcash__fetch` against the same endpoint",
     "  - Marketplace UI: open the listing's public page and run it interactively",
   ].join("\n");
+}
+
+/** Detect whether a `callApi` error message starts with an HTTP 400 status. */
+const API_CALL_FAILED_400_PREFIX = "API call failed: 400";
+
+function is400Error(message: string): boolean {
+  return message.startsWith(API_CALL_FAILED_400_PREFIX);
+}
+
+// The appended Reason field gets a wider cap than an x402 accept field because
+// decoded custom errors are routinely longer than addresses. The original
+// callApi message remains verbatim as the first line for compatibility.
+const MAX_SIMULATION_REASON_CHARS = 200;
+
+type SimulateFailureShape = {
+  success?: unknown;
+  status?: unknown;
+  failureKind?: unknown;
+  wouldRevert?: unknown;
+  revertReason?: unknown;
+  error?: unknown;
+  code?: unknown;
+  from?: unknown;
+  to?: unknown;
+};
+
+/**
+ * Turn an actionable dry-run failure reported as HTTP 400 into an agent-native
+ * message.
+ *
+ * `/api/execute/*` reports two failures that carry enough structure to act on:
+ * a true call revert has `failureKind: "revert"` plus `wouldRevert: true`, while
+ * an attributed preflight failure has a machine-readable `code`. The latter is
+ * deliberately not called a revert: the current `insufficient_balance` case is
+ * rejected by gas estimation before the EVM returns revert data.
+ *
+ * An MCP caller never sees either body as data because `callApi` throws and the
+ * JSON survives only as a fragment of an error string. Returns null for every
+ * other 400, including uncoded simulator validation failures, so malformed
+ * inputs are never relabelled as chain-side reverts.
+ *
+ * Best-effort throughout, like `buildPaymentRequiredHint`: an unparseable body
+ * or a missing field degrades to fewer lines rather than throwing inside an
+ * error path. The original message is kept first so callers that pattern-match
+ * on the status line keep working. Every appended field copy is sanitised — a
+ * contract can pick its own revert string, so it is untrusted input.
+ */
+function buildSimulationFailureHint(originalMessage: string): string | null {
+  const bodyStart = originalMessage.indexOf(
+    " - ",
+    API_CALL_FAILED_400_PREFIX.length
+  );
+  if (bodyStart < 0) {
+    return null;
+  }
+
+  let parsed: SimulateFailureShape | null;
+  try {
+    parsed = JSON.parse(
+      originalMessage.slice(bodyStart + 3)
+    ) as SimulateFailureShape | null;
+  } catch {
+    return null;
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    parsed.success !== false ||
+    parsed.status !== "simulated" ||
+    parsed.wouldRevert !== true
+  ) {
+    return null;
+  }
+
+  // `wouldRevert` is also true for simulator-side validation failures. A true
+  // revert therefore needs the explicit discriminator. Separately, a string
+  // `code` means the simulator attributed a preflight failure closely enough
+  // to make it actionable even when `failureKind` remains "validation".
+  const isRevert = parsed.failureKind === "revert";
+  const hasFailureCode = typeof parsed.code === "string";
+  if (!(isRevert || hasFailureCode)) {
+    return null;
+  }
+
+  const reason = sanitiseUpstreamField(
+    typeof parsed.revertReason === "string"
+      ? parsed.revertReason
+      : parsed.error,
+    MAX_SIMULATION_REASON_CHARS,
+    "not reported"
+  );
+
+  const lines = [
+    originalMessage,
+    "",
+    isRevert
+      ? "Simulation reverted. Nothing was signed or broadcast."
+      : "Simulation preflight failed. Nothing was signed or broadcast.",
+    isRevert
+      ? "Stage: simulation — this 400 describes the transaction, not your request."
+      : "Stage: simulation preflight — the simulator attributed a machine-readable cause.",
+    `Reason: ${reason}`,
+  ];
+
+  if (typeof parsed.code === "string") {
+    lines.push(
+      `Reason code: ${sanitiseUpstreamField(parsed.code, MAX_ACCEPT_FIELD_CHARS, "unknown")} (branch on this rather than the reason text)`
+    );
+  }
+  if (typeof parsed.from === "string") {
+    lines.push(
+      `Simulated sender: ${sanitiseUpstreamField(parsed.from, MAX_ACCEPT_FIELD_CHARS, "unknown")}`
+    );
+  }
+  if (typeof parsed.to === "string") {
+    lines.push(
+      `Simulated call target: ${sanitiseUpstreamField(parsed.to, MAX_ACCEPT_FIELD_CHARS, "unknown")}`
+    );
+  }
+
+  lines.push(
+    "Next step:",
+    "  - The dry run resolves the sender to the organization wallet. If your org routes writes through a Safe, the broadcast spends from the Safe, so the sender above is not the account that pays — resolve the signer mode before acting on the reason.",
+    "  - Fix the cause, then re-run the same arguments with simulate: true. Broadcast only once the dry run returns success: true and wouldRevert: false."
+  );
+
+  return lines.join("\n");
+}
+
+/**
+ * `callApi` for the direct-execution tools: identical behaviour, except that a
+ * structured dry-run failure reported as HTTP 400 is augmented with its
+ * actionable diagnostic instead of surfacing as a bare
+ * `API call failed: 400 Bad Request - {...}`. Every other failure, including
+ * an uncoded validation 400, is rethrown untouched.
+ */
+async function callExecuteApi(
+  internalApiBaseUrl: string,
+  authHeader: string,
+  path: string,
+  method: string,
+  body?: unknown,
+  idempotencyKey?: string,
+  options?: CallApiOptions
+): Promise<ApiResponse> {
+  try {
+    return await callApi(
+      internalApiBaseUrl,
+      authHeader,
+      path,
+      method,
+      body,
+      idempotencyKey,
+      options
+    );
+  } catch (err) {
+    if (err instanceof Error && is400Error(err.message)) {
+      const hint = buildSimulationFailureHint(err.message);
+      if (hint) {
+        throw new Error(hint);
+      }
+    }
+    throw err;
+  }
 }
 
 // Optional idempotency key shared by the mutating tools. Forwarded to the REST
@@ -1266,7 +1447,7 @@ export function registerTools(
 
   server.tool(
     "list_integrations",
-    "List all configured integrations (credentials) for the organization. These are required for actions like Discord notifications or Sendgrid emails.",
+    "List all configured integrations (credentials) for the organization, each with its id, name, and type. These are required for actions like Discord notifications, Sendgrid emails, or web3 writes. A web3 integration's entry already includes its checksummed wallet address; config is omitted -- call get_wallet_integration with an entry's id for its decrypted config.",
     {},
     { title: "List Integrations", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("list_integrations", scope, async (_args) =>
@@ -1286,9 +1467,13 @@ export function registerTools(
 
   server.tool(
     "get_wallet_integration",
-    "Get details for a specific wallet integration. Required for web3 write actions like fund transfers and contract writes.",
+    "Get details for a specific wallet integration, including its decrypted config -- not present on list_integrations' entries, which already carry the checksummed wallet address. Call list_integrations first to find the integrationId; its response already tells you which integrations are type 'web3'. Required for web3 write actions like fund transfers and contract writes.",
     {
-      integrationId: z.string().describe("The integration (wallet) ID"),
+      integrationId: z
+        .string()
+        .describe(
+          "The integration (wallet) ID, from a prior list_integrations call"
+        ),
     },
     {
       title: "Get Wallet Integration",
@@ -1506,7 +1691,7 @@ export function registerTools(
       async (args) =>
         withToolLogging("execute_transfer", undefined, async () => {
           assertSimulationSupported(args.chain_id, args.simulate);
-          const data = await callApi(
+          const data = await callExecuteApi(
             internalApiBaseUrl,
             authHeader,
             "/api/execute/transfer",
@@ -1563,7 +1748,7 @@ export function registerTools(
       async (args) =>
         withToolLogging("execute_contract_call", undefined, async () => {
           assertSimulationSupported(args.chain_id, args.simulate);
-          const data = await callApi(
+          const data = await callExecuteApi(
             internalApiBaseUrl,
             authHeader,
             "/api/execute/contract-call",
@@ -1638,7 +1823,7 @@ export function registerTools(
       async (args) =>
         withToolLogging("execute_check_and_execute", undefined, async () => {
           assertSimulationSupported(args.chain_id, args.simulate);
-          const data = await callApi(
+          const data = await callExecuteApi(
             internalApiBaseUrl,
             authHeader,
             "/api/execute/check-and-execute",

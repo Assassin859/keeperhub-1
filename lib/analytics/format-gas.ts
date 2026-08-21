@@ -72,6 +72,51 @@ export function formatGasAsEth(
   return renderUnits(toDisplayUnits(wei, decimals), decimals);
 }
 
+const WEI_DECIMALS = 18;
+const TRAILING_ZEROS = /0+$/;
+
+/**
+ * Every wei the value holds, rendered as ETH with nothing rounded away.
+ *
+ * The headline figures round to 4 significant places, which is unreadable to
+ * compare against a block explorer. This is the number to show on hover so the
+ * two can be reconciled digit for digit. Trailing zeros are trimmed because
+ * they carry no information.
+ */
+export function formatGasExactEth(
+  weiString: string | null | undefined
+): string {
+  const wei = parseWei(weiString);
+  if (wei === null) {
+    return "--";
+  }
+  if (wei === ZERO) {
+    return "0 ETH";
+  }
+  const digits = wei.toString().padStart(WEI_DECIMALS + 1, "0");
+  const whole = digits.slice(0, -WEI_DECIMALS);
+  const fraction = digits.slice(-WEI_DECIMALS).replace(TRAILING_ZEROS, "");
+  return fraction ? `${whole}.${fraction} ETH` : `${whole} ETH`;
+}
+
+/**
+ * The wallet-paid share of a period's gas.
+ *
+ * `totalWei` is every wei the runs burned, sponsored included, so the wallet
+ * share is what is left after removing the sponsorship ledger. Clamped at zero:
+ * the two figures sit on different time axes (run start vs ledger insert), so a
+ * window edge can put a sponsored transaction in one and not the other.
+ */
+export function walletShareWei(totalWei: string, sponsoredWei: string): string {
+  const total = parseWei(totalWei);
+  const sponsored = parseWei(sponsoredWei);
+  if (total === null || sponsored === null) {
+    return totalWei;
+  }
+  const wallet = total - sponsored;
+  return wallet > ZERO ? wallet.toString() : "0";
+}
+
 export type GasSplit = {
   total: string;
   wallet: string;

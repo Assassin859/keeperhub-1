@@ -164,6 +164,50 @@ async function getEncryptedOtpFromDb(identifier: string): Promise<string> {
   }
 }
 
+/**
+ * Read and decrypt the forgot-password reset code. The route stores it under the
+ * bare email identifier, not a prefixed one.
+ */
+export async function getResetOtpFromDb(email: string): Promise<string> {
+  return await getEncryptedOtpFromDb(email);
+}
+
+/**
+ * Read and decrypt a dual-factor email OTP, keyed `mfa:<action>:<userId>` by
+ * lib/mfa/dual-factor.ts. Resolves the user id from the email first.
+ */
+export async function getDualFactorOtpFromDb(
+  email: string,
+  action: string
+): Promise<string> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required");
+  }
+  const sql = postgres(databaseUrl, { max: 1 });
+  let userId: string;
+  try {
+    const rows = await sql`SELECT id FROM users WHERE email = ${email} LIMIT 1`;
+    if (rows.length === 0) {
+      throw new Error(`No user found for ${email}`);
+    }
+    userId = rows[0].id as string;
+  } finally {
+    await sql.end();
+  }
+  // The row is written as the challenge is issued, so poll briefly.
+  let lastError: unknown;
+  for (let i = 0; i < 10; i++) {
+    try {
+      return await getEncryptedOtpFromDb(`mfa:${action}:${userId}`);
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw lastError;
+}
+
 async function getOtpViaDb(email: string): Promise<string> {
   return await getEncryptedOtpFromDb(`email-verification-otp-${email}`);
 }
@@ -249,7 +293,7 @@ function base32Decode(input: string): Buffer {
  * server's RFC 6238 implementation (HMAC-SHA1, 30s period, dynamic truncation).
  * Validated against the app's generateTotp for byte-identical output.
  */
-function generateTotpCode(manualEntryKey: string): string {
+export function generateTotpCode(manualEntryKey: string): string {
   const step = Math.floor(Date.now() / 1000 / TOTP_PERIOD_SECONDS);
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(step));
@@ -411,23 +455,35 @@ export async function signIn(
 
   // The email/password form renders inline (no chooser step on the landing).
   const emailField = page.locator("#auth-email");
-  await expect(emailField).toBeVisible({ timeout: 15_000 });
-  await emailField.fill(email);
-  await page.locator("#auth-password").fill(password);
+  const passwordField = page.locator("#auth-password");
+  const orgSwitcher = page.locator('button[role="combobox"]');
 
-  // Retry the submit: right after navigation the first click can land before
-  // the client handler is wired and be dropped, leaving the form in place.
-  // toPass re-clicks until the org switcher (canvas) resolves.
+  // An existing session redirects /welcome straight into the app, so there is
+  // no form to fill. Wait for whichever of the two lands and take that branch.
+  await expect(emailField.or(orgSwitcher).first()).toBeVisible({
+    timeout: 15_000,
+  });
+  if (await orgSwitcher.isVisible()) {
+    return;
+  }
+
+  // Retry the fill and the submit together: a fill that lands before hydration
+  // is wiped when React mounts the controlled inputs, and a click that lands
+  // before the handler is wired is dropped. Re-filling every attempt keeps the
+  // loop from clicking an empty form against native required validation.
   const signInButton = page.getByRole("button", {
     name: "Sign in",
     exact: true,
   });
-  const orgSwitcher = page.locator('button[role="combobox"]');
   await expect(async () => {
     if (await signInButton.isVisible()) {
+      await emailField.fill(email);
+      await passwordField.fill(password);
       await signInButton.click();
     }
-    await expect(orgSwitcher).toBeVisible({ timeout: 4000 });
+    // Give a submit that did land time to resolve before re-clicking, so a slow
+    // sign-in is not mistaken for a dropped click and re-submitted needlessly.
+    await expect(orgSwitcher).toBeVisible({ timeout: 10_000 });
   }).toPass({ timeout: 30_000 });
 }
 

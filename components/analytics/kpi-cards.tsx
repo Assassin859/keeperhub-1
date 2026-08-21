@@ -18,7 +18,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { formatGasSplit } from "@/lib/analytics/format-gas";
+import {
+  formatGasExactEth,
+  formatGasSplit,
+  walletShareWei,
+} from "@/lib/analytics/format-gas";
 import type { TimeRange } from "@/lib/analytics/types";
 import {
   analyticsLoadingAtom,
@@ -40,17 +44,6 @@ function formatDuration(ms: number | null): string {
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.round((ms % 60_000) / 1000);
   return `${minutes}m ${seconds}s`;
-}
-
-// Wallet-paid and sponsored gas are tracked in separate ledgers, so the headline
-// figure is their sum. BigInt keeps the addition exact before the lossy
-// Number() conversion that the delta needs.
-function addWeiStrings(a: string, b: string): string {
-  try {
-    return (BigInt(a) + BigInt(b)).toString();
-  } catch {
-    return a;
-  }
 }
 
 function computeDelta(current: number, previous: number): number | null {
@@ -119,6 +112,12 @@ function DeltaDisplay({
   );
 }
 
+// Shown on Total Runs, which is where a user notices runs are missing: the
+// trigger fired but the platform refused the run before it started, so it is
+// neither a success nor a failure and belongs in no rate.
+const SKIPPED_TOOLTIP =
+  "Runs that finished, successfully or not, over this period. Runs still in flight, runs you cancelled, and skipped runs are excluded. A run is skipped when the trigger fired but the run was refused before it started, because the plan's monthly execution limit was reached, the workflow uses an action your plan does not include, or a pay-as-you-go charge could not be collected. Nothing ran, so skipped runs do not count towards your success rate or your usage.";
+
 const COMPARISON_LABELS: Record<TimeRange, string> = {
   "1h": "the previous hour",
   "24h": "the previous 24 hours",
@@ -147,7 +146,42 @@ type KpiBreakdownLine = {
   key: string;
   text: string;
   highlighted?: boolean;
+  /** Shown on hover, for figures the headline rounds. */
+  exact?: string;
 };
+
+function BreakdownLine({ line }: { line: KpiBreakdownLine }): ReactNode {
+  const className = cn(
+    "text-xs font-medium",
+    line.highlighted ? "text-green-600 dark:text-green-400" : "text-foreground"
+  );
+  if (!line.exact) {
+    return (
+      <p className={className} data-kpi-line={line.key}>
+        {line.text}
+      </p>
+    );
+  }
+  // A button, not a <p> with tabIndex: Radix needs a focusable trigger, so the
+  // exact figure has to be reachable by keyboard and not only by hover.
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          className={cn(className, "block cursor-help text-left")}
+          data-exact={line.exact}
+          data-kpi-line={line.key}
+          type="button"
+        >
+          {line.text}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs font-mono text-xs">
+        {line.exact}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 type KpiCardProps = {
   cardKey: string;
@@ -160,6 +194,8 @@ type KpiCardProps = {
   iconClassName?: string;
   breakdown?: readonly KpiBreakdownLine[];
   tooltip?: string;
+  /** Shown on hover over the headline, for values the display rounds. */
+  exactValue?: string;
 };
 
 function KpiCard({
@@ -173,6 +209,7 @@ function KpiCard({
   iconClassName,
   breakdown,
   tooltip,
+  exactValue,
 }: KpiCardProps): ReactNode {
   return (
     <Card data-kpi={cardKey} data-testid="kpi-card">
@@ -199,12 +236,30 @@ function KpiCard({
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <p
-                className="whitespace-nowrap font-bold text-2xl tracking-tight xl:text-xl"
-                data-testid="kpi-value"
-              >
-                {value}
-              </p>
+              {exactValue ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className="cursor-help whitespace-nowrap text-left font-bold text-2xl tracking-tight xl:text-xl"
+                      data-exact={exactValue}
+                      data-testid="kpi-value"
+                      type="button"
+                    >
+                      {value}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs font-mono text-xs">
+                    {exactValue}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <p
+                  className="whitespace-nowrap font-bold text-2xl tracking-tight xl:text-xl"
+                  data-testid="kpi-value"
+                >
+                  {value}
+                </p>
+              )}
               <DeltaDisplay
                 delta={delta}
                 invertColor={invertDeltaColor}
@@ -214,18 +269,7 @@ function KpiCard({
             {breakdown && breakdown.length > 0 ? (
               <div className="space-y-0.5">
                 {breakdown.map((line) => (
-                  <p
-                    className={cn(
-                      "text-xs font-medium",
-                      line.highlighted
-                        ? "text-green-600 dark:text-green-400"
-                        : "text-foreground"
-                    )}
-                    data-kpi-line={line.key}
-                    key={line.key}
-                  >
-                    {line.text}
-                  </p>
+                  <BreakdownLine key={line.key} line={line} />
                 ))}
               </div>
             ) : null}
@@ -259,6 +303,7 @@ export function KpiCards(): ReactNode {
       `Change in ${metric} compared with ${versus}.`;
 
     const prev = summary.previousPeriod;
+    const skippedCount = summary.skippedCount;
 
     const totalRunsDelta = prev
       ? computeDelta(summary.totalRuns, prev.totalRuns)
@@ -278,15 +323,12 @@ export function KpiCards(): ReactNode {
         ? computeDelta(summary.avgDurationMs, prev.avgDurationMs)
         : null;
 
-    const walletGasWei = summary.totalGasWei;
+    const totalGasWei = summary.totalGasWei;
     const sponsoredGasWei = summary.sponsoredGasWei;
-    const totalGasWei = addWeiStrings(walletGasWei, sponsoredGasWei);
+    const walletGasWei = walletShareWei(totalGasWei, sponsoredGasWei);
 
     const gasDelta = prev
-      ? computeDelta(
-          Number(totalGasWei),
-          Number(addWeiStrings(prev.totalGasWei, prev.sponsoredGasWei))
-        )
+      ? computeDelta(Number(totalGasWei), Number(prev.totalGasWei))
       : null;
 
     const hasSponsoredGas = sponsoredGasWei !== "0" && sponsoredGasWei !== "";
@@ -302,6 +344,16 @@ export function KpiCards(): ReactNode {
         deltaTooltip: deltaTooltip("total runs"),
         invertDeltaColor: false,
         iconClassName: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+        breakdown:
+          skippedCount > 0
+            ? ([
+                {
+                  key: "skipped",
+                  text: `${skippedCount.toLocaleString()} skipped`,
+                },
+              ] as const)
+            : undefined,
+        tooltip: SKIPPED_TOOLTIP,
       },
       {
         key: "success-rate",
@@ -332,16 +384,19 @@ export function KpiCards(): ReactNode {
         deltaTooltip: deltaTooltip("total gas spent"),
         invertDeltaColor: true,
         iconClassName: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+        exactValue: formatGasExactEth(totalGasWei),
         breakdown: hasSponsoredGas
           ? ([
               {
                 key: "wallet",
                 text: `${gas.wallet} from wallet`,
+                exact: formatGasExactEth(walletGasWei),
               },
               {
                 key: "sponsored",
                 text: `${gas.sponsored} sponsored`,
                 highlighted: true,
+                exact: formatGasExactEth(sponsoredGasWei),
               },
             ] as const)
           : undefined,
@@ -385,6 +440,7 @@ export function KpiCards(): ReactNode {
           cardKey={card.key}
           delta={card.delta}
           deltaTooltip={card.deltaTooltip}
+          exactValue={"exactValue" in card ? card.exactValue : undefined}
           icon={card.icon}
           iconClassName={card.iconClassName}
           invertDeltaColor={card.invertDeltaColor}

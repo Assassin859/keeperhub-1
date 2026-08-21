@@ -50,7 +50,7 @@ import type {
 
 /**
  * Normalize workflow execution status to a unified status.
- * workflow_executions uses: pending | running | unconfirmed | success | error | cancelled
+ * workflow_executions uses: pending | running | unconfirmed | success | error | skipped | cancelled
  * direct_executions uses: pending | running | unconfirmed | completed | failed
  * We normalize to: pending | running | success | error
  */
@@ -69,6 +69,9 @@ export function normalizeStatus(
   }
   if (status === "cancelled") {
     return "cancelled";
+  }
+  if (status === "skipped") {
+    return "skipped";
   }
   // Both sources use "unconfirmed" for a broadcast the chain has not confirmed.
   // It is still in flight, not an outcome, so it reads as running in the UI.
@@ -151,6 +154,7 @@ function parseBucketRow(row: {
   success: string;
   error: string;
   cancelled: string;
+  skipped: string;
   pending: string;
   running: string;
 }): TimeSeriesBucket {
@@ -159,6 +163,7 @@ function parseBucketRow(row: {
     success: Number(row.success) || 0,
     error: Number(row.error) || 0,
     cancelled: Number(row.cancelled) || 0,
+    skipped: Number(row.skipped) || 0,
     pending: Number(row.pending) || 0,
     running: Number(row.running) || 0,
   };
@@ -176,6 +181,7 @@ function addBucketToMap(
     existing.success += bucket.success;
     existing.error += bucket.error;
     existing.cancelled += bucket.cancelled;
+    existing.skipped += bucket.skipped;
     existing.pending += bucket.pending;
     existing.running += bucket.running;
   } else {
@@ -279,6 +285,7 @@ async function computeAnalyticsSummary(
   const successCount = workflowStats.success + directStats.success;
   const errorCount = workflowStats.error + directStats.error;
   const cancelledCount = workflowStats.cancelled;
+  const skippedCount = workflowStats.skipped;
   const successRate = totalRuns > 0 ? successCount / totalRuns : 0;
 
   const avgDurationMs = computeAvgDuration(
@@ -293,6 +300,7 @@ async function computeAnalyticsSummary(
     successCount,
     errorCount,
     cancelledCount,
+    skippedCount,
     successRate,
     avgDurationMs,
     totalGasWei,
@@ -312,6 +320,7 @@ async function getWorkflowCounts(
   success: number;
   error: number;
   cancelled: number;
+  skipped: number;
   durationSum: number;
   durationCount: number;
 }> {
@@ -320,6 +329,7 @@ async function getWorkflowCounts(
       success: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
       error: sql<number>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
+      skipped: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'skipped' THEN 1 ELSE 0 END)`,
       durationSum: sql<number>`COALESCE(SUM(${workflowExecutions.duration}), 0)`,
       durationCount: sql<number>`SUM(CASE WHEN ${workflowExecutions.duration} IS NOT NULL THEN 1 ELSE 0 END)`,
     })
@@ -337,14 +347,16 @@ async function getWorkflowCounts(
   const row = result[0];
   const success = Number(row?.success) || 0;
   const error = Number(row?.error) || 0;
-  // Total counts only completed runs (success + error). Pending, running and
-  // cancelled runs are excluded so the success rate and Total Runs KPI ignore
-  // in-flight and cancelled executions.
+  // Total counts only completed runs (success + error). Pending, running,
+  // cancelled and skipped runs are excluded so the success rate and Total Runs
+  // KPI ignore in-flight runs, cancellations, and runs the platform refused
+  // before they started.
   return {
     total: success + error,
     success,
     error,
     cancelled: Number(row?.cancelled) || 0,
+    skipped: Number(row?.skipped) || 0,
     durationSum: Number(row?.durationSum) || 0,
     durationCount: Number(row?.durationCount) || 0,
   };
@@ -457,6 +469,7 @@ async function getPreviousPeriodSummary(
     successCount: workflowStats.success + directStats.success,
     errorCount: workflowStats.error + directStats.error,
     cancelledCount: workflowStats.cancelled,
+    skippedCount: workflowStats.skipped,
     avgDurationMs: computeAvgDuration(
       workflowStats.durationSum + directStats.durationSum,
       workflowStats.durationCount + directStats.durationCount
@@ -467,10 +480,17 @@ async function getPreviousPeriodSummary(
 }
 
 /**
- * Sum of gas paid by KeeperHub sponsorship over the window (in wei), read
- * straight from the gas_credit_usage ledger. Org-level only: sponsorship is not
- * project-attributable, so a project-scoped view returns "0" rather than
- * leaking org-wide totals under a project filter.
+ * Sum of gas paid by KeeperHub sponsorship over the window (in wei), read from
+ * the gas_credit_usage ledger but scoped to the same runs `getWorkflowGasTotal`
+ * counts: joined through the execution, windowed on `started_at`, and limited
+ * to runs that have already written their `gas_used_wei` rollup.
+ *
+ * The scoping is what lets the KPI derive the wallet share by subtraction. The
+ * ledger inserts per confirmed transaction while the rollup is only written at
+ * finalize, so summing the ledger on its own axis would subtract gas from runs
+ * that have not landed in the total yet - on a 1h range that is the normal
+ * case, not an edge, and it would drive the wallet figure to zero. The join
+ * also makes the figure project-attributable, where the raw ledger is not.
  *
  * Caveat: this sums native gas across chains and the Gas Spent KPI renders it
  * as ETH, so a non-ETH chain's gas (e.g. Polygon's POL) is counted as ETH. It
@@ -484,19 +504,24 @@ async function getSponsoredGasTotal(
   rangeEnd: Date,
   projectId?: string
 ): Promise<string> {
-  if (projectId) {
-    return "0";
-  }
   const result = await db
     .select({
       totalWei: sql<string>`COALESCE(SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC)), 0)::text`,
     })
     .from(gasCreditUsage)
+    .innerJoin(
+      workflowExecutions,
+      eq(workflowExecutions.id, gasCreditUsage.executionId)
+    )
+    .innerJoin(workflows, eq(workflows.id, workflowExecutions.workflowId))
     .where(
       and(
         eq(gasCreditUsage.organizationId, organizationId),
-        gte(gasCreditUsage.createdAt, rangeStart),
-        lt(gasCreditUsage.createdAt, rangeEnd)
+        eq(workflows.organizationId, organizationId),
+        projectId ? eq(workflows.projectId, projectId) : undefined,
+        isNotNull(workflowExecutions.gasUsedWei),
+        gte(workflowExecutions.startedAt, rangeStart),
+        lt(workflowExecutions.startedAt, rangeEnd)
       )
     );
   return result[0]?.totalWei ?? "0";
@@ -588,6 +613,7 @@ async function computeTimeSeries(
       success: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
       error: sql<string>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
+      skipped: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'skipped' THEN 1 ELSE 0 END)`,
       pending: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'pending' THEN 1 ELSE 0 END)`,
       running: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'running' THEN 1 ELSE 0 END)`,
     })
@@ -614,6 +640,7 @@ async function computeTimeSeries(
       success: sql<string>`SUM(CASE WHEN ${directExecutions.status} = 'completed' THEN 1 ELSE 0 END)`,
       error: sql<string>`SUM(CASE WHEN ${directExecutions.status} = 'failed' THEN 1 ELSE 0 END)`,
       cancelled: sql<string>`0`,
+      skipped: sql<string>`0`,
       pending: sql<string>`SUM(CASE WHEN ${directExecutions.status} = 'pending' THEN 1 ELSE 0 END)`,
       running: sql<string>`SUM(CASE WHEN ${directExecutions.status} IN ('running', 'unconfirmed') THEN 1 ELSE 0 END)`,
     })
@@ -662,6 +689,7 @@ type BucketRow = {
   success: string;
   error: string;
   cancelled: string;
+  skipped: string;
   pending: string;
   running: string;
 };
@@ -1019,8 +1047,9 @@ async function fetchWorkflowRuns(
     .as("log_summary");
 
   // Total native gas cost sponsored per execution, from the sponsorship ledger.
-  // Used to show a single-network run's real total (the wallet-side gas above is
-  // ~0 for sponsored runs); multi-network runs render as "Composed" instead.
+  // Preferred for a single-network run because it carries the chain, so the
+  // amount renders in that chain's own token; multi-network runs render as
+  // "Composed" instead.
   const gasCostSummary = db
     .select({
       executionId: gasCreditUsage.executionId,

@@ -13,6 +13,10 @@ import {
 } from "drizzle-orm/pg-core";
 import type { ErrorCode } from "../errors/error-codes";
 import type { ExecutionErrorType } from "../errors/execution-error-type";
+import type {
+  NodeExecutionStatus,
+  WorkflowExecutionStatus,
+} from "../errors/execution-status";
 import type { IntegrationType } from "../types/integration";
 import { generateId } from "../utils/id";
 
@@ -72,6 +76,11 @@ export const users = pgTable("users", {
   // Only written after the user confirms it with a code; presence = verified.
   // Distinct from `email` (the synthetic SIWE login identity).
   stepUpEmail: text("step_up_email"),
+  // Set the first time the signup channels (Discord webhook, MailerLite) were
+  // told about this account. Claimed with a conditional update so the send
+  // happens once per account no matter how many times a verification hook
+  // re-fires for the same row.
+  signupNotifiedAt: timestamp("signup_notified_at"),
 });
 
 export const sessions = pgTable(
@@ -319,6 +328,10 @@ export const organization = pgTable("organization", {
   // (e.g. ["totp"], ["email"], or both); null/empty means no extra requirement.
   enforceMfa: boolean("enforce_mfa").notNull().default(false),
   enforcedMfaFactors: jsonb("enforced_mfa_factors"),
+  // Ceiling on what any MCP connection in this org may hold. Null means no
+  // ceiling, which is what every org predating the setting gets, so nothing
+  // an agent already does stops working on deploy.
+  mcpMaxScope: text("mcp_max_scope"),
 });
 
 export const member = pgTable(
@@ -332,6 +345,12 @@ export const member = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").default("member").notNull(),
+    // Ceiling on what this person's MCP agents may do in this organization,
+    // set by an owner or admin. It lives on the membership rather than on a
+    // connection because every `mcp add` registers a new client: a cap tied to
+    // a connection would be shed by reconnecting. Null means the organization
+    // ceiling alone applies.
+    mcpMaxScope: text("mcp_max_scope"),
     createdAt: timestamp("created_at").notNull(),
   },
   (table) => [
@@ -659,18 +678,9 @@ export const workflowExecutions = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
-    status: text("status").notNull().$type<
-      | "pending"
-      | "running"
-      // A run whose claimed transaction hashes could not be read on chain.
-      // Non-terminal: settled to success or error by the reconciler.
-      | "unconfirmed"
-      | "success"
-      | "error"
-      | "cancelled"
-      | "phantom"
-      | "system_error"
-    >(),
+    // Values and their meanings live on WorkflowExecutionStatus, so the API,
+    // the client and the executor all name the same set.
+    status: text("status").notNull().$type<WorkflowExecutionStatus>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<Record<string, any>>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
@@ -826,9 +836,7 @@ export const workflowExecutionLogs = pgTable(
     nodeId: text("node_id").notNull(),
     nodeName: text("node_name").notNull(),
     nodeType: text("node_type").notNull(),
-    status: text("status")
-      .notNull()
-      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+    status: text("status").notNull().$type<NodeExecutionStatus>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<any>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
@@ -894,7 +902,9 @@ export {
   type DirectExecutionReceiptEntry,
   directExecutions,
   type ExecutionDebt,
+  type ExecutionQuotaNotification,
   executionDebt,
+  executionQuotaNotifications,
   type GasCreditAllocation,
   type GasSponsorshipMonthly,
   gasCreditAllocations,
@@ -905,6 +915,7 @@ export {
   type NewBillingEvent,
   type NewDirectExecution,
   type NewExecutionDebt,
+  type NewExecutionQuotaNotification,
   type NewGasCreditAllocation,
   type NewGasSponsorshipMonthly,
   type NewOrganizationApiKey,

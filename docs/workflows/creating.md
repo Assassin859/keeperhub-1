@@ -8,8 +8,8 @@ description: "Step-by-step guide to building workflows with the visual node-base
 There are several ways to create a KeeperHub workflow. The visual builder in the browser is the most direct path; for AI agents and terminal-driven workflows, you can also create them programmatically:
 
 - [**Visual builder**](/workflows/creating) (this guide): design workflows on a node canvas in the KeeperHub web app.
-- [**MCP server**](/ai-tools/mcp-server): AI agents call `create_workflow` over the Model Context Protocol to build workflows from natural language.
-- [**Claude Code plugin**](/ai-tools/claude-code-plugin): bundles the MCP server plus skills so you can ask Claude Code to "create a workflow that..." inside the terminal.
+- [**MCP server**](/agent/mcp-server): AI agents call `create_workflow` over the Model Context Protocol to build workflows from natural language.
+- [**Claude Code plugin**](/agent/claude-code-plugin): bundles the MCP server plus skills so you can ask Claude Code to "create a workflow that..." inside the terminal.
 - [**`kh` CLI**](/cli): scriptable workflow management for CI and headless environments.
 
 The rest of this page covers the visual builder.
@@ -192,10 +192,10 @@ To check if a balance from a previous "Check Balance" node (ID: `check-balance`)
 
 ## Managing Connections
 
-Before using certain node types, set up connections in your account:
+Before using certain node types, set up connections:
 
-1. Click your profile icon in the top-right
-2. Select **Connections**
+1. Open Settings from the user menu
+2. Under Organization, select **Connections**
 3. Add connections for services you need:
    - Web3 wallets
    - Email providers

@@ -91,7 +91,7 @@ async function validateApiKey(
           code: "wrong_key_type",
           expected: "wfb_*",
           received: "kh_*",
-          hint: "Generate a webhook key from the user menu > API Keys > Webhook tab, then pass it as `Authorization: Bearer wfb_...`.",
+          hint: "Generate a webhook key from Settings > Developer > API keys > Webhook keys, then pass it as `Authorization: Bearer wfb_...`.",
         },
       };
     }
@@ -437,6 +437,8 @@ export async function POST(
           error: paygCharge.message,
           errorCategory: "billing",
           errorType: "user",
+          // Unpaid means the run never started, so it consumes no quota.
+          billable: false,
           completedAt: new Date(),
         })
         .where(eq(workflowExecutions.id, execution.id));
