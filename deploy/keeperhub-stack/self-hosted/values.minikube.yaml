@@ -12,18 +12,38 @@
 
 global:
   image:
-    # A bare repository name with no registry host. It resolves only because
-    # build-images.sh side-loads the images with `minikube image load`.
-    repository: keeperhub-local
-    # The kubelet must not try to pull an image that exists only inside the node.
-    # This is the single most client-hostile setting in this file, which is why
-    # it lives here rather than in the base profile.
+    # NO repository HERE, for the same reason there is no appHost below. It is
+    # written down once, in the settings file named by ENV_FILE, and read from
+    # there by install.sh, build-images.sh and the sandbox manifest alike.
+    #
+    # It used to live here as well, with assert_overlay comparing the two
+    # copies. That guard could report a mismatch but not prevent one, and it
+    # covered only the copy build-images.sh held - the sandbox manifest, which
+    # is applied outside the chart, could still find nothing.
+    #
+    # The kubelet must not try to pull an image that exists only inside the
+    # node. This is the single most client-hostile setting in this file, which
+    # is why it lives here rather than in the base profile.
     pullPolicy: Never
 
-  # Not local.keeperhub.com, so this can coexist with deploy/local on the same
-  # cluster. A client cannot use either: they do not own keeperhub.com. Reaching
-  # it needs `minikube tunnel -p keeperhub` and an /etc/hosts entry.
-  appHost: selfhosted.keeperhub.com
+  # NO appHost HERE, deliberately. The hostname is written down in exactly one
+  # place, the settings file named by ENV_FILE, and install.sh passes it through
+  # as --set global.appHost. A value here would be a second place to change and
+  # a silent winner whenever someone forgot the first.
+  #
+  # Leaving it out means a plain `helm install -f values.minikube.yaml` with no
+  # host stops on the `required` in values.yaml and names the value it wants.
+  # That is the intended behaviour: refusing to install is better than serving
+  # on whatever hostname the profile happened to ship with.
+  #
+  # Use a hostname you own and not a keeperhub.com one. Two reasons. The gate
+  # has to show the product running with no KeeperHub-operated host involved.
+  # And a keeperhub.com host would not exercise the trusted-origin seam at all:
+  # lib/trusted-origins.ts compiles the built-in `https://*.keeperhub.com` to an
+  # anchored regex, so such a host passes the CSRF guard on the built-in entry
+  # rather than on the one the install configured.
+  #
+  # Reaching it needs `minikube tunnel -p keeperhub` and an /etc/hosts entry.
 
   # The minikube ingress addon.
   ingressClassName: nginx
@@ -65,6 +85,30 @@ executor:
     JOB_TTL_SECONDS:
       type: kv
       value: "600"
+
+# Both are off in the base profile, for reasons that are about a client's
+# default rather than about correctness: the block dispatcher holds websockets
+# open to public RPC endpoints, and the metrics collector is a scrape target
+# with nothing scraping it. The acceptance run turns them on because the gate
+# has to cover every trigger type and every component the chart ships, so their
+# full configuration lives in values.yaml and only the switch is here.
+block:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+metricsCollector:
+  enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
 
 postgresql:
   # One instance. Three would sit forever waiting on anti-affinity against a

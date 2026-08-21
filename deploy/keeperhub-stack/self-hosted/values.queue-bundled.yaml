@@ -57,3 +57,18 @@ schedule:
     SQS_QUEUE_URL:
       type: template
       value: 'http://elasticmq.{{ .Release.Namespace }}.svc.cluster.local:9324/000000000000/keeperhub-workflow-queue'
+
+# The block dispatcher is the fourth producer. Helm merges this whether or not
+# block.enabled is true, and an unrendered component ignores it, so the queue
+# address cannot drift out of step with the other three by being written in one
+# place and forgotten in another.
+block:
+  env:
+    AWS_ENDPOINT_URL:
+      type: template
+      value: 'http://elasticmq.{{ .Release.Namespace }}.svc.cluster.local:9324'
+    AWS_ACCESS_KEY_ID: { type: kv, value: "test" }
+    AWS_SECRET_ACCESS_KEY: { type: kv, value: "test" }
+    SQS_QUEUE_URL:
+      type: template
+      value: 'http://elasticmq.{{ .Release.Namespace }}.svc.cluster.local:9324/000000000000/keeperhub-workflow-queue'

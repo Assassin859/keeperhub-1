@@ -72,7 +72,7 @@ afterEach(() => {
  */
 async function proxyWith(
   value: string | undefined
-): Promise<(typeof import("@/proxy"))["proxy"]> {
+): Promise<typeof import("@/proxy")["proxy"]> {
   const { ADDITIONAL_TRUSTED_ORIGINS: _omitted, ...rest } = originalEnv;
   process.env =
     value === undefined

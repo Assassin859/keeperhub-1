@@ -16,14 +16,16 @@ source "$SCRIPT_DIR/../config.sh"
 
 MINIKUBE_PROFILE="${MINIKUBE_PROFILE:-keeperhub}"
 
-# Harness constant, not an install setting.
+# Read from the settings file, like everything else.
 #
-# A bare repository name with no registry host. It resolves only because the
-# images are side-loaded into the node below, which is why a real install has no
-# default for it and must name a registry the cluster can pull from.
-# assert_overlay keeps this in step with the overlay the install reads.
-IMAGE_REPO="keeperhub-local"   # values.minikube.yaml: global.image.repository
-assert_overlay repository "$IMAGE_REPO"
+# On this cluster it is a bare repository name with no registry host, which
+# resolves only because the images are side-loaded into the node below. A real
+# install names a registry the cluster can pull from instead.
+if [ -z "$IMAGE_REPO" ]; then
+    echo "IMAGE_REPO is not set. Put it in the file ENV_FILE names:" >&2
+    echo "    IMAGE_REPO=keeperhub-local" >&2
+    exit 1
+fi
 
 SKIP_BUILD=false
 PRINT_TAG=false
@@ -68,15 +70,41 @@ if [ "$SKIP_BUILD" = false ]; then
     # bake reads them as HCL variables. shellcheck loses track of that across
     # the line continuations and reports them unused, which fails the
     # --severity=warning gate in maintainability.yml.
-    # shellcheck disable=SC2034
-    NEXT_PUBLIC_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
-    IMAGE_TAG="$IMAGE_TAG" \
-    LOCAL_IMAGE_REPO="$IMAGE_REPO" \
+    # NOTHING MAY GO BETWEEN THE ASSIGNMENTS AND `docker` BELOW, not even a
+    # comment. An assignment prefix has to touch the command it applies to. A
+    # comment after a trailing backslash ends the prefix, so the assignments
+    # become ordinary shell variables - set, unexported, invisible to the child
+    # process - and bake silently falls back to every default.
+    #
+    # That is not hypothetical. It is what this script did until now, and both
+    # consequences are the ones the comments here warn about: the tag resolved
+    # to "app-latest", the ":latest" this file forbids because kubelet then
+    # defaults initContainers to imagePullPolicy Always and cannot pull a
+    # side-loaded image, and NEXT_PUBLIC_TURNSTILE_SITE_KEY resolved to empty,
+    # so the captcha never rendered and signup failed with "Missing CAPTCHA
+    # response". Keep the block contiguous. Put explanations above it.
+    #
     # DOCS_BASE_URL is emptied so the image does not redirect /llms.txt to
     # docs.keeperhub.com. next.config.ts bakes redirects into the build, so this
     # cannot be a Helm value - it has to be decided here. Set on every target
     # rather than just app: the four that run `next build` share one builder
     # stage and BuildKit only deduplicates it while their args match.
+    #
+    # Every NEXT_PUBLIC_* below is compiled into the browser bundle and cannot be
+    # changed by any Helm value afterwards. An unset one is not neutral: it
+    # becomes the empty string in the bundle, which is how a missing site key
+    # turns into a signup form that renders and then refuses to submit.
+    #
+    # shellcheck disable=SC2034
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
+    NEXT_PUBLIC_GITHUB_CLIENT_ID="${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}" \
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID="${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}" \
+    NEXT_PUBLIC_AUTH_PROVIDERS="${NEXT_PUBLIC_AUTH_PROVIDERS:-}" \
+    NEXT_PUBLIC_BILLING_ENABLED="${NEXT_PUBLIC_BILLING_ENABLED:-false}" \
+    NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED="${NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:-false}" \
+    NEXT_PUBLIC_SENTRY_DSN="" \
+    IMAGE_TAG="$IMAGE_TAG" \
+    LOCAL_IMAGE_REPO="$IMAGE_REPO" \
     docker buildx bake \
         -f docker-bake.hcl \
         -f "$SCRIPT_DIR/docker-bake.hcl" \
@@ -87,7 +115,9 @@ fi
 
 echo "== Loading into minikube ($MINIKUBE_PROFILE)"
 present=$(minikube -p "$MINIKUBE_PROFILE" image ls 2>/dev/null || true)
-for component in app migrator workflow-runner executor schedule; do
+# Tag prefixes, not bake target names. The metrics collector is tagged
+# "collector-" and the block dispatcher "block-", matching the root bake file.
+for component in app migrator workflow-runner executor schedule block sandbox collector; do
     image="${IMAGE_REPO}:${component}-${IMAGE_TAG}"
     # Anchored: a bare substring match lets ":app-<tag>" match
     # "keeperhub-local:app-<tag>" and report a skip for an image never checked.

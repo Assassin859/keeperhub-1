@@ -29,15 +29,37 @@
 
 variable "LOCAL_IMAGE_REPO" { default = "keeperhub-local" }
 
-# Only the components deploy/keeperhub-stack/self-hosted/values.yaml enables.
-# block-dispatcher and metricsCollector are off there, so building them would be
-# wasted time; 'local-block' exists for when the block dispatcher is turned on.
+# Every component the M0 acceptance run installs.
+#
+# The first five share the deps -> source -> builder chain, so one bake session
+# runs 'pnpm install' and 'pnpm build' once for all of them. The last three are
+# additions for the gate run:
+#
+#   block-dispatcher   the Block trigger needs it, and the gate covers every
+#                      trigger type
+#   sandbox            the Code step calls SANDBOX_URL, which the profile points
+#                      at keeperhub-sandbox:8787. Without this image that
+#                      hostname resolves to nothing and the step fails with a
+#                      connection error
+#   metrics-collector  cheap, because it reuses the same builder stage
+#
+# 'local-core' keeps the original five available for a run that does not need
+# the extra three.
 group "local" {
-  targets = ["app", "migrator", "workflow-runner", "executor", "schedule-dispatcher"]
+  targets = [
+    "app",
+    "migrator",
+    "workflow-runner",
+    "executor",
+    "schedule-dispatcher",
+    "block-dispatcher",
+    "sandbox",
+    "metrics-collector",
+  ]
 }
 
-group "local-block" {
-  targets = ["block-dispatcher"]
+group "local-core" {
+  targets = ["app", "migrator", "workflow-runner", "executor", "schedule-dispatcher"]
 }
 
 # Tags deliberately never use ":latest". The common chart does not render
@@ -72,5 +94,18 @@ target "schedule-dispatcher" {
 
 target "block-dispatcher" {
   tags   = ["${LOCAL_IMAGE_REPO}:block-${IMAGE_TAG}"]
+  output = ["type=docker"]
+}
+
+# Tag prefixes match the root file's own, so a reader comparing the two sees the
+# same component under the same name: the root tags sandbox as "sandbox-" and
+# the metrics collector as "collector-", not "metrics-collector-".
+target "sandbox" {
+  tags   = ["${LOCAL_IMAGE_REPO}:sandbox-${IMAGE_TAG}"]
+  output = ["type=docker"]
+}
+
+target "metrics-collector" {
+  tags   = ["${LOCAL_IMAGE_REPO}:collector-${IMAGE_TAG}"]
   output = ["type=docker"]
 }

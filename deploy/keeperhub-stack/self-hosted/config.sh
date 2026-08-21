@@ -24,6 +24,86 @@
 # shellcheck disable=SC2034
 # Most variables here are consumed by the scripts that source this file.
 
+# ---------------------------------------------------------------------------
+# The settings file
+# ---------------------------------------------------------------------------
+# ENV_FILE names one file that holds every setting for an install. It is the
+# single place a hostname, a credential or a mode is written down; install.sh,
+# bootstrap-cluster.sh and build-images.sh all read the same one, so they cannot
+# disagree about what is being built or where it is served.
+#
+#   ENV_FILE=/path/to/my-install.env ./install.sh
+#
+# Anything already set in the environment wins, so a one-off override still
+# works: APP_HOST=other.example ./install.sh
+ENV_FILE="${ENV_FILE:-}"
+
+# Read a settings file WITHOUT letting the shell parse the values.
+#
+# `set -a; . file` cannot be used and this is not a style preference. A shell
+# assignment performs quote removal, so an unquoted JSON value silently loses
+# its double quotes. CHAIN_RPC_CONFIG went from 493 characters to 453 that way
+# and stopped being valid JSON, which parseRpcConfig catches and turns into an
+# empty config - the install then falls back to public RPC defaults with no
+# websocket URLs, and the Block and Event triggers connect to nothing while
+# every pod stays green.
+#
+# Assigning from a variable never re-parses the bytes, so the value arrives
+# exactly as written.
+load_env_file() {
+    local file="$1" line name value
+    [ -n "$file" ] || return 0
+    if [ ! -f "$file" ]; then
+        echo "ENV_FILE=$file does not exist." >&2
+        exit 1
+    fi
+
+    # The `|| [ -n "$line" ]` tail reads a final line with no newline.
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        case "$line" in
+            ''|'#'*|' '*'#'*|$'\t'*) continue ;;
+        esac
+        case "$line" in *=*) ;; *) continue ;; esac
+
+        name="${line%%=*}"
+        value="${line#*=}"
+
+        # A commented-out assignment is an opt-out, not a value, and anything
+        # that is not a plain identifier is prose that happened to contain "=".
+        case "$name" in
+            [A-Za-z_]*) ;;
+            *) continue ;;
+        esac
+        case "$name" in *[!A-Za-z0-9_]*) continue ;; esac
+
+        # Strip one layer of matching surrounding quotes.
+        #
+        # The settings file has to survive two different readers. This one takes
+        # each line literally, while the image build is a plain
+        # `set -a; . .env`, and the shell performs quote removal. An unquoted
+        # JSON value therefore loses its double quotes on the build side, and a
+        # quoted one keeps its outer quotes on this side. Quoting the file and
+        # stripping here is the only form that means the same thing to both.
+        case "$value" in
+            \'*\') value="${value#\'}"; value="${value%\'}" ;;
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+        esac
+
+        # An empty entry stays unset rather than becoming "". Several settings
+        # are read with `??`, which falls back on undefined but not on an empty
+        # string, so exporting "" would replace a working default with nothing.
+        [ -n "$value" ] || continue
+
+        # Already set in the environment wins, so a per-run override holds.
+        [ -n "${!name:-}" ] && continue
+
+        export "$name=$value"
+    done <"$file"
+}
+
+load_env_file "$ENV_FILE"
+
 # The cluster and namespace to install into. KUBE_CONTEXT is required rather
 # than defaulted, because a bare kubectl follows whatever context happens to be
 # current, and on a machine with production access that is how an install lands
@@ -55,6 +135,34 @@ PROFILE="${PROFILE:-}"
 IMAGE_REPO="${IMAGE_REPO:-}"
 IMAGE_TAG="${IMAGE_TAG:-}"
 IMAGE_PULL_POLICY="${IMAGE_PULL_POLICY:-}"
+
+# The Code step's execution sandbox, applied from sandbox.yaml.
+#
+# Off by default, which matches what the chart does: keeperhub-stack does not
+# render a sandbox, so an install has never had one. Everything except the Code
+# step works without it, and the failure is loud and local - that one step ends
+# with a connection error rather than the install misbehaving.
+#
+# On, it needs the sandbox image present in the same repository as the rest, and
+# it adds the one workload in the install that executes code the operator did
+# not write. sandbox.yaml documents what that pod is denied.
+SANDBOX_ENABLED="${SANDBOX_ENABLED:-false}"
+
+# The egress policy in networkpolicy.yaml: deny everything, then allow DNS, the
+# install's own namespace, the API server and the public internet minus every
+# private range.
+#
+# Off by default for two reasons. It does nothing at all on a cluster whose CNI
+# ignores NetworkPolicy, which is most default installs and includes minikube
+# without --cni=calico, so an operator could believe they were protected when
+# they were not. And a policy that silently drops traffic is a poor first
+# experience; better to install, confirm the product works, then close it down.
+EGRESS_POLICY="${EGRESS_POLICY:-false}"
+
+# The cluster's API server service address, for the egress policy. Read it with
+#   kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}'
+# The default is the kubeadm convention that minikube follows.
+APISERVER_CIDR="${APISERVER_CIDR:-10.96.0.1/32}"
 
 # The hostname the app is served on, and how it is exposed.
 #
@@ -92,6 +200,18 @@ TLS_ISSUER="${TLS_ISSUER:-}"
 # point it at a relay of yours that accepts SendGrid's request shape.
 SENDGRID_API_KEY="${SENDGRID_API_KEY:-}"
 FROM_ADDRESS="${FROM_ADDRESS:-}"
+
+# A second hostname served by the same app, added to the ingress and to
+# ADDITIONAL_TRUSTED_ORIGINS alongside APP_HOST.
+#
+# It exists because some third parties will only accept a hostname whose domain
+# you can prove you own. A Google OAuth redirect and a Turnstile widget both
+# want that, and a reserved domain such as example.com cannot be proved. So the
+# install can serve the reserved name it is evaluated on and a real name the
+# third parties accept, at the same time, without choosing between them.
+#
+# Leave empty for a single-host install, which is the normal case.
+APP_ALIAS_HOST="${APP_ALIAS_HOST:-}"
 
 # Cloudflare Turnstile.
 #
@@ -179,6 +299,92 @@ DB_SECRET_KEY="${DB_SECRET_KEY:-DATABASE_URL}"
 # rather than after a confusing execution.
 RUNNER_SECRET_PREFIX="${RUNNER_SECRET_PREFIX:-keeperhub-executor}"
 STRICT_RUNNER_SECRETS="${STRICT_RUNNER_SECRETS:-false}"
+
+# Which environment variable supplies each runner slug.
+#
+# check_runner_secrets below only reports what is absent. This list is what lets
+# install.sh create them, so an operator who has the credentials does not have to
+# run eight kubectl commands by hand and get the "key equals the name" convention
+# right eight times.
+#
+# slug|environment variable
+RUNNER_SECRET_SOURCES=(
+    "chain-rpc-config|CHAIN_RPC_CONFIG"
+    "etherscan-api-key|ETHERSCAN_API_KEY"
+    "openai-api-key|OPENAI_API_KEY"
+    "sendgrid-api-key|SENDGRID_API_KEY"
+    "turnkey-api-private-key|TURNKEY_API_PRIVATE_KEY"
+    "turnkey-api-public-key|TURNKEY_API_PUBLIC_KEY"
+)
+
+# An OAuth client id is needed twice, under two names, and the two do different
+# jobs. Deriving the second from the first so nobody has to know that.
+#
+#   NEXT_PUBLIC_GITHUB_CLIENT_ID  compiled into the browser bundle. Decides
+#                                 whether the sign-in button is rendered.
+#   GITHUB_CLIENT_ID              read at runtime. lib/auth.ts gates the
+#                                 provider on `enabled: !!process.env.
+#                                 GITHUB_CLIENT_ID`.
+#
+# Set only the public one and the result is the quiet kind of broken: the button
+# appears, because the bundle has an id, and the provider behind it is disabled,
+# so the flow fails after the user has already committed to it.
+GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID:-${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}}"
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}}"
+
+# Secret material the chart stores rather than generates.
+#
+# These reach the app through secrets.values in the chart, which writes them
+# into keeperhub-shared and keeperhub-email. Everything else in those Secrets is
+# generated and must not be overridden here: regenerating an encryption key
+# orphans the data encrypted with the old one.
+#
+# Creating only the runner copies is not enough and the failure is quiet. The
+# runner Secrets serve workflow steps inside Job pods; the app reads these. Miss
+# them and the app logs "SENDGRID_API_KEY environment variable is not
+# configured" while the variable is demonstrably mounted, because what is
+# mounted is an empty string the chart wrote.
+CHART_SECRET_VARS=(
+    SENDGRID_API_KEY
+    TURNKEY_API_PRIVATE_KEY
+    TURNKEY_API_PUBLIC_KEY
+    TURNKEY_ORGANIZATION_ID
+)
+
+# Third-party configuration passed to the app, each one optional.
+#
+# Rendered into a values fragment at install time, and ONLY when the variable is
+# actually set. That is deliberate rather than tidy: several of these are read
+# with `??`, which falls back on undefined but NOT on an empty string, so
+# supplying an empty value would replace a working default with nothing.
+# BASE_RPC_URL is the clearest case - lib/payments/x402/reconcile.ts reads
+# `process.env.BASE_RPC_URL ?? "https://mainnet.base.org"`.
+APP_INTEGRATION_VARS=(
+    AGENT_ID
+    AGENT_REGISTRY_CHAIN_ID
+    ANTHROPIC_API_KEY
+    BASE_RPC_URL
+    CDP_API_KEY_ID
+    CDP_API_KEY_SECRET
+    EMAIL_LOGO_URL
+    ETHERSCAN_API_KEY
+    GEOIP_ENABLED
+    GITHUB_CLIENT_ID
+    GITHUB_CLIENT_SECRET
+    GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_SECRET
+    MPP_SECRET_KEY
+    OPENAI_API_KEY
+    PAYG_RESOURCE_URL
+    SENDGRID_API_URL
+    TURNKEY_API_BASE_URL
+    X402_FACILITATOR_URL
+    ZERION_API_KEY
+)
+
+# Sent to every geo provider by default, and none of them needs a credential, so
+# configuring nothing is not the same as sending nothing. Off unless overridden.
+GEOIP_ENABLED="${GEOIP_ENABLED:-false}"
 
 # slug|what stops working without it
 RUNNER_OPTIONAL_SECRETS=(

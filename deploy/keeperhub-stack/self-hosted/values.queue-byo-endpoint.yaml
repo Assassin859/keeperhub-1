@@ -62,3 +62,15 @@ schedule:
     AWS_SECRET_ACCESS_KEY:
       type: template
       value: '{{ .Values.global.queue.staticCredentials.secretAccessKey }}'
+
+block:
+  env:
+    AWS_ENDPOINT_URL:
+      type: template
+      value: '{{ required "set global.queue.endpoint - the SQS-compatible base endpoint" .Values.global.queue.endpoint }}'
+    AWS_ACCESS_KEY_ID:
+      type: template
+      value: '{{ .Values.global.queue.staticCredentials.accessKeyId }}'
+    AWS_SECRET_ACCESS_KEY:
+      type: template
+      value: '{{ .Values.global.queue.staticCredentials.secretAccessKey }}'

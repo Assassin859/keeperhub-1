@@ -41,3 +41,11 @@ schedule:
     SQS_QUEUE_URL:
       type: template
       value: '{{ required "set global.queue.url - the full queue URL" .Values.global.queue.url }}'
+
+# The fourth producer. Merged whether or not block.enabled is true, so the queue
+# address stays defined in one place for every component that enqueues.
+block:
+  env:
+    SQS_QUEUE_URL:
+      type: template
+      value: '{{ required "set global.queue.url - the full queue URL" .Values.global.queue.url }}'

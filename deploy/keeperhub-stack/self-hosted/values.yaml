@@ -171,6 +171,24 @@ app:
     SANDBOX_URL:
       type: template
       value: 'http://keeperhub-sandbox.{{ .Release.Namespace }}.svc.cluster.local:8787'
+    # In shared_env specifically because the db-migration initContainer needs
+    # it. scripts/seed/seed-chains.ts calls getWssUrl and writes the result into
+    # the chains table, so a value that arrives after the install is too late:
+    # the columns are already empty and the dispatchers connect to nothing.
+    #
+    # install.sh always creates this Secret key, empty when unset. Empty is safe
+    # to read - parseRpcConfig evaluates `envValue || "{}"` and falls through to
+    # the public RPC defaults - whereas an absent key would leave every pod in
+    # CreateContainerConfigError.
+    #
+    # This is also the ONLY way to configure a websocket endpoint. The per-chain
+    # CHAIN_<NAME>_PRIMARY_RPC variables are HTTP-only; ChainConfigEntry in
+    # lib/rpc/rpc-config.ts has no websocket field. The Block and Event triggers
+    # both need one, and only the Tempo chains ship a public default.
+    CHAIN_RPC_CONFIG:
+      type: secret
+      name: keeperhub-integrations
+      key: CHAIN_RPC_CONFIG
 
   replicaCount: 1
 
@@ -366,9 +384,14 @@ app:
     # in the app log - which looks like the app is broken rather than
     # unconfigured. Set from the same value as the URLs above so the three
     # cannot disagree.
+    #
+    # global.appAliasHost is appended when the install serves a second hostname.
+    # The list is comma-separated, and lib/trusted-origins.ts filters each entry
+    # through isSafeOriginPattern, so an empty trailing entry is dropped rather
+    # than trusted.
     ADDITIONAL_TRUSTED_ORIGINS:
       type: template
-      value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}'
+      value: 'https://{{ required "set global.appHost - the hostname the application is served on" .Values.global.appHost }}{{ if .Values.global.appAliasHost }},https://{{ .Values.global.appAliasHost }}{{ end }}'
     # Nothing is gated in a self-hosted install; this short-circuits both the
     # execution guard and the feature route-guard.
     NEXT_PUBLIC_BILLING_ENABLED:
@@ -782,12 +805,173 @@ schedule:
   cronjob:
     enabled: false
 
-# Off locally. The block dispatcher opens websocket subscriptions to public RPC
-# endpoints, which is a poor default on a laptop. Turn it on by enabling this
-# and adding block-dispatcher to the image build.
+# Off by default. The block dispatcher opens websocket subscriptions to public
+# RPC endpoints, which is a poor default on a laptop and reaches the network
+# continuously rather than on demand. The configuration below is complete, so
+# turning it on is `block.enabled: true` plus block-dispatcher in the image
+# build; the acceptance profile values.minikube.yaml does exactly that.
+#
+# It needs no RPC configuration of its own. Chain endpoints arrive with the
+# workflows it fetches from the app (keeperhub-scheduler/block-dispatcher/api-client.ts),
+# which reads them from the `chains` table the migrator seeds. So the endpoints
+# a client's install uses are the rows in a client's own database.
 block:
   enabled: false
+  replicaCount: 1
 
-# Off locally. It is purely a Prometheus scrape target and nothing scrapes it.
+  image:
+    repository: '{{ required "set global.image.repository - a registry the cluster can pull from" .Values.global.image.repository }}'
+    tag: 'block-{{ required "set global.image.tag - the bare version, each component adds its own prefix" .Values.global.image.tag }}'
+    pullPolicy: '{{ .Values.global.image.pullPolicy }}'
+
+  service:
+    enabled: true
+    name: keeperhub-block
+    type: ClusterIP
+    port: 3000
+    containerPort: 3000
+    tls:
+      enabled: false
+  ingress:
+    enabled: false
+
+  command: ["/bin/sh"]
+  args:
+    - "-c"
+    - |
+      echo "$(date) - [BlockDispatcher] Starting..."
+      tsx block-dispatcher/index.ts
+
+  # Shares the dispatcher service account rather than creating a second one:
+  # the schedule component already grants the Lease permissions that
+  # LEADER_ELECTION_ENABLED would need, and both are the same logical producer.
+  serviceAccount:
+    create: false
+    name: keeperhub-schedule
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+  env:
+    KEEPERHUB_API_URL:
+      type: kv
+      value: "http://keeperhub-app:3000"
+    # Same database-backed HMAC store the schedule dispatcher uses. Without the
+    # row, /api/internal/block-workflows returns 401 and no block trigger ever
+    # fires, with every pod still green.
+    INTERNAL_SERVICE_HMAC_SECRET:
+      type: secret
+      name: keeperhub-shared
+      key: INTERNAL_SERVICE_HMAC_SECRET
+    AWS_REGION:
+      type: template
+      value: '{{ .Values.global.awsRegion }}'
+    RECONCILE_INTERVAL_MS:
+      type: kv
+      value: "30000"
+    # Force-reconnect each chain socket on this cadence, so a half-open upstream
+    # websocket cannot silently stop delivering blocks.
+    SOCKET_MAX_AGE_MS:
+      type: kv
+      value: "3600000"
+    # One replica, so nothing has to acquire a lease before it starts work.
+    LEADER_ELECTION_ENABLED:
+      type: kv
+      value: "false"
+    HEALTH_PORT:
+      type: kv
+      value: "3000"
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+  serviceMonitors:
+    enabled: false
+  cronjob:
+    enabled: false
+
+# Off by default, because it is purely a Prometheus scrape target and a
+# self-hosted install has nothing scraping it unless the operator brings their
+# own Prometheus. The configuration below is complete for anyone who does.
 metricsCollector:
   enabled: false
+  replicaCount: 1
+
+  image:
+    repository: '{{ required "set global.image.repository - a registry the cluster can pull from" .Values.global.image.repository }}'
+    tag: 'collector-{{ required "set global.image.tag - the bare version, each component adds its own prefix" .Values.global.image.tag }}'
+    pullPolicy: '{{ .Values.global.image.pullPolicy }}'
+
+  service:
+    enabled: true
+    name: keeperhub-metrics-collector
+    type: ClusterIP
+    port: 9090
+    containerPort: 9090
+    tls:
+      enabled: false
+  ingress:
+    enabled: false
+
+  # No command override. Startup comes from the Dockerfile CMD
+  # (tsx keeperhub-metrics-collector/index.ts), which stays the single source.
+
+  serviceAccount:
+    create: true
+    name: keeperhub-metrics-collector
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  env:
+    DATABASE_URL:
+      type: secret
+      name: '{{ .Values.global.db.secretName }}'
+      key: '{{ .Values.global.db.secretKey }}'
+    PORT:
+      type: kv
+      value: "9090"
+    METRICS_COLLECTOR:
+      type: kv
+      value: "prometheus"
+    LOG_LEVEL:
+      type: kv
+      value: "info"
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 9090
+    initialDelaySeconds: 20
+    periodSeconds: 30
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 9090
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+  serviceMonitors:
+    enabled: false
+  cronjob:
+    enabled: false
