@@ -3,7 +3,9 @@
  * Replaces server actions with API endpoints
  */
 
+import type { PlanName } from "@/lib/billing/plans";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import type { NodeExecutionStatus } from "@/lib/errors/execution-status";
 import type { Page } from "@/lib/pagination";
 import type { HeldPaymentView } from "@/lib/tempo/held-payment-view";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
@@ -71,6 +73,8 @@ export type SavedWorkflow = WorkflowData & {
   userVote?: VoteDirection | null;
   canVote?: boolean;
   duplicateCount?: number;
+  /** Minimum plan required on free tier (marketplace feed only). */
+  requiredPlan?: PlanName | null;
   // Present when loaded via getById(id, { version }).
   isHistoricalVersion?: boolean;
   version?: number;
@@ -641,13 +645,29 @@ export const workflowApi = {
     ),
 
   // Version history timeline (admin/owner only).
-  getHistory: (id: string, options?: { page?: number; limit?: number }) => {
+  getHistory: (
+    id: string,
+    options?: {
+      page?: number;
+      limit?: number;
+      // Restrict the timeline to versions touching one node. Filtered on the
+      // server so paging counts only the matching versions.
+      nodeId?: string;
+      nodeLabel?: string | null;
+    }
+  ) => {
     const params = new URLSearchParams();
     if (options?.page !== undefined) {
       params.set("page", String(options.page));
     }
     if (options?.limit !== undefined) {
       params.set("limit", String(options.limit));
+    }
+    if (options?.nodeId) {
+      params.set("nodeId", options.nodeId);
+    }
+    if (options?.nodeLabel) {
+      params.set("nodeLabel", options.nodeLabel);
     }
     const qs = params.toString();
     return apiCall<Page<WorkflowVersionSummary>>(
@@ -810,7 +830,7 @@ export const workflowApi = {
         nodeId: string;
         nodeName: string;
         nodeType: string;
-        status: "pending" | "running" | "success" | "error" | "cancelled";
+        status: NodeExecutionStatus;
         input: unknown;
         output: unknown;
         error: string | null;
@@ -834,7 +854,7 @@ export const workflowApi = {
       status: string;
       nodeStatuses: Array<{
         nodeId: string;
-        status: "pending" | "running" | "success" | "error" | "cancelled";
+        status: NodeExecutionStatus;
       }>;
       progress?: {
         totalSteps: number;
@@ -1003,6 +1023,13 @@ export type SecurityAuditEvent = {
   // Human label for the affected resource (currently workflows), resolved
   // server-side so the feed can name "which workflow" and link into it.
   resourceName: string | null;
+  /** Set when the thing acted on is a person, so the feed can show them. */
+  resourceUser?: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    image: string | null;
+  } | null;
   // The workflow history version this event produced, when one exists, so the
   // feed can deep-link to that exact version. Null for events with no version.
   version: number | null;

@@ -1,6 +1,10 @@
 import "server-only";
 
 import { and, desc, eq } from "drizzle-orm";
+import {
+  ETHEREUM_MAINNET_CHAIN_ID,
+  KEEPERHUB_ERC_8004_AGENT_ID,
+} from "@/lib/agentic-wallet/constants";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { isErrorStatus } from "@/lib/errors/execution-status";
@@ -13,7 +17,12 @@ import { isErrorStatus } from "@/lib/errors/execution-status";
 export const DEFAULT_CALL_WAIT_TIMEOUT_MS = 25_000;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
-type TerminalStatus = "success" | "error" | "system_error" | "cancelled";
+type TerminalStatus =
+  | "success"
+  | "error"
+  | "system_error"
+  | "cancelled"
+  | "skipped";
 
 type ExecutionResult = {
   status: TerminalStatus;
@@ -23,7 +32,12 @@ type ExecutionResult = {
 
 function isTerminalStatus(status: string): status is TerminalStatus {
   return (
-    status === "success" || isErrorStatus(status) || status === "cancelled"
+    status === "success" ||
+    isErrorStatus(status) ||
+    status === "cancelled" ||
+    // A refused run never starts, so a caller waiting on it must stop here
+    // rather than poll until the timeout.
+    status === "skipped"
   );
 }
 
@@ -202,9 +216,9 @@ function buildFeedbackCta(executionId: string): FeedbackCta {
       executionId,
       agent: {
         registry: "erc-8004",
-        chainId: 1,
-        id: "31875",
-        explorerUrl: "https://8004scan.io/agents/ethereum/31875",
+        chainId: ETHEREUM_MAINNET_CHAIN_ID,
+        id: String(KEEPERHUB_ERC_8004_AGENT_ID),
+        explorerUrl: `https://8004scan.io/agents/ethereum/${KEEPERHUB_ERC_8004_AGENT_ID}`,
       },
     },
   };
@@ -249,6 +263,13 @@ export async function buildCallCompletionResponse(
   }
   if (result.status === "cancelled") {
     return { executionId, status: "error", error: "Execution cancelled" };
+  }
+  if (result.status === "skipped") {
+    return {
+      executionId,
+      status: "error",
+      error: result.error ?? "Execution skipped",
+    };
   }
   return {
     executionId,

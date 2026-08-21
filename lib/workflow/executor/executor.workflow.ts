@@ -7,7 +7,12 @@ import {
   applyBigIntConversion,
   needsBigIntMode,
 } from "@/lib/bigint-condition-utils";
-import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
+import {
+  ErrorCategory,
+  logSystemError,
+  logSystemWarn,
+  logUserError,
+} from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   decrementConcurrentExecutions,
@@ -46,6 +51,7 @@ import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context
 import {
   computeFinalSuccess,
   type ExecutionResult,
+  findOrphanedNodes,
 } from "@/lib/workflow/executor/final-success";
 import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
 import {
@@ -86,6 +92,7 @@ import {
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
 // System actions that don't have plugins - maps to module import functions.
@@ -231,7 +238,6 @@ export type WorkflowExecutionInput = {
 /**
  * Helper to replace template variables in conditions
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: KEEP-1284 validation requires checking multiple error conditions
 function replaceTemplateVariable(
   _match: string,
   nodeId: string,
@@ -265,10 +271,10 @@ function replaceTemplateVariable(
     );
   }
 
-  const dotIndex = rest.indexOf(".");
+  const { fieldPath } = splitTemplateRef(rest, output.label);
   let value: unknown;
 
-  if (dotIndex === -1) {
+  if (!fieldPath) {
     value = output.data;
   } else if (output.data === null || output.data === undefined) {
     // KEEP-1284: Throw error when node data is null/undefined
@@ -276,8 +282,6 @@ function replaceTemplateVariable(
       `Condition references "${rest}" but the node output data is ${output.data === null ? "null" : "undefined"}. Ensure the referenced node produces valid output.`
     );
   } else {
-    const fieldPath = rest.substring(dotIndex + 1);
-
     // Wrapper-aware lookup: matches resolveFromOutputData's three-shape walk
     // (top-level → { data: ... } → { result: ... }) so paths like
     // "args.value" resolve through the trigger node's
@@ -382,7 +386,6 @@ function renderConditionLiteral(value: unknown): string {
  * validated upfront for clear user-facing error messages.
  */
 // Exported for testing - KEEP-1284
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: KEEP-1284 validation requires comprehensive error checking
 export function evaluateConditionExpression(
   conditionExpression: unknown,
   outputs: NodeOutputs,
@@ -519,6 +522,88 @@ export function evaluateConditionExpression(
   );
 }
 
+type StepFunction = (input: Record<string, unknown>) => Promise<unknown>;
+
+/** Action type -> the step function to invoke for it. */
+export type StepFunctionTable = ReadonlyMap<string, StepFunction>;
+
+/** Resolve the importer for an action type, honoring legacy action renames. */
+function findStepImporter(actionType: string): StepImporter | undefined {
+  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
+    actionType
+  ];
+  if (systemAction) {
+    return systemAction;
+  }
+  const direct = getStepImporter(actionType);
+  if (direct) {
+    return direct;
+  }
+  const mapped = LEGACY_ACTION_MAPPINGS[actionType];
+  return mapped ? getStepImporter(mapped) : undefined;
+}
+
+/**
+ * Resolve every step module the workflow can reach, before any step runs.
+ *
+ * Step identity in the durability layer is assigned by invocation order: the
+ * Nth `useStep` call in a run gets the Nth id, with no name or content
+ * matching. A replay therefore has to invoke steps in exactly the order the
+ * event log recorded, or every id from the divergence point on refers to the
+ * wrong step and the log becomes unreadable.
+ *
+ * `executeActionStep` used to `await importer()` immediately before calling the
+ * step. That await put the step invocation into a racing microtask: on the
+ * first pass the module load is real I/O, on a replay it is an already-resolved
+ * cache hit, so N branches fanned out in parallel reach their step calls in
+ * different orders on different passes. Resolving the modules here -- once, up
+ * front, before any step is invoked -- leaves the fan-out path synchronous from
+ * `executeNode` through to the step call, so invocation order follows the graph
+ * instead of module-load timing.
+ *
+ * Iterating a sorted list keeps this preload itself order-stable. It invokes no
+ * steps, so it contributes nothing to the event log.
+ */
+export async function preloadStepFunctions(
+  nodes: WorkflowNode[]
+): Promise<StepFunctionTable> {
+  const actionTypes = new Set<string>();
+  for (const node of nodes) {
+    if (node.data.type !== "action") {
+      continue;
+    }
+    const actionType = node.data.config?.actionType as string | undefined;
+    if (actionType) {
+      actionTypes.add(actionType);
+    }
+  }
+
+  const table = new Map<string, StepFunction>();
+  for (const actionType of [...actionTypes].sort()) {
+    const importer = findStepImporter(actionType);
+    if (!importer) {
+      continue;
+    }
+    try {
+      const module = await importer.importer();
+      const stepFunction = module[importer.stepFunction];
+      if (typeof stepFunction === "function") {
+        table.set(actionType, stepFunction as StepFunction);
+      }
+    } catch (error) {
+      // A module that fails to load here fails again at call time, where the
+      // error is attributed to the node instead of aborting the whole run.
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Executor] Failed to preload step module",
+        error instanceof Error ? error : new Error(String(error)),
+        { action_type: actionType }
+      );
+    }
+  }
+  return table;
+}
+
 /**
  * Execute a single action step with logging via stepHandler
  * IMPORTANT: Steps receive only the integration ID as a reference to fetch credentials.
@@ -529,10 +614,11 @@ async function executeActionStep(input: {
   config: Record<string, unknown>;
   outputs: NodeOutputs;
   context: StepContext;
+  stepFunctions: StepFunctionTable;
   nodeMap?: ReadonlyMap<string, unknown>;
   executionResults?: Record<string, ExecutionResult>;
 }) {
-  const { actionType, config, outputs, context } = input;
+  const { actionType, config, outputs, context, stepFunctions } = input;
 
   // Build step input WITHOUT credentials, but WITH integrationId reference and logging context
   const stepInput: Record<string, unknown> = {
@@ -541,10 +627,19 @@ async function executeActionStep(input: {
     _context: context,
   };
 
+  // Resolved by preloadStepFunctions before any step ran. Looking it up
+  // synchronously is what keeps the step invocation in program order -- an
+  // await here would hand the ordering back to microtask scheduling.
+  const stepFunction = stepFunctions.get(actionType);
+  if (!stepFunction) {
+    return {
+      success: false,
+      error: `Unknown action type: "${actionType}". This action is not registered in the plugin system. Available system actions: ${Object.keys(SYSTEM_ACTIONS).join(", ")}.`,
+    };
+  }
+
   // Special handling for Condition action - needs template evaluation
   if (actionType === "Condition") {
-    const systemAction = SYSTEM_ACTIONS.Condition;
-    const module = await systemAction.importer();
     const originalExpression =
       resolveConditionExpression(stepInput) ?? stepInput.condition;
 
@@ -570,7 +665,7 @@ async function executeActionStep(input: {
 
     console.log("[Condition] Final result:", evaluatedCondition);
 
-    return await module[systemAction.stepFunction]({
+    return await stepFunction({
       condition: evaluatedCondition,
       // Include original expression only when evaluation succeeded (avoid raw template in UI on failure)
       expression:
@@ -585,45 +680,7 @@ async function executeActionStep(input: {
     });
   }
 
-  // Check system actions first (Database Query, HTTP Request)
-  const systemAction = (SYSTEM_ACTIONS as Record<string, StepImporter>)[
-    actionType
-  ];
-  if (systemAction) {
-    const module = await systemAction.importer();
-    const stepFunction = module[systemAction.stepFunction];
-    return await stepFunction(stepInput);
-  }
-
-  // Look up plugin action from the generated step registry
-  let stepImporter = getStepImporter(actionType);
-
-  // Fallback: check legacy action mappings (e.g. "safe-wallet/get-owners" -> "safe/get-owners")
-  if (!stepImporter) {
-    const mapped = LEGACY_ACTION_MAPPINGS[actionType];
-    if (mapped) {
-      stepImporter = getStepImporter(mapped);
-    }
-  }
-
-  if (stepImporter) {
-    const module = await stepImporter.importer();
-    const stepFunction = module[stepImporter.stepFunction];
-    if (stepFunction) {
-      return await stepFunction(stepInput);
-    }
-
-    return {
-      success: false,
-      error: `Step function "${stepImporter.stepFunction}" not found in module for action "${actionType}". Check that the plugin exports the correct function name.`,
-    };
-  }
-
-  // Fallback for unknown action types
-  return {
-    success: false,
-    error: `Unknown action type: "${actionType}". This action is not registered in the plugin system. Available system actions: ${Object.keys(SYSTEM_ACTIONS).join(", ")}.`,
-  };
+  return await stepFunction(stepInput);
 }
 
 /**
@@ -1493,7 +1550,6 @@ function nextBodyTargets(
  * In both modes the BFS uses depth tracking so nested For Each / Collect
  * pairs are correctly stepped over.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: BFS with depth tracking + handle-aware seeding requires multiple condition branches
 export function identifyLoopBody(
   forEachNodeId: string,
   edgesBySource: Map<string, string[]>,
@@ -1729,7 +1785,6 @@ export function resolveArraySource(
 /**
  * Main workflow executor function
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Core workflow engine function requires comprehensive logic
 export async function executeWorkflow(input: WorkflowExecutionInput) {
   "use workflow";
 
@@ -1831,6 +1886,53 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   // Authoritative input to computeFinalSuccess so a node that actually executed
   // and failed is never masked as skipped.
   const skippedNodes = new Set<string>();
+
+  // Every node executeNode was entered for, across all branches. The per-branch
+  // `visited` sets cannot answer "was this node ever reached" on their own, and
+  // `results` misses disabled nodes (which return before recording one), so
+  // orphan detection needs its own run-wide record.
+  const attemptedNodes = new Set<string>();
+
+  // Nodes whose execution is gated by a condition's routing decision, excluded
+  // from orphan detection.
+  const conditionNodeIds = new Set(
+    nodes
+      .filter(
+        (n) =>
+          n.data.type === "action" && n.data.config?.actionType === "Condition"
+      )
+      .map((n) => n.id)
+  );
+
+  // For Each body nodes run through runBodyNode, not executeNode, so they never
+  // reach attemptedNodes and would otherwise all read as orphans. Their failures
+  // are already accounted for by the For Each node's failedIterations.
+  const loopBodyNodeIds = new Set<string>();
+  for (const node of nodes) {
+    if (
+      node.data.type !== "action" ||
+      node.data.config?.actionType !== "For Each"
+    ) {
+      continue;
+    }
+    const body = identifyLoopBody(
+      node.id,
+      edgesBySource,
+      nodeMap,
+      edgesBySourceHandle
+    );
+    for (const bodyNodeId of body.bodyNodeIds) {
+      loopBodyNodeIds.add(bodyNodeId);
+    }
+    if (body.collectNodeId) {
+      loopBodyNodeIds.add(body.collectNodeId);
+    }
+  }
+
+  // Must complete before the first step runs: it invokes no steps itself, and
+  // once it has, every step call downstream is reached synchronously, so the
+  // order they are invoked in follows the graph rather than module-load timing.
+  const stepFunctions = await preloadStepFunctions(nodes);
 
   // Find trigger nodes
   const nodesWithIncoming = new Set(edges.map((e) => e.target));
@@ -2045,6 +2147,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           config: processedConfig,
           outputs,
           context: stepContext,
+          stepFunctions,
           nodeMap,
           executionResults: results,
         }),
@@ -2137,7 +2240,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   // For Each: iteration orchestrator
   // -------------------------------------------------------------------
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Orchestrates loop iteration with error handling and result collection
   async function handleForEachExecution(params: {
     forEachNodeId: string;
     forEachNode: WorkflowNode;
@@ -2222,7 +2324,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // 3. Single iteration executor
     const mapExpression = processedConfig.mapExpression as string | undefined;
 
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: iteration logic has inherent complexity from scoped output capture, body execution, and map expression
     async function executeIteration(
       item: unknown,
       index: number
@@ -2575,6 +2676,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       return; // Prevent cycles
     }
     visited.add(nodeId);
+    attemptedNodes.add(nodeId);
 
     const node = nodeMap.get(nodeId);
     if (!node) {
@@ -2797,6 +2899,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           config: processedConfig,
           outputs: liveOutputs,
           context: stepContext,
+          stepFunctions,
           nodeMap,
           executionResults: results,
         });
@@ -2970,15 +3073,31 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       // late-landing success inside a step boundary (DB-backed, replay-safe via
       // memoization) before giving up, so the reconcile path below recovers it
       // instead of nullifying the node and unblocking convergence with no data.
+      // The poll itself is a step and can throw its own max-retries error. An
+      // escape here would abort the rest of this catch, and the convergence
+      // signal at the bottom is what keeps a fan-in join from waiting forever
+      // on an arrival that never comes -- so swallow the failure and fall
+      // through to the normal failure path instead.
       if (isSpuriousMaxRetries && executionId && recordedOutput === undefined) {
-        recordedOutput = (
-          await awaitCompletedStepOutputStep(
-            executionId,
-            nodeId,
-            SPURIOUS_RECOVERY_POLL_TIMEOUT_MS,
-            SPURIOUS_RECOVERY_POLL_INTERVAL_MS
-          )
-        )?.outputRaw;
+        try {
+          recordedOutput = (
+            await awaitCompletedStepOutputStep(
+              executionId,
+              nodeId,
+              SPURIOUS_RECOVERY_POLL_TIMEOUT_MS,
+              SPURIOUS_RECOVERY_POLL_INTERVAL_MS
+            )
+          )?.outputRaw;
+        } catch (pollError) {
+          logSystemWarn(
+            ErrorCategory.WORKFLOW_ENGINE,
+            "[Workflow Executor] Spurious-recovery poll failed; falling back to failure path",
+            pollError instanceof Error
+              ? pollError
+              : new Error(String(pollError)),
+            { ...baseLogLabels, node_id: nodeId }
+          );
+        }
       }
       if (isSpuriousMaxRetries && recordedOutput !== undefined) {
         // Recovered execution: the step body succeeded, only the SDK's
@@ -3183,6 +3302,38 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       organizationId,
       organizationPlan,
     });
+
+    // A node the executor never scheduled is absent from `results`, so on its
+    // own it cannot fail the run. Record one failure per orphan before the
+    // final tally so a fan-in join that never fired -- and the alerting steps
+    // behind it -- surface as an error instead of a green run.
+    const orphanedNodes = findOrphanedNodes({
+      attempted: attemptedNodes,
+      results,
+      skipped: skippedNodes,
+      edgesByTarget,
+      conditionNodeIds,
+      excludedNodeIds: loopBodyNodeIds,
+    });
+    for (const orphanId of orphanedNodes) {
+      const orphanNode = nodeMap.get(orphanId);
+      const upstreamCount = edgesByTarget.get(orphanId)?.length ?? 0;
+      results[orphanId] = {
+        success: false,
+        error: `Node "${orphanNode ? getNodeName(orphanNode) : orphanId}" never executed although all ${upstreamCount} upstream branches completed`,
+      };
+    }
+    if (orphanedNodes.length > 0) {
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Executor] Nodes never scheduled despite a clean upstream",
+        new Error(`orphaned_nodes=${orphanedNodes.join(",")}`),
+        {
+          ...baseLogLabels,
+          orphaned_node_count: String(orphanedNodes.length),
+        }
+      );
+    }
 
     // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches.
     // KEEP-395 Bug 2 hardening: re-evaluated AFTER drain so any failures from
