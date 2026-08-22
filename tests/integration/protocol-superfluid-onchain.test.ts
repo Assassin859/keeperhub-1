@@ -36,6 +36,7 @@ import {
   PUBLIC_RPCS,
   parseRpcConfig,
 } from "@/lib/rpc/rpc-config";
+import { safeEthersGetUrl } from "@/lib/rpc/safe-ethers-fetch";
 import superfluidDef, {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
@@ -56,6 +57,13 @@ const SEPOLIA_PRIMARY_URL = resolveRpcUrl(
   PUBLIC_RPCS.SEPOLIA,
   "primary"
 );
+// CHAIN_CONFIG's eth-sepolia entry has no `publicFallback` distinct from
+// `publicDefault`, so with neither CHAIN_RPC_CONFIG nor CHAIN_SEPOLIA_*_RPC
+// set (true for local dev; CI sets CHAIN_RPC_CONFIG with genuinely distinct
+// paid endpoints) this resolves to the same literal as SEPOLIA_PRIMARY_URL.
+// The fallback corroboration below still adds value in that case (a fresh
+// request against the same node can succeed where a rate-limited one
+// failed), but it is a same-node retry, not independent corroboration.
 const SEPOLIA_FALLBACK_URL = resolveRpcUrl(
   "eth-sepolia",
   "CHAIN_SEPOLIA_FALLBACK_RPC",
@@ -104,10 +112,10 @@ const DISPATCH_FAILURE_RE =
   /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|,\s*data="0x"/;
 
 // The "missing revert data" alternative above is genuinely ambiguous.
-// ethers 6.16.0 only ever produces that text with `data=null` (no code
-// path in that version produces it otherwise), and it reports it
-// identically for two very different situations: the real misroute
-// regression (see "reroute regression" below), and a Sepolia RPC
+// ethers 6.16.0 only ever produces that text with `data=null` and
+// `reason=null` (no code path in that version produces it otherwise), and
+// it reports it identically for two very different situations: the real
+// misroute regression (see "reroute regression" below), and a Sepolia RPC
 // endpoint that withheld revert data while degraded/rate-limited. The
 // message text alone cannot tell them apart -- `resolveEstimateGasError`
 // below corroborates this one shape against a second, independent endpoint
@@ -115,11 +123,21 @@ const DISPATCH_FAILURE_RE =
 // DISPATCH_FAILURE_RE alternative is already unambiguous and needs no such
 // corroboration.
 //
-// `data=null` uses `=` -- ethers' top-level field separator -- which a
-// nested `transaction` object never does (it always carries an encoded
-// hex string under `"data":`, colon-separated JSON), so this cannot
-// false-positive on a nested field.
-const AMBIGUOUS_MISSING_REVERT_DATA_RE = /missing revert data[\s\S]*data=null/;
+// Checked on the typed error fields rather than the stringified message:
+// mirrors tests/integration/_shared/onchain-rpc.ts's isRpcInfraError,
+// which classifies this identical shape (CALL_EXCEPTION with no execution
+// data) as RPC-infra noise for the same reason. A future ethers version
+// that reformats CALL_EXCEPTION's message text would silently break a
+// string/regex check; the typed fields are the stable contract.
+type EthersLikeError = { code?: string; data?: unknown; reason?: unknown };
+
+function isAmbiguousMissingRevertData(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const e = error as EthersLikeError;
+  return e.code === "CALL_EXCEPTION" && e.data == null && e.reason == null;
+}
 
 /**
  * Resolves the outcome of an estimateGas attempt given a primary attempt
@@ -155,9 +173,8 @@ async function resolveEstimateGasError(
     await primaryAttempt();
     return "";
   } catch (error) {
-    const message = String(error);
-    if (!AMBIGUOUS_MISSING_REVERT_DATA_RE.test(message)) {
-      return message;
+    if (!isAmbiguousMissingRevertData(error)) {
+      return String(error);
     }
     try {
       await fallbackAttempt();
@@ -231,12 +248,25 @@ describe("Superfluid on-chain integration", () => {
         manager.executeWithFailover((p) =>
           p.estimateGas({ to, data, from: TEST_ADDRESS })
         ),
-      () =>
-        new ethers.JsonRpcProvider(
-          SEPOLIA_FALLBACK_URL,
+      () => {
+        // manager may already be in its sticky fallback state from an
+        // earlier call in this suite (a degraded-RPC run is exactly when
+        // that happens) -- when it is, the primary attempt above actually
+        // queried SEPOLIA_FALLBACK_URL, so corroborating against that same
+        // URL again would be a same-node retry, not a second opinion.
+        // Target whichever endpoint the primary attempt did not just use.
+        const corroborationUrl = manager.isCurrentlyUsingFallback()
+          ? SEPOLIA_PRIMARY_URL
+          : SEPOLIA_FALLBACK_URL;
+        const fetchRequest = new ethers.FetchRequest(corroborationUrl);
+        fetchRequest.timeout = 5000;
+        fetchRequest.getUrlFunc = safeEthersGetUrl;
+        return new ethers.JsonRpcProvider(
+          fetchRequest,
           ethers.Network.from(SEPOLIA_CHAIN_ID),
           { staticNetwork: true }
-        ).estimateGas({ to, data, from: TEST_ADDRESS })
+        ).estimateGas({ to, data, from: TEST_ADDRESS });
+      }
     );
   }
 
