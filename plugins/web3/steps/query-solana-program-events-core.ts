@@ -1,6 +1,9 @@
 import "server-only";
 
-import type { ConfirmedSignatureInfo } from "@solana/web3.js";
+import type {
+  ConfirmedSignatureInfo,
+  VersionedTransactionResponse,
+} from "@solana/web3.js";
 import { PublicKey } from "@solana/web3.js";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -26,8 +29,11 @@ export const DEFAULT_SIGNATURE_LOOKBACK = 1000;
 export const MAX_SIGNATURE_LOOKBACK =
   MAX_SIGNATURE_PAGES * MAX_SIGNATURES_PER_PAGE;
 export const MAX_TRANSACTION_CONCURRENCY = 8;
-export const MAX_PAGE_RETRIES = 3;
-export const RETRY_BASE_DELAY_MS = 2000;
+export const NULL_TX_RETRY_ATTEMPTS = 3;
+export const NULL_TX_RETRY_DELAY_MS = 1000;
+
+const INTEGER_STRING_RE = /^\d+$/;
+const BASE58_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,90}$/;
 
 export type QuerySolanaProgramEventsCoreInput = {
   network: string;
@@ -61,6 +67,8 @@ export type QuerySolanaProgramEventsResult =
       eventCount: number;
       truncated: boolean;
       nextBeforeSignature: string | null;
+      failedSignatureCount: number;
+      otherEventNamesSeen: string[];
     }
   | { success: false; error: string };
 
@@ -79,12 +87,16 @@ async function getUserIdFromExecution(
   if (!executionId) {
     return;
   }
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-  return execution[0]?.userId;
+  try {
+    const execution = await db
+      .select({ userId: workflowExecutions.userId })
+      .from(workflowExecutions)
+      .where(eq(workflowExecutions.id, executionId))
+      .limit(1);
+    return execution[0]?.userId;
+  } catch {
+    return;
+  }
 }
 
 function parseSignatureLookback(
@@ -93,15 +105,44 @@ function parseSignatureLookback(
   if (input === undefined || input === null || input === "") {
     return { success: true, value: DEFAULT_SIGNATURE_LOOKBACK };
   }
-  const parsed =
-    typeof input === "number" ? input : Number.parseInt(input, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
+
+  let parsed: number;
+  if (typeof input === "number") {
+    if (!Number.isInteger(input) || input <= 0) {
+      return {
+        success: false,
+        error: `Invalid signatureLookback value: ${input}`,
+      };
+    }
+    parsed = input;
+  } else {
+    const trimmed = input.trim();
+    if (!INTEGER_STRING_RE.test(trimmed)) {
+      return {
+        success: false,
+        error: `Invalid signatureLookback value: ${input}`,
+      };
+    }
+    parsed = Number.parseInt(trimmed, 10);
+  }
+
+  return { success: true, value: Math.min(parsed, MAX_SIGNATURE_LOOKBACK) };
+}
+
+function validateSignatureCursor(
+  value: string | undefined,
+  label: string
+): { success: true } | { success: false; error: string } {
+  if (value === undefined || value === "") {
+    return { success: true };
+  }
+  if (!BASE58_SIGNATURE_RE.test(value)) {
     return {
       success: false,
-      error: `Invalid signatureLookback value: ${input}`,
+      error: `Invalid ${label}: not a well-formed transaction signature`,
     };
   }
-  return { success: true, value: Math.min(parsed, MAX_SIGNATURE_LOOKBACK) };
+  return { success: true };
 }
 
 type ResolvedQuery = {
@@ -121,7 +162,27 @@ function resolveQueryContext(
     return { success: false, error: `Invalid program ID: ${input.programId}` };
   }
 
-  const decoder = createEventDecoder(input.idl);
+  const beforeCheck = validateSignatureCursor(
+    input.beforeSignature,
+    "beforeSignature"
+  );
+  if (!beforeCheck.success) {
+    return { success: false, error: beforeCheck.error };
+  }
+  const untilCheck = validateSignatureCursor(
+    input.untilSignature,
+    "untilSignature"
+  );
+  if (!untilCheck.success) {
+    return { success: false, error: untilCheck.error };
+  }
+
+  // createEventDecoder degrades to raw-log mode (returns null) on a missing
+  // or unusable IDL rather than throwing - a deliberate divergence from
+  // call-solana-program-anchor's hard-error IDL handling, since that action
+  // signs and spends (a bad IDL must block it) while this one only reads (a
+  // bad IDL degrading to raw output is safe). See lib/web3/anchor-events.ts.
+  const decoder = createEventDecoder(input.idl, input.programId);
   if (input.eventName && !decoder) {
     return {
       success: false,
@@ -153,20 +214,13 @@ async function fetchSignaturePage(
   programKey: PublicKey,
   options: { before?: string; until?: string; limit: number }
 ): Promise<ConfirmedSignatureInfo[]> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
-    try {
-      return await rpcManager.executeWithFailover((connection) =>
-        connection.getSignaturesForAddress(programKey, options)
-      );
-    } catch (error) {
-      lastError = error;
-      if (attempt < MAX_PAGE_RETRIES) {
-        await delay(RETRY_BASE_DELAY_MS * attempt);
-      }
-    }
-  }
-  throw lastError;
+  // executeWithFailover already retries against primary then fallback, each
+  // with its own backoff - an extra retry loop here would only re-run that
+  // same budget several times over without giving a transient failure a
+  // better chance to clear.
+  return rpcManager.executeWithFailover((connection) =>
+    connection.getSignaturesForAddress(programKey, options)
+  );
 }
 
 /**
@@ -192,11 +246,26 @@ async function collectSignatures(
       break;
     }
     const pageLimit = Math.min(remaining, MAX_SIGNATURES_PER_PAGE);
-    const batch = await fetchSignaturePage(rpcManager, programKey, {
-      before,
-      until: untilSignature,
-      limit: pageLimit,
-    });
+
+    let batch: ConfirmedSignatureInfo[];
+    try {
+      batch = await fetchSignaturePage(rpcManager, programKey, {
+        before,
+        until: untilSignature,
+        limit: pageLimit,
+      });
+    } catch (error) {
+      if (collected.length === 0) {
+        // Nothing salvageable from this scan; surface a real error rather
+        // than an empty success.
+        throw error;
+      }
+      // Keep the signatures already collected from earlier pages instead of
+      // discarding a partially-successful scan - the caller can resume from
+      // this boundary via nextBeforeSignature.
+      return { signatures: collected, truncated: true };
+    }
+
     collected.push(...batch);
     if (batch.length < pageLimit) {
       // Fewer results than requested: no more history behind this cursor.
@@ -211,62 +280,136 @@ async function collectSignatures(
   return { signatures: collected, truncated: hitCap && collected.length > 0 };
 }
 
+type TransactionFetchResult =
+  | { kind: "ok"; tx: VersionedTransactionResponse }
+  | { kind: "failed" };
+
+/**
+ * getTransaction can return null for a signature getSignaturesForAddress
+ * already returned, most often because it has not finished indexing yet.
+ * That is a successful call with no data, distinct from a thrown RPC error
+ * (which executeWithFailover already retries against both endpoints
+ * internally) - so this only adds a short retry for the null case, rather
+ * than layering another retry on top of executeWithFailover's own.
+ */
+async function fetchTransactionWithRetry(
+  rpcManager: SolanaProviderManager,
+  signature: string
+): Promise<TransactionFetchResult> {
+  for (let attempt = 1; attempt <= NULL_TX_RETRY_ATTEMPTS; attempt++) {
+    let tx: VersionedTransactionResponse | null;
+    try {
+      tx = await rpcManager.executeWithFailover((connection) =>
+        connection.getTransaction(signature, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        })
+      );
+    } catch {
+      return { kind: "failed" };
+    }
+    if (tx) {
+      return { kind: "ok", tx };
+    }
+    if (attempt < NULL_TX_RETRY_ATTEMPTS) {
+      await delay(NULL_TX_RETRY_DELAY_MS * attempt);
+    }
+  }
+  return { kind: "failed" };
+}
+
+type SignatureFetchResult = {
+  events: SolanaProgramEvent[];
+  failed: boolean;
+  unmatchedEventNames: string[];
+};
+
 async function fetchAndDecodeSignature(
   rpcManager: SolanaProviderManager,
   info: ConfirmedSignatureInfo,
   decoder: AnchorEventDecoder | null,
   eventName: string | undefined
-): Promise<SolanaProgramEvent[]> {
+): Promise<SignatureFetchResult> {
   if (info.err) {
     // A failed instruction's events are not committed state; skip it,
     // matching the live event trigger's SignaturesSource behavior.
-    return [];
+    return { events: [], failed: false, unmatchedEventNames: [] };
   }
 
-  const tx = await rpcManager.executeWithFailover((connection) =>
-    connection.getTransaction(info.signature, {
-      commitment: "confirmed",
-      maxSupportedTransactionVersion: 0,
-    })
-  );
-  const logs = tx?.meta?.logMessages ?? [];
+  const fetched = await fetchTransactionWithRetry(rpcManager, info.signature);
+  if (fetched.kind === "failed") {
+    // Distinct from "zero events found": the transaction could not be
+    // fetched at all, so its true event count is unknown. Reported via
+    // failedSignatureCount rather than silently folded into a zero-event
+    // result.
+    return { events: [], failed: true, unmatchedEventNames: [] };
+  }
+
+  const logs = fetched.tx.meta?.logMessages ?? [];
 
   if (!decoder) {
-    return [
-      {
-        signature: info.signature,
-        slot: info.slot,
-        blockTime: info.blockTime ?? null,
-        raw: logs,
-      },
-    ];
+    return {
+      events: [
+        {
+          signature: info.signature,
+          slot: info.slot,
+          blockTime: info.blockTime ?? null,
+          raw: logs,
+        },
+      ],
+      failed: false,
+      unmatchedEventNames: [],
+    };
   }
 
   const decoded = decoder.decodeLogs(logs);
   const matched = eventName
     ? decoded.filter((event) => event.name === eventName)
     : decoded;
+  const unmatchedEventNames = eventName
+    ? decoded
+        .filter((event) => event.name !== eventName)
+        .map((event) => event.name)
+    : [];
 
-  return matched.map((event) => ({
-    signature: info.signature,
-    slot: info.slot,
-    blockTime: info.blockTime ?? null,
-    eventName: event.name,
-    args: event.data,
-  }));
+  return {
+    events: matched.map((event) => ({
+      signature: info.signature,
+      slot: info.slot,
+      blockTime: info.blockTime ?? null,
+      eventName: event.name,
+      args: event.data,
+    })),
+    failed: false,
+    unmatchedEventNames,
+  };
 }
 
+/**
+ * Runs `worker` over `items` with at most `concurrency` in flight at once,
+ * each freed slot immediately pulling the next item - unlike a fixed-chunk
+ * barrier, one slow item never stalls otherwise-idle slots.
+ */
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
-  fn: (item: T) => Promise<R>
+  worker: (item: T) => Promise<R>
 ): Promise<R[]> {
-  const results: R[] = [];
-  for (let start = 0; start < items.length; start += concurrency) {
-    const chunk = items.slice(start, start + concurrency);
-    const chunkResults = await Promise.all(chunk.map((item) => fn(item)));
-    results.push(...chunkResults);
-  }
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+
+  const runWorker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index]);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, runWorker)
+  );
+
   return results;
 }
 
@@ -318,6 +461,8 @@ export async function queryProgramEventsCore(
       eventCount: 0,
       truncated: false,
       nextBeforeSignature: null,
+      failedSignatureCount: 0,
+      otherEventNamesSeen: [],
     };
   }
 
@@ -325,20 +470,19 @@ export async function queryProgramEventsCore(
   // are ordered the same way they occurred on-chain.
   const oldestFirst = [...signatures].reverse();
 
-  let events: SolanaProgramEvent[];
-  try {
-    const perSignature = await mapWithConcurrency(
-      oldestFirst,
-      MAX_TRANSACTION_CONCURRENCY,
-      (info) => fetchAndDecodeSignature(rpcManager, info, decoder, eventName)
-    );
-    events = perSignature.flat();
-  } catch (error) {
-    return {
-      success: false,
-      error: `Transaction fetch failed: ${getErrorMessage(error)}`,
-    };
-  }
+  const perSignature = await mapWithConcurrency(
+    oldestFirst,
+    MAX_TRANSACTION_CONCURRENCY,
+    (info) => fetchAndDecodeSignature(rpcManager, info, decoder, eventName)
+  );
+
+  const events = perSignature.flatMap((result) => result.events);
+  const failedSignatureCount = perSignature.filter(
+    (result) => result.failed
+  ).length;
+  const otherEventNamesSeen = [
+    ...new Set(perSignature.flatMap((result) => result.unmatchedEventNames)),
+  ].sort();
 
   return {
     success: true,
@@ -349,5 +493,7 @@ export async function queryProgramEventsCore(
     eventCount: events.length,
     truncated,
     nextBeforeSignature: truncated ? oldestFirst[0].signature : null,
+    failedSignatureCount,
+    otherEventNamesSeen,
   };
 }

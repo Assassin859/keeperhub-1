@@ -660,6 +660,16 @@ const web3Plugin: IntegrationPlugin = {
             "Pass this as beforeSignature on a follow-up call to continue paging further back",
         },
         {
+          field: "failedSignatureCount",
+          description:
+            "Number of signatures whose transaction could not be fetched even after retrying - their true event count is unknown and is not included in events or eventCount",
+        },
+        {
+          field: "otherEventNamesSeen",
+          description:
+            "When eventName is set, the distinct names of other decoded events that were filtered out - empty if nothing else was seen, useful for catching an eventName typo",
+        },
+        {
           field: "error",
           description: "Error message if the query failed",
         },
@@ -723,9 +733,9 @@ const web3Plugin: IntegrationPlugin = {
               key: "untilSignature",
               label: "Until Signature",
               type: "template-input",
-              placeholder: "Signature to stop at (inclusive lower bound)",
+              placeholder: "Signature to stop at (exclusive lower bound)",
               helpTip:
-                "Stop scanning once this signature is reached. Leave empty to stop only at the Signature Lookback cap.",
+                "Stop scanning just before this signature - it is not itself included in the results. Leave empty to stop only at the Signature Lookback cap.",
             },
           ],
         },
