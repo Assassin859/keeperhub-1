@@ -103,6 +103,71 @@ const DUMMY_BYTES = "0x";
 const DISPATCH_FAILURE_RE =
   /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|,\s*data="0x"/;
 
+// The "missing revert data" alternative above is genuinely ambiguous.
+// ethers 6.16.0 only ever produces that text with `data=null` (no code
+// path in that version produces it otherwise), and it reports it
+// identically for two very different situations: the real misroute
+// regression (see "reroute regression" below), and a Sepolia RPC
+// endpoint that withheld revert data while degraded/rate-limited. The
+// message text alone cannot tell them apart -- `resolveEstimateGasError`
+// below corroborates this one shape against a second, independent endpoint
+// before trusting it as a real dispatch failure. Every other
+// DISPATCH_FAILURE_RE alternative is already unambiguous and needs no such
+// corroboration.
+//
+// `data=null` uses `=` -- ethers' top-level field separator -- which a
+// nested `transaction` object never does (it always carries an encoded
+// hex string under `"data":`, colon-separated JSON), so this cannot
+// false-positive on a nested field.
+const AMBIGUOUS_MISSING_REVERT_DATA_RE = /missing revert data[\s\S]*data=null/;
+
+/**
+ * Resolves the outcome of an estimateGas attempt given a primary attempt
+ * (through the shared failover manager, as before this fallback
+ * corroboration was added) and an independent fallback attempt.
+ *
+ * `RpcProviderManager.executeWithFailover` treats CALL_EXCEPTION (which
+ * "missing revert data" is) as non-retryable and throws immediately,
+ * bypassing both its retry loop and its failover logic entirely -- see
+ * `NON_RETRYABLE_ERROR_CODES` / `isNonRetryableError` in
+ * lib/rpc/providers/error-classification.ts. That is correct for every
+ * other caller of that shared code: a genuine contract revert on one
+ * endpoint is a revert on any endpoint, so retrying elsewhere is pointless.
+ * It also means the primary attempt below never reaches the fallback
+ * endpoint on its own for this error shape.
+ *
+ * But the ambiguous "missing revert data" shape specifically can also mean
+ * the endpoint withheld revert data rather than the contract genuinely
+ * rejecting the call. So only for that one shape, this function makes an
+ * explicit second call directly against the fallback endpoint -- bypassing
+ * `manager`/`executeWithFailover` entirely -- and uses that outcome as the
+ * final answer: a clean fallback result means the primary error was RPC
+ * noise (returns "", matching estimateGasError's existing "no failure"
+ * contract); a fallback error means two independent endpoints agree, which
+ * is a real signal and must still surface as a failure. Any other,
+ * unambiguous error shape is returned immediately with no second call.
+ */
+async function resolveEstimateGasError(
+  primaryAttempt: () => Promise<unknown>,
+  fallbackAttempt: () => Promise<unknown>
+): Promise<string> {
+  try {
+    await primaryAttempt();
+    return "";
+  } catch (error) {
+    const message = String(error);
+    if (!AMBIGUOUS_MISSING_REVERT_DATA_RE.test(message)) {
+      return message;
+    }
+    try {
+      await fallbackAttempt();
+      return "";
+    } catch (fallbackError) {
+      return String(fallbackError);
+    }
+  }
+}
+
 describe("Superfluid on-chain integration", () => {
   let manager: RpcProviderManager;
 
@@ -146,7 +211,9 @@ describe("Superfluid on-chain integration", () => {
   // Returns the error message from estimateGas, or "" if it succeeded.
   // Callers either assert the empty string (positive simulation) or assert
   // the message does not match DISPATCH_FAILURE_RE (any non-routing-error
-  // revert is acceptable).
+  // revert is acceptable). See resolveEstimateGasError above for the
+  // fallback corroboration this delegates to for the ambiguous "missing
+  // revert data" shape.
   async function estimateGasError(
     slug: string,
     inputs: Record<string, string>,
@@ -159,14 +226,18 @@ describe("Superfluid on-chain integration", () => {
       chainId: CHAIN_ID,
       toOverride: contractAddressOverride,
     });
-    try {
-      await manager.executeWithFailover((p) =>
-        p.estimateGas({ to, data, from: TEST_ADDRESS })
-      );
-      return "";
-    } catch (error) {
-      return String(error);
-    }
+    return resolveEstimateGasError(
+      () =>
+        manager.executeWithFailover((p) =>
+          p.estimateGas({ to, data, from: TEST_ADDRESS })
+        ),
+      () =>
+        new ethers.JsonRpcProvider(
+          SEPOLIA_FALLBACK_URL,
+          ethers.Network.from(SEPOLIA_CHAIN_ID),
+          { staticNetwork: true }
+        ).estimateGas({ to, data, from: TEST_ADDRESS })
+    );
   }
 
   // -- CFA reads -----------------------------------------------------------
@@ -617,6 +688,115 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
         }
       );
       expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
+    }
+  );
+});
+
+// Unit-level coverage for resolveEstimateGasError's fallback
+// corroboration, mocking the primary/fallback attempts directly rather than
+// hitting a live RPC -- same reasoning as the "DISPATCH_FAILURE_RE shape"
+// block above (synthesized ethers errors instead of a real endpoint).
+describe("resolveEstimateGasError (fallback corroboration for ambiguous missing revert data)", () => {
+  function missingRevertDataError(): Error {
+    return ethers.makeError("missing revert data", "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: null,
+      reason: null,
+      transaction: {
+        data: "0xdeadbeef",
+        from: TEST_ADDRESS,
+        to: TEST_ADDRESS,
+      },
+      invocation: null,
+      revert: null,
+    });
+  }
+
+  itOnchain(
+    "ambiguous primary failure + clean fallback -> resolves as no dispatch failure",
+    async () => {
+      const primaryAttempt = vi
+        .fn()
+        .mockRejectedValue(missingRevertDataError());
+      const fallbackAttempt = vi.fn().mockResolvedValue(BigInt(21_000));
+
+      const result = await resolveEstimateGasError(
+        primaryAttempt,
+        fallbackAttempt
+      );
+
+      expect(result).toBe("");
+      expect(fallbackAttempt).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  itOnchain(
+    "ambiguous primary failure + fallback also fails -> surfaces the fallback's error and matches DISPATCH_FAILURE_RE",
+    async () => {
+      const primaryAttempt = vi
+        .fn()
+        .mockRejectedValue(missingRevertDataError());
+      const fallbackError = missingRevertDataError();
+      const fallbackAttempt = vi.fn().mockRejectedValue(fallbackError);
+
+      const result = await resolveEstimateGasError(
+        primaryAttempt,
+        fallbackAttempt
+      );
+
+      // Two independent endpoints agreeing is a real signal, not noise.
+      expect(result).toBe(String(fallbackError));
+      expect(result).toMatch(DISPATCH_FAILURE_RE);
+      expect(fallbackAttempt).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  itOnchain(
+    "unambiguous primary failure (INVALID_ARGUMENT) -> returns immediately, never calls the fallback",
+    async () => {
+      const primaryError = ethers.makeError(
+        "invalid BigNumberish value",
+        "INVALID_ARGUMENT",
+        { argument: "value", value: "abc" }
+      );
+      const primaryAttempt = vi.fn().mockRejectedValue(primaryError);
+      const fallbackAttempt = vi.fn();
+
+      const result = await resolveEstimateGasError(
+        primaryAttempt,
+        fallbackAttempt
+      );
+
+      expect(result).toBe(String(primaryError));
+      expect(fallbackAttempt).not.toHaveBeenCalled();
+    }
+  );
+
+  itOnchain(
+    'unambiguous primary failure (empty revert data="0x") -> returns immediately, never calls the fallback',
+    async () => {
+      const primaryError = ethers.makeError(
+        "execution reverted",
+        "CALL_EXCEPTION",
+        {
+          action: "estimateGas",
+          data: "0x",
+          reason: null,
+          transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
+          invocation: null,
+          revert: null,
+        }
+      );
+      const primaryAttempt = vi.fn().mockRejectedValue(primaryError);
+      const fallbackAttempt = vi.fn();
+
+      const result = await resolveEstimateGasError(
+        primaryAttempt,
+        fallbackAttempt
+      );
+
+      expect(result).toBe(String(primaryError));
+      expect(fallbackAttempt).not.toHaveBeenCalled();
     }
   );
 });
