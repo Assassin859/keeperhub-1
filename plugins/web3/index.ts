@@ -71,7 +71,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Address",
           type: "template-input",
           placeholder: "0x... / Solana address / {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
       ],
@@ -143,7 +143,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {
@@ -230,6 +230,8 @@ const web3Plugin: IntegrationPlugin = {
           label: "Token",
           type: "token-select",
           networkField: "network",
+          example:
+            '{"mode":"custom","customToken":{"address":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","symbol":"USDC"}}',
           required: true,
         },
       ],
@@ -286,7 +288,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Recipient Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {
@@ -401,7 +403,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Recipient Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {
@@ -1932,7 +1934,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Owner Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {

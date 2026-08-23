@@ -116,6 +116,14 @@ function parseSignatureLookback(
     }
     parsed = input;
   } else {
+    // Node config is untyped JSON at runtime - a boolean/array/object here
+    // must fail as invalid input, not throw on .trim().
+    if (typeof input !== "string") {
+      return {
+        success: false,
+        error: `Invalid signatureLookback value: ${String(input)}`,
+      };
+    }
     const trimmed = input.trim();
     if (!INTEGER_STRING_RE.test(trimmed)) {
       return {

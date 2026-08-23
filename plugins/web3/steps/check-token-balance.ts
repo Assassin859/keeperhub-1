@@ -6,6 +6,7 @@ import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
+import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
@@ -16,7 +17,7 @@ import { validateChainAddress } from "@/lib/web3/validate-chain-address";
 import {
   getTokenAddress,
   parseTokenConfig,
-  type TokenBalance,
+  type TokenBalanceInfo,
   type TokenConfigSource,
 } from "./token-config-core";
 
@@ -42,7 +43,7 @@ async function getUserIdFromExecution(
 type CheckTokenBalanceResult =
   | {
       success: true;
-      balance: TokenBalance;
+      balance: TokenBalanceInfo;
       address: string;
       addressLink: string;
     }
@@ -90,7 +91,7 @@ async function fetchTokenBalance(
   provider: ethers.JsonRpcProvider,
   walletAddress: string,
   tokenAddress: string
-): Promise<TokenBalance> {
+): Promise<TokenBalanceInfo> {
   const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
   const [balanceRaw, decimals, symbol, name] = await Promise.all([
@@ -285,7 +286,14 @@ export async function checkTokenBalanceStep(
 ): Promise<CheckTokenBalanceResult> {
   "use step";
 
-  return withStepLogging(input, () => stepHandler(input));
+  return withPluginMetrics(
+    {
+      pluginName: "web3",
+      actionName: "check-token-balance",
+      executionId: input._context?.executionId,
+    },
+    () => withStepLogging(input, () => stepHandler(input))
+  );
 }
 
 checkTokenBalanceStep.maxRetries = 0;

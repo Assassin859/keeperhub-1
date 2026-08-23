@@ -23,6 +23,9 @@ const TOKEN_2022_PROGRAM_ID = new PublicKey(
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 );
+const METAPLEX_METADATA_PROGRAM_ID = new PublicKey(
+  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+);
 
 const { mockUnpackMint, mockUnpackAccount, mockGetAssociatedTokenAddressSync } =
   vi.hoisted(() => ({
@@ -108,15 +111,27 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
 }));
 
 // The workflowExecutions lookup (selects userId) resolves a caller; the
-// supportedTokens display-info lookup (selects symbol/name) finds no row, so
-// the Metaplex fallback is reachable.
+// supportedTokens address lookup (selects tokenAddress) resolves the mint for
+// supported-token configs; the supportedTokens display-info lookup (selects
+// symbol/name) finds no row, so the Metaplex fallback is reachable.
 vi.mock("@/lib/db", () => ({
   db: {
     select: (shape: Record<string, unknown>) => ({
       from: () => ({
         where: () => ({
-          limit: () =>
-            Promise.resolve("userId" in shape ? [{ userId: "user_1" }] : []),
+          limit: () => {
+            if ("userId" in shape) {
+              return Promise.resolve([{ userId: "user_1" }]);
+            }
+            if ("tokenAddress" in shape) {
+              return Promise.resolve([
+                {
+                  tokenAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                },
+              ]);
+            }
+            return Promise.resolve([]);
+          },
         }),
       }),
     }),
@@ -192,7 +207,12 @@ function fakeMetadataAccountInfo(name: string, symbol: string) {
     symbolLen,
     paddedSymbol,
   ]);
-  return { owner: TOKEN_PROGRAM_ID, data, lamports: 0, executable: false };
+  return {
+    owner: METAPLEX_METADATA_PROGRAM_ID,
+    data,
+    lamports: 0,
+    executable: false,
+  };
 }
 
 const context = () => ({
@@ -325,6 +345,20 @@ describe("getSplTokenBalanceStep", () => {
       expect(result.balance.symbol).toBe("USDC");
       expect(result.balance.name).toBe("USD Coin");
     }
+
+    // The third read must target the canonical Metaplex metadata PDA - a
+    // wrong seed order or program id would silently resolve to sentinels.
+    const [expectedMetadataAddress] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata"),
+        METAPLEX_METADATA_PROGRAM_ID.toBuffer(),
+        new PublicKey(MINT).toBuffer(),
+      ],
+      METAPLEX_METADATA_PROGRAM_ID
+    );
+    const metadataCallArg = mockConnectionGetAccountInfo.mock
+      .calls[2][0] as PublicKey;
+    expect(metadataCallArg.equals(expectedMetadataAddress)).toBe(true);
   });
 
   it("falls back to unknown-token sentinels when no metadata account exists", async () => {
@@ -344,6 +378,69 @@ describe("getSplTokenBalanceStep", () => {
     if (result.success) {
       expect(result.balance.symbol).toBe("???");
       expect(result.balance.name).toBe("Unknown");
+    }
+  });
+
+  it("resolves a supported token id to its mint address via the DB", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)) // mint
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)) // ATA
+      .mockResolvedValueOnce(null); // no metadata account
+    mockUnpackMint.mockReturnValue({ decimals: 6 });
+    mockUnpackAccount.mockReturnValue({ amount: BigInt(3_000_000) });
+
+    const result = await getSplTokenBalanceStep({
+      ...input(),
+      tokenConfig: { mode: "supported", supportedTokenId: "tok_1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.balance.tokenAddress).toBe(MINT);
+      expect(result.balance.balance).toBe("3");
+    }
+  });
+
+  it("keeps a successful balance when the metadata lookup itself errors", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)) // mint
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID)) // ATA
+      .mockRejectedValueOnce(new Error("429 rate limited")); // metadata PDA
+    mockUnpackMint.mockReturnValue({ decimals: 6 });
+    mockUnpackAccount.mockReturnValue({ amount: BigInt(1_000_000) });
+
+    const result = await getSplTokenBalanceStep({
+      ...input(),
+      tokenConfig: MINT,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.balance.balance).toBe("1");
+      expect(result.balance.symbol).toBe("???");
+      expect(result.balance.name).toBe("Unknown");
+    }
+  });
+
+  it("strips control and bidi characters from on-chain metadata strings", async () => {
+    mockConnectionGetAccountInfo
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID))
+      .mockResolvedValueOnce(fakeAccountInfo(TOKEN_PROGRAM_ID))
+      .mockResolvedValueOnce(
+        fakeMetadataAccountInfo("USD\u0000 Coin\u202e", "US\u0000DC")
+      );
+    mockUnpackMint.mockReturnValue({ decimals: 6 });
+    mockUnpackAccount.mockReturnValue({ amount: BigInt(1_000_000) });
+
+    const result = await getSplTokenBalanceStep({
+      ...input(),
+      tokenConfig: MINT,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.balance.symbol).toBe("USDC");
+      expect(result.balance.name).toBe("USD Coin");
     }
   });
 
@@ -376,7 +473,11 @@ describe("getSplTokenBalanceStep", () => {
   });
 
   it("propagates a real RPC error instead of treating it as a zero balance", async () => {
-    mockConnectionGetAccountInfo.mockRejectedValue(new Error("RPC timeout"));
+    // Once, not persistent: vi.clearAllMocks() does not clear implementations,
+    // so a persistent mockRejectedValue would leak into later tests.
+    mockConnectionGetAccountInfo.mockRejectedValueOnce(
+      new Error("RPC timeout")
+    );
 
     const result = await getSplTokenBalanceStep(input());
 

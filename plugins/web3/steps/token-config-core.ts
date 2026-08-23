@@ -11,7 +11,9 @@ import { db } from "@/lib/db";
 import { supportedTokens } from "@/lib/db/schema";
 import type { CustomToken, TokenFieldValue } from "@/lib/wallet/types";
 
-export type TokenBalance = {
+// Named TokenBalanceInfo rather than TokenBalance to avoid colliding with
+// the structurally different wallet-UI TokenBalance in lib/wallet/types.ts.
+export type TokenBalanceInfo = {
   balance: string;
   balanceRaw: string;
   symbol: string;
@@ -21,7 +23,8 @@ export type TokenBalance = {
 };
 
 export type TokenConfigSource = {
-  tokenConfig: string | Record<string, unknown>;
+  // Optional: legacy stored node configs can omit it entirely.
+  tokenConfig?: string | Record<string, unknown>;
   // Legacy support
   tokenAddress?: string;
 };

@@ -23,7 +23,7 @@ import { validateChainAddress } from "@/lib/web3/validate-chain-address";
 import {
   getTokenAddress,
   parseTokenConfig,
-  type TokenBalance,
+  type TokenBalanceInfo,
   type TokenConfigSource,
 } from "./token-config-core";
 
@@ -34,7 +34,16 @@ const METADATA_SEED = Buffer.from("metadata");
 // Metadata layout before the name field: key (1) + updateAuthority (32) +
 // mint (32).
 const METADATA_NAME_OFFSET = 65;
-const TRAILING_NULLS = /\0+$/;
+// Metaplex convention caps the name at 32 bytes and the symbol at 10.
+const MAX_METADATA_NAME_LENGTH = 32;
+const MAX_METADATA_SYMBOL_LENGTH = 10;
+// Metadata strings are attacker-authored on-chain bytes that flow into the
+// step output and downstream notification templates, so control characters
+// (embedded NULs included), bidi overrides, and zero-width characters are
+// stripped rather than passed through.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+const DISALLOWED_METADATA_CHARS =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 export type GetSplTokenBalanceCoreInput = TokenConfigSource & {
   network: string;
@@ -46,14 +55,18 @@ export type GetSplTokenBalanceInput = StepInput & GetSplTokenBalanceCoreInput;
 type GetSplTokenBalanceResult =
   | {
       success: true;
-      balance: TokenBalance;
+      balance: TokenBalanceInfo;
       address: string;
       addressLink: string;
     }
   | { success: false; error: string };
 
 /**
- * Get userId from executionId by querying the workflowExecutions table
+ * Get userId from executionId by querying the workflowExecutions table.
+ *
+ * Non-throwing by design: RPC preferences are a per-user convenience, not an
+ * authority signal, so a lookup failure falls back to the chain's default RPC
+ * config rather than failing the balance check.
  */
 async function getUserIdFromExecution(
   executionId: string | undefined
@@ -62,23 +75,29 @@ async function getUserIdFromExecution(
     return;
   }
 
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
+  try {
+    const execution = await db
+      .select({ userId: workflowExecutions.userId })
+      .from(workflowExecutions)
+      .where(eq(workflowExecutions.id, executionId))
+      .limit(1);
 
-  return execution[0]?.userId;
+    return execution[0]?.userId;
+  } catch {
+    return;
+  }
 }
 
 /**
  * Read a borsh string (u32 LE length prefix + utf8 bytes) at offset,
- * trimming the trailing null padding Metaplex writes inside the declared
- * length. Returns null when the declared length runs past the buffer.
+ * stripping the null padding Metaplex writes inside the declared length
+ * along with any other disallowed characters, and capping the result at
+ * maxLength. Returns null when the declared length runs past the buffer.
  */
 function readBorshString(
   data: Buffer,
-  offset: number
+  offset: number,
+  maxLength: number
 ): { value: string; nextOffset: number } | null {
   if (offset + 4 > data.length) {
     return null;
@@ -91,46 +110,64 @@ function readBorshString(
   const value = data
     .subarray(start, start + length)
     .toString("utf8")
-    .replace(TRAILING_NULLS, "")
-    .trim();
+    .replace(DISALLOWED_METADATA_CHARS, "")
+    .trim()
+    .slice(0, maxLength);
   return { value, nextOffset: start + length };
 }
 
 /**
  * Resolve symbol/name from the mint's Metaplex token metadata PDA. Returns
- * null when no metadata account exists or its data does not parse - callers
- * fall back to the unknown-token sentinels.
+ * null when no metadata account exists, its data does not parse, or the
+ * lookup itself fails - the metadata read is cosmetic, so it must never
+ * fail a balance check; callers fall back to the unknown-token sentinels.
  */
 async function fetchMetaplexDisplayInfo(
   connection: Connection,
   mintPubkey: PublicKey
 ): Promise<{ symbol: string; name: string } | null> {
-  const [metadataAddress] = PublicKey.findProgramAddressSync(
-    [METADATA_SEED, METAPLEX_METADATA_PROGRAM_ID.toBuffer(), mintPubkey.toBuffer()],
-    METAPLEX_METADATA_PROGRAM_ID
-  );
+  try {
+    const [metadataAddress] = PublicKey.findProgramAddressSync(
+      [
+        METADATA_SEED,
+        METAPLEX_METADATA_PROGRAM_ID.toBuffer(),
+        mintPubkey.toBuffer(),
+      ],
+      METAPLEX_METADATA_PROGRAM_ID
+    );
 
-  const accountInfo = await connection.getAccountInfo(
-    metadataAddress,
-    "confirmed"
-  );
-  if (!accountInfo) {
+    const accountInfo = await connection.getAccountInfo(
+      metadataAddress,
+      "confirmed"
+    );
+    if (!accountInfo) {
+      return null;
+    }
+
+    const name = readBorshString(
+      accountInfo.data,
+      METADATA_NAME_OFFSET,
+      MAX_METADATA_NAME_LENGTH
+    );
+    if (!name) {
+      return null;
+    }
+    const symbol = readBorshString(
+      accountInfo.data,
+      name.nextOffset,
+      MAX_METADATA_SYMBOL_LENGTH
+    );
+    if (!name.value && !symbol?.value) {
+      return null;
+    }
+
+    return {
+      symbol: symbol?.value || "???",
+      name: name.value || "Unknown",
+    };
+  } catch {
     return null;
   }
-
-  const name = readBorshString(accountInfo.data, METADATA_NAME_OFFSET);
-  if (!name) {
-    return null;
-  }
-  const symbol = readBorshString(accountInfo.data, name.nextOffset);
-  if (!symbol || (!name.value && !symbol.value)) {
-    return null;
-  }
-
-  return {
-    symbol: symbol.value || "???",
-    name: name.value || "Unknown",
-  };
 }
 
 /**
@@ -221,7 +258,6 @@ async function fetchSplBalance(
 /**
  * Core get SPL token balance logic
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: linear validation ladder mirroring check-token-balance
 async function stepHandler(
   input: GetSplTokenBalanceInput
 ): Promise<GetSplTokenBalanceResult> {
