@@ -116,6 +116,14 @@ function parseSignatureLookback(
     }
     parsed = input;
   } else {
+    // Node config is untyped JSON at runtime - a boolean/array/object here
+    // must fail as invalid input, not throw on .trim().
+    if (typeof input !== "string") {
+      return {
+        success: false,
+        error: `Invalid signatureLookback value: ${String(input)}`,
+      };
+    }
     const trimmed = input.trim();
     if (!INTEGER_STRING_RE.test(trimmed)) {
       return {
@@ -124,6 +132,14 @@ function parseSignatureLookback(
       };
     }
     parsed = Number.parseInt(trimmed, 10);
+    // The regex only admits digit strings, so the remaining invalid case is
+    // "0" - reject it like the number branch rejects 0.
+    if (parsed <= 0) {
+      return {
+        success: false,
+        error: `Invalid signatureLookback value: ${input}`,
+      };
+    }
   }
 
   return { success: true, value: Math.min(parsed, MAX_SIGNATURE_LOOKBACK) };

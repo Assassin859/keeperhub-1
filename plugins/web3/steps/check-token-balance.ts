@@ -1,32 +1,25 @@
 import "server-only";
 
-import {
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddressSync,
-  unpackAccount,
-} from "@solana/spl-token";
-import { type Connection, PublicKey } from "@solana/web3.js";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { isSolanaAddressFormat } from "@/lib/address-utils";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { db } from "@/lib/db";
-import { supportedTokens, workflowExecutions } from "@/lib/db/schema";
+import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
+import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import {
-  getRpcProvider,
-  getSolanaProvider,
-  isSolanaChain,
-} from "@/lib/rpc/provider-factory";
+import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
-import type { CustomToken, TokenFieldValue } from "@/lib/wallet/types";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
-import { parseSolanaMintAccount } from "@/lib/web3/solana-mint";
 import { validateChainAddress } from "@/lib/web3/validate-chain-address";
+import {
+  getTokenAddress,
+  parseTokenConfig,
+  type TokenBalanceInfo,
+  type TokenConfigSource,
+} from "./token-config-core";
 
 /**
  * Get userId from executionId by querying the workflowExecutions table
@@ -47,223 +40,21 @@ async function getUserIdFromExecution(
   return execution[0]?.userId;
 }
 
-type TokenBalance = {
-  balance: string;
-  balanceRaw: string;
-  symbol: string;
-  decimals: number;
-  name: string;
-  tokenAddress: string;
-};
-
 type CheckTokenBalanceResult =
   | {
       success: true;
-      balance: TokenBalance;
+      balance: TokenBalanceInfo;
       address: string;
       addressLink: string;
     }
   | { success: false; error: string };
 
-export type CheckTokenBalanceCoreInput = {
+export type CheckTokenBalanceCoreInput = TokenConfigSource & {
   network: string;
   address: string;
-  tokenConfig: string | Record<string, unknown>;
-  // Legacy support
-  tokenAddress?: string;
 };
 
 export type CheckTokenBalanceInput = StepInput & CheckTokenBalanceCoreInput;
-
-/**
- * Extract mode from parsed config, defaulting to "supported"
- */
-function extractMode(parsed: unknown): "supported" | "custom" {
-  if (typeof parsed !== "object" || parsed === null) {
-    return "supported";
-  }
-
-  const config = parsed as Record<string, unknown>;
-  return config.mode === "supported" || config.mode === "custom"
-    ? (config.mode as "supported" | "custom")
-    : "supported";
-}
-
-/**
- * Extract supported token ID from parsed config
- * Handles both new (single) and legacy (array) formats
- */
-function extractSupportedTokenId(parsed: unknown): string | undefined {
-  if (typeof parsed !== "object" || parsed === null) {
-    return;
-  }
-
-  const config = parsed as Record<string, unknown>;
-
-  // New format: single token ID
-  if (typeof config.supportedTokenId === "string") {
-    return config.supportedTokenId;
-  }
-
-  // Legacy format: array - use first element
-  if (
-    Array.isArray(config.supportedTokenIds) &&
-    config.supportedTokenIds.length > 0
-  ) {
-    const firstId = config.supportedTokenIds[0];
-    return typeof firstId === "string" ? firstId : undefined;
-  }
-
-  return;
-}
-
-/**
- * Extract custom token from parsed config
- * Handles both new (single) and legacy (array/string) formats
- */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Handles multiple legacy formats for backwards compatibility
-function extractCustomToken(parsed: unknown): CustomToken | undefined {
-  if (typeof parsed !== "object" || parsed === null) {
-    return;
-  }
-
-  const config = parsed as Record<string, unknown>;
-
-  // New format: single custom token object
-  if (
-    config.customToken &&
-    typeof config.customToken === "object" &&
-    config.customToken !== null
-  ) {
-    const token = config.customToken as Record<string, unknown>;
-    if (typeof token.address === "string" && typeof token.symbol === "string") {
-      return { address: token.address, symbol: token.symbol };
-    }
-  }
-
-  // Legacy format: array of custom tokens - use first element
-  if (Array.isArray(config.customTokens) && config.customTokens.length > 0) {
-    const firstToken = config.customTokens[0];
-    if (
-      firstToken &&
-      typeof firstToken === "object" &&
-      typeof firstToken.address === "string" &&
-      typeof firstToken.symbol === "string"
-    ) {
-      return {
-        address: firstToken.address,
-        symbol: firstToken.symbol,
-      };
-    }
-  }
-
-  // Legacy format: array of addresses - convert first address to token
-  if (
-    Array.isArray(config.customTokenAddresses) &&
-    config.customTokenAddresses.length > 0
-  ) {
-    const address = config.customTokenAddresses.find(
-      (a): a is string => typeof a === "string" && a.trim() !== ""
-    );
-    if (address) {
-      return { address, symbol: "???" };
-    }
-  }
-
-  // Legacy format: single address string
-  if (typeof config.customTokenAddress === "string") {
-    return { address: config.customTokenAddress, symbol: "???" };
-  }
-
-  return;
-}
-
-/**
- * Parse token config from input
- * Supports both new (single token) and legacy (array) formats
- */
-function parseTokenConfig(input: CheckTokenBalanceInput): TokenFieldValue {
-  // Legacy support: if tokenAddress is provided directly, use custom mode
-  if (input.tokenAddress && !input.tokenConfig) {
-    return {
-      mode: "custom",
-      customToken: { address: input.tokenAddress, symbol: "???" },
-    };
-  }
-
-  if (!input.tokenConfig) {
-    return {
-      mode: "supported",
-    };
-  }
-
-  // Object values from API/MCP-created workflows
-  if (typeof input.tokenConfig === "object") {
-    return {
-      mode: extractMode(input.tokenConfig),
-      supportedTokenId: extractSupportedTokenId(input.tokenConfig),
-      customToken: extractCustomToken(input.tokenConfig),
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(input.tokenConfig);
-
-    return {
-      mode: extractMode(parsed),
-      supportedTokenId: extractSupportedTokenId(parsed),
-      customToken: extractCustomToken(parsed),
-    };
-  } catch {
-    // If parsing fails and it looks like an address (EVM 0x-hex or Solana
-    // base58), treat as custom.
-    if (
-      input.tokenConfig.startsWith("0x") ||
-      isSolanaAddressFormat(input.tokenConfig)
-    ) {
-      return {
-        mode: "custom",
-        customToken: { address: input.tokenConfig, symbol: "???" },
-      };
-    }
-    return {
-      mode: "supported",
-    };
-  }
-}
-
-/**
- * Get token address to check based on config
- * Returns a single token address (either supported or custom)
- */
-async function getTokenAddress(
-  config: TokenFieldValue,
-  chainId: number
-): Promise<string | null> {
-  // Get supported token address from database
-  if (config.supportedTokenId) {
-    const tokens = await db
-      .select({ tokenAddress: supportedTokens.tokenAddress })
-      .from(supportedTokens)
-      .where(
-        and(
-          eq(supportedTokens.chainId, chainId),
-          eq(supportedTokens.id, config.supportedTokenId)
-        )
-      )
-      .limit(1);
-    if (tokens[0]?.tokenAddress) {
-      return tokens[0].tokenAddress;
-    }
-  }
-
-  // Get custom token address
-  if (config.customToken?.address) {
-    return config.customToken.address;
-  }
-
-  return null;
-}
 
 /**
  * Fetch a string metadata field from a token contract, handling non-standard
@@ -300,7 +91,7 @@ async function fetchTokenBalance(
   provider: ethers.JsonRpcProvider,
   walletAddress: string,
   tokenAddress: string
-): Promise<TokenBalance> {
+): Promise<TokenBalanceInfo> {
   const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
   const [balanceRaw, decimals, symbol, name] = await Promise.all([
@@ -324,102 +115,7 @@ async function fetchTokenBalance(
 }
 
 /**
- * Resolve a display symbol/name for an SPL mint. Solana has no on-chain
- * equivalent of ERC20's symbol()/name() (that lives in a separate Metaplex
- * metadata account this action does not integrate with), so this falls back
- * to whatever the caller already told us: the custom-token symbol supplied
- * in tokenConfig, or a matching row in supportedTokens if one exists.
- */
-async function getSolanaTokenDisplayInfo(
-  tokenConfig: TokenFieldValue,
-  chainId: number,
-  tokenAddress: string
-): Promise<{ symbol: string; name: string }> {
-  // "???" is this file's own unknown-symbol sentinel (see extractCustomToken /
-  // parseTokenConfig's legacy fallbacks above) - it is not a real symbol, so
-  // it must fall through to the DB lookup below rather than short-circuit it.
-  if (tokenConfig.customToken?.symbol && tokenConfig.customToken.symbol !== "???") {
-    return {
-      symbol: tokenConfig.customToken.symbol,
-      name: tokenConfig.customToken.symbol,
-    };
-  }
-
-  const tokens = await db
-    .select({ symbol: supportedTokens.symbol, name: supportedTokens.name })
-    .from(supportedTokens)
-    .where(
-      and(
-        eq(supportedTokens.chainId, chainId),
-        eq(supportedTokens.tokenAddress, tokenAddress)
-      )
-    )
-    .limit(1);
-
-  return {
-    symbol: tokens[0]?.symbol ?? "???",
-    name: tokens[0]?.name ?? "Unknown",
-  };
-}
-
-/**
- * Fetch an SPL token balance for a wallet. A wallet with no associated
- * token account for this mint has never held the token, which is a zero
- * balance (matching ERC20 balanceOf() on an unfunded holder), not an error.
- */
-async function fetchSolanaTokenBalance(
-  connection: Connection,
-  walletAddress: string,
-  tokenAddress: string,
-  symbol: string,
-  name: string
-): Promise<TokenBalance> {
-  const mintPubkey = new PublicKey(tokenAddress);
-  const ownerPubkey = new PublicKey(walletAddress);
-
-  const mintInfo = await connection.getAccountInfo(mintPubkey, "confirmed");
-  if (!mintInfo) {
-    throw new Error(`Mint account not found: ${mintPubkey.toBase58()}`);
-  }
-  const resolved = parseSolanaMintAccount(mintPubkey, mintInfo);
-  if ("error" in resolved) {
-    throw new Error(resolved.error);
-  }
-  const { mint, programId } = resolved;
-
-  // Off-curve owners (PDA/program-owned wallets, e.g. a multisig treasury)
-  // are legitimate holders to check - matching transfer-spl-token-core.ts's
-  // handling of off-curve recipients. Derivation is synchronous (no RPC).
-  const associatedTokenAddress = getAssociatedTokenAddressSync(
-    mintPubkey,
-    ownerPubkey,
-    true,
-    programId,
-    ASSOCIATED_TOKEN_PROGRAM_ID
-  );
-
-  const accountInfo = await connection.getAccountInfo(
-    associatedTokenAddress,
-    "confirmed"
-  );
-  const balanceRaw = accountInfo
-    ? unpackAccount(associatedTokenAddress, accountInfo, programId).amount
-    : BigInt(0);
-
-  const balance = ethers.formatUnits(balanceRaw, mint.decimals);
-
-  return {
-    balance,
-    balanceRaw: balanceRaw.toString(),
-    symbol,
-    decimals: mint.decimals,
-    name,
-    tokenAddress,
-  };
-}
-
-/**
- * EVM branch: resolve an RPC provider and read the ERC20 balance/metadata.
+ * Resolve an RPC provider and read the ERC20 balance/metadata.
  */
 async function checkEvmTokenBalance(
   address: string,
@@ -476,59 +172,6 @@ async function checkEvmTokenBalance(
 }
 
 /**
- * Solana branch: a fresh, userId-aware adapter is constructed directly
- * (bypassing getChainAdapter's chainId-only cache) so a user's custom RPC
- * preference is actually honored here, the same way getRpcProvider({chainId,
- * userId}) already honors it on the EVM branch above.
- */
-async function checkSolanaTokenBalance(
-  address: string,
-  tokenAddress: string,
-  chainId: number,
-  userId: string | undefined,
-  tokenConfig: TokenFieldValue
-): Promise<CheckTokenBalanceResult> {
-  const adapter = new SolanaChainAdapter(chainId, () =>
-    getSolanaProvider({ chainId, userId })
-  );
-
-  try {
-    const displayInfo = await getSolanaTokenDisplayInfo(
-      tokenConfig,
-      chainId,
-      tokenAddress
-    );
-    const balance = await adapter.executeWithSolanaFailover((connection) =>
-      fetchSolanaTokenBalance(
-        connection,
-        address,
-        tokenAddress,
-        displayInfo.symbol,
-        displayInfo.name
-      )
-    );
-    const addressLink = await adapter.getAddressUrl(address);
-
-    return { success: true, balance, address, addressLink };
-  } catch (error) {
-    logUserError(
-      ErrorCategory.NETWORK_RPC,
-      "[Check Token Balance] Failed to check token balance:",
-      error,
-      {
-        plugin_name: "web3",
-        action_name: "check-token-balance",
-        chain_id: String(chainId),
-      }
-    );
-    return {
-      success: false,
-      error: `Failed to check token balance: ${getErrorMessage(error)}`,
-    };
-  }
-}
-
-/**
  * Core check token balance logic
  */
 async function stepHandler(
@@ -553,8 +196,6 @@ async function stepHandler(
     );
   }
 
-  // Resolve the chain first so address validation can branch on the chain
-  // family (EVM vs Solana) - see lib/web3/validate-chain-address.ts.
   let chainId: number;
   try {
     chainId = getChainIdFromNetwork(network);
@@ -572,6 +213,14 @@ async function stepHandler(
     return {
       success: false,
       error: getErrorMessage(error),
+    };
+  }
+
+  if (isSolanaChain(chainId)) {
+    return {
+      success: false,
+      error:
+        "Solana chains are not supported by this action. Use the Get SPL Token Balance action for SPL tokens.",
     };
   }
 
@@ -624,9 +273,7 @@ async function stepHandler(
     };
   }
 
-  return isSolanaChain(chainId)
-    ? checkSolanaTokenBalance(address, tokenAddress, chainId, userId, tokenConfig)
-    : checkEvmTokenBalance(address, tokenAddress, chainId, userId);
+  return checkEvmTokenBalance(address, tokenAddress, chainId, userId);
 }
 
 /**
@@ -639,7 +286,14 @@ export async function checkTokenBalanceStep(
 ): Promise<CheckTokenBalanceResult> {
   "use step";
 
-  return withStepLogging(input, () => stepHandler(input));
+  return withPluginMetrics(
+    {
+      pluginName: "web3",
+      actionName: "check-token-balance",
+      executionId: input._context?.executionId,
+    },
+    () => withStepLogging(input, () => stepHandler(input))
+  );
 }
 
 checkTokenBalanceStep.maxRetries = 0;
