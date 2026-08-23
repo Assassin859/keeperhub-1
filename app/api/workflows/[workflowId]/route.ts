@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
@@ -944,8 +944,13 @@ export async function DELETE(
     const { searchParams } = new URL(request.url);
     const force = searchParams.get("force") === "true";
 
+    // Soft-deleted runs (history already purged, see the executions DELETE
+    // route) are not "execution history" for this guard's purpose.
     const hasExecutions = await db.query.workflowExecutions.findFirst({
-      where: eq(workflowExecutions.workflowId, workflowId),
+      where: and(
+        eq(workflowExecutions.workflowId, workflowId),
+        isNull(workflowExecutions.deletedAt)
+      ),
       columns: { id: true },
     });
 
