@@ -26,15 +26,17 @@ function normalizeMessage(message: unknown): unknown {
 }
 
 /**
- * A `tools/call` sent with `arguments` omitted or explicitly `null` fails the
- * SDK's `z.record().optional()` params schema with a raw Zod error, which the
+ * A `tools/call` with `arguments` explicitly `null` fails the SDK's
+ * `z.record().optional()` params schema with a raw Zod error, which the
  * transport surfaces as -32603 (Internal error) rather than a validation
- * error. That reads as "the server is down" on exactly the call an agent is
- * most likely to make first: a tool with no required parameters, invoked
- * with no arguments object at all. Defaulting to `{}` here, before the
- * request reaches the SDK, keeps every per-tool schema (e.g.
- * get_wallet_integration's required `integrationId`) enforced downstream
- * unchanged.
+ * error - indistinguishable from the server being down. Omitting the key
+ * entirely already parses fine at this schema and fails one layer in with a
+ * proper tool-scoped error instead, so it isn't broken the same way - but on
+ * a tool with no required parameters it should just run. Defaulting both
+ * shapes to `{}` here, before the request reaches the SDK, fixes the null
+ * case's opaque error and lets an all-optional tool run without an
+ * arguments key, while every per-tool schema (e.g. get_wallet_integration's
+ * required `integrationId`) is still enforced downstream unchanged.
  */
 export function normalizeToolCallArguments(body: unknown): unknown {
   return Array.isArray(body)

@@ -1,9 +1,12 @@
 /**
- * KH-1: a `tools/call` with `arguments` omitted or explicitly `null` fails
- * the SDK's params schema with a raw Zod error, surfaced as -32603 (Internal
- * error) rather than a validation error - indistinguishable from the server
- * being down, on exactly the call an agent tries first. This pins the
- * dispatch-layer default that keeps that from reaching the SDK at all.
+ * KH-1: a `tools/call` with `arguments` explicitly `null` fails the SDK's
+ * params schema with a raw Zod error, surfaced as -32603 (Internal error)
+ * rather than a validation error - indistinguishable from the server being
+ * down. Omitting `arguments` entirely doesn't hit that path - it fails one
+ * layer in with a proper tool-scoped error instead - but on a tool with no
+ * required parameters it should just run. This pins the dispatch-layer
+ * default that fixes the null case and lets an all-optional tool run
+ * without an arguments key.
  */
 import { describe, expect, it } from "vitest";
 import { normalizeToolCallArguments } from "@/lib/mcp/normalize-tool-call-arguments";
