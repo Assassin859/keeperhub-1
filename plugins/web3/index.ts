@@ -79,7 +79,7 @@ const web3Plugin: IntegrationPlugin = {
     {
       slug: "check-token-balance",
       label: "Get ERC20 Token Balance",
-      description: "Get the token balance (ERC20 or SPL) of any address",
+      description: "Get ERC20 token balance of any address",
       category: "Web3",
       stepFunction: "checkTokenBalanceStep",
       stepImportPath: "check-token-balance",
@@ -134,7 +134,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          // No chainType filter: supports EVM (ERC20) and Solana (SPL) tokens.
+          chainTypeFilter: "evm",
           placeholder: "Select network",
           required: true,
         },
@@ -142,8 +142,87 @@ const web3Plugin: IntegrationPlugin = {
           key: "address",
           label: "Address",
           type: "template-input",
-          placeholder: "0x... / Solana address / {{NodeName.address}}",
+          placeholder: "0x... or {{NodeName.address}}",
           example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          required: true,
+        },
+        {
+          key: "tokenConfig",
+          label: "Token",
+          type: "token-select",
+          networkField: "network",
+          required: true,
+        },
+      ],
+    },
+    {
+      slug: "get-spl-token-balance",
+      label: "Get SPL Token Balance",
+      description: "Get SPL token balance of any Solana address",
+      category: "Web3",
+      stepFunction: "getSplTokenBalanceStep",
+      stepImportPath: "get-spl-token-balance",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the balance check succeeded",
+        },
+        {
+          field: "balance",
+          description: "Token balance object",
+        },
+        {
+          field: "balance.balance",
+          description: "The token balance amount (human-readable string)",
+        },
+        {
+          field: "balance.balanceRaw",
+          description: "The token balance in raw units (string)",
+        },
+        {
+          field: "balance.symbol",
+          description: "The token symbol (e.g., USDC)",
+        },
+        {
+          field: "balance.decimals",
+          description: "The token decimals",
+        },
+        {
+          field: "balance.name",
+          description: "The token name",
+        },
+        {
+          field: "balance.tokenAddress",
+          description: "The token mint address",
+        },
+        {
+          field: "address",
+          description: "The wallet address that was checked",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to the wallet address",
+        },
+        {
+          field: "error",
+          description: "Error message if the check failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "address",
+          label: "Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
           required: true,
         },
         {

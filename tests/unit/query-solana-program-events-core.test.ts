@@ -529,6 +529,20 @@ describe("queryProgramEventsCore", () => {
     expect(mockGetSignaturesForAddress).not.toHaveBeenCalled();
   });
 
+  it("rejects a zero string signatureLookback instead of silently scanning nothing", async () => {
+    const result = await queryProgramEventsCore({
+      network: "solana",
+      programId: PROGRAM_ID,
+      signatureLookback: "0",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Invalid signatureLookback value");
+    }
+    expect(mockGetSignaturesForAddress).not.toHaveBeenCalled();
+  });
+
   it("rejects a non-integer numeric signatureLookback", async () => {
     const result = await queryProgramEventsCore({
       network: "solana",

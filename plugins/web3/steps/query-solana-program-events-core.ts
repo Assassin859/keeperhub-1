@@ -124,6 +124,14 @@ function parseSignatureLookback(
       };
     }
     parsed = Number.parseInt(trimmed, 10);
+    // The regex only admits digit strings, so the remaining invalid case is
+    // "0" - reject it like the number branch rejects 0.
+    if (parsed <= 0) {
+      return {
+        success: false,
+        error: `Invalid signatureLookback value: ${input}`,
+      };
+    }
   }
 
   return { success: true, value: Math.min(parsed, MAX_SIGNATURE_LOOKBACK) };
