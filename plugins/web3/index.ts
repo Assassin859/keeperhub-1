@@ -79,7 +79,7 @@ const web3Plugin: IntegrationPlugin = {
     {
       slug: "check-token-balance",
       label: "Get ERC20 Token Balance",
-      description: "Get ERC20 token balance of any address",
+      description: "Get the token balance (ERC20 or SPL) of any address",
       category: "Web3",
       stepFunction: "checkTokenBalanceStep",
       stepImportPath: "check-token-balance",
@@ -134,7 +134,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // No chainType filter: supports EVM (ERC20) and Solana (SPL) tokens.
           placeholder: "Select network",
           required: true,
         },
@@ -142,7 +142,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "address",
           label: "Address",
           type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
+          placeholder: "0x... / Solana address / {{NodeName.address}}",
           example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
           required: true,
         },
@@ -616,6 +616,158 @@ const web3Plugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "read-solana-account",
+      label: "Read Solana Account",
+      description:
+        "Read the raw account info (owner, lamports, data) for a Solana address. Read-only - no wallet or credentials required.",
+      category: "Web3",
+      stepFunction: "readSolanaAccountStep",
+      stepImportPath: "read-solana-account",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the read succeeded",
+        },
+        {
+          field: "exists",
+          description: "Whether the account exists on-chain",
+        },
+        {
+          field: "owner",
+          description: "The base58 address of the program that owns the account",
+        },
+        {
+          field: "lamports",
+          description: "Number of lamports assigned to the account",
+        },
+        {
+          field: "executable",
+          description: "Whether the account's data contains a loaded program",
+        },
+        {
+          field: "rentEpoch",
+          description: "The account's rent epoch, if applicable",
+        },
+        {
+          field: "dataBase64",
+          description: "The account's raw data, base64-encoded",
+        },
+        {
+          field: "dataLength",
+          description: "Length of the account's raw data in bytes",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to view the account",
+        },
+        {
+          field: "error",
+          description: "Error message if the read failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "accountAddress",
+          label: "Account Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+          required: true,
+        },
+      ],
+    },
+    {
+      slug: "read-solana-program-anchor",
+      label: "Read Solana Program (Anchor)",
+      description:
+        "Read a Solana account and decode it against an Anchor program's IDL. Read-only - no wallet or credentials required.",
+      category: "Web3",
+      stepFunction: "readSolanaProgramStep",
+      stepImportPath: "read-solana-program",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the read succeeded",
+        },
+        {
+          field: "result",
+          description: "The decoded account fields, per the IDL's account type",
+        },
+        {
+          field: "owner",
+          description: "The base58 address of the program that owns the account",
+        },
+        {
+          field: "lamports",
+          description: "Number of lamports assigned to the account",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to view the account",
+        },
+        {
+          field: "error",
+          description: "Error message if the read or decode failed",
+        },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "solana",
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "accountAddress",
+          label: "Account Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+          helpTip: "The data account to read and decode - not the program's own address.",
+          required: true,
+        },
+        {
+          key: "programId",
+          label: "Program ID",
+          type: "template-input",
+          placeholder: "Program address (base58) or {{NodeName.programId}}",
+          example: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          helpTip:
+            "The base58 address of the Anchor program that owns this account. Verified against the account's actual owner before decoding.",
+          required: true,
+        },
+        {
+          key: "idl",
+          label: "Anchor IDL",
+          type: "json-editor",
+          placeholder:
+            '{ "address": "...", "metadata": {...}, "instructions": [...], "accounts": [...], "types": [...] }',
+          helpTip:
+            "The program's Anchor IDL as JSON (Anchor 0.30 or newer, with per-account discriminators). Paste the published IDL. Used to decode the account's raw data.",
+          required: true,
+        },
+        {
+          key: "accountType",
+          label: "Account Type",
+          type: "template-input",
+          placeholder: "Account type name, e.g. Vault",
+          helpTip:
+            "The name of the account type to decode as, exactly as it appears in the IDL's accounts array.",
+          required: true,
+        },
+      ],
+    },
+    {
       slug: "query-solana-program-events",
       label: "Query Solana Program Events",
       description:
@@ -846,7 +998,13 @@ const web3Plugin: IntegrationPlugin = {
         },
         {
           field: "gasLimit",
-          description: "Gas limit for the transaction",
+          description:
+            "Gas limit for the transaction (EVM only; 0 for Solana, which has no comparable ceiling)",
+        },
+        {
+          field: "computeUnitsConsumed",
+          description:
+            "Solana only: actual compute units consumed by the transaction",
         },
         {
           field: "blockNumber",
@@ -874,7 +1032,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // No chainType filter: supports EVM and Solana transaction lookups.
           placeholder: "Select network",
           required: true,
         },
@@ -882,7 +1040,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "transactionHash",
           label: "Transaction Hash",
           type: "template-input",
-          placeholder: "0x... or {{NodeName.transactionHash}}",
+          placeholder: "0x... / Solana signature / {{NodeName.transactionHash}}",
           example:
             "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060",
           required: true,
