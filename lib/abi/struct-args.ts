@@ -7,24 +7,16 @@
  * ethers.js expects a single object argument -- this utility rebuilds it.
  */
 
+import type { AbiParam, FunctionAbiEntry } from "@/lib/abi/types";
+
 const TEMPLATE_VARIABLE_RE = /^\{\{.+\}\}$/;
 const ARRAY_SUFFIX_RE = /\[\d*\]$/;
 
-export type AbiComponent = {
-  name: string;
-  type: string;
-  components?: AbiComponent[];
-};
+export type { AbiParam, FunctionAbiEntry } from "@/lib/abi/types";
 
-export type AbiInput = {
-  name: string;
-  type: string;
-  components?: AbiComponent[];
-};
-
-export type FunctionAbiEntry = {
-  inputs?: AbiInput[];
-};
+/** Compatibility aliases for the canonical AbiParam shape. */
+export type AbiComponent = AbiParam;
+export type AbiInput = AbiParam;
 
 function isTupleInput(input: AbiInput): boolean {
   return (

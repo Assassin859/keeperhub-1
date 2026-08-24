@@ -59,6 +59,11 @@ vi.mock("@/lib/metrics/instrumentation/plugin", () => ({
 }));
 
 vi.mock("@/lib/workflow/executor/step-handler", () => ({
+  runPluginStep: (
+    _options: unknown,
+    input: unknown,
+    fn: (input: unknown) => unknown
+  ) => fn(input),
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 

@@ -3,14 +3,13 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
-import { getAddressUrl } from "@/lib/explorer";
+import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { resolveExplorerLink } from "@/lib/web3/explorer-link";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { validateChainAddress } from "@/lib/web3/validate-chain-address";
@@ -184,29 +183,14 @@ export async function checkBalanceStep(
   "use step";
 
   // Enrich input with address explorer link for the execution log
-  let enrichedInput: CheckBalanceInput & { addressLink?: string } = input;
-  try {
-    const chainId = getChainIdFromNetwork(input.network);
-    const explorerConfig = await db.query.explorerConfigs.findFirst({
-      where: eq(explorerConfigs.chainId, chainId),
-    });
-    if (explorerConfig) {
-      const addressLink = getAddressUrl(explorerConfig, input.address);
-      if (addressLink) {
-        enrichedInput = { ...input, addressLink };
-      }
-    }
-  } catch {
-    // Non-critical: if lookup fails, input logs without the link
-  }
+  const addressLink = await resolveExplorerLink(input.network, input.address);
+  const enrichedInput: CheckBalanceInput & { addressLink?: string } =
+    addressLink ? { ...input, addressLink } : input;
 
-  return withPluginMetrics(
-    {
-      pluginName: "web3",
-      actionName: "check-balance",
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(enrichedInput, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: "web3", actionName: "check-balance" },
+    enrichedInput,
+    () => stepHandler(input)
   );
 }
 

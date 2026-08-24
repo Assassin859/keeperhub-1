@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/workflow/executor/step-handler", () => ({
+  runPluginStep: (
+    _options: unknown,
+    input: unknown,
+    fn: (input: unknown) => unknown
+  ) => fn(input),
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 vi.mock("@/lib/metrics/instrumentation/plugin", () => ({

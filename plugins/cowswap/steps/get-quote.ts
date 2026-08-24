@@ -2,8 +2,7 @@ import "server-only";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { cowFetch, type CowSwapFailure, resolveCowChainPath } from "./cowswap-core";
 
@@ -110,13 +109,10 @@ async function stepHandler(input: GetQuoteInput): Promise<GetQuoteResult> {
 export async function getQuoteStep(input: GetQuoteInput): Promise<GetQuoteResult> {
   "use step";
 
-  return withPluginMetrics(
-    {
-      pluginName: PLUGIN_NAME,
-      actionName: ACTION_NAME,
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(input, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: PLUGIN_NAME, actionName: ACTION_NAME },
+    input,
+    stepHandler
   );
 }
 

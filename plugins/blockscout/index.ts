@@ -18,6 +18,16 @@ const NETWORK_FIELD: ActionConfigField = {
     "Which chain's Blockscout explorer to query. Defaults to Ethereum mainnet. For a chain not listed here, add a Blockscout connection with its instance URL.",
 };
 
+// Address input shared verbatim by the address-scoped actions.
+const ADDRESS_FIELD: ActionConfigField = {
+  key: "address",
+  label: "Address",
+  type: "template-input",
+  placeholder: "0x... or {{NodeName.address}}",
+  example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+  required: true,
+};
+
 const blockscoutPlugin: IntegrationPlugin = {
   type: "blockscout",
   egress: "user-destination",
@@ -81,14 +91,7 @@ const blockscoutPlugin: IntegrationPlugin = {
       ],
       configFields: [
         NETWORK_FIELD,
-        {
-          key: "address",
-          label: "Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-          required: true,
-        },
+        ADDRESS_FIELD,
       ],
     },
     {
@@ -119,14 +122,7 @@ const blockscoutPlugin: IntegrationPlugin = {
       ],
       configFields: [
         NETWORK_FIELD,
-        {
-          key: "address",
-          label: "Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-          required: true,
-        },
+        ADDRESS_FIELD,
       ],
     },
     {
@@ -147,14 +143,7 @@ const blockscoutPlugin: IntegrationPlugin = {
       ],
       configFields: [
         NETWORK_FIELD,
-        {
-          key: "address",
-          label: "Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-          required: true,
-        },
+        ADDRESS_FIELD,
       ],
     },
     {

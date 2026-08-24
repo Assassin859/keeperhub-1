@@ -1,5 +1,27 @@
 import type { IntegrationType } from "@/lib/types/integration";
+import { evmNetworkField } from "@/plugins/field-fragments";
+import type { ActionConfigField } from "@/plugins/registry";
 import { getIntegration } from "@/plugins/registry";
+
+// Config fields shared verbatim by more than one CoW Swap action.
+const ORDER_UID_FIELD: ActionConfigField = {
+  key: "orderUid",
+  label: "Order UID",
+  type: "template-input",
+  placeholder: "0x... 56-byte order identifier",
+  example: "0xabc123...",
+  required: true,
+};
+
+const OWNER_ADDRESS_FIELD: ActionConfigField = {
+  key: "ownerAddress",
+  label: "Owner Address",
+  type: "template-input",
+  placeholder: "0x... wallet address",
+  example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+  required: true,
+  isAddressField: true,
+};
 
 const getQuoteAction = {
   slug: "get-quote",
@@ -10,14 +32,7 @@ const getQuoteAction = {
   stepFunction: "getQuoteStep",
   stepImportPath: "get-quote",
   configFields: [
-    {
-      key: "network",
-      label: "Network",
-      type: "chain-select" as const,
-      chainTypeFilter: "evm",
-      placeholder: "Select network",
-      required: true,
-    },
+    evmNetworkField(),
     {
       key: "sellToken",
       label: "Sell Token Address",
@@ -81,22 +96,8 @@ const getOrderStatusAction = {
   stepFunction: "getOrderStatusStep",
   stepImportPath: "get-order-status",
   configFields: [
-    {
-      key: "network",
-      label: "Network",
-      type: "chain-select" as const,
-      chainTypeFilter: "evm",
-      placeholder: "Select network",
-      required: true,
-    },
-    {
-      key: "orderUid",
-      label: "Order UID",
-      type: "template-input" as const,
-      placeholder: "0x... 56-byte order identifier",
-      example: "0xabc123...",
-      required: true,
-    },
+    evmNetworkField(),
+    ORDER_UID_FIELD,
   ],
   outputFields: [
     { field: "success", description: "Whether the request succeeded" },
@@ -118,14 +119,7 @@ const createOrderAction = {
   stepFunction: "createOrderStep",
   stepImportPath: "create-order",
   configFields: [
-    {
-      key: "network",
-      label: "Network",
-      type: "chain-select" as const,
-      chainTypeFilter: "evm",
-      placeholder: "Select network",
-      required: true,
-    },
+    evmNetworkField(),
     {
       key: "orderPayload",
       label: "Signed Order Payload (JSON)",
@@ -150,22 +144,8 @@ const cancelOrderAction = {
   stepFunction: "cancelOrderStep",
   stepImportPath: "cancel-order",
   configFields: [
-    {
-      key: "network",
-      label: "Network",
-      type: "chain-select" as const,
-      chainTypeFilter: "evm",
-      placeholder: "Select network",
-      required: true,
-    },
-    {
-      key: "orderUid",
-      label: "Order UID",
-      type: "template-input" as const,
-      placeholder: "0x... 56-byte order identifier",
-      example: "0xabc123...",
-      required: true,
-    },
+    evmNetworkField(),
+    ORDER_UID_FIELD,
   ],
   outputFields: [
     { field: "success", description: "Whether the request succeeded" },
@@ -182,23 +162,8 @@ const getAccountOrdersAction = {
   stepFunction: "getAccountOrdersStep",
   stepImportPath: "get-account-orders",
   configFields: [
-    {
-      key: "network",
-      label: "Network",
-      type: "chain-select" as const,
-      chainTypeFilter: "evm",
-      placeholder: "Select network",
-      required: true,
-    },
-    {
-      key: "ownerAddress",
-      label: "Owner Address",
-      type: "template-input" as const,
-      placeholder: "0x... wallet address",
-      example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-      required: true,
-      isAddressField: true,
-    },
+    evmNetworkField(),
+    OWNER_ADDRESS_FIELD,
     {
       key: "limit",
       label: "Limit",
@@ -225,23 +190,8 @@ const getTradesAction = {
   stepFunction: "getTradesStep",
   stepImportPath: "get-trades",
   configFields: [
-    {
-      key: "network",
-      label: "Network",
-      type: "chain-select" as const,
-      chainTypeFilter: "evm",
-      placeholder: "Select network",
-      required: true,
-    },
-    {
-      key: "ownerAddress",
-      label: "Owner Address",
-      type: "template-input" as const,
-      placeholder: "0x... wallet address",
-      example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-      required: true,
-      isAddressField: true,
-    },
+    evmNetworkField(),
+    OWNER_ADDRESS_FIELD,
   ],
   outputFields: [
     { field: "success", description: "Whether the request succeeded" },

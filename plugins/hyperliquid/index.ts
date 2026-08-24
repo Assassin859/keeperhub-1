@@ -1,6 +1,30 @@
-import type { IntegrationPlugin } from "@/plugins/registry";
+import {
+  queryErrorOutput,
+  querySuccessOutput,
+} from "@/plugins/field-fragments";
+import type { ActionConfigField, IntegrationPlugin } from "@/plugins/registry";
 import { registerIntegration } from "@/plugins/registry-core";
 import { HyperliquidIcon } from "./icon";
+
+// Config fields shared verbatim by more than one Hyperliquid action.
+const USER_ADDRESS_FIELD: ActionConfigField = {
+  key: "user",
+  label: "User Address",
+  type: "template-input",
+  placeholder: "0x... or {{NodeName.address}}",
+  example: "0x0000000000000000000000000000000000000000",
+  required: true,
+  isAddressField: true,
+};
+
+const COIN_FIELD: ActionConfigField = {
+  key: "coin",
+  label: "Coin",
+  type: "template-input",
+  placeholder: "BTC, ETH, SOL ...",
+  example: "BTC",
+  required: true,
+};
 
 const hyperliquidPlugin: IntegrationPlugin = {
   type: "hyperliquid",
@@ -42,24 +66,16 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "clearinghouseStateStep",
       stepImportPath: "clearinghouse-state",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Clearinghouse state JSON: marginSummary, assetPositions, withdrawable, time",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "user",
-          label: "User Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0x0000000000000000000000000000000000000000",
-          required: true,
-          isAddressField: true,
-        },
+        USER_ADDRESS_FIELD,
         {
           key: "dex",
           label: "Builder DEX",
@@ -79,13 +95,13 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "vaultDetailsStep",
       stepImportPath: "vault-details",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Vault details JSON: name, leader, vaultAddress, portfolio, apr, followers, relationship",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
         {
@@ -117,13 +133,13 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "validatorSummariesStep",
       stepImportPath: "validator-summaries",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Array of validator summaries with validator, signer, name, stake, isJailed, isActive, commission, stats",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [],
     },
@@ -136,23 +152,16 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "fundingHistoryStep",
       stepImportPath: "funding-history",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Array of funding records: coin, fundingRate, premium, time (ms)",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "coin",
-          label: "Coin",
-          type: "template-input",
-          placeholder: "BTC, ETH, SOL ...",
-          example: "BTC",
-          required: true,
-        },
+        COIN_FIELD,
         {
           key: "startTime",
           label: "Start Time (ms)",
@@ -180,24 +189,16 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "spotDeployStateStep",
       stepImportPath: "spot-deploy-state",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Spot deploy state JSON: states (token deployments), gasAuction (start, duration, gas params)",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "user",
-          label: "User Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0x0000000000000000000000000000000000000000",
-          required: true,
-          isAddressField: true,
-        },
+        USER_ADDRESS_FIELD,
       ],
     },
     {
@@ -209,24 +210,16 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "referralStep",
       stepImportPath: "referral",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Referral JSON: referredBy, cumVlm, unclaimedRewards, claimedRewards, builderRewards, referrerState",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "user",
-          label: "User Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0x0000000000000000000000000000000000000000",
-          required: true,
-          isAddressField: true,
-        },
+        USER_ADDRESS_FIELD,
       ],
     },
     {
@@ -238,13 +231,13 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "subAccountsStep",
       stepImportPath: "sub-accounts",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Array of sub-accounts with name, subAccountUser, master, and clearinghouseState",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
         {
@@ -267,32 +260,17 @@ const hyperliquidPlugin: IntegrationPlugin = {
       stepFunction: "activeAssetDataStep",
       stepImportPath: "active-asset-data",
       outputFields: [
-        { field: "success", description: "Whether the query succeeded" },
+        querySuccessOutput(),
         {
           field: "data",
           description:
             "Active asset data JSON: user, coin, leverage, maxTradeSzs, availableToTrade, markPx",
         },
-        { field: "error", description: "Error message if the query failed" },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "user",
-          label: "User Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.address}}",
-          example: "0x0000000000000000000000000000000000000000",
-          required: true,
-          isAddressField: true,
-        },
-        {
-          key: "coin",
-          label: "Coin",
-          type: "template-input",
-          placeholder: "BTC, ETH, SOL ...",
-          example: "BTC",
-          required: true,
-        },
+        USER_ADDRESS_FIELD,
+        COIN_FIELD,
       ],
     },
   ],

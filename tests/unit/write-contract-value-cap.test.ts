@@ -28,7 +28,10 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({ explorerConfigs: { chainId: "chainId" } }));
 
-vi.mock("@/lib/explorer", () => ({ getAddressUrl: vi.fn() }));
+vi.mock("@/lib/explorer", () => ({
+  getAddressUrl: vi.fn(),
+  getTransactionUrl: vi.fn(),
+}));
 
 vi.mock("@/lib/rpc/network-utils", () => ({
   getChainIdFromNetwork: vi.fn().mockReturnValue(1),
