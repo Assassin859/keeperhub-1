@@ -14,11 +14,11 @@
  * visible) resolves to `verified: false`, never `verified: true`.
  */
 import "server-only";
-import { sleep } from "@/lib/sleep";
 import { ethers } from "ethers";
 import { resolveRpcConfig } from "@/lib/rpc/config-service";
 import { isSolanaChain } from "@/lib/rpc/provider-factory";
 import { RpcProviderManager } from "@/lib/rpc/providers";
+import { sleep } from "@/lib/sleep";
 
 export type ReceiptStatus =
   | "success"

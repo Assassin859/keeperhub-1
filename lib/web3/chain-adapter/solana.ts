@@ -1,4 +1,3 @@
-import { sleep } from "@/lib/sleep";
 import {
   type Connection,
   PublicKey,
@@ -10,6 +9,7 @@ import { logWarn } from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { RpcOperationType } from "@/lib/rpc/providers/index";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
+import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import type { NonceSession } from "../nonce-manager";
 import { assertMaxSolLamportsOutflow } from "../solana-max-sol-guard";

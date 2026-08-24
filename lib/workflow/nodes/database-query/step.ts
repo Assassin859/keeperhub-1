@@ -5,7 +5,6 @@
  * Step fetches credentials using workflow ID reference
  */
 import "server-only";
-import { sleep } from "@/lib/sleep";
 
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -18,6 +17,7 @@ import {
   type PostgresSslOption,
 } from "@/lib/db/connection-utils";
 import { ErrorCategory, logUserError } from "@/lib/logging";
+import { sleep } from "@/lib/sleep";
 import {
   type StepInput,
   withStepLogging,

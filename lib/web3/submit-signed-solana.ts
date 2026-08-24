@@ -1,5 +1,4 @@
 import "server-only";
-import { sleep } from "@/lib/sleep";
 import {
   type SignatureStatus,
   Transaction,
@@ -7,6 +6,7 @@ import {
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
+import { sleep } from "@/lib/sleep";
 
 function extractFirstSignature(signedBytes: Uint8Array): Uint8Array | null {
   try {

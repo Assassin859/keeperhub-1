@@ -1,7 +1,7 @@
-import { sleep } from "@/lib/sleep";
 import { ethers } from "ethers";
 import { logWarn } from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import { OnChainRevertError } from "@/lib/web3/onchain-revert";
 import { submitSignedTransactionWithFailover } from "@/lib/web3/submit-signed";

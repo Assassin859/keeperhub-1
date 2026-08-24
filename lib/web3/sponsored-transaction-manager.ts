@@ -1,5 +1,4 @@
 import "server-only";
-import { sleep } from "@/lib/sleep";
 import type { Hex, TransactionReceipt } from "viem";
 import { BaseError, createPublicClient, encodeFunctionData, http } from "viem";
 import {
@@ -16,6 +15,7 @@ import {
   isBlockedIp,
   stripIpv6Brackets,
 } from "@/lib/safe-fetch";
+import { sleep } from "@/lib/sleep";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
