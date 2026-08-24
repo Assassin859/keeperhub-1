@@ -1,13 +1,11 @@
 import "server-only";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 
 import type {
   ConfirmedSignatureInfo,
   VersionedTransactionResponse,
 } from "@solana/web3.js";
 import { PublicKey } from "@solana/web3.js";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { workflowExecutions } from "@/lib/db/schema";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getSolanaProvider } from "@/lib/rpc/provider-factory";
 import type { SolanaProviderManager } from "@/lib/rpc/providers/solana";
@@ -76,27 +74,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-// Non-throwing by design: RPC preferences are a per-user convenience, not an
-// authority signal, so a lookup failure falls back to the chain's default RPC
-// config rather than failing the query.
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-  try {
-    const execution = await db
-      .select({ userId: workflowExecutions.userId })
-      .from(workflowExecutions)
-      .where(eq(workflowExecutions.id, executionId))
-      .limit(1);
-    return execution[0]?.userId;
-  } catch {
-    return;
-  }
 }
 
 function parseSignatureLookback(
@@ -439,7 +416,7 @@ export async function queryProgramEventsCore(
   const { programKey, decoder, lookback, chainId } = resolved.value;
   const eventName = input.eventName;
 
-  const userId = await getUserIdFromExecution(input._context?.executionId);
+  const userId = await getRpcPreferenceUserId(input._context?.executionId);
 
   let rpcManager: SolanaProviderManager;
   try {

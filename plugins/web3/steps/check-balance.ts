@@ -3,36 +3,18 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { validateChainAddress } from "@/lib/web3/validate-chain-address";
-
-/**
- * Get userId from executionId by querying the workflowExecutions table
- */
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
-}
 
 type CheckBalanceResult =
   | {
@@ -66,7 +48,7 @@ async function stepHandler(
   const { network, address, _context } = input;
 
   // Get userId from execution context (for user RPC preferences)
-  const userId = await getUserIdFromExecution(_context?.executionId);
+  const userId = await getRpcPreferenceUserId(_context?.executionId);
   if (userId) {
     console.log(
       "[Check Balance] Using user RPC preferences for userId:",
