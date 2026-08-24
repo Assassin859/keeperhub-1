@@ -1,9 +1,10 @@
 import "server-only";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { explorerConfigs } from "@/lib/db/schema";
 import {
   fetchContractTransactions,
   getAddressUrl,
@@ -59,22 +60,6 @@ export type QueryTransactionsCoreInput = {
   blockCount?: number | string;
   _context?: { executionId?: string; organizationId?: string };
 };
-
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
-}
 
 function parseAbi(
   abi: string
@@ -313,7 +298,7 @@ export async function queryTransactionsCore(
 
   const { iface, functionFragment, chainId } = validation.data;
 
-  const userId = await getUserIdFromExecution(input._context?.executionId);
+  const userId = await getRpcPreferenceUserId(input._context?.executionId);
 
   let rpcManager: RpcProviderManager;
   try {

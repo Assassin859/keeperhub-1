@@ -1,14 +1,12 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
-import { db } from "@/lib/db";
-import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
@@ -19,25 +17,6 @@ import {
   type TokenBalanceInfo,
   type TokenConfigSource,
 } from "./token-config-core";
-
-/**
- * Get userId from executionId by querying the workflowExecutions table
- */
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
-}
 
 type CheckTokenBalanceResult =
   | {
@@ -187,7 +166,7 @@ async function stepHandler(
   const tokenConfig = parseTokenConfig(input);
 
   // Get userId from execution context (for user RPC preferences)
-  const userId = await getUserIdFromExecution(_context?.executionId);
+  const userId = await getRpcPreferenceUserId(_context?.executionId);
   if (userId) {
     console.log(
       "[Check Token Balance] Using user RPC preferences for userId:",

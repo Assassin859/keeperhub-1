@@ -1,24 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/workflow/executor/step-handler", () => ({
-  runPluginStep: (
-    _options: unknown,
-    input: unknown,
-    fn: (input: unknown) => unknown
-  ) => fn(input),
-  withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
-}));
-vi.mock("@/lib/metrics/instrumentation/plugin", () => ({
-  withPluginMetrics: (_opts: unknown, fn: () => unknown) => fn(),
-}));
+vi.mock("@/lib/workflow/executor/step-handler", async () =>
+  (await import("../mocks/step-mocks")).stepHandlerPassthrough()
+);
+vi.mock("@/lib/metrics/instrumentation/plugin", async () =>
+  (await import("../mocks/step-mocks")).pluginMetricsPassthrough()
+);
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { TRANSACTION: "transaction" },
   logUserError: vi.fn(),
 }));
-vi.mock("@/lib/utils", () => ({
-  getErrorMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
-}));
+vi.mock("@/lib/utils", async () =>
+  (await import("../mocks/step-mocks")).utilsGetErrorMessage()
+);
 
 const mockGetChainIdFromNetwork = vi.fn();
 vi.mock("@/lib/rpc/network-utils", () => ({

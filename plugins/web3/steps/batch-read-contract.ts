@@ -1,14 +1,12 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from "@/lib/contracts/multicall3";
-import { db } from "@/lib/db";
-import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import {
@@ -20,25 +18,6 @@ const LOG_PREFIX = "[Batch Read Contract]";
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 500;
 const MAX_TOTAL_CALLS = 5000;
-
-/**
- * Get userId from executionId by querying the workflowExecutions table
- */
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
-}
 
 type CallResult = {
   success: boolean;
@@ -774,7 +753,7 @@ async function executeMixedMode(
 async function stepHandler(
   input: BatchReadContractInput
 ): Promise<BatchReadContractResult> {
-  const userId = await getUserIdFromExecution(input._context?.executionId);
+  const userId = await getRpcPreferenceUserId(input._context?.executionId);
   const isUniform = input.inputMode !== "mixed";
 
   if (isUniform) {

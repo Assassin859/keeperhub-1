@@ -4,7 +4,7 @@ import type { VersionedTransactionResponse } from "@solana/web3.js";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl, getTransactionUrl } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { resolveExplorerLink } from "@/lib/web3/explorer-link";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
@@ -34,22 +35,6 @@ function getSolanaFeePayer(tx: VersionedTransactionResponse): string {
     );
   }
   return feePayer.toBase58();
-}
-
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
 }
 
 type GetTransactionResult =
@@ -224,7 +209,7 @@ async function stepHandler(
     };
   }
 
-  const userId = await getUserIdFromExecution(_context?.executionId);
+  const userId = await getRpcPreferenceUserId(_context?.executionId);
 
   try {
     return isSolanaChain(chainId)
