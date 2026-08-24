@@ -10,7 +10,11 @@ import {
   TemplateAutocomplete,
   type TemplateAutocompleteCloseReason,
 } from "./template-autocomplete";
-import { countTemplateTokens, toStringValue } from "./template-badge-utils";
+import {
+  countTemplateTokens,
+  TEMPLATE_TOKEN_PATTERN,
+  toStringValue,
+} from "./template-badge-utils";
 
 // Guards `selection.getRangeAt(0)`, which throws IndexSizeError when
 // rangeCount is 0 (e.g. focus moved off the editable before keydown fired).
@@ -320,14 +324,14 @@ export function TemplateBadgeEditor({
   // Helper to add text with line breaks preserved (multiline only)
   const addTextWithLineBreaks = (container: HTMLElement, text: string): void => {
     const lines = text.split("\n");
-    lines.forEach((line, index) => {
+    for (const [index, line] of lines.entries()) {
       if (line) {
         container.appendChild(document.createTextNode(line));
       }
       if (index < lines.length - 1) {
         container.appendChild(document.createElement("br"));
       }
-    });
+    }
   };
 
   // Append text to the container: as-is for single-line, preserving line
@@ -365,8 +369,10 @@ export function TemplateBadgeEditor({
       return;
     }
 
-    // Match template patterns: {{@nodeId:DisplayName.field}} or {{@nodeId:DisplayName}}
-    const pattern = /\{\{@([^:]+):([^}]+)\}\}/g;
+    // Match template patterns: {{@nodeId:DisplayName.field}} or {{@nodeId:DisplayName}}.
+    // Fresh instance per call: the shared constant is /g and exec() would leave
+    // lastIndex state behind for other consumers.
+    const pattern = new RegExp(TEMPLATE_TOKEN_PATTERN.source, "g");
     let lastIndex = 0;
     let match;
 

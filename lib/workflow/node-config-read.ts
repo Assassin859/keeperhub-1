@@ -28,20 +28,14 @@ export function normalizeActionType(value: unknown): string | undefined {
 }
 
 /**
- * Bounds for {@link walkNodeConfigStrings}. The defaults exist to keep
- * validators predictable on adversarial input: workflow `nodes` payloads are
- * DB-resident, so a malicious row could otherwise blow the V8 stack (~20k
- * depth) or pin a worker on a multi-MB string field.
+ * Bounds for {@link walkNodeConfigStrings}. They keep validators predictable
+ * on adversarial input: workflow `nodes` payloads are DB-resident, so a
+ * malicious row could otherwise blow the V8 stack (~20k depth) or pin a
+ * worker on a multi-MB string field. Strings over the length bound are
+ * skipped entirely, not truncated.
  */
-export type NodeConfigStringWalkBounds = {
-  /** Depth below a node's `data.config` at which the walk stops descending. */
-  maxDepth?: number;
-  /** Strings longer than this are skipped entirely, not truncated. */
-  maxStringLength?: number;
-};
-
-const DEFAULT_MAX_DEPTH = 100;
-const DEFAULT_MAX_STRING_LENGTH = 256_000;
+const MAX_DEPTH = 100;
+const MAX_STRING_LENGTH = 256_000;
 
 type NodeConfigStringVisitor = (
   value: string,
@@ -101,14 +95,11 @@ function visitConfigValue(
  */
 export function walkNodeConfigStrings(
   nodes: unknown,
-  onString: NodeConfigStringVisitor,
-  bounds?: NodeConfigStringWalkBounds
+  onString: NodeConfigStringVisitor
 ): void {
   if (!Array.isArray(nodes)) {
     return;
   }
-  const maxDepth = bounds?.maxDepth ?? DEFAULT_MAX_DEPTH;
-  const maxStringLength = bounds?.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH;
   for (const node of nodes) {
     const config = asRecord(asRecord(node)?.data)?.config;
     if (config === undefined || config === null) {
@@ -116,8 +107,8 @@ export function walkNodeConfigStrings(
     }
     const stopped = visitConfigValue(config, 0, {
       node,
-      maxDepth,
-      maxStringLength,
+      maxDepth: MAX_DEPTH,
+      maxStringLength: MAX_STRING_LENGTH,
       onString,
     });
     if (stopped) {

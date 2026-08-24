@@ -185,13 +185,18 @@ type PublishedAction = {
 // (plugins/field-fragments.ts), so the source scan resolves both: literal
 // `field: "x"` entries plus `somethingOutput()` calls, the latter by invoking
 // the factory (the fragments module is a leaf with no runtime imports).
+// Fail closed: an unresolvable factory call would otherwise silently drop
+// the field and could hide a transactionHash from the guard below.
 function resolveFragmentFields(block: string): string[] {
   const fields: string[] = [];
   for (const call of block.matchAll(/\b([a-z][A-Za-z]*Output)\(\)/g)) {
     const factory = outputFragmentFactories[call[1] as string];
-    if (factory) {
-      fields.push(factory().field);
+    if (!factory) {
+      throw new Error(
+        `outputFields uses fragment factory "${call[1]}" that is missing from outputFragmentFactories in plugins/field-fragments.ts; add it so the published-schema guard can see its field`
+      );
     }
+    fields.push(factory().field);
   }
   return fields;
 }

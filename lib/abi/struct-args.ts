@@ -12,11 +12,10 @@ import type { AbiParam, FunctionAbiEntry } from "@/lib/abi/types";
 const TEMPLATE_VARIABLE_RE = /^\{\{.+\}\}$/;
 const ARRAY_SUFFIX_RE = /\[\d*\]$/;
 
-export type { AbiParam, FunctionAbiEntry } from "@/lib/abi/types";
+export type { FunctionAbiEntry } from "@/lib/abi/types";
 
-/** Compatibility aliases for the canonical AbiParam shape. */
-export type AbiComponent = AbiParam;
-export type AbiInput = AbiParam;
+type AbiComponent = AbiParam;
+type AbiInput = AbiParam;
 
 function isTupleInput(input: AbiInput): boolean {
   return (

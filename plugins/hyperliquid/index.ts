@@ -6,8 +6,9 @@ import type { ActionConfigField, IntegrationPlugin } from "@/plugins/registry";
 import { registerIntegration } from "@/plugins/registry-core";
 import { HyperliquidIcon } from "./icon";
 
-// Config fields shared verbatim by more than one Hyperliquid action.
-const USER_ADDRESS_FIELD: ActionConfigField = {
+// Config fields shared verbatim by more than one Hyperliquid action. Factories
+// return fresh objects so no field instance is aliased across actions.
+const userAddressField = (): ActionConfigField => ({
   key: "user",
   label: "User Address",
   type: "template-input",
@@ -15,16 +16,16 @@ const USER_ADDRESS_FIELD: ActionConfigField = {
   example: "0x0000000000000000000000000000000000000000",
   required: true,
   isAddressField: true,
-};
+});
 
-const COIN_FIELD: ActionConfigField = {
+const coinField = (): ActionConfigField => ({
   key: "coin",
   label: "Coin",
   type: "template-input",
   placeholder: "BTC, ETH, SOL ...",
   example: "BTC",
   required: true,
-};
+});
 
 const hyperliquidPlugin: IntegrationPlugin = {
   type: "hyperliquid",
@@ -75,7 +76,7 @@ const hyperliquidPlugin: IntegrationPlugin = {
         queryErrorOutput(),
       ],
       configFields: [
-        USER_ADDRESS_FIELD,
+        userAddressField(),
         {
           key: "dex",
           label: "Builder DEX",
@@ -161,7 +162,7 @@ const hyperliquidPlugin: IntegrationPlugin = {
         queryErrorOutput(),
       ],
       configFields: [
-        COIN_FIELD,
+        coinField(),
         {
           key: "startTime",
           label: "Start Time (ms)",
@@ -198,7 +199,7 @@ const hyperliquidPlugin: IntegrationPlugin = {
         queryErrorOutput(),
       ],
       configFields: [
-        USER_ADDRESS_FIELD,
+        userAddressField(),
       ],
     },
     {
@@ -219,7 +220,7 @@ const hyperliquidPlugin: IntegrationPlugin = {
         queryErrorOutput(),
       ],
       configFields: [
-        USER_ADDRESS_FIELD,
+        userAddressField(),
       ],
     },
     {
@@ -269,8 +270,8 @@ const hyperliquidPlugin: IntegrationPlugin = {
         queryErrorOutput(),
       ],
       configFields: [
-        USER_ADDRESS_FIELD,
-        COIN_FIELD,
+        userAddressField(),
+        coinField(),
       ],
     },
   ],

@@ -44,18 +44,6 @@ export function evmPrivateNetworkField(): ActionConfigField {
   };
 }
 
-export function tempoNetworkField(): ActionConfigField {
-  return {
-    allowedChainIds: ["4217", "42431"],
-    chainTypeFilter: "evm",
-    key: "network",
-    label: "Network",
-    placeholder: "Select a Tempo network",
-    required: true,
-    type: "chain-select",
-  };
-}
-
 export function tokenConfigField(): ActionConfigField {
   return {
     key: "tokenConfig",

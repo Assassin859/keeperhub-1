@@ -18,7 +18,7 @@ export type BlockRange = {
   toBlockIsLatest: boolean;
 };
 
-export function parseBlockCount(
+function parseBlockCount(
   blockCountInput: number | string | undefined
 ): { success: true; value: number } | { success: false; error: string } | null {
   if (blockCountInput === undefined || blockCountInput === null) {
@@ -46,7 +46,7 @@ export function parseBlockCount(
   return { success: true, value: parsed };
 }
 
-export function resolveFromBlock(
+function resolveFromBlock(
   fromBlockInput: string | undefined,
   blockCountInput: number | string | undefined,
   resolvedToBlock: number
@@ -79,8 +79,7 @@ export async function resolveBlockRange(
   provider: ethers.JsonRpcProvider,
   fromBlockInput: string | undefined,
   toBlockInput: string | undefined,
-  blockCountInput: number | string | undefined,
-  options?: { logLabel?: string }
+  blockCountInput: number | string | undefined
 ): Promise<
   { success: true; range: BlockRange } | { success: false; error: string }
 > {
@@ -94,12 +93,6 @@ export async function resolveBlockRange(
     // `fromBlock` starts. It is NOT the authoritative bound used for the
     // final eth_getLogs call; see queryBatchWithRetry's tip-batch handling.
     resolvedToBlock = await provider.getBlockNumber();
-    if (options?.logLabel) {
-      console.log(
-        `${options.logLabel} Resolved latest block:`,
-        resolvedToBlock
-      );
-    }
   } else {
     resolvedToBlock = Number.parseInt(toBlockStr, 10);
     if (Number.isNaN(resolvedToBlock)) {

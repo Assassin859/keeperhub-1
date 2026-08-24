@@ -2,8 +2,9 @@ import type { IntegrationPlugin, OutputField } from "../registry";
 import { registerIntegration } from "../registry-core";
 import { ClerkIcon } from "./icon";
 
-// Output shape shared verbatim by the user-returning actions.
-const USER_OUTPUT_FIELDS: OutputField[] = [
+// Output shape shared verbatim by the user-returning actions. The factory
+// returns fresh objects so no field instance is aliased across actions.
+const userOutputFields = (): OutputField[] => [
   { field: "id", description: "User ID" },
   { field: "firstName", description: "First name" },
   { field: "lastName", description: "Last name" },
@@ -49,7 +50,7 @@ const clerkPlugin: IntegrationPlugin = {
       category: "Clerk",
       stepFunction: "clerkGetUserStep",
       stepImportPath: "get-user",
-      outputFields: [...USER_OUTPUT_FIELDS],
+      outputFields: userOutputFields(),
       configFields: [
         {
           key: "userId",
@@ -68,7 +69,7 @@ const clerkPlugin: IntegrationPlugin = {
       category: "Clerk",
       stepFunction: "clerkCreateUserStep",
       stepImportPath: "create-user",
-      outputFields: [...USER_OUTPUT_FIELDS],
+      outputFields: userOutputFields(),
       configFields: [
         {
           key: "emailAddress",
@@ -129,7 +130,7 @@ const clerkPlugin: IntegrationPlugin = {
       category: "Clerk",
       stepFunction: "clerkUpdateUserStep",
       stepImportPath: "update-user",
-      outputFields: [...USER_OUTPUT_FIELDS],
+      outputFields: userOutputFields(),
       configFields: [
         {
           key: "userId",

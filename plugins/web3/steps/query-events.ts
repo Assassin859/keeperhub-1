@@ -248,14 +248,16 @@ async function stepHandler(
         provider,
         input.fromBlock,
         input.toBlock,
-        input.blockCount,
-        { logLabel: "[Query Events]" }
+        input.blockCount
       )
   );
   if (!blockRangeResult.success) {
     return { success: false, error: blockRangeResult.error };
   }
   const { range } = blockRangeResult;
+  if (range.toBlockIsLatest) {
+    console.log("[Query Events] Resolved latest block:", range.toBlock);
+  }
 
   if (range.fromBlock > range.toBlock) {
     return {

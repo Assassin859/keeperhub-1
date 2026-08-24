@@ -3,17 +3,18 @@ import { evmNetworkField } from "@/plugins/field-fragments";
 import type { ActionConfigField } from "@/plugins/registry";
 import { getIntegration } from "@/plugins/registry";
 
-// Config fields shared verbatim by more than one CoW Swap action.
-const ORDER_UID_FIELD: ActionConfigField = {
+// Config fields shared verbatim by more than one CoW Swap action. Factories
+// return fresh objects so no field instance is aliased across actions.
+const orderUidField = (): ActionConfigField => ({
   key: "orderUid",
   label: "Order UID",
   type: "template-input",
   placeholder: "0x... 56-byte order identifier",
   example: "0xabc123...",
   required: true,
-};
+});
 
-const OWNER_ADDRESS_FIELD: ActionConfigField = {
+const ownerAddressField = (): ActionConfigField => ({
   key: "ownerAddress",
   label: "Owner Address",
   type: "template-input",
@@ -21,7 +22,7 @@ const OWNER_ADDRESS_FIELD: ActionConfigField = {
   example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
   required: true,
   isAddressField: true,
-};
+});
 
 const getQuoteAction = {
   slug: "get-quote",
@@ -97,7 +98,7 @@ const getOrderStatusAction = {
   stepImportPath: "get-order-status",
   configFields: [
     evmNetworkField(),
-    ORDER_UID_FIELD,
+    orderUidField(),
   ],
   outputFields: [
     { field: "success", description: "Whether the request succeeded" },
@@ -145,7 +146,7 @@ const cancelOrderAction = {
   stepImportPath: "cancel-order",
   configFields: [
     evmNetworkField(),
-    ORDER_UID_FIELD,
+    orderUidField(),
   ],
   outputFields: [
     { field: "success", description: "Whether the request succeeded" },
@@ -163,7 +164,7 @@ const getAccountOrdersAction = {
   stepImportPath: "get-account-orders",
   configFields: [
     evmNetworkField(),
-    OWNER_ADDRESS_FIELD,
+    ownerAddressField(),
     {
       key: "limit",
       label: "Limit",
@@ -191,7 +192,7 @@ const getTradesAction = {
   stepImportPath: "get-trades",
   configFields: [
     evmNetworkField(),
-    OWNER_ADDRESS_FIELD,
+    ownerAddressField(),
   ],
   outputFields: [
     { field: "success", description: "Whether the request succeeded" },
