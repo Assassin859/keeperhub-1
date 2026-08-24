@@ -11,6 +11,7 @@
     "build": "pnpm discover-plugins && next build",
     "start": "next start",
     "type-check": "tsc --noEmit",
+    "type-check:executor": "tsc -p keeperhub-executor --noEmit",
     "check": "biome check",
     "check:api-docs": "tsx scripts/check-api-docs-routes.ts",
     "fix": "biome check --write",
