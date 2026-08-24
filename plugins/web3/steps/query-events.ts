@@ -3,12 +3,13 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { evmOnlyGuard } from "@/lib/web3/validate-chain-address";
@@ -20,22 +21,6 @@ import {
 
 const DEFAULT_BATCH_SIZE = 2000;
 const DEFAULT_BLOCK_LOOKBACK = 6500;
-
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
-}
 
 type DecodedEvent = {
   blockNumber: number;
@@ -329,7 +314,7 @@ async function stepHandler(
     return { success: false, error: `Event '${eventName}' not found in ABI` };
   }
 
-  const userId = await getUserIdFromExecution(_context?.executionId);
+  const userId = await getRpcPreferenceUserId(_context?.executionId);
 
   // Validate event exists in ABI using ethers Interface (no provider needed)
   const iface = new ethers.Interface(abiResult.parsed);
