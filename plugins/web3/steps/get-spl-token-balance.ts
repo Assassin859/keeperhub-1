@@ -11,11 +11,10 @@ import { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { supportedTokens } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getSolanaProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { TokenFieldValue } from "@/lib/wallet/types";
 import { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
@@ -374,13 +373,10 @@ export async function getSplTokenBalanceStep(
 ): Promise<GetSplTokenBalanceResult> {
   "use step";
 
-  return withPluginMetrics(
-    {
-      pluginName: "web3",
-      actionName: "get-spl-token-balance",
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(input, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: "web3", actionName: "get-spl-token-balance" },
+    input,
+    stepHandler
   );
 }
 

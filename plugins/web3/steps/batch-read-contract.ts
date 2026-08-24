@@ -3,12 +3,11 @@ import "server-only";
 import { ethers } from "ethers";
 import { MULTICALL3_ABI, MULTICALL3_ADDRESS } from "@/lib/contracts/multicall3";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import {
   type AbiOutputParam,
@@ -773,13 +772,10 @@ export async function batchReadContractStep(
 ): Promise<BatchReadContractResult> {
   "use step";
 
-  return await withPluginMetrics(
-    {
-      pluginName: "web3",
-      actionName: "batch-read-contract",
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(input, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: "web3", actionName: "batch-read-contract" },
+    input,
+    stepHandler
   );
 }
 

@@ -14,6 +14,11 @@
 
 export function stepHandlerPassthrough() {
   return {
+    runPluginStep: (
+      _options: unknown,
+      input: unknown,
+      fn: (input: unknown) => unknown
+    ) => fn(input),
     withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
   };
 }

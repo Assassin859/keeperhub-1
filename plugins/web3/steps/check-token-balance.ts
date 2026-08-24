@@ -3,12 +3,11 @@ import "server-only";
 import { ethers } from "ethers";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { validateChainAddress } from "@/lib/web3/validate-chain-address";
@@ -265,13 +264,10 @@ export async function checkTokenBalanceStep(
 ): Promise<CheckTokenBalanceResult> {
   "use step";
 
-  return withPluginMetrics(
-    {
-      pluginName: "web3",
-      actionName: "check-token-balance",
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(input, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: "web3", actionName: "check-token-balance" },
+    input,
+    stepHandler
   );
 }
 

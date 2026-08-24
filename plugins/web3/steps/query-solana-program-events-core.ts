@@ -1,4 +1,5 @@
 import "server-only";
+import { sleep } from "@/lib/sleep";
 import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 
 import type {
@@ -69,12 +70,6 @@ export type QuerySolanaProgramEventsResult =
       otherEventNamesSeen: string[];
     }
   | { success: false; error: string };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 function parseSignatureLookback(
   input: number | string | undefined
@@ -305,7 +300,7 @@ async function fetchTransactionWithRetry(
       return { kind: "ok", tx };
     }
     if (attempt < NULL_TX_RETRY_ATTEMPTS) {
-      await delay(NULL_TX_RETRY_DELAY_MS * attempt);
+      await sleep(NULL_TX_RETRY_DELAY_MS * attempt);
     }
   }
   return { kind: "failed" };

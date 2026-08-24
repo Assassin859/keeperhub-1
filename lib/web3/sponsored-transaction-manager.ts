@@ -15,6 +15,7 @@ import {
   isBlockedIp,
   stripIpv6Brackets,
 } from "@/lib/safe-fetch";
+import { sleep } from "@/lib/sleep";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -277,12 +278,6 @@ export type ReceiptWaitOptions = {
   perEndpointMs?: number;
   roundDelayMs?: number;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 /**
  * Every endpoint worth asking for the receipt, most-likely first: the URL the

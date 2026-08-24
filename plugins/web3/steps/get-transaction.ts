@@ -6,7 +6,6 @@ import { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl, getTransactionUrl } from "@/lib/explorer";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import {
   getRpcProvider,
@@ -14,8 +13,9 @@ import {
   isSolanaChain,
 } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { resolveExplorerLink } from "@/lib/web3/explorer-link";
 import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { SolanaChainAdapter } from "@/lib/web3/chain-adapter/solana";
 import { validateChainTxHash } from "@/lib/web3/validate-chain-address";
@@ -233,32 +233,18 @@ export async function getTransactionStep(
 ): Promise<GetTransactionResult> {
   "use step";
 
-  let enrichedInput: GetTransactionInput & { transactionLink?: string } = input;
-  try {
-    const chainId = getChainIdFromNetwork(input.network);
-    const explorerConfig = await db.query.explorerConfigs.findFirst({
-      where: eq(explorerConfigs.chainId, chainId),
-    });
-    if (explorerConfig) {
-      const transactionLink = getTransactionUrl(
-        explorerConfig,
-        input.transactionHash
-      );
-      if (transactionLink) {
-        enrichedInput = { ...input, transactionLink };
-      }
-    }
-  } catch {
-    // Non-critical: if lookup fails, input logs without the link
-  }
+  const transactionLink = await resolveExplorerLink(
+    input.network,
+    input.transactionHash,
+    "transaction"
+  );
+  const enrichedInput: GetTransactionInput & { transactionLink?: string } =
+    transactionLink ? { ...input, transactionLink } : input;
 
-  return await withPluginMetrics(
-    {
-      pluginName: "web3",
-      actionName: "get-transaction",
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(enrichedInput, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: "web3", actionName: "get-transaction" },
+    enrichedInput,
+    () => stepHandler(input)
   );
 }
 
