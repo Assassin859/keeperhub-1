@@ -977,8 +977,13 @@ export async function DELETE(
       const { workflowExecutionLogs } = await import("@/lib/db/schema");
 
       await db.transaction(async (tx) => {
+        // Only the runs not already purged, so a second pass cannot restamp
+        // a run to a later instant than the logs it was purged with.
         const executions = await tx.query.workflowExecutions.findMany({
-          where: eq(workflowExecutions.workflowId, workflowId),
+          where: and(
+            eq(workflowExecutions.workflowId, workflowId),
+            isNull(workflowExecutions.deletedAt)
+          ),
           columns: { id: true },
         });
 
@@ -997,10 +1002,13 @@ export async function DELETE(
               )
             );
 
+          // Same set the logs update used. Re-reading by workflow_id here would
+          // catch a run that committed after the snapshot and mark it deleted
+          // while its logs stay visible, with nothing left to stamp them.
           await tx
             .update(workflowExecutions)
             .set({ deletedAt: purgedAt })
-            .where(eq(workflowExecutions.workflowId, workflowId));
+            .where(inArray(workflowExecutions.id, executionIds));
         }
 
         await tx
