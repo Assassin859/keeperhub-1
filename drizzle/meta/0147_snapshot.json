@@ -7892,6 +7892,21 @@
           "method": "btree",
           "with": {}
         },
+        "idx_workflow_executions_organization_id": {
+          "name": "idx_workflow_executions_organization_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "idx_workflow_executions_executed_hash": {
           "name": "idx_workflow_executions_executed_hash",
           "columns": [

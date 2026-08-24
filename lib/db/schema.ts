@@ -826,6 +826,9 @@ export const workflowExecutions = pgTable(
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
     index("idx_workflow_executions_user_id").on(table.userId),
+    // Backs the FK to organization: without it the RI check on an organization
+    // delete or key change scans this table, the largest one, under lock.
+    index("idx_workflow_executions_organization_id").on(table.organizationId),
     // Resolve "which runs executed this snapshot" / join to workflow_history.
     index("idx_workflow_executions_executed_hash").on(
       table.executedWorkflowHash
