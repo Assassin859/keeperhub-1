@@ -1,4 +1,5 @@
 import "server-only";
+import { sleep } from "@/lib/sleep";
 
 import type {
   ConfirmedSignatureInfo,
@@ -71,12 +72,6 @@ export type QuerySolanaProgramEventsResult =
       otherEventNamesSeen: string[];
     }
   | { success: false; error: string };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 // Non-throwing by design: RPC preferences are a per-user convenience, not an
 // authority signal, so a lookup failure falls back to the chain's default RPC
@@ -328,7 +323,7 @@ async function fetchTransactionWithRetry(
       return { kind: "ok", tx };
     }
     if (attempt < NULL_TX_RETRY_ATTEMPTS) {
-      await delay(NULL_TX_RETRY_DELAY_MS * attempt);
+      await sleep(NULL_TX_RETRY_DELAY_MS * attempt);
     }
   }
   return { kind: "failed" };

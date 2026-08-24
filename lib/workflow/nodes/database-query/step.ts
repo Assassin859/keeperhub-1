@@ -5,6 +5,7 @@
  * Step fetches credentials using workflow ID reference
  */
 import "server-only";
+import { sleep } from "@/lib/sleep";
 
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -216,12 +217,6 @@ function isRetryableConnectionError(error: unknown): boolean {
   return false;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 /**
  * Database query logic
  */
@@ -296,7 +291,7 @@ async function databaseQuery(
       // Retry only pre-query connection failures: a query that already reached
       // the server (or a deterministic SQL error) must not be re-run.
       if (attempt < maxAttempts && isRetryableConnectionError(error)) {
-        await delay(RETRY_BACKOFF_MS * attempt);
+        await sleep(RETRY_BACKOFF_MS * attempt);
         continue;
       }
       return {

@@ -15,6 +15,7 @@
  * @see docs/keeperhub/KEEP-1240/gas.md for full specification
  */
 
+import { sleep } from "@/lib/sleep";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
@@ -656,13 +657,6 @@ export class TransactionStuckError extends Error {
     this.txHash = txHash;
     this.attempts = attempts;
   }
-}
-
-/**
- * Sleep helper
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

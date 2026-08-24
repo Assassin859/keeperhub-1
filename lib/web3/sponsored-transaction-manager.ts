@@ -1,4 +1,5 @@
 import "server-only";
+import { sleep } from "@/lib/sleep";
 import type { Hex, TransactionReceipt } from "viem";
 import { BaseError, createPublicClient, encodeFunctionData, http } from "viem";
 import {
@@ -277,12 +278,6 @@ export type ReceiptWaitOptions = {
   perEndpointMs?: number;
   roundDelayMs?: number;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 /**
  * Every endpoint worth asking for the receipt, most-likely first: the URL the

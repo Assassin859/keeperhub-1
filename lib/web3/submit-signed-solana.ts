@@ -1,4 +1,5 @@
 import "server-only";
+import { sleep } from "@/lib/sleep";
 import {
   type SignatureStatus,
   Transaction,
@@ -50,10 +51,6 @@ export type ReconcileOptions = {
   attempts?: number;
   delayMs?: number;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Polls a signature's on-chain status, tolerating the indexing lag that follows
