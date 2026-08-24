@@ -8,6 +8,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   lt,
   type SQL,
   sql,
@@ -980,6 +981,9 @@ async function fetchWorkflowRuns(
     sql`${workflowExecutions.workflowId} IN (${orgWorkflowIds})`,
     gte(workflowExecutions.startedAt, rangeStart),
     lt(workflowExecutions.startedAt, rangeEnd),
+    // A purged run leaves the listing. Its gas stays in the summary tiles and
+    // the network breakdown, which count every row on purpose.
+    isNull(workflowExecutions.deletedAt),
   ];
 
   if (status) {
@@ -1222,6 +1226,9 @@ async function getWorkflowRunsTotal(
     eq(workflows.organizationId, organizationId),
     gte(workflowExecutions.startedAt, rangeStart),
     lt(workflowExecutions.startedAt, rangeEnd),
+    // Must match fetchWorkflowRuns: a total that counts rows the listing drops
+    // leaves the last page short and the cursor pointing at nothing.
+    isNull(workflowExecutions.deletedAt),
   ];
   if (projectId) {
     conditions.push(eq(workflows.projectId, projectId));
