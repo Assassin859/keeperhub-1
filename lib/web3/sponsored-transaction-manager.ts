@@ -1,6 +1,12 @@
 import "server-only";
 import type { Hex, TransactionReceipt } from "viem";
-import { BaseError, createPublicClient, encodeFunctionData, http } from "viem";
+import {
+  BaseError,
+  createPublicClient,
+  encodeFunctionData,
+  http,
+  type PublicClient,
+} from "viem";
 import {
   checkGasCredits,
   getGasTokenPriceUsd,
@@ -223,7 +229,10 @@ const VIEM_REVERT_REASON_RE = /reverted with reason:\s*(.+?)\.?\s*$/i;
  * message.
  */
 async function decodeSponsoredRevertReason(
-  publicClient: ReturnType<typeof createPublicClient>,
+  // Concrete PublicClient rather than ReturnType<typeof createPublicClient>:
+  // the un-instantiated generic return type was the single most expensive
+  // comparison in the whole type-check (measured via tsc --generateTrace).
+  publicClient: PublicClient,
   txHash: Hex,
   blockNumber: bigint
 ): Promise<string | undefined> {
