@@ -1495,6 +1495,27 @@ describe("ChainProviderManager", () => {
       expect(getLogsCalls(provider)).toHaveLength(warmupCalls);
     });
 
+    it("serves a window held open by a dropped connection on the replacement", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+
+      // One past the warm-up, so this last block is buffered rather than
+      // dispatched, and the connection drops with the window still open.
+      await emitBlocks(provider, 100, WARMUP_SAMPLES + 1, 100);
+      const buffered = 100 + WARMUP_SAMPLES;
+
+      provider.emitError(new Error("socket closed"));
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      const replacement = factoryBundle.created[1];
+      expect(replacement).toBeDefined();
+
+      // Discarding here would lose logs that per-block dispatch never could:
+      // the subscriber is still attached across a reconnect.
+      const served = getLogsCalls(replacement).map(rangeOf);
+      expect(served).toContainEqual({ from: buffered, to: buffered });
+    });
+
     it("re-learns cadence after a reconnect instead of carrying the estimate over", async () => {
       await subscribe(manager);
       const provider = factoryBundle.created[0];

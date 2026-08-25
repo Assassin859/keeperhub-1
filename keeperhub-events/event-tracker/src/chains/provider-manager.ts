@@ -830,14 +830,25 @@ export class ChainProviderManager {
     entry.provider.on("block", listener);
   }
 
-  private detachBlockListener(entry: ChainEntry): void {
+  /**
+   * Stop delivering blocks on this connection.
+   *
+   * `retainWindow` decides the fate of an open coalescing window, and the two
+   * cases are not alike. Unsubscribe and destroy leave no subscriber to
+   * dispatch to, so the buffered numbers are discarded. A reconnect does not:
+   * its subscribers are still attached and still expect those logs, and
+   * discarding them would lose events that per-block dispatch never could.
+   * The numbers are just block heights, not provider state, so the reconnect
+   * carries them and the replacement connection serves them.
+   */
+  private detachBlockListener(entry: ChainEntry, retainWindow = false): void {
     entry.blockListenerAttachedAt = null;
-    // Drop any open window. Detach happens when the last subscriber leaves
-    // (nothing left to dispatch to) or when the connection is being replaced
-    // (the buffered numbers belong to the old provider, and a reconnect has
-    // already lost blocks for its downtime). Flushing here would issue a
-    // request against a provider that is about to be destroyed.
-    this.clearBatchWindow(entry);
+    // The timer always goes: it must not fire against a provider that is
+    // being torn down.
+    this.stopBatchTimer(entry);
+    if (!retainWindow) {
+      entry.pendingBlocks = [];
+    }
     if (!(entry.provider && entry.blockListener)) {
       entry.blockListener = null;
       return;
@@ -911,7 +922,8 @@ export class ChainProviderManager {
    */
   private async flushBatchWindow(entry: ChainEntry): Promise<void> {
     const blocks = entry.pendingBlocks;
-    this.clearBatchWindow(entry);
+    this.stopBatchTimer(entry);
+    entry.pendingBlocks = [];
     if (blocks.length === 0) {
       return;
     }
@@ -926,12 +938,11 @@ export class ChainProviderManager {
     );
   }
 
-  private clearBatchWindow(entry: ChainEntry): void {
+  private stopBatchTimer(entry: ChainEntry): void {
     if (entry.batchTimer) {
       clearTimeout(entry.batchTimer);
       entry.batchTimer = null;
     }
-    entry.pendingBlocks = [];
   }
 
   private attachErrorListener(entry: ChainEntry): void {
@@ -1084,6 +1095,13 @@ export class ChainProviderManager {
     }
     entry.isReconnecting = true;
     this.stopHeartbeat(entry);
+    // Disarm the coalescing window here rather than in `reconnect()`, which
+    // does not run until the backoff has elapsed. The window is the same
+    // width as the initial backoff, so leaving it armed lets it fire against
+    // the connection that just failed: the request throws, and the buffered
+    // blocks are lost to a logged warning. The blocks themselves are kept -
+    // `reconnect()` carries them to the replacement.
+    this.stopBatchTimer(entry);
 
     // Publish the reconnect promise on the entry BEFORE any `await`
     // yields. `getOrCreateProvider` awaits this to avoid creating a
@@ -1179,7 +1197,7 @@ export class ChainProviderManager {
     // the old provider cannot trigger another reconnect while we are
     // building the new one.
     if (entry.provider) {
-      this.detachBlockListener(entry);
+      this.detachBlockListener(entry, true);
       this.detachErrorListener(entry);
       try {
         await entry.provider.destroy();
@@ -1233,6 +1251,10 @@ export class ChainProviderManager {
     if (entry.subscribers.size > 0) {
       this.attachBlockListener(entry);
       this.startHeartbeat(entry);
+      // Serve the window the dropped connection was holding. These heights
+      // are historical by now, so the replacement answers for them as well as
+      // the original would have.
+      await this.flushBatchWindow(entry);
     }
   }
 
