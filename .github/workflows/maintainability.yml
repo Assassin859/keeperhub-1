@@ -396,25 +396,11 @@ jobs:
           done
           exit $failed
 
-      # networkpolicy.yaml is the other file here that is rendered rather than
-      # applied as written, and two of the three values it takes are multi-line
-      # YAML lists. A list expanded in the wrong place - inside a comment, for
-      # one - still reads as a file in a diff and is rejected by the API server.
-      # Render it with synthetic values and parse the result.
+      # The values files above are rendered by helm. networkpolicy.yaml is not:
+      # install.sh substitutes it with envsubst, and two of the values it takes
+      # are multi-line YAML lists. The script renders it the way install.sh
+      # does and checks the result. Its docstring says what goes wrong without
+      # it, and it runs locally with no arguments.
       - name: Render the egress policy
         working-directory: deploy/keeperhub-stack/self-hosted
-        run: |
-          set -euo pipefail
-          RENDERED=$(mktemp)
-          trap 'rm -f "$RENDERED"' EXIT
-          export RENDERED
-          cidrs=$'        - ipBlock:\n            cidr: 10.43.0.1/32\n        - ipBlock:\n            cidr: 10.0.0.5/32'
-          ports=$'        - protocol: TCP\n          port: 443\n        - protocol: TCP\n          port: 6443'
-          NAMESPACE=keeperhub APISERVER_CIDRS="$cidrs" APISERVER_PORTS="$ports" \
-            envsubst '${NAMESPACE} ${APISERVER_CIDRS} ${APISERVER_PORTS}' \
-            <networkpolicy.yaml >"$RENDERED"
-          if grep -nE '\$\{[A-Z_]+\}' "$RENDERED"; then
-            echo "::error::networkpolicy.yaml left an envsubst placeholder"
-            exit 1
-          fi
-          python3 -c 'import os, sys, yaml; docs = [d for d in yaml.safe_load_all(open(os.environ["RENDERED"])) if d]; kinds = {d.get("kind") for d in docs}; sys.exit(f"::error::rendered {kinds}, expected only NetworkPolicy") if kinds != {"NetworkPolicy"} else print(f"ok: {len(docs)} NetworkPolicy documents")'
+        run: ./test-harness/check-policy-render.py
