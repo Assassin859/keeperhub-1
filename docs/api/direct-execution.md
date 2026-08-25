@@ -36,12 +36,6 @@ Both caps count value moved by workflow runs as well as by this API, so the two 
 
 Call `GET /api/analytics/spend-cap` before planning a large transfer. Read `effectiveDailyCapWei` and `effectiveDailySolanaCapLamports` — those are the figures enforcement uses. A null `dailyCapWei` means the organization configured nothing, not that spending is unbounded.
 
-### Stablecoin transfers
-
-An ERC-20 transfer carries no native value, so the daily caps above cannot see it. A single transaction that moves a recognised stablecoin (any token listed for that chain and flagged as a stablecoin) is limited to **100 USD**, applying the 1:1 peg to the token's own decimals. The limit is per transaction rather than per day, and covers every write path: `/api/execute/transfer`, `/api/execute/contract-call`, protocol actions, `/api/execute/node`, and the equivalent workflow steps. Over the limit nothing is signed or broadcast; the request completes as a failed execution (`202` with `status: "failed"`) whose error reads `Stablecoin transfer of ... exceeds the 100.0 USD per-transaction limit`. Self-hosted deployments can change the figure with `EXECUTE_DEFAULT_STABLECOIN_CAP_MICRO_USD` (micro-USD, so `100000000` is 100 USD).
-
-Two things this does **not** do: it does not price non-stablecoin ERC-20s, which are not bounded at all, and it does not refuse `approve` — a large stablecoin approval is recorded but allowed, because capping approvals would break routine protocol integrations.
-
 ## Safe First-Write Sequence
 
 Use the same request body from simulation through broadcast so the transaction
