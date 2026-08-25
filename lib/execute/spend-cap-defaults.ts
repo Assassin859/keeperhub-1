@@ -20,17 +20,24 @@
  * has no chain to price. The figures are therefore fixed, chosen at the
  * reference price stated on each, and the drift is accepted deliberately.
  *
- * Each default can be overridden without a deploy, matching the
- * `AGENTIC_WALLET_DAILY_CAP_MICROS` convention, so an operator can widen the
- * floor if it turns out to bind a live integrator mid-flight.
+ * Each default is overridable from the environment, and both values.yaml files
+ * set it explicitly for the app and the executor, so widening one that is
+ * binding a live integrator is a values edit and a release rather than a code
+ * change. It is not instant: `type: kv` means the new figure ships with a helm
+ * upgrade. Anything faster would need the key moved to parameterStore, where a
+ * value change plus a pod restart is enough.
+ *
+ * (`AGENTIC_WALLET_DAILY_CAP_MICROS` makes the same "tune without a deploy"
+ * claim and is wired into neither environment, so it is not the precedent it
+ * appears to be.)
  */
 
 // The reference ceiling these are chosen against is the 200 USD/day figure
 // lib/agentic-wallet/daily-spend.ts already applies to agent-signed spend --
 // the one ratified spend-policy number in the codebase. Each default below
-// sits at or under it deliberately: every one is env-overridable without a
-// deploy, so a default that binds too tightly is a config change, while one
-// that binds too loosely is an unbounded outflow nobody notices. The rollout
+// sits at or under it deliberately: a default that binds too tightly is a
+// values.yaml edit, while one that binds too loosely is an unbounded outflow
+// nobody notices. The rollout
 // widens from here on evidence (watch spend_cap_default_applied), rather than
 // starting wide and tightening after an incident.
 
