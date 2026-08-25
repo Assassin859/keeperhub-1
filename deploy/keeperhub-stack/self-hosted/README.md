@@ -369,9 +369,12 @@ leftmost hop is whatever the caller sent. If the header does carry several hops,
 list your own proxies in `CLIENT_IP_TRUSTED_PROXIES` and the chain is read from
 the right instead.
 
-Read the ingress controller step in `INSTALL.md` first. On a cluster with no
-cloud load balancer the controller can replace the client address with its own
-before any of this applies, and then no header setting helps.
+One thing to check before you trust any of this. On a cluster with no cloud
+load balancer, traffic can arrive at a node that does not host the ingress
+controller and be forwarded to the node that does, which replaces the client
+address with an internal one. The header is then set correctly to the wrong
+address, and no setting here helps. Running the controller as a DaemonSet
+preserves the real address.
 
 **Email needs a SendGrid account of your own.** `lib/email.ts` posts to
 SendGrid's HTTP API, so there is no SMTP setting and no local mail-catcher
