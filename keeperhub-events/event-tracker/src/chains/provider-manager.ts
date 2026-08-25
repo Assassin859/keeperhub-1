@@ -223,6 +223,13 @@ export type DisconnectHandler = (ev: DisconnectEvent) => void | Promise<void>;
  * the chain is already identified by `chainId`, so nothing is lost by dropping
  * the path. Fails closed: a URL that will not parse is replaced entirely
  * rather than passed through on the assumption it holds no secret.
+ *
+ * The host is kept deliberately, and that is an assumption rather than a
+ * guarantee: a provider that puts the token in the subdomain - QuickNode and
+ * Chainstack both do - would survive this untouched. No configured upstream
+ * does today (checked across both env files: no userinfo, no query strings, no
+ * host-borne credentials), and the host is what makes failover diagnosable, so
+ * it stays. Revisit when an upstream of that shape is added.
  */
 export function redactRpcUrl(url: string | null): string | null {
   if (url === null) {
@@ -785,7 +792,7 @@ export class ChainProviderManager {
       // first caller's failover behaviour.
       if (existing.wssUrl !== wssUrl || existing.fallbackWssUrl !== fallback) {
         throw new Error(
-          `chainId ${chainId} already registered with wssUrl=${existing.wssUrl} fallbackWssUrl=${existing.fallbackWssUrl}; refusing to reuse for wssUrl=${wssUrl} fallbackWssUrl=${fallback}`,
+          `chainId ${chainId} already registered with wssUrl=${redactRpcUrl(existing.wssUrl)} fallbackWssUrl=${redactRpcUrl(existing.fallbackWssUrl)}; refusing to reuse for wssUrl=${redactRpcUrl(wssUrl)} fallbackWssUrl=${redactRpcUrl(fallback)}`,
         );
       }
       return existing;
@@ -883,7 +890,11 @@ export class ChainProviderManager {
         return { provider, urlUsed: url };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        failures.push(`${url}: ${message}`);
+        // Redacted here, not at the reader. This string is stored on
+        // `lastCreateError` and served in the /healthz body, logged by the
+        // reconnect loop, and embedded in the stack the listener registry
+        // prints - so a raw URL here leaks through every one of them.
+        failures.push(`${redactRpcUrl(url)}: ${message}`);
         if (provider) {
           try {
             await provider.destroy();
@@ -907,7 +918,7 @@ export class ChainProviderManager {
     entry.activeWssUrl = urlUsed;
     if (urlUsed !== entry.wssUrl) {
       logger.warn(
-        `[ChainProviderManager] chain=${entry.chainId} primary failed; running on fallback ${urlUsed}`,
+        `[ChainProviderManager] chain=${entry.chainId} primary failed; running on fallback ${redactRpcUrl(urlUsed)}`,
       );
     }
     // Clear the prior failure marker now that we have a working provider.
@@ -1492,7 +1503,7 @@ export class ChainProviderManager {
     entry.activeWssUrl = urlUsed;
     if (urlUsed !== entry.wssUrl) {
       logger.warn(
-        `[ChainProviderManager] chain=${entry.chainId} reconnected on fallback ${urlUsed}`,
+        `[ChainProviderManager] chain=${entry.chainId} reconnected on fallback ${redactRpcUrl(urlUsed)}`,
       );
     }
     // Successful reconnect clears any prior failure marker so /healthz
