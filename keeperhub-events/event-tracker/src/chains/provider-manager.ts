@@ -210,6 +210,33 @@ export interface DisconnectEvent {
 
 export type DisconnectHandler = (ev: DisconnectEvent) => void | Promise<void>;
 
+/**
+ * Reduce an RPC URL to what an operator needs and nothing more.
+ *
+ * The configured URLs carry credentials at runtime. `chain-config` stores
+ * `${DRPC_API_KEY}` as a placeholder, but the deploy workflow substitutes the
+ * real key into the value before writing it to SSM, so the string this process
+ * holds is a live secret for 19 of 22 chains.
+ *
+ * Only scheme and host survive. That is the whole diagnostic purpose - which
+ * upstream is serving, and therefore whether failover has kicked in - while
+ * the chain is already identified by `chainId`, so nothing is lost by dropping
+ * the path. Fails closed: a URL that will not parse is replaced entirely
+ * rather than passed through on the assumption it holds no secret.
+ */
+export function redactRpcUrl(url: string | null): string | null {
+  if (url === null) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    const hasMore = parsed.pathname !== "/" || parsed.search !== "";
+    return `${parsed.protocol}//${parsed.host}${hasMore ? "/[redacted]" : ""}`;
+  } catch {
+    return "[redacted]";
+  }
+}
+
 export interface ChainHealth {
   chainId: number;
   /**
@@ -218,11 +245,15 @@ export interface ChainHealth {
    * fallback when the most recent successful (re)connect landed on it;
    * resets to the configured primary during a mid-reconnect window
    * because `reconnect()` clears `activeWssUrl` before re-attempting.
+   *
+   * Scheme and host only - see `redactRpcUrl`. The configured value carries a
+   * live credential at runtime.
    */
   wssUrl: string;
   /**
    * Configured fallback URL, or null if none. Surfaced so operators can
-   * see whether failover capacity exists for this chain.
+   * see whether failover capacity exists for this chain. Scheme and host
+   * only, for the same reason as `wssUrl`.
    */
   fallbackWssUrl: string | null;
   connected: boolean;
@@ -679,8 +710,11 @@ export class ChainProviderManager {
       // Active URL when a provider is live, primary otherwise. Lets
       // operators see whether failover kicked in without exposing a
       // stale "active" value when nothing is connected.
-      wssUrl: entry.activeWssUrl ?? entry.wssUrl,
-      fallbackWssUrl: entry.fallbackWssUrl,
+      // Redacted here rather than at serialisation: every consumer of
+      // getAllHealth() then gets the safe value, and a future caller cannot
+      // reach a credential by reading the field directly.
+      wssUrl: redactRpcUrl(entry.activeWssUrl ?? entry.wssUrl) ?? "[redacted]",
+      fallbackWssUrl: redactRpcUrl(entry.fallbackWssUrl),
       connected: entry.provider != null && !entry.isReconnecting,
       reconnecting: entry.isReconnecting,
       lastBlockAt: entry.lastBlockAt,
