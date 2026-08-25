@@ -1337,6 +1337,232 @@ describe("ChainProviderManager", () => {
     });
   });
 
+  describe("sub-second block batching", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Production constants this suite pins behaviour against.
+    const WARMUP_SAMPLES = 20;
+    const WINDOW_MS = 1_000;
+    const MAX_BLOCKS = 25;
+
+    async function subscribe(mgr: ChainProviderManager): Promise<void> {
+      await mgr.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+    }
+
+    function getLogsCalls(provider: MockProvider): SendCall[] {
+      return provider.sendCalls.filter((c) => c.method === "eth_getLogs");
+    }
+
+    function rangeOf(call: SendCall): { from: number; to: number } {
+      const filter = call.params[0] as { fromBlock: string; toBlock: string };
+      return {
+        from: Number.parseInt(filter.fromBlock, 16),
+        to: Number.parseInt(filter.toBlock, 16),
+      };
+    }
+
+    /**
+     * Deliver `count` blocks `intervalMs` apart. The first block establishes
+     * the interval baseline, so `count` blocks yield `count - 1` samples.
+     */
+    async function emitBlocks(
+      provider: MockProvider,
+      firstBlock: number,
+      count: number,
+      intervalMs: number,
+    ): Promise<void> {
+      for (let i = 0; i < count; i += 1) {
+        await provider.emitBlock(firstBlock + i);
+        await vi.advanceTimersByTimeAsync(intervalMs);
+      }
+    }
+
+    it("dispatches one request per block until the cadence estimate is warm", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+
+      // WARMUP_SAMPLES blocks yield only WARMUP_SAMPLES - 1 intervals, so
+      // batching is still one sample short of engaging.
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+
+      const calls = getLogsCalls(provider);
+      expect(calls).toHaveLength(WARMUP_SAMPLES);
+      for (const call of calls) {
+        const { from, to } = rangeOf(call);
+        expect(from).toBe(to);
+      }
+    });
+
+    it("coalesces a window into a single ranged request once the chain proves sub-second", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+      const warmupCalls = getLogsCalls(provider).length;
+
+      // Five further blocks now fall inside one window rather than issuing
+      // five separate requests.
+      await emitBlocks(provider, 200, 5, 100);
+      expect(getLogsCalls(provider)).toHaveLength(warmupCalls);
+
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+
+      const batched = getLogsCalls(provider).slice(warmupCalls);
+      expect(batched).toHaveLength(1);
+      expect(rangeOf(batched[0])).toEqual({ from: 200, to: 204 });
+    });
+
+    it("leaves a chain with second-scale blocks on per-block dispatch", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+
+      // Well past the warm-up count, at Base's cadence. Every block must
+      // still get its own request: this change must not add latency to any
+      // chain that behaves like the ones supported today.
+      await emitBlocks(provider, 100, WARMUP_SAMPLES + 10, 2_000);
+
+      const calls = getLogsCalls(provider);
+      expect(calls).toHaveLength(WARMUP_SAMPLES + 10);
+      for (const call of calls) {
+        const { from, to } = rangeOf(call);
+        expect(from).toBe(to);
+      }
+    });
+
+    it("flushes at the block cap without waiting out the window", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+      const warmupCalls = getLogsCalls(provider).length;
+
+      // A burst arriving far faster than the window: the cap, not the timer,
+      // has to bound the range.
+      await emitBlocks(provider, 300, MAX_BLOCKS, 1);
+
+      const batched = getLogsCalls(provider).slice(warmupCalls);
+      expect(batched).toHaveLength(1);
+      expect(rangeOf(batched[0])).toEqual({
+        from: 300,
+        to: 300 + MAX_BLOCKS - 1,
+      });
+    });
+
+    it("spans blocks the subscription skipped inside the window", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+      const warmupCalls = getLogsCalls(provider).length;
+
+      // 401 to 404 were never pushed. A ranged request covers them anyway,
+      // which recovers logs a per-block loop would have dropped.
+      await provider.emitBlock(400);
+      await vi.advanceTimersByTimeAsync(100);
+      await provider.emitBlock(405);
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+
+      const batched = getLogsCalls(provider).slice(warmupCalls);
+      expect(batched).toHaveLength(1);
+      expect(rangeOf(batched[0])).toEqual({ from: 400, to: 405 });
+    });
+
+    it("drops an open window when the last subscriber unsubscribes", async () => {
+      const unsubscribe = await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      const provider = factoryBundle.created[0];
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+      const warmupCalls = getLogsCalls(provider).length;
+
+      await provider.emitBlock(500);
+      unsubscribe();
+      await vi.advanceTimersByTimeAsync(WINDOW_MS * 2);
+
+      // No request fires against a provider with nothing left to dispatch to.
+      expect(getLogsCalls(provider)).toHaveLength(warmupCalls);
+    });
+
+    it("re-learns cadence after a reconnect instead of carrying the estimate over", async () => {
+      await subscribe(manager);
+      const provider = factoryBundle.created[0];
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+
+      provider.emitError(new Error("socket closed"));
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      const replacement = factoryBundle.created[1];
+      expect(replacement).toBeDefined();
+      const before = getLogsCalls(replacement).length;
+
+      // The new connection starts cold, so these dispatch per block even
+      // though the previous one had been batching.
+      await emitBlocks(replacement, 600, 3, 100);
+      expect(getLogsCalls(replacement)).toHaveLength(before + 3);
+    });
+
+    it("tightens the staleness threshold for a batching chain", async () => {
+      // No blockStalenessTimeoutMs override, so the threshold is derived.
+      const bundle = makeFactory();
+      const mgr = new ChainProviderManager({
+        factory: bundle.factory,
+        onPermanentFailure,
+      });
+      await subscribe(mgr);
+      const provider = bundle.created[0];
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      // One more than WARMUP_SAMPLES: the first block sets the interval
+      // baseline, so batching needs WARMUP_SAMPLES + 1 blocks to engage.
+      await emitBlocks(provider, 100, WARMUP_SAMPLES + 1, 100);
+
+      // A 100 ms chain derives the 30 s floor, so silence trips on the
+      // second heartbeat rather than the fixed 120 s default's fifth.
+      await vi.advanceTimersByTimeAsync(62_000);
+
+      expect(reasons).toContain("block_staleness");
+      await mgr.destroy();
+    });
+
+    it("keeps the fixed staleness threshold for a chain dispatching per block", async () => {
+      const bundle = makeFactory();
+      const mgr = new ChainProviderManager({
+        factory: bundle.factory,
+        onPermanentFailure,
+      });
+      await subscribe(mgr);
+      const provider = bundle.created[0];
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      await emitBlocks(provider, 100, WARMUP_SAMPLES + 10, 2_000);
+
+      // 90 s of silence is past the derived floor a batching chain would get
+      // but well inside the 120 s this chain must keep.
+      await vi.advanceTimersByTimeAsync(90_000);
+
+      expect(reasons).not.toContain("block_staleness");
+      await mgr.destroy();
+    });
+  });
+
   describe("block-staleness watchdog", () => {
     beforeEach(() => {
       vi.useFakeTimers();
