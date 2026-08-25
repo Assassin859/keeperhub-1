@@ -3,7 +3,11 @@
 // The per-organization limiter is Redis-backed so the ceiling is fleet-wide.
 // It previously lived in a module-level Map, which made the real ceiling
 // LIMIT * num_replicas: an agent spraying requests across pods got a multiple
-// of the intended budget.
+// of the intended budget. Prod runs replicaCount 4
+// (deploy/keeperhub-stack/prod/values.yaml), so the advertised 120/min was
+// really 480/min and this change cuts the effective ceiling by three quarters.
+// Staging runs 1 replica, so the limit there is already 120/min and the change
+// is a no-op: staging cannot surface the impact before prod does.
 //
 // The per-IP limiter below is still in-memory per pod, and is not built on
 // lib/rate-limit/sliding-window.ts: the stale-entry sweep below iterates this
