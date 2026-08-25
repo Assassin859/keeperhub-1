@@ -1355,12 +1355,16 @@ export function registerTools(
         .optional()
         .describe("Additional context or constraints for the AI generator"),
     },
-    // Persists nothing, but /api/ai/generate hard-requires mcp:write and
-    // spends a rate-limited external model call, so claiming read-only would
-    // contradict the scope model in oauth-scopes.ts.
+    // Persists nothing and changes no state, so it stays read-only. The hint
+    // describes effect, not grant: withScopeCheck enforces mcp:write on this
+    // tool regardless of any annotation, so flipping readOnlyHint would buy no
+    // enforcement and cost an accurate signal -- clients that allowlist
+    // read-only tools would start prompting for a call that mutates nothing.
+    // The rate-limited model spend is a cost concern the annotation vocabulary
+    // has no way to express.
     {
       title: "AI Generate Workflow",
-      readOnlyHint: false,
+      readOnlyHint: true,
       destructiveHint: false,
     },
     withScopeCheck("ai_generate_workflow", scope, async (args) =>

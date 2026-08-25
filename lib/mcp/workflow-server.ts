@@ -1,6 +1,6 @@
 import "server-only";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isMutatingActionType } from "@/lib/mcp/action-type";
+import { hasIrreversibleEffect } from "@/lib/mcp/action-type";
 import {
   buildTriggerInputSchema,
   detectListingTriggerType,
@@ -28,16 +28,15 @@ function getNodeActionType(node: unknown): unknown {
   return configActionType ?? legacyActionType;
 }
 
-// Broader than workflowType === "write": also catches genuinely-mutating
-// actions (batch-write-contract, approve-token, transfer-funds,
-// transfer-token) that deriveWorkflowType deliberately never promotes to
-// "write" because they cannot be served by the calldata-handoff MCP route.
-// Those workflows correctly stay workflowType="read" for routing purposes,
-// but they still broadcast a real transaction, so the readOnlyHint
-// annotation needs this separate, wider check rather than reusing
-// workflowType.
+// Broader than workflowType === "write": also catches actions that
+// deriveWorkflowType never promotes to "write" because they cannot be served
+// by the calldata-handoff MCP route, plus the outbound-message actions that
+// have no chain effect at all. Those workflows correctly stay
+// workflowType="read" for routing purposes, but they still broadcast a
+// transaction or send a message the caller cannot recall, so the annotations
+// need this separate, wider check rather than reusing workflowType.
 function hasMutatingNode(nodes: unknown[]): boolean {
-  return nodes.some((node) => isMutatingActionType(getNodeActionType(node)));
+  return nodes.some((node) => hasIrreversibleEffect(getNodeActionType(node)));
 }
 
 type ApiResponse = Record<string, unknown>;

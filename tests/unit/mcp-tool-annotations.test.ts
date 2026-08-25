@@ -62,11 +62,23 @@ function collectAnnotations(): Map<string, ToolAnnotations> {
  * rather than silently reaching clients as auto-approvable.
  */
 const ADDITIVE_WRITE_TOOLS = [
-  "ai_generate_workflow",
   "create_project",
   "create_tag",
   "deploy_template",
 ];
+
+/**
+ * Tools that are genuinely read-only in effect but still require a write
+ * grant. readOnlyHint describes whether the tool modifies its environment;
+ * the scope describes who may call it. They are separate axes and this is
+ * where they legitimately diverge, so the check below allows exactly these
+ * rather than assuming a read-only tool implies a read scope.
+ *
+ * ai_generate_workflow persists nothing and changes no state, but
+ * /api/ai/generate requires mcp:write because it spends a rate-limited model
+ * call. withScopeCheck enforces that regardless of any annotation.
+ */
+const READ_ONLY_TOOLS_REQUIRING_WRITE = ["ai_generate_workflow"];
 
 /**
  * Tools that move value, broadcast a transaction, or dispatch an execution
@@ -143,9 +155,22 @@ describe("MCP tool annotations", () => {
 
   it("never claims a write tool is read-only", () => {
     for (const [name, annotation] of annotations) {
-      if (annotation.readOnlyHint === true) {
+      if (
+        annotation.readOnlyHint === true &&
+        !READ_ONLY_TOOLS_REQUIRING_WRITE.includes(name)
+      ) {
         expect(getRequiredScopeForTool(name), name).toBe(SCOPE_MCP_READ);
       }
+    }
+  });
+
+  // Guards the exception list itself: an entry that stops needing a write
+  // grant should leave the list rather than sit there masking a real
+  // read-only tool that was mis-scoped.
+  it("keeps the read-only-but-write-scoped list minimal", () => {
+    for (const name of READ_ONLY_TOOLS_REQUIRING_WRITE) {
+      expect(annotations.get(name)?.readOnlyHint, name).toBe(true);
+      expect(getRequiredScopeForTool(name), name).not.toBe(SCOPE_MCP_READ);
     }
   });
 });
@@ -250,19 +275,51 @@ describe("per-listing workflow MCP server annotations", () => {
     expect(annotation.destructiveHint).toBe(false);
   });
 
-  // Guard on the residual gap rather than leaving it silent. isMutatingActionType
-  // is a denylist: it matches write-contract/protocol-write plus three named
-  // web3 transfer/approve types, so a mutating action outside that set is not
-  // detected and the listing is still advertised read-only. tempo/transfer-with-memo
-  // moves real TIP-20 stablecoin value and is the concrete instance. Closing this
-  // needs a side-effect declaration on PluginAction so the classification is an
-  // allowlist derived from the registry; until then this test documents the
-  // exposure and will fail the moment the denylist is widened, prompting the
-  // expectation below to be flipped.
-  it("does not yet detect mutating actions outside the web3 denylist", () => {
+  // Tempo carries no native gas token, so none of its writes register on the
+  // daily native value cap and this annotation is the only thing standing
+  // between an MCP client and an auto-approved stablecoin transfer.
+  it.each([
+    "tempo/transfer-with-memo",
+    "tempo/batch-payout",
+    "tempo/dex-swap",
+    "tempo/hold-payment",
+  ])("treats a read-typed listing containing %s as destructive", (actionType) => {
     const annotation = listingAnnotations({
       workflowType: "read" as const,
-      nodes: [actionNode("n1", "tempo/transfer-with-memo")],
+      nodes: [actionNode("n1", actionType)],
+    });
+    expect(annotation.readOnlyHint).toBe(false);
+    expect(annotation.destructiveHint).toBe(true);
+  });
+
+  // tools.ts annotates test_notification destructive because it "sends to a
+  // caller-named target and cannot recall the message". A listing whose nodes
+  // do the same send has to land the same way, or the two MCP surfaces
+  // disagree about identical behaviour.
+  it.each([
+    "discord/send-message",
+    "slack/send-message",
+    "telegram/send-message",
+    "sendgrid/send-email",
+    "resend/send-email",
+  ])("treats a read-typed listing containing %s as destructive", (actionType) => {
+    const annotation = listingAnnotations({
+      workflowType: "read" as const,
+      nodes: [actionNode("n1", actionType)],
+    });
+    expect(annotation.readOnlyHint).toBe(false);
+    expect(annotation.destructiveHint).toBe(true);
+  });
+
+  // The predicate is an allowlist of known effects, so an unrecognised action
+  // type still reads as side-effect-free. Stated as a test so the residual is
+  // visible rather than assumed away: a new broadcasting plugin must be added
+  // to lib/mcp/action-type.ts, and deriving the classification from a declared
+  // field on PluginAction is what would close it for good.
+  it("still reads an unknown action type as side-effect-free", () => {
+    const annotation = listingAnnotations({
+      workflowType: "read" as const,
+      nodes: [actionNode("n1", "somefutureplugin/send-value")],
     });
     expect(annotation.readOnlyHint).toBe(true);
     expect(annotation.destructiveHint).toBe(false);
