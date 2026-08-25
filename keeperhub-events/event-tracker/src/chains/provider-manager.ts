@@ -14,13 +14,18 @@ import { logger } from "../../lib/utils/logger";
  * typically ~1000 per WSS).
  *
  * Request volume is driven by block rate, so a sub-second chain costs orders
- * of magnitude more than a 12 s one for the same subscriptions. Blocks from a
- * chain observed to be producing them faster than
- * `BATCHING_BLOCK_INTERVAL_THRESHOLD_MS` are coalesced into a
- * `BATCH_WINDOW_MS` window and served by a single ranged request. Cadence is
- * measured per connection rather than configured, and every chain starts out
- * dispatching per block, so a chain only leaves the historical behaviour once
- * it has demonstrated it needs to.
+ * of magnitude more than a 12 s one for the same subscriptions. Requests are
+ * therefore rate limited rather than issued per block: each chain keeps a
+ * high-water mark of the last block it has served, and a drain fetches
+ * `(mark, head]` at most once per `GETLOGS_MIN_INTERVAL_MS`.
+ *
+ * Nothing branches on how fast a chain is. A chain whose blocks arrive
+ * further apart than that interval always finds it already elapsed and
+ * dispatches immediately - one request per block, as before - while a faster
+ * one accumulates against the mark and is served in one ranged request. The
+ * range is contiguous, so blocks the subscription never pushed are covered
+ * too, and the mark survives a reconnect so a replacement connection resumes
+ * rather than starting blind.
  *
  * Per-chain reconnect + heartbeat are owned here. Drop detection uses two
  * signals:
@@ -42,7 +47,7 @@ import { logger } from "../../lib/utils/logger";
 
 // Address list cap on `eth_getLogs` varies by provider (Alchemy ~500,
 // Infura ~1000). Chunk defensively; multiple calls per block are cheap.
-const GETLOGS_ADDRESS_BATCH = 500;
+export const GETLOGS_ADDRESS_BATCH = 500;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
@@ -58,53 +63,84 @@ const HEARTBEAT_TIMEOUT_MS = 10_000;
  * time so a slow-but-healthy chain is never reconnected for a normal
  * inter-block gap; overridable per-manager for tests.
  */
-const BLOCK_STALENESS_TIMEOUT_MS = 120_000;
+export const BLOCK_STALENESS_TIMEOUT_MS = 120_000;
 /**
  * Floor on the derived staleness threshold for a batching chain. A chain
  * producing blocks every 100 ms would otherwise derive a 1 s threshold and
  * reconnect on any brief upstream hiccup. 30 s is ~300 blocks of slack there,
  * still three orders of magnitude tighter than the fixed default.
  */
-const BLOCK_STALENESS_FLOOR_MS = 30_000;
-/** Blocks of slack the derived staleness threshold allows. */
-const BLOCK_STALENESS_BLOCK_MULTIPLIER = 10;
+export const BLOCK_STALENESS_FLOOR_MS = 30_000;
+/**
+ * Blocks of slack the derived staleness threshold allows.
+ *
+ * Chosen so that no chain running today changes: at 60 blocks, Base's 2 s
+ * cadence derives 120 s and Ethereum's 12 s clamps to the same, which is what
+ * both had before any of this existed. A 100 ms chain derives 6 s and takes
+ * the 30 s floor instead. The value is live between those - a 1 s chain
+ * derives 60 s - so tuning it has an effect rather than being absorbed by a
+ * bound, which is what a multiplier of 10 was: every reachable cadence
+ * produced a value below the floor, making the constant dead and the
+ * documented `max(floor, interval x N)` rule unobservable.
+ */
+export const BLOCK_STALENESS_BLOCK_MULTIPLIER = 60;
 
 /**
- * Batching engages only below this observed inter-block interval. Every chain
- * supported today produces blocks at 2 s or slower, so all of them keep the
- * historical one-`eth_getLogs`-per-block behaviour and its latency; batching
- * is reachable only by a sub-second chain, where per-block calls are the
- * problem (a 100 ms chain issues 864,000 calls/day/address-batch against
- * Base's 43,200).
+ * Minimum wall-clock gap between `eth_getLogs` requests for one chain.
  *
- * Set well clear of both sides rather than at the 1 s round number: the
- * integration rig runs anvil at `--block-time 1`, and a chain sitting exactly
- * on the threshold would drift across it on timer jitter alone and batch
- * nondeterministically. 500 ms leaves 5x margin below to the chain this
- * exists for and 2x above to the fastest cadence anything here produces.
+ * Request volume is driven by block rate, so a sub-second chain costs orders
+ * of magnitude more than a 12 s one for the same subscriptions: at 100 ms a
+ * chain issues 864,000 calls/day/address-batch against Base's 43,200. Rate
+ * limiting the request rather than measuring the chain bounds that directly -
+ * one call per second per chain, whatever the cadence.
+ *
+ * Nothing here is conditional on a chain being fast. A chain whose blocks
+ * arrive further apart than this always finds the interval already elapsed
+ * and dispatches immediately, so every chain supported today - 2 s at the
+ * fastest - keeps one request per block and its current latency without a
+ * threshold deciding anything. A 100 ms chain finds it has not, and its
+ * blocks accumulate against the high-water mark until it has.
+ *
+ * The gap is well inside the 0-10 s jitter `EventListener` already applies
+ * before forwarding a matched event, so it is not the binding term in
+ * end-to-end trigger latency on any chain.
  */
-const BATCHING_BLOCK_INTERVAL_THRESHOLD_MS = 500;
+export const GETLOGS_MIN_INTERVAL_MS = 1_000;
 /**
- * Width of the coalescing window, measured from the first buffered block.
- * Well inside the 0-10 s jitter `EventListener` already applies before
- * forwarding a matched event, so it is not the binding term in end-to-end
- * trigger latency.
+ * Ceiling on the block span of a single request, so a wide gap - a long
+ * reconnect, a slow drain, a chain that ran ahead - cannot produce one
+ * oversized response or trip a provider's block-range limit. A remainder is
+ * left for the next drain rather than dropped.
  */
-const BATCH_WINDOW_MS = 1_000;
+export const GETLOGS_MAX_BLOCK_SPAN = 25;
 /**
- * Ceiling on blocks per windowed request, so a burst (catch-up after a slow
- * flush) cannot widen the range without bound and produce an oversized
- * response or trip a provider's block-range limit.
+ * Ceiling on how far behind the head the mark may fall before the gap is
+ * abandoned rather than walked.
+ *
+ * The mark survives a reconnect, which is what lets a drain recover blocks
+ * the subscription missed while it was down. Left unbounded, a long outage on
+ * a fast chain would queue hours of catch-up at one request per second and
+ * starve current blocks behind history nobody is waiting for. Past this the
+ * mark jumps to the head and the skip is logged, so the loss is recorded
+ * rather than silent.
  */
-const BATCH_MAX_BLOCKS = 25;
-/**
- * Inter-block intervals folded into the EWMA before its value is trusted.
- * Until then a chain dispatches per block, so a misjudged cadence at startup
- * can only fail towards today's behaviour.
- */
-const BLOCK_INTERVAL_WARMUP_SAMPLES = 20;
+export const GETLOGS_MAX_CATCHUP_BLOCKS = 5_000;
 /** EWMA smoothing factor for the inter-block interval. */
 const BLOCK_INTERVAL_EWMA_ALPHA = 0.2;
+/**
+ * Inter-block intervals required before the cadence estimate is trusted.
+ */
+export const BLOCK_INTERVAL_MIN_SAMPLES = 20;
+/**
+ * Wall-clock the samples must also span before the estimate is trusted.
+ *
+ * A sample count alone is not evidence of cadence. Twenty `newHeads` messages
+ * drained back-to-back out of a socket buffer after an event-loop stall are
+ * twenty samples milliseconds apart, and would read a 12 s chain as a 1 ms
+ * one. Requiring the samples to cover real time as well makes that
+ * impossible: a burst cannot manufacture a minute.
+ */
+export const BLOCK_INTERVAL_MIN_SPAN_MS = 60_000;
 /**
  * Cadence of the per-chain `getlogs-stats` line.
  *
@@ -132,7 +168,7 @@ const BLOCK_INTERVAL_EWMA_ALPHA = 0.2;
  *
  * `| json` alone yields `msg` as one string, not the individual counters.
  */
-const STATS_LOG_INTERVAL_MS = 60_000;
+export const STATS_LOG_INTERVAL_MS = 60_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -200,17 +236,19 @@ export interface ChainHealth {
    */
   blockIntervalMs: number | null;
   /**
-   * Whether this chain is coalescing blocks into windowed ranged requests
-   * rather than dispatching one request per block.
+   * How many blocks the head is ahead of the last block served, or null
+   * before the first block arrives. Zero on a chain keeping up; a persistently
+   * positive value means requests are being rate limited behind the head.
    */
-  batching: boolean;
+  blocksBehindHead: number | null;
   /**
-   * Cumulative `eth_getLogs` calls issued for this chain since the entry
-   * was created, across reconnects. The same counter reported by the
-   * periodic `getlogs-stats` line, surfaced here so the number is reachable
-   * without log search if this endpoint ever becomes reachable.
+   * Cumulative `eth_getLogs` calls issued for this chain since the entry was
+   * created, across reconnects. Named to match `getLogsCallsTotal` on the
+   * `getlogs-stats` line, which is its source: the line's `getLogsCalls` is
+   * the per-interval count, a different quantity, and giving the two the same
+   * name invited reading a rate as a counter.
    */
-  getLogsCalls: number;
+  getLogsCallsTotal: number;
   /**
    * If the most recent `createProvider` attempt rejected, the error
    * message captured at rejection time. Cleared on the next successful
@@ -304,20 +342,34 @@ interface ChainEntry {
   lastBlockIntervalAt: number | null;
   /**
    * EWMA of inter-block arrival intervals in ms, or null before the first
-   * interval is observed. Measured rather than configured: no per-chain block
-   * time reaches this process, and an observed value needs no migration when
-   * a chain is added or its cadence changes.
+   * interval is observed. Used only to size the block-staleness threshold -
+   * dispatch does not consult it, so a wrong estimate cannot change which
+   * logs are fetched.
    */
   blockIntervalEwmaMs: number | null;
   /** Intervals folded into `blockIntervalEwmaMs` since the last attach. */
   blockIntervalSamples: number;
+  /** When the first interval since the last attach was recorded. */
+  blockIntervalFirstSampleAt: number | null;
   /**
-   * Block numbers awaiting a windowed ranged `eth_getLogs`. Non-empty only
-   * while batching is engaged.
+   * Highest block whose logs have been fetched and dispatched. The drain
+   * queries forward from here, so it is the one piece of state that decides
+   * what is owed. Survives a reconnect: a replacement connection resumes
+   * where the old one stopped rather than starting blind.
    */
-  pendingBlocks: number[];
-  /** Open coalescing window, started by the first block buffered into it. */
-  batchTimer: ReturnType<typeof setTimeout> | null;
+  lastProcessedBlock: number | null;
+  /** Highest block number the subscription has reported. */
+  headBlock: number | null;
+  /** When the last `eth_getLogs` request for this chain was issued. */
+  lastRequestAt: number | null;
+  /** Armed when blocks are owed but the minimum interval has not elapsed. */
+  catchUpTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * True while a drain is in flight. Blocks keep arriving during a request,
+   * and each one calls `drain`; without this they would issue overlapping
+   * requests for overlapping ranges.
+   */
+  draining: boolean;
   /**
    * Populated when `createProvider` rejects (most often the
    * subscription probe). Cleared on the next successful creation.
@@ -336,11 +388,18 @@ interface ChainEntry {
  * None of it resets on reconnect. The cadence estimate is per connection
  * because a new socket may be a different upstream; cost is per chain.
  *
- * `blocksCovered` against `getLogsCalls` is the ratio the batching exists to
- * move, and it is self-comparing: a per-block chain reports them roughly
- * equal, a batching chain reports blocks far ahead of calls. That matters
- * because there is no historical baseline for this quantity to compare a
- * later reading against - nothing has ever counted it.
+ * `blocksCovered / ranges` is the ratio the rate limiting exists to move, and
+ * it is self-comparing: a chain dispatching one request per block reports
+ * exactly 1, a rate-limited chain reports the average blocks served per
+ * request. That matters because there is no historical baseline for this
+ * quantity to compare a later reading against - nothing has ever counted it.
+ *
+ * Read it against `ranges`, not `getLogsCalls`. `getLogsCalls` counts one per
+ * address chunk, so a chain with more than `GETLOGS_ADDRESS_BATCH` subscribed
+ * addresses issues several calls per range and the blocks-per-call figure
+ * halves for a reason that has nothing to do with coalescing. `getLogsCalls`
+ * is the cost number - it is what a provider bills - and `ranges` is the
+ * denominator that isolates the behaviour.
  */
 interface ChainStats {
   getLogsCalls: number;
@@ -434,8 +493,8 @@ export class ChainProviderManager {
   private readonly blockStalenessTimeoutOverrideMs: number | null;
   /**
    * Manager-wide timer for the periodic per-chain counter line. Started with
-   * the first block listener and stopped in `destroy`. Unreferenced so a
-   * reporting-only timer can never hold the process open.
+   * the first block listener and cleared by `destroy`, which the shutdown
+   * path calls. Not unref'd, matching every other timer in this class.
    */
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private isDestroyed = false;
@@ -627,8 +686,11 @@ export class ChainProviderManager {
       lastBlockAt: entry.lastBlockAt,
       subscriberCount: entry.subscribers.size,
       blockIntervalMs: entry.blockIntervalEwmaMs,
-      batching: this.isBatching(entry),
-      getLogsCalls: entry.stats.getLogsCallsTotal,
+      blocksBehindHead:
+        entry.headBlock !== null && entry.lastProcessedBlock !== null
+          ? Math.max(0, entry.headBlock - entry.lastProcessedBlock)
+          : null,
+      getLogsCallsTotal: entry.stats.getLogsCallsTotal,
       lastCreateError: entry.lastCreateError,
     };
   }
@@ -712,8 +774,12 @@ export class ChainProviderManager {
       lastBlockIntervalAt: null,
       blockIntervalEwmaMs: null,
       blockIntervalSamples: 0,
-      pendingBlocks: [],
-      batchTimer: null,
+      blockIntervalFirstSampleAt: null,
+      lastProcessedBlock: null,
+      headBlock: null,
+      lastRequestAt: null,
+      catchUpTimer: null,
+      draining: false,
       lastCreateError: null,
       disconnectHandlers: new Set(),
       stats: newChainStats(),
@@ -902,46 +968,35 @@ export class ChainProviderManager {
       const now = Date.now();
       this.recordBlockInterval(entry, now);
       entry.lastBlockAt = now;
-      if (!this.isBatching(entry)) {
-        await this.processBlockRange(entry, blockNumber, blockNumber);
-        return;
+      if (entry.headBlock === null || blockNumber > entry.headBlock) {
+        entry.headBlock = blockNumber;
       }
-      await this.bufferBlock(entry, blockNumber);
+      await this.drain(entry);
     };
     entry.blockListener = listener;
     // Baseline for the block-staleness watchdog: until the first block
     // arrives, staleness is measured from attach time so a subscription that
     // never delivers a block is still caught.
     entry.blockListenerAttachedAt = Date.now();
-    // A fresh connection re-learns the chain's cadence. Carrying the previous
-    // connection's estimate across a reconnect would let a stale value decide
-    // batching for a provider that may be a different upstream entirely.
+    // A fresh connection re-measures cadence: the replacement may be a
+    // different upstream, and the downtime gap is not an inter-block
+    // interval. `lastProcessedBlock` deliberately does NOT reset - what is
+    // owed is a property of the chain, not of the socket that was serving it.
     entry.lastBlockIntervalAt = null;
     entry.blockIntervalEwmaMs = null;
     entry.blockIntervalSamples = 0;
+    entry.blockIntervalFirstSampleAt = null;
     entry.provider.on("block", listener);
     this.startStatsTimer();
   }
 
-  /**
-   * Stop delivering blocks on this connection.
-   *
-   * `retainWindow` decides the fate of an open coalescing window, and the two
-   * cases are not alike. Unsubscribe and destroy leave no subscriber to
-   * dispatch to, so the buffered numbers are discarded. A reconnect does not:
-   * its subscribers are still attached and still expect those logs, and
-   * discarding them would lose events that per-block dispatch never could.
-   * The numbers are just block heights, not provider state, so the reconnect
-   * carries them and the replacement connection serves them.
-   */
-  private detachBlockListener(entry: ChainEntry, retainWindow = false): void {
+  private detachBlockListener(entry: ChainEntry): void {
     entry.blockListenerAttachedAt = null;
-    // The timer always goes: it must not fire against a provider that is
-    // being torn down.
-    this.stopBatchTimer(entry);
-    if (!retainWindow) {
-      entry.pendingBlocks = [];
-    }
+    // The timer must not fire against a provider that is being torn down.
+    // Nothing is lost by dropping it: the timer only ever schedules another
+    // drain, and `lastProcessedBlock` still records exactly what is owed, so
+    // whatever this connection did not serve the next one starts from.
+    this.stopCatchUpTimer(entry);
     if (!(entry.provider && entry.blockListener)) {
       entry.blockListener = null;
       return;
@@ -954,6 +1009,10 @@ export class ChainProviderManager {
    * Fold this block's arrival into the chain's inter-block interval estimate.
    * The first block after an attach establishes the baseline only - there is
    * no prior arrival on this connection to measure against.
+   *
+   * This drives the staleness threshold and nothing else. Dispatch does not
+   * consult it, so an estimate that is wrong - or never settles - cannot
+   * change which logs are fetched or when.
    */
   private recordBlockInterval(entry: ChainEntry, now: number): void {
     const previous = entry.lastBlockIntervalAt;
@@ -967,6 +1026,9 @@ export class ChainProviderManager {
     if (interval <= 0) {
       return;
     }
+    if (entry.blockIntervalFirstSampleAt === null) {
+      entry.blockIntervalFirstSampleAt = now;
+    }
     entry.blockIntervalEwmaMs =
       entry.blockIntervalEwmaMs === null
         ? interval
@@ -976,65 +1038,124 @@ export class ChainProviderManager {
   }
 
   /**
-   * Whether this chain has proven itself fast enough to coalesce blocks.
-   * False until the estimate is warm, so a chain always starts out dispatching
-   * per block and only changes behaviour once its cadence is established.
+   * Whether the cadence estimate can be trusted, which needs both enough
+   * samples and enough elapsed time. The time condition is what makes a burst
+   * harmless: twenty messages drained out of a socket buffer are twenty
+   * samples, but they cannot span a minute.
    */
-  private isBatching(entry: ChainEntry): boolean {
+  private hasSettledCadence(entry: ChainEntry): boolean {
+    if (
+      entry.blockIntervalEwmaMs === null ||
+      entry.blockIntervalFirstSampleAt === null ||
+      entry.blockIntervalSamples < BLOCK_INTERVAL_MIN_SAMPLES
+    ) {
+      return false;
+    }
+    // The span the samples cover, not the time since the first one. Measuring
+    // to `Date.now()` would let silence supply the span: a burst of twenty
+    // millisecond-apart samples followed by a quiet minute would read as
+    // settled, and the quiet minute is exactly when the threshold it produced
+    // gets used.
+    const lastSampleAt = entry.lastBlockIntervalAt ?? 0;
     return (
-      entry.blockIntervalSamples >= BLOCK_INTERVAL_WARMUP_SAMPLES &&
-      entry.blockIntervalEwmaMs !== null &&
-      entry.blockIntervalEwmaMs < BATCHING_BLOCK_INTERVAL_THRESHOLD_MS
+      lastSampleAt - entry.blockIntervalFirstSampleAt >=
+      BLOCK_INTERVAL_MIN_SPAN_MS
     );
   }
 
   /**
-   * Add a block to the open window, opening one if needed. The window is
-   * measured from its first block, so it bounds the delay any single block
-   * waits rather than sliding forward as blocks keep arriving.
+   * Fetch and dispatch everything owed between the high-water mark and the
+   * head, subject to one request per `GETLOGS_MIN_INTERVAL_MS` per chain.
+   *
+   * Called on every block. On a chain slower than the interval the gap has
+   * always already elapsed, so this is one immediate request per block - the
+   * historical behaviour, with no threshold deciding it. On a faster chain the
+   * interval has not elapsed, the head runs ahead of the mark, and the next
+   * drain serves the accumulated range in one request.
+   *
+   * The range is contiguous from the mark, so blocks the subscription never
+   * pushed are covered too, and the dedup layer absorbs anything redelivered
+   * as a result.
    */
-  private async bufferBlock(
-    entry: ChainEntry,
-    blockNumber: number,
-  ): Promise<void> {
-    entry.pendingBlocks.push(blockNumber);
-    if (entry.pendingBlocks.length >= BATCH_MAX_BLOCKS) {
-      await this.flushBatchWindow(entry);
+  private async drain(entry: ChainEntry): Promise<void> {
+    if (
+      entry.draining ||
+      entry.isReconnecting ||
+      this.isDestroyed ||
+      !entry.provider ||
+      entry.subscribers.size === 0 ||
+      entry.headBlock === null
+    ) {
       return;
     }
-    if (!entry.batchTimer) {
-      entry.batchTimer = setTimeout(() => {
-        void this.flushBatchWindow(entry);
-      }, BATCH_WINDOW_MS);
+
+    // The first block on a chain establishes the mark rather than triggering a
+    // backfill: history before the first subscriber is not owed to anyone.
+    if (entry.lastProcessedBlock === null) {
+      entry.lastProcessedBlock = entry.headBlock - 1;
+    }
+
+    const behind = entry.headBlock - entry.lastProcessedBlock;
+    if (behind <= 0) {
+      return;
+    }
+    if (behind > GETLOGS_MAX_CATCHUP_BLOCKS) {
+      logger.warn(
+        `[ChainProviderManager] chain=${entry.chainId} ${behind} blocks behind head; skipping to ${entry.headBlock} without fetching logs for the gap`,
+      );
+      entry.lastProcessedBlock = entry.headBlock - 1;
+    }
+
+    const waitMs =
+      entry.lastRequestAt === null
+        ? 0
+        : GETLOGS_MIN_INTERVAL_MS - (Date.now() - entry.lastRequestAt);
+    if (waitMs > 0) {
+      this.armCatchUp(entry, waitMs);
+      return;
+    }
+
+    const from = entry.lastProcessedBlock + 1;
+    const to = Math.min(entry.headBlock, from + GETLOGS_MAX_BLOCK_SPAN - 1);
+
+    entry.draining = true;
+    try {
+      entry.lastRequestAt = Date.now();
+      // The mark advances only on success. A failed range stays owed, so the
+      // next drain re-queries it instead of losing every event in it.
+      if (await this.processBlockRange(entry, from, to)) {
+        entry.lastProcessedBlock = to;
+      }
+    } finally {
+      entry.draining = false;
+    }
+
+    // More owed than one request could take, the head moved while the request
+    // was in flight, or the range failed and is still owed.
+    if (
+      entry.headBlock !== null &&
+      entry.lastProcessedBlock !== null &&
+      entry.lastProcessedBlock < entry.headBlock
+    ) {
+      this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
     }
   }
 
-  /**
-   * Issue one ranged `eth_getLogs` covering every block buffered in the open
-   * window, then close it.
-   */
-  private async flushBatchWindow(entry: ChainEntry): Promise<void> {
-    const blocks = entry.pendingBlocks;
-    this.stopBatchTimer(entry);
-    entry.pendingBlocks = [];
-    if (blocks.length === 0) {
+  /** Schedule the next drain. Idempotent: an armed timer is left alone. */
+  private armCatchUp(entry: ChainEntry, delayMs: number): void {
+    if (entry.catchUpTimer || this.isDestroyed) {
       return;
     }
-    // Span the extremes rather than the arrival order. A ranged request also
-    // covers any block the subscription skipped inside the window, which
-    // recovers logs a per-block loop would have missed; the dedup layer
-    // absorbs anything that arrives twice as a result.
-    await this.processBlockRange(
-      entry,
-      Math.min(...blocks),
-      Math.max(...blocks),
-    );
+    entry.catchUpTimer = setTimeout(() => {
+      entry.catchUpTimer = null;
+      void this.drain(entry);
+    }, delayMs);
   }
 
-  private stopBatchTimer(entry: ChainEntry): void {
-    if (entry.batchTimer) {
-      clearTimeout(entry.batchTimer);
-      entry.batchTimer = null;
+  private stopCatchUpTimer(entry: ChainEntry): void {
+    if (entry.catchUpTimer) {
+      clearTimeout(entry.catchUpTimer);
+      entry.catchUpTimer = null;
     }
   }
 
@@ -1124,12 +1245,21 @@ export class ChainProviderManager {
       return this.blockStalenessTimeoutOverrideMs;
     }
     const ewma = entry.blockIntervalEwmaMs;
-    if (!this.isBatching(entry) || ewma === null) {
+    if (ewma === null || !this.hasSettledCadence(entry)) {
       return BLOCK_STALENESS_TIMEOUT_MS;
     }
-    return Math.max(
-      BLOCK_STALENESS_FLOOR_MS,
-      ewma * BLOCK_STALENESS_BLOCK_MULTIPLIER,
+    // Clamped at both ends: never tighter than the floor, so no chain is
+    // reconnected over an ordinary upstream hiccup, and never looser than the
+    // historical default, so no chain gains slack it did not have. Both
+    // bounds bind for real chains - a 100 ms chain takes the floor, a 12 s
+    // chain takes the default - and the multiplier decides everything
+    // between.
+    return Math.min(
+      BLOCK_STALENESS_TIMEOUT_MS,
+      Math.max(
+        BLOCK_STALENESS_FLOOR_MS,
+        ewma * BLOCK_STALENESS_BLOCK_MULTIPLIER,
+      ),
     );
   }
 
@@ -1188,13 +1318,12 @@ export class ChainProviderManager {
     }
     entry.isReconnecting = true;
     this.stopHeartbeat(entry);
-    // Disarm the coalescing window here rather than in `reconnect()`, which
-    // does not run until the backoff has elapsed. The window is the same
-    // width as the initial backoff, so leaving it armed lets it fire against
-    // the connection that just failed: the request throws, and the buffered
-    // blocks are lost to a logged warning. The blocks themselves are kept -
-    // `reconnect()` carries them to the replacement.
-    this.stopBatchTimer(entry);
+    // Disarm the pending drain. `drain` also refuses to run while
+    // `isReconnecting`, so a block arriving during the backoff cannot re-arm
+    // it either - the guard is on the work, not just on the timer. Nothing is
+    // lost: `lastProcessedBlock` still records what is owed, and the
+    // replacement connection serves it.
+    this.stopCatchUpTimer(entry);
 
     // Publish the reconnect promise on the entry BEFORE any `await`
     // yields. `getOrCreateProvider` awaits this to avoid creating a
@@ -1290,7 +1419,7 @@ export class ChainProviderManager {
     // the old provider cannot trigger another reconnect while we are
     // building the new one.
     if (entry.provider) {
-      this.detachBlockListener(entry, true);
+      this.detachBlockListener(entry);
       this.detachErrorListener(entry);
       try {
         await entry.provider.destroy();
@@ -1344,26 +1473,34 @@ export class ChainProviderManager {
     if (entry.subscribers.size > 0) {
       this.attachBlockListener(entry);
       this.startHeartbeat(entry);
-      // Serve the window the dropped connection was holding. These heights
-      // are historical by now, so the replacement answers for them as well as
-      // the original would have.
-      await this.flushBatchWindow(entry);
+      // Schedule rather than await. Anything owed from before the drop is
+      // still owed - `lastProcessedBlock` survived - and a drain dispatches
+      // logs to handlers that may each sleep seconds of jitter, so awaiting
+      // it here would hold `isReconnecting` true long after the connection
+      // was healthy, reporting the chain degraded and blocking every
+      // `getOrCreateProvider` behind it.
+      this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
     }
   }
 
   /**
-   * Fetch and dispatch the logs in `[fromBlock, toBlock]`. The two are equal
-   * on a per-block dispatch and span the window on a batched one, so both
-   * paths issue the same shape of request.
+   * Fetch and dispatch the logs in `[fromBlock, toBlock]`.
+   *
+   * Returns whether the whole range was served. A range spanning more than
+   * `GETLOGS_ADDRESS_BATCH` addresses takes several requests, and a failure in
+   * any of them means the range is incomplete - so nothing from it is
+   * dispatched and the caller leaves the high-water mark where it was, which
+   * makes the next drain re-query it. Dispatching the chunks that did return
+   * would deliver a partial view of the range and then never fetch the rest.
    */
   private async processBlockRange(
     entry: ChainEntry,
     fromBlock: number,
     toBlock: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const subscribers = [...entry.subscribers];
     if (subscribers.length === 0 || !entry.provider) {
-      return;
+      return false;
     }
 
     const { addresses, topic0s } = this.collectFilter(subscribers);
@@ -1395,12 +1532,13 @@ export class ChainProviderManager {
       // Counted only once every request for the range returned. A throw
       // leaves the range out of `blocksCovered` entirely, so a failing chain
       // cannot report blocks it never fetched logs for - which would make
-      // the blocks-per-call ratio look most efficient exactly when the chain
+      // the blocks-per-range ratio look most efficient exactly when the chain
       // is least working. The calls themselves are counted at issue, since a
       // request that fails was still made and still billed.
       entry.stats.ranges += 1;
       entry.stats.blocksCovered += toBlock - fromBlock + 1;
       entry.stats.logsDispatched += logs.length;
+      return true;
     } catch (err) {
       entry.stats.getLogsErrors += 1;
       const range =
@@ -1408,8 +1546,9 @@ export class ChainProviderManager {
           ? `block=${fromBlock}`
           : `blocks=${fromBlock}-${toBlock}`;
       logger.warn(
-        `[ChainProviderManager] chain=${entry.chainId} ${range} getLogs failed: ${String(err)}`,
+        `[ChainProviderManager] chain=${entry.chainId} ${range} getLogs failed, will retry: ${String(err)}`,
       );
+      return false;
     }
   }
 
@@ -1447,8 +1586,12 @@ export class ChainProviderManager {
         entry.blockIntervalEwmaMs === null
           ? "null"
           : String(Math.round(entry.blockIntervalEwmaMs));
+      const behind =
+        entry.headBlock !== null && entry.lastProcessedBlock !== null
+          ? Math.max(0, entry.headBlock - entry.lastProcessedBlock)
+          : 0;
       logger.log(
-        `[ChainProviderManager] getlogs-stats chain=${entry.chainId} batching=${this.isBatching(entry)} blockIntervalMs=${interval} windowMs=${BATCH_WINDOW_MS} intervalMs=${STATS_LOG_INTERVAL_MS} getLogsCalls=${stats.getLogsCalls} getLogsErrors=${stats.getLogsErrors} blocksCovered=${stats.blocksCovered} ranges=${stats.ranges} logsDispatched=${stats.logsDispatched} getLogsCallsTotal=${stats.getLogsCallsTotal}`,
+        `[ChainProviderManager] getlogs-stats chain=${entry.chainId} blockIntervalMs=${interval} minRequestIntervalMs=${GETLOGS_MIN_INTERVAL_MS} statsIntervalMs=${STATS_LOG_INTERVAL_MS} getLogsCalls=${stats.getLogsCalls} getLogsErrors=${stats.getLogsErrors} blocksCovered=${stats.blocksCovered} ranges=${stats.ranges} blocksBehindHead=${behind} logsDispatched=${stats.logsDispatched} getLogsCallsTotal=${stats.getLogsCallsTotal}`,
       );
       stats.getLogsCalls = 0;
       stats.getLogsErrors = 0;
