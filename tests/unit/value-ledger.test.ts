@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   }>,
   inserted: [] as Record<string, unknown>[],
   capAnchors: [] as Record<string, unknown>[],
+  capInsertLosesRace: false,
   updates: [] as Record<string, unknown>[],
   returningId: "res_1",
   reserveKind: "evm" as "evm" | "solana",
@@ -78,15 +79,25 @@ vi.mock("@/lib/db", () => ({
             if (isCapAnchorInsert(v)) {
               state.capAnchors.push(v);
               return {
-                onConflictDoNothing: () => {
-                  state.caps = [
-                    {
-                      dailyValueCapWei: null,
-                      dailySolanaValueCapLamports: null,
-                    },
-                  ];
-                  return Promise.resolve(undefined);
-                },
+                // onConflictDoNothing yields a row only when the insert
+                // actually happened. `capInsertLosesRace` models a concurrent
+                // transaction having created the row first, where postgres
+                // returns nothing and the row still exists to be locked.
+                onConflictDoNothing: () => ({
+                  returning: () => {
+                    state.caps = [
+                      {
+                        dailyValueCapWei: null,
+                        dailySolanaValueCapLamports: null,
+                      },
+                    ];
+                    return Promise.resolve(
+                      state.capInsertLosesRace
+                        ? []
+                        : [{ organizationId: "org_1" }]
+                    );
+                  },
+                }),
               };
             }
             state.inserted.push(v);
@@ -134,6 +145,7 @@ beforeEach(() => {
   state.ledgerLamportsSum = [{ totalLamports: "0" }];
   state.inserted = [];
   state.capAnchors = [];
+  state.capInsertLosesRace = false;
   state.updates = [];
   state.returningId = "res_1";
   state.reserveKind = "evm";

@@ -189,17 +189,24 @@ export async function lockOrgSpendCapRow(
 
   // A concurrent inserter blocks here on the unique index until it commits, so
   // the re-read below either finds its row and locks it, or finds ours.
-  await executor
+  //
+  // `returning` is what distinguishes the two. onConflictDoNothing yields a row
+  // only when the insert actually happened, so an empty result means a
+  // concurrent transaction won the race and the row was already there.
+  // Reporting `created: true` unconditionally made the caller's telemetry
+  // attribute that case to "no_cap_row", which reads as "this org has never
+  // configured a cap" when the truth is only that this transaction lost a race.
+  const inserted = await executor
     .insert(organizationSpendCaps)
     .values({ organizationId })
-    .onConflictDoNothing({ target: organizationSpendCaps.organizationId });
+    .onConflictDoNothing({ target: organizationSpendCaps.organizationId })
+    .returning({ organizationId: organizationSpendCaps.organizationId });
 
-  const created = await selectForUpdate();
+  const locked = await selectForUpdate();
   return {
-    dailyValueCapWei: created[0]?.dailyValueCapWei ?? null,
-    dailySolanaValueCapLamports:
-      created[0]?.dailySolanaValueCapLamports ?? null,
-    created: true,
+    dailyValueCapWei: locked[0]?.dailyValueCapWei ?? null,
+    dailySolanaValueCapLamports: locked[0]?.dailySolanaValueCapLamports ?? null,
+    created: inserted.length > 0,
   };
 }
 

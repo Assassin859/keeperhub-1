@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { mockLogSecurityEvent } = vi.hoisted(() => ({
+  mockLogSecurityEvent: vi.fn(),
+}));
+
+vi.mock("@/lib/logging", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/logging")>();
+  return { ...actual, logSecurityEvent: mockLogSecurityEvent };
+});
+
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/utils/id", () => ({ generateId: () => "exec_test" }));
 
@@ -13,6 +22,7 @@ const state = vi.hoisted(() => ({
   ledgerRows: [] as Array<{ totalWei?: string; totalLamports?: string }>,
   inserted: [] as Record<string, unknown>[],
   capAnchors: [] as Record<string, unknown>[],
+  capInsertLosesRace: false,
   updated: [] as Record<string, unknown>[],
   paygCharge: { applicable: false } as
     | { applicable: false }
@@ -66,15 +76,25 @@ vi.mock("@/lib/db", () => ({
             if (isCapAnchorInsert(v)) {
               state.capAnchors.push(v);
               return {
-                onConflictDoNothing: () => {
-                  state.caps = [
-                    {
-                      dailyValueCapWei: null,
-                      dailySolanaValueCapLamports: null,
-                    },
-                  ];
-                  return Promise.resolve(undefined);
-                },
+                // onConflictDoNothing yields a row only when the insert
+                // actually happened. `capInsertLosesRace` models a concurrent
+                // transaction having created the row first, where postgres
+                // returns nothing and the row still exists to be locked.
+                onConflictDoNothing: () => ({
+                  returning: () => {
+                    state.caps = [
+                      {
+                        dailyValueCapWei: null,
+                        dailySolanaValueCapLamports: null,
+                      },
+                    ];
+                    return Promise.resolve(
+                      state.capInsertLosesRace
+                        ? []
+                        : [{ organizationId: "org_1" }]
+                    );
+                  },
+                }),
               };
             }
             state.inserted.push(v);
@@ -120,11 +140,13 @@ const baseParams = {
 };
 
 beforeEach(() => {
+  mockLogSecurityEvent.mockClear();
   state.caps = [];
   state.sumRows = [{ totalWei: "0" }];
   state.ledgerRows = [{ totalWei: "0" }];
   state.inserted = [];
   state.capAnchors = [];
+  state.capInsertLosesRace = false;
   state.updated = [];
   state.paygCharge = { applicable: false };
 });
@@ -285,6 +307,107 @@ describe("checkAndReserveExecution value cap", () => {
 
     expect(result.allowed).toBe(false);
     expect(state.inserted).toHaveLength(0);
+  });
+});
+
+describe("checkAndReserveExecution zero-value requests", () => {
+  // `total + reserved > dailyCap` collapses to `total > dailyCap` at reserved
+  // = 0, so once an org went over for the day every later zero-value request
+  // was refused too -- node executions and reads that cannot move anything.
+  // Only reachable since an absent cap stopped meaning unlimited: before that
+  // an unconfigured org returned before the comparison ran.
+  it("admits a zero-value request when the day is already over the cap", async () => {
+    state.caps = [{ dailyValueCapWei: "1000000000000000000" }];
+    state.sumRows = [{ totalWei: "5000000000000000000" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "0" },
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(state.inserted).toHaveLength(1);
+  });
+
+  it("admits a zero-lamport request when the Solana day is over the cap", async () => {
+    state.caps = [
+      { dailyValueCapWei: null, dailySolanaValueCapLamports: "1000000000" },
+    ];
+    state.sumRows = [{ totalLamports: "5000000000" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "solana", valueLamports: "0" },
+    });
+
+    expect(result.allowed).toBe(true);
+  });
+
+  // The row exists only as a lock anchor. A request that moves nothing cannot
+  // race anyone for budget, so it should not pay for the insert or hold the
+  // lock -- and zero-value traffic is the bulk of it.
+  it("takes no cap-row lock for a zero-value request", async () => {
+    state.caps = [];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "0" },
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(state.capAnchors).toHaveLength(0);
+  });
+
+  // Guards the boundary: one wei is not zero and must still be charged.
+  it("still charges a one-wei reservation against the cap", async () => {
+    state.caps = [{ dailyValueCapWei: "1000000000000000000" }];
+    state.sumRows = [{ totalWei: "1000000000000000000" }];
+
+    const result = await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "1" },
+    });
+
+    expect(result.allowed).toBe(false);
+  });
+});
+
+describe("spend_cap_default_applied attribution", () => {
+  function reasonOf(): string | undefined {
+    const call = mockLogSecurityEvent.mock.calls.find(
+      ([name]) => name === "spend_cap_default_applied"
+    );
+    return (call?.[1] as { reason?: string } | undefined)?.reason;
+  }
+
+  it("reports no_cap_row when this transaction created the row", async () => {
+    state.caps = [];
+    state.sumRows = [{ totalWei: "0" }];
+
+    await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "1" },
+    });
+
+    expect(reasonOf()).toBe("no_cap_row");
+  });
+
+  // lockOrgSpendCapRow used to report created: true whenever it reached the
+  // insert, even when onConflictDoNothing did nothing because a concurrent
+  // transaction got there first. That attributed the race to "this org has
+  // never configured a cap", which is a different and more alarming claim than
+  // "two requests arrived together".
+  it("does not report no_cap_row when a concurrent transaction created it", async () => {
+    state.caps = [];
+    state.sumRows = [{ totalWei: "0" }];
+    state.capInsertLosesRace = true;
+
+    await checkAndReserveExecution({
+      ...baseParams,
+      reserved: { kind: "evm", valueWei: "1" },
+    });
+
+    expect(reasonOf()).toBe("cap_unset_for_chain_family");
   });
 });
 

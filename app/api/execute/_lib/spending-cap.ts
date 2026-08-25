@@ -83,9 +83,13 @@ export async function checkAndReserveExecution(
   params: ReserveExecutionParams
 ): Promise<ReserveResult> {
   const reserve = await db.transaction(async (tx) => {
-    const cap = await lockOrgSpendCapRow(tx, params.organizationId);
     const id = generateId();
     const isSolana = params.reserved.kind === "solana";
+    const reserved = BigInt(
+      params.reserved.kind === "solana"
+        ? params.reserved.valueLamports
+        : params.reserved.valueWei
+    );
 
     const insertReservation = () =>
       tx.insert(directExecutions).values({
@@ -105,6 +109,27 @@ export async function checkAndReserveExecution(
             : null,
         status: "pending",
       });
+
+    // A request that moves no value cannot push the day's total over anything,
+    // so it neither consults the cap nor takes the row lock. Both matter.
+    //
+    // The comparison below is `total + reserved > dailyCap`, which at reserved
+    // = 0 collapses to `total > dailyCap`: once an organization went over for
+    // the day, every later zero-value request was refused too -- off-chain node
+    // executions and reads that cannot move anything. Before the default
+    // existed an unconfigured org returned early and never reached the
+    // comparison, so this only became reachable when absent stopped meaning
+    // unlimited.
+    //
+    // Skipping the lock also keeps the insert-and-lock off the request path for
+    // the traffic that is mostly zero-value. withValueCap on the ledger side
+    // already returns early on a zero value; this matches it.
+    if (reserved === BigInt(0)) {
+      await insertReservation();
+      return { allowed: true, executionId: id } as const;
+    }
+
+    const cap = await lockOrgSpendCapRow(tx, params.organizationId);
 
     const configuredCap = isSolana
       ? cap.dailySolanaValueCapLamports
@@ -126,19 +151,13 @@ export async function checkAndReserveExecution(
     const total = isSolana
       ? await sumOrgSolanaValueTodayLamports(tx, params.organizationId)
       : await sumOrgValueTodayWei(tx, params.organizationId);
-    const reserved = BigInt(
-      params.reserved.kind === "solana"
-        ? params.reserved.valueLamports
-        : params.reserved.valueWei
-    );
     const dailyCap = BigInt(effectiveCap);
     const exceeded = total + reserved > dailyCap;
 
     // Every value-moving request an unconfigured org makes is reported, so the
     // blast radius of the default is measurable before it starts denying
-    // anyone. Zero-value requests (off-chain node executions, reads) are not:
-    // they are the bulk of the traffic and carry no cap signal.
-    if (usingDefault && reserved > BigInt(0)) {
+    // anyone. Zero-value requests returned above and never reach this point.
+    if (usingDefault) {
       logSecurityEvent("spend_cap_default_applied", {
         organizationId: params.organizationId,
         surface: "direct-execution",
