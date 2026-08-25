@@ -78,7 +78,13 @@ class MockProvider {
     if (this.sendResponses.length === 0) {
       return [];
     }
-    return this.sendResponses.shift();
+    const next = this.sendResponses.shift();
+    // Same convention as blockNumberResponses: a queued Error rejects the
+    // call rather than being returned as a value.
+    if (next instanceof Error) {
+      throw next;
+    }
+    return next;
   }
 
   async destroy(): Promise<void> {
@@ -1676,6 +1682,30 @@ describe("ChainProviderManager", () => {
         expect(second).toHaveLength(2);
         expect(second[1]).toContain("getLogsCalls=1");
         expect(second[1]).toContain("getLogsCallsTotal=4");
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it("counts a failed request without counting the blocks it never fetched", async () => {
+      const logSpy = vi
+        .spyOn(console, "log")
+        .mockImplementation(() => undefined);
+      try {
+        const provider = await subscribe();
+        provider.sendResponses = [new Error("upstream refused")];
+        await emitBlocks(provider, 100, 1, 2_000);
+        await vi.advanceTimersByTimeAsync(STATS_INTERVAL_MS);
+
+        const lines = statsLines(logSpy);
+        expect(lines).toHaveLength(1);
+        // The call was issued, so it was billed and is counted. The block was
+        // never fetched, so counting it would make the blocks-per-call ratio
+        // look most efficient exactly when the chain is least working.
+        expect(lines[0]).toContain("getLogsCalls=1");
+        expect(lines[0]).toContain("getLogsErrors=1");
+        expect(lines[0]).toContain("blocksCovered=0");
+        expect(lines[0]).toContain("ranges=0");
       } finally {
         logSpy.mockRestore();
       }

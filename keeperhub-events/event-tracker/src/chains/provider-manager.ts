@@ -122,6 +122,15 @@ const BLOCK_INTERVAL_EWMA_ALPHA = 0.2;
  * That leaves the log stream. `logger` emits canonical single-line JSON
  * precisely so Loki can aggregate across the app and its satellites, so a
  * periodic line is the one channel that makes calls-per-day observable.
+ *
+ * The counters are packed as key=value inside `msg` rather than as JSON
+ * fields, because the logger has no structured-field API. Querying them
+ * therefore needs the inner parse as well:
+ *
+ *   {namespace="keeperhub"} |= "getlogs-stats"
+ *     | json | line_format "{{.msg}}" | logfmt
+ *
+ * `| json` alone yields `msg` as one string, not the individual counters.
  */
 const STATS_LOG_INTERVAL_MS = 60_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -1360,9 +1369,6 @@ export class ChainProviderManager {
     const { addresses, topic0s } = this.collectFilter(subscribers);
     const fromHex = `0x${fromBlock.toString(16)}`;
     const toHex = `0x${toBlock.toString(16)}`;
-    entry.stats.ranges += 1;
-    entry.stats.blocksCovered += toBlock - fromBlock + 1;
-
     try {
       const logs: ethers.Log[] = [];
       for (let i = 0; i < addresses.length; i += GETLOGS_ADDRESS_BATCH) {
@@ -1386,6 +1392,14 @@ export class ChainProviderManager {
       for (const log of logs) {
         await this.dispatchLog(entry, log);
       }
+      // Counted only once every request for the range returned. A throw
+      // leaves the range out of `blocksCovered` entirely, so a failing chain
+      // cannot report blocks it never fetched logs for - which would make
+      // the blocks-per-call ratio look most efficient exactly when the chain
+      // is least working. The calls themselves are counted at issue, since a
+      // request that fails was still made and still billed.
+      entry.stats.ranges += 1;
+      entry.stats.blocksCovered += toBlock - fromBlock + 1;
       entry.stats.logsDispatched += logs.length;
     } catch (err) {
       entry.stats.getLogsErrors += 1;
@@ -1403,11 +1417,12 @@ export class ChainProviderManager {
     if (this.statsTimer || this.isDestroyed) {
       return;
     }
-    const timer = setInterval(() => {
+    // Not unref'd, matching every other timer in this class: `destroy`
+    // clears it, and `unref` is not on `setInterval`'s return type under
+    // every lib configuration this package compiles against.
+    this.statsTimer = setInterval(() => {
       this.logStats();
     }, STATS_LOG_INTERVAL_MS);
-    timer.unref?.();
-    this.statsTimer = timer;
   }
 
   private stopStatsTimer(): void {
