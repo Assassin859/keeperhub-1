@@ -25,16 +25,37 @@
  * floor if it turns out to bind a live integrator mid-flight.
  */
 
-// 0.05 ETH. Chosen as roughly 200 USD at a 4,000 USD/ETH reference price, to
-// line up with the 200 USD/day ceiling lib/agentic-wallet/daily-spend.ts
-// already applies to agent-signed spend. Applies to every EVM chain, testnets
-// included, because the ledger column it is compared against is chain-agnostic.
-const DEFAULT_DAILY_VALUE_CAP_WEI = "50000000000000000";
+// The reference ceiling these are chosen against is the 200 USD/day figure
+// lib/agentic-wallet/daily-spend.ts already applies to agent-signed spend --
+// the one ratified spend-policy number in the codebase. Each default below
+// sits at or under it deliberately: every one is env-overridable without a
+// deploy, so a default that binds too tightly is a config change, while one
+// that binds too loosely is an unbounded outflow nobody notices. The rollout
+// widens from here on evidence (watch spend_cap_default_applied), rather than
+// starting wide and tightening after an incident.
 
-// 1 SOL, roughly 200 USD at a 200 USD/SOL reference price. Same anchor.
-const DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS = "1000000000";
+// 0.02 ETH, about 80 USD at a 4,000 USD/ETH reference price.
+//
+// Denominated in ETH, not USD, so the realized ceiling moves with the market.
+// The figure is picked so that drift cannot carry it above the 200 USD anchor
+// until ETH passes roughly 10,000 USD -- the upward direction is the dangerous
+// one, because nothing alerts when a cap silently widens. Applies to every EVM
+// chain, testnets included, because the ledger column it is compared against is
+// chain-agnostic.
+const DEFAULT_DAILY_VALUE_CAP_WEI = "20000000000000000";
 
-// 200 USD in micro-USD (6 decimals), the unit stablecoins are compared in.
+// 0.5 SOL, about 100 USD at a 200 USD/SOL reference price. Same drift
+// reasoning: stays under the 200 USD anchor until SOL passes roughly 400 USD.
+const DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS = "500000000";
+
+// 100 USD in micro-USD (6 decimals), the unit stablecoins are compared in.
+//
+// Half the anchor rather than equal to it, because this ceiling is PER
+// TRANSACTION and nothing aggregates it: the per-key rate limit is the only
+// thing bounding the daily total, which leaves far more headroom than the
+// native caps have. What this figure actually sizes is the single worst
+// transaction a leaked key can push through, so it is set below the daily
+// anchor rather than at it.
 //
 // Deliberately its own constant rather than a re-export of the agentic wallet's
 // DEFAULT_DAILY_CAP_MICROS: that figure is a DAILY AGGREGATE for a different
@@ -42,7 +63,7 @@ const DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS = "1000000000";
 // policy even though they were chosen from the same anchor. Coupling them would
 // mean an edit to the agentic wallet's daily budget silently moved the
 // execution API's per-transfer ceiling.
-const DEFAULT_STABLECOIN_CAP_MICRO_USD = "200000000";
+const DEFAULT_STABLECOIN_CAP_MICRO_USD = "100000000";
 
 // BigInt() accepts hex-prefixed strings ("0x10" -> 16), so an ops typo would
 // silently turn a cap into a near-zero one. Reject anything that is not a

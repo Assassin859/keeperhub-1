@@ -383,7 +383,7 @@ describe("Direct Execution API", () => {
       // broadcasting anything.
       setupPassingGuards();
       const error =
-        "Stablecoin transfer of 5000.0 USDC exceeds the 200.0 USD per-transaction limit";
+        "Stablecoin transfer of 5000.0 USDC exceeds the 100.0 USD per-transaction limit";
       mocks.transferTokenCore.mockResolvedValue({ success: false, error });
       mocks.failExecution.mockResolvedValue({ status: "failed" });
 

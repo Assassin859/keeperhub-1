@@ -88,8 +88,8 @@ beforeEach(() => {
 describe("the stablecoin per-transaction ceiling", () => {
   // Pinned so widening the policy is a deliberate test edit. Every other case
   // here derives its expectations from the getter.
-  it("is 200 USD, expressed in micro-USD", () => {
-    expect(getDefaultStablecoinTransferCapMicroUsd()).toBe("200000000");
+  it("is 100 USD, expressed in micro-USD", () => {
+    expect(getDefaultStablecoinTransferCapMicroUsd()).toBe("100000000");
   });
 });
 

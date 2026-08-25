@@ -133,12 +133,12 @@ describe("platform default cap figures", () => {
   // Pinned so a change to the policy is a deliberate test edit rather than a
   // silent widening. Every other test derives its expectations from these
   // getters, so without this nothing would catch an added zero.
-  it("is 0.05 ETH per day for EVM chains", () => {
-    expect(getDefaultDailyValueCapWei()).toBe("50000000000000000");
+  it("is 0.02 ETH per day for EVM chains", () => {
+    expect(getDefaultDailyValueCapWei()).toBe("20000000000000000");
   });
 
-  it("is 1 SOL per day for Solana", () => {
-    expect(getDefaultDailySolanaValueCapLamports()).toBe("1000000000");
+  it("is 0.5 SOL per day for Solana", () => {
+    expect(getDefaultDailySolanaValueCapLamports()).toBe("500000000");
   });
 });
 

@@ -200,8 +200,8 @@ Returns current spending status against the daily spending caps.
   "dailyUsedWei": "25000000000000000",
   "dailySolanaCapLamports": null,
   "dailySolanaUsedLamports": "0",
-  "effectiveDailyCapWei": "50000000000000000",
-  "effectiveDailySolanaCapLamports": "1000000000",
+  "effectiveDailyCapWei": "20000000000000000",
+  "effectiveDailySolanaCapLamports": "500000000",
   "usingDefaultDailyCap": true,
   "usingDefaultDailySolanaCap": true
 }
