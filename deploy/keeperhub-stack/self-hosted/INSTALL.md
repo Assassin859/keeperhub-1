@@ -79,6 +79,17 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace
 ```
 
+**On a cluster with no cloud load balancer, run the controller on every
+node.** K3s and clusters like it answer a `LoadBalancer` Service with a small
+proxy on each node. A request can arrive at a node that does not hold the
+ingress controller pod. That node forwards the request to the node that does,
+and the source address becomes an address from the cluster's own pod range.
+Per-IP rate limits and any address rule you keep then work on that address
+instead of the caller's. Nothing else looks wrong, because the install works,
+pages load and workflows run. Run the controller as a DaemonSet, so that every
+node holds a pod. The node that receives a request then also terminates it, and
+the caller's address survives.
+
 **c) TLS — pick one.**
 
 *Let the chart request certificates.* It emits a cert-manager `Certificate`
