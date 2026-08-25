@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { supportedTokens } from "@/lib/db/schema";
 import { getDefaultStablecoinTransferCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
 import { logSecurityEvent } from "@/lib/logging";
+import { getRegisteredProtocols } from "@/lib/protocol-registry";
 
 const MICRO_USD_DECIMALS = 6;
 
@@ -170,6 +171,9 @@ export async function checkStablecoinContractCall(params: {
 
   return decide({
     ...params,
+    // Argument 0 is the spender for approve. The allowlist check in decide()
+    // needs it from this entry point too, not just the calldata one.
+    spender: typeof params.args[0] === "string" ? params.args[0] : undefined,
     tokenAddress: params.contractAddress,
     token,
     amountBase,
@@ -205,7 +209,95 @@ export async function checkStablecoinCalldata(params: {
     token,
     amountBase: decoded.amountBase,
     fn: decoded.fn,
+    spender: decoded.spender,
   });
+}
+
+/**
+ * Apply the ceiling to a batch of calls signed as ONE transaction.
+ *
+ * Checking each call on its own is not equivalent. A Tempo batch payout builds
+ * one call per recipient, so ten entries of 99 USD each clear a 100 USD ceiling
+ * individually while the transaction moves 990 USD, and nothing bounds the
+ * entry count. The transaction is the unit the wallet signs, so it is the unit
+ * the ceiling has to measure.
+ *
+ * Outflows are summed across every recognised stablecoin in the batch and
+ * compared once. Summing across different tokens is deliberate: the ceiling is
+ * denominated in USD and every token it recognises is pegged 1:1, so a batch
+ * splitting value across two stablecoins moves exactly as much as one that does
+ * not.
+ *
+ * Approvals are evaluated individually rather than folded into that sum. An
+ * approval is a standing grant, not a movement, so adding it to a transfer
+ * total would compare two different things.
+ */
+export async function checkStablecoinCalldataBatch(params: {
+  organizationId: string;
+  chainId: number;
+  context: string;
+  calls: readonly { to: string; data: string }[];
+}): Promise<StablecoinCapDecision> {
+  let totalMicroUsd = BigInt(0);
+  let outflowSymbol: string | null = null;
+
+  for (const call of params.calls) {
+    const decoded = decodeErc20Outflow(call.data);
+    if (!decoded) {
+      continue;
+    }
+    const token = await loadStablecoin(params.chainId, call.to);
+    if (!token) {
+      continue;
+    }
+
+    if (decoded.fn === "approve") {
+      const decision = decide({
+        organizationId: params.organizationId,
+        chainId: params.chainId,
+        context: params.context,
+        tokenAddress: call.to,
+        token,
+        amountBase: decoded.amountBase,
+        fn: decoded.fn,
+        spender: decoded.spender,
+      });
+      if (decision.kind !== "allowed") {
+        return decision;
+      }
+      continue;
+    }
+
+    if (decoded.amountBase < BigInt(0)) {
+      return {
+        kind: "invalid",
+        error: `${token.symbol} amount must not be negative`,
+      };
+    }
+    totalMicroUsd += rescaleToMicroUsd(decoded.amountBase, token.decimals);
+    outflowSymbol ??= token.symbol;
+  }
+
+  const capMicroUsd = BigInt(getDefaultStablecoinTransferCapMicroUsd());
+  if (totalMicroUsd <= capMicroUsd) {
+    return ALLOWED;
+  }
+
+  logSecurityEvent("stablecoin_transfer_cap_exceeded", {
+    organizationId: params.organizationId,
+    surface: params.context,
+    chainId: params.chainId,
+    erc20Function: "batch",
+    callCount: params.calls.length,
+    amountMicroUsd: totalMicroUsd.toString(),
+    capMicroUsd: capMicroUsd.toString(),
+    blocked: true,
+  });
+
+  return {
+    kind: "over_cap",
+    error: `Stablecoin transfer of ${formatMicroUsd(totalMicroUsd)} ${outflowSymbol ?? "USD"} across ${params.calls.length} call(s) exceeds the ${formatMicroUsd(capMicroUsd)} USD per-transaction limit`,
+  };
 }
 
 function decide(params: {
@@ -216,6 +308,8 @@ function decide(params: {
   amountBase: bigint;
   fn: OutflowFn;
   context: string;
+  /** First argument of the call: the spender for approve, else the recipient. */
+  spender?: string;
 }): StablecoinCapDecision {
   const { token, amountBase, fn } = params;
 
@@ -233,11 +327,21 @@ function decide(params: {
   }
 
   // An approval moves nothing by itself, and max-uint approvals are how nearly
-  // every DeFi integration works, so refusing them would break legitimate
-  // workflows wholesale. It is still a standing right to drain the wallet, so
-  // it is reported rather than silently allowed. Turning this into a denial
-  // needs a spender allowlist, which is a product decision, not a bug fix.
-  const blocked = fn !== "approve";
+  // every DeFi integration works, so a blanket refusal would break legitimate
+  // workflows wholesale. But an unbounded approval to an address we cannot
+  // account for is the cheapest complete drain path a leaked key has: the
+  // attacker calls transferFrom afterwards, off platform, where none of this
+  // runs and the ceiling never applies to any of it.
+  //
+  // The split is the spender. Every protocol integration approves a contract
+  // this repo already knows about, so an over-cap approval to one of those is
+  // the legitimate pattern and stays allowed. An over-cap approval to anything
+  // else is refused. Contracts declared userSpecifiedAddress carry no static
+  // address and are deliberately absent from the allowlist: a caller-supplied
+  // spender is exactly the case that must not be auto-trusted.
+  const approvingKnownSpender =
+    fn === "approve" && isKnownProtocolSpender(params.spender);
+  const blocked = !approvingKnownSpender;
   const verb = fn === "approve" ? "approval" : "transfer";
 
   logSecurityEvent(
@@ -251,6 +355,7 @@ function decide(params: {
       tokenAddress: params.tokenAddress.toLowerCase(),
       symbol: token.symbol,
       erc20Function: fn,
+      spender: params.spender?.toLowerCase() ?? null,
       amountMicroUsd: microUsd.toString(),
       capMicroUsd: capMicroUsd.toString(),
       blocked,
@@ -265,6 +370,49 @@ function decide(params: {
     kind: "over_cap",
     error: `Stablecoin ${verb} of ${formatMicroUsd(microUsd)} ${token.symbol} exceeds the ${formatMicroUsd(capMicroUsd)} USD per-transaction limit`,
   };
+}
+
+/**
+ * Addresses this repo already directs value at: every contract declared by a
+ * registered protocol, across every network it lists.
+ *
+ * Built once and cached. getRegisteredProtocols() is populated by protocol
+ * modules at import time, and the set only grows as protocols register, so a
+ * miss can only ever be conservative -- it refuses an approval, never admits
+ * one it should not have.
+ *
+ * Contracts flagged userSpecifiedAddress are skipped: their address comes from
+ * the caller at run time, so including them would allowlist whatever the
+ * caller passed, which is the case this control exists to catch.
+ */
+let knownSpenders: Set<string> | null = null;
+
+function getKnownProtocolSpenders(): Set<string> {
+  if (knownSpenders) {
+    return knownSpenders;
+  }
+  const addresses = new Set<string>();
+  for (const protocol of getRegisteredProtocols()) {
+    for (const contract of Object.values(protocol.contracts ?? {})) {
+      if (contract.userSpecifiedAddress) {
+        continue;
+      }
+      for (const address of Object.values(contract.addresses ?? {})) {
+        if (typeof address === "string" && address.length > 0) {
+          addresses.add(address.toLowerCase());
+        }
+      }
+    }
+  }
+  knownSpenders = addresses;
+  return addresses;
+}
+
+function isKnownProtocolSpender(spender: string | undefined): boolean {
+  if (!spender) {
+    return false;
+  }
+  return getKnownProtocolSpenders().has(spender.toLowerCase());
 }
 
 /** The registry row for a known stablecoin on this chain, or null. */
@@ -357,7 +505,7 @@ function canonicalAbiType(type: string): string {
 
 function decodeErc20Outflow(
   data: string
-): { fn: OutflowFn; amountBase: bigint } | null {
+): { fn: OutflowFn; amountBase: bigint; spender: string | undefined } | null {
   if (!data?.startsWith("0x")) {
     return null;
   }
@@ -378,7 +526,11 @@ function decodeErc20Outflow(
   }
 
   const amountBase = toBaseUnits(parsed.args[OUTFLOW_SHAPES[fn].amountIndex]);
-  return amountBase === null ? null : { fn, amountBase };
+  // Argument 0 is the spender for approve and the recipient otherwise. Only
+  // the approve reading is load-bearing; the rest is carried for telemetry.
+  const spender =
+    typeof parsed.args[0] === "string" ? parsed.args[0] : undefined;
+  return amountBase === null ? null : { fn, amountBase, spender };
 }
 
 /** Coerce an ABI uint256 argument, however the caller expressed it, to bigint. */

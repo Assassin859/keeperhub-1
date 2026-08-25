@@ -1,6 +1,28 @@
 import { ethers } from "ethers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const KNOWN_ROUTER = "0x1111111111111111111111111111111111111111";
+const UNKNOWN_SPENDER = "0x2222222222222222222222222222222222222222";
+const USER_SUPPLIED = "0x3333333333333333333333333333333333333333";
+
+vi.mock("@/lib/protocol-registry", () => ({
+  getRegisteredProtocols: () => [
+    {
+      slug: "test-protocol",
+      contracts: {
+        router: { label: "Router", addresses: { mainnet: KNOWN_ROUTER } },
+        // userSpecifiedAddress contracts take their address from the caller at
+        // run time, so they must not seed the allowlist.
+        custom: {
+          label: "Custom",
+          addresses: { mainnet: USER_SUPPLIED },
+          userSpecifiedAddress: true,
+        },
+      },
+    },
+  ],
+}));
+
 vi.mock("server-only", () => ({}));
 
 // Hoisted registry rows the fake supported_tokens lookup returns, set per test.
@@ -32,6 +54,7 @@ vi.mock("@/lib/db", () => ({
 import { getDefaultStablecoinTransferCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
 import {
   checkStablecoinCalldata,
+  checkStablecoinCalldataBatch,
   checkStablecoinContractCall,
   checkStablecoinTransferAmount,
 } from "@/lib/execute/stablecoin-cap";
@@ -43,6 +66,7 @@ const CAP_USD = CAP_MICRO_USD / BigInt(1_000_000);
 // The registry seeds addresses lowercase; callers usually resolve checksummed
 // ones, so the two casings must still meet.
 const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const DAI_ADDRESS = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
 const RECIPIENT = "0x1111111111111111111111111111111111111111";
 
 const USDC = {
@@ -299,16 +323,59 @@ describe("checkStablecoinContractCall", () => {
     expect(result.kind).toBe("over_cap");
   });
 
-  it("allows a large approval but does not treat it as capped", async () => {
-    // Refusing approvals would break every protocol integration that approves
-    // max uint before a swap, so this is reported rather than blocked.
+  // Approving max uint before a swap is how nearly every protocol integration
+  // works, so the spender is what separates the legitimate case from the drain.
+  it("allows an over-cap approval to a contract a protocol already uses", async () => {
     state.tokenRows = [USDC];
 
     const result = await checkStablecoinContractCall({
       ...callParams,
       functionName: "approve",
       inputTypes: ["address", "uint256"],
-      args: [RECIPIENT, ethers.MaxUint256.toString()],
+      args: [KNOWN_ROUTER, ethers.MaxUint256.toString()],
+    });
+
+    expect(result).toEqual({ kind: "allowed" });
+  });
+
+  // The complete drain path for a leaked key: grant an unbounded allowance,
+  // then call transferFrom off platform where none of this code runs.
+  it("refuses an over-cap approval to a spender nothing accounts for", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "approve",
+      inputTypes: ["address", "uint256"],
+      args: [UNKNOWN_SPENDER, ethers.MaxUint256.toString()],
+    });
+
+    expect(result.kind).toBe("over_cap");
+  });
+
+  // A userSpecifiedAddress contract resolves to whatever the caller passed, so
+  // allowlisting it would trust exactly the input this control exists to check.
+  it("does not trust a spender drawn from a user-specified contract", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "approve",
+      inputTypes: ["address", "uint256"],
+      args: [USER_SUPPLIED, ethers.MaxUint256.toString()],
+    });
+
+    expect(result.kind).toBe("over_cap");
+  });
+
+  it("leaves an approval under the ceiling alone whoever the spender is", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "approve",
+      inputTypes: ["address", "uint256"],
+      args: [UNKNOWN_SPENDER, units(BigInt(1), 6)],
     });
 
     expect(result).toEqual({ kind: "allowed" });
@@ -386,6 +453,112 @@ describe("checkStablecoinContractCall", () => {
       functionName: "transfer(address,uint256)",
       inputTypes: ["address", "uint256"],
       args: [RECIPIENT, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result.kind).toBe("over_cap");
+  });
+});
+
+describe("checkStablecoinCalldataBatch", () => {
+  const batchParams = {
+    organizationId: "org_1",
+    chainId: 1,
+    context: "tempo",
+  };
+
+  function transferCall(amountUsd: bigint) {
+    return {
+      to: USDC_ADDRESS,
+      data: erc20.encodeFunctionData("transfer", [
+        RECIPIENT,
+        units(amountUsd, 6),
+      ]),
+    };
+  }
+
+  // The bypass this entry point exists for. signTempoTx signs every call of a
+  // batch payout as one transaction, so ten entries that each clear the
+  // ceiling individually moved ten times it, and nothing bounded the entry
+  // count.
+  it("sums a batch whose calls each sit under the ceiling", async () => {
+    state.tokenRows = [USDC];
+    const under = CAP_USD - BigInt(1);
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: Array.from({ length: 10 }, () => transferCall(under)),
+    });
+
+    expect(result.kind).toBe("over_cap");
+  });
+
+  it("admits a batch whose total stays within the ceiling", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: [transferCall(BigInt(10)), transferCall(BigInt(20))],
+    });
+
+    expect(result).toEqual({ kind: "allowed" });
+  });
+
+  // Every recognised token is pegged 1:1, so splitting a payout across two of
+  // them moves exactly as much as sending it in one.
+  it("sums across different stablecoins in the same transaction", async () => {
+    state.tokenRows = [
+      USDC,
+      { ...USDC, tokenAddress: DAI_ADDRESS, symbol: "DAI", decimals: 18 },
+    ];
+    const half = CAP_USD / BigInt(2) + BigInt(1);
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: [
+        transferCall(half),
+        {
+          to: DAI_ADDRESS,
+          data: erc20.encodeFunctionData("transfer", [
+            RECIPIENT,
+            units(half, 18),
+          ]),
+        },
+      ],
+    });
+
+    expect(result.kind).toBe("over_cap");
+  });
+
+  it("ignores calls that are not recognised stablecoin outflows", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: [
+        { to: USDC_ADDRESS, data: "0xdeadbeef" },
+        transferCall(BigInt(1)),
+      ],
+    });
+
+    expect(result).toEqual({ kind: "allowed" });
+  });
+
+  // An approval is a standing grant, not a movement, so it is judged on its
+  // own spender rather than folded into the transfer total.
+  it("refuses a batch carrying an over-cap approval to an unknown spender", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: [
+        {
+          to: USDC_ADDRESS,
+          data: erc20.encodeFunctionData("approve", [
+            UNKNOWN_SPENDER,
+            ethers.MaxUint256.toString(),
+          ]),
+        },
+      ],
     });
 
     expect(result.kind).toBe("over_cap");
