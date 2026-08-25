@@ -83,3 +83,157 @@ export const CLIENT_IP_HEADERS: readonly string[] = parseClientIpHeaders(
 export const CLIENT_IP_TRUSTED_PROXIES: readonly string[] = parseTrustedProxies(
   process.env.CLIENT_IP_TRUSTED_PROXIES
 );
+
+/**
+ * Resolve one header value to a single client address.
+ *
+ * A header can carry a chain of hops, `client, proxy1, proxy2`. Only the
+ * rightmost hop was written by something we control; every hop to its left was
+ * copied from what the previous hop received, so a caller can put anything it
+ * likes at the front. Taking the leftmost value is therefore the same as
+ * letting the caller choose its own address.
+ *
+ * With no trusted proxy named, a value carrying more than one hop is refused
+ * outright. With proxies named, the chain is walked from the right and the
+ * first hop that is not one of them is the client. A malformed hop breaks the
+ * walk and fails closed rather than returning a proxy as the client.
+ *
+ * This mirrors what better-auth does with the same header, so the two routes
+ * into `sessions.ip_address` agree instead of one accepting what the other
+ * rejects.
+ */
+export function resolveIpFromHeaderValue(value: string): string | null {
+  const hops = value
+    .split(",")
+    .map((hop) => hop.trim())
+    .filter((hop) => hop.length > 0);
+  if (hops.length === 0) {
+    return null;
+  }
+
+  // Gate on the parsed networks, not the raw entries. A list of nothing but
+  // typos would otherwise engage chain mode with no network to match, and the
+  // rightmost hop - one of our own proxies - would be returned as the client.
+  if (TRUSTED_PROXY_NETWORKS.length > 0) {
+    for (let i = hops.length - 1; i >= 0; i--) {
+      const hop = hops[i];
+      const bytes = hop ? ipToBytes(hop) : null;
+      if (!bytes) {
+        return null;
+      }
+      if (TRUSTED_PROXY_NETWORKS.some((net) => matchesCidr(bytes, net))) {
+        continue;
+      }
+      return hop;
+    }
+    return null;
+  }
+
+  if (hops.length !== 1) {
+    return null;
+  }
+  const only = hops[0];
+  return only && ipToBytes(only) ? only : null;
+}
+
+/** Raw bytes of an IPv4 or IPv6 address, or null when it is neither. */
+function ipToBytes(ip: string): Uint8Array | null {
+  if (IPV4_PATTERN.test(ip)) {
+    const parts = ip.split(".").map(Number);
+    return parts.every((n) => n >= 0 && n <= 255)
+      ? Uint8Array.from(parts)
+      : null;
+  }
+  return ipv6ToBytes(ip);
+}
+
+const IPV4_PATTERN = /^\d{1,3}(\.\d{1,3}){3}$/;
+const IPV4_MAPPED_PATTERN = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/;
+const IPV6_GROUP_PATTERN = /^[0-9a-fA-F]{1,4}$/;
+const CIDR_PREFIX_PATTERN = /^\d+$/;
+
+/**
+ * Expands an IPv6 address, including the `::` zero-compression form and the
+ * `::ffff:1.2.3.4` IPv4-mapped form, into 16 bytes. Returns null for anything
+ * that is not a well-formed address.
+ */
+function ipv6ToBytes(ip: string): Uint8Array | null {
+  const mapped = ip.toLowerCase().match(IPV4_MAPPED_PATTERN);
+  if (mapped?.[1]) {
+    return ipToBytes(mapped[1]);
+  }
+  if (!ip.includes(":")) {
+    return null;
+  }
+  const halves = ip.split("::");
+  if (halves.length > 2) {
+    return null;
+  }
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (halves.length === 2 ? missing < 0 : missing !== 0) {
+    return null;
+  }
+  const groups = [
+    ...left,
+    ...Array.from({ length: halves.length === 2 ? missing : 0 }, () => "0"),
+    ...right,
+  ];
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const group = groups[i];
+    if (group === undefined || !IPV6_GROUP_PATTERN.test(group)) {
+      return null;
+    }
+    const value = Number.parseInt(group, 16);
+    bytes[i * 2] = (value >> 8) & 0xff;
+    bytes[i * 2 + 1] = value & 0xff;
+  }
+  return bytes;
+}
+
+type CidrNetwork = { bytes: Uint8Array; prefix: number };
+
+/**
+ * Parses `IP` or `IP/prefix`. A malformed entry yields null and is dropped, so
+ * a typo cannot silently widen the set of addresses treated as our own proxies.
+ */
+function parseCidr(entry: string): CidrNetwork | null {
+  const slash = entry.lastIndexOf("/");
+  const bytes = ipToBytes(slash === -1 ? entry : entry.slice(0, slash));
+  if (!bytes) {
+    return null;
+  }
+  const maxBits = bytes.length * 8;
+  if (slash === -1) {
+    return { bytes, prefix: maxBits };
+  }
+  const prefixPart = entry.slice(slash + 1);
+  if (!CIDR_PREFIX_PATTERN.test(prefixPart)) {
+    return null;
+  }
+  const prefix = Number(prefixPart);
+  return prefix <= maxBits ? { bytes, prefix } : null;
+}
+
+function matchesCidr(ipBytes: Uint8Array, net: CidrNetwork): boolean {
+  if (ipBytes.length !== net.bytes.length) {
+    return false;
+  }
+  let bitsRemaining = net.prefix;
+  for (let i = 0; i < ipBytes.length && bitsRemaining > 0; i++) {
+    const take = bitsRemaining >= 8 ? 8 : bitsRemaining;
+    const mask = take === 8 ? 0xff : (0xff << (8 - take)) & 0xff;
+    if (((ipBytes[i] ?? 0) & mask) !== ((net.bytes[i] ?? 0) & mask)) {
+      return false;
+    }
+    bitsRemaining -= 8;
+  }
+  return true;
+}
+
+const TRUSTED_PROXY_NETWORKS: readonly CidrNetwork[] =
+  CLIENT_IP_TRUSTED_PROXIES.map(parseCidr).filter(
+    (net): net is CidrNetwork => net !== null
+  );
