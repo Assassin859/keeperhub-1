@@ -105,6 +105,25 @@ const BATCH_MAX_BLOCKS = 25;
 const BLOCK_INTERVAL_WARMUP_SAMPLES = 20;
 /** EWMA smoothing factor for the inter-block interval. */
 const BLOCK_INTERVAL_EWMA_ALPHA = 0.2;
+/**
+ * Cadence of the per-chain `getlogs-stats` line.
+ *
+ * Batching is a cost change, so it has to be measurable to be worth
+ * trusting, and nothing outside this process can measure it. The package
+ * ships no prom-client, no OpenTelemetry and no `/metrics` route, and the
+ * health server binds `HEALTH_PORT` (default 3001) while the deployment
+ * declares only 3000, so an endpoint added here would not be reachable.
+ * Aetherlay cannot stand in either: its
+ * `aetherlay_endpoint_proxy_requests_total` increments once per WebSocket
+ * *connection* and only per request on the HTTP path, so calls tunnelled
+ * through a long-lived socket - which is every call this class makes -
+ * never move it, on any cluster.
+ *
+ * That leaves the log stream. `logger` emits canonical single-line JSON
+ * precisely so Loki can aggregate across the app and its satellites, so a
+ * periodic line is the one channel that makes calls-per-day observable.
+ */
+const STATS_LOG_INTERVAL_MS = 60_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -165,6 +184,24 @@ export interface ChainHealth {
   reconnecting: boolean;
   lastBlockAt: number | null;
   subscriberCount: number;
+  /**
+   * Smoothed inter-block interval in milliseconds, or null before the
+   * current connection has observed enough intervals to estimate one.
+   * Per connection, like the estimate that drives batching.
+   */
+  blockIntervalMs: number | null;
+  /**
+   * Whether this chain is coalescing blocks into windowed ranged requests
+   * rather than dispatching one request per block.
+   */
+  batching: boolean;
+  /**
+   * Cumulative `eth_getLogs` calls issued for this chain since the entry
+   * was created, across reconnects. The same counter reported by the
+   * periodic `getlogs-stats` line, surfaced here so the number is reachable
+   * without log search if this endpoint ever becomes reachable.
+   */
+  getLogsCalls: number;
   /**
    * If the most recent `createProvider` attempt rejected, the error
    * message captured at rejection time. Cleared on the next successful
@@ -279,6 +316,41 @@ interface ChainEntry {
    */
   lastCreateError: string | null;
   disconnectHandlers: Set<DisconnectHandler>;
+  stats: ChainStats;
+}
+
+/**
+ * Per-chain request counters behind the `getlogs-stats` line. Everything
+ * except `getLogsCallsTotal` is reset once reported, so a line describes the
+ * interval it covers rather than needing two lines differenced.
+ *
+ * None of it resets on reconnect. The cadence estimate is per connection
+ * because a new socket may be a different upstream; cost is per chain.
+ *
+ * `blocksCovered` against `getLogsCalls` is the ratio the batching exists to
+ * move, and it is self-comparing: a per-block chain reports them roughly
+ * equal, a batching chain reports blocks far ahead of calls. That matters
+ * because there is no historical baseline for this quantity to compare a
+ * later reading against - nothing has ever counted it.
+ */
+interface ChainStats {
+  getLogsCalls: number;
+  getLogsErrors: number;
+  blocksCovered: number;
+  ranges: number;
+  logsDispatched: number;
+  getLogsCallsTotal: number;
+}
+
+function newChainStats(): ChainStats {
+  return {
+    getLogsCalls: 0,
+    getLogsErrors: 0,
+    blocksCovered: 0,
+    ranges: 0,
+    logsDispatched: 0,
+    getLogsCallsTotal: 0,
+  };
 }
 
 /**
@@ -351,6 +423,12 @@ export class ChainProviderManager {
    * per chain; tests set a small value to exercise the watchdog.
    */
   private readonly blockStalenessTimeoutOverrideMs: number | null;
+  /**
+   * Manager-wide timer for the periodic per-chain counter line. Started with
+   * the first block listener and stopped in `destroy`. Unreferenced so a
+   * reporting-only timer can never hold the process open.
+   */
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
   private isDestroyed = false;
   // Wake-up signal for in-flight reconnect sleeps: `destroy()` resolves
   // this promise, racing any pending backoff sleep so the reconnect loop
@@ -539,12 +617,16 @@ export class ChainProviderManager {
       reconnecting: entry.isReconnecting,
       lastBlockAt: entry.lastBlockAt,
       subscriberCount: entry.subscribers.size,
+      blockIntervalMs: entry.blockIntervalEwmaMs,
+      batching: this.isBatching(entry),
+      getLogsCalls: entry.stats.getLogsCallsTotal,
       lastCreateError: entry.lastCreateError,
     };
   }
 
   async destroy(): Promise<void> {
     this.isDestroyed = true;
+    this.stopStatsTimer();
     // Wake every reconnect loop that is currently sleeping. The loop
     // resumes, checks `isDestroyed`, and bails via its `finally`.
     this.destroyed.resolve();
@@ -625,6 +707,7 @@ export class ChainProviderManager {
       batchTimer: null,
       lastCreateError: null,
       disconnectHandlers: new Set(),
+      stats: newChainStats(),
     };
     this.chains.set(chainId, entry);
     return entry;
@@ -828,6 +911,7 @@ export class ChainProviderManager {
     entry.blockIntervalEwmaMs = null;
     entry.blockIntervalSamples = 0;
     entry.provider.on("block", listener);
+    this.startStatsTimer();
   }
 
   /**
@@ -1276,11 +1360,18 @@ export class ChainProviderManager {
     const { addresses, topic0s } = this.collectFilter(subscribers);
     const fromHex = `0x${fromBlock.toString(16)}`;
     const toHex = `0x${toBlock.toString(16)}`;
+    entry.stats.ranges += 1;
+    entry.stats.blocksCovered += toBlock - fromBlock + 1;
 
     try {
       const logs: ethers.Log[] = [];
       for (let i = 0; i < addresses.length; i += GETLOGS_ADDRESS_BATCH) {
         const chunk = addresses.slice(i, i + GETLOGS_ADDRESS_BATCH);
+        // Counted at the call rather than the range: one range over more
+        // than GETLOGS_ADDRESS_BATCH addresses is still several requests,
+        // and requests are the quantity the provider bills.
+        entry.stats.getLogsCalls += 1;
+        entry.stats.getLogsCallsTotal += 1;
         const batch = (await entry.provider.send("eth_getLogs", [
           {
             fromBlock: fromHex,
@@ -1295,7 +1386,9 @@ export class ChainProviderManager {
       for (const log of logs) {
         await this.dispatchLog(entry, log);
       }
+      entry.stats.logsDispatched += logs.length;
     } catch (err) {
+      entry.stats.getLogsErrors += 1;
       const range =
         fromBlock === toBlock
           ? `block=${fromBlock}`
@@ -1303,6 +1396,50 @@ export class ChainProviderManager {
       logger.warn(
         `[ChainProviderManager] chain=${entry.chainId} ${range} getLogs failed: ${String(err)}`,
       );
+    }
+  }
+
+  private startStatsTimer(): void {
+    if (this.statsTimer || this.isDestroyed) {
+      return;
+    }
+    const timer = setInterval(() => {
+      this.logStats();
+    }, STATS_LOG_INTERVAL_MS);
+    timer.unref?.();
+    this.statsTimer = timer;
+  }
+
+  private stopStatsTimer(): void {
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+  }
+
+  /**
+   * Emit one line per chain that issued a request this interval, then reset
+   * the per-interval counters. Chains that did nothing stay silent so an idle
+   * tracker does not emit a line per chain per minute forever.
+   */
+  private logStats(): void {
+    for (const entry of this.chains.values()) {
+      const stats = entry.stats;
+      if (stats.getLogsCalls === 0 && stats.getLogsErrors === 0) {
+        continue;
+      }
+      const interval =
+        entry.blockIntervalEwmaMs === null
+          ? "null"
+          : String(Math.round(entry.blockIntervalEwmaMs));
+      logger.log(
+        `[ChainProviderManager] getlogs-stats chain=${entry.chainId} batching=${this.isBatching(entry)} blockIntervalMs=${interval} windowMs=${BATCH_WINDOW_MS} intervalMs=${STATS_LOG_INTERVAL_MS} getLogsCalls=${stats.getLogsCalls} getLogsErrors=${stats.getLogsErrors} blocksCovered=${stats.blocksCovered} ranges=${stats.ranges} logsDispatched=${stats.logsDispatched} getLogsCallsTotal=${stats.getLogsCallsTotal}`,
+      );
+      stats.getLogsCalls = 0;
+      stats.getLogsErrors = 0;
+      stats.blocksCovered = 0;
+      stats.ranges = 0;
+      stats.logsDispatched = 0;
     }
   }
 

@@ -748,6 +748,9 @@ describe("ChainProviderManager", () => {
         reconnecting: false,
         lastBlockAt: null,
         subscriberCount: 1,
+        blockIntervalMs: null,
+        batching: false,
+        getLogsCalls: 0,
         lastCreateError: null,
       });
     });
@@ -1581,6 +1584,116 @@ describe("ChainProviderManager", () => {
 
       expect(reasons).not.toContain("block_staleness");
       await mgr.destroy();
+    });
+  });
+
+  describe("getLogs counters", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const WARMUP_SAMPLES = 20;
+    const WINDOW_MS = 1_000;
+    const STATS_INTERVAL_MS = 60_000;
+
+    async function subscribe(): Promise<MockProvider> {
+      await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      return factoryBundle.created[0];
+    }
+
+    async function emitBlocks(
+      provider: MockProvider,
+      firstBlock: number,
+      count: number,
+      intervalMs: number,
+    ): Promise<void> {
+      for (let i = 0; i < count; i += 1) {
+        await provider.emitBlock(firstBlock + i);
+        await vi.advanceTimersByTimeAsync(intervalMs);
+      }
+    }
+
+    function statsLines(spy: ReturnType<typeof vi.spyOn>): string[] {
+      return spy.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("getlogs-stats"));
+    }
+
+    it("counts one request per block while dispatching per block", async () => {
+      const provider = await subscribe();
+      await emitBlocks(provider, 100, 5, 2_000);
+
+      const health = manager.getHealth(CHAIN_A);
+      expect(health?.getLogsCalls).toBe(5);
+      expect(health?.batching).toBe(false);
+      expect(health?.blockIntervalMs).toBeGreaterThan(0);
+    });
+
+    it("counts a coalesced window as one request covering several blocks", async () => {
+      const provider = await subscribe();
+      await emitBlocks(provider, 100, WARMUP_SAMPLES, 100);
+      const warmCalls = manager.getHealth(CHAIN_A)?.getLogsCalls ?? 0;
+
+      await emitBlocks(provider, 200, 5, 100);
+      await vi.advanceTimersByTimeAsync(WINDOW_MS);
+
+      // Five blocks, one request - the ratio the batching exists to move.
+      expect(manager.getHealth(CHAIN_A)?.getLogsCalls).toBe(warmCalls + 1);
+      expect(manager.getHealth(CHAIN_A)?.batching).toBe(true);
+    });
+
+    it("reports the interval's counters and resets them for the next one", async () => {
+      const logSpy = vi
+        .spyOn(console, "log")
+        .mockImplementation(() => undefined);
+      try {
+        const provider = await subscribe();
+        await emitBlocks(provider, 100, 3, 2_000);
+        await vi.advanceTimersByTimeAsync(STATS_INTERVAL_MS);
+
+        const first = statsLines(logSpy);
+        expect(first).toHaveLength(1);
+        expect(first[0]).toContain(`chain=${CHAIN_A}`);
+        expect(first[0]).toContain("batching=false");
+        expect(first[0]).toContain("getLogsCalls=3");
+        expect(first[0]).toContain("blocksCovered=3");
+        expect(first[0]).toContain("getLogsCallsTotal=3");
+
+        await emitBlocks(provider, 200, 1, 2_000);
+        await vi.advanceTimersByTimeAsync(STATS_INTERVAL_MS);
+
+        // Interval counters restart; the cumulative total does not.
+        const second = statsLines(logSpy);
+        expect(second).toHaveLength(2);
+        expect(second[1]).toContain("getLogsCalls=1");
+        expect(second[1]).toContain("getLogsCallsTotal=4");
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it("stays silent for a chain that issued no requests", async () => {
+      const logSpy = vi
+        .spyOn(console, "log")
+        .mockImplementation(() => undefined);
+      try {
+        await subscribe();
+        await vi.advanceTimersByTimeAsync(STATS_INTERVAL_MS);
+
+        // An idle tracker must not emit a line per chain per minute forever.
+        expect(statsLines(logSpy)).toHaveLength(0);
+      } finally {
+        logSpy.mockRestore();
+      }
     });
   });
 
