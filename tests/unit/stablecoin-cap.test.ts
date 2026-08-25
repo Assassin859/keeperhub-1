@@ -353,6 +353,31 @@ describe("checkStablecoinContractCall", () => {
     expect(state.selectCalls).toBe(0);
   });
 
+  // Solidity aliases uint to uint256, and ethers canonicalises before it
+  // computes the selector, so transfer(address,uint) encodes 0xa9059cbb -- a
+  // real ERC-20 transfer. inputTypes reaches this module as the RAW declared
+  // strings from a caller-supplied ABI, so a literal comparison against
+  // "uint256" missed it and the call short-circuited to allowed without ever
+  // loading the token. One word in an attacker-supplied ABI defeated the whole
+  // ceiling. selectCalls asserts the token lookup actually ran, so this cannot
+  // pass by accidentally allowing for some other reason.
+  it.each([
+    ["address", "uint"],
+    ["address", "uint256"],
+  ])("applies the ceiling to transfer declared as %j", async (...types) => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transfer",
+      inputTypes: types,
+      args: [RECIPIENT, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result.kind).toBe("over_cap");
+    expect(state.selectCalls).toBe(1);
+  });
+
   it("accepts a fully qualified overload key", async () => {
     state.tokenRows = [USDC];
 

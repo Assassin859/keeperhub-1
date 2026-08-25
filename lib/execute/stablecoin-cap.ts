@@ -318,13 +318,41 @@ function matchOutflowFunction(
 
   // A same-named function with a different signature is a different function.
   const expected = OUTFLOW_SHAPES[bareName].inputTypes;
+  const declared = inputTypes.map(canonicalAbiType);
   if (
-    inputTypes.length !== expected.length ||
-    !inputTypes.every((type, index) => type === expected[index])
+    declared.length !== expected.length ||
+    !declared.every((type, index) => type === expected[index])
   ) {
     return null;
   }
   return bareName;
+}
+
+/**
+ * Canonicalise a declared ABI type so an alias cannot slip past the shape
+ * comparison above.
+ *
+ * `inputTypes` reaches this module as the RAW strings from the caller-supplied
+ * ABI, while the selector is computed from the canonical form. Solidity treats
+ * `uint` as an alias of `uint256`, so an ABI declaring
+ * `transfer(address,uint)` encodes selector 0xa9059cbb -- byte-identical to a
+ * real ERC-20 transfer -- yet a literal string comparison against "uint256"
+ * fails, matchOutflowFunction returns null, and the caller short-circuits to
+ * ALLOWED without ever loading the token or comparing an amount. That is a
+ * complete bypass of this ceiling via a one-word change to an
+ * attacker-supplied ABI.
+ *
+ * ParamType.from applies the same normalisation ethers uses when building the
+ * selector, so the two agree. A type ethers cannot parse is passed through
+ * unchanged: it will not match a shape, but it also cannot be encoded into a
+ * transaction, so there is nothing to bypass.
+ */
+function canonicalAbiType(type: string): string {
+  try {
+    return ethers.ParamType.from(type).format("sighash");
+  } catch {
+    return type;
+  }
 }
 
 function decodeErc20Outflow(
