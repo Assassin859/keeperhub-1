@@ -269,6 +269,11 @@ app:
     EXECUTE_DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS:
       type: kv
       value: "500000000"
+    # Ceiling on a single stablecoin outflow, in micro-USD (6 decimals). Per
+    # transaction, not per day. 100 USD.
+    EXECUTE_DEFAULT_STABLECOIN_CAP_MICRO_USD:
+      type: kv
+      value: "100000000"
     METRICS_COLLECTOR:
       type: kv
       value: "prometheus"
@@ -987,6 +992,11 @@ executor:
     EXECUTE_DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS:
       type: kv
       value: "500000000"
+    # Ceiling on a single stablecoin outflow, in micro-USD (6 decimals). Per
+    # transaction, not per day. 100 USD.
+    EXECUTE_DEFAULT_STABLECOIN_CAP_MICRO_USD:
+      type: kv
+      value: "100000000"
     JOB_TTL_SECONDS:
       type: kv
       value: "300"
