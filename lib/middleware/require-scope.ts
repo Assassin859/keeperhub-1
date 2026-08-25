@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { logSecurityEvent } from "@/lib/logging";
+import { ErrorCategory, logSecurityEvent, logUserError } from "@/lib/logging";
 import { type OAuthScope, scopeSatisfies } from "@/lib/mcp/oauth-scopes";
 
 /**
@@ -35,29 +35,35 @@ export function requireScope(
     return null;
   }
 
-  logSecurityEvent(
-    "insufficient_scope_denied",
+  // Loki only -- no Sentry argument. A scope denial is the caller using a
+  // credential outside its grant, not a platform fault, and this path is
+  // reachable at the caller's own request rate. lib/logging.ts states the rule
+  // in logUserError's body: user errors are deliberately kept out of Sentry
+  // because they are expected, high-volume, and would drown actionable system
+  // errors. The structured line still lands in Loki, so a detection query over
+  // repeated denials from one credential works unchanged.
+  logSecurityEvent("insufficient_scope_denied", {
+    required_scope: required,
+    granted_scope: grantedScope ?? null,
+    organizationId: context?.organizationId,
+    credentialId: context?.credentialId,
+    endpoint: context?.endpoint,
+  });
+
+  // logSecurityEvent writes Sentry and Loki but never Prometheus, so on its own
+  // it leaves no series to alert on. This is what makes the deny rate countable
+  // and gives Grafana something to threshold.
+  logUserError(
+    ErrorCategory.AUTH,
+    "[RequireScope] Insufficient scope",
+    undefined,
     {
       required_scope: required,
-      granted_scope: grantedScope ?? null,
-      organizationId: context?.organizationId,
-      credentialId: context?.credentialId,
-      endpoint: context?.endpoint,
-    },
-    {
-      tags: {
-        security: "insufficient_scope_denied",
-        required_scope: required,
-      },
-      extra: {
-        granted_scope: grantedScope ?? null,
-        organizationId: context?.organizationId,
-        credentialId: context?.credentialId,
-        endpoint: context?.endpoint,
-      },
-      // One Sentry issue per required scope rather than one per caller, so a
-      // misconfigured integrator retrying cannot bury the rest of the signal.
-      fingerprint: ["security", "insufficient_scope_denied", required],
+      granted_scope: grantedScope ?? "none",
+      ...(context?.endpoint ? { endpoint: context.endpoint } : {}),
+      ...(context?.organizationId
+        ? { organizationId: context.organizationId }
+        : {}),
     }
   );
 

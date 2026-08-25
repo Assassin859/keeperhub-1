@@ -493,8 +493,7 @@ describe("A-03 leg 3: kh_ API key scope gate at the direct-execution sinks", () 
         organizationId: "org-1",
         credentialId: "key-1",
         endpoint: "/api/execute/transfer",
-      }),
-      expect.anything()
+      })
     );
   });
 

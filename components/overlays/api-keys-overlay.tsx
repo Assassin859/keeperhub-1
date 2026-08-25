@@ -120,12 +120,15 @@ export function CreateApiKeyOverlay({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            // Spread first so the step-up payload cannot silently take over a
+            // field the operator set: whatever it returns is overridden by the
+            // explicit keys below rather than the other way round.
+            ...extra,
             name: keyName.trim() || null,
             // The same Permissions block is shown to wallet users, so the
             // selection has to reach the API here too. Omitting it minted an
             // unscoped key that ignored whatever the user unchecked.
             scopes: activeScopes,
-            ...extra,
           }),
         })
       );

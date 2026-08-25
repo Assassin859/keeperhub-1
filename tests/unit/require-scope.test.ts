@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockLogSecurityEvent } = vi.hoisted(() => ({
+const { mockLogSecurityEvent, mockLogUserError } = vi.hoisted(() => ({
   mockLogSecurityEvent: vi.fn(),
+  mockLogUserError: vi.fn(),
 }));
 
 vi.mock("@/lib/logging", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/logging")>();
-  return { ...actual, logSecurityEvent: mockLogSecurityEvent };
+  return {
+    ...actual,
+    logSecurityEvent: mockLogSecurityEvent,
+    logUserError: mockLogUserError,
+  };
 });
 
 const { requireScope } = await import("@/lib/middleware/require-scope");
@@ -86,11 +91,40 @@ describe("requireScope (A-03)", () => {
           organizationId: "org-1",
           credentialId: "key-1",
           endpoint: "/api/execute/transfer",
-        },
-        expect.objectContaining({
-          fingerprint: ["security", "insufficient_scope_denied", "mcp:write"],
-        })
+        }
       );
+    });
+
+    // A denial is the caller misusing its own credential, not a platform
+    // fault. Pinned with an exact arity: passing a third argument routes it to
+    // Sentry, which lib/logging.ts explicitly reserves for system errors, on a
+    // path an integrator can drive at its own request rate.
+    it("does not route the denial to Sentry", () => {
+      requireScope("mcp:read", "mcp:write", { organizationId: "org-1" });
+
+      expect(mockLogSecurityEvent).toHaveBeenCalledTimes(1);
+      expect(mockLogSecurityEvent.mock.calls[0]).toHaveLength(2);
+    });
+
+    // logSecurityEvent writes Sentry and Loki but never Prometheus, so without
+    // this second emit there is no series behind the "countable deny rate"
+    // claim and nothing for Grafana to alert on.
+    it("emits a user error so the deny rate is countable in Prometheus", () => {
+      requireScope("mcp:read", "mcp:write", {
+        organizationId: "org-1",
+        endpoint: "/api/execute/transfer",
+      });
+
+      expect(mockLogUserError).toHaveBeenCalledTimes(1);
+      const [category, message, error, labels] = mockLogUserError.mock.calls[0];
+      expect(category).toBe("auth");
+      expect(message).toBe("[RequireScope] Insufficient scope");
+      expect(error).toBeUndefined();
+      expect(labels).toMatchObject({
+        required_scope: "mcp:write",
+        granted_scope: "mcp:read",
+        endpoint: "/api/execute/transfer",
+      });
     });
 
     it("records an empty grant string verbatim rather than dropping the field", () => {
@@ -98,8 +132,7 @@ describe("requireScope (A-03)", () => {
 
       expect(mockLogSecurityEvent).toHaveBeenCalledWith(
         "insufficient_scope_denied",
-        expect.objectContaining({ granted_scope: "" }),
-        expect.anything()
+        expect.objectContaining({ granted_scope: "" })
       );
     });
 
