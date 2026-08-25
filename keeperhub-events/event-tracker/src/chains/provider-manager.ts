@@ -125,6 +125,22 @@ export const GETLOGS_MAX_BLOCK_SPAN = 25;
  * rather than silent.
  */
 export const GETLOGS_MAX_CATCHUP_BLOCKS = 5_000;
+/**
+ * How far back the mark may be rewound when a height is delivered a second
+ * time.
+ *
+ * `newHeads` re-announcing a height the mark has already passed means the
+ * chain reorganised: the logs at that height may not be the ones already
+ * dispatched. Rewinding makes the next drain re-cover the range, and the
+ * dedup layer drops whatever is unchanged - which is the behaviour dedup was
+ * built for, its own header naming reorg replay alongside reconnects and pod
+ * restarts.
+ *
+ * Bounded because a rewind is re-fetching: a stray very old height must not be
+ * able to schedule thousands of blocks of re-reads. Anything deeper than this
+ * is a chain failure rather than an ordinary reorg, and is logged instead.
+ */
+export const REORG_REWIND_MAX_BLOCKS = 32;
 /** EWMA smoothing factor for the inter-block interval. */
 const BLOCK_INTERVAL_EWMA_ALPHA = 0.2;
 /**
@@ -407,6 +423,10 @@ interface ChainStats {
   blocksCovered: number;
   ranges: number;
   logsDispatched: number;
+  /** Blocks abandoned by the catch-up bound rather than fetched. */
+  blocksSkipped: number;
+  /** Times a re-announced height rewound the mark. */
+  reorgRewinds: number;
   getLogsCallsTotal: number;
 }
 
@@ -417,6 +437,8 @@ function newChainStats(): ChainStats {
     blocksCovered: 0,
     ranges: 0,
     logsDispatched: 0,
+    blocksSkipped: 0,
+    reorgRewinds: 0,
     getLogsCallsTotal: 0,
   };
 }
@@ -970,6 +992,8 @@ export class ChainProviderManager {
       entry.lastBlockAt = now;
       if (entry.headBlock === null || blockNumber > entry.headBlock) {
         entry.headBlock = blockNumber;
+      } else {
+        this.rewindForReorg(entry, blockNumber);
       }
       await this.drain(entry);
     };
@@ -1103,6 +1127,10 @@ export class ChainProviderManager {
       logger.warn(
         `[ChainProviderManager] chain=${entry.chainId} ${behind} blocks behind head; skipping to ${entry.headBlock} without fetching logs for the gap`,
       );
+      // Counted, not only logged: a chain that repeatedly falls behind and
+      // skips is otherwise indistinguishable in aggregation from one keeping
+      // up, and skipping is the one path here that loses events on purpose.
+      entry.stats.blocksSkipped += behind - 1;
       entry.lastProcessedBlock = entry.headBlock - 1;
     }
 
@@ -1139,6 +1167,33 @@ export class ChainProviderManager {
     ) {
       this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
     }
+  }
+
+  /**
+   * Re-announcement of a height at or below the mark: the chain reorganised
+   * and the logs already dispatched for that height may no longer be the ones
+   * on chain. Rewind so the next drain re-covers from there.
+   *
+   * Serving each height once and never again would silently drop the replaced
+   * logs - a per-block loop re-fetched every push, and dedup existed to
+   * suppress the duplicates that produced. Re-covering restores that, with the
+   * duplicates still going to dedup and the depth bounded.
+   */
+  private rewindForReorg(entry: ChainEntry, blockNumber: number): void {
+    const mark = entry.lastProcessedBlock;
+    if (mark === null || blockNumber > mark) {
+      // Not yet served, so it is already owed and the drain will fetch it.
+      return;
+    }
+    const depth = mark - blockNumber + 1;
+    if (depth > REORG_REWIND_MAX_BLOCKS) {
+      logger.warn(
+        `[ChainProviderManager] chain=${entry.chainId} block=${blockNumber} re-announced ${depth} blocks below the mark; deeper than REORG_REWIND_MAX_BLOCKS, not re-fetching`,
+      );
+      return;
+    }
+    entry.stats.reorgRewinds += 1;
+    entry.lastProcessedBlock = blockNumber - 1;
   }
 
   /** Schedule the next drain. Idempotent: an armed timer is left alone. */
@@ -1408,6 +1463,15 @@ export class ChainProviderManager {
       // fresh error on the new provider gets silently dropped.
       entry.reconnectPromise = null;
       entry.isReconnecting = false;
+      // Only now can a drain run. Anything owed from before the drop still is
+      // - `lastProcessedBlock` survives a reconnect - so schedule the
+      // catch-up here rather than inside `reconnect()`, where the flag is
+      // still set. Scheduled rather than awaited: a drain dispatches to
+      // handlers that may each sleep seconds of jitter, and awaiting it would
+      // hold the chain reconnecting long after the socket was healthy.
+      if (!this.isDestroyed && entry.provider && entry.subscribers.size > 0) {
+        this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
+      }
     }
   }
 
@@ -1473,13 +1537,10 @@ export class ChainProviderManager {
     if (entry.subscribers.size > 0) {
       this.attachBlockListener(entry);
       this.startHeartbeat(entry);
-      // Schedule rather than await. Anything owed from before the drop is
-      // still owed - `lastProcessedBlock` survived - and a drain dispatches
-      // logs to handlers that may each sleep seconds of jitter, so awaiting
-      // it here would hold `isReconnecting` true long after the connection
-      // was healthy, reporting the chain degraded and blocking every
-      // `getOrCreateProvider` behind it.
-      this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
+      // The catch-up for anything owed from before the drop is armed by
+      // `reconnectLoop` once `isReconnecting` clears, not here: `drain`
+      // refuses to run while that flag is set, so a timer armed at this point
+      // would fire into a guard and the work would be dropped.
     }
   }
 
@@ -1579,7 +1640,11 @@ export class ChainProviderManager {
   private logStats(): void {
     for (const entry of this.chains.values()) {
       const stats = entry.stats;
-      if (stats.getLogsCalls === 0 && stats.getLogsErrors === 0) {
+      if (
+        stats.getLogsCalls === 0 &&
+        stats.getLogsErrors === 0 &&
+        stats.blocksSkipped === 0
+      ) {
         continue;
       }
       const interval =
@@ -1591,13 +1656,15 @@ export class ChainProviderManager {
           ? Math.max(0, entry.headBlock - entry.lastProcessedBlock)
           : 0;
       logger.log(
-        `[ChainProviderManager] getlogs-stats chain=${entry.chainId} blockIntervalMs=${interval} minRequestIntervalMs=${GETLOGS_MIN_INTERVAL_MS} statsIntervalMs=${STATS_LOG_INTERVAL_MS} getLogsCalls=${stats.getLogsCalls} getLogsErrors=${stats.getLogsErrors} blocksCovered=${stats.blocksCovered} ranges=${stats.ranges} blocksBehindHead=${behind} logsDispatched=${stats.logsDispatched} getLogsCallsTotal=${stats.getLogsCallsTotal}`,
+        `[ChainProviderManager] getlogs-stats chain=${entry.chainId} blockIntervalMs=${interval} minRequestIntervalMs=${GETLOGS_MIN_INTERVAL_MS} statsIntervalMs=${STATS_LOG_INTERVAL_MS} getLogsCalls=${stats.getLogsCalls} getLogsErrors=${stats.getLogsErrors} blocksCovered=${stats.blocksCovered} ranges=${stats.ranges} blocksSkipped=${stats.blocksSkipped} reorgRewinds=${stats.reorgRewinds} blocksBehindHead=${behind} logsDispatched=${stats.logsDispatched} getLogsCallsTotal=${stats.getLogsCallsTotal}`,
       );
       stats.getLogsCalls = 0;
       stats.getLogsErrors = 0;
       stats.blocksCovered = 0;
       stats.ranges = 0;
       stats.logsDispatched = 0;
+      stats.blocksSkipped = 0;
+      stats.reorgRewinds = 0;
     }
   }
 

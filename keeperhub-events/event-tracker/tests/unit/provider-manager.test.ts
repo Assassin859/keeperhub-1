@@ -12,6 +12,7 @@ import {
   GETLOGS_MAX_CATCHUP_BLOCKS,
   GETLOGS_MIN_INTERVAL_MS,
   type ProviderFactory,
+  REORG_REWIND_MAX_BLOCKS,
   STATS_LOG_INTERVAL_MS,
 } from "../../src/chains/provider-manager";
 
@@ -1567,6 +1568,78 @@ describe("ChainProviderManager", () => {
       });
     });
 
+    describe("reorg re-delivery", () => {
+      it("re-queries a height the subscription announces a second time", async () => {
+        const provider = await subscribe();
+        await emitBlocks(provider, 100, 3, GETLOGS_MIN_INTERVAL_MS * 2);
+        const before = ranges(provider).length;
+
+        // The chain reorganised and re-announced 102. The logs there may not
+        // be the ones already dispatched, so serving it once and never again
+        // would drop the replacement silently.
+        await provider.emitBlock(102);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+        const served = ranges(provider).slice(before);
+        expect(served.some((r) => r.from <= 102 && r.to >= 102)).toBe(true);
+      });
+
+      it("re-covers every height from the re-announced one forward", async () => {
+        const provider = await subscribe();
+        await emitBlocks(provider, 200, 4, GETLOGS_MIN_INTERVAL_MS * 2);
+        const before = ranges(provider).length;
+
+        // A reorg at 201 invalidates 201-203, not 201 alone.
+        await provider.emitBlock(201);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+        const served = ranges(provider).slice(before);
+        expect(served[0].from).toBe(201);
+        expect(served[served.length - 1].to).toBeGreaterThanOrEqual(203);
+      });
+
+      it("refuses a rewind deeper than the bound", async () => {
+        const warnSpy = vi
+          .spyOn(console, "warn")
+          .mockImplementation(() => undefined);
+        try {
+          const provider = await subscribe();
+          await provider.emitBlock(1_000);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+          await provider.emitBlock(1_000 + REORG_REWIND_MAX_BLOCKS + 10);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+          const before = ranges(provider).length;
+
+          // A stray very old height must not schedule an unbounded re-read.
+          await provider.emitBlock(1_000);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+          expect(ranges(provider)).toHaveLength(before);
+          expect(
+            warnSpy.mock.calls
+              .map((a) => String(a[0]))
+              .filter((l) => l.includes("below the mark")),
+          ).toHaveLength(1);
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("does not rewind for a height it has not served yet", async () => {
+        const provider = await subscribe();
+        await provider.emitBlock(300);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+        await provider.emitBlock(310);
+        // 305 arrives before the drain covering 301-310 has run: it is already
+        // owed, so this must not rewind the mark backwards past work in hand.
+        await provider.emitBlock(305);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 3);
+
+        const served = ranges(provider);
+        expect(served.every((r) => r.from >= 300)).toBe(true);
+      });
+    });
+
     describe("failure handling", () => {
       it("re-queries a failed range instead of losing its blocks", async () => {
         const provider = await subscribe();
@@ -1746,6 +1819,31 @@ describe("ChainProviderManager", () => {
           expect(lines[0]).not.toContain("getLogsErrors=0");
         } finally {
           logSpy.mockRestore();
+        }
+      });
+
+      it("reports blocks abandoned by the catch-up bound", async () => {
+        const logSpy = vi
+          .spyOn(console, "log")
+          .mockImplementation(() => undefined);
+        const warnSpy = vi
+          .spyOn(console, "warn")
+          .mockImplementation(() => undefined);
+        try {
+          const provider = await subscribe();
+          await provider.emitBlock(1_000);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+          await provider.emitBlock(1_000 + GETLOGS_MAX_CATCHUP_BLOCKS + 100);
+          await vi.advanceTimersByTimeAsync(STATS_LOG_INTERVAL_MS);
+
+          // Skipping is the one path that loses events on purpose, so it has
+          // to be countable, not only greppable.
+          const lines = statsLines(logSpy);
+          expect(lines).toHaveLength(1);
+          expect(lines[0]).toMatch(/blocksSkipped=[1-9]/);
+        } finally {
+          logSpy.mockRestore();
+          warnSpy.mockRestore();
         }
       });
 
