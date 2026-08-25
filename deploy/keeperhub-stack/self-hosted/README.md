@@ -354,6 +354,25 @@ domain is trusted without further configuration. Set it yourself only if the app
 is reached on more origins than that one - a vanity domain, or a separate
 hostname for an internal network.
 
+**The client address comes from a header you name.** `lib/auth.ts` and
+`lib/security/login-risk.ts` read `CLIENT_IP_HEADERS`, which defaults to
+`CF-Connecting-IP`. Only Cloudflare sets that header, so on your cluster nothing
+resolves an address unless you name the one your ingress controller sets. The
+failure is quiet and it cuts both ways: sessions record no address, and signup
+throttling stops counting per caller and counts everyone in a single bucket, so
+the whole install shares one allowance of 5 signups per hour.
+
+This profile sets `CLIENT_IP_HEADERS=X-Real-IP`, which is what ingress-nginx
+sets. Change it if your controller sets a different one. Name a header carrying a
+single value; a header with several comma-separated hops is refused, because the
+leftmost hop is whatever the caller sent. If the header does carry several hops,
+list your own proxies in `CLIENT_IP_TRUSTED_PROXIES` and the chain is read from
+the right instead.
+
+Read the ingress controller step in `INSTALL.md` first. On a cluster with no
+cloud load balancer the controller can replace the client address with its own
+before any of this applies, and then no header setting helps.
+
 **Email needs a SendGrid account of your own.** `lib/email.ts` posts to
 SendGrid's HTTP API, so there is no SMTP setting and no local mail-catcher
 option. SendGrid is the only supported sender, and it is a required dependency
