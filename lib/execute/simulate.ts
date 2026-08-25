@@ -8,6 +8,7 @@ import {
   getNativeSymbol,
   type INSUFFICIENT_BALANCE_CODE,
 } from "@/lib/execute/native-balance";
+import { checkStablecoinTransferAmount } from "@/lib/execute/stablecoin-cap";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
@@ -843,6 +844,22 @@ export async function simulateTokenTransfer(
       BigInt(0),
       `Invalid amount for ${decimals} decimals: ${input.amount}`
     );
+  }
+
+  // The ceiling applies to the broadcast, so a simulation that ignored it
+  // would report a clean dry run for a transfer that then fails at send.
+  // Agents call simulate precisely to decide whether to send, so the limit has
+  // to be visible here. Reported as a failed simulation rather than thrown:
+  // the caller asked what would happen, and this is what would happen.
+  const stablecoinCap = await checkStablecoinTransferAmount({
+    organizationId: input.organizationId,
+    chainId,
+    tokenAddress: resolvedTokenAddress,
+    amount: input.amount,
+    context: "simulate-transfer",
+  });
+  if (stablecoinCap.kind !== "allowed") {
+    return failure(from, resolvedTokenAddress, BigInt(0), stablecoinCap.error);
   }
 
   return simulateContractCall({

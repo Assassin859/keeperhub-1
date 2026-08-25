@@ -26,7 +26,7 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { rpcRelayErrorClass } from "@/lib/rpc/providers";
-import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
 import {
@@ -323,7 +323,14 @@ export async function transferTokenCore(
     context: "transfer-token",
   });
   if (stablecoinCap.kind !== "allowed") {
-    return { success: false, error: stablecoinCap.error };
+    // Same classification as writeContractCore's identical refusal. Without it
+    // the two cores file the same policy denial under different fault domains
+    // in the metrics, so the deny rate cannot be read across them.
+    return {
+      success: false,
+      error: stablecoinCap.error,
+      errorClass: ExecutionErrorType.USER,
+    };
   }
 
   // Resolve RPC config (with failover)

@@ -11,14 +11,22 @@ import { getRegisteredProtocols } from "@/lib/protocol-registry";
 const MICRO_USD_DECIMALS = 6;
 
 /**
- * `invalid` is caller error (an amount that will not parse); `over_cap` is a
- * policy denial. Kept apart so a route can answer 400 vs 403 rather than
- * collapsing a malformed request into "cap exceeded".
+ * The ceiling either admits a call or refuses it, and the reason travels in
+ * `error` rather than in the tag.
+ *
+ * This deliberately does not split "malformed" from "over the cap". The split
+ * existed so a route could answer 400 rather than 403, but no route reads it:
+ * the check runs inside the step cores, which return a uniform
+ * `{ success: false, error }` that every entrance surfaces as a 202 with
+ * status "failed". Nothing maps a decision to a status code, so the
+ * distinction described behaviour that did not exist.
+ *
+ * Reintroducing it needs the mapping first -- a route-level translation from
+ * refusal class to status -- not a wider union here.
  */
 export type StablecoinCapDecision =
   | { kind: "allowed" }
-  | { kind: "invalid"; error: string }
-  | { kind: "over_cap"; error: string };
+  | { kind: "denied"; error: string };
 
 const ALLOWED = { kind: "allowed" } as const;
 
@@ -128,7 +136,7 @@ export async function checkStablecoinTransferAmount(params: {
     amountBase = ethers.parseUnits(params.amount, token.decimals);
   } catch {
     return {
-      kind: "invalid",
+      kind: "denied",
       error: `Invalid ${token.symbol} amount: ${params.amount}`,
     };
   }
@@ -164,7 +172,7 @@ export async function checkStablecoinContractCall(params: {
     // The call is a stablecoin outflow whose size cannot be read. Passing it
     // through would be an unbounded move, so refuse instead.
     return {
-      kind: "invalid",
+      kind: "denied",
       error: `Could not read the ${token.symbol} amount from the ${fn} arguments`,
     };
   }
@@ -270,7 +278,7 @@ export async function checkStablecoinCalldataBatch(params: {
 
     if (decoded.amountBase < BigInt(0)) {
       return {
-        kind: "invalid",
+        kind: "denied",
         error: `${token.symbol} amount must not be negative`,
       };
     }
@@ -295,7 +303,7 @@ export async function checkStablecoinCalldataBatch(params: {
   });
 
   return {
-    kind: "over_cap",
+    kind: "denied",
     error: `Stablecoin transfer of ${formatMicroUsd(totalMicroUsd)} ${outflowSymbol ?? "USD"} across ${params.calls.length} call(s) exceeds the ${formatMicroUsd(capMicroUsd)} USD per-transaction limit`,
   };
 }
@@ -315,7 +323,7 @@ function decide(params: {
 
   if (amountBase < BigInt(0)) {
     return {
-      kind: "invalid",
+      kind: "denied",
       error: `${token.symbol} amount must not be negative`,
     };
   }
@@ -367,7 +375,7 @@ function decide(params: {
   }
 
   return {
-    kind: "over_cap",
+    kind: "denied",
     error: `Stablecoin ${verb} of ${formatMicroUsd(microUsd)} ${token.symbol} exceeds the ${formatMicroUsd(capMicroUsd)} USD per-transaction limit`,
   };
 }

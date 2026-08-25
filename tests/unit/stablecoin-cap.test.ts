@@ -148,7 +148,7 @@ describe("checkStablecoinTransferAmount", () => {
       amount: `${CAP_USD}.000001`,
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("denies the drain the native cap could never see", async () => {
@@ -161,7 +161,7 @@ describe("checkStablecoinTransferAmount", () => {
       amount: "250000",
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("rescales an 18-decimal stablecoin to micro-USD before comparing", async () => {
@@ -177,7 +177,7 @@ describe("checkStablecoinTransferAmount", () => {
       ...transferParams,
       amount: (CAP_USD + BigInt(1)).toString(),
     });
-    expect(over.kind).toBe("over_cap");
+    expect(over.kind).toBe("denied");
   });
 
   it("passes through a registered token that is not a stablecoin", async () => {
@@ -231,7 +231,7 @@ describe("checkStablecoinTransferAmount", () => {
       amount: "1.0000001",
     });
 
-    expect(result.kind).toBe("invalid");
+    expect(result.kind).toBe("denied");
   });
 
   it("matches a checksummed address against the lowercase registry row", async () => {
@@ -245,7 +245,7 @@ describe("checkStablecoinTransferAmount", () => {
       amount: (CAP_USD + BigInt(1)).toString(),
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("ignores a different token on the same chain", async () => {
@@ -281,7 +281,7 @@ describe("checkStablecoinContractCall", () => {
       args: [RECIPIENT, units(CAP_USD + BigInt(1), 6)],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("allows a contract-call transfer under the cap", async () => {
@@ -307,7 +307,7 @@ describe("checkStablecoinContractCall", () => {
       args: [RECIPIENT, RECIPIENT, units(CAP_USD + BigInt(1), 6)],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("accepts a bigint argument as well as a decimal string", async () => {
@@ -320,7 +320,7 @@ describe("checkStablecoinContractCall", () => {
       args: [RECIPIENT, BigInt(units(CAP_USD + BigInt(1), 6))],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   // Approving max uint before a swap is how nearly every protocol integration
@@ -350,7 +350,7 @@ describe("checkStablecoinContractCall", () => {
       args: [UNKNOWN_SPENDER, ethers.MaxUint256.toString()],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   // A userSpecifiedAddress contract resolves to whatever the caller passed, so
@@ -365,7 +365,7 @@ describe("checkStablecoinContractCall", () => {
       args: [USER_SUPPLIED, ethers.MaxUint256.toString()],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("leaves an approval under the ceiling alone whoever the spender is", async () => {
@@ -393,7 +393,7 @@ describe("checkStablecoinContractCall", () => {
       args: [RECIPIENT, { toString: () => "1" }],
     });
 
-    expect(result.kind).toBe("invalid");
+    expect(result.kind).toBe("denied");
   });
 
   it("ignores a function that is not an ERC-20 outflow", async () => {
@@ -441,7 +441,7 @@ describe("checkStablecoinContractCall", () => {
       args: [RECIPIENT, units(CAP_USD + BigInt(1), 6)],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
     expect(state.selectCalls).toBe(1);
   });
 
@@ -455,7 +455,7 @@ describe("checkStablecoinContractCall", () => {
       args: [RECIPIENT, units(CAP_USD + BigInt(1), 6)],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 });
 
@@ -489,7 +489,7 @@ describe("checkStablecoinCalldataBatch", () => {
       calls: Array.from({ length: 10 }, () => transferCall(under)),
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("admits a batch whose total stays within the ceiling", async () => {
@@ -526,7 +526,7 @@ describe("checkStablecoinCalldataBatch", () => {
       ],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("ignores calls that are not recognised stablecoin outflows", async () => {
@@ -561,7 +561,7 @@ describe("checkStablecoinCalldataBatch", () => {
       ],
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 });
 
@@ -586,7 +586,7 @@ describe("checkStablecoinCalldata", () => {
       ]),
     });
 
-    expect(result.kind).toBe("over_cap");
+    expect(result.kind).toBe("denied");
   });
 
   it("allows an under-cap transfer from raw calldata", async () => {
@@ -617,7 +617,7 @@ describe("checkStablecoinCalldata", () => {
         MEMO,
       ]),
     });
-    expect(over.kind).toBe("over_cap");
+    expect(over.kind).toBe("denied");
 
     const under = await checkStablecoinCalldata({
       ...calldataParams,
