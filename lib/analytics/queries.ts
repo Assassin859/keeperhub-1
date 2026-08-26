@@ -1041,6 +1041,17 @@ async function fetchWorkflowRuns(
       >`COALESCE(ARRAY_AGG(DISTINCT ${logStepNetwork}) FILTER (WHERE ${logStepNetwork} IS NOT NULL), '{}')`.as(
         "networks"
       ),
+      // The subset of `networks` that actually spent gas. The runs table needs
+      // both sets and they are not the same one: the Network column wants every
+      // chain the run touched, while the gas cell can only render an amount
+      // when the wei it is summing landed on a single chain, since two chains'
+      // native tokens do not add. Deriving the second from the first held only
+      // while this subquery filtered on gas.
+      gasNetworks: sql<
+        string[]
+      >`COALESCE(ARRAY_AGG(DISTINCT ${logStepNetwork}) FILTER (WHERE ${logStepNetwork} IS NOT NULL AND ${logStepHasGas}), '{}')`.as(
+        "gasNetworks"
+      ),
     })
     .from(workflowExecutionLogs)
     .where(sql`${workflowExecutionLogs.executionId} IN (${pagedExecutionIds})`)
@@ -1078,6 +1089,7 @@ async function fetchWorkflowRuns(
       gasUsedWei: logSummary.gasUsedWei,
       network: logSummary.network,
       networks: logSummary.networks,
+      gasNetworks: logSummary.gasNetworks,
       gasCostWei: gasCostSummary.gasCostWei,
       transactionHashes: workflowExecutions.transactionHashes,
       error: workflowExecutions.error,
@@ -1110,6 +1122,7 @@ async function fetchWorkflowRuns(
     directType: null,
     network: row.network ?? null,
     networks: row.networks ?? [],
+    gasNetworks: row.gasNetworks ?? [],
     gasCostWei:
       row.gasCostWei && row.gasCostWei !== "0" ? row.gasCostWei : null,
     transactionHashes: row.transactionHashes,
@@ -1184,6 +1197,7 @@ async function fetchDirectRuns(
     directType: row.type as UnifiedRun["directType"],
     network: row.network,
     networks: row.network ? [row.network] : [],
+    gasNetworks: row.network && row.gasUsedWei ? [row.network] : [],
     gasCostWei: row.gasUsedWei,
     // Direct executions are genuinely single-tx. Synthesize the entry so
     // consumers can render workflow + direct runs through the same array

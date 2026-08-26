@@ -53,6 +53,14 @@ export type UnifiedRun = {
    * runs, where a read-only step on another chain now joins the list.
    */
   networks: string[];
+  /**
+   * The subset of `networks` the run actually spent gas on. Distinct from
+   * `networks` because the runs table asks two different questions of the same
+   * run: which chains it touched (the Network column) and which chains its gas
+   * landed on (the Gas cell, which can only render an amount when that is one
+   * chain - two chains' native tokens do not add).
+   */
+  gasNetworks: string[];
   /** Total native gas cost (wei) sponsored across the run's transactions. */
   gasCostWei: string | null;
   /**

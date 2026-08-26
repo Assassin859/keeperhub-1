@@ -242,6 +242,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     expect(run.networks).toEqual(["base"]);
     // No gas was spent, and that must stay distinguishable from "no chain".
     expect(run.gasUsedWei).toBeNull();
+    expect(run.gasNetworks).toEqual([]);
   });
 
   it("still prefers the gas-bearing step's chain as the run's network", async () => {
@@ -253,6 +254,9 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
   it("lists every chain the run's steps targeted, gas-bearing or not", async () => {
     const run = await runById(MIXED_ID);
     expect([...run.networks].sort()).toEqual(["base", "optimism"]);
+    // ...while the gas cell reads gasNetworks, which stays the one chain the
+    // run actually spent on, so its total is still summable into one token.
+    expect(run.gasNetworks).toEqual(["base"]);
   });
 
   it("reads the chain from the JSONB when the column was never backfilled", async () => {
@@ -266,6 +270,8 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     const run = await runById(LEGACY_GAS_ID);
     expect(run.gasUsedWei).toBe("31000");
     expect(run.network).toBe("base");
+    // The COALESCE arm feeds gasNetworks too, not just the scalar network.
+    expect(run.gasNetworks).toEqual(["base"]);
   });
 
   it("backfills a gas-free legacy row, so the read moves onto the column", async () => {
