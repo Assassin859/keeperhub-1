@@ -13,15 +13,17 @@ export type ScopeDenialContext = {
   credentialId?: string;
   endpoint?: string;
   /**
-   * Which credential family is being denied, when the caller knows. Selects the
-   * remediation sentence in the 403 body. Omitted by call sites that do not
-   * distinguish the families, which get the requirement without a remediation
-   * claim rather than a guess that may be wrong for the credential in hand.
+   * Which credential family is being denied. Selects the remediation sentence
+   * in the 403 body, since an OAuth grant is widened by an admin and an API
+   * key's scope is fixed at creation. Every route that gates on scope passes
+   * it: the execute routes from validateApiKey, the rest from the authMethod
+   * their auth helper already returns.
    *
-   * Reuses AuthMethod rather than a private union so the ~35 sites that already
-   * hold an `authMethod` can pass it straight through. "session" carries no
-   * scope, so it reaches here only if a future caller passes it, and falls to
-   * the no-remediation branch.
+   * Optional so a caller that genuinely cannot say gets the requirement with no
+   * remediation claim, rather than a guess that may be wrong for the credential
+   * in hand. "session" carries no scope, so scopeSatisfies admits it before a
+   * denial can be built; it falls to the no-remediation branch if it ever
+   * arrives.
    */
   credentialType?: AuthMethod;
 };

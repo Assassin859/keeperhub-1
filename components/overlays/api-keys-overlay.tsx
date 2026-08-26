@@ -22,7 +22,7 @@ import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { Page, PageMeta } from "@/lib/pagination";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
-import { SUPPORTED_SCOPES } from "@/lib/mcp/oauth-scopes";
+import { SCOPE_MCP_READ, SUPPORTED_SCOPES } from "@/lib/mcp/oauth-scopes";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { KeyActivityOverlay } from "./key-activity-overlay";
 import { Overlay } from "./overlay";
@@ -85,8 +85,14 @@ export function CreateApiKeyOverlay({
   const [phase, setPhase] = useState<"label" | "codes">("label");
   const dual = useDualFactorState();
   const [creating, setCreating] = useState(false);
+  // Only read is pre-checked. Pre-checking all three made the least-effort
+  // mint a full-access mcp:admin key, which is the widest-by-default outcome
+  // parseScopeInput was just changed to stop producing on the API side.
   const [selectedScopes, setSelectedScopes] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(SUPPORTED_SCOPES.map((s) => [s, true]))
+    () =>
+      Object.fromEntries(
+        SUPPORTED_SCOPES.map((s) => [s, s === SCOPE_MCP_READ])
+      )
   );
 
   // Scope is only enforced for organisation keys (kh_): authenticateApiKey
@@ -442,6 +448,7 @@ function ApiKeysList({
   onDelete,
   onDismissNewKey,
   showCreator = false,
+  showScope = true,
   deleteEndpoint,
   canDelete = true,
   readOnlyReason,
@@ -459,6 +466,12 @@ function ApiKeysList({
   ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onDismissNewKey: () => void;
   showCreator?: boolean;
+  /**
+   * Webhook (wfb_) keys store a scope that nothing reads: the workflow webhook
+   * route looks a key up by hash and dispatches without consulting it. Showing
+   * it there states a restriction that is not applied.
+   */
+  showScope?: boolean;
   deleteEndpoint: (id: string) => string;
   canDelete?: boolean;
   readOnlyReason?: string;
@@ -552,7 +565,7 @@ function ApiKeysList({
                     <span className="truncate text-sm">{apiKey.name}</span>
                   </p>
                 )}
-                {apiKey.scope && (
+                {showScope && apiKey.scope && (
                   <p className="mt-2 mb-2 text-sm">
                     {"Scope: "}
                     {apiKey.scope.split(" ").map((s) => (
@@ -954,6 +967,7 @@ export function ApiKeysPanel({
           ) : (
             <ApiKeysList
               apiKeys={webhookKeys.apiKeys}
+              showScope={false}
               deleteEndpoint={webhookKeys.deleteEndpoint}
               deleting={webhookKeys.deleting}
               highlightId={
