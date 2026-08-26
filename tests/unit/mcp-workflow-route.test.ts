@@ -82,6 +82,7 @@ vi.mock("@modelcontextprotocol/sdk/types.js", () => ({
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { getWorkflowListing } from "@/lib/mcp/listing";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
+import { getSession } from "@/lib/mcp/sessions";
 import type { WorkflowListing } from "@/lib/mcp/workflow-server";
 
 const { POST, GET, DELETE, OPTIONS } = await import("@/app/mcp/w/[slug]/route");
@@ -112,8 +113,8 @@ function makeInitializeRequest(authHeader = "Bearer kh_test"): Request {
     headers: {
       "Content-Type": "application/json",
       Authorization: authHeader,
-      // Include both accept types so ensureMcpAcceptHeader short-circuits
-      // and does not attempt to clone the already-consumed body stream.
+      // Both accept types, so ensureMcpAcceptHeader short-circuits and the
+      // request reaches the transport unmodified.
       Accept: "application/json, text/event-stream",
     },
     body: JSON.stringify({ method: "initialize", id: 1, jsonrpc: "2.0" }),
@@ -370,5 +371,61 @@ describe("DELETE /mcp/w/[slug]", () => {
     });
     const res = await DELETE(req, makeParams());
     expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /mcp/w/[slug] — tools/call argument normalization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTransportHandleRequest.mockResolvedValue(
+      new Response("{}", { status: 200 })
+    );
+  });
+
+  // Every tools/call on this route arrives with a session header, so the
+  // session branch is the only path that matters here - and it used to hand
+  // the live Request to the SDK, where `arguments: null` became an opaque
+  // -32603.
+  it.each([
+    ["explicitly null", true],
+    ["omitted entirely", false],
+  ])("defaults tools/call arguments to {} when %s, before the transport sees it", async (_label, includeNullArguments) => {
+    vi.mocked(getWorkflowListing).mockResolvedValue({
+      ok: true,
+      listing: { ...makeListing(), isListed: true } as never,
+    });
+    mockAuthSuccess();
+    vi.mocked(getSession).mockReturnValue({
+      organizationId: "org-x",
+      transport: { handleRequest: mockTransportHandleRequest },
+    } as never);
+
+    const params: Record<string, unknown> = { name: "call_workflow" };
+    if (includeNullArguments) {
+      params.arguments = null;
+    }
+    const req = new Request("http://localhost/mcp/w/my-workflow", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer kh_test",
+        Accept: "application/json, text/event-stream",
+        "Mcp-Session-Id": "session-abc",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params,
+      }),
+    });
+    await POST(req, makeParams());
+
+    expect(mockTransportHandleRequest).toHaveBeenCalledTimes(1);
+    const [, options] = mockTransportHandleRequest.mock.calls[0] as unknown as [
+      Request,
+      { parsedBody: { params: { arguments: unknown } } },
+    ];
+    expect(options.parsedBody.params.arguments).toEqual({});
   });
 });
