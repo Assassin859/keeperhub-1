@@ -448,6 +448,16 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
 - `gte`: Greater than or equal to
 - `lte`: Less than or equal to
 
+The check function must resolve to exactly one supported scalar output.
+Solidity integers support all six operators. `address` and `bytes1` through
+`bytes32` support `eq` and `neq` only. `condition.value` must be a
+`BigInt`-compatible decimal or hexadecimal string. KeeperHub rejects empty,
+multi-output, compound, or otherwise unsupported ABI return shapes with HTTP
+`400` before the check RPC call. It also rejects an operator that the output
+type does not support, or a runtime result that cannot be compared, before the
+action executes. The action leg never forwards native value; `action.value` is
+not part of the supported request shape.
+
 ### Response
 
 **Condition Not Met:**

@@ -1845,7 +1845,7 @@ export function registerTools(
 
   server.tool(
     "execute_check_and_execute",
-    'Read a contract value, evaluate a condition, and execute an action if the condition is met. Useful for conditional on-chain operations (e.g., \'if balance > 1000, then transfer\'). Requires a wallet integration. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "balanceOf", "function_args": "[\\"0xHolder...\\"]", "condition": {"operator": "gt", "value": "1000"}, "action": {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"}} - note that function_args is a JSON array encoded as a string, on both the check and the action.',
+    'Read one supported scalar from a contract and execute an action if its condition is met. A single Solidity integer output supports every operator; a single address or bytes1 through bytes32 output supports eq and neq only. Empty, multiple, compound, and other scalar outputs are rejected before the RPC read. Useful for conditional on-chain operations (e.g., \'if balance > 1000, then transfer\'). Requires a wallet integration. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "balanceOf", "function_args": "[\\"0xHolder...\\"]", "condition": {"operator": "gt", "value": "1000"}, "action": {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"}} - note that function_args is a JSON array encoded as a string, on both the check and the action.',
     {
       contract_address: z
         .string()
@@ -1853,7 +1853,9 @@ export function registerTools(
       chain_id: looseString("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
-        .describe("Function to call for the check (e.g., 'balanceOf')"),
+        .describe(
+          "Function to call for the check; it must return one Solidity integer, address, or bytes1 through bytes32 value (e.g., 'balanceOf' or 'owner')"
+        ),
       function_args: looseJsonString(
         "JSON array of function arguments for the check"
       ).optional(),
@@ -1864,7 +1866,9 @@ export function registerTools(
         operator: z
           .enum(["eq", "neq", "gt", "lt", "gte", "lte"])
           .describe("Comparison operator"),
-        value: looseString("Target value to compare against"),
+        value: looseString(
+          "BigInt-compatible decimal or hexadecimal target value to compare against"
+        ),
       }),
       action: z.object({
         contract_address: z
