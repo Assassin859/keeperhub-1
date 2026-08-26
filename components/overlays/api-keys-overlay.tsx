@@ -89,8 +89,17 @@ export function CreateApiKeyOverlay({
     () => Object.fromEntries(SUPPORTED_SCOPES.map((s) => [s, true]))
   );
 
+  // Scope is only enforced for organisation keys (kh_): authenticateApiKey
+  // reads the column on organizationApiKeys, and requireScope gates on it.
+  // Webhook keys (wfb_) are looked up by hash in the workflow webhook route and
+  // dispatched without consulting scope, so offering the checkboxes there would
+  // promise a restriction nothing applies.
+  const scopesApply = keyType === "organisation";
   const activeScopes = SUPPORTED_SCOPES.filter((s) => selectedScopes[s]);
-  const hasScopeSelected = activeScopes.length > 0;
+  const hasScopeSelected = !scopesApply || activeScopes.length > 0;
+  // Omitted rather than sent-and-ignored for webhook keys, so the stored column
+  // says what is true: this key carries no scope restriction.
+  const scopesForRequest = scopesApply ? activeScopes : undefined;
 
   const toggleScope = (id: string, checked: boolean): void => {
     if (id === "mcp:admin" && checked) {
@@ -108,7 +117,10 @@ export function CreateApiKeyOverlay({
     fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: keyName.trim() || null, scopes: activeScopes }),
+      body: JSON.stringify({
+        name: keyName.trim() || null,
+        scopes: scopesForRequest,
+      }),
     });
 
   // Wallet users confirm by signing instead of entering TOTP + email codes.
@@ -128,7 +140,7 @@ export function CreateApiKeyOverlay({
             // The same Permissions block is shown to wallet users, so the
             // selection has to reach the API here too. Omitting it minted an
             // unscoped key that ignored whatever the user unchecked.
-            scopes: activeScopes,
+            scopes: scopesForRequest,
           }),
         })
       );
@@ -159,7 +171,7 @@ export function CreateApiKeyOverlay({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: keyName.trim() || null,
-          scopes: activeScopes,
+          scopes: scopesForRequest,
           code: dual.totpCode.trim(),
           emailOtp: dual.emailOtp.trim() || undefined,
         }),
@@ -255,35 +267,37 @@ export function CreateApiKeyOverlay({
             value={keyName}
           />
         </div>
-        <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Permissions
-          </p>
-          <div className="rounded-lg border bg-muted/30 p-4">
-            <ul className="space-y-3">
-              {SUPPORTED_SCOPES.map((scopeId) => {
-                const lockedByAdmin = scopeId !== "mcp:admin" && isAdminSelected;
-                return (
-                  <li key={scopeId}>
-                    <label
-                      className={`flex items-center gap-3 text-sm text-foreground ${lockedByAdmin ? "cursor-default opacity-50" : "cursor-pointer"}`}
-                    >
-                      <input
-                        checked={selectedScopes[scopeId] ?? false}
-                        className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
-                        disabled={lockedByAdmin}
-                        onChange={(e) => toggleScope(scopeId, e.target.checked)}
-                        type="checkbox"
-                        value={scopeId}
-                      />
-                      {SCOPE_LABELS[scopeId] ?? scopeId}
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
+        {scopesApply && (
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Permissions
+            </p>
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <ul className="space-y-3">
+                {SUPPORTED_SCOPES.map((scopeId) => {
+                  const lockedByAdmin = scopeId !== "mcp:admin" && isAdminSelected;
+                  return (
+                    <li key={scopeId}>
+                      <label
+                        className={`flex items-center gap-3 text-sm text-foreground ${lockedByAdmin ? "cursor-default opacity-50" : "cursor-pointer"}`}
+                      >
+                        <input
+                          checked={selectedScopes[scopeId] ?? false}
+                          className="h-4 w-4 shrink-0 rounded border-input accent-[var(--ds-green-accent)]"
+                          disabled={lockedByAdmin}
+                          onChange={(e) => toggleScope(scopeId, e.target.checked)}
+                          type="checkbox"
+                          value={scopeId}
+                        />
+                        {SCOPE_LABELS[scopeId] ?? scopeId}
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </Overlay>
   );

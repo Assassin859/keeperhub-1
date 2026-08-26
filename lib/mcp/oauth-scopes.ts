@@ -132,16 +132,22 @@ export function normalizeScope(requestedScope: string): string {
 /**
  * Coerce the `scopes` field from an API request body (array or space-separated
  * string) into a normalized scope string, or null when omitted.
+ *
+ * Null means "no scope restriction" and passes every gate, so it must be
+ * reachable only by leaving `scopes` out entirely. A caller that supplies the
+ * field gets normalizeScope, which floors at mcp:read -- so `[]`, `[1, 2]` and
+ * `""` narrow to the least privilege rather than widening to full access, the
+ * same way `["bogus"]` already did. Asking for nothing and receiving
+ * everything was the one input shape where the fallback ran the wrong way.
  */
 export function parseScopeInput(scopes: unknown): string | null {
   if (Array.isArray(scopes)) {
-    const raw = scopes
-      .filter((s): s is string => typeof s === "string")
-      .join(" ");
-    return raw.trim() ? normalizeScope(raw) : null;
+    return normalizeScope(
+      scopes.filter((s): s is string => typeof s === "string").join(" ")
+    );
   }
   if (typeof scopes === "string") {
-    return scopes.trim() ? normalizeScope(scopes) : null;
+    return normalizeScope(scopes);
   }
   return null;
 }

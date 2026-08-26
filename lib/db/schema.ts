@@ -699,6 +699,8 @@ export const workflowExecutions = pgTable(
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     output: jsonb("output").$type<any>(),
     error: text("error"),
+    // Mirrors ErrorCategory in lib/logging.ts. Plain text, not a pg enum, so
+    // keeping the two in step is a type-level change only.
     errorCategory: text("error_category").$type<
       | "validation"
       | "configuration"
@@ -706,6 +708,7 @@ export const workflowExecutions = pgTable(
       | "network_rpc"
       | "transaction"
       | "billing"
+      | "authorization"
       | "database"
       | "auth"
       | "infrastructure"
