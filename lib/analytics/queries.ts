@@ -13,7 +13,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { logInputField } from "@/lib/db/execution-log-fields";
+import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
 import {
   workflowExecutionLogs,
   workflowExecutions,
@@ -1002,41 +1002,43 @@ async function fetchWorkflowRuns(
   // workflow_execution_logs was a workaround that picked an arbitrary single
   // hash per run; multi-tx workflows (approve+swap, fan-outs) silently lost
   // every hash but one.
-  // Reads the denormalised network / gas_used_wei columns rather than
-  // re-parsing the double-encoded input/output JSONB per row - the cost the
-  // comment above fetchNetworkBreakdown records as the networks-endpoint 524.
-  // That matters more here now that the subquery no longer filters on gas and
-  // so covers every step row of the page. Columns are written by
-  // lib/workflow/executor/logging.ts and backfilled for legacy rows by
-  // scripts/backfill-exec-log-network-gas.ts.
+  // Gas and network are read as COALESCE(denormalised column, JSONB extract).
+  // The columns (migration 0117) are written by lib/workflow/executor/logging.ts
+  // - network at step start, gas_used_wei at step complete - and are NULL on
+  // every row written before it, so a column-only read returns no chain and no
+  // gas for historical runs. scripts/backfill-exec-log-network-gas.ts fills
+  // those rows; the JSONB arm is what keeps this correct while that runs, and on
+  // any row it has not reached. The re-parse cost the comment above
+  // fetchNetworkBreakdown records is not in play here: this subquery is already
+  // restricted to one page of executions (see pagedExecutionIds above), which is
+  // why it could afford the JSONB extract before this change.
+  const logStepNetwork = sql`COALESCE(${workflowExecutionLogs.network}, ${logInputField("network")})`;
+  const logStepHasGas = sql`(${workflowExecutionLogs.gasUsedWei} IS NOT NULL OR ${logOutputField("gasUsed")} IS NOT NULL)`;
+  const logStepGasWei = sql`COALESCE(${workflowExecutionLogs.gasUsedWei}, CAST(${logOutputField("gasUsed")} AS NUMERIC))`;
+
   const logSummary = db
     .select({
       executionId: workflowExecutionLogs.executionId,
-      gasUsedWei:
-        sql<string>`COALESCE(SUM(${workflowExecutionLogs.gasUsedWei}), 0)::text`.as(
-          "gasUsedWei"
-        ),
+      gasUsedWei: sql<string>`COALESCE(SUM(${logStepGasWei}), 0)::text`.as(
+        "gasUsedWei"
+      ),
       // A gas-bearing step names the chain the run actually spent on, so it
       // wins; any step that named one is the fallback. Both arms only matter
       // because this subquery no longer filters on gas: it used to require
-      // gas_used_wei IS NOT NULL, and since WHERE runs before GROUP BY, a run
-      // that never reached broadcast contributed no rows, formed no group, and
-      // left the join NULL - so a pre-flight failure (insufficient balance,
-      // spend cap, a bad address) came back with no chain at all, even when
-      // its own error named one ("Insufficient BASE balance"). A consumer of
-      // the audit trail could not tell which chain a failed run was on.
-      // logging.ts writes network at step start, before any such failure.
+      // gasUsed IS NOT NULL, and since WHERE runs before GROUP BY, a run that
+      // never reached broadcast contributed no rows, formed no group, and left
+      // the join NULL - so a pre-flight failure (insufficient balance, spend
+      // cap, a bad address) came back with no chain at all, even when its own
+      // error named one ("Insufficient BASE balance"). A consumer of the audit
+      // trail could not tell which chain a failed run was on. logging.ts writes
+      // network at step start, before any such failure.
       network: sql<string | null>`COALESCE(
-        MIN(
-          CASE WHEN ${workflowExecutionLogs.gasUsedWei} IS NOT NULL
-          THEN ${workflowExecutionLogs.network}
-          END
-        ),
-        MIN(${workflowExecutionLogs.network})
+        MIN(CASE WHEN ${logStepHasGas} THEN ${logStepNetwork} END),
+        MIN(${logStepNetwork})
       )`.as("network"),
       networks: sql<
         string[]
-      >`COALESCE(ARRAY_AGG(DISTINCT ${workflowExecutionLogs.network}) FILTER (WHERE ${workflowExecutionLogs.network} IS NOT NULL), '{}')`.as(
+      >`COALESCE(ARRAY_AGG(DISTINCT ${logStepNetwork}) FILTER (WHERE ${logStepNetwork} IS NOT NULL), '{}')`.as(
         "networks"
       ),
     })

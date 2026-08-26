@@ -32,6 +32,22 @@ const WORKFLOW_ID = `${PREFIX}wf`;
 const PREFLIGHT_ID = `${PREFIX}exec_preflight`;
 /** A run whose gas-bearing step and read-only step sit on different chains. */
 const MIXED_ID = `${PREFIX}exec_mixed`;
+/** Pre-migration-0117 pre-flight failure: chain in the JSONB, columns null. */
+const LEGACY_ID = `${PREFIX}exec_legacy`;
+/** Pre-migration-0117 gas-bearing run: gas in the JSONB, columns null. */
+const LEGACY_GAS_ID = `${PREFIX}exec_legacy_gas`;
+/** Same shape as LEGACY_ID, reserved for the backfill to repair in place. */
+const BACKFILL_ID = `${PREFIX}exec_backfill`;
+
+// Log ids are the backfill's keyset cursor, so they are chosen, not incidental:
+// the backfill case runs one batch from the cursor below, and every other
+// unbackfilled fixture row sorts before it and is therefore out of that batch's
+// reach. Without that the batch would repair the legacy rows too and the cases
+// above it would stop testing the unbackfilled path.
+const LEGACY_LOG_ID = `${PREFIX}log_za_legacy`;
+const LEGACY_GAS_LOG_ID = `${PREFIX}log_zb_legacy_gas`;
+const BACKFILL_CURSOR = `${PREFIX}log_zy`;
+const BACKFILL_LOG_ID = `${BACKFILL_CURSOR}_backfill`;
 
 describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
   let queryClient: ReturnType<typeof postgres>;
@@ -41,6 +57,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     range: "7d",
     options?: { limit?: number }
   ) => Promise<{ runs: UnifiedRun[] }>;
+  let applyBatch: (afterId: string, batchSize: number) => Promise<number>;
 
   async function cleanup(): Promise<void> {
     await queryClient`DELETE FROM workflow_execution_logs WHERE execution_id LIKE ${`${PREFIX}%`}`;
@@ -49,6 +66,12 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     await queryClient`DELETE FROM member WHERE organization_id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM users WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM organization WHERE id LIKE ${`${PREFIX}%`}`;
+  }
+
+  async function logNetworkColumn(logId: string): Promise<string | null> {
+    const rows =
+      await queryClient`SELECT network FROM workflow_execution_logs WHERE id = ${logId}`;
+    return (rows[0]?.network as string | null) ?? null;
   }
 
   beforeAll(async () => {
@@ -81,32 +104,38 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
       edges: [],
     });
 
-    await db.insert(workflowExecutions).values({
-      id: PREFLIGHT_ID,
+    const execution = (id: string, error?: string) => ({
+      id,
       workflowId: WORKFLOW_ID,
       userId: USER_ID,
-      status: "error" as const,
-      error: "Insufficient BASE balance",
+      status: (error ? "error" : "success") as "error" | "success",
+      error,
       startedAt: now,
       completedAt: now,
       totalSteps: "1",
-      completedSteps: "0",
-    });
-    await db.insert(workflowExecutions).values({
-      id: MIXED_ID,
-      workflowId: WORKFLOW_ID,
-      userId: USER_ID,
-      status: "success" as const,
-      startedAt: now,
-      completedAt: now,
-      totalSteps: "2",
-      completedSteps: "2",
+      completedSteps: error ? "0" : "1",
     });
 
-    // logging.ts writes network/gas into both the JSONB and the denormalised
-    // columns, so the fixture populates both: the failure this suite asserts
-    // must come from the subquery's gas predicate, not from a half-seeded row
-    // that only the column-reading variant can see.
+    await db
+      .insert(workflowExecutions)
+      .values([
+        execution(PREFLIGHT_ID, "Insufficient BASE balance"),
+        { ...execution(MIXED_ID), totalSteps: "2", completedSteps: "2" },
+        execution(LEGACY_ID, "Insufficient BASE balance"),
+        execution(LEGACY_GAS_ID),
+        execution(BACKFILL_ID, "Insufficient BASE balance"),
+      ]);
+
+    // Two row shapes matter here, and they are seeded separately on purpose.
+    //
+    // Post-0117 rows carry the value in both the JSONB and the denormalised
+    // column, because logging.ts writes both; the first three rows are those.
+    //
+    // Pre-0117 rows carry it only in the JSONB - migration 0117 added the
+    // columns null and no writer ever went back over the history. Those are the
+    // za/zb/zy rows, and they are what makes a column-only read regress: they
+    // are seeded with the column NULL so a read that ignores the JSONB returns
+    // nothing for them.
     await db.insert(workflowExecutionLogs).values([
       {
         id: `${PREFIX}log_preflight`,
@@ -146,9 +175,51 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
         network: "optimism",
         gasUsedWei: null,
       },
+      {
+        id: LEGACY_LOG_ID,
+        executionId: LEGACY_ID,
+        nodeId: "send-1",
+        nodeName: "Send",
+        nodeType: "web3",
+        status: "error",
+        input: { network: "base" },
+        error: "Insufficient BASE balance",
+        startedAt: now,
+        network: null,
+        gasUsedWei: null,
+      },
+      {
+        id: LEGACY_GAS_LOG_ID,
+        executionId: LEGACY_GAS_ID,
+        nodeId: "swap-1",
+        nodeName: "Swap",
+        nodeType: "web3",
+        status: "success",
+        input: { network: "base" },
+        output: { gasUsed: "31000" },
+        startedAt: now,
+        network: null,
+        gasUsedWei: null,
+      },
+      {
+        id: BACKFILL_LOG_ID,
+        executionId: BACKFILL_ID,
+        nodeId: "send-1",
+        nodeName: "Send",
+        nodeType: "web3",
+        status: "error",
+        input: { network: "base" },
+        error: "Insufficient BASE balance",
+        startedAt: now,
+        network: null,
+        gasUsedWei: null,
+      },
     ]);
 
     ({ getUnifiedRuns } = await import("@/lib/analytics/queries"));
+    ({ applyBatch } = await import(
+      "@/scripts/lib/exec-log-network-gas-backfill"
+    ));
   });
 
   afterAll(async () => {
@@ -182,5 +253,34 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
   it("lists every chain the run's steps targeted, gas-bearing or not", async () => {
     const run = await runById(MIXED_ID);
     expect([...run.networks].sort()).toEqual(["base", "optimism"]);
+  });
+
+  it("reads the chain from the JSONB when the column was never backfilled", async () => {
+    expect(await logNetworkColumn(LEGACY_LOG_ID)).toBeNull();
+    const run = await runById(LEGACY_ID);
+    expect(run.network).toBe("base");
+    expect(run.networks).toEqual(["base"]);
+  });
+
+  it("reads historical gas from the JSONB when the column was never backfilled", async () => {
+    const run = await runById(LEGACY_GAS_ID);
+    expect(run.gasUsedWei).toBe("31000");
+    expect(run.network).toBe("base");
+  });
+
+  it("backfills a gas-free legacy row, so the read moves onto the column", async () => {
+    expect(await logNetworkColumn(BACKFILL_LOG_ID)).toBeNull();
+
+    // One batch, scoped by cursor to this row alone: the gas-only predicate the
+    // backfill used to carry never selects it, since it has no gasUsed.
+    expect(await applyBatch(BACKFILL_CURSOR, 1)).toBe(1);
+    expect(await logNetworkColumn(BACKFILL_LOG_ID)).toBe("base");
+
+    const run = await runById(BACKFILL_ID);
+    expect(run.network).toBe("base");
+    expect(run.networks).toEqual(["base"]);
+
+    // Idempotent: the row no longer matches, so a re-run writes nothing.
+    expect(await applyBatch(BACKFILL_CURSOR, 1)).toBe(0);
   });
 });
