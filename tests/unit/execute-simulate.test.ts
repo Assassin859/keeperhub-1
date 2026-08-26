@@ -156,6 +156,49 @@ function resetSpies(): void {
 }
 
 describe("simulateContractCall", () => {
+  // The contract-call route calls this function directly rather than going
+  // through simulateTokenTransfer, so gating only the latter left
+  // POST /api/execute/contract-call?simulate=true reporting a clean dry run
+  // for a send the broadcast path then refuses.
+  it("reports the stablecoin ceiling on a direct contract-call simulation", async () => {
+    resetSpies();
+    rpcSpies.supportedTokensLookup.mockResolvedValueOnce([
+      {
+        tokenAddress: CONTRACT_ADDRESS,
+        decimals: 6,
+        symbol: "USDC",
+        isStablecoin: true,
+      },
+    ]);
+
+    const result = await simulateContractCall({
+      organizationId: "org_test",
+      network: "1",
+      contractAddress: CONTRACT_ADDRESS,
+      abi: JSON.stringify([
+        {
+          name: "transfer",
+          type: "function",
+          inputs: [
+            { name: "to", type: "address" },
+            { name: "amount", type: "uint256" },
+          ],
+          outputs: [{ name: "", type: "bool" }],
+        },
+      ]),
+      functionName: "transfer",
+      // 5,000 USDC at 6 decimals, well past the ceiling.
+      functionArgs: JSON.stringify([RECIPIENT_ADDRESS, "5000000000"]),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("per-transaction limit");
+    }
+    // Refused before any RPC work: the answer is knowable without simulating.
+    expect(executeWithFailover).not.toHaveBeenCalled();
+  });
+
   it("returns gas + decoded return value when the call succeeds", async () => {
     resetSpies();
     // ABI-encoded uint256(123)

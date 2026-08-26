@@ -314,12 +314,18 @@ export async function checkStablecoinCalldataBatch(params: {
   let totalMicroUsd = BigInt(0);
   let outflowSymbol: string | null = null;
 
+  // One read for the whole batch. Every call in a transaction shares a chain,
+  // so resolving each token separately meant N identical queries.
+  const chainTokens = await loadChainTokens(params.chainId);
+
   for (const call of params.calls) {
     const decoded = decodeErc20Outflow(call.data);
     if (!decoded) {
       continue;
     }
-    const token = await loadStablecoin(params.chainId, call.to);
+    const token = isHexAddress(call.to)
+      ? matchStablecoin(chainTokens, call.to)
+      : null;
     if (!token) {
       continue;
     }
@@ -551,6 +557,23 @@ function isKnownProtocolSpender(spender: string | undefined): boolean {
   return getKnownProtocolSpenders().has(spender.toLowerCase());
 }
 
+/**
+ * Every token row for a chain. Split from loadStablecoin so the batch path can
+ * read once rather than once per call: a 50-recipient payout was 50 identical
+ * round trips on the pre-broadcast path, where the latency is user-visible.
+ */
+async function loadChainTokens(chainId: number): Promise<TokenRow[]> {
+  return await db
+    .select({
+      tokenAddress: supportedTokens.tokenAddress,
+      decimals: supportedTokens.decimals,
+      symbol: supportedTokens.symbol,
+      isStablecoin: supportedTokens.isStablecoin,
+    })
+    .from(supportedTokens)
+    .where(eq(supportedTokens.chainId, chainId));
+}
+
 /** The registry row for a known stablecoin on this chain, or null. */
 async function loadStablecoin(
   chainId: number,
@@ -565,16 +588,20 @@ async function loadStablecoin(
   // lowercase but a resolved address is often checksummed, and an exact SQL
   // comparison against the wrong casing would silently find nothing -- which,
   // for a cap, means failing open.
-  const rows = await db
-    .select({
-      tokenAddress: supportedTokens.tokenAddress,
-      decimals: supportedTokens.decimals,
-      symbol: supportedTokens.symbol,
-      isStablecoin: supportedTokens.isStablecoin,
-    })
-    .from(supportedTokens)
-    .where(eq(supportedTokens.chainId, chainId));
+  return matchStablecoin(await loadChainTokens(chainId), tokenAddress);
+}
 
+type TokenRow = {
+  tokenAddress: string;
+  decimals: number;
+  symbol: string;
+  isStablecoin: boolean;
+};
+
+function matchStablecoin(
+  rows: readonly TokenRow[],
+  tokenAddress: string
+): StablecoinToken | null {
   const wanted = tokenAddress.toLowerCase();
   const token = rows.find(
     (row) => row.tokenAddress.toLowerCase() === wanted && row.isStablecoin
