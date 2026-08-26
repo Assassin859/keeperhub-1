@@ -490,12 +490,16 @@ describe("MFA gate", () => {
     }
   });
 
-  it("does not block public marketing + docs pages for signed-in users", async () => {
+  it("does not block the exempt public pages for signed-in users", async () => {
+    // Was ["/pricing", "/docs/getting-started"]. /pricing was one of four
+    // entries in MFA_EXEMPT_PAGES that named routes this app has never served
+    // (/pricing, /about, /terms, /privacy); they now live on keeperhub.com and
+    // the exempt list only names routes that exist.
     mockGetSession.mockResolvedValue({
       user: { id: "u1", twoFactorEnabled: false },
       session: { requiresMfa: false },
     });
-    for (const path of ["/pricing", "/docs/getting-started"]) {
+    for (const path of ["/welcome", "/docs/getting-started"]) {
       const res = await proxy(make(path, { headers: sessionCookieHeaders() }));
       expect(res.status).toBe(200);
     }
@@ -760,13 +764,11 @@ describe("markdown content negotiation", () => {
   });
 
   it("serves markdown for every negotiable path", async () => {
-    for (const path of [
-      "/about",
-      "/contact",
-      "/privacy",
-      "/pricing",
-      "/developers",
-    ]) {
+    // Only / and /welcome now: the five app-side pages were removed once they
+    // turned out to duplicate keeperhub.com and docs.keeperhub.com.
+    const { NEGOTIABLE_PATHS } = await import("@/lib/site/content");
+    expect(NEGOTIABLE_PATHS).toEqual(["/", "/welcome"]);
+    for (const path of NEGOTIABLE_PATHS) {
       const res = await proxy(make(path, { headers: MD }));
       expect(res.status, `${path} did not negotiate`).toBe(200);
       expect(res.headers.get("content-type")).toBe(
@@ -790,9 +792,10 @@ describe("markdown content negotiation", () => {
   });
 
   it("advertises the canonical URL on the markdown response", async () => {
-    const res = await proxy(make("/pricing", { headers: MD }));
+    const res = await proxy(make("/welcome", { headers: MD }));
+    // /welcome resolves to the homepage SitePage, so it canonicalises to "/".
     expect(res.headers.get("link")).toBe(
-      '<http://localhost:3000/pricing>; rel="canonical"'
+      '<http://localhost:3000/>; rel="canonical"'
     );
   });
 

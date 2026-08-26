@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { docsUrl } from "@/lib/site/identity";
+import { docsUrl, marketingUrl } from "@/lib/site/identity";
 
 /**
  * Root 404.
@@ -15,6 +15,7 @@ import { docsUrl } from "@/lib/site/identity";
  */
 export default function NotFound(): React.ReactElement {
   const docs = docsUrl();
+  const marketing = marketingUrl();
   const links: { label: string; href: string; description: string }[] = [
     {
       label: "Sitemap",
@@ -27,9 +28,9 @@ export default function NotFound(): React.ReactElement {
       description: "Machine-readable index of the whole product",
     },
     {
-      label: "Developer portal",
-      href: "/developers",
-      description: "API keys, quickstart, sandbox, rate limits, error model",
+      label: "Platform reference",
+      href: `${docs}/platform-reference`,
+      description: "API keys, MCP endpoint, chains, testnets, rate limits",
     },
     {
       label: "OpenAPI",
@@ -48,7 +49,7 @@ export default function NotFound(): React.ReactElement {
     },
     {
       label: "Contact",
-      href: "/contact",
+      href: `${marketing}/contact`,
       description: "How to reach a human",
     },
   ];

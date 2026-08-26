@@ -21,14 +21,9 @@ import { appUrl } from "@/lib/site/identity";
 /** Public surfaces every crawler may read, agent or otherwise. */
 const PUBLIC_ALLOW: readonly string[] = [
   "/",
-  "/about",
-  "/contact",
-  "/developers",
   "/hub",
   "/hub/tags/",
   "/marketplace",
-  "/pricing",
-  "/privacy",
   "/welcome",
 ];
 

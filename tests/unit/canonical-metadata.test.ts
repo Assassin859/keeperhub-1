@@ -59,11 +59,19 @@ describe("canonical URLs on crawlable routes", () => {
     );
   });
 
-  it("keeps every public SitePage canonical to its own path", () => {
-    // lib/site/metadata.ts builds these from the page path, so one assertion
-    // covers all six.
-    expect(source("lib/site/metadata.ts")).toContain(
-      "alternates: { canonical: page.path }"
-    );
+  it("does not reintroduce app-side copies of the marketing pages", async () => {
+    // /about, /contact, /privacy and /pricing live on keeperhub.com. A second
+    // self-canonical copy here competes with them for the same query, which is
+    // why they were removed. Adding one back should be a deliberate act.
+    const { PUBLIC_PAGE_PATHS } = await import("@/lib/site/content");
+    for (const path of [
+      "/about",
+      "/contact",
+      "/privacy",
+      "/pricing",
+      "/developers",
+    ]) {
+      expect(PUBLIC_PAGE_PATHS).not.toContain(path);
+    }
   });
 });

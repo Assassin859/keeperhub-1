@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { PLANS } from "@/lib/billing/plans";
 import {
   NEGOTIABLE_PATHS,
   negotiablePage,
@@ -71,35 +70,14 @@ describe("public site content", () => {
     expect(negotiablePage("/settings")).toBeNull();
   });
 
-  it("keeps the contact page on the mailboxes the marketing site publishes", () => {
-    const contact = publicPage("/contact");
-    const text = textOf(contact as SitePage);
-    expect(text).toContain("human@keeperhub.com");
-    expect(text).toContain("support@keeperhub.com");
-  });
-
-  it("publishes the registered address on the contact page", () => {
-    const headings = (publicPage("/contact")?.sections ?? []).map(
-      (section) => section.heading
-    );
-    expect(headings).toContain("Postal address");
-  });
-
-  it("renders the address in postal order with the country spelled out", () => {
-    // "EE" is correct for schema.org/addressCountry and wrong to show a person.
-    expect(textOf(publicPage("/contact") as SitePage)).toContain(
-      "Ahtri 12, 10151 Tallinn, Harju maakond, Estonia"
-    );
-  });
-
-  it("links the homepage to the API, the docs, and the developer portal", () => {
+  it("links the homepage to the API, the docs, and the marketing site", () => {
     // The audit's "public API/docs linked from homepage" check reads these.
     const hrefs = (publicPage("/")?.sections ?? []).flatMap((section) =>
       (section.links ?? []).map((link) => link.href)
     );
-    expect(hrefs).toContain("/developers");
     expect(hrefs).toContain("/openapi.json");
     expect(hrefs).toContain("/mcp");
+    expect(hrefs).toContain("/.well-known/mcp.json");
     // Host-exact, not a substring: "https://evil.test/docs.keeperhub.com"
     // satisfies an includes() check while pointing somewhere else entirely.
     expect(
@@ -108,77 +86,6 @@ describe("public site content", () => {
           href.startsWith("http") && new URL(href).host === "docs.keeperhub.com"
       )
     ).toBe(true);
-  });
-
-  describe("pricing", () => {
-    it("derives every plan row from lib/billing/plans.ts", () => {
-      const table = publicPage("/pricing")?.sections[0]?.table;
-      expect(table).toBeDefined();
-      const names = (table?.rows ?? []).map((row) => row[0]);
-      expect(names).toEqual([
-        PLANS.free.name,
-        PLANS.pro.name,
-        PLANS.business.name,
-        PLANS.enterprise.name,
-      ]);
-    });
-
-    it("quotes the Pro entry price that billing actually charges", () => {
-      const [entryTier] = PLANS.pro.tiers;
-      const proRow = publicPage("/pricing")?.sections[0]?.table?.rows.find(
-        (row) => row[0] === PLANS.pro.name
-      );
-      expect(proRow?.[1]).toContain(`$${entryTier.monthlyPrice}`);
-      expect(proRow?.[1]).toContain(`$${entryTier.monthlyPriceAnnual}`);
-    });
-
-    it("never leaks the raw supportLevel slug into the table", () => {
-      // "email-48h" / "dedicated-12h" are internal enum values and were
-      // rendering straight into the public pricing table.
-      const rows = publicPage("/pricing")?.sections[0]?.table?.rows ?? [];
-      for (const row of rows) {
-        for (const cell of row) {
-          expect(cell).not.toMatch(/^(email|dedicated)-\d+h$/);
-          expect(cell).not.toBe("community");
-        }
-      }
-      expect(rows.map((row) => row[6])).toEqual([
-        "Community",
-        "Email, 48h",
-        "Dedicated, 12h",
-        "Dedicated, 1h",
-      ]);
-    });
-
-    it("derives support targets from PLANS rather than restating them", () => {
-      // These were hand-written prose until review flagged the drift risk. A
-      // public page quoting a response time the product no longer offers is
-      // worse now that the same sentence is served as markdown agents repeat.
-      const contact = textOf(publicPage("/contact") as SitePage);
-      expect(contact).toContain("48-hour response target");
-      expect(contact).toContain("12-hour response target");
-      expect(contact).toContain("1-hour response target");
-      expect(contact).toContain(PLANS.business.features.sla as string);
-      expect(contact).toContain(PLANS.enterprise.features.sla as string);
-    });
-
-    it("does not state an SLA twice in the tier paragraphs", () => {
-      const pricing = publicPage("/pricing") as SitePage;
-      const business = pricing.sections.find(
-        (section) => section.heading === "Business tiers"
-      )?.paragraphs?.[0];
-      expect(business).toBeDefined();
-      const sla = PLANS.business.features.sla as string;
-      expect((business ?? "").split(sla).length - 1).toBe(1);
-    });
-
-    it("reports Enterprise as custom rather than inventing a number", () => {
-      const row = publicPage("/pricing")?.sections[0]?.table?.rows.find(
-        (entry) => entry[0] === PLANS.enterprise.name
-      );
-      expect(row?.[1]).toBe("Custom");
-      expect(row?.[2]).toBe("Custom");
-    });
   });
 });
 
@@ -205,7 +112,7 @@ function countHeadings(markdown: string, level: number): number {
 
 describe("markdown rendering", () => {
   it("opens with a single H1 and a blockquoted summary", () => {
-    const page = publicPage("/developers") as SitePage;
+    const page = publicPage("/") as SitePage;
     const markdown = renderPageMarkdown(page);
     expect(markdown.startsWith(`# ${page.heading}\n`)).toBe(true);
     expect(markdown).toContain(`> ${page.description}`);
@@ -222,7 +129,7 @@ describe("markdown rendering", () => {
   });
 
   it("renders every section as an H2", () => {
-    const page = publicPage("/about") as SitePage;
+    const page = publicPage("/") as SitePage;
     const markdown = renderPageMarkdown(page);
     for (const section of page.sections) {
       expect(markdown).toContain(`## ${section.heading}`);
@@ -230,17 +137,14 @@ describe("markdown rendering", () => {
     expect(countHeadings(markdown, 2)).toBe(page.sections.length);
   });
 
-  it("renders tables with a header row and a divider", () => {
-    const markdown = renderPageMarkdown(publicPage("/pricing") as SitePage);
-    expect(markdown).toContain("| Plan | Entry price |");
-    expect(markdown).toMatch(/\| --- \| --- \|/);
-  });
-
   it("rewrites site-relative links to absolute URLs", () => {
     // A markdown document travels away from its origin; a bare "/developers"
     // is unresolvable once an agent has copied it into a context window.
     const markdown = renderPageMarkdown(publicPage("/") as SitePage);
-    expect(markdown).toContain("](https://app.keeperhub.com/developers)");
+    // Site-relative hrefs like "/openapi.json" become absolute; a markdown
+    // document travels away from its origin and a bare path is unresolvable
+    // once an agent has copied it into a context window.
+    expect(markdown).toContain("](https://app.keeperhub.com/openapi.json)");
     expect(markdown).not.toMatch(/\]\(\/[a-z]/);
   });
 
@@ -275,7 +179,7 @@ describe("markdown rendering", () => {
   });
 
   it("escapes pipes so a cell cannot break the table", () => {
-    const markdown = renderPageMarkdown(publicPage("/pricing") as SitePage);
+    const markdown = renderPageMarkdown(publicPage("/") as SitePage);
     for (const line of markdown.split("\n")) {
       if (!line.startsWith("|")) {
         continue;
@@ -295,8 +199,6 @@ describe("markdown rendering", () => {
   });
 
   it("ends with a trailing newline", () => {
-    expect(renderPageMarkdown(publicPage("/contact") as SitePage)).toMatch(
-      /\n$/
-    );
+    expect(renderPageMarkdown(publicPage("/") as SitePage)).toMatch(/\n$/);
   });
 });

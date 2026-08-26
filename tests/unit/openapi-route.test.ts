@@ -572,11 +572,14 @@ describe("GET /api/openapi agent contracts", () => {
       expect(doc.paths["/api/keys"].get.security).toEqual([{ bearerAuth: [] }]);
     });
 
-    it("points at the developer portal, pricing, CLI, and sandbox", async () => {
+    it("points at the docs reference, CLI, and sandbox", async () => {
       const doc = await fetchDoc();
       const info = doc["x-service-info"];
-      expect(info.developerPortal).toBe("https://app.keeperhub.com/developers");
-      expect(info.pricing).toBe("https://app.keeperhub.com/pricing");
+      // Points at docs, not a duplicate page on this host.
+      expect(info.developerPortal).toBe(
+        "https://docs.keeperhub.com/platform-reference"
+      );
+      expect(info.errors).toBe("https://docs.keeperhub.com/api/errors");
       expect(info.cli.name).toBe("kh");
       expect(info.cli.install).toContain("brew install");
       expect(

@@ -125,7 +125,9 @@ describe("app/robots.ts", () => {
     expect(allow).toContain("/.well-known/");
   });
 
-  it("allows the public trust-anchor and developer pages", async () => {
+  it("does not advertise app-side copies of the marketing pages", async () => {
+    // They live on keeperhub.com. Allowing a duplicate here would invite a
+    // crawler to index two self-canonical copies of one page.
     const robotsModule = await import("@/app/robots");
     const rules = robotsModule.default().rules;
     const firstRule = Array.isArray(rules) ? rules[0] : rules;
@@ -139,8 +141,9 @@ describe("app/robots.ts", () => {
       "/pricing",
       "/developers",
     ]) {
-      expect(allow).toContain(path);
+      expect(allow).not.toContain(path);
     }
+    expect(allow).toContain("/welcome");
   });
 });
 

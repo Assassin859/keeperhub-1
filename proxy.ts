@@ -170,18 +170,14 @@ const MFA_EXEMPT_API_PREFIXES: readonly string[] = [
  * signed-in users on `/` must still be routed through enrollment /
  * step-up before any other navigation.
  *
- * Every entry must name a route that exists. `/terms` sat here for a long time
- * without one, which is not harmless: the list reads as the inventory of public
- * pages, so a dangling entry makes a page look shipped when it 404s. If terms
- * of service are published later, add the path back here and to
- * PUBLIC_PAGE_PATHS in lib/site/content.ts together.
+ * Every entry must name a route that exists. Four did not: /pricing, /about,
+ * /terms and /privacy sat here naming pages this app has never served. That is
+ * not harmless - the list reads as the inventory of public pages, so a dangling
+ * entry makes a page look shipped when it 404s. Those pages live on
+ * keeperhub.com. If any is ever served from this host, add the path back here
+ * and to PUBLIC_PAGE_PATHS in lib/site/content.ts together.
  */
 const MFA_EXEMPT_PAGES = new Set<string>([
-  "/pricing",
-  "/about",
-  "/contact",
-  "/developers",
-  "/privacy",
   "/welcome",
   "/enroll-mfa",
   "/enforce-mfa",

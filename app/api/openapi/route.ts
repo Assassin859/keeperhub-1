@@ -469,14 +469,13 @@ export async function GET(request: Request): Promise<Response> {
       headers: Object.keys(RATE_LIMIT_HEADERS),
       retryAfterHeader: "Retry-After",
       pollIntervalHeader: "X-Poll-Interval-Hint",
-      documented: `${baseUrl}/developers`,
+      documented: `${docsUrl()}/api/errors`,
     },
     "x-service-info": {
       categories: ["web3", "automation", "blockchain"],
       docs: { homepage: docsUrl() },
-      developerPortal: `${baseUrl}/developers`,
-      pricing: `${baseUrl}/pricing`,
-      contact: `${baseUrl}/contact`,
+      developerPortal: `${docsUrl()}/platform-reference`,
+      errors: `${docsUrl()}/api/errors`,
       mcp: {
         card: `${baseUrl}/.well-known/mcp.json`,
         endpoint: `${baseUrl}/mcp`,
