@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { SiteFooter } from "@/components/site/site-footer";
 import { WelcomeAuth } from "@/components/welcome/welcome-auth";
 import { auth } from "@/lib/auth";
 import { isAnonymousUser } from "@/lib/is-anonymous";
@@ -15,8 +16,11 @@ export default async function WelcomePage(): Promise<React.ReactElement> {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background p-6">
-      <WelcomeAuth />
-    </main>
+    <>
+      <main className="flex min-h-screen items-center justify-center bg-background p-6">
+        <WelcomeAuth />
+      </main>
+      <SiteFooter />
+    </>
   );
 }
