@@ -117,7 +117,12 @@ describe("requireScope (A-03)", () => {
 
       expect(mockLogUserError).toHaveBeenCalledTimes(1);
       const [category, message, error, labels] = mockLogUserError.mock.calls[0];
-      expect(category).toBe("auth");
+      // Not "auth": that maps to errors.system.auth.total, which the errors
+      // dashboard sums into its System Errors panels unfiltered. A caller using
+      // a credential outside its grant is user-caused, so it belongs on the
+      // user side of the taxonomy where the deny rate can climb without
+      // reading as a platform fault.
+      expect(category).toBe("authorization");
       expect(message).toBe("[RequireScope] Insufficient scope");
       expect(error).toBeUndefined();
       expect(labels).toMatchObject({
