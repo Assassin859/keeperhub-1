@@ -218,7 +218,7 @@ describe("no credential reaches the health payload", () => {
       factory: failingFactory,
       onPermanentFailure: () => undefined,
     });
-    const primary = `wss://chain.techops.services/eth-mainnet`;
+    const primary = "wss://chain.techops.services/eth-mainnet";
     const fallback = `wss://lb.drpc.live/eth-mainnet/${SECRET}`;
 
     await mgr
