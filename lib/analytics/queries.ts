@@ -8,6 +8,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   lt,
   type SQL,
   sql,
@@ -27,10 +28,15 @@ import {
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import {
+  getDefaultDailySolanaValueCapLamports,
+  getDefaultDailyValueCapWei,
+} from "@/lib/execute/spend-cap-defaults";
+import {
   sumOrgSolanaValueTodayLamports,
   sumOrgValueTodayWei,
 } from "@/lib/execute/value-ledger";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
+import { executionLogNotDeleted } from "@/lib/workflow/soft-delete";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -979,6 +985,9 @@ async function fetchWorkflowRuns(
     sql`${workflowExecutions.workflowId} IN (${orgWorkflowIds})`,
     gte(workflowExecutions.startedAt, rangeStart),
     lt(workflowExecutions.startedAt, rangeEnd),
+    // A purged run leaves the listing. Its gas stays in the summary tiles and
+    // the network breakdown, which count every row on purpose.
+    isNull(workflowExecutions.deletedAt),
   ];
 
   if (status) {
@@ -1221,6 +1230,9 @@ async function getWorkflowRunsTotal(
     eq(workflows.organizationId, organizationId),
     gte(workflowExecutions.startedAt, rangeStart),
     lt(workflowExecutions.startedAt, rangeEnd),
+    // Must match fetchWorkflowRuns: a total that counts rows the listing drops
+    // leaves the last page short and the cursor pointing at nothing.
+    isNull(workflowExecutions.deletedAt),
   ];
   if (projectId) {
     conditions.push(eq(workflows.projectId, projectId));
@@ -1351,7 +1363,10 @@ export async function getStepLogs(
     .where(
       and(
         eq(workflowExecutionLogs.executionId, executionId),
-        eq(workflows.organizationId, organizationId)
+        eq(workflows.organizationId, organizationId),
+        // Purged steps stay in the table for the gas aggregates, but this is
+        // the run detail a user reads, so it shows what they kept.
+        executionLogNotDeleted()
       )
     )
     .orderBy(workflowExecutionLogs.startedAt);
@@ -1382,6 +1397,10 @@ export async function getSpendCapData(organizationId: string): Promise<{
   dailyUsedWei: string;
   dailySolanaCapLamports: string | null;
   dailySolanaUsedLamports: string;
+  effectiveDailyCapWei: string;
+  effectiveDailySolanaCapLamports: string;
+  usingDefaultDailyCap: boolean;
+  usingDefaultDailySolanaCap: boolean;
 }> {
   // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
   // per day, summed across BOTH stores (direct executions AND the workflow/
@@ -1405,11 +1424,24 @@ export async function getSpendCapData(organizationId: string): Promise<{
     sumOrgSolanaValueTodayLamports(db, organizationId),
   ]);
 
+  // The configured columns are reported as-is (null means "this org set
+  // nothing"), alongside the figure enforcement will actually use. Without the
+  // effective pair, an unconfigured org -- and the get_spending_limits MCP tool
+  // an agent asks before planning a transfer -- would be told there is no cap
+  // while the platform default is quietly denying requests.
+  const configuredWei = capResult[0]?.dailyValueCapWei ?? null;
+  const configuredLamports = capResult[0]?.dailySolanaValueCapLamports ?? null;
+
   return {
-    dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
+    dailyCapWei: configuredWei,
     dailyUsedWei: dailyUsedWei.toString(),
-    dailySolanaCapLamports: capResult[0]?.dailySolanaValueCapLamports ?? null,
+    dailySolanaCapLamports: configuredLamports,
     dailySolanaUsedLamports: dailySolanaUsedLamports.toString(),
+    effectiveDailyCapWei: configuredWei ?? getDefaultDailyValueCapWei(),
+    effectiveDailySolanaCapLamports:
+      configuredLamports ?? getDefaultDailySolanaValueCapLamports(),
+    usingDefaultDailyCap: configuredWei === null,
+    usingDefaultDailySolanaCap: configuredLamports === null,
   };
 }
 
