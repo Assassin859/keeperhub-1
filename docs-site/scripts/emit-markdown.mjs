@@ -62,7 +62,12 @@ export function mapContentFile(relativePath) {
   return { route: route === "/" ? "/" : route, output };
 }
 
-async function* walk(dir) {
+/**
+ * Yields every markdown file under `dir`, following symlinks to both
+ * directories (`content` is one) and files. Exported so the symlink handling
+ * can be tested against a fixture tree rather than against build output.
+ */
+export async function* walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     // withFileTypes reports the link itself, so follow directories explicitly:

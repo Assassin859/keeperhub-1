@@ -93,27 +93,80 @@ describe("docs middleware method handling", () => {
 });
 
 describe("docs markdown emitter", () => {
-  it("resolves a symlinked page rather than dropping it", async () => {
-    // A symlink to a file fails readdir, and entry.isFile() reports the link
-    // rather than its target - so the page was skipped with no error, and
-    // would have rendered as HTML while 404ing on both .md routes.
-    const source = readFileSync("docs-site/scripts/emit-markdown.mjs", "utf8");
-    expect(source).toContain("const target = await stat(full)");
-    expect(source).toContain("target?.isFile()");
+  /**
+   * Runs the real walker over a fixture tree rather than over build output.
+   * An earlier version of this asserted on public/_md/manifest.json, which is
+   * gitignored build output - so it passed locally after a docs build and
+   * failed in CI, where unit tests run without one. Testing the emitter's
+   * behaviour needs a tree it can walk, not a tree someone already built.
+   */
+  async function walkFixture(
+    build: (root: string) => Promise<void> | void
+  ): Promise<string[]> {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { walk } = await import("../../docs-site/scripts/emit-markdown.mjs");
+
+    const root = await mkdtemp(join(tmpdir(), "emit-md-"));
+    try {
+      await build(root);
+      const found: string[] = [];
+      for await (const file of walk(root)) {
+        found.push(file.slice(root.length + 1));
+      }
+      return found.sort();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("finds markdown files, including nested ones", async () => {
+    const found = await walkFixture(async (root) => {
+      const { mkdir, writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      await writeFile(join(root, "index.md"), "# root");
+      await mkdir(join(root, "api"), { recursive: true });
+      await writeFile(join(root, "api", "auth.md"), "# auth");
+      await writeFile(join(root, "notes.txt"), "ignored");
+    });
+    expect(found).toEqual(["api/auth.md", "index.md"]);
   });
 
-  it("emits one file per markdown page in the content tree", async () => {
-    const { readdirSync, existsSync } = await import("node:fs");
-    const manifest = "docs-site/public/_md/manifest.json";
-    expect(existsSync(manifest)).toBe(true);
-    const { files } = JSON.parse(readFileSync(manifest, "utf8"));
-    // Every emitted path ends in .md and none escapes the prefix.
-    for (const file of files) {
-      expect(file.endsWith(".md")).toBe(true);
-      expect(file.startsWith("..")).toBe(false);
-    }
-    expect(files.length).toBeGreaterThan(100);
-    expect(readdirSync("docs-site/public/_md").length).toBeGreaterThan(0);
+  it("follows a symlink to a markdown file rather than dropping it", async () => {
+    // readdir on a file symlink fails, and entry.isFile() reports the link
+    // rather than its target - so before the stat() fallthrough the page was
+    // skipped with no error, rendering as HTML while 404ing on both .md routes.
+    const found = await walkFixture(async (root) => {
+      const { mkdir, writeFile, symlink } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      await mkdir(join(root, "real"), { recursive: true });
+      await writeFile(join(root, "real", "page.md"), "# page");
+      await symlink(join(root, "real", "page.md"), join(root, "linked.md"));
+    });
+    expect(found).toContain("linked.md");
+    expect(found).toContain("real/page.md");
+  });
+
+  it("follows a symlink to a directory, which is how content/ is wired", async () => {
+    const found = await walkFixture(async (root) => {
+      const { mkdir, writeFile, symlink } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      await mkdir(join(root, "elsewhere"), { recursive: true });
+      await writeFile(join(root, "elsewhere", "deep.md"), "# deep");
+      await symlink(join(root, "elsewhere"), join(root, "content"));
+    });
+    expect(found).toContain("content/deep.md");
+  });
+
+  it("ignores a dangling symlink instead of throwing", async () => {
+    const found = await walkFixture(async (root) => {
+      const { writeFile, symlink } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      await writeFile(join(root, "ok.md"), "# ok");
+      await symlink(join(root, "missing.md"), join(root, "broken.md"));
+    });
+    expect(found).toEqual(["ok.md"]);
   });
 });
 
