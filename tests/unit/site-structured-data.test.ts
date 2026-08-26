@@ -90,6 +90,17 @@ describe("homepage JSON-LD", () => {
       });
     });
 
+    it("points contact and pricing at the marketing site, not this host", async () => {
+      // /contact, /privacy and /pricing are served by keeperhub.com. They were
+      // briefly on this host; pointing structured data at them here shipped
+      // four 404s to exactly the crawlers this graph exists for.
+      const graph = JSON.stringify((await loadWith({})).siteJsonLd());
+      for (const path of ["/contact", "/privacy", "/pricing"]) {
+        expect(graph).toContain(`https://keeperhub.com${path}`);
+        expect(graph).not.toContain(`https://app.keeperhub.com${path}`);
+      }
+    });
+
     it("publishes KeeperHub's registered address by default", async () => {
       const { siteJsonLd } = await loadWith({});
       expect(nodeOfType(siteJsonLd(), "Organization").address).toEqual({

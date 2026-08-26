@@ -38,6 +38,7 @@ export default function robots(): MetadataRoute.Robots {
       ...AGENT_CRAWLER_USER_AGENTS.map((userAgent) => ({ userAgent, ...rule })),
     ],
     sitemap: `${BASE_URL}/sitemap.xml`,
-    host: BASE_URL,
+    // Bare hostname, not a URL - see the same note in app/robots.ts.
+    host: new URL(BASE_URL).host,
   };
 }

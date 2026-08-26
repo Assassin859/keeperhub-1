@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { negotiate as appNegotiate } from "@/lib/site/accept";
 import { AGENT_CRAWLER_USER_AGENTS } from "@/lib/site/crawlers";
@@ -67,6 +68,52 @@ describe("docs crawler allow-list parity", () => {
     for (const blocked of ["Bytespider", "Meta-ExternalAgent", "cohere-ai"]) {
       expect(docsCrawlers).not.toContain(blocked);
     }
+  });
+});
+
+describe("docs middleware method handling", () => {
+  it("negotiates on HEAD as well as GET, like the app proxy", () => {
+    // The parity suite above compares negotiate() across the two copies but
+    // not their callers, which is how this diverged unnoticed: docs gated on
+    // `method === "GET"`, so HEAD answered with HTML headers while GET with
+    // the same Accept answered Markdown.
+    const source = readFileSync("docs-site/middleware.ts", "utf8");
+    expect(source).toContain(
+      'request.method === "GET" || request.method === "HEAD"'
+    );
+    expect(source).not.toContain(
+      'if (request.method === "GET" && !isRscRequest'
+    );
+  });
+
+  it("matches the app proxy, which also handles both", () => {
+    const proxySource = readFileSync("proxy.ts", "utf8");
+    expect(proxySource).toContain('method !== "GET" && method !== "HEAD"');
+  });
+});
+
+describe("docs markdown emitter", () => {
+  it("resolves a symlinked page rather than dropping it", async () => {
+    // A symlink to a file fails readdir, and entry.isFile() reports the link
+    // rather than its target - so the page was skipped with no error, and
+    // would have rendered as HTML while 404ing on both .md routes.
+    const source = readFileSync("docs-site/scripts/emit-markdown.mjs", "utf8");
+    expect(source).toContain("const target = await stat(full)");
+    expect(source).toContain("target?.isFile()");
+  });
+
+  it("emits one file per markdown page in the content tree", async () => {
+    const { readdirSync, existsSync } = await import("node:fs");
+    const manifest = "docs-site/public/_md/manifest.json";
+    expect(existsSync(manifest)).toBe(true);
+    const { files } = JSON.parse(readFileSync(manifest, "utf8"));
+    // Every emitted path ends in .md and none escapes the prefix.
+    for (const file of files) {
+      expect(file.endsWith(".md")).toBe(true);
+      expect(file.startsWith("..")).toBe(false);
+    }
+    expect(files.length).toBeGreaterThan(100);
+    expect(readdirSync("docs-site/public/_md").length).toBeGreaterThan(0);
   });
 });
 

@@ -94,7 +94,8 @@ export function middleware(request: NextRequest) {
   }
 
   // The explicit alternate: /api/authentication.md -> the emitted file. Handled
-  // before the route check because ".md" is not a route segment.
+  // before the route check because ".md" is not a route segment. Method-agnostic
+  // on purpose: it is a static file, and HEAD on it should answer like GET.
   if (pathname.endsWith(MARKDOWN_SUFFIX)) {
     const target = `${MARKDOWN_PREFIX}${pathname}`;
     return withVary(NextResponse.rewrite(new URL(target, request.url)));
@@ -110,10 +111,16 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(new URL("/404", request.url));
   }
 
-  // Negotiated Markdown. Only for real GETs: an RSC navigation carries a
-  // permissive Accept, and answering it with Markdown would break client-side
-  // routing.
-  if (request.method === "GET" && !isRscRequest(request)) {
+  // Negotiated Markdown. GET and HEAD together, matching proxy.ts in the app:
+  // gating on GET alone meant `HEAD /concepts` answered with HTML headers while
+  // `GET /concepts` with the same Accept answered with Markdown, so a client
+  // probing with HEAD before fetching got the wrong content type. Excludes RSC
+  // navigations, which carry a permissive Accept and would break client-side
+  // routing if answered with Markdown.
+  if (
+    (request.method === "GET" || request.method === "HEAD") &&
+    !isRscRequest(request)
+  ) {
     const decision = negotiate(request.headers.get("accept"));
     if (decision.kind === "markdown") {
       return withVary(

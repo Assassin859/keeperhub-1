@@ -54,14 +54,18 @@ function organizationNode(): JsonLdNode {
         "@type": "ContactPoint",
         contactType: "customer support",
         email: supportEmail(),
-        url: `${appUrl()}/contact`,
+        // marketingUrl(), not appUrl(): /contact, /privacy and /pricing are
+        // served by keeperhub.com. They were briefly on this host and were
+        // removed as duplicates, so pointing structured data at them here
+        // would ship 404s to the crawlers this graph exists for.
+        url: `${marketingUrl()}/contact`,
         availableLanguage: ["en"],
       },
       {
         "@type": "ContactPoint",
         contactType: "privacy",
         email: privacyEmail(),
-        url: `${appUrl()}/privacy`,
+        url: `${marketingUrl()}/privacy`,
         availableLanguage: ["en"],
       },
     ],
@@ -83,10 +87,10 @@ function offerNode(plan: PlanName): JsonLdNode {
   const price = entryTier ? entryTier.monthlyPrice : 0;
   return {
     "@type": "Offer",
-    "@id": `${appUrl()}/pricing#${plan}`,
+    "@id": `${marketingUrl()}/pricing#${plan}`,
     name: definition.name,
     description: definition.description,
-    url: `${appUrl()}/pricing`,
+    url: `${marketingUrl()}/pricing`,
     price: String(price),
     priceCurrency: "USD",
     category: plan === "free" ? "free" : "subscription",

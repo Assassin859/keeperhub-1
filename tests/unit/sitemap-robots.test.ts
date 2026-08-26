@@ -52,6 +52,15 @@ describe("app/robots.ts", () => {
     expect(allow).toContain("/marketplace");
   });
 
+  it("emits a bare hostname in the Host directive", async () => {
+    // Host is not a URL. With a scheme the line is discarded by crawlers, so
+    // it looked configured while doing nothing.
+    const robotsModule = await import("@/app/robots");
+    const { host } = robotsModule.default();
+    expect(host).toBe("app.keeperhub.com");
+    expect(host).not.toMatch(/^https?:\/\//);
+  });
+
   it("points to a sitemap URL on the configured base URL", async () => {
     const robotsModule = await import("@/app/robots");
     const result = robotsModule.default();

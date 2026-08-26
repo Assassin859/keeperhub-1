@@ -68,6 +68,8 @@ export default function robots(): MetadataRoute.Robots {
       })),
     ],
     sitemap: `${baseUrl}/sitemap.xml`,
-    host: baseUrl,
+    // Bare hostname. The Host directive is not a URL, and a crawler discards
+    // the line if it carries a scheme.
+    host: new URL(baseUrl).host,
   };
 }

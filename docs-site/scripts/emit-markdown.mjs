@@ -30,7 +30,7 @@
  * Markdown representation say less than the HTML one.
  */
 
-import { readdir, mkdir, copyFile, rm } from "node:fs/promises";
+import { readdir, mkdir, copyFile, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,11 +68,26 @@ async function* walk(dir) {
     // withFileTypes reports the link itself, so follow directories explicitly:
     // `content` is a symlink to `../docs` in every non-Docker build.
     if (entry.isDirectory() || entry.isSymbolicLink()) {
-      const stat = await readdir(full, { withFileTypes: true }).catch(() => null);
-      if (stat) {
+      const listed = await readdir(full, { withFileTypes: true }).catch(
+        () => null
+      );
+      if (listed) {
         yield* walk(full);
         continue;
       }
+      // readdir failed, so this is a symlink to a file rather than to a
+      // directory. `entry.isFile()` reports the link, not its target, so the
+      // check below would be false and the page would be dropped silently -
+      // rendering as HTML but 404ing on both of its Markdown routes. Resolve
+      // the target instead. No symlinked pages exist today; this keeps the
+      // first one from disappearing without an error.
+      if (MARKDOWN_EXT.test(entry.name)) {
+        const target = await stat(full).catch(() => null);
+        if (target?.isFile()) {
+          yield full;
+        }
+      }
+      continue;
     }
     if (entry.isFile() && MARKDOWN_EXT.test(entry.name)) {
       yield full;

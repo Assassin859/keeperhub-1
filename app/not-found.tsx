@@ -17,6 +17,17 @@ export default function NotFound(): React.ReactElement {
   const docs = docsUrl();
   const marketing = marketingUrl();
   const links: { label: string; href: string; description: string }[] = [
+    // First, and in-app on purpose. notFound() is reachable from inside the
+    // authenticated app - a bad execution id renders this page, and
+    // /executions is in BARE_LAYOUT_PREFIXES, so the navigation sidebar is not
+    // rendered at all for that route. Every other link here points off host,
+    // which would leave a signed-in user with the browser back button as their
+    // only way out.
+    {
+      label: "KeeperHub",
+      href: "/",
+      description: "Back to the app",
+    },
     {
       label: "Sitemap",
       href: "/sitemap.xml",
