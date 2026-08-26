@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { negotiate as appNegotiate } from "@/lib/site/accept";
 import { AGENT_CRAWLER_USER_AGENTS } from "@/lib/site/crawlers";
@@ -72,23 +71,95 @@ describe("docs crawler allow-list parity", () => {
 });
 
 describe("docs middleware method handling", () => {
-  it("negotiates on HEAD as well as GET, like the app proxy", () => {
-    // The parity suite above compares negotiate() across the two copies but
-    // not their callers, which is how this diverged unnoticed: docs gated on
-    // `method === "GET"`, so HEAD answered with HTML headers while GET with
-    // the same Accept answered Markdown.
-    const source = readFileSync("docs-site/middleware.ts", "utf8");
-    expect(source).toContain(
-      'request.method === "GET" || request.method === "HEAD"'
+  /**
+   * Calls the middleware rather than grepping its source.
+   *
+   * The first version of this asserted on the text of the method condition,
+   * which is defeated in both directions: an early `if (request.method !==
+   * "GET") return ...` above the gate reintroduces the bug with the string
+   * still present, and extracting the condition into a variable, or a
+   * formatter rewrapping it, breaks the test with behaviour unchanged. It also
+   * grepped proxy.ts, so an unrelated refactor there failed a docs-site test.
+   */
+  async function call(
+    path: string,
+    {
+      method = "GET",
+      accept,
+      rsc,
+    }: { method?: string; accept?: string; rsc?: boolean } = {}
+  ) {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("../../docs-site/middleware");
+    const headers = new Headers(accept ? { accept } : {});
+    if (rsc) {
+      headers.set("rsc", "1");
+    }
+    const request = new NextRequest(
+      new URL(path, "https://docs.keeperhub.com"),
+      { method, headers }
     );
-    expect(source).not.toContain(
-      'if (request.method === "GET" && !isRscRequest'
+    // docs-site is a separate pnpm workspace with its own next (16.3.2 against
+    // the root's 16.2.11), so the two NextRequest types are structurally
+    // distinct even though they are the same class at runtime. Same forced
+    // duplication as lib/accept.ts. Cast through the callee's own parameter
+    // type rather than `any`, so a real signature change still fails here.
+    return middleware(request as unknown as Parameters<typeof middleware>[0]);
+  }
+
+  const MARKDOWN = "text/markdown";
+
+  it("rewrites a GET that negotiates markdown to the emitted file", async () => {
+    const res = await call("/api/authentication", { accept: MARKDOWN });
+    expect(res.headers.get("x-middleware-rewrite")).toContain(
+      "/_md/api/authentication.md"
+    );
+    expect(res.headers.get("vary")).toContain("Accept");
+  });
+
+  it("rewrites a HEAD the same way, not just a GET", async () => {
+    // The bug: gating on `method === "GET"` meant HEAD answered with HTML
+    // headers while GET with the same Accept answered Markdown, so a client
+    // probing with HEAD before fetching got the wrong content type.
+    const res = await call("/api/authentication", {
+      method: "HEAD",
+      accept: MARKDOWN,
+    });
+    expect(res.headers.get("x-middleware-rewrite")).toContain(
+      "/_md/api/authentication.md"
     );
   });
 
-  it("matches the app proxy, which also handles both", () => {
-    const proxySource = readFileSync("proxy.ts", "utf8");
-    expect(proxySource).toContain('method !== "GET" && method !== "HEAD"');
+  it("406s on HEAD as well as GET when nothing on offer is acceptable", async () => {
+    for (const method of ["GET", "HEAD"]) {
+      const res = await call("/concepts", { method, accept: "image/png" });
+      expect(res.status, `${method} did not 406`).toBe(406);
+    }
+  });
+
+  it("leaves a browser on HTML for both methods", async () => {
+    for (const method of ["GET", "HEAD"]) {
+      const res = await call("/concepts", {
+        method,
+        accept: "text/html,application/xhtml+xml,*/*;q=0.8",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-middleware-rewrite")).toBeNull();
+    }
+  });
+
+  it("serves the explicit .md alternate on both methods", async () => {
+    for (const method of ["GET", "HEAD"]) {
+      const res = await call("/api/authentication.md", { method });
+      expect(res.headers.get("x-middleware-rewrite")).toContain(
+        "/_md/api/authentication.md"
+      );
+    }
+  });
+
+  it("does not negotiate an RSC navigation", async () => {
+    const res = await call("/concepts", { accept: MARKDOWN, rsc: true });
+    expect(res.headers.get("x-middleware-rewrite")).toBeNull();
   });
 });
 
