@@ -1,38 +1,18 @@
 import "server-only";
 
-import { PublicKey } from "@solana/web3.js";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
-import { getAddressUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { resolveExplorerLink } from "@/lib/web3/explorer-link";
+import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
+import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-
-/**
- * Get userId from executionId by querying the workflowExecutions table
- */
-async function getUserIdFromExecution(
-  executionId: string | undefined
-): Promise<string | undefined> {
-  if (!executionId) {
-    return;
-  }
-
-  const execution = await db
-    .select({ userId: workflowExecutions.userId })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.id, executionId))
-    .limit(1);
-
-  return execution[0]?.userId;
-}
+import { validateChainAddress } from "@/lib/web3/validate-chain-address";
 
 type CheckBalanceResult =
   | {
@@ -66,7 +46,7 @@ async function stepHandler(
   const { network, address, _context } = input;
 
   // Get userId from execution context (for user RPC preferences)
-  const userId = await getUserIdFromExecution(_context?.executionId);
+  const userId = await getRpcPreferenceUserId(_context?.executionId);
   if (userId) {
     console.log(
       "[Check Balance] Using user RPC preferences for userId:",
@@ -99,35 +79,20 @@ async function stepHandler(
   const isSolana = isSolanaChain(chainId);
 
   // Validate the address for the chain family.
-  if (isSolana) {
-    try {
-      // Throws on non-base58 / wrong-length input.
-      new PublicKey(address);
-    } catch {
-      logUserError(
-        ErrorCategory.VALIDATION,
-        "[Check Balance] Invalid Solana address:",
-        address,
-        { plugin_name: "web3", action_name: "check-balance" }
-      );
-      return {
-        success: false,
-        error: `Invalid Solana address: ${address}`,
-      };
-    }
-  } else if (!ethers.isAddress(address)) {
+  if (!validateChainAddress(address, chainId)) {
     logUserError(
       ErrorCategory.VALIDATION,
-      "[Check Balance] Invalid address:",
+      isSolana
+        ? "[Check Balance] Invalid Solana address:"
+        : "[Check Balance] Invalid address:",
       address,
-      {
-        plugin_name: "web3",
-        action_name: "check-balance",
-      }
+      { plugin_name: "web3", action_name: "check-balance" }
     );
     return {
       success: false,
-      error: `Invalid Ethereum address: ${address}`,
+      error: isSolana
+        ? `Invalid Solana address: ${address}`
+        : `Invalid Ethereum address: ${address}`,
     };
   }
 
@@ -199,29 +164,14 @@ export async function checkBalanceStep(
   "use step";
 
   // Enrich input with address explorer link for the execution log
-  let enrichedInput: CheckBalanceInput & { addressLink?: string } = input;
-  try {
-    const chainId = getChainIdFromNetwork(input.network);
-    const explorerConfig = await db.query.explorerConfigs.findFirst({
-      where: eq(explorerConfigs.chainId, chainId),
-    });
-    if (explorerConfig) {
-      const addressLink = getAddressUrl(explorerConfig, input.address);
-      if (addressLink) {
-        enrichedInput = { ...input, addressLink };
-      }
-    }
-  } catch {
-    // Non-critical: if lookup fails, input logs without the link
-  }
+  const addressLink = await resolveExplorerLink(input.network, input.address);
+  const enrichedInput: CheckBalanceInput & { addressLink?: string } =
+    addressLink ? { ...input, addressLink } : input;
 
-  return withPluginMetrics(
-    {
-      pluginName: "web3",
-      actionName: "check-balance",
-      executionId: input._context?.executionId,
-    },
-    () => withStepLogging(enrichedInput, () => stepHandler(input))
+  return runPluginStep(
+    { pluginName: "web3", actionName: "check-balance" },
+    enrichedInput,
+    () => stepHandler(input)
   );
 }
 

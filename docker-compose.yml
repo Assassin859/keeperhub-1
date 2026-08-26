@@ -272,7 +272,11 @@ services:
     hostname: sandbox
     restart: unless-stopped
     ports:
-      - "8787:8787"
+      # Loopback only. This published the sandbox on every host interface, so
+      # any machine on the LAN could reach /run and execute code on a
+      # developer's box. In-cluster the NetworkPolicy restricts ingress to the
+      # keeperhub namespace; compose has no such control.
+      - "127.0.0.1:8787:8787"
     environment:
       NODE_ENV: production
       SANDBOX_PORT: "8787"
@@ -458,6 +462,39 @@ services:
           sh /scripts/digest-cron.sh http://app-dev:3000/api/internal/execution-digest || echo "[ExecutionDigest] Failed"
           echo ""
           echo "[ExecutionDigest] Sleeping 3600s..."
+          sleep 3600
+        done'
+    profiles:
+      - dev
+      - minikube
+
+  # ===========================================================================
+  # Quota Threshold Scan
+  # Backstop for the quota threshold emails. Admission notifies inline when an
+  # execution crosses 80% / 100%; this catches executor-driven runs, which do
+  # not go through that path. The endpoint debounces on its own notification
+  # table, so a run normally finds nothing to claim.
+  # ===========================================================================
+  quota-threshold-scan:
+    image: alpine:3.20
+    container_name: keeperhub-quota-threshold-scan
+    restart: unless-stopped
+    environment:
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
+    volumes:
+      - ./deploy/scripts:/scripts:ro
+    depends_on:
+      app-dev:
+        condition: service_started
+      hmac-seed:
+        condition: service_completed_successfully
+    command: |
+      sh -c 'apk add --no-cache curl openssl >/dev/null;
+        while true; do
+          echo "[QuotaThresholdScan] Running at $$(date)"
+          sh /scripts/reaper.sh http://app-dev:3000/api/internal/quota-threshold-scan || echo "[QuotaThresholdScan] Failed"
+          echo ""
+          echo "[QuotaThresholdScan] Sleeping 3600s..."
           sleep 3600
         done'
     profiles:

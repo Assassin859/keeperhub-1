@@ -15,6 +15,7 @@ const VALID_STATUSES = new Set<NormalizedStatus>([
   "error",
   "system_error",
   "external_error",
+  "skipped",
   "cancelled",
 ]);
 
@@ -28,7 +29,9 @@ export async function GET(req: NextRequest): Promise<Response> {
       { status: authCtx.status }
     );
   }
-  const scopeError = requireScope(authCtx.scope, SCOPE_MCP_READ);
+  const scopeError = requireScope(authCtx.scope, SCOPE_MCP_READ, {
+    credentialType: authCtx.authMethod,
+  });
   if (scopeError) {
     return scopeError;
   }

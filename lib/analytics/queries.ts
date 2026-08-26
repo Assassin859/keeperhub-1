@@ -8,6 +8,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  isNull,
   lt,
   type SQL,
   sql,
@@ -27,10 +28,15 @@ import {
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import {
+  getDefaultDailySolanaValueCapLamports,
+  getDefaultDailyValueCapWei,
+} from "@/lib/execute/spend-cap-defaults";
+import {
   sumOrgSolanaValueTodayLamports,
   sumOrgValueTodayWei,
 } from "@/lib/execute/value-ledger";
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
+import { executionLogNotDeleted } from "@/lib/workflow/soft-delete";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
@@ -50,7 +56,7 @@ import type {
 
 /**
  * Normalize workflow execution status to a unified status.
- * workflow_executions uses: pending | running | unconfirmed | success | error | cancelled
+ * workflow_executions uses: pending | running | unconfirmed | success | error | skipped | cancelled
  * direct_executions uses: pending | running | unconfirmed | completed | failed
  * We normalize to: pending | running | success | error
  */
@@ -69,6 +75,9 @@ export function normalizeStatus(
   }
   if (status === "cancelled") {
     return "cancelled";
+  }
+  if (status === "skipped") {
+    return "skipped";
   }
   // Both sources use "unconfirmed" for a broadcast the chain has not confirmed.
   // It is still in flight, not an outcome, so it reads as running in the UI.
@@ -151,6 +160,7 @@ function parseBucketRow(row: {
   success: string;
   error: string;
   cancelled: string;
+  skipped: string;
   pending: string;
   running: string;
 }): TimeSeriesBucket {
@@ -159,6 +169,7 @@ function parseBucketRow(row: {
     success: Number(row.success) || 0,
     error: Number(row.error) || 0,
     cancelled: Number(row.cancelled) || 0,
+    skipped: Number(row.skipped) || 0,
     pending: Number(row.pending) || 0,
     running: Number(row.running) || 0,
   };
@@ -176,6 +187,7 @@ function addBucketToMap(
     existing.success += bucket.success;
     existing.error += bucket.error;
     existing.cancelled += bucket.cancelled;
+    existing.skipped += bucket.skipped;
     existing.pending += bucket.pending;
     existing.running += bucket.running;
   } else {
@@ -279,6 +291,7 @@ async function computeAnalyticsSummary(
   const successCount = workflowStats.success + directStats.success;
   const errorCount = workflowStats.error + directStats.error;
   const cancelledCount = workflowStats.cancelled;
+  const skippedCount = workflowStats.skipped;
   const successRate = totalRuns > 0 ? successCount / totalRuns : 0;
 
   const avgDurationMs = computeAvgDuration(
@@ -293,6 +306,7 @@ async function computeAnalyticsSummary(
     successCount,
     errorCount,
     cancelledCount,
+    skippedCount,
     successRate,
     avgDurationMs,
     totalGasWei,
@@ -312,6 +326,7 @@ async function getWorkflowCounts(
   success: number;
   error: number;
   cancelled: number;
+  skipped: number;
   durationSum: number;
   durationCount: number;
 }> {
@@ -320,6 +335,7 @@ async function getWorkflowCounts(
       success: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
       error: sql<number>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
+      skipped: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'skipped' THEN 1 ELSE 0 END)`,
       durationSum: sql<number>`COALESCE(SUM(${workflowExecutions.duration}), 0)`,
       durationCount: sql<number>`SUM(CASE WHEN ${workflowExecutions.duration} IS NOT NULL THEN 1 ELSE 0 END)`,
     })
@@ -337,14 +353,16 @@ async function getWorkflowCounts(
   const row = result[0];
   const success = Number(row?.success) || 0;
   const error = Number(row?.error) || 0;
-  // Total counts only completed runs (success + error). Pending, running and
-  // cancelled runs are excluded so the success rate and Total Runs KPI ignore
-  // in-flight and cancelled executions.
+  // Total counts only completed runs (success + error). Pending, running,
+  // cancelled and skipped runs are excluded so the success rate and Total Runs
+  // KPI ignore in-flight runs, cancellations, and runs the platform refused
+  // before they started.
   return {
     total: success + error,
     success,
     error,
     cancelled: Number(row?.cancelled) || 0,
+    skipped: Number(row?.skipped) || 0,
     durationSum: Number(row?.durationSum) || 0,
     durationCount: Number(row?.durationCount) || 0,
   };
@@ -457,6 +475,7 @@ async function getPreviousPeriodSummary(
     successCount: workflowStats.success + directStats.success,
     errorCount: workflowStats.error + directStats.error,
     cancelledCount: workflowStats.cancelled,
+    skippedCount: workflowStats.skipped,
     avgDurationMs: computeAvgDuration(
       workflowStats.durationSum + directStats.durationSum,
       workflowStats.durationCount + directStats.durationCount
@@ -600,6 +619,7 @@ async function computeTimeSeries(
       success: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
       error: sql<string>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       cancelled: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'cancelled' THEN 1 ELSE 0 END)`,
+      skipped: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'skipped' THEN 1 ELSE 0 END)`,
       pending: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'pending' THEN 1 ELSE 0 END)`,
       running: sql<string>`SUM(CASE WHEN ${workflowExecutions.status} = 'running' THEN 1 ELSE 0 END)`,
     })
@@ -626,6 +646,7 @@ async function computeTimeSeries(
       success: sql<string>`SUM(CASE WHEN ${directExecutions.status} = 'completed' THEN 1 ELSE 0 END)`,
       error: sql<string>`SUM(CASE WHEN ${directExecutions.status} = 'failed' THEN 1 ELSE 0 END)`,
       cancelled: sql<string>`0`,
+      skipped: sql<string>`0`,
       pending: sql<string>`SUM(CASE WHEN ${directExecutions.status} = 'pending' THEN 1 ELSE 0 END)`,
       running: sql<string>`SUM(CASE WHEN ${directExecutions.status} IN ('running', 'unconfirmed') THEN 1 ELSE 0 END)`,
     })
@@ -674,6 +695,7 @@ type BucketRow = {
   success: string;
   error: string;
   cancelled: string;
+  skipped: string;
   pending: string;
   running: string;
 };
@@ -963,6 +985,9 @@ async function fetchWorkflowRuns(
     sql`${workflowExecutions.workflowId} IN (${orgWorkflowIds})`,
     gte(workflowExecutions.startedAt, rangeStart),
     lt(workflowExecutions.startedAt, rangeEnd),
+    // A purged run leaves the listing. Its gas stays in the summary tiles and
+    // the network breakdown, which count every row on purpose.
+    isNull(workflowExecutions.deletedAt),
   ];
 
   if (status) {
@@ -1205,6 +1230,9 @@ async function getWorkflowRunsTotal(
     eq(workflows.organizationId, organizationId),
     gte(workflowExecutions.startedAt, rangeStart),
     lt(workflowExecutions.startedAt, rangeEnd),
+    // Must match fetchWorkflowRuns: a total that counts rows the listing drops
+    // leaves the last page short and the cursor pointing at nothing.
+    isNull(workflowExecutions.deletedAt),
   ];
   if (projectId) {
     conditions.push(eq(workflows.projectId, projectId));
@@ -1335,7 +1363,10 @@ export async function getStepLogs(
     .where(
       and(
         eq(workflowExecutionLogs.executionId, executionId),
-        eq(workflows.organizationId, organizationId)
+        eq(workflows.organizationId, organizationId),
+        // Purged steps stay in the table for the gas aggregates, but this is
+        // the run detail a user reads, so it shows what they kept.
+        executionLogNotDeleted()
       )
     )
     .orderBy(workflowExecutionLogs.startedAt);
@@ -1366,6 +1397,10 @@ export async function getSpendCapData(organizationId: string): Promise<{
   dailyUsedWei: string;
   dailySolanaCapLamports: string | null;
   dailySolanaUsedLamports: string;
+  effectiveDailyCapWei: string;
+  effectiveDailySolanaCapLamports: string;
+  usingDefaultDailyCap: boolean;
+  usingDefaultDailySolanaCap: boolean;
 }> {
   // Mirror spending-cap enforcement exactly: the notional VALUE moved per org
   // per day, summed across BOTH stores (direct executions AND the workflow/
@@ -1389,11 +1424,24 @@ export async function getSpendCapData(organizationId: string): Promise<{
     sumOrgSolanaValueTodayLamports(db, organizationId),
   ]);
 
+  // The configured columns are reported as-is (null means "this org set
+  // nothing"), alongside the figure enforcement will actually use. Without the
+  // effective pair, an unconfigured org -- and the get_spending_limits MCP tool
+  // an agent asks before planning a transfer -- would be told there is no cap
+  // while the platform default is quietly denying requests.
+  const configuredWei = capResult[0]?.dailyValueCapWei ?? null;
+  const configuredLamports = capResult[0]?.dailySolanaValueCapLamports ?? null;
+
   return {
-    dailyCapWei: capResult[0]?.dailyValueCapWei ?? null,
+    dailyCapWei: configuredWei,
     dailyUsedWei: dailyUsedWei.toString(),
-    dailySolanaCapLamports: capResult[0]?.dailySolanaValueCapLamports ?? null,
+    dailySolanaCapLamports: configuredLamports,
     dailySolanaUsedLamports: dailySolanaUsedLamports.toString(),
+    effectiveDailyCapWei: configuredWei ?? getDefaultDailyValueCapWei(),
+    effectiveDailySolanaCapLamports:
+      configuredLamports ?? getDefaultDailySolanaValueCapLamports(),
+    usingDefaultDailyCap: configuredWei === null,
+    usingDefaultDailySolanaCap: configuredLamports === null,
   };
 }
 

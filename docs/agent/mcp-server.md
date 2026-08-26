@@ -202,7 +202,7 @@ mid-flight.
 | Tool | Description |
 |------|-------------|
 | `execute_workflow` | Trigger a manual execution. Returns an execution ID for status polling. |
-| `get_execution` | Get combined status and step-by-step logs for an execution in one response. Replaces the earlier `get_execution_status` + `get_execution_logs` pair. Its `transactionHashes` entries are receipt objects, not plain hash strings -- see [Transaction Hashes](/api/executions#transaction-hashes) for the field shape. |
+| `get_execution` | Get combined status and step-by-step logs for an execution in one response. Replaces the earlier `get_execution_status` + `get_execution_logs` pair. See [Get Execution](/agent/mcp-get-execution) for the full response shape, including `transactionHashes` (receipt objects, not plain hash strings), which fields are numbers versus strings, and the order log entries arrive in. |
 | `get_execution_status` | **Deprecated (v1.13)** — status only. Use `get_execution`. |
 | `get_execution_logs` | **Deprecated (v1.13)** — logs only. Use `get_execution`. |
 | `list_executions` | List workflow and direct executions with cursor pagination. |
@@ -399,6 +399,7 @@ Conditions reference previous node outputs using template syntax: `{{@nodeId:Lab
 |--------|----------------|
 | `web3/check-balance` | `network`, `address` |
 | `web3/check-token-balance` | `network`, `address`, `tokenConfig` |
+| `web3/get-spl-token-balance` | `network`, `address`, `tokenConfig` |
 | `web3/read-contract` | `network`, `contractAddress`, `abi`, `abiFunction` |
 
 ### Write Actions (require a wallet integration)

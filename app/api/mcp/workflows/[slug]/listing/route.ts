@@ -65,7 +65,7 @@ function mapListingError(
       {
         error: "MISSING_WRITE_ACTION",
         message:
-          "Workflows listed as workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action to the workflow before listing it.",
+          "Workflows listed as workflowType='write' must contain at least one write-contract, protocol-write, or batch-write-contract action node. Add the action to the workflow before listing it.",
       },
       { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
@@ -191,7 +191,9 @@ export async function POST(
     );
   }
 
-  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE, {
+    credentialType: authContext.authMethod,
+  });
   if (scopeError) {
     return scopeError;
   }
@@ -275,7 +277,9 @@ export async function PATCH(
     );
   }
 
-  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE, {
+    credentialType: authContext.authMethod,
+  });
   if (scopeError) {
     return scopeError;
   }
@@ -357,7 +361,9 @@ export async function DELETE(
     );
   }
 
-  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE, {
+    credentialType: authContext.authMethod,
+  });
   if (scopeError) {
     return scopeError;
   }

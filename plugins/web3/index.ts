@@ -1,4 +1,26 @@
 import type { IntegrationPlugin } from "@/plugins/registry";
+import {
+  amountField,
+  balanceCheckSuccessOutput,
+  checkErrorOutput,
+  contractAddressField,
+  evmNetworkField,
+  evmPrivateNetworkField,
+  executedCallArgsOutput,
+  executedCallContractAddressOutput,
+  executedCallRevertedOutput,
+  executedCallSponsoredOutput,
+  queryErrorOutput,
+  querySuccessOutput,
+  receiptChainIdOutput,
+  solanaNetworkField,
+  tokenConfigField,
+  tokenSymbolOutput,
+  transactionLinkOutput,
+  transferAmountOutput,
+  transferErrorOutput,
+  transferSuccessOutput,
+} from "@/plugins/field-fragments";
 import { registerIntegration } from "@/plugins/registry-core";
 import { Web3Icon } from "./icon";
 
@@ -36,10 +58,7 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "checkBalanceStep",
       stepImportPath: "check-balance",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the balance check succeeded",
-        },
+        balanceCheckSuccessOutput(),
         {
           field: "balance",
           description: "Balance in ETH (human-readable)",
@@ -52,10 +71,7 @@ const web3Plugin: IntegrationPlugin = {
           field: "address",
           description: "The address that was checked",
         },
-        {
-          field: "error",
-          description: "Error message if the check failed",
-        },
+        checkErrorOutput(),
       ],
       configFields: [
         {
@@ -71,7 +87,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Address",
           type: "template-input",
           placeholder: "0x... / Solana address / {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
       ],
@@ -84,10 +100,7 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "checkTokenBalanceStep",
       stepImportPath: "check-token-balance",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the balance check succeeded",
-        },
+        balanceCheckSuccessOutput(),
         {
           field: "balance",
           description: "Token balance object",
@@ -124,26 +137,76 @@ const web3Plugin: IntegrationPlugin = {
           field: "addressLink",
           description: "Explorer link to the wallet address",
         },
-        {
-          field: "error",
-          description: "Error message if the check failed",
-        },
+        checkErrorOutput(),
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          placeholder: "Select network",
-          required: true,
-        },
+        evmNetworkField(),
         {
           key: "address",
           label: "Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+          required: true,
+        },
+        tokenConfigField(),
+      ],
+    },
+    {
+      slug: "get-spl-token-balance",
+      label: "Get SPL Token Balance",
+      description: "Get SPL token balance of any Solana address",
+      category: "Web3",
+      stepFunction: "getSplTokenBalanceStep",
+      stepImportPath: "get-spl-token-balance",
+      outputFields: [
+        balanceCheckSuccessOutput(),
+        {
+          field: "balance",
+          description: "Token balance object",
+        },
+        {
+          field: "balance.balance",
+          description: "The token balance amount (human-readable string)",
+        },
+        {
+          field: "balance.balanceRaw",
+          description: "The token balance in raw units (string)",
+        },
+        {
+          field: "balance.symbol",
+          description: "The token symbol (e.g., USDC)",
+        },
+        {
+          field: "balance.decimals",
+          description: "The token decimals",
+        },
+        {
+          field: "balance.name",
+          description: "The token name",
+        },
+        {
+          field: "balance.tokenAddress",
+          description: "The token mint address",
+        },
+        {
+          field: "address",
+          description: "The wallet address that was checked",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to the wallet address",
+        },
+        checkErrorOutput(),
+      ],
+      configFields: [
+        solanaNetworkField(),
+        {
+          key: "address",
+          label: "Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
           required: true,
         },
         {
@@ -151,6 +214,8 @@ const web3Plugin: IntegrationPlugin = {
           label: "Token",
           type: "token-select",
           networkField: "network",
+          example:
+            '{"mode":"custom","customToken":{"address":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","symbol":"USDC"}}',
           required: true,
         },
       ],
@@ -165,23 +230,13 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "transferFundsStep",
       stepImportPath: "transfer-funds",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the transfer succeeded",
-        },
+        transferSuccessOutput(),
         {
           field: "transactionHash",
           description: "The transaction hash of the successful transfer",
         },
-        {
-          field: "chainId",
-          description:
-            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
-        },
-        {
-          field: "error",
-          description: "Error message if the transfer failed",
-        },
+        receiptChainIdOutput(),
+        transferErrorOutput(),
       ],
       configFields: [
         {
@@ -207,7 +262,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Recipient Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {
@@ -236,31 +291,15 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "transferTokenStep",
       stepImportPath: "transfer-token",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the transfer succeeded",
-        },
+        transferSuccessOutput(),
         {
           field: "transactionHash",
           description: "The transaction hash of the successful transfer",
         },
-        {
-          field: "chainId",
-          description:
-            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
-        },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
-        {
-          field: "amount",
-          description: "The amount transferred (human-readable)",
-        },
-        {
-          field: "symbol",
-          description: "The token symbol (e.g., USDC)",
-        },
+        receiptChainIdOutput(),
+        transactionLinkOutput(),
+        transferAmountOutput(),
+        tokenSymbolOutput(),
         {
           field: "recipient",
           description: "The recipient address",
@@ -270,59 +309,22 @@ const web3Plugin: IntegrationPlugin = {
           description:
             "Function that actually executed on the token contract, recovered by tracing the transaction. Identical for sponsored and direct sends.",
         },
-        {
-          field: "executedCall.contractAddress",
-          description: "Address the executed call actually hit",
-        },
-        {
-          field: "executedCall.args",
-          description: "Decoded arguments of the executed call, keyed by name",
-        },
-        {
-          field: "executedCall.sponsored",
-          description:
-            "Whether the transaction was routed through a gas-sponsorship relayer/wrapper",
-        },
-        {
-          field: "executedCall.reverted",
-          description: "Whether the executed call frame reverted",
-        },
-        {
-          field: "error",
-          description: "Error message if the transfer failed",
-        },
+        executedCallContractAddressOutput(),
+        executedCallArgsOutput(),
+        executedCallSponsoredOutput(),
+        executedCallRevertedOutput(),
+        transferErrorOutput(),
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          showPrivateVariants: true,
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "tokenConfig",
-          label: "Token",
-          type: "token-select",
-          networkField: "network",
-          required: true,
-        },
-        {
-          key: "amount",
-          label: "Amount",
-          type: "template-input",
-          placeholder: "100.50 or {{NodeName.amount}}",
-          example: "100.50",
-          required: true,
-        },
+        evmPrivateNetworkField(),
+        tokenConfigField(),
+        amountField(),
         {
           key: "recipientAddress",
           label: "Recipient Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {
@@ -352,22 +354,13 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "transferSplTokenStep",
       stepImportPath: "transfer-spl-token",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the transfer succeeded",
-        },
+        transferSuccessOutput(),
         {
           field: "transactionHash",
           description: "The transaction signature of the successful transfer",
         },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
-        {
-          field: "amount",
-          description: "The amount transferred (human-readable)",
-        },
+        transactionLinkOutput(),
+        transferAmountOutput(),
         {
           field: "mint",
           description: "The SPL token mint address",
@@ -390,20 +383,10 @@ const web3Plugin: IntegrationPlugin = {
           description:
             "Whether the recipient's token account was created by this transfer (the sender pays its rent)",
         },
-        {
-          field: "error",
-          description: "Error message if the transfer failed",
-        },
+        transferErrorOutput(),
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "solana",
-          placeholder: "Select network",
-          required: true,
-        },
+        solanaNetworkField(),
         {
           // Keyed "mint" rather than "mintAddress" on purpose: the field
           // renderer treats any key ending in "address" as an EVM address,
@@ -418,14 +401,7 @@ const web3Plugin: IntegrationPlugin = {
             "The SPL token's mint address (base58). Decimals are read from the mint account at execution time.",
           required: true,
         },
-        {
-          key: "amount",
-          label: "Amount",
-          type: "template-input",
-          placeholder: "100.50 or {{NodeName.amount}}",
-          example: "100.50",
-          required: true,
-        },
+        amountField(),
         {
           // No isAddressField: it would validate against an Ethereum address
           // pattern and reject every valid base58 Solana address.
@@ -456,10 +432,7 @@ const web3Plugin: IntegrationPlugin = {
           field: "transactionHash",
           description: "The transaction signature of the submitted transaction",
         },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
+        transactionLinkOutput(),
         {
           field: "gasUsedUnits",
           description: "Compute units consumed by the transaction",
@@ -479,14 +452,7 @@ const web3Plugin: IntegrationPlugin = {
         },
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "solana",
-          placeholder: "Select network",
-          required: true,
-        },
+        solanaNetworkField(),
         {
           key: "instructions",
           label: "Instructions",
@@ -527,10 +493,7 @@ const web3Plugin: IntegrationPlugin = {
           field: "transactionHash",
           description: "The transaction signature of the submitted transaction",
         },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
+        transactionLinkOutput(),
         {
           field: "gasUsedUnits",
           description: "Compute units consumed by the transaction",
@@ -550,14 +513,7 @@ const web3Plugin: IntegrationPlugin = {
         },
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "solana",
-          placeholder: "Select network",
-          required: true,
-        },
+        solanaNetworkField(),
         {
           key: "programId",
           label: "Program ID",
@@ -616,6 +572,257 @@ const web3Plugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "read-solana-account",
+      label: "Read Solana Account",
+      description:
+        "Read the raw account info (owner, lamports, data) for a Solana address. Read-only - no wallet or credentials required.",
+      category: "Web3",
+      stepFunction: "readSolanaAccountStep",
+      stepImportPath: "read-solana-account",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the read succeeded",
+        },
+        {
+          field: "exists",
+          description: "Whether the account exists on-chain",
+        },
+        {
+          field: "owner",
+          description: "The base58 address of the program that owns the account",
+        },
+        {
+          field: "lamports",
+          description: "Number of lamports assigned to the account",
+        },
+        {
+          field: "executable",
+          description: "Whether the account's data contains a loaded program",
+        },
+        {
+          field: "rentEpoch",
+          description: "The account's rent epoch, if applicable",
+        },
+        {
+          field: "dataBase64",
+          description: "The account's raw data, base64-encoded",
+        },
+        {
+          field: "dataLength",
+          description: "Length of the account's raw data in bytes",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to view the account",
+        },
+        {
+          field: "error",
+          description: "Error message if the read failed",
+        },
+      ],
+      configFields: [
+        solanaNetworkField(),
+        {
+          key: "accountAddress",
+          label: "Account Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+          required: true,
+        },
+      ],
+    },
+    {
+      slug: "read-solana-program-anchor",
+      label: "Read Solana Program (Anchor)",
+      description:
+        "Read a Solana account and decode it against an Anchor program's IDL. Read-only - no wallet or credentials required.",
+      category: "Web3",
+      stepFunction: "readSolanaProgramStep",
+      stepImportPath: "read-solana-program",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the read succeeded",
+        },
+        {
+          field: "result",
+          description: "The decoded account fields, per the IDL's account type",
+        },
+        {
+          field: "owner",
+          description: "The base58 address of the program that owns the account",
+        },
+        {
+          field: "lamports",
+          description: "Number of lamports assigned to the account",
+        },
+        {
+          field: "addressLink",
+          description: "Explorer link to view the account",
+        },
+        {
+          field: "error",
+          description: "Error message if the read or decode failed",
+        },
+      ],
+      configFields: [
+        solanaNetworkField(),
+        {
+          key: "accountAddress",
+          label: "Account Address",
+          type: "template-input",
+          placeholder: "Solana address or {{NodeName.address}}",
+          example: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+          helpTip: "The data account to read and decode - not the program's own address.",
+          required: true,
+        },
+        {
+          key: "programId",
+          label: "Program ID",
+          type: "template-input",
+          placeholder: "Program address (base58) or {{NodeName.programId}}",
+          example: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          helpTip:
+            "The base58 address of the Anchor program that owns this account. Verified against the account's actual owner before decoding.",
+          required: true,
+        },
+        {
+          key: "idl",
+          label: "Anchor IDL",
+          type: "json-editor",
+          placeholder:
+            '{ "address": "...", "metadata": {...}, "instructions": [...], "accounts": [...], "types": [...] }',
+          helpTip:
+            "The program's Anchor IDL as JSON (Anchor 0.30 or newer, with per-account discriminators). Paste the published IDL. Used to decode the account's raw data.",
+          required: true,
+        },
+        {
+          key: "accountType",
+          label: "Account Type",
+          type: "template-input",
+          placeholder: "Account type name, e.g. Vault",
+          helpTip:
+            "The name of the account type to decode as, exactly as it appears in the IDL's accounts array.",
+          required: true,
+        },
+      ],
+    },
+    {
+      slug: "query-solana-program-events",
+      label: "Query Solana Program Events",
+      description:
+        "Query historical Solana program events for backfill/reconciliation, paging backward through recent signatures",
+      category: "Web3",
+      stepFunction: "querySolanaProgramEventsStep",
+      stepImportPath: "query-solana-program-events",
+      outputFields: [
+        querySuccessOutput(),
+        {
+          field: "events",
+          description:
+            "Array of events found, each with signature, slot, blockTime, and either a decoded eventName/args (Anchor IDL provided) or raw log lines (no IDL)",
+        },
+        {
+          field: "oldestSignature",
+          description: "The oldest signature scanned in this query",
+        },
+        {
+          field: "newestSignature",
+          description: "The newest signature scanned in this query",
+        },
+        {
+          field: "signatureCount",
+          description: "Number of signatures scanned",
+        },
+        {
+          field: "eventCount",
+          description: "Number of events returned",
+        },
+        {
+          field: "truncated",
+          description:
+            "Whether the scan hit its page/signature cap before exhausting the window - if true, more history may exist behind nextBeforeSignature",
+        },
+        {
+          field: "nextBeforeSignature",
+          description:
+            "Pass this as beforeSignature on a follow-up call to continue paging further back",
+        },
+        {
+          field: "failedSignatureCount",
+          description:
+            "Number of signatures whose transaction could not be fetched even after retrying - their true event count is unknown and is not included in events or eventCount",
+        },
+        {
+          field: "otherEventNamesSeen",
+          description:
+            "When eventName is set, the distinct names of other decoded events that were filtered out - empty if nothing else was seen, useful for catching an eventName typo",
+        },
+        queryErrorOutput(),
+      ],
+      configFields: [
+        solanaNetworkField(),
+        {
+          key: "programId",
+          label: "Program ID",
+          type: "template-input",
+          placeholder: "Program address (base58) or {{NodeName.programId}}",
+          example: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          required: true,
+        },
+        {
+          key: "idl",
+          label: "Anchor IDL",
+          type: "json-editor",
+          placeholder:
+            '{ "address": "...", "metadata": {...}, "instructions": [...], "events": [...] }',
+          helpTip:
+            "The program's Anchor IDL as JSON. Used to decode event args. If omitted or invalid, events are returned as raw log lines instead of decoded fields.",
+        },
+        {
+          key: "eventName",
+          label: "Event Name",
+          type: "template-input",
+          placeholder: "Event name, e.g. Transfer",
+          helpTip:
+            "Only return events with this name (as it appears in the IDL's events array). Requires a valid Anchor IDL. Leave empty to return all decoded events.",
+        },
+        {
+          type: "group",
+          label: "Pagination",
+          defaultExpanded: true,
+          fields: [
+            {
+              key: "signatureLookback",
+              label: "Signature Lookback",
+              type: "template-input",
+              placeholder: "Number of signatures to scan (default: 1000)",
+              helpTip:
+                "How many recent signatures to scan backward from beforeSignature (or the newest signature). Default: 1000. Capped at 10000 per call.",
+            },
+            {
+              key: "beforeSignature",
+              label: "Before Signature",
+              type: "template-input",
+              placeholder: "Signature to page backward from (exclusive)",
+              helpTip:
+                "Start scanning just older than this signature. Pass a previous call's nextBeforeSignature here to continue a backfill. Defaults to the newest signature.",
+            },
+            {
+              key: "untilSignature",
+              label: "Until Signature",
+              type: "template-input",
+              placeholder: "Signature to stop at (exclusive lower bound)",
+              helpTip:
+                "Stop scanning just before this signature - it is not itself included in the results. Leave empty to stop only at the Signature Lookback cap.",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "read-contract",
       label: "Read Contract",
       description: "Read data from a smart contract (view/pure functions)",
@@ -638,22 +845,8 @@ const web3Plugin: IntegrationPlugin = {
         },
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "contractAddress",
-          label: "Contract Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.contractAddress}}",
-          example: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-          required: true,
-        },
+        evmNetworkField(),
+        contractAddressField(),
         {
           key: "abi",
           label: "Contract ABI",
@@ -720,7 +913,13 @@ const web3Plugin: IntegrationPlugin = {
         },
         {
           field: "gasLimit",
-          description: "Gas limit for the transaction",
+          description:
+            "Gas limit for the transaction (EVM only; 0 for Solana, which has no comparable ceiling)",
+        },
+        {
+          field: "computeUnitsConsumed",
+          description:
+            "Solana only: actual compute units consumed by the transaction",
         },
         {
           field: "blockNumber",
@@ -748,7 +947,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "network",
           label: "Network",
           type: "chain-select",
-          chainTypeFilter: "evm",
+          // No chainType filter: supports EVM and Solana transaction lookups.
           placeholder: "Select network",
           required: true,
         },
@@ -756,7 +955,7 @@ const web3Plugin: IntegrationPlugin = {
           key: "transactionHash",
           label: "Transaction Hash",
           type: "template-input",
-          placeholder: "0x... or {{NodeName.transactionHash}}",
+          placeholder: "0x... / Solana signature / {{NodeName.transactionHash}}",
           example:
             "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060",
           required: true,
@@ -932,10 +1131,7 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "queryEventsStep",
       stepImportPath: "query-events",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the query succeeded",
-        },
+        querySuccessOutput(),
         {
           field: "events",
           description:
@@ -953,28 +1149,11 @@ const web3Plugin: IntegrationPlugin = {
           field: "eventCount",
           description: "Number of events returned",
         },
-        {
-          field: "error",
-          description: "Error message if the query failed",
-        },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "contractAddress",
-          label: "Contract Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.contractAddress}}",
-          example: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-          required: true,
-        },
+        evmNetworkField(),
+        contractAddressField(),
         {
           key: "abi",
           label: "Contract ABI",
@@ -1035,10 +1214,7 @@ const web3Plugin: IntegrationPlugin = {
       stepFunction: "queryTransactionsStep",
       stepImportPath: "query-transactions",
       outputFields: [
-        {
-          field: "success",
-          description: "Whether the query succeeded",
-        },
+        querySuccessOutput(),
         {
           field: "transactions",
           description:
@@ -1066,28 +1242,11 @@ const web3Plugin: IntegrationPlugin = {
           field: "contractAddressLink",
           description: "Block explorer link for the contract",
         },
-        {
-          field: "error",
-          description: "Error message if the query failed",
-        },
+        queryErrorOutput(),
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "contractAddress",
-          label: "Contract Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.contractAddress}}",
-          example: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-          required: true,
-        },
+        evmNetworkField(),
+        contractAddressField(),
         {
           key: "abi",
           label: "Contract ABI",
@@ -1248,6 +1407,8 @@ const web3Plugin: IntegrationPlugin = {
           label: "Calls",
           type: "call-list-builder",
           required: true,
+          functionFilter: "read",
+          contractInteractionType: "read",
           helpTip:
             "Add contract calls to batch. Each call has its own network, contract address, ABI, function, and arguments.",
           showWhen: { field: "inputMode", equals: "mixed" },
@@ -1273,6 +1434,118 @@ const web3Plugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "batch-write-contract",
+      label: "Batch Write Contract",
+      description:
+        "Send multiple write calls as a single on-chain transaction via Multicall3. Each call carries its own contract, ABI, and function. Every call executes with msg.sender set to the Multicall3 contract, not your organization wallet: any call whose behavior depends on msg.sender (an approve() sets Multicall3's allowance, not the wallet's; an ownerOnly-style check fails) will not behave like a direct call from your wallet.",
+      category: "Web3",
+      requiresCredentials: true,
+      stepFunction: "batchWriteContractStep",
+      stepImportPath: "batch-write-contract",
+      outputFields: [
+        {
+          field: "success",
+          description:
+            "Whether the step completed. True for a real successful broadcast. Also true when failOnError is off and an execution failure (signer/RPC/whole-batch revert) was softened; check `error` to tell them apart.",
+        },
+        {
+          field: "transactionHash",
+          description:
+            "The transaction hash of the batch write. Present on a successful broadcast. Absent on a soft-failed (failOnError=false) call, on a revert, and on a pre-broadcast failure.",
+        },
+        {
+          field: "chainId",
+          description: "Chain the transaction was broadcast on.",
+        },
+        transactionLinkOutput(),
+        {
+          field: "gasUsed",
+          description: "Gas cost in wei for the whole batch",
+        },
+        {
+          field: "gasUsedUnits",
+          description: "Gas units consumed by the whole batch",
+        },
+        {
+          field: "effectiveGasPrice",
+          description: "Effective gas price paid",
+        },
+        {
+          field: "results",
+          description:
+            "Per-call outcome in call order: [{ success, result, error? }], decoded from a pre-broadcast simulation of the same batch this transaction executes.",
+        },
+        {
+          field: "totalCalls",
+          description: "Total number of calls in the batch",
+        },
+        {
+          field: "error",
+          description:
+            "Error message if the batch failed, or the softened error when failOnError is off",
+        },
+        {
+          field: "rejection",
+          description:
+            "Classified revert kind when the batch was rejected on-chain, when it could be determined",
+        },
+      ],
+      configFields: [
+        evmPrivateNetworkField(),
+        {
+          key: "calls",
+          label: "Calls",
+          type: "call-list-builder",
+          required: true,
+          functionFilter: "write",
+          contractInteractionType: "write",
+          hideNetworkColumn: true,
+          helpTip:
+            "Each call carries its own contract address, ABI, and function; args is positional and must match that call's selected function. All calls still run on this action's single selected Network above and broadcast as one signed transaction, with msg.sender set to the Multicall3 contract, not your wallet. Avoid batching msg.sender-gated calls (like approve()) here, since they would grant Multicall3 the allowance or permission, not your organization wallet.",
+        },
+        {
+          key: "isolateCallFailures",
+          label: "Isolate Call Failures",
+          type: "select",
+          options: [
+            {
+              value: "true",
+              label: "On, a failed call does not block the rest",
+            },
+            {
+              value: "false",
+              label: "Off, any failed call reverts the entire batch",
+            },
+          ],
+          defaultValue: "true",
+          helpTip:
+            "When on, one call reverting does not block the others: the transaction still succeeds and the failed call is reported in `results`. When off, any single call reverting reverts the entire batch, and since this transaction races the state read that produced `calls`, a job already worked by someone else can revert the whole batch.",
+        },
+        {
+          key: "failOnError",
+          label: "Fail workflow on error",
+          type: "fail-on-error-switch",
+          defaultValue: "true",
+          helpTip:
+            "When off, a failed batch send (signer/RPC error, or the whole tx reverting) passes a soft error to the next node instead of failing the run. Config/validation problems (bad ABI, missing function, malformed calls JSON) always fail the run regardless of this setting.",
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "batch-write-contract",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "approve-token",
       label: "Approve ERC20 Token",
       description:
@@ -1290,15 +1563,8 @@ const web3Plugin: IntegrationPlugin = {
           field: "transactionHash",
           description: "The transaction hash of the approval",
         },
-        {
-          field: "chainId",
-          description:
-            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
-        },
-        {
-          field: "transactionLink",
-          description: "Explorer link to view the transaction",
-        },
+        receiptChainIdOutput(),
+        transactionLinkOutput(),
         {
           field: "gasUsed",
           description: "Gas cost in wei",
@@ -1312,54 +1578,24 @@ const web3Plugin: IntegrationPlugin = {
           field: "spender",
           description: "The spender address that was approved",
         },
-        {
-          field: "symbol",
-          description: "The token symbol (e.g., USDC)",
-        },
+        tokenSymbolOutput(),
         {
           field: "executedCall.functionName",
           description:
             "Function that actually executed on the token contract, recovered by tracing the transaction. Identical for sponsored and direct sends.",
         },
-        {
-          field: "executedCall.contractAddress",
-          description: "Address the executed call actually hit",
-        },
-        {
-          field: "executedCall.args",
-          description: "Decoded arguments of the executed call, keyed by name",
-        },
-        {
-          field: "executedCall.sponsored",
-          description:
-            "Whether the transaction was routed through a gas-sponsorship relayer/wrapper",
-        },
-        {
-          field: "executedCall.reverted",
-          description: "Whether the executed call frame reverted",
-        },
+        executedCallContractAddressOutput(),
+        executedCallArgsOutput(),
+        executedCallSponsoredOutput(),
+        executedCallRevertedOutput(),
         {
           field: "error",
           description: "Error message if the approval failed",
         },
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          showPrivateVariants: true,
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "tokenConfig",
-          label: "Token",
-          type: "token-select",
-          networkField: "network",
-          required: true,
-        },
+        evmPrivateNetworkField(),
+        tokenConfigField(),
         {
           key: "spenderAddress",
           label: "Spender Address",
@@ -1414,37 +1650,18 @@ const web3Plugin: IntegrationPlugin = {
           field: "allowanceRaw",
           description: "Current allowance in raw units (wei string)",
         },
-        {
-          field: "symbol",
-          description: "The token symbol (e.g., USDC)",
-        },
-        {
-          field: "error",
-          description: "Error message if the check failed",
-        },
+        tokenSymbolOutput(),
+        checkErrorOutput(),
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "tokenConfig",
-          label: "Token",
-          type: "token-select",
-          networkField: "network",
-          required: true,
-        },
+        evmNetworkField(),
+        tokenConfigField(),
         {
           key: "ownerAddress",
           label: "Owner Address",
           type: "template-input",
           placeholder: "0x... or {{NodeName.address}}",
-          example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
           required: true,
         },
         {
@@ -1476,11 +1693,7 @@ const web3Plugin: IntegrationPlugin = {
           description:
             "The transaction hash of the write. Present on a successful write, and also on a genuine (non-softened) on-chain revert, since the transaction still reached the chain. Absent on a soft-failed (failOnError=false) call and on a pre-broadcast failure (signer/RPC/config error).",
         },
-        {
-          field: "chainId",
-          description:
-            "Chain the transaction was broadcast on. Required for on-chain receipt verification: a step that reports a transactionHash without a chainId fails the execution closed.",
-        },
+        receiptChainIdOutput(),
         {
           field: "result",
           description: "The contract function return value (if any)",
@@ -1490,23 +1703,10 @@ const web3Plugin: IntegrationPlugin = {
           description:
             "Function that actually executed on the target contract, recovered by tracing the transaction. Identical for sponsored and direct sends.",
         },
-        {
-          field: "executedCall.contractAddress",
-          description: "Address the executed call actually hit",
-        },
-        {
-          field: "executedCall.args",
-          description: "Decoded arguments of the executed call, keyed by name",
-        },
-        {
-          field: "executedCall.sponsored",
-          description:
-            "Whether the transaction was routed through a gas-sponsorship relayer/wrapper",
-        },
-        {
-          field: "executedCall.reverted",
-          description: "Whether the executed call frame reverted",
-        },
+        executedCallContractAddressOutput(),
+        executedCallArgsOutput(),
+        executedCallSponsoredOutput(),
+        executedCallRevertedOutput(),
         {
           field: "error",
           description:
@@ -1514,23 +1714,8 @@ const web3Plugin: IntegrationPlugin = {
         },
       ],
       configFields: [
-        {
-          key: "network",
-          label: "Network",
-          type: "chain-select",
-          chainTypeFilter: "evm",
-          showPrivateVariants: true,
-          placeholder: "Select network",
-          required: true,
-        },
-        {
-          key: "contractAddress",
-          label: "Contract Address",
-          type: "template-input",
-          placeholder: "0x... or {{NodeName.contractAddress}}",
-          example: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-          required: true,
-        },
+        evmPrivateNetworkField(),
+        contractAddressField(),
         {
           key: "abi",
           label: "Contract ABI",

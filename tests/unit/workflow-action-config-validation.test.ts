@@ -57,6 +57,62 @@ describe("validateWorkflowActionConfigs", () => {
     ]);
   });
 
+  it("names the offending node and suggests a case-mismatched system action type", () => {
+    const result = validateWorkflowActionConfigs([
+      {
+        id: "reserve-condition",
+        type: "action",
+        data: {
+          label: "Reserve condition",
+          type: "action",
+          config: { actionType: "condition" },
+        },
+      },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "UNKNOWN_ACTION_TYPE",
+        nodeId: "reserve-condition",
+        nodeLabel: "Reserve condition",
+        suggestion: "Condition",
+        message: 'Unknown action type "condition". Did you mean "Condition"?',
+      }),
+    ]);
+  });
+
+  it("attaches node identity to unknown-field issues", () => {
+    const result = validateWorkflowActionConfigs([
+      {
+        id: "balance-check",
+        type: "action",
+        data: {
+          label: "Check ETH Balance",
+          type: "action",
+          config: {
+            actionType: "web3/check-balance",
+            bogusField: "x",
+            network: "11155111",
+            address: "0xabc",
+          },
+        },
+      },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNKNOWN_FIELD",
+          field: "bogusField",
+          nodeId: "balance-check",
+          nodeLabel: "Check ETH Balance",
+        }),
+      ])
+    );
+  });
+
   it("rejects wrong config keys and missing required fields", () => {
     const result = validateWorkflowActionConfigs([
       actionNode("discord/send-message", { Message: "hello" }),
@@ -464,6 +520,104 @@ describe("validateWorkflowActionConfigs", () => {
       ]);
 
       expect(result).toEqual({ valid: true, issues: [] });
+    });
+  });
+
+  describe("batch-write-contract calls[] required fields", () => {
+    const DO_WRITE_ABI = JSON.stringify([
+      {
+        inputs: [],
+        name: "doWrite",
+        outputs: [],
+        stateMutability: "nonpayable",
+        type: "function",
+      },
+    ]);
+
+    const VALID_CALL = {
+      network: "1",
+      contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      abi: DO_WRITE_ABI,
+      abiFunction: "doWrite",
+      args: [],
+    };
+
+    it("accepts a batch whose every call is complete", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/batch-write-contract", {
+          network: "1",
+          calls: JSON.stringify([VALID_CALL, VALID_CALL]),
+        }),
+      ]);
+
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("flags a missing contractAddress on the second call, not just the first", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/batch-write-contract", {
+          network: "1",
+          calls: JSON.stringify([
+            VALID_CALL,
+            { ...VALID_CALL, contractAddress: "" },
+          ]),
+        }),
+      ]);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[0].data.config.calls[1].contractAddress",
+          field: "calls[1].contractAddress",
+          actionType: "web3/batch-write-contract",
+        }),
+      ]);
+    });
+
+    it("flags every missing field on a fully blank call", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/batch-write-contract", {
+          network: "1",
+          calls: JSON.stringify([
+            VALID_CALL,
+            {
+              network: "1",
+              contractAddress: "",
+              abi: "",
+              abiFunction: "",
+              args: [],
+            },
+          ]),
+        }),
+      ]);
+
+      expect(result.valid).toBe(false);
+      const paths = result.issues.map((issue) => issue.path);
+      expect(paths).toEqual([
+        "nodes[0].data.config.calls[1].contractAddress",
+        "nodes[0].data.config.calls[1].abi",
+        "nodes[0].data.config.calls[1].abiFunction",
+      ]);
+    });
+
+    it("rejects an unparseable calls value via the existing type check", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/batch-write-contract", {
+          network: "1",
+          calls: "not json",
+        }),
+      ]);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          path: "nodes[0].data.config.calls",
+          field: "calls",
+          actionType: "web3/batch-write-contract",
+        }),
+      ]);
     });
   });
 
@@ -1285,8 +1439,163 @@ describe("formatActionConfigValidationResponse", () => {
     expect(formatActionConfigValidationResponse(validation)).toEqual({
       error: "INVALID_ACTION_CONFIG",
       message:
-        "Workflow contains invalid action configuration. Fix the listed fields and save again.",
+        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send". Fix the listed fields and save again.',
       invalidFields: validation.issues,
     });
+  });
+
+  it("names the invalid node in the top-level message", () => {
+    const validation = validateWorkflowActionConfigs([
+      {
+        id: "reserve-condition",
+        type: "action",
+        data: {
+          label: "Reserve condition",
+          type: "action",
+          config: { actionType: "condition" },
+        },
+      },
+    ]);
+
+    expect(formatActionConfigValidationResponse(validation).message).toContain(
+      '"Reserve condition"'
+    );
+  });
+
+  it("caps node labels in the summary", () => {
+    const longLabel = "A".repeat(200);
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: longLabel,
+        },
+      ],
+    });
+
+    expect(result.message).toContain("...");
+    expect(result.message).not.toContain("A".repeat(101));
+  });
+
+  it("strips control characters from node labels in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: "My\x00Node",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"My Node"');
+  });
+
+  it("strips bidi isolates from node labels in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: "\u2067Send Payout\u2069",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"Send Payout"');
+  });
+
+  it("escapes format delimiters in node labels to prevent fake entries", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeLabel: 'A" (webhook/send)',
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"A\' [webhook/send]"');
+  });
+
+  it("falls back to nodeId when sanitised label is blank", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "bogus",
+          message: "Unknown field",
+          nodeId: "my-node",
+          nodeLabel: "\u200b",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"my-node"');
+  });
+
+  it("shows at most three distinct nodes in the summary", () => {
+    const issues = Array.from({ length: 10 }, (_, i) => ({
+      code: "UNKNOWN_FIELD" as const,
+      path: `nodes[${i}].data.config.bogus`,
+      actionType: "discord/send-message",
+      field: "bogus",
+      message: "Unknown field",
+      nodeLabel: `Node ${i}`,
+    }));
+
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues,
+    });
+
+    expect(result.message).toContain("and 7 more");
+  });
+
+  it("deduplicates repeated node labels in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.a",
+          actionType: "discord/send-message",
+          field: "a",
+          message: "Unknown field a",
+          nodeLabel: "Send Notification",
+        },
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.b",
+          actionType: "discord/send-message",
+          field: "b",
+          message: "Unknown field b",
+          nodeLabel: "Send Notification",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"Send Notification" (2 issues)');
   });
 });

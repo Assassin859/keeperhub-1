@@ -1,5 +1,5 @@
 import { isNull, type SQL } from "drizzle-orm";
-import { workflows } from "@/lib/db/schema";
+import { workflowExecutionLogs, workflows } from "@/lib/db/schema";
 
 /**
  * KEEP-440: Drizzle predicate that excludes soft-deleted workflow rows.
@@ -7,9 +7,7 @@ import { workflows } from "@/lib/db/schema";
  * Workflows are soft-deleted (`deletedAt` set) instead of hard-deleted so the
  * listed slug stays bound to the row and cannot be re-claimed by another
  * workflow. Every read that should treat a deleted workflow as gone must
- * compose this into its WHERE clause. The owner-facing workflow list is the
- * deliberate exception -- it keeps showing deleted rows so the UI can mark
- * them as deleted.
+ * compose this into its WHERE clause, the owner-facing list included.
  */
 export function workflowNotDeleted(): SQL {
   return isNull(workflows.deletedAt);
@@ -42,11 +40,34 @@ export function softDeleteValues(): {
 }
 
 /**
+ * Drizzle predicate that excludes soft-deleted step logs.
+ *
+ * Step logs are soft-deleted instead of erased because they carry the per-step
+ * network and gas the analytics breakdown aggregates. Compose this into the
+ * WHERE of any read that shows a user their own steps. Aggregate readers
+ * deliberately omit it and count every row, the same way the billing quota
+ * counters already treat soft-deleted runs, and so does the executor resume
+ * path, which must still read `output_raw` for a run purged mid-flight.
+ */
+export function executionLogNotDeleted(): SQL {
+  return isNull(workflowExecutionLogs.deletedAt);
+}
+
+/**
+ * The column write that retires a step log. Takes the timestamp so every row
+ * in one purge shares a single instant, which is what makes a purge
+ * identifiable after the fact.
+ */
+export function executionLogSoftDeleteValues(at: Date): { deletedAt: Date } {
+  return { deletedAt: at };
+}
+
+/**
  * Filter the owner-facing workflow list down to entries that belong in the
- * sidebar picker. Soft-deleted rows are dropped (audit/recovery still keeps
- * them in the API payload for other surfaces) and the internal `__current__`
- * stub is excluded. Disabled rows are intentionally kept -- the picker greys
- * them out and tags them rather than hiding them.
+ * sidebar picker: the internal `__current__` stub is excluded, and the
+ * deletedAt check is a second line of defence behind the route's own
+ * workflowNotDeleted() filter. Disabled rows are intentionally kept -- the
+ * picker greys them out and tags them rather than hiding them.
  */
 export function filterPickerVisible<
   T extends { name: string; deletedAt?: Date | string | null },

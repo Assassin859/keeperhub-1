@@ -111,7 +111,9 @@ export async function POST(
         );
       }
 
-      const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+      const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE, {
+      credentialType: authContext.authMethod,
+    });
       if (scopeError) {
         return scopeError;
       }
@@ -266,6 +268,7 @@ export async function POST(
             db.insert(workflowExecutions).values({
               id: executionId,
               workflowId,
+              organizationId: workflow.organizationId,
               userId,
               status: "pending",
               input,
@@ -285,6 +288,7 @@ export async function POST(
             .insert(workflowExecutions)
             .values({
               workflowId,
+              organizationId: workflow.organizationId,
               userId,
               status: "pending",
               input,

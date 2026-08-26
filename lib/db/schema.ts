@@ -13,6 +13,11 @@ import {
 } from "drizzle-orm/pg-core";
 import type { ErrorCode } from "../errors/error-codes";
 import type { ExecutionErrorType } from "../errors/execution-error-type";
+import type {
+  NodeExecutionStatus,
+  WorkflowExecutionStatus,
+} from "../errors/execution-status";
+import type { ErrorCategory } from "../logging";
 import type { IntegrationType } from "../types/integration";
 import { generateId } from "../utils/id";
 
@@ -668,42 +673,37 @@ export const workflowExecutions = pgTable(
     workflowId: text("workflow_id")
       .notNull()
       .references(() => workflows.id),
+    /**
+     * Owning organisation, denormalised off `workflows.organization_id` at
+     * insert. Every org-scoped read used to reach the org only by joining
+     * `workflows`, so the run's billing and analytics attribution lived in a
+     * row the run does not control. This column holds the attribution on the
+     * run itself, so quota counts and gas history survive whatever happens to
+     * the workflow.
+     *
+     * Nullable on rows written before the column existed, until
+     * scripts/backfill-execution-organization-id.ts has run. Read it through
+     * getOrganizationIdFromExecution, which falls back to the join.
+     */
+    organizationId: text("organization_id").references(() => organization.id),
     // Audit lineage only (the workflow's createdBy, or the triggering user
     // where one exists). Execution AUTHORITY - quotas, billing, credentials -
     // is the owning org: resolve it via getOrganizationIdFromExecution.
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
-    status: text("status").notNull().$type<
-      | "pending"
-      | "running"
-      // A run whose claimed transaction hashes could not be read on chain.
-      // Non-terminal: settled to success or error by the reconciler.
-      | "unconfirmed"
-      | "success"
-      | "error"
-      | "cancelled"
-      | "phantom"
-      | "system_error"
-    >(),
+    // Values and their meanings live on WorkflowExecutionStatus, so the API,
+    // the client and the executor all name the same set.
+    status: text("status").notNull().$type<WorkflowExecutionStatus>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<Record<string, any>>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     output: jsonb("output").$type<any>(),
     error: text("error"),
-    errorCategory: text("error_category").$type<
-      | "validation"
-      | "configuration"
-      | "external_service"
-      | "network_rpc"
-      | "transaction"
-      | "billing"
-      | "database"
-      | "auth"
-      | "infrastructure"
-      | "workflow_engine"
-      | "unknown"
-    >(),
+    // $type erases at compile time, so this tracks ErrorCategory in
+    // lib/logging.ts by reference rather than by a hand-copied union that has
+    // to be remembered whenever a category is added.
+    errorCategory: text("error_category").$type<ErrorCategory>(),
     errorType: text("error_type").$type<ExecutionErrorType>(),
     errorCode: text("error_code").$type<ErrorCode>(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
@@ -818,6 +818,9 @@ export const workflowExecutions = pgTable(
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
     index("idx_workflow_executions_user_id").on(table.userId),
+    // Backs the FK to organization: without it the RI check on an organization
+    // delete or key change scans this table, the largest one, under lock.
+    index("idx_workflow_executions_organization_id").on(table.organizationId),
     // Resolve "which runs executed this snapshot" / join to workflow_history.
     index("idx_workflow_executions_executed_hash").on(
       table.executedWorkflowHash
@@ -841,9 +844,7 @@ export const workflowExecutionLogs = pgTable(
     nodeId: text("node_id").notNull(),
     nodeName: text("node_name").notNull(),
     nodeType: text("node_type").notNull(),
-    status: text("status")
-      .notNull()
-      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+    status: text("status").notNull().$type<NodeExecutionStatus>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<any>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
@@ -872,6 +873,18 @@ export const workflowExecutionLogs = pgTable(
      */
     network: text("network"),
     gasUsedWei: numeric("gas_used_wei"),
+    /**
+     * Set when a user purges run history or force-deletes a workflow. These
+     * rows carry the per-step network and gas that the analytics gas
+     * breakdown aggregates, so erasing them tore a hole in historical spend
+     * that no query could explain. Soft-deleting keeps the history whole and
+     * hides the steps from the run detail views.
+     *
+     * Aggregate readers count every row, matching how the billing quota
+     * counters already treat soft-deleted runs. Only the views that show a
+     * user their own steps filter on it.
+     */
+    deletedAt: timestamp("deleted_at"),
   },
   (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
 );
@@ -909,7 +922,9 @@ export {
   type DirectExecutionReceiptEntry,
   directExecutions,
   type ExecutionDebt,
+  type ExecutionQuotaNotification,
   executionDebt,
+  executionQuotaNotifications,
   type GasCreditAllocation,
   type GasSponsorshipMonthly,
   gasCreditAllocations,
@@ -920,6 +935,7 @@ export {
   type NewBillingEvent,
   type NewDirectExecution,
   type NewExecutionDebt,
+  type NewExecutionQuotaNotification,
   type NewGasCreditAllocation,
   type NewGasSponsorshipMonthly,
   type NewOrganizationApiKey,

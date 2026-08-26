@@ -2,18 +2,25 @@
 
 import { useAtom, useAtomValue } from "jotai";
 import {
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   ExternalLink,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
   NormalizedStatus,
   StepLog,
@@ -178,6 +185,8 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
     "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20",
   cancelled:
     "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20",
+  // Refused before it started: neutral, not a failure colour.
+  skipped: "bg-muted text-muted-foreground border-border",
   running: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20",
   pending: "bg-gray-500/10 text-gray-700 dark:text-gray-400 border-gray-500/20",
 } as const;
@@ -185,16 +194,44 @@ const STATUS_STYLES: Record<NormalizedStatus, string> = {
 const STATUS_LABELS: Partial<Record<NormalizedStatus, string>> = {
   system_error: "System Error",
   external_error: "External",
+  skipped: "Skipped",
+};
+
+// The four outcome badges a user cannot tell apart from the label alone. Each
+// one answers "whose fault is it and what do I do about it".
+const STATUS_TOOLTIPS: Partial<Record<NormalizedStatus, string>> = {
+  skipped:
+    "The trigger fired but the run was refused before it started. Either the monthly execution limit was reached, or the workflow uses an action your plan does not include, or a pay-as-you-go charge could not be collected. Nothing ran, so a skipped run is not a failure and does not count towards your success rate or your usage.",
+  error:
+    "The run started and failed on something in the workflow itself: bad input, a missing or invalid credential, or a 4xx from an endpoint you configured. Fix the workflow and run it again.",
+  external_error:
+    "The run failed on a third party it called, not on the workflow and not on KeeperHub. Typical causes are an API or endpoint that timed out, a webhook host that was down, or a provider that returned a 5xx. Retrying usually works once the provider recovers.",
+  system_error:
+    "The run failed inside KeeperHub: dispatch, the queue, or a run that was reaped after it timed out. There is nothing to fix in your workflow.",
 };
 
 function StatusBadge({ status }: { status: NormalizedStatus }): ReactNode {
-  return (
+  const badge = (
     <Badge
       className={cn("capitalize", STATUS_STYLES[status])}
       variant="outline"
     >
       {STATUS_LABELS[status] ?? status}
     </Badge>
+  );
+
+  const tooltip = STATUS_TOOLTIPS[status];
+  if (!tooltip) {
+    return badge;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-help">{badge}</span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -219,6 +256,69 @@ function getStepStatusColor(status: string): string {
   return "bg-gray-400";
 }
 
+const COPIED_FOR_MS = 1500;
+
+// The default tooltip surface inverts the page; an error blob reads better on
+// the same panel the rest of the run details use. The arrow goes with it.
+const ERROR_TOOLTIP_SURFACE =
+  "border bg-popover text-popover-foreground shadow-md [&>span]:hidden";
+
+function CopyErrorButton({ text }: { text: string }): ReactNode {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(
+    (event: MouseEvent): void => {
+      event.stopPropagation();
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), COPIED_FOR_MS);
+    },
+    [text]
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          aria-label="Copy error message"
+          className="shrink-0 rounded p-0.5 text-muted-foreground transition hover:text-foreground"
+          onClick={handleCopy}
+          type="button"
+        >
+          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className={ERROR_TOOLTIP_SURFACE}>
+        {copied ? "Copied" : "Copy error"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** The clipped one-liner in the row; hovering it reveals the whole message. */
+function StepErrorMessage({ message }: { message: string }): ReactNode {
+  return (
+    <span className="flex min-w-0 shrink items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="min-w-0 max-w-md truncate rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] text-red-700 leading-tight dark:text-red-400">
+            {message}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent
+          className={cn(
+            ERROR_TOOLTIP_SURFACE,
+            "max-w-sm text-left font-mono text-[11px] leading-relaxed wrap-anywhere"
+          )}
+        >
+          {message}
+        </TooltipContent>
+      </Tooltip>
+      <CopyErrorButton text={message} />
+    </span>
+  );
+}
+
 type StepLogRowProps = {
   step: StepLog;
 };
@@ -240,14 +340,7 @@ function StepLogRow({ step }: StepLogRowProps): ReactNode {
               ({step.nodeType})
             </span>
           </span>
-          {step.error ? (
-            <span
-              className="max-w-[40%] truncate rounded bg-red-500/10 px-1.5 py-0.5 text-[11px] leading-tight text-red-700 dark:text-red-400"
-              title={step.error}
-            >
-              {step.error}
-            </span>
-          ) : null}
+          {step.error ? <StepErrorMessage message={step.error} /> : null}
         </div>
       </td>
       <td className="whitespace-nowrap py-1.5 pr-3 text-xs text-muted-foreground">
@@ -315,8 +408,29 @@ function ExpandedStepRows({
   const errorMessage = getCustomerRunErrorMessage(run);
   return (
     <tr>
-      <td className="py-2 pl-10 text-xs text-muted-foreground" colSpan={8}>
-        {errorMessage ?? "No step logs available"}
+      <td className="py-2 pl-10 pr-3 text-xs text-muted-foreground" colSpan={8}>
+        <div className="flex items-start gap-2">
+          {errorMessage ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="line-clamp-3 wrap-anywhere">
+                  {errorMessage}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent
+                className={cn(
+                  ERROR_TOOLTIP_SURFACE,
+                  "max-w-sm text-left font-mono text-[11px] leading-relaxed wrap-anywhere"
+                )}
+              >
+                {errorMessage}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <span>No step logs available</span>
+          )}
+          {errorMessage ? <CopyErrorButton text={errorMessage} /> : null}
+        </div>
       </td>
     </tr>
   );

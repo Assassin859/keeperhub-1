@@ -1,8 +1,11 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs } from "@/lib/db/schema";
-import { isErrorStatus } from "@/lib/errors/execution-status";
+import {
+  isErrorStatus,
+  type NodeExecutionStatus,
+} from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
@@ -15,11 +18,12 @@ import {
   redactExecutionStatusForPublicView,
   resolveExecutionViewAccess,
 } from "@/lib/workflow/execution-access";
+import { executionLogNotDeleted } from "@/lib/workflow/soft-delete";
 import { checkExecutionStatusRateLimit } from "@/lib/workflow/execution-status-rate-limit";
 
 type NodeStatus = {
   nodeId: string;
-  status: "pending" | "running" | "success" | "error" | "cancelled";
+  status: NodeExecutionStatus;
 };
 
 // Statuses after which there is nothing left to poll for. Mirrors the set the
@@ -28,6 +32,7 @@ const TERMINAL_STATUSES = new Set([
   "success",
   "error",
   "system_error",
+  "skipped",
   "cancelled",
 ]);
 const POLL_INTERVAL_HINT_SECONDS = 2;
@@ -129,7 +134,11 @@ export async function GET(
     const { execution } = viewAccess;
 
     const logs = await db.query.workflowExecutionLogs.findMany({
-      where: eq(workflowExecutionLogs.executionId, executionId),
+      // Per-step detail of one run, so a purge hides it here too.
+      where: and(
+        eq(workflowExecutionLogs.executionId, executionId),
+        executionLogNotDeleted()
+      ),
     });
 
     const nodeStatuses: NodeStatus[] = logs.map((log) => ({

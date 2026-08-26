@@ -245,9 +245,30 @@ app:
 
   env:
     <<: *shared_env
+    # Status page embedded in the app shell. The application renders the
+    # script only when this is set, so a deployment that does not run a status
+    # page - which is any deployment but ours - makes no request for it.
+    STATUS_EMBED_SRC:
+      type: kv
+      value: "https://status.keeperhub.com/embed/script.js"
     LOG_LEVEL:
       type: kv
       value: "info"
+    # Organization spending caps. Set here so an operator can widen one that is
+    # binding a live integrator by editing this file and cutting a release,
+    # rather than changing code. Both the app and the executor enforce them:
+    # direct executions run in the app, workflow steps run in the executor.
+    # Daily EVM native value an organization may move, in wei, when it has
+    # configured no cap of its own. 0.02 ETH. Absent from the environment means
+    # the compiled-in default applies, NOT unlimited.
+    EXECUTE_DEFAULT_DAILY_VALUE_CAP_WEI:
+      type: kv
+      value: "20000000000000000"
+    # Same, for Solana native value, in lamports. 0.5 SOL. Independent of the
+    # wei cap: an unset Solana cap never falls back to the EVM figure.
+    EXECUTE_DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS:
+      type: kv
+      value: "500000000"
     METRICS_COLLECTOR:
       type: kv
       value: "prometheus"
@@ -719,6 +740,33 @@ app:
         failedJobsHistoryLimit: 3
         restartPolicy: OnFailure
         backoffLimit: 2
+      - name: quota-threshold-scan
+        image:
+          repository: ${ECR_REGISTRY}/keeperhub-prod
+          tag: app-${IMAGE_TAG}
+          imagePullPolicy: Always
+        schedule: "37 * * * *" # hourly; the notification table debounces, so this only needs to catch executor-driven crossings
+        command: ["/bin/sh"]
+        args:
+          - "/app/deploy/scripts/reaper.sh"
+          - "http://keeperhub-common:3000/api/internal/quota-threshold-scan"
+        env:
+          INTERNAL_SERVICE_HMAC_SECRET:
+            type: parameterStore
+            name: internal-service-hmac-secret
+            parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "10m"
+        concurrencyPolicy: Forbid
+        successfulJobsHistoryLimit: 3
+        failedJobsHistoryLimit: 3
+        restartPolicy: OnFailure
+        backoffLimit: 2
       - name: overage-scan
         image:
           repository: ${ECR_REGISTRY}/keeperhub-prod
@@ -924,6 +972,21 @@ executor:
     HEALTH_PORT:
       type: kv
       value: "3080"
+    # Organization spending caps. Set here so an operator can widen one that is
+    # binding a live integrator by editing this file and cutting a release,
+    # rather than changing code. Both the app and the executor enforce them:
+    # direct executions run in the app, workflow steps run in the executor.
+    # Daily EVM native value an organization may move, in wei, when it has
+    # configured no cap of its own. 0.02 ETH. Absent from the environment means
+    # the compiled-in default applies, NOT unlimited.
+    EXECUTE_DEFAULT_DAILY_VALUE_CAP_WEI:
+      type: kv
+      value: "20000000000000000"
+    # Same, for Solana native value, in lamports. 0.5 SOL. Independent of the
+    # wei cap: an unset Solana cap never falls back to the EVM figure.
+    EXECUTE_DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS:
+      type: kv
+      value: "500000000"
     JOB_TTL_SECONDS:
       type: kv
       value: "300"

@@ -871,6 +871,18 @@ const safeFetchBlocks = getOrCreateCounter(
   ["reason", "plugin_name", "shadow"]
 );
 
+// Degradation signal for the per-organization MCP rate limit. Every increment
+// is a decision served by the per-pod fallback instead of the shared Redis
+// window, i.e. a decision taken against a ceiling of LIMIT * num_replicas
+// rather than LIMIT. A non-zero rate here means the fleet-wide limit is not
+// being enforced.
+const mcpRateLimitDegraded = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_mcp_rate_limit_degraded_total",
+  "MCP rate-limit decisions served from the per-pod fallback because the shared Redis window was unavailable, labelled by reason",
+  ["reason"]
+);
+
 // Error counters
 const pluginErrors = getOrCreateCounter(
   apiRegistry,
@@ -920,6 +932,13 @@ const userConfigurationErrors = getOrCreateCounter(
   apiRegistry,
   "keeperhub_errors_user_configuration_total",
   "User configuration errors",
+  ERROR_LABELS
+);
+
+const userAuthorizationErrors = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_errors_user_authorization_total",
+  "User authorization errors",
   ERROR_LABELS
 );
 
@@ -1028,6 +1047,28 @@ export function recordWorkflowExecutionFinished(labels: {
     status: labels.status,
     org_slug: labels.orgSlug,
     error_type: labels.errorType,
+  });
+}
+
+// Runs the platform refused before they started: over the plan's execution
+// limit, a gated action, or an unpaid pay-as-you-go charge. Deliberately its own
+// series rather than a `finished` status: a refused run never executed, so it
+// belongs in neither the error count nor the success-rate denominator, but it
+// still has to be visible or the refusals become invisible in Prometheus.
+const workflowExecutionsSkipped = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_skipped_total",
+  "Workflow executions refused before starting, by org_slug and reason (execution_limit, plan_feature, payg_unpaid). Not failures: these runs never executed.",
+  ["org_slug", "reason"]
+);
+
+export function recordWorkflowExecutionSkipped(labels: {
+  orgSlug: string;
+  reason: string;
+}): void {
+  workflowExecutionsSkipped.inc({
+    org_slug: labels.orgSlug,
+    reason: labels.reason,
   });
 }
 
@@ -1390,6 +1431,7 @@ const counterMap: Record<string, Counter> = {
   "billing.overage.charged": billingOverageCharged,
   // KEEP-612: see safeFetchBlocks definition above for rationale.
   "safe_fetch.blocks.total": safeFetchBlocks,
+  "ratelimit.mcp.degraded.total": mcpRateLimitDegraded,
 };
 
 const errorCounterMap: Record<string, Counter> = {
@@ -1398,6 +1440,7 @@ const errorCounterMap: Record<string, Counter> = {
   // User-caused errors
   "errors.user.validation.total": userValidationErrors,
   "errors.user.configuration.total": userConfigurationErrors,
+  "errors.user.authorization.total": userAuthorizationErrors,
   "errors.external.service.total": externalServiceErrors,
   "errors.network.rpc.total": networkRpcErrors,
   "errors.transaction.blockchain.total": transactionBlockchainErrors,

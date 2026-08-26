@@ -18,6 +18,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -468,7 +469,11 @@ export const supportedTokens = pgTable(
       .primaryKey()
       .$defaultFn(() => generateId()),
     chainId: integer("chain_id").notNull(),
-    tokenAddress: text("token_address").notNull(), // ERC20 contract address (lowercase)
+    // ERC20 contract address, stored lowercase - this convention is EVM-only.
+    // A Solana row (SPL mint) MUST be stored with its exact base58 case: base58
+    // has no checksum, so lowercasing can silently decode to a different, still
+    // -valid 32-byte key rather than failing loudly.
+    tokenAddress: text("token_address").notNull(),
     symbol: text("symbol").notNull(), // e.g., "USDC", "USDT", "DAI"
     name: text("name").notNull(), // e.g., "USD Coin", "Tether USD"
     decimals: integer("decimals").notNull(),
@@ -766,9 +771,17 @@ export type NewIdempotencyRecord = typeof idempotencyRecords.$inferInsert;
  * accounted at its true 9-decimal precision instead of being scaled to 18
  * decimals to share the ETH cap.
  *
- * When no row exists for an org, or the relevant cap column is null, spending
- * of that kind is unlimited (no cap enforced). The two caps are independent:
- * a null Solana cap does not fall back to the wei cap.
+ * When no row exists for an org, or the relevant cap column is null, the
+ * platform default in `lib/execute/spend-cap-defaults.ts` applies -- there is
+ * no "unlimited" state, because an org that has never opened the settings page
+ * is indistinguishable from one that deliberately wanted no ceiling. The two
+ * caps are independent: a null Solana cap falls back to the Solana default,
+ * not to the wei cap.
+ *
+ * A row with both cap columns NULL is therefore normal, not a mistake: the
+ * reservation paths create one on an org's first value-moving request purely so
+ * `SELECT ... FOR UPDATE` has something to lock (see lockOrgSpendCapRow in
+ * lib/execute/value-ledger.ts).
  */
 export const organizationSpendCaps = pgTable("organization_spend_caps", {
   id: text("id")
@@ -1425,3 +1438,52 @@ export const paygPayments = pgTable(
 
 export type PaygPayment = typeof paygPayments.$inferSelect;
 export type NewPaygPayment = typeof paygPayments.$inferInsert;
+
+/**
+ * Execution quota threshold notifications
+ *
+ * One row per (org, quota period, threshold) that has been announced. The
+ * unique constraint is the debounce: the scan runs hourly and inserts with
+ * ON CONFLICT DO NOTHING, so only the run that wins the insert sends mail and
+ * an org above 80% for three weeks is still told once. `periodStart` is the
+ * start of the UTC month the quota is counted over, so a new month is a new
+ * key and the warning fires again on re-crossing.
+ */
+export const executionQuotaNotifications = pgTable(
+  "execution_quota_notifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id").notNull(),
+    periodStart: timestamp("period_start").notNull(),
+    threshold: integer("threshold").notNull(),
+    usagePercent: integer("usage_percent").notNull(),
+    executionsUsed: integer("executions_used").notNull(),
+    executionLimit: integer("execution_limit").notNull(),
+    recipientCount: integer("recipient_count").notNull().default(0),
+    notifiedAt: timestamp("notified_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Named explicitly rather than left to the derived
+    // <table>_<column>_<ref table>_<ref column>_fk, which is 65 characters here
+    // and would be silently truncated to 63 by Postgres. A later DROP CONSTRAINT
+    // generated against the untruncated name would then not find it.
+    foreignKey({
+      columns: [table.organizationId],
+      foreignColumns: [organization.id],
+      name: "execution_quota_notif_org_fk",
+    }).onDelete("cascade"),
+    unique("execution_quota_notif_org_period_threshold").on(
+      table.organizationId,
+      table.periodStart,
+      table.threshold
+    ),
+    index("idx_execution_quota_notif_org").on(table.organizationId),
+  ]
+);
+
+export type ExecutionQuotaNotification =
+  typeof executionQuotaNotifications.$inferSelect;
+export type NewExecutionQuotaNotification =
+  typeof executionQuotaNotifications.$inferInsert;

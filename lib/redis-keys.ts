@@ -13,6 +13,26 @@ export function deploymentKey(...parts: string[]): string {
   return [KEY_PREFIX, ...parts].join(":");
 }
 
+/**
+ * Suppresses repeat work for a quota threshold an org has already been told
+ * about. Held for the rest of the quota month, so admission stops attempting
+ * the DB claim (and the send) after the first crossing rather than on every
+ * execution above the threshold. The unique row in execution_quota_notifications
+ * remains the correctness guarantee; this only keeps the hot path cheap.
+ */
+export function quotaNotifyClaimKey(
+  organizationId: string,
+  periodStartIso: string,
+  threshold: number
+): string {
+  return deploymentKey(
+    "quota-notify",
+    organizationId,
+    periodStartIso,
+    String(threshold)
+  );
+}
+
 /** Dedup claim for the new-device warning email, keyed on the device id. */
 export function newDeviceNotifyClaimKey(
   userId: string,
@@ -27,6 +47,14 @@ export function newDeviceNotifyClaimKey(
  */
 export function trustedCountryKey(userId: string, country: string): string {
   return deploymentKey("trust-country", userId, country);
+}
+
+/**
+ * Sliding-window counter for the per-organization MCP rate limit. Shared
+ * across replicas so the limit is a fleet-wide ceiling, not a per-pod one.
+ */
+export function mcpRateLimitKey(organizationId: string): string {
+  return deploymentKey("ratelimit", "mcp", organizationId);
 }
 
 /** Short-lived cache of a holder's native balance in wei, for the gas preflight. */
