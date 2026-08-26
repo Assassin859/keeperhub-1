@@ -53,6 +53,16 @@ export function requireScope(
   // logSecurityEvent writes Sentry and Loki but never Prometheus, so on its own
   // it leaves no series to alert on. This is what makes the deny rate countable
   // and gives Grafana something to threshold.
+  //
+  // What actually reaches Prometheus is narrower than what is passed here.
+  // filterLabelsForMetric keeps only ERROR_LABELS, which carries `endpoint`
+  // and the `error_context` extracted from the message prefix, but not
+  // `required_scope`, `granted_scope` or `organizationId` -- those three are
+  // dropped and survive only in the Loki line above. So the rate is alertable
+  // per endpoint, not breakable down per scope or per organization. Adding
+  // required_scope to ERROR_LABELS would enable that; organizationId should
+  // stay out, since per-org labels are the cardinality the allowlist exists to
+  // keep off Prometheus.
   logUserError(
     ErrorCategory.AUTH,
     "[RequireScope] Insufficient scope",
