@@ -2224,10 +2224,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           currentOutputs: scopedOutputs,
           currentResults: bodyResults,
           currentVisited: bodyVisited,
-          currentEdgesBySource: resolveNestedForEachEdgeMap({
-            globalEdgesBySource: edgesBySource,
-            outerBodyEdgesBySource: bodyEdgesBySource,
-          }),
           continueAfterCollect: async (collectId) => {
             const nextNodes = bodyEdgesBySource.get(collectId) ?? [];
             for (const next of nextNodes) {
@@ -2273,7 +2269,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     currentOutputs: NodeOutputs;
     currentResults: Record<string, ExecutionResult>;
     currentVisited: Set<string>;
-    currentEdgesBySource: Map<string, string[]>;
     /**
      * Dispatch downstream of a Collect node once iterations finish. Used for
      * both the canonical `done`-handle Collect and legacy in-body Collect.
@@ -2302,7 +2297,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       currentOutputs,
       currentResults,
       currentVisited,
-      currentEdgesBySource,
       continueAfterCollect,
       continueWithDoneTargets,
     } = params;
@@ -2326,7 +2320,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       bodyEdgesBySourceHandle,
     } = identifyLoopBody(
       forEachNodeId,
-      currentEdgesBySource,
+      edgesBySource,
       nodeMap,
       edgesBySourceHandle
     );
@@ -3014,7 +3008,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             currentOutputs: outputs,
             currentResults: results,
             currentVisited: visited,
-            currentEdgesBySource: edgesBySource,
             continueAfterCollect: async (collectId) => {
               const nextNodes = edgesBySource.get(collectId) ?? [];
               await executeReadyDownstream(collectId, nextNodes, visited);
