@@ -3,38 +3,34 @@
  *   "Condition node never executes when nested inside two For Each loops
  *    (nested loop edge-map bug)"
  *
- * Root cause: handleForEachExecution's handleNestedForEach callback passed
- * `currentEdgesBySource: bodyEdgesBySource` — the *outer* loop's own locally-
- * scoped, partial edge map — to the recursive inner-loop call.  Because the
- * outer BFS intentionally does not walk into the inner loop's `loop` branch,
- * `bodyEdgesBySource` has no entry for any edge that lives purely inside the
- * inner loop's body (e.g. `read-contributed -> condition-not-contributed`).
- * When that incomplete map was forwarded as `currentEdgesBySource` to
- * `identifyLoopBody`, the inner loop's body-scan saw zero downstream targets
- * after the seed node and silently terminated, leaving the Condition node
+ * Root cause: handleForEachExecution's handleNestedForEach callback forwarded
+ * the *outer* loop's own locally-scoped `bodyEdgesBySource` to the recursive
+ * inner-loop call. The outer BFS intentionally does not walk into a nested
+ * For Each's `loop` branch, so that map has no entry for any edge living
+ * purely inside the inner body (e.g. `read-contributed ->
+ * condition-not-contributed`). The inner body-scan saw zero downstream
+ * targets past its seed and silently terminated, leaving the Condition node
  * absent from the execution trace.
  *
- * Fix (executor.workflow.ts line 2101): pass `edgesBySource` (the workflow-
- * global map, built once at line 1821) instead of `bodyEdgesBySource`.
- *
- * These tests exercise the ACTUAL recursive handoff path — calling
- * `identifyLoopBody` first for the outer loop (producing a partial
- * `bodyEdgesBySource`), then calling it again for the inner loop using:
- *   a) the outer's partial map  => demonstrates the broken behaviour
- *   b) the global map           => demonstrates the correct behaviour / fix
- *
- * This closes the coverage gap noted by the maintainer:
- *   "tests/unit/for-each-executor.test.ts's 'handles deeply nested For Each
- *    chains' case only calls identifyLoopBody once, directly, with the full
- *    global map — it doesn't exercise the actual recursive
- *    handleForEachExecution handoff where a partial map gets reused."
+ * The map choice now lives in one place: `resolveNestedForEachEdgeMap`, which
+ * takes both candidate maps and returns the one the nested scan must use.
+ * These tests reproduce the recursive handoff around it — run
+ * `identifyLoopBody` on the outer loop, feed its real `bodyEdgesBySource` and
+ * the global map to the resolver, then run `identifyLoopBody` on the inner
+ * loop with whatever came back. Return the outer map from the resolver and
+ * the inner-body assertions below fail, which is the guard the earlier
+ * direct-call tests did not provide.
  */
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
-import { identifyLoopBody } from "@/lib/workflow/executor/executor.workflow";
+import { buildEdgesBySource } from "@/lib/workflow/executor/convergence-barrier";
+import {
+  identifyLoopBody,
+  resolveNestedForEachEdgeMap,
+} from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
@@ -75,16 +71,6 @@ function makeEdge(
   };
 }
 
-function buildEdgesBySource(edges: RawEdge[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  for (const e of edges) {
-    const list = map.get(e.source) ?? [];
-    list.push(e.target);
-    map.set(e.source, list);
-  }
-  return map;
-}
-
 function buildNodeMap(nodes: WorkflowNode[]): Map<string, WorkflowNode> {
   return new Map(nodes.map((n) => [n.id, n]));
 }
@@ -93,7 +79,8 @@ function buildNodeMap(nodes: WorkflowNode[]): Map<string, WorkflowNode> {
 // Shared workflow topology (mirrors the real failing workflow from issue #2049)
 //
 //   for-each-circles  (outer For Each)
-//     +- condition-due           (Condition at depth-1 — works correctly)
+//     +- condition-due           (Condition at depth-1 — gates the inner loop)
+//          +- (true) for-each-members
 //     +- for-each-members        (inner For Each — nested)
 //          +- read-contributed   (depth-2 seed node)
 //          +- condition-not-contributed  (Condition at depth-2 — THE BUG)
@@ -118,6 +105,7 @@ const ALL_EDGES: RawEdge[] = [
   makeEdge("for-each-circles", "condition-due", "loop"),
   makeEdge("for-each-circles", "for-each-members", "loop"),
   makeEdge("for-each-circles", "collect-circles", "done"),
+  makeEdge("condition-due", "for-each-members", "true"),
   // Inner body edges — live PURELY inside the inner loop
   makeEdge("for-each-members", "read-contributed", "loop"),
   makeEdge("for-each-members", "collect-members", "done"),
@@ -157,63 +145,46 @@ describe("outer For Each body identification (baseline)", () => {
 // ---------------------------------------------------------------------------
 
 describe("inner For Each body identification — nested edge-map handoff (issue #2049)", () => {
+  // The outer scan, exactly as the executor runs it. Its bodyEdgesBySource is
+  // the partial map the old code forwarded to the nested call.
   const outerBody = identifyLoopBody(
     "for-each-circles",
     GLOBAL_EDGES_BY_SOURCE,
     NODE_MAP,
     GLOBAL_EDGES_BY_SOURCE_HANDLE
   );
-  // This is the incomplete map the old code wrongly forwarded.
-  const outerBodyEdgesBySource = outerBody.bodyEdgesBySource;
 
-  it("(pre-fix) outer bodyEdgesBySource does NOT contain the inner-body Condition edge", () => {
-    // With the outer's partial map, the inner BFS has no entry for
-    // read-contributed -> condition-not-contributed, so the Condition is absent.
-    const innerBodyViaBrokenMap = identifyLoopBody(
-      "for-each-members",
-      outerBodyEdgesBySource, // the BUGGY argument — outer partial map
-      NODE_MAP,
-      GLOBAL_EDGES_BY_SOURCE_HANDLE
-    );
+  // The handoff itself. Every assertion below scans the inner loop with
+  // whatever this returns, so returning the outer map fails this suite.
+  const innerBody = identifyLoopBody(
+    "for-each-members",
+    resolveNestedForEachEdgeMap({
+      globalEdgesBySource: GLOBAL_EDGES_BY_SOURCE,
+      outerBodyEdgesBySource: outerBody.bodyEdgesBySource,
+    }),
+    NODE_MAP,
+    GLOBAL_EDGES_BY_SOURCE_HANDLE
+  );
 
-    expect(innerBodyViaBrokenMap.bodyNodeIds).not.toContain(
-      "condition-not-contributed"
-    );
-    expect(innerBodyViaBrokenMap.bodyNodeIds).not.toContain(
-      "write-deposit-draw"
-    );
+  it("the outer scan never descends into the inner loop's body", () => {
+    // Why the outer map cannot serve the nested scan: it has no entry for any
+    // edge that lives purely inside the inner loop.
+    expect(outerBody.bodyEdgesBySource.has("read-contributed")).toBe(false);
+    expect(outerBody.bodyNodeIds).not.toContain("condition-not-contributed");
   });
 
-  it("(post-fix) global edgesBySource correctly exposes all inner-body nodes", () => {
-    const innerBodyViaGlobalMap = identifyLoopBody(
-      "for-each-members",
-      GLOBAL_EDGES_BY_SOURCE, // the CORRECT argument — global map
-      NODE_MAP,
-      GLOBAL_EDGES_BY_SOURCE_HANDLE
-    );
-
-    expect(innerBodyViaGlobalMap.bodyNodeIds).toContain("read-contributed");
-    expect(innerBodyViaGlobalMap.bodyNodeIds).toContain(
-      "condition-not-contributed"
-    );
-    expect(innerBodyViaGlobalMap.bodyNodeIds).toContain("write-deposit-draw");
-    expect(innerBodyViaGlobalMap.collectNodeId).toBe("collect-members");
-    expect(innerBodyViaGlobalMap.bodyNodeIds).not.toContain("collect-members");
+  it("the resolved map exposes every inner-body node past the seed", () => {
+    expect(innerBody.bodyNodeIds).toContain("read-contributed");
+    expect(innerBody.bodyNodeIds).toContain("condition-not-contributed");
+    expect(innerBody.bodyNodeIds).toContain("write-deposit-draw");
+    expect(innerBody.collectNodeId).toBe("collect-members");
+    expect(innerBody.bodyNodeIds).not.toContain("collect-members");
   });
 
-  it("(post-fix) inner bodyEdgesBySource contains the edge that was silently absent before the fix", () => {
-    const innerBodyViaGlobalMap = identifyLoopBody(
-      "for-each-members",
-      GLOBAL_EDGES_BY_SOURCE,
-      NODE_MAP,
-      GLOBAL_EDGES_BY_SOURCE_HANDLE
+  it("the inner body map carries the edge that was silently absent before", () => {
+    expect(innerBody.bodyEdgesBySource.get("read-contributed")).toContain(
+      "condition-not-contributed"
     );
-
-    // The edge read-contributed -> condition-not-contributed must be present
-    // in the inner body map for the runtime walker to reach the Condition.
-    expect(
-      innerBodyViaGlobalMap.bodyEdgesBySource.get("read-contributed")
-    ).toContain("condition-not-contributed");
   });
 });
 
@@ -221,7 +192,7 @@ describe("inner For Each body identification — nested edge-map handoff (issue 
 // Generalisation: 3-level nesting — same fix applies at every recursion depth
 // ---------------------------------------------------------------------------
 
-describe("3-level nesting: Condition at depth-3 is reachable with global map", () => {
+describe("3-level nesting: the resolver holds at every recursion depth", () => {
   //   fe-l1 -> fe-l2 -> fe-l3 -> read-data -> condition-deep
   //                                          -> (true) write-result -> collect-l3
   //   collect-l3 -> collect-l2 -> collect-l1
@@ -256,33 +227,46 @@ describe("3-level nesting: Condition at depth-3 is reachable with global map", (
   const globalHandle3 = buildEdgesBySourceHandle(edges3);
   const nodeMap3 = buildNodeMap(nodes3);
 
-  it("depth-3 Condition is visible when the global map is used (post-fix)", () => {
-    const innermost = identifyLoopBody(
-      "fe-l3",
-      global3,
-      nodeMap3,
-      globalHandle3
-    );
-
-    expect(innermost.bodyNodeIds).toContain("read-data");
-    expect(innermost.bodyNodeIds).toContain("condition-deep");
-    expect(innermost.bodyNodeIds).toContain("write-result");
-    expect(innermost.collectNodeId).toBe("collect-l3");
-  });
-
-  it("depth-3 Condition is NOT visible when partial maps are chained (pre-fix regression)", () => {
-    // Simulate the old buggy chain: each level forwards its own partial map
-    // to the next level's identifyLoopBody call.
+  it("depth-3 body is complete when each level resolves its nested map", () => {
+    // The executor's recursion, level by level: every nested scan runs on
+    // whatever resolveNestedForEachEdgeMap hands back.
     const l1Body = identifyLoopBody("fe-l1", global3, nodeMap3, globalHandle3);
     const l2Body = identifyLoopBody(
       "fe-l2",
-      l1Body.bodyEdgesBySource, // l1 partial
+      resolveNestedForEachEdgeMap({
+        globalEdgesBySource: global3,
+        outerBodyEdgesBySource: l1Body.bodyEdgesBySource,
+      }),
       nodeMap3,
       globalHandle3
     );
     const l3Body = identifyLoopBody(
       "fe-l3",
-      l2Body.bodyEdgesBySource, // l2 partial (which itself was built from l1 partial)
+      resolveNestedForEachEdgeMap({
+        globalEdgesBySource: global3,
+        outerBodyEdgesBySource: l2Body.bodyEdgesBySource,
+      }),
+      nodeMap3,
+      globalHandle3
+    );
+
+    expect(l3Body.bodyNodeIds).toContain("read-data");
+    expect(l3Body.bodyNodeIds).toContain("condition-deep");
+    expect(l3Body.bodyNodeIds).toContain("write-result");
+    expect(l3Body.collectNodeId).toBe("collect-l3");
+  });
+
+  it("chaining each level's own partial map loses the depth-3 body (root cause)", () => {
+    const l1Body = identifyLoopBody("fe-l1", global3, nodeMap3, globalHandle3);
+    const l2Body = identifyLoopBody(
+      "fe-l2",
+      l1Body.bodyEdgesBySource,
+      nodeMap3,
+      globalHandle3
+    );
+    const l3Body = identifyLoopBody(
+      "fe-l3",
+      l2Body.bodyEdgesBySource,
       nodeMap3,
       globalHandle3
     );
