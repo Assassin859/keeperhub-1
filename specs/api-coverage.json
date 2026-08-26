@@ -19,7 +19,7 @@
       "path": "/api/integrations/{integrationId}",
       "route_file": "app/api/integrations/[integrationId]/route.ts",
       "source": "docs/api/integrations.md",
-      "line": 101
+      "line": 107
     },
     {
       "method": "DELETE",
@@ -419,14 +419,14 @@
       "path": "/api/integrations",
       "route_file": "app/api/integrations/route.ts",
       "source": "docs/api/integrations.md",
-      "line": 66
+      "line": 69
     },
     {
       "method": "POST",
       "path": "/api/integrations/{integrationId}/test",
       "route_file": "app/api/integrations/[integrationId]/test/route.ts",
       "source": "docs/api/integrations.md",
-      "line": 107
+      "line": 113
     },
     {
       "method": "POST",
@@ -552,7 +552,7 @@
       "path": "/api/integrations/{integrationId}",
       "route_file": "app/api/integrations/[integrationId]/route.ts",
       "source": "docs/api/integrations.md",
-      "line": 84
+      "line": 87
     },
     {
       "method": "PUT",
