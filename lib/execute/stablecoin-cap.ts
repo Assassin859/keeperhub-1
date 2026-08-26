@@ -7,6 +7,14 @@ import { supportedTokens } from "@/lib/db/schema";
 import { getDefaultStablecoinTransferCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
 import { logSecurityEvent } from "@/lib/logging";
 import { getRegisteredProtocols } from "@/lib/protocol-registry";
+// Registration is an import side effect: a protocol module calls
+// registerProtocol at load. Without this import the registry is whatever the
+// entry point happened to pull in, and of the execute routes only
+// app/api/execute/[...slug]/route.ts imports the barrel -- so contract-call,
+// transfer, node, swap, check-and-execute and the web3 write-contract step all
+// saw an EMPTY allowlist and refused every over-cap approval, including the
+// max-uint-before-swap that protocol integrations depend on.
+import "@/protocols";
 
 const MICRO_USD_DECIMALS = 6;
 
@@ -394,13 +402,20 @@ function decide(params: {
  * caller passed, which is the case this control exists to catch.
  */
 let knownSpenders: Set<string> | null = null;
+let knownSpendersFrom = -1;
 
 function getKnownProtocolSpenders(): Set<string> {
-  if (knownSpenders) {
+  // Keyed on registry size rather than memoised outright. A protocol that
+  // registers after the first call -- a lazily imported module, a different
+  // entry point warming a different subset -- would otherwise be locked out
+  // for the life of the process, making the verdict depend on which traffic
+  // arrived first.
+  const protocols = getRegisteredProtocols();
+  if (knownSpenders && knownSpendersFrom === protocols.length) {
     return knownSpenders;
   }
   const addresses = new Set<string>();
-  for (const protocol of getRegisteredProtocols()) {
+  for (const protocol of protocols) {
     for (const contract of Object.values(protocol.contracts ?? {})) {
       if (contract.userSpecifiedAddress) {
         continue;
@@ -413,6 +428,7 @@ function getKnownProtocolSpenders(): Set<string> {
     }
   }
   knownSpenders = addresses;
+  knownSpendersFrom = protocols.length;
   return addresses;
 }
 
