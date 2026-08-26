@@ -59,6 +59,13 @@ describe("normalizeToolCallArguments", () => {
     expect(result[1].params.arguments).toEqual({});
   });
 
+  it("leaves by-position array params untouched", () => {
+    const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: [] };
+    const result = normalizeToolCallArguments(body) as typeof body;
+    expect(Array.isArray(result.params)).toBe(true);
+    expect(result).toEqual(body);
+  });
+
   it("passes through malformed bodies without throwing", () => {
     expect(normalizeToolCallArguments(null)).toBeNull();
     expect(normalizeToolCallArguments(undefined)).toBeUndefined();

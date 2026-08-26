@@ -9,8 +9,11 @@ function normalizeMessage(message: unknown): unknown {
     return message;
   }
 
+  // By-position `params` (a JSON-RPC 2.0 array) is not a shape MCP uses, and
+  // spreading one would silently rewrite it into an object. Leave it alone and
+  // let the SDK reject it on its own terms.
   const params = (message as JsonRpcMessage).params;
-  if (!params || typeof params !== "object") {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
     return message;
   }
 
