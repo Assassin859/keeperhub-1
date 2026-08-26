@@ -8,10 +8,7 @@ import {
   publicPages,
   type SitePage,
 } from "@/lib/site/content";
-import {
-  renderNotFoundMarkdown,
-  renderPageMarkdown,
-} from "@/lib/site/markdown";
+import { renderPageMarkdown } from "@/lib/site/markdown";
 
 /**
  * The agent-readiness audit scores a page as "no content" below roughly 500
@@ -103,9 +100,14 @@ describe("public site content", () => {
     expect(hrefs).toContain("/developers");
     expect(hrefs).toContain("/openapi.json");
     expect(hrefs).toContain("/mcp");
-    expect(hrefs.some((href) => href.includes("docs.keeperhub.com"))).toBe(
-      true
-    );
+    // Host-exact, not a substring: "https://evil.test/docs.keeperhub.com"
+    // satisfies an includes() check while pointing somewhere else entirely.
+    expect(
+      hrefs.some(
+        (href) =>
+          href.startsWith("http") && new URL(href).host === "docs.keeperhub.com"
+      )
+    ).toBe(true);
   });
 
   describe("pricing", () => {
@@ -202,6 +204,36 @@ describe("markdown rendering", () => {
     expect(markdown).not.toMatch(/\]\(\/[a-z]/);
   });
 
+  it("escapes backslashes before pipes so the escaping cannot undo itself", async () => {
+    // Escaping | while leaving \\ alone turns a cell ending in a backslash into
+    // "...\\\\|", where the doubled backslash renders as a literal and the pipe
+    // goes back to being a column delimiter.
+    const { renderPageMarkdown: render } = await import("@/lib/site/markdown");
+    const page = {
+      path: "/x",
+      title: "x",
+      heading: "x",
+      description: "x",
+      sections: [
+        {
+          heading: "t",
+          table: {
+            headers: ["a", "b"],
+            rows: [["ends with a backslash \\", "second"]],
+          },
+        },
+      ],
+    } as unknown as SitePage;
+    const row = render(page)
+      .split("\n")
+      .find((line) => line.includes("ends with a backslash"));
+    expect(row).toBeDefined();
+    // Exactly three pipes: opening, the column boundary, and closing. A
+    // cell that broke out would produce a fourth.
+    expect((row ?? "").split("|").length - 1).toBe(3);
+    expect(row).toContain("\\\\");
+  });
+
   it("escapes pipes so a cell cannot break the table", () => {
     const markdown = renderPageMarkdown(publicPage("/pricing") as SitePage);
     for (const line of markdown.split("\n")) {
@@ -225,33 +257,6 @@ describe("markdown rendering", () => {
   it("ends with a trailing newline", () => {
     expect(renderPageMarkdown(publicPage("/contact") as SitePage)).toMatch(
       /\n$/
-    );
-  });
-});
-
-describe("404 markdown", () => {
-  it("names the path that was missed", () => {
-    const markdown = renderNotFoundMarkdown("/does-not-exist");
-    expect(markdown).toContain("`/does-not-exist`");
-  });
-
-  it("states that the 404 is real, not a gate", () => {
-    const markdown = renderNotFoundMarkdown("/nope");
-    expect(markdown).toMatch(/retrying it will not start working/i);
-  });
-
-  it("points at the sitemap, llms.txt, and the developer portal", () => {
-    const markdown = renderNotFoundMarkdown("/nope");
-    expect(markdown).toContain("/sitemap.xml");
-    expect(markdown).toContain("llms.txt");
-    expect(markdown).toContain("/developers");
-    expect(markdown).toContain("/openapi.json");
-  });
-
-  it("tells an agent how to enumerate workflow slugs instead of guessing", () => {
-    const markdown = renderNotFoundMarkdown("/api/mcp/workflows/guessed/call");
-    expect(markdown).toContain(
-      "GET https://app.keeperhub.com/api/mcp/workflows"
     );
   });
 });

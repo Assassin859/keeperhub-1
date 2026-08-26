@@ -14,9 +14,18 @@ import type {
 } from "@/lib/site/content";
 import { appUrl, docsUrl } from "@/lib/site/identity";
 
-/** Escapes the characters that would break out of a markdown table cell. */
+/**
+ * Escapes the characters that would break out of a markdown table cell.
+ *
+ * Backslashes first, and that order is the whole point: escaping `|` while
+ * leaving `\` alone turns a cell ending in a backslash into `...\\|`, where the
+ * doubled backslash renders as a literal and the pipe goes back to being a
+ * column delimiter - so the escaping undoes itself. Every value here is
+ * currently deployment config or a billing plan, but an escaper that is only
+ * correct for its present callers is a trap for the next one.
+ */
 function escapeCell(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
 }
 
 function absolute(href: string, origin: string): string {
@@ -85,33 +94,4 @@ export function renderPageMarkdown(page: SitePage): string {
     ].join("\n")
   );
   return `${blocks.join("\n\n")}\n`;
-}
-
-/**
- * The body served for an unknown path. Deliberately short and link-heavy: an
- * agent that lands here has taken a wrong turn, and the useful response is the
- * set of places it can go next, not an apology.
- */
-export function renderNotFoundMarkdown(pathname: string): string {
-  const origin = appUrl();
-  return [
-    "# 404 - page not found",
-    "",
-    `> No resource exists at \`${pathname}\` on ${origin}. This is a real 404: the path does not exist, and retrying it will not start working.`,
-    "",
-    "## Where to look next",
-    "",
-    `- [Sitemap](${origin}/sitemap.xml): every crawlable public page`,
-    `- [llms.txt](${docsUrl()}/llms.txt): machine-readable index of the whole product`,
-    `- [Developer portal](${origin}/developers): API keys, quickstart, sandbox, rate limits, error model`,
-    `- [OpenAPI](${origin}/openapi.json): callable endpoints and their schemas`,
-    `- [MCP server card](${origin}/.well-known/mcp.json): tool catalog and transport`,
-    `- [Documentation](${docsUrl()}): concepts, plugins, API, CLI`,
-    `- [Contact](${origin}/contact): how to reach a human`,
-    "",
-    "## If you expected a workflow here",
-    "",
-    `Listed marketplace workflows are called at \`POST ${origin}/api/mcp/workflows/{slug}/call\`. Enumerate the available slugs with \`GET ${origin}/api/mcp/workflows\` rather than guessing a path.`,
-    "",
-  ].join("\n");
 }
