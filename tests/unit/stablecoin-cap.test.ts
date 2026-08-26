@@ -7,6 +7,7 @@ const USER_SUPPLIED = "0x3333333333333333333333333333333333333333";
 
 const ORG_WALLET = "0x4444444444444444444444444444444444444444";
 const COUNTERPARTY = "0x5555555555555555555555555555555555555555";
+const SAFE_WALLET = "0x6666666666666666666666666666666666666666";
 
 const { mockGetOrgWallet } = vi.hoisted(() => ({
   mockGetOrgWallet: vi.fn(),
@@ -45,17 +46,24 @@ const state = vi.hoisted(() => ({
     isStablecoin: boolean;
   }>,
   selectCalls: 0,
+  safeRows: [] as { safeAddress: string }[],
 }));
 
-// Fake db serving the chain's supported_tokens list, which the cap then matches
-// against in JS: select(...).from(...).where(...).
+// Fake db serving two reads: the chain's supported_tokens list, which the cap
+// matches against in JS, and the org's safe_wallets rows, which feed the payer
+// set for transferFrom. Branches on the selected columns, since that is the
+// only thing distinguishing the two calls through this stub.
 vi.mock("@/lib/db", () => ({
   db: {
-    select: () => {
-      state.selectCalls += 1;
+    select: (columns?: Record<string, unknown>) => {
+      const isSafeQuery = columns !== undefined && "safeAddress" in columns;
+      if (!isSafeQuery) {
+        state.selectCalls += 1;
+      }
       return {
         from: () => ({
-          where: () => Promise.resolve(state.tokenRows),
+          where: () =>
+            Promise.resolve(isSafeQuery ? state.safeRows : state.tokenRows),
         }),
       };
     },
@@ -123,6 +131,7 @@ function units(dollars: bigint, decimals: number): string {
 beforeEach(() => {
   state.tokenRows = [];
   state.selectCalls = 0;
+  state.safeRows = [];
   mockGetOrgWallet.mockReset();
   mockGetOrgWallet.mockResolvedValue(ORG_WALLET);
 });
@@ -334,6 +343,40 @@ describe("checkStablecoinContractCall", () => {
   // Treating every transferFrom as an outflow refused invoice settlements.
   it("allows an over-cap transferFrom that collects from a counterparty", async () => {
     state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transferFrom",
+      inputTypes: ["address", "address", "uint256"],
+      args: [COUNTERPARTY, ORG_WALLET, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result).toEqual({ kind: "allowed" });
+  });
+
+  // The EOA is not the only address the org can move funds from. A
+  // transferFrom naming a Safe as payer would otherwise compare unequal, read
+  // as an inbound collection and skip the ceiling. Not a drain in the ordinary
+  // case -- pulling from your own balance needs allowance[safe][safe], which is
+  // zero -- but it becomes one where a Safe has approved the org EOA as a
+  // spender, and nothing in this module checks allowances.
+  it("applies the ceiling when the payer is a Safe the org controls", async () => {
+    state.tokenRows = [USDC];
+    state.safeRows = [{ safeAddress: SAFE_WALLET }];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transferFrom",
+      inputTypes: ["address", "address", "uint256"],
+      args: [SAFE_WALLET, RECIPIENT, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result.kind).toBe("denied");
+  });
+
+  it("still exempts a counterparty payer when the org has Safes", async () => {
+    state.tokenRows = [USDC];
+    state.safeRows = [{ safeAddress: SAFE_WALLET }];
 
     const result = await checkStablecoinContractCall({
       ...callParams,

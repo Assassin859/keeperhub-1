@@ -1,9 +1,9 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { supportedTokens } from "@/lib/db/schema";
+import { safeWallets, supportedTokens } from "@/lib/db/schema";
 import {
   getDefaultBatchStablecoinCapMicroUsd,
   getDefaultStablecoinTransferCapMicroUsd,
@@ -119,31 +119,71 @@ const PAYER_IS_FIRST_ARG: ReadonlySet<OutflowFn> = new Set([
 ]);
 
 /**
- * Whether this call actually moves value OUT of the organization's wallet.
+ * Every address the organization can move funds FROM on this chain: its EOA
+ * wallet plus any Safe it controls there.
+ *
+ * The EOA alone is not enough. A `transferFrom` naming a Safe as payer would
+ * compare unequal, read as an inbound collection and skip the ceiling. That is
+ * not a live drain in the ordinary case -- pulling from your own balance needs
+ * `allowance[safe][safe]`, which is zero -- but it becomes one where a Safe has
+ * approved the org EOA as a spender, and the reasoning that makes it safe
+ * otherwise rests on a fact about allowances rather than on anything this
+ * module checks. Cheaper to include the Safes than to depend on that.
+ *
+ * Returns an empty set if neither lookup succeeds, which callers treat as
+ * fail-closed: an unattributable payer stays subject to the ceiling.
+ */
+async function resolveOrgPayers(
+  organizationId: string,
+  chainId: number
+): Promise<Set<string>> {
+  const [wallet, safes] = await Promise.all([
+    getOrganizationWalletAddress(organizationId).catch(() => null),
+    db
+      .select({ safeAddress: safeWallets.safeAddress })
+      .from(safeWallets)
+      .where(
+        and(
+          eq(safeWallets.organizationId, organizationId),
+          eq(safeWallets.chainId, chainId)
+        )
+      )
+      .catch(() => [] as { safeAddress: string }[]),
+  ]);
+
+  const payers = new Set<string>();
+  if (wallet) {
+    payers.add(wallet.toLowerCase());
+  }
+  for (const safe of safes) {
+    payers.add(safe.safeAddress.toLowerCase());
+  }
+  return payers;
+}
+
+/**
+ * Whether this call actually moves value OUT of the organization.
  *
  * A pull payment is a `transferFrom` where the payer is a counterparty and the
  * org is collecting: value moves in, nothing leaves. Treating that as an
  * outflow refused legitimate collections above the ceiling -- a 500 USDC
  * invoice settlement read as a 500 USDC drain.
  *
- * Fails closed. If the wallet cannot be resolved the call is treated as an
- * outflow and stays subject to the ceiling, because the alternative is letting
- * a real drain through on a lookup error.
+ * Fails closed: an empty payer set means neither lookup resolved, and the call
+ * stays subject to the ceiling rather than being waved through on a db error.
  */
-async function movesOrgFunds(
+function movesOrgFunds(
   fn: OutflowFn,
   payer: string | undefined,
-  organizationId: string
-): Promise<boolean> {
+  payers: ReadonlySet<string>
+): boolean {
   if (!(PAYER_IS_FIRST_ARG.has(fn) && typeof payer === "string")) {
     return true;
   }
-  try {
-    const wallet = await getOrganizationWalletAddress(organizationId);
-    return wallet ? payer.toLowerCase() === wallet.toLowerCase() : true;
-  } catch {
+  if (payers.size === 0) {
     return true;
   }
+  return payers.has(payer.toLowerCase());
 }
 
 type StablecoinToken = { decimals: number; symbol: string };
@@ -231,7 +271,14 @@ export async function checkStablecoinContractCall(params: {
 
   const firstArg =
     typeof params.args[0] === "string" ? params.args[0] : undefined;
-  if (!(await movesOrgFunds(fn, firstArg, params.organizationId))) {
+  if (
+    PAYER_IS_FIRST_ARG.has(fn) &&
+    !movesOrgFunds(
+      fn,
+      firstArg,
+      await resolveOrgPayers(params.organizationId, params.chainId)
+    )
+  ) {
     return ALLOWED;
   }
 
@@ -271,7 +318,12 @@ export async function checkStablecoinCalldata(params: {
   }
 
   if (
-    !(await movesOrgFunds(decoded.fn, decoded.spender, params.organizationId))
+    PAYER_IS_FIRST_ARG.has(decoded.fn) &&
+    !movesOrgFunds(
+      decoded.fn,
+      decoded.spender,
+      await resolveOrgPayers(params.organizationId, params.chainId)
+    )
   ) {
     return ALLOWED;
   }
@@ -317,6 +369,7 @@ export async function checkStablecoinCalldataBatch(params: {
   // One read for the whole batch. Every call in a transaction shares a chain,
   // so resolving each token separately meant N identical queries.
   const chainTokens = await loadChainTokens(params.chainId);
+  let orgPayers: Set<string> | undefined;
 
   for (const call of params.calls) {
     const decoded = decodeErc20Outflow(call.data);
@@ -347,11 +400,18 @@ export async function checkStablecoinCalldataBatch(params: {
       continue;
     }
 
-    if (
-      !(await movesOrgFunds(decoded.fn, decoded.spender, params.organizationId))
-    ) {
-      // An inbound collection inside a batch is not org value leaving.
-      continue;
+    if (PAYER_IS_FIRST_ARG.has(decoded.fn)) {
+      // Resolved once for the whole batch, and only when a call actually needs
+      // it. Doing it per call reintroduced an N+1 in the same loop the
+      // token-list hoist above just removed.
+      orgPayers ??= await resolveOrgPayers(
+        params.organizationId,
+        params.chainId
+      );
+      if (!movesOrgFunds(decoded.fn, decoded.spender, orgPayers)) {
+        // An inbound collection inside a batch is not org value leaving.
+        continue;
+      }
     }
 
     if (decoded.amountBase < BigInt(0)) {

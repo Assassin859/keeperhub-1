@@ -72,9 +72,6 @@ const DEFAULT_DAILY_SOLANA_VALUE_CAP_LAMPORTS = "500000000";
 // execution API's per-transfer ceiling.
 const DEFAULT_STABLECOIN_CAP_MICRO_USD = "100000000";
 
-// BigInt() accepts hex-prefixed strings ("0x10" -> 16), so an ops typo would
-// silently turn a cap into a near-zero one. Reject anything that is not a
-// decimal digit run before it is used.
 // 2,000 USD in micro-USD: the ceiling on ONE transaction's total stablecoin
 // outflow, distinct from the per-call figure above.
 //
@@ -90,6 +87,9 @@ const DEFAULT_STABLECOIN_CAP_MICRO_USD = "100000000";
 // batch still cannot move materially more than a handful of single transfers.
 const DEFAULT_BATCH_STABLECOIN_CAP_MICRO_USD = "2000000000";
 
+// BigInt() accepts hex-prefixed strings ("0x10" -> 16), so an ops typo would
+// silently turn a cap into a near-zero one. Reject anything that is not a
+// decimal digit run before it is used.
 const DECIMAL_INTEGER_RE = /^\d+$/;
 
 function resolveOverride(
