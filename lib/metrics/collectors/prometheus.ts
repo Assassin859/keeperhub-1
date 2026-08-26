@@ -935,6 +935,13 @@ const userConfigurationErrors = getOrCreateCounter(
   ERROR_LABELS
 );
 
+const userAuthorizationErrors = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_errors_user_authorization_total",
+  "User authorization errors",
+  ERROR_LABELS
+);
+
 const externalServiceErrors = getOrCreateCounter(
   apiRegistry,
   "keeperhub_errors_external_service_total",
@@ -1433,6 +1440,7 @@ const errorCounterMap: Record<string, Counter> = {
   // User-caused errors
   "errors.user.validation.total": userValidationErrors,
   "errors.user.configuration.total": userConfigurationErrors,
+  "errors.user.authorization.total": userAuthorizationErrors,
   "errors.external.service.total": externalServiceErrors,
   "errors.network.rpc.total": networkRpcErrors,
   "errors.transaction.blockchain.total": transactionBlockchainErrors,

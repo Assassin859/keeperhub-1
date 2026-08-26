@@ -294,6 +294,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     {
       organizationId: apiKeyCtx.organizationId,
       credentialId: apiKeyCtx.apiKeyId,
+      credentialType: apiKeyCtx.credentialType,
       endpoint: "/api/execute/contract-call",
     }
   );
