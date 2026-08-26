@@ -21,7 +21,7 @@ export default async function WelcomePage(): Promise<React.ReactElement> {
     // page. Without this the footer below still renders into the DOM, so a
     // crawler reads it, but no user can ever scroll to it. Content only a
     // crawler can see is the cloaking this work set out not to do.
-    // components/site/site-page-view.tsx solves the same problem the same way.
+    // components/activity/activity-page.tsx solves the same problem the same way.
     <div className="h-dvh overflow-y-auto">
       <main className="flex min-h-dvh items-center justify-center bg-background p-6">
         <WelcomeAuth />

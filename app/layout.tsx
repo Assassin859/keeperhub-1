@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   // its own origin rather than to app.keeperhub.com. Agents use rel=canonical
   // for entity resolution and attribution; pointing it at somebody else's
   // origin is worse than omitting it. Public pages override this with their own
-  // path via lib/site/metadata.ts.
+  // own `alternates` - see app/hub/page.tsx.
   alternates: { canonical: "/" },
   openGraph: {
     title: "KeeperHub - Blockchain Workflow Automation",
