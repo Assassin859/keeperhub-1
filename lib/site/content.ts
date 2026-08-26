@@ -99,6 +99,39 @@ const PLAN_ORDER: readonly PlanName[] = [
   "enterprise",
 ];
 
+/**
+ * Support-tier prose, derived rather than restated.
+ *
+ * `supportLevel` is a slug ("email-48h", "dedicated-12h") and `sla` is either a
+ * percentage or null, so the sentence has to be assembled - but every number in
+ * it comes from lib/billing/plans.ts, the same place billing reads them.
+ * Hand-writing "48-hour target" is how a public page ends up quoting a response
+ * time the product no longer offers, and this one is now also served as
+ * markdown that agents may repeat verbatim.
+ */
+function supportChannel(plan: PlanName): string {
+  const [channel, window] = PLANS[plan].features.supportLevel.split("-");
+  if (window === undefined) {
+    return "community-supported";
+  }
+  const medium = channel === "email" ? "email" : "a dedicated channel";
+  return `${medium} with a ${window.replace("h", "-hour")} response target`;
+}
+
+/** The channel plus the SLA, for prose that has not already named the SLA. */
+function supportPhrase(plan: PlanName): string {
+  const { sla } = PLANS[plan].features;
+  const base = supportChannel(plan);
+  return sla ? `${base} and a ${sla} availability SLA` : base;
+}
+
+function supportSummary(): string {
+  const parts = PLAN_ORDER.map(
+    (plan) => `${PLANS[plan].name} is ${supportPhrase(plan)}`
+  );
+  return `Response targets follow your plan: ${parts.join(", ")}.`;
+}
+
 function pricingTable(): SiteTable {
   return {
     headers: [
@@ -295,7 +328,7 @@ function contactPage(): SitePage {
         heading: "Support",
         paragraphs: [
           `Email ${supportEmail()} for anything about your account, a workflow that is not behaving, billing, or plan changes. Include your organization name and, where the question is about a specific run, the execution id shown on the run page - that is the fastest route to a precise answer.`,
-          "Response targets follow your plan: Free is community-supported, Pro is email with a 48-hour target, Business is a dedicated channel with a 12-hour target, and Enterprise is a dedicated channel with a 1-hour target and a 99.99% availability SLA.",
+          supportSummary(),
         ],
         links: [
           {
@@ -390,7 +423,15 @@ function privacyPage(): SitePage {
         bullets: [
           "API keys are hashed with SHA-256 before storage. Only the key prefix is retained, for identification in the dashboard.",
           "Wallet private keys are generated and held inside Turnkey's secure hardware enclaves. KeeperHub does not store them and cannot move funds outside the transactions your workflows define.",
-          "Third-party integration credentials are encrypted at rest and are only decrypted inside the execution path that needs them.",
+          // Deliberately narrower than the first draft, which also asserted
+          // encryption at rest. lib/db/schema.ts:571 carries a comment saying
+          // credentials are stored encrypted, but no encryption path for them
+          // was found in the codebase, and a code comment is not evidence
+          // enough to publish a security commitment on a page agents quote.
+          // What is below is verifiable: lib/credential-fetcher.ts fetches by
+          // integration id at runtime, in memory, and steps take the id rather
+          // than the secret so it never reaches step parameters or logs.
+          "Third-party integration credentials are never passed to workflow steps or written to execution logs. A step receives only an integration id and fetches the credential in memory at the moment it is used.",
           "Two-factor authentication is mandatory on email-password accounts, and new sign-in devices and countries are verified before a session is granted.",
         ],
       },
@@ -444,7 +485,7 @@ function pricingPage(): SitePage {
       {
         heading: "Business tiers",
         paragraphs: [
-          "Business adds a 99.9% availability SLA, 90-day log retention, and a dedicated support channel with a 12-hour response target.",
+          `Business adds a ${PLANS.business.features.sla} availability SLA, ${PLANS.business.features.logRetentionDays}-day log retention, and ${supportChannel("business")}.`,
         ],
         table: tierTable("business"),
       },
@@ -461,7 +502,7 @@ function pricingPage(): SitePage {
       {
         heading: "Enterprise",
         paragraphs: [
-          "Enterprise covers custom execution volume, a 99.99% availability SLA, 365-day log retention, and a dedicated support channel with a 1-hour response target. Terms are agreed directly rather than published.",
+          `Enterprise covers custom execution volume, a ${PLANS.enterprise.features.sla} availability SLA, ${PLANS.enterprise.features.logRetentionDays}-day log retention, and ${supportChannel("enterprise")}. Terms are agreed directly rather than published.`,
         ],
         links: [
           { label: "Contact us", href: "/contact" },

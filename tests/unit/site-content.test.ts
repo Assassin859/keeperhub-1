@@ -132,6 +132,28 @@ describe("public site content", () => {
       expect(proRow?.[1]).toContain(`$${entryTier.monthlyPriceAnnual}`);
     });
 
+    it("derives support targets from PLANS rather than restating them", () => {
+      // These were hand-written prose until review flagged the drift risk. A
+      // public page quoting a response time the product no longer offers is
+      // worse now that the same sentence is served as markdown agents repeat.
+      const contact = textOf(publicPage("/contact") as SitePage);
+      expect(contact).toContain("48-hour response target");
+      expect(contact).toContain("12-hour response target");
+      expect(contact).toContain("1-hour response target");
+      expect(contact).toContain(PLANS.business.features.sla as string);
+      expect(contact).toContain(PLANS.enterprise.features.sla as string);
+    });
+
+    it("does not state an SLA twice in the tier paragraphs", () => {
+      const pricing = publicPage("/pricing") as SitePage;
+      const business = pricing.sections.find(
+        (section) => section.heading === "Business tiers"
+      )?.paragraphs?.[0];
+      expect(business).toBeDefined();
+      const sla = PLANS.business.features.sla as string;
+      expect((business ?? "").split(sla).length - 1).toBe(1);
+    });
+
     it("reports Enterprise as custom rather than inventing a number", () => {
       const row = publicPage("/pricing")?.sections[0]?.table?.rows.find(
         (entry) => entry[0] === PLANS.enterprise.name
