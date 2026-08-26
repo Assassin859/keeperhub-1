@@ -800,18 +800,25 @@ this connection is allowed:
 ```json
 {
   "error": "insufficient_scope",
-  "message": "This endpoint requires the `mcp:write` OAuth scope. This connection is allowed `mcp:read`. Reconnecting will not raise it: the limit is set by an organization owner or admin under Settings > Developer > Agents. Do not retry; ask them to raise it.",
+  "message": "This endpoint requires the `mcp:write` scope. This credential is allowed `mcp:read`. Retrying will not widen it. An API key's scope is fixed when the key is created and cannot be raised. A new key has to be issued with the scope this endpoint requires.",
   "retryable": false,
   "required_scope": "mcp:write",
   "granted_scope": "mcp:read"
 }
 ```
 
-`granted_scope` is what the connection may do right now, which is not always the
-scope the token was issued with. An organization can cap what its agents may do,
-and a cap is applied on every call, so a token issued with `mcp:admin` reports
-`mcp:read` here while a read-only cap is in force. Reauthorizing with a wider
-scope does not lift a cap; only an owner or admin can, in the Agents settings.
+The closing sentence names the remedy for the credential that was used, because
+the two families differ. An API key's scope is written into the key when it is
+created and cannot be changed afterwards, so a new key is the only route. An
+OAuth connection is instead told that an owner or admin controls its ceiling
+under Settings > Developer > Agents.
+
+`granted_scope` is what the credential may do right now. For an OAuth token that
+is not always the scope it was issued with: an organization can cap what its
+agents may do, and the cap is applied on every call, so a token issued with
+`mcp:admin` reports `mcp:read` here while a read-only cap is in force.
+Reauthorizing with a wider scope does not lift a cap; only an owner or admin
+can, in the Agents settings. An API key reports the scope stored on the key.
 
 Broadcasting requires `mcp:write`. A dry run (`simulate: true`) neither signs nor broadcasts, so `mcp:read` is sufficient.
 

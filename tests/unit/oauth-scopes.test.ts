@@ -121,7 +121,17 @@ describe("oauth-scopes — scopeSatisfies (A-03)", () => {
 describe("parseScopeInput — null means unrestricted, so only omission may reach it", () => {
   it("returns null only when the field is absent", () => {
     expect(parseScopeInput(undefined)).toBeNull();
+    // JSON clients routinely send null for an absent field.
     expect(parseScopeInput(null)).toBeNull();
+  });
+
+  it("floors a supplied but unreadable scopes value at mcp:read", () => {
+    // scopes is unvalidated request body. An object is the shape the creation
+    // overlay holds internally, and is the likeliest way one reaches the API.
+    expect(parseScopeInput({ "mcp:read": true })).toBe("mcp:read");
+    expect(parseScopeInput(true)).toBe("mcp:read");
+    expect(parseScopeInput(false)).toBe("mcp:read");
+    expect(parseScopeInput(0)).toBe("mcp:read");
   });
 
   it("narrows an explicitly empty scopes array to mcp:read", () => {

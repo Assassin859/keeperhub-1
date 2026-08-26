@@ -133,14 +133,19 @@ export function normalizeScope(requestedScope: string): string {
  * Coerce the `scopes` field from an API request body (array or space-separated
  * string) into a normalized scope string, or null when omitted.
  *
- * Null means "no scope restriction" and passes every gate, so it must be
- * reachable only by leaving `scopes` out entirely. A caller that supplies the
- * field gets normalizeScope, which floors at mcp:read -- so `[]`, `[1, 2]` and
- * `""` narrow to the least privilege rather than widening to full access, the
- * same way `["bogus"]` already did. Asking for nothing and receiving
- * everything was the one input shape where the fallback ran the wrong way.
+ * Null means "no scope restriction" and passes every gate, so only omission may
+ * reach it. `scopes` arrives as unvalidated request body, so "supplied" has to
+ * cover more than the two shapes we can read: an object (the shape the creation
+ * UI holds internally), a boolean, a number. Anything present but unusable
+ * floors at mcp:read rather than widening to full access -- the caller asked
+ * for a restriction, and the one thing we must not do is answer that with none.
  */
 export function parseScopeInput(scopes: unknown): string | null {
+  // JSON clients routinely send null for an absent field, so it is read as
+  // omission. undefined is the same case.
+  if (scopes === undefined || scopes === null) {
+    return null;
+  }
   if (Array.isArray(scopes)) {
     return normalizeScope(
       scopes.filter((s): s is string => typeof s === "string").join(" ")
@@ -149,7 +154,7 @@ export function parseScopeInput(scopes: unknown): string | null {
   if (typeof scopes === "string") {
     return normalizeScope(scopes);
   }
-  return null;
+  return SCOPE_MCP_READ;
 }
 
 /**

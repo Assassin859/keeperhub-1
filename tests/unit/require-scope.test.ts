@@ -79,6 +79,7 @@ describe("requireScope (A-03)", () => {
       requireScope("mcp:read", "mcp:write", {
         organizationId: "org-1",
         credentialId: "key-1",
+        credentialType: "api-key",
         endpoint: "/api/execute/transfer",
       });
 
@@ -90,6 +91,9 @@ describe("requireScope (A-03)", () => {
           granted_scope: "mcp:read",
           organizationId: "org-1",
           credentialId: "key-1",
+          // Without this a Loki query cannot separate an OAuth grant clamped by
+          // a ceiling change from a leaked kh_ key probing above its scope.
+          credential_type: "api-key",
           endpoint: "/api/execute/transfer",
         }
       );

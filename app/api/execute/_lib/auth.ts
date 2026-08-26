@@ -2,6 +2,7 @@ import "server-only";
 
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
+import type { AuthMethod } from "@/lib/middleware/auth-helpers";
 
 export type ApiKeyContext = {
   organizationId: string;
@@ -13,7 +14,7 @@ export type ApiKeyContext = {
    * admin, an API key's scope is fixed at creation -- so requireScope needs to
    * know which one it is talking to.
    */
-  credentialType: "oauth" | "api-key";
+  credentialType: Extract<AuthMethod, "oauth" | "api-key">;
 };
 
 export type ApiKeyAuthError = { error: string; status: number };

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSecurityEvent, logUserError } from "@/lib/logging";
 import { type OAuthScope, scopeSatisfies } from "@/lib/mcp/oauth-scopes";
+import type { AuthMethod } from "@/lib/middleware/auth-helpers";
 
 /**
  * Identifies the denied caller in the security signal. Never carries the
@@ -14,10 +15,15 @@ export type ScopeDenialContext = {
   /**
    * Which credential family is being denied, when the caller knows. Selects the
    * remediation sentence in the 403 body. Omitted by call sites that do not
-   * distinguish the two, which get the requirement without a remediation claim
-   * rather than a guess that may be wrong for the credential in hand.
+   * distinguish the families, which get the requirement without a remediation
+   * claim rather than a guess that may be wrong for the credential in hand.
+   *
+   * Reuses AuthMethod rather than a private union so the ~35 sites that already
+   * hold an `authMethod` can pass it straight through. "session" carries no
+   * scope, so it reaches here only if a future caller passes it, and falls to
+   * the no-remediation branch.
    */
-  credentialType?: "oauth" | "api-key";
+  credentialType?: AuthMethod;
 };
 
 /**
@@ -28,11 +34,9 @@ export type ScopeDenialContext = {
  * creation and `/api/keys/[keyId]` exposes only DELETE -- so there is nothing
  * to raise, only a new key to mint.
  */
-function remediationFor(
-  credentialType: ScopeDenialContext["credentialType"]
-): string {
+function remediationFor(credentialType: AuthMethod | undefined): string {
   if (credentialType === "api-key") {
-    return " An API key's scope is fixed when the key is created and cannot be changed. Create a new key with the scope you need.";
+    return " An API key's scope is fixed when the key is created and cannot be raised. A new key has to be issued with the scope this endpoint requires.";
   }
   if (credentialType === "oauth") {
     return " The ceiling is set by an organization owner or admin under Settings > Developer > Agents. Do not retry; ask them to raise it.";
@@ -74,6 +78,7 @@ export function requireScope(
     granted_scope: grantedScope ?? null,
     organizationId: context?.organizationId,
     credentialId: context?.credentialId,
+    credential_type: context?.credentialType ?? null,
     endpoint: context?.endpoint,
   });
 
