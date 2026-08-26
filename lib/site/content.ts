@@ -118,6 +118,19 @@ function supportChannel(plan: PlanName): string {
   return `${medium} with a ${window.replace("h", "-hour")} response target`;
 }
 
+/**
+ * Table-cell form: "Email, 48h" rather than the raw `email-48h` slug. The slug
+ * is an internal enum and was rendering straight into the public pricing table.
+ */
+function supportCell(plan: PlanName): string {
+  const [channel, window] = PLANS[plan].features.supportLevel.split("-");
+  if (window === undefined) {
+    return "Community";
+  }
+  const medium = channel === "email" ? "Email" : "Dedicated";
+  return `${medium}, ${window}`;
+}
+
 /** The channel plus the SLA, for prose that has not already named the SLA. */
 function supportPhrase(plan: PlanName): string {
   const { sla } = PLANS[plan].features;
@@ -152,7 +165,7 @@ function pricingTable(): SiteTable {
         gasCreditsLabel(plan),
         overageLabel(plan),
         `${definition.features.logRetentionDays} days`,
-        definition.features.supportLevel,
+        supportCell(plan),
       ] as const;
     }),
   };

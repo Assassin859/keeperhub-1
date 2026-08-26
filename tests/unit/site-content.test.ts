@@ -132,6 +132,24 @@ describe("public site content", () => {
       expect(proRow?.[1]).toContain(`$${entryTier.monthlyPriceAnnual}`);
     });
 
+    it("never leaks the raw supportLevel slug into the table", () => {
+      // "email-48h" / "dedicated-12h" are internal enum values and were
+      // rendering straight into the public pricing table.
+      const rows = publicPage("/pricing")?.sections[0]?.table?.rows ?? [];
+      for (const row of rows) {
+        for (const cell of row) {
+          expect(cell).not.toMatch(/^(email|dedicated)-\d+h$/);
+          expect(cell).not.toBe("community");
+        }
+      }
+      expect(rows.map((row) => row[6])).toEqual([
+        "Community",
+        "Email, 48h",
+        "Dedicated, 12h",
+        "Dedicated, 1h",
+      ]);
+    });
+
     it("derives support targets from PLANS rather than restating them", () => {
       // These were hand-written prose until review flagged the drift risk. A
       // public page quoting a response time the product no longer offers is
