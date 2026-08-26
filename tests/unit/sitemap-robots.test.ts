@@ -92,6 +92,25 @@ describe("app/robots.ts", () => {
     }
   });
 
+  it("does not invite crawlers the edge blocks everywhere", async () => {
+    // robots.txt and the Cloudflare rule are one policy expressed twice. A UA
+    // invited here and 403'd at the edge is worse than either alone: the
+    // crawler retries, and a readiness audit reads the 403 as "unreachable".
+    // See prod/keeperhub-infrastructure/cloudflare.tf in the infra repo.
+    const { AGENT_CRAWLER_USER_AGENTS } = await import("@/lib/site/crawlers");
+    for (const blocked of [
+      "Bytespider",
+      "Meta-ExternalAgent",
+      "cohere-training-data-crawler",
+      "cohere-ai",
+    ]) {
+      expect(AGENT_CRAWLER_USER_AGENTS).not.toContain(blocked);
+    }
+    // Meta-ExternalFetcher (user-initiated) is allowed; Meta-ExternalAgent
+    // (bulk crawl) is not. Different agents, one character apart in practice.
+    expect(AGENT_CRAWLER_USER_AGENTS).toContain("Meta-ExternalFetcher");
+  });
+
   it("allows the machine-readable documents despite the /api/ disallow", async () => {
     const robotsModule = await import("@/app/robots");
     const rules = robotsModule.default().rules;
