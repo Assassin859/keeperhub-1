@@ -4,7 +4,10 @@ import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { supportedTokens } from "@/lib/db/schema";
-import { getDefaultStablecoinTransferCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
+import {
+  getDefaultBatchStablecoinCapMicroUsd,
+  getDefaultStablecoinTransferCapMicroUsd,
+} from "@/lib/execute/spend-cap-defaults";
 import { logSecurityEvent } from "@/lib/logging";
 import { getRegisteredProtocols } from "@/lib/protocol-registry";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
@@ -351,30 +354,45 @@ export async function checkStablecoinCalldataBatch(params: {
         error: `${token.symbol} amount must not be negative`,
       };
     }
+
+    // Every entry is still bounded on its own. Summing alone would let one
+    // large recipient hide under a generous batch total.
+    const perCall = decide({
+      organizationId: params.organizationId,
+      chainId: params.chainId,
+      context: params.context,
+      tokenAddress: call.to,
+      token,
+      amountBase: decoded.amountBase,
+      fn: decoded.fn,
+      spender: decoded.spender,
+    });
+    if (perCall.kind !== "allowed") {
+      return perCall;
+    }
+
     totalMicroUsd += rescaleToMicroUsd(decoded.amountBase, token.decimals);
     outflowSymbol ??= token.symbol;
   }
 
-  const capMicroUsd = BigInt(getDefaultStablecoinTransferCapMicroUsd());
-  if (totalMicroUsd <= capMicroUsd) {
-    return ALLOWED;
-  }
-
-  logSecurityEvent("stablecoin_transfer_cap_exceeded", {
-    organizationId: params.organizationId,
-    surface: params.context,
-    chainId: params.chainId,
-    erc20Function: "batch",
-    callCount: params.calls.length,
-    amountMicroUsd: totalMicroUsd.toString(),
-    capMicroUsd: capMicroUsd.toString(),
+  // The transaction total, on its own figure. The per-call ceiling above
+  // bounds any single recipient; this bounds what the whole transaction moves,
+  // so neither one 990 USD entry nor fifty 100 USD entries get through.
+  return compareAgainstCap({
+    microUsd: totalMicroUsd,
+    capMicroUsd: BigInt(getDefaultBatchStablecoinCapMicroUsd()),
     blocked: true,
+    verb: "transfer",
+    unit: `${outflowSymbol ?? "USD"} across ${params.calls.length} call(s)`,
+    limit: "per-transaction batch limit",
+    event: {
+      organizationId: params.organizationId,
+      surface: params.context,
+      chainId: params.chainId,
+      erc20Function: "batch",
+      callCount: params.calls.length,
+    },
   });
-
-  return {
-    kind: "denied",
-    error: `Stablecoin transfer of ${formatMicroUsd(totalMicroUsd)} ${outflowSymbol ?? "USD"} across ${params.calls.length} call(s) exceeds the ${formatMicroUsd(capMicroUsd)} USD per-transaction limit`,
-  };
 }
 
 function decide(params: {
@@ -398,10 +416,6 @@ function decide(params: {
   }
 
   const microUsd = rescaleToMicroUsd(amountBase, token.decimals);
-  const capMicroUsd = BigInt(getDefaultStablecoinTransferCapMicroUsd());
-  if (microUsd <= capMicroUsd) {
-    return ALLOWED;
-  }
 
   // An approval moves nothing by itself, and max-uint approvals are how nearly
   // every DeFi integration works, so a blanket refusal would break legitimate
@@ -416,16 +430,16 @@ function decide(params: {
   // else is refused. Contracts declared userSpecifiedAddress carry no static
   // address and are deliberately absent from the allowlist: a caller-supplied
   // spender is exactly the case that must not be auto-trusted.
-  const approvingKnownSpender =
+  const permittedApproval =
     fn === "approve" && isKnownProtocolSpender(params.spender);
-  const blocked = !approvingKnownSpender;
-  const verb = fn === "approve" ? "approval" : "transfer";
 
-  logSecurityEvent(
-    blocked
-      ? "stablecoin_transfer_cap_exceeded"
-      : "stablecoin_approval_above_cap",
-    {
+  return compareAgainstCap({
+    microUsd,
+    capMicroUsd: BigInt(getDefaultStablecoinTransferCapMicroUsd()),
+    blocked: !permittedApproval,
+    verb: fn === "approve" ? "approval" : "transfer",
+    unit: token.symbol,
+    event: {
       organizationId: params.organizationId,
       surface: params.context,
       chainId: params.chainId,
@@ -433,6 +447,43 @@ function decide(params: {
       symbol: token.symbol,
       erc20Function: fn,
       spender: params.spender?.toLowerCase() ?? null,
+    },
+  });
+}
+
+/**
+ * Shared tail for every entry shape: compare, emit the signal, allow or deny.
+ *
+ * Split out because the batch path had grown its own copy of all four moving
+ * parts -- the comparison, the cap read, the security event and the wording of
+ * the denial -- so a new field on the event or a reworded message silently kept
+ * the old form on one path.
+ *
+ * `blocked: false` is the one case that reports without refusing: an
+ * allowlisted approval above the cap, recorded precisely because it is allowed.
+ */
+function compareAgainstCap(params: {
+  microUsd: bigint;
+  capMicroUsd: bigint;
+  blocked: boolean;
+  verb: string;
+  /** Token symbol for a single call, or a description for a batch. */
+  unit: string;
+  /** What the figure bounds, as it reads in the denial. */
+  limit?: string;
+  event: Record<string, unknown>;
+}): StablecoinCapDecision {
+  const { microUsd, capMicroUsd, blocked, verb, unit } = params;
+  if (microUsd <= capMicroUsd) {
+    return ALLOWED;
+  }
+
+  logSecurityEvent(
+    blocked
+      ? "stablecoin_transfer_cap_exceeded"
+      : "stablecoin_approval_above_cap",
+    {
+      ...params.event,
       amountMicroUsd: microUsd.toString(),
       capMicroUsd: capMicroUsd.toString(),
       blocked,
@@ -445,7 +496,7 @@ function decide(params: {
 
   return {
     kind: "denied",
-    error: `Stablecoin ${verb} of ${formatMicroUsd(microUsd)} ${token.symbol} exceeds the ${formatMicroUsd(capMicroUsd)} USD per-transaction limit`,
+    error: `Stablecoin ${verb} of ${formatMicroUsd(microUsd)} ${unit} exceeds the ${formatMicroUsd(capMicroUsd)} USD ${params.limit ?? "per-transaction limit"}`,
   };
 }
 

@@ -75,6 +75,21 @@ const DEFAULT_STABLECOIN_CAP_MICRO_USD = "100000000";
 // BigInt() accepts hex-prefixed strings ("0x10" -> 16), so an ops typo would
 // silently turn a cap into a near-zero one. Reject anything that is not a
 // decimal digit run before it is used.
+// 2,000 USD in micro-USD: the ceiling on ONE transaction's total stablecoin
+// outflow, distinct from the per-call figure above.
+//
+// A Tempo batch payout packs up to MAX_PAYOUTS (50) recipients into a single
+// transaction. Measuring that total against the per-call 100 USD would cap a
+// 50-recipient payroll at 2 USD a head, which is not a bound on the feature so
+// much as its removal. The two figures do different jobs: the per-call ceiling
+// stops any one recipient being large, and this one stops the batch as a whole
+// being large, so neither a single 990 USD entry nor fifty 100 USD entries get
+// through.
+//
+// 20x the per-call figure. Sized so an ordinary payroll run clears it while a
+// batch still cannot move materially more than a handful of single transfers.
+const DEFAULT_BATCH_STABLECOIN_CAP_MICRO_USD = "2000000000";
+
 const DECIMAL_INTEGER_RE = /^\d+$/;
 
 function resolveOverride(
@@ -116,5 +131,19 @@ export function getDefaultStablecoinTransferCapMicroUsd(): string {
   return resolveOverride(
     process.env.EXECUTE_DEFAULT_STABLECOIN_CAP_MICRO_USD,
     DEFAULT_STABLECOIN_CAP_MICRO_USD
+  );
+}
+
+/**
+ * Ceiling on the total stablecoin outflow of a single transaction, in
+ * micro-USD (6 decimals).
+ *
+ * Applies alongside the per-call figure rather than instead of it: every call
+ * in a batch is still individually bounded, and this bounds their sum.
+ */
+export function getDefaultBatchStablecoinCapMicroUsd(): string {
+  return resolveOverride(
+    process.env.EXECUTE_DEFAULT_BATCH_STABLECOIN_CAP_MICRO_USD,
+    DEFAULT_BATCH_STABLECOIN_CAP_MICRO_USD
   );
 }

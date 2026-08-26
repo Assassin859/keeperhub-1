@@ -62,7 +62,10 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { getDefaultStablecoinTransferCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
+import {
+  getDefaultBatchStablecoinCapMicroUsd,
+  getDefaultStablecoinTransferCapMicroUsd,
+} from "@/lib/execute/spend-cap-defaults";
 import {
   checkStablecoinCalldata,
   checkStablecoinCalldataBatch,
@@ -73,6 +76,8 @@ import {
 const CAP_MICRO_USD = BigInt(getDefaultStablecoinTransferCapMicroUsd());
 // The cap in whole dollars, used to build amounts either side of it.
 const CAP_USD = CAP_MICRO_USD / BigInt(1_000_000);
+const BATCH_CAP_MICRO_USD = BigInt(getDefaultBatchStablecoinCapMicroUsd());
+const BATCH_CAP_USD = BATCH_CAP_MICRO_USD / BigInt(1_000_000);
 
 // The registry seeds addresses lowercase; callers usually resolve checksummed
 // ones, so the two casings must still meet.
@@ -555,19 +560,55 @@ describe("checkStablecoinCalldataBatch", () => {
   }
 
   // The bypass this entry point exists for. signTempoTx signs every call of a
-  // batch payout as one transaction, so ten entries that each clear the
-  // ceiling individually moved ten times it, and nothing bounded the entry
-  // count.
-  it("sums a batch whose calls each sit under the ceiling", async () => {
+  // batch payout as one transaction, so entries that each clear the per-call
+  // ceiling still moved a multiple of it, and nothing bounded the entry count.
+  it("sums a batch whose calls each sit under the per-call ceiling", async () => {
     state.tokenRows = [USDC];
-    const under = CAP_USD - BigInt(1);
+    // Each entry clears the 100 USD per-call figure; together they pass the
+    // batch total.
+    const perEntry = CAP_USD - BigInt(10);
+    const count = Number(BATCH_CAP_USD / perEntry) + 1;
 
     const result = await checkStablecoinCalldataBatch({
       ...batchParams,
-      calls: Array.from({ length: 10 }, () => transferCall(under)),
+      calls: Array.from({ length: count }, () => transferCall(perEntry)),
     });
 
     expect(result.kind).toBe("denied");
+    if (result.kind === "denied") {
+      expect(result.error).toContain("per-transaction batch limit");
+    }
+  });
+
+  // The case that made the per-call figure the wrong yardstick for a batch: a
+  // payroll run of many small entries. Measured against 100 USD it capped
+  // batch payouts at 2 USD a head, which removed the feature rather than
+  // bounding it.
+  it("admits a payroll-shaped batch of many small entries", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: Array.from({ length: 50 }, () => transferCall(BigInt(20))),
+    });
+
+    expect(result).toEqual({ kind: "allowed" });
+  });
+
+  // Summing alone is not enough either: without the per-call ceiling a single
+  // large recipient hides under a generous batch total.
+  it("refuses one over-cap entry even when the batch total is small", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinCalldataBatch({
+      ...batchParams,
+      calls: [transferCall(CAP_USD + BigInt(1))],
+    });
+
+    expect(result.kind).toBe("denied");
+    if (result.kind === "denied") {
+      expect(result.error).toContain("per-transaction limit");
+    }
   });
 
   it("admits a batch whose total stays within the ceiling", async () => {
@@ -588,7 +629,7 @@ describe("checkStablecoinCalldataBatch", () => {
       USDC,
       { ...USDC, tokenAddress: DAI_ADDRESS, symbol: "DAI", decimals: 18 },
     ];
-    const half = CAP_USD / BigInt(2) + BigInt(1);
+    const half = BATCH_CAP_USD / BigInt(2) + BigInt(1);
 
     const result = await checkStablecoinCalldataBatch({
       ...batchParams,
