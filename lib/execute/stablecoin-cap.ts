@@ -7,6 +7,7 @@ import { supportedTokens } from "@/lib/db/schema";
 import { getDefaultStablecoinTransferCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
 import { logSecurityEvent } from "@/lib/logging";
 import { getRegisteredProtocols } from "@/lib/protocol-registry";
+import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
 // Registration is an import side effect: a protocol module calls
 // registerProtocol at load. Without this import the registry is whatever the
 // entry point happened to pull in, and of the execute routes only
@@ -102,6 +103,46 @@ const OUTFLOW_SHAPES: Readonly<Record<OutflowFn, OutflowShape>> = {
   },
 };
 
+/**
+ * Functions whose first argument names the payer rather than the payee.
+ *
+ * `transfer` and `approve` always move or grant from the caller, which is the
+ * org wallet. `transferFrom` does not: it moves from whoever the first
+ * argument names, and the org may just be the one submitting the transaction.
+ */
+const PAYER_IS_FIRST_ARG: ReadonlySet<OutflowFn> = new Set([
+  "transferFrom",
+  "transferFromWithMemo",
+]);
+
+/**
+ * Whether this call actually moves value OUT of the organization's wallet.
+ *
+ * A pull payment is a `transferFrom` where the payer is a counterparty and the
+ * org is collecting: value moves in, nothing leaves. Treating that as an
+ * outflow refused legitimate collections above the ceiling -- a 500 USDC
+ * invoice settlement read as a 500 USDC drain.
+ *
+ * Fails closed. If the wallet cannot be resolved the call is treated as an
+ * outflow and stays subject to the ceiling, because the alternative is letting
+ * a real drain through on a lookup error.
+ */
+async function movesOrgFunds(
+  fn: OutflowFn,
+  payer: string | undefined,
+  organizationId: string
+): Promise<boolean> {
+  if (!(PAYER_IS_FIRST_ARG.has(fn) && typeof payer === "string")) {
+    return true;
+  }
+  try {
+    const wallet = await getOrganizationWalletAddress(organizationId);
+    return wallet ? payer.toLowerCase() === wallet.toLowerCase() : true;
+  } catch {
+    return true;
+  }
+}
+
 type StablecoinToken = { decimals: number; symbol: string };
 
 /**
@@ -185,11 +226,18 @@ export async function checkStablecoinContractCall(params: {
     };
   }
 
+  const firstArg =
+    typeof params.args[0] === "string" ? params.args[0] : undefined;
+  if (!(await movesOrgFunds(fn, firstArg, params.organizationId))) {
+    return ALLOWED;
+  }
+
   return decide({
     ...params,
-    // Argument 0 is the spender for approve. The allowlist check in decide()
-    // needs it from this entry point too, not just the calldata one.
-    spender: typeof params.args[0] === "string" ? params.args[0] : undefined,
+    // Argument 0 is the spender for approve and the payer for transferFrom.
+    // The allowlist check in decide() needs it from this entry point too, not
+    // just the calldata one.
+    spender: firstArg,
     tokenAddress: params.contractAddress,
     token,
     amountBase,
@@ -216,6 +264,12 @@ export async function checkStablecoinCalldata(params: {
 
   const token = await loadStablecoin(params.chainId, params.to);
   if (!token) {
+    return ALLOWED;
+  }
+
+  if (
+    !(await movesOrgFunds(decoded.fn, decoded.spender, params.organizationId))
+  ) {
     return ALLOWED;
   }
 
@@ -281,6 +335,13 @@ export async function checkStablecoinCalldataBatch(params: {
       if (decision.kind !== "allowed") {
         return decision;
       }
+      continue;
+    }
+
+    if (
+      !(await movesOrgFunds(decoded.fn, decoded.spender, params.organizationId))
+    ) {
+      // An inbound collection inside a batch is not org value leaving.
       continue;
     }
 

@@ -5,6 +5,17 @@ const KNOWN_ROUTER = "0x1111111111111111111111111111111111111111";
 const UNKNOWN_SPENDER = "0x2222222222222222222222222222222222222222";
 const USER_SUPPLIED = "0x3333333333333333333333333333333333333333";
 
+const ORG_WALLET = "0x4444444444444444444444444444444444444444";
+const COUNTERPARTY = "0x5555555555555555555555555555555555555555";
+
+const { mockGetOrgWallet } = vi.hoisted(() => ({
+  mockGetOrgWallet: vi.fn(),
+}));
+
+vi.mock("@/lib/web3/wallet-helpers", () => ({
+  getOrganizationWalletAddress: mockGetOrgWallet,
+}));
+
 vi.mock("@/lib/protocol-registry", () => ({
   getRegisteredProtocols: () => [
     {
@@ -107,6 +118,8 @@ function units(dollars: bigint, decimals: number): string {
 beforeEach(() => {
   state.tokenRows = [];
   state.selectCalls = 0;
+  mockGetOrgWallet.mockReset();
+  mockGetOrgWallet.mockResolvedValue(ORG_WALLET);
 });
 
 describe("the stablecoin per-transaction ceiling", () => {
@@ -304,7 +317,72 @@ describe("checkStablecoinContractCall", () => {
       ...callParams,
       functionName: "transferFrom",
       inputTypes: ["address", "address", "uint256"],
-      args: [RECIPIENT, RECIPIENT, units(CAP_USD + BigInt(1), 6)],
+      // Payer is the org wallet, so this is a real outflow.
+      args: [ORG_WALLET, RECIPIENT, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result.kind).toBe("denied");
+  });
+
+  // A pull payment: the counterparty pays and the org collects. Value moves
+  // INTO the wallet, so the outflow ceiling has nothing to say about it.
+  // Treating every transferFrom as an outflow refused invoice settlements.
+  it("allows an over-cap transferFrom that collects from a counterparty", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transferFrom",
+      inputTypes: ["address", "address", "uint256"],
+      args: [COUNTERPARTY, ORG_WALLET, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result).toEqual({ kind: "allowed" });
+  });
+
+  it("compares the payer case-insensitively", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transferFrom",
+      inputTypes: ["address", "address", "uint256"],
+      args: [
+        ORG_WALLET.toUpperCase().replace("0X", "0x"),
+        RECIPIENT,
+        units(CAP_USD + BigInt(1), 6),
+      ],
+    });
+
+    expect(result.kind).toBe("denied");
+  });
+
+  // Fail closed: an unresolvable wallet must not become a way to move funds
+  // out under a transferFrom the check can no longer attribute.
+  it("still applies the ceiling when the org wallet cannot be resolved", async () => {
+    state.tokenRows = [USDC];
+    mockGetOrgWallet.mockRejectedValue(new Error("wallet lookup failed"));
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transferFrom",
+      inputTypes: ["address", "address", "uint256"],
+      args: [COUNTERPARTY, ORG_WALLET, units(CAP_USD + BigInt(1), 6)],
+    });
+
+    expect(result.kind).toBe("denied");
+  });
+
+  // transfer has no payer argument -- it always moves from the caller -- so
+  // the payer exemption must not leak into it via args[0], which is the payee.
+  it("does not exempt a plain transfer whose recipient is a counterparty", async () => {
+    state.tokenRows = [USDC];
+
+    const result = await checkStablecoinContractCall({
+      ...callParams,
+      functionName: "transfer",
+      inputTypes: ["address", "uint256"],
+      args: [COUNTERPARTY, units(CAP_USD + BigInt(1), 6)],
     });
 
     expect(result.kind).toBe("denied");
