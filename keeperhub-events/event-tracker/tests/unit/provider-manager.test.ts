@@ -1605,12 +1605,19 @@ describe("ChainProviderManager", () => {
         }
         provider.sendResponses = [[], new Error("chunk two refused")];
         await provider.emitBlock(800);
+        // Only ranges issued after the failed drain count: that drain already
+        // asked for 800 once per address chunk.
+        const afterFailedDrain = ranges(provider).length;
         await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 3);
 
         // Block 800 is still owed, so a later drain re-queries from 800.
         await provider.emitBlock(801);
         await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
-        expect(ranges(provider).some((r) => r.from === 800)).toBe(true);
+        expect(
+          ranges(provider)
+            .slice(afterFailedDrain)
+            .some((r) => r.from === 800),
+        ).toBe(true);
         await mgr.destroy();
       });
 
@@ -1630,12 +1637,18 @@ describe("ChainProviderManager", () => {
         expect(getLogsCalls(provider)).toHaveLength(1);
 
         // The mark stayed at 849, so the next drain re-issues 850 rather
-        // than treating the timed-out range as served.
+        // than treating the timed-out range as served. Only ranges issued
+        // after this point count: the timed-out call already asked for 850.
+        const beforeRetry = ranges(provider).length;
         provider.beforeSend = null;
         await provider.emitBlock(851);
         await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
 
-        expect(ranges(provider).some((r) => r.from === 850)).toBe(true);
+        expect(
+          ranges(provider)
+            .slice(beforeRetry)
+            .some((r) => r.from === 850),
+        ).toBe(true);
       });
     });
 

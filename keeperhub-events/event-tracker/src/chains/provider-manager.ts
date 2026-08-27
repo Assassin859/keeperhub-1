@@ -1212,8 +1212,9 @@ export class ChainProviderManager {
     // Dedup cannot absorb that: `isProcessed`/`markProcessed` is a
     // check-then-set with the listener's jitter sleep before the check, so
     // two concurrent dispatches of one log both see "not processed".
-    // Nothing needs to force-release it either, because the `eth_getLogs`
-    // timeout below guarantees every drain settles.
+    // The `eth_getLogs` timeout below bounds the fetch, so a stranded request
+    // cannot hold `draining`. Dispatch is not bounded, so a handler that never
+    // settles still can.
     entry.draining = true;
     try {
       entry.lastRequestAt = Date.now();
