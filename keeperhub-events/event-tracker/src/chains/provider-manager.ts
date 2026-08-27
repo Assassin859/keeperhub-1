@@ -1070,7 +1070,10 @@ export class ChainProviderManager {
     entry.blockIntervalSamples = 0;
     entry.blockIntervalFirstSampleAt = null;
     // Per connection, like the cadence estimate above: a run of timeouts is
-    // evidence about one socket, and this is a different one.
+    // evidence about one socket, and this is a different one. `entry` is
+    // shared though, so a request stranded by the old connection settles
+    // after the swap and counts against the replacement. It takes a full run
+    // to matter and any served range clears it.
     entry.consecutiveGetLogsTimeouts = 0;
     entry.provider.on("block", listener);
     this.startStatsTimer();
