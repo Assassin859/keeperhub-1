@@ -1,7 +1,15 @@
 "use client";
 
 import { ethers } from "ethers";
-import { AlertCircle, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Loader2,
+  ShieldAlert,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ChangeEvent, ChangeEventHandler, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -33,9 +41,12 @@ import {
 } from "@/components/ui/select";
 import { SaveAddressBookmark } from "@/components/address-book/save-address-bookmark";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
+import { joinExplorerUrl } from "@/lib/build-explorer-url";
 import type { WithdrawableAsset } from "@/lib/wallet/build-withdrawable-assets";
 
 export type { WithdrawableAsset };
+
+const COPIED_FOR_MS = 1500;
 
 /**
  * The wallet whose funds the withdraw moves. Default = the org's Turnkey
@@ -119,6 +130,10 @@ export function WithdrawModal({
   const [walletFactors, setWalletFactors] = useState<StepUpFactor[] | null>(
     null
   );
+  // The chain's explorer base, so a finished transaction can be opened rather
+  // than only read off the screen.
+  const [explorerBase, setExplorerBase] = useState<string | null>(null);
+  const [hashCopied, setHashCopied] = useState(false);
   const lastEstimateKeyRef = useRef<string | null>(null);
   const factorsProbedRef = useRef(false);
 
@@ -307,6 +322,38 @@ export function WithdrawModal({
     }
     return null;
   };
+
+  // The chains feed carries the explorer base; the withdraw response carries
+  // only the hash. Fetched on success so a page that never sends pays nothing.
+  useEffect(() => {
+    if (state !== "success" || !selectedAsset) {
+      return;
+    }
+    let cancelled = false;
+    const loadExplorer = async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/chains");
+        if (!response.ok) {
+          return;
+        }
+        const rows = (await response.json()) as {
+          chainId: number;
+          explorerUrl: string | null;
+        }[];
+        if (cancelled) {
+          return;
+        }
+        const match = rows.find((row) => row.chainId === selectedAsset.chainId);
+        setExplorerBase(match?.explorerUrl ?? null);
+      } catch {
+        // No link, but the hash itself is still on screen and copyable.
+      }
+    };
+    void loadExplorer();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAsset, state]);
 
   // An empty-codes POST. The server reads it as the opening move of the
   // challenge: it mints the wallet nonce and emails the confirmation code,
@@ -505,13 +552,21 @@ export function WithdrawModal({
 
   // Success state
   if (state === "success" && txHash) {
+    const explorerTxUrl = explorerBase
+      ? joinExplorerUrl(explorerBase, `/tx/${txHash}`)
+      : null;
+    const copyHash = (): void => {
+      navigator.clipboard.writeText(txHash);
+      setHashCopied(true);
+      setTimeout(() => setHashCopied(false), COPIED_FOR_MS);
+    };
     return (
       <Overlay
         actions={[{ label: "Done", onClick: closeAll }]}
         overlayId={overlayId}
         title="Withdrawal Complete"
       >
-        <div className="flex flex-col items-center justify-center py-8 text-center">
+        <div className="flex flex-col items-center py-8 text-center">
           <CheckCircle2 className="mb-4 size-12 text-green-500" />
           <p className="mb-2 font-medium">
             {amount} {selectedAsset?.symbol} sent
@@ -519,6 +574,40 @@ export function WithdrawModal({
           <p className="mb-4 text-muted-foreground text-sm">
             To: {truncateAddress(recipient)}
           </p>
+
+          {/* The hash is the only handle a person has on the transfer once
+              this closes, so it is shown in full, copyable, and linked. */}
+          <div className="w-full space-y-2 text-left">
+            <p className="text-muted-foreground text-xs">Transaction hash</p>
+            <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+              <code className="min-w-0 flex-1 break-all font-mono text-xs">
+                {txHash}
+              </code>
+              <button
+                aria-label="Copy transaction hash"
+                className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                onClick={copyHash}
+                type="button"
+              >
+                {hashCopied ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Copy className="size-4" />
+                )}
+              </button>
+            </div>
+            {explorerTxUrl && (
+              <a
+                className="inline-flex items-center gap-1.5 text-sm underline underline-offset-4"
+                href={explorerTxUrl}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                View on block explorer
+                <ExternalLink className="size-3.5" />
+              </a>
+            )}
+          </div>
         </div>
       </Overlay>
     );
