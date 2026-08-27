@@ -1611,6 +1611,30 @@ describe("ChainProviderManager", () => {
         expect(ranges(provider).some((r) => r.from === 800)).toBe(true);
         await mgr.destroy();
       });
+
+      it("times out a request that never gets a response", async () => {
+        const provider = await subscribe();
+        provider.beforeSend = (method) =>
+          method === "eth_getLogs" ? new Promise<void>(() => undefined) : null;
+
+        // Not awaited: the request never settles on its own, so awaiting it
+        // here would hang the test rather than the chain. Only the timeout
+        // inside processBlockRange unblocks it, and that needs fake time to
+        // advance first.
+        const stuck = provider.emitBlock(850);
+        await vi.advanceTimersByTimeAsync(10_000);
+        await stuck;
+
+        expect(getLogsCalls(provider)).toHaveLength(1);
+
+        // The mark stayed at 849, so the next drain re-issues 850 rather
+        // than treating the timed-out range as served.
+        provider.beforeSend = null;
+        await provider.emitBlock(851);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+        expect(ranges(provider).some((r) => r.from === 850)).toBe(true);
+      });
     });
 
     describe("reconnect", () => {
@@ -1660,6 +1684,76 @@ describe("ChainProviderManager", () => {
         // getOrCreateProvider long after the socket was healthy.
         expect(manager.getHealth(CHAIN_A)?.reconnecting).toBe(false);
         expect(manager.getHealth(CHAIN_A)?.connected).toBe(true);
+      });
+
+      it("does not stay wedged when a request is stranded on the socket a reconnect replaces", async () => {
+        const provider = await subscribe();
+        // Never resolves - the same shape as ethers leaving an in-flight
+        // eth_getLogs unsettled when the socket underneath it is destroyed.
+        provider.beforeSend = (method) =>
+          method === "eth_getLogs" ? new Promise<void>(() => undefined) : null;
+
+        // Not awaited: this request never settles, so awaiting it would
+        // hang the test rather than the chain.
+        void provider.emitBlock(1_000);
+        await vi.advanceTimersByTimeAsync(100);
+
+        // The reconnect replaces the connection while that request is still
+        // open and never coming back.
+        provider.emitError(new Error("socket closed"));
+        await vi.advanceTimersByTimeAsync(3_000);
+
+        const replacement = factoryBundle.created[1];
+        expect(replacement).toBeDefined();
+
+        await replacement.emitBlock(1_005);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+        // The stranded request must not hold the drain flag for a
+        // connection it no longer belongs to - the replacement has to keep
+        // fetching logs.
+        expect(getLogsCalls(replacement).length).toBeGreaterThan(0);
+      });
+
+      it("does not let a late response from the old connection advance the replacement's mark", async () => {
+        const provider = await subscribe();
+        let release: (() => void) | null = null;
+        provider.beforeSend = (method) =>
+          method === "eth_getLogs"
+            ? new Promise<void>((r) => {
+                release = r;
+              })
+            : null;
+
+        const stuck = provider.emitBlock(2_000);
+        await vi.advanceTimersByTimeAsync(100);
+
+        provider.emitError(new Error("socket closed"));
+        await vi.advanceTimersByTimeAsync(3_000);
+
+        const replacement = factoryBundle.created[1];
+        expect(replacement).toBeDefined();
+
+        // The replacement moves on and fetches its own range before the old
+        // request ever answers.
+        await replacement.emitBlock(2_010);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+        expect(getLogsCalls(replacement).length).toBeGreaterThan(0);
+        const callsBeforeLateResponse = getLogsCalls(replacement).length;
+
+        // The old request finally answers - late, against a connection
+        // nobody is using anymore.
+        provider.sendResponses = [[]];
+        release?.();
+        await stuck;
+
+        // The late settlement must not touch the replacement's flag or
+        // mark: another block should still drain normally.
+        await replacement.emitBlock(2_011);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+        expect(getLogsCalls(replacement).length).toBeGreaterThan(
+          callsBeforeLateResponse,
+        );
       });
     });
 

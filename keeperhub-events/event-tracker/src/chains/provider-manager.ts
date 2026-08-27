@@ -190,6 +190,15 @@ const PROBE_TIMEOUT_MS = 10_000;
  * connect-time reachability gates fail at the same scale.
  */
 const CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * Cap on an `eth_getLogs` round-trip in `processBlockRange`. A request
+ * already written to the socket has no other timeout: ethers does not
+ * reject it on its own, and a heartbeat on the same socket can keep
+ * passing while this specific request never answers. Matches the other
+ * per-request timeouts in this file so every reachability gate fails at
+ * the same scale.
+ */
+const GETLOGS_TIMEOUT_MS = 10_000;
 
 export type LogHandler = (log: ethers.Log) => void | Promise<void>;
 export type Unsubscribe = () => void;
@@ -408,6 +417,15 @@ interface ChainEntry {
    * requests for overlapping ranges.
    */
   draining: boolean;
+  /**
+   * Bumped by `reconnect()` on every replacement provider. A `drain` call
+   * that started before the bump belongs to the socket that was just
+   * destroyed - ethers does not reject a request that was already written
+   * to that socket, so the call may never settle. Comparing this value
+   * before and after the await lets `drain` tell whether it is still
+   * describing the connection it started on before touching shared state.
+   */
+  connectionGeneration: number;
   /**
    * Populated when `createProvider` rejects (most often the
    * subscription probe). Cleared on the next successful creation.
@@ -821,6 +839,7 @@ export class ChainProviderManager {
       lastRequestAt: null,
       catchUpTimer: null,
       draining: false,
+      connectionGeneration: 0,
       lastCreateError: null,
       disconnectHandlers: new Set(),
       stats: newChainStats(),
@@ -1163,16 +1182,30 @@ export class ChainProviderManager {
     const from = entry.lastProcessedBlock + 1;
     const to = Math.min(entry.headBlock, from + GETLOGS_MAX_BLOCK_SPAN - 1);
 
+    // Ownership token for this connection. `reconnect()` bumps it and clears
+    // `draining` directly when it replaces the provider, so a request
+    // stranded on the socket that was just destroyed - which may never
+    // settle at all - cannot advance the mark or hold the flag for a
+    // connection it no longer belongs to.
+    const generation = entry.connectionGeneration;
     entry.draining = true;
     try {
       entry.lastRequestAt = Date.now();
-      // The mark advances only on success. A failed range stays owed, so the
-      // next drain re-queries it instead of losing every event in it.
-      if (await this.processBlockRange(entry, from, to)) {
+      // The mark advances only on success, and only if this is still the
+      // connection that started the request - a late response from a
+      // connection that has since been replaced must not advance the
+      // replacement's mark.
+      const served = await this.processBlockRange(entry, from, to);
+      if (served && entry.connectionGeneration === generation) {
         entry.lastProcessedBlock = to;
       }
     } finally {
-      entry.draining = false;
+      // A reconnect that happened mid-request already cleared `draining`
+      // for the replacement connection; clearing it again here would race
+      // whatever drain that connection may already have started.
+      if (entry.connectionGeneration === generation) {
+        entry.draining = false;
+      }
     }
 
     // More owed than one request could take, the head moved while the request
@@ -1460,6 +1493,14 @@ export class ChainProviderManager {
     if (this.isDestroyed) {
       return;
     }
+    // A new connection generation, and `draining` cleared directly rather
+    // than left for a `finally` that may never run. A `drain` still
+    // awaiting a response on the socket about to be destroyed belongs to
+    // the previous generation: ethers does not reject a request that was
+    // already written to the socket, so that await can hang forever, and
+    // the flag it owns must not hang with it.
+    entry.connectionGeneration += 1;
+    entry.draining = false;
     // Tear down the old provider (best-effort) and unhook listeners so
     // the old provider cannot trigger another reconnect while we are
     // building the new one.
@@ -1560,14 +1601,42 @@ export class ChainProviderManager {
         // and requests are the quantity the provider bills.
         entry.stats.getLogsCalls += 1;
         entry.stats.getLogsCallsTotal += 1;
-        const batch = (await entry.provider.send("eth_getLogs", [
-          {
-            fromBlock: fromHex,
-            toBlock: toHex,
-            address: chunk,
-            topics: [topic0s],
-          },
-        ])) as ethers.Log[];
+        // Raced against an explicit timeout for the same reason as the
+        // probe in `probeSubscriptionSupport`: ethers gives no externally
+        // controllable timeout on `provider.send`, and a socket that has
+        // gone quiet on this one request - while still answering heartbeat
+        // pings - would otherwise hang the drain for the life of the
+        // socket, with no reconnect ever triggered to replace it.
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `eth_getLogs timed out after ${GETLOGS_TIMEOUT_MS}ms`,
+                ),
+              ),
+            GETLOGS_TIMEOUT_MS,
+          );
+        });
+        let batch: ethers.Log[];
+        try {
+          batch = (await Promise.race([
+            entry.provider.send("eth_getLogs", [
+              {
+                fromBlock: fromHex,
+                toBlock: toHex,
+                address: chunk,
+                topics: [topic0s],
+              },
+            ]),
+            timeoutPromise,
+          ])) as ethers.Log[];
+        } finally {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+        }
         logs.push(...batch);
       }
 
