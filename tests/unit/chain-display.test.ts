@@ -5,6 +5,7 @@ const REGISTRY = [
   { chainId: 1, name: "Ethereum Mainnet", symbol: "ETH" },
   { chainId: 101, name: "Solana", symbol: "SOL" },
   { chainId: 8453, name: "Base", symbol: "BASE" },
+  { chainId: 42_431, name: "Tempo Testnet", symbol: "TEMPO" },
   { chainId: 43_114, name: "Avalanche", symbol: "AVAX" },
 ];
 
@@ -36,5 +37,15 @@ describe("createChainDisplay", () => {
   it("names no token for a chain no source knows", () => {
     expect(createChainDisplay(REGISTRY).gasSymbol("999999")).toBe("");
     expect(createChainDisplay(REGISTRY).gasSymbol(null)).toBe("");
+  });
+
+  it("names a chain a step recorded as a slug", () => {
+    const chains = createChainDisplay(REGISTRY);
+    expect(chains.name("tempo-testnet")).toBe("Tempo Testnet");
+    expect(chains.name("base-sepolia")).toBe("Base Sepolia");
+  });
+
+  it("keeps a slug it cannot resolve rather than showing a bare id", () => {
+    expect(createChainDisplay(REGISTRY).name("some-chain")).toBe("some-chain");
   });
 });

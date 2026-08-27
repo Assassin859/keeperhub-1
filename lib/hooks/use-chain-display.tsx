@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { createContext, useContext, useMemo } from "react";
 import { useCachedResource } from "@/lib/hooks/use-cached-resource";
+import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { SPONSORSHIP_CHAINS } from "@/lib/web3/sponsorship-chains-meta";
 
 export type ChainRow = {
@@ -25,18 +26,34 @@ export type ChainDisplay = {
   gasSymbol: (network: string | null) => string;
 };
 
+// A step records the chain it ran on as a chain id, but the older plugins
+// record a slug ("tempo-testnet"), so both have to land on the same key.
+function canonicalId(byId: Map<string, ChainRow>, network: string): string {
+  if (byId.has(network) || SPONSORED_BY_ID.has(network)) {
+    return network;
+  }
+  try {
+    return String(getChainIdFromNetwork(network));
+  } catch {
+    return network;
+  }
+}
+
 export function createChainDisplay(rows: ChainRow[] | undefined): ChainDisplay {
-  const byId = new Map((rows ?? []).map((row) => [String(row.chainId), row]));
+  const byId = new Map(
+    (rows ?? []).map((row): [string, ChainRow] => [String(row.chainId), row])
+  );
   return {
-    name: (network: string): string =>
-      byId.get(network)?.name ?? SPONSORED_BY_ID.get(network)?.name ?? network,
+    name: (network: string): string => {
+      const id = canonicalId(byId, network);
+      return byId.get(id)?.name ?? SPONSORED_BY_ID.get(id)?.name ?? network;
+    },
     gasSymbol: (network: string | null): string => {
       if (!network) {
         return "";
       }
-      return (
-        SPONSORED_BY_ID.get(network)?.symbol ?? byId.get(network)?.symbol ?? ""
-      );
+      const id = canonicalId(byId, network);
+      return SPONSORED_BY_ID.get(id)?.symbol ?? byId.get(id)?.symbol ?? "";
     },
   };
 }
