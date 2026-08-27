@@ -21,6 +21,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  normalizeRunsResponse,
+  type WireRunsResponse,
+} from "@/lib/analytics/runs-response";
 import type {
   NormalizedStatus,
   StepLog,
@@ -709,14 +713,8 @@ export function RunsTable(): ReactNode {
           `/api/analytics/runs?${params.toString()}`
         );
         if (response.ok) {
-          const data = (await response.json()) as {
-            runs: UnifiedRun[];
-            nextCursor: string | null;
-            total: number;
-            page: number;
-            pageSize: number;
-          };
-          setRunsData(data);
+          const data = (await response.json()) as WireRunsResponse;
+          setRunsData(normalizeRunsResponse(data));
         } else {
           toast.error("Failed to load runs");
         }
