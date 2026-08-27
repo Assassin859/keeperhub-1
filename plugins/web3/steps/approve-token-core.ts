@@ -43,7 +43,7 @@ import {
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
-import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
+import { broadcastTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import type { ExecutedCall } from "@/lib/web3/trace-decode";
@@ -610,8 +610,8 @@ export async function approveTokenCore(
         ),
         ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
-        ...(revertedTransactionHash(error)
-          ? { transactionHash: revertedTransactionHash(error), chainId }
+        ...(broadcastTransactionHash(error)
+          ? { transactionHash: broadcastTransactionHash(error), chainId }
           : {}),
       };
     }

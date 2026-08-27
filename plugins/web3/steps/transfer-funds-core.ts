@@ -52,7 +52,7 @@ import {
   computeSolanaLamportFee,
   SOLANA_BASE_FEE_LAMPORTS,
 } from "@/lib/web3/solana-fees";
-import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
+import { broadcastTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -517,8 +517,8 @@ export async function transferFundsCore(
         error: formatContractError(error, undefined, "Transaction failed"),
         ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
-        ...(revertedTransactionHash(error)
-          ? { transactionHash: revertedTransactionHash(error), chainId }
+        ...(broadcastTransactionHash(error)
+          ? { transactionHash: broadcastTransactionHash(error), chainId }
           : {}),
       };
     }

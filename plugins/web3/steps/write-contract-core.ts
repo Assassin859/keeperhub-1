@@ -52,7 +52,7 @@ import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import type { ExecutedCall } from "@/lib/web3/trace-decode";
 import { traceExecutedCallWithFailover } from "@/lib/web3/trace-executed-call";
-import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
+import { broadcastTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
@@ -702,15 +702,15 @@ export async function writeContractCore(
         }
       );
       const rejection = classifyRevert(error, contractInterface);
-      const revertedHash = revertedTransactionHash(error);
+      const broadcastHash = broadcastTransactionHash(error);
       const errorClass = rpcRelayErrorClass(error);
       return {
         success: false,
         error: formatContractError(error, contractInterface),
         ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
-        ...(revertedHash
-          ? { transactionHash: revertedHash, chainId }
+        ...(broadcastHash
+          ? { transactionHash: broadcastHash, chainId }
           : {}),
       };
     }

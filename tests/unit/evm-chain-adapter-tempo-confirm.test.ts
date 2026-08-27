@@ -10,6 +10,10 @@ vi.mock("@/lib/explorer", () => ({
 }));
 
 import { EvmChainAdapter } from "@/lib/web3/chain-adapter/evm";
+import {
+  broadcastTransactionHash,
+  isOnChainPendingError,
+} from "@/lib/web3/onchain-revert";
 
 const FROM = "0x2c9F694183A4240B6431771F6c714a8106179dF5";
 const TO = "0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59";
@@ -121,5 +125,56 @@ describe("EvmChainAdapter Tempo confirmation", () => {
     expect(result.hash).toBe(TX_HASH);
     expect(h.wait).toHaveBeenCalledTimes(1);
     expect(h.getTransactionReceipt).not.toHaveBeenCalled();
+  });
+});
+
+describe("EvmChainAdapter unreadable receipt", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("keeps the hash on the error when the receipt cannot be read", async () => {
+    // wait() resolving null is the shape of "broadcast, outcome unknown": the
+    // transaction is on the network, we just cannot see it yet.
+    const h = createHarness(SEPOLIA, vi.fn().mockResolvedValue(null));
+
+    const error = await send(h).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+
+    expect(isOnChainPendingError(error)).toBe(true);
+    // The regression this guards: a bare Error dropped the hash, so the
+    // finalizer recorded a terminal failure for a transaction that exists
+    // on-chain and nowhere in our data, and the reconciler -- which scans for
+    // unconfirmed rows WITH a hash -- never revisited it.
+    expect(broadcastTransactionHash(error)).toBe(TX_HASH);
+  });
+
+  it("leaves the message untouched for callers that only read it", async () => {
+    const h = createHarness(SEPOLIA, vi.fn().mockResolvedValue(null));
+
+    await expect(send(h)).rejects.toThrow(
+      "Transaction sent but receipt not available"
+    );
+  });
+
+  it("does not mistake a pre-broadcast failure for a broadcast one", async () => {
+    // Nothing reached the chain, so no hash may be attached: recording one
+    // would invent a transaction that does not exist.
+    const h = createHarness(SEPOLIA, vi.fn());
+    (
+      h.signer as { sendTransaction: ReturnType<typeof vi.fn> }
+    ).sendTransaction = vi
+      .fn()
+      .mockRejectedValue(new Error("insufficient funds"));
+
+    const error = await send(h).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+
+    expect(isOnChainPendingError(error)).toBe(false);
+    expect(broadcastTransactionHash(error)).toBeUndefined();
   });
 });
