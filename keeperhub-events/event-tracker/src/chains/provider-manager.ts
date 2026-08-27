@@ -194,11 +194,30 @@ const CONNECT_TIMEOUT_MS = 10_000;
  * Cap on an `eth_getLogs` round-trip in `processBlockRange`. A request
  * already written to the socket has no other timeout: ethers does not
  * reject it on its own, and a heartbeat on the same socket can keep
- * passing while this specific request never answers. Matches the other
- * per-request timeouts in this file so every reachability gate fails at
- * the same scale.
+ * passing while this specific request never answers.
+ *
+ * Deliberately looser than the 10 s connect and probe gates. Those bound a
+ * handshake and a single trivial frame; this bounds a real query over up to
+ * `GETLOGS_MAX_BLOCK_SPAN` blocks and `GETLOGS_ADDRESS_BATCH` addresses,
+ * which on a busy chain or a loaded upstream can legitimately take many
+ * seconds. Sizing it to match the connect gate would turn slow-but-working
+ * queries into permanent failures, and a range that never succeeds never
+ * advances the mark.
  */
-const GETLOGS_TIMEOUT_MS = 10_000;
+export const GETLOGS_TIMEOUT_MS = 30_000;
+/**
+ * Consecutive `eth_getLogs` timeouts on one connection before the chain is
+ * reconnected. A single timeout is a slow upstream and worth retrying in
+ * place; a run of them is a socket that will not serve this call again, and
+ * no other check in this class notices - the heartbeat is a different
+ * request and still answers, and blocks keep arriving so the staleness
+ * watchdog never fires. Without this the chain retries into the void until
+ * the gap crosses `GETLOGS_MAX_CATCHUP_BLOCKS` and its events are dropped.
+ */
+export const GETLOGS_TIMEOUT_RECONNECT_THRESHOLD = 3;
+
+/** Marks the timeout branch of the `eth_getLogs` race, for escalation. */
+class GetLogsTimeoutError extends Error {}
 
 export type LogHandler = (log: ethers.Log) => void | Promise<void>;
 export type Unsubscribe = () => void;
@@ -209,7 +228,8 @@ export type DisconnectReason =
   | "provider_error"
   | "heartbeat_failure"
   | "heartbeat_timeout"
-  | "block_staleness";
+  | "block_staleness"
+  | "getlogs_timeout";
 
 export interface DisconnectEvent {
   chainId: number;
@@ -418,14 +438,13 @@ interface ChainEntry {
    */
   draining: boolean;
   /**
-   * Bumped by `reconnect()` on every replacement provider. A `drain` call
-   * that started before the bump belongs to the socket that was just
-   * destroyed - ethers does not reject a request that was already written
-   * to that socket, so the call may never settle. Comparing this value
-   * before and after the await lets `drain` tell whether it is still
-   * describing the connection it started on before touching shared state.
+   * Consecutive `eth_getLogs` timeouts on the current connection, reset by
+   * any range that returns and by every fresh connection. A socket that
+   * answers heartbeat pings but never answers `eth_getLogs` passes every
+   * other liveness check this class has, so the timeout has to escalate on
+   * its own or the chain retries into the void forever.
    */
-  connectionGeneration: number;
+  consecutiveGetLogsTimeouts: number;
   /**
    * Populated when `createProvider` rejects (most often the
    * subscription probe). Cleared on the next successful creation.
@@ -839,7 +858,7 @@ export class ChainProviderManager {
       lastRequestAt: null,
       catchUpTimer: null,
       draining: false,
-      connectionGeneration: 0,
+      consecutiveGetLogsTimeouts: 0,
       lastCreateError: null,
       disconnectHandlers: new Set(),
       stats: newChainStats(),
@@ -1050,6 +1069,9 @@ export class ChainProviderManager {
     entry.blockIntervalEwmaMs = null;
     entry.blockIntervalSamples = 0;
     entry.blockIntervalFirstSampleAt = null;
+    // Per connection, like the cadence estimate above: a run of timeouts is
+    // evidence about one socket, and this is a different one.
+    entry.consecutiveGetLogsTimeouts = 0;
     entry.provider.on("block", listener);
     this.startStatsTimer();
   }
@@ -1182,30 +1204,26 @@ export class ChainProviderManager {
     const from = entry.lastProcessedBlock + 1;
     const to = Math.min(entry.headBlock, from + GETLOGS_MAX_BLOCK_SPAN - 1);
 
-    // Ownership token for this connection. `reconnect()` bumps it and clears
-    // `draining` directly when it replaces the provider, so a request
-    // stranded on the socket that was just destroyed - which may never
-    // settle at all - cannot advance the mark or hold the flag for a
-    // connection it no longer belongs to.
-    const generation = entry.connectionGeneration;
+    // `draining` is held for the whole drain, dispatch included, and is
+    // released only here. Nothing else clears it - a reconnect must not,
+    // because releasing a drain that already has its logs and is part way
+    // through dispatching them lets the replacement re-fetch the same
+    // unadvanced range and dispatch those logs a second time, concurrently.
+    // Dedup cannot absorb that: `isProcessed`/`markProcessed` is a
+    // check-then-set with the listener's jitter sleep before the check, so
+    // two concurrent dispatches of one log both see "not processed".
+    // Nothing needs to force-release it either, because the `eth_getLogs`
+    // timeout below guarantees every drain settles.
     entry.draining = true;
     try {
       entry.lastRequestAt = Date.now();
-      // The mark advances only on success, and only if this is still the
-      // connection that started the request - a late response from a
-      // connection that has since been replaced must not advance the
-      // replacement's mark.
-      const served = await this.processBlockRange(entry, from, to);
-      if (served && entry.connectionGeneration === generation) {
+      // The mark advances only on success. A failed range stays owed, so the
+      // next drain re-queries it instead of losing every event in it.
+      if (await this.processBlockRange(entry, from, to)) {
         entry.lastProcessedBlock = to;
       }
     } finally {
-      // A reconnect that happened mid-request already cleared `draining`
-      // for the replacement connection; clearing it again here would race
-      // whatever drain that connection may already have started.
-      if (entry.connectionGeneration === generation) {
-        entry.draining = false;
-      }
+      entry.draining = false;
     }
 
     // More owed than one request could take, the head moved while the request
@@ -1493,14 +1511,12 @@ export class ChainProviderManager {
     if (this.isDestroyed) {
       return;
     }
-    // A new connection generation, and `draining` cleared directly rather
-    // than left for a `finally` that may never run. A `drain` still
-    // awaiting a response on the socket about to be destroyed belongs to
-    // the previous generation: ethers does not reject a request that was
-    // already written to the socket, so that await can hang forever, and
-    // the flag it owns must not hang with it.
-    entry.connectionGeneration += 1;
-    entry.draining = false;
+    // `draining` is deliberately left alone. A drain in flight here is
+    // either waiting on `eth_getLogs` - bounded by `GETLOGS_TIMEOUT_MS`, so
+    // it releases the flag on its own - or already dispatching, and forcing
+    // it open there would let this replacement re-fetch and re-dispatch the
+    // same logs concurrently with it. The drain also captures its provider,
+    // so it cannot issue anything against the connection built below.
     // Tear down the old provider (best-effort) and unhook listeners so
     // the old provider cannot trigger another reconnect while we are
     // building the new one.
@@ -1585,7 +1601,13 @@ export class ChainProviderManager {
     toBlock: number,
   ): Promise<boolean> {
     const subscribers = [...entry.subscribers];
-    if (subscribers.length === 0 || !entry.provider) {
+    // Captured once. A multi-chunk range spans several awaits, and
+    // `entry.provider` can be replaced (or nulled) by a reconnect during
+    // any of them - re-reading it would issue the remaining chunks against
+    // a connection this range does not belong to, or throw a TypeError that
+    // the catch below would report as an ordinary getLogs failure.
+    const provider = entry.provider;
+    if (subscribers.length === 0 || !provider) {
       return false;
     }
 
@@ -1595,6 +1617,12 @@ export class ChainProviderManager {
     try {
       const logs: ethers.Log[] = [];
       for (let i = 0; i < addresses.length; i += GETLOGS_ADDRESS_BATCH) {
+        // A reconnect between chunks means this range is being served by a
+        // socket that is already gone. Stop rather than bill more requests
+        // against it; the mark has not moved, so the range is still owed.
+        if (entry.provider !== provider) {
+          return false;
+        }
         const chunk = addresses.slice(i, i + GETLOGS_ADDRESS_BATCH);
         // Counted at the call rather than the range: one range over more
         // than GETLOGS_ADDRESS_BATCH addresses is still several requests,
@@ -1603,16 +1631,17 @@ export class ChainProviderManager {
         entry.stats.getLogsCallsTotal += 1;
         // Raced against an explicit timeout for the same reason as the
         // probe in `probeSubscriptionSupport`: ethers gives no externally
-        // controllable timeout on `provider.send`, and a socket that has
-        // gone quiet on this one request - while still answering heartbeat
-        // pings - would otherwise hang the drain for the life of the
-        // socket, with no reconnect ever triggered to replace it.
+        // controllable timeout on `provider.send`, and a request already
+        // written to a socket that is then destroyed is never settled by
+        // ethers at all. This race is what guarantees a drain always
+        // finishes, which is in turn what lets `draining` be owned by the
+        // drain alone.
         let timeoutHandle: NodeJS.Timeout | null = null;
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutHandle = setTimeout(
             () =>
               reject(
-                new Error(
+                new GetLogsTimeoutError(
                   `eth_getLogs timed out after ${GETLOGS_TIMEOUT_MS}ms`,
                 ),
               ),
@@ -1622,7 +1651,7 @@ export class ChainProviderManager {
         let batch: ethers.Log[];
         try {
           batch = (await Promise.race([
-            entry.provider.send("eth_getLogs", [
+            provider.send("eth_getLogs", [
               {
                 fromBlock: fromHex,
                 toBlock: toHex,
@@ -1652,6 +1681,9 @@ export class ChainProviderManager {
       entry.stats.ranges += 1;
       entry.stats.blocksCovered += toBlock - fromBlock + 1;
       entry.stats.logsDispatched += logs.length;
+      // The connection served a range, so whatever timeouts preceded it were
+      // a slow upstream rather than a socket that stopped answering.
+      entry.consecutiveGetLogsTimeouts = 0;
       return true;
     } catch (err) {
       entry.stats.getLogsErrors += 1;
@@ -1662,6 +1694,27 @@ export class ChainProviderManager {
       logger.warn(
         `[ChainProviderManager] chain=${entry.chainId} ${range} getLogs failed, will retry: ${String(err)}`,
       );
+      if (err instanceof GetLogsTimeoutError) {
+        entry.consecutiveGetLogsTimeouts += 1;
+        if (
+          entry.consecutiveGetLogsTimeouts >=
+          GETLOGS_TIMEOUT_RECONNECT_THRESHOLD
+        ) {
+          // Replace the socket rather than keep retrying against one that
+          // has stopped serving this call. Safe to call from here: the
+          // reconnect loop yields at its first await, so this drain still
+          // returns and releases `draining` before any teardown runs.
+          this.triggerReconnect(
+            entry,
+            "getlogs_timeout",
+            `${entry.consecutiveGetLogsTimeouts} consecutive eth_getLogs timeouts`,
+          );
+        }
+      } else {
+        // Only an unbroken run of timeouts indicates a socket that will not
+        // serve this call again; an ordinary rejection means it answered.
+        entry.consecutiveGetLogsTimeouts = 0;
+      }
       return false;
     }
   }

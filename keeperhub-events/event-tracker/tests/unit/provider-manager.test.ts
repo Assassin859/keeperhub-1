@@ -11,6 +11,8 @@ import {
   GETLOGS_MAX_BLOCK_SPAN,
   GETLOGS_MAX_CATCHUP_BLOCKS,
   GETLOGS_MIN_INTERVAL_MS,
+  GETLOGS_TIMEOUT_MS,
+  GETLOGS_TIMEOUT_RECONNECT_THRESHOLD,
   type ProviderFactory,
   STATS_LOG_INTERVAL_MS,
 } from "../../src/chains/provider-manager";
@@ -1622,7 +1624,7 @@ describe("ChainProviderManager", () => {
         // inside processBlockRange unblocks it, and that needs fake time to
         // advance first.
         const stuck = provider.emitBlock(850);
-        await vi.advanceTimersByTimeAsync(10_000);
+        await vi.advanceTimersByTimeAsync(GETLOGS_TIMEOUT_MS);
         await stuck;
 
         expect(getLogsCalls(provider)).toHaveLength(1);
@@ -1686,15 +1688,15 @@ describe("ChainProviderManager", () => {
         expect(manager.getHealth(CHAIN_A)?.connected).toBe(true);
       });
 
-      it("does not stay wedged when a request is stranded on the socket a reconnect replaces", async () => {
+      it("recovers once a request stranded by a reconnect times out", async () => {
         const provider = await subscribe();
         // Never resolves - the same shape as ethers leaving an in-flight
         // eth_getLogs unsettled when the socket underneath it is destroyed.
         provider.beforeSend = (method) =>
           method === "eth_getLogs" ? new Promise<void>(() => undefined) : null;
 
-        // Not awaited: this request never settles, so awaiting it would
-        // hang the test rather than the chain.
+        // Not awaited: this request never settles on its own, so awaiting it
+        // would hang the test rather than the chain.
         void provider.emitBlock(1_000);
         await vi.advanceTimersByTimeAsync(100);
 
@@ -1706,54 +1708,98 @@ describe("ChainProviderManager", () => {
         const replacement = factoryBundle.created[1];
         expect(replacement).toBeDefined();
 
+        // The stranded drain still owns the chain here - that is deliberate,
+        // it may be dispatching - so nothing has moved yet.
         await replacement.emitBlock(1_005);
         await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
 
-        // The stranded request must not hold the drain flag for a
-        // connection it no longer belongs to - the replacement has to keep
-        // fetching logs.
+        // Its timeout is what releases the chain, and it always arrives.
+        // Before this fix nothing did, and the chain never fetched again.
+        await vi.advanceTimersByTimeAsync(GETLOGS_TIMEOUT_MS);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
         expect(getLogsCalls(replacement).length).toBeGreaterThan(0);
       });
 
-      it("does not let a late response from the old connection advance the replacement's mark", async () => {
-        const provider = await subscribe();
-        let release: (() => void) | null = null;
-        provider.beforeSend = (method) =>
-          method === "eth_getLogs"
-            ? new Promise<void>((r) => {
-                release = r;
-              })
-            : null;
+      it("does not dispatch a log twice when a reconnect lands mid-dispatch", async () => {
+        // The drain holds the chain across dispatch as well as the request.
+        // Releasing it at reconnect would let the replacement re-fetch the
+        // same unadvanced range and dispatch its logs a second time, running
+        // alongside the first dispatch - and the dedup store cannot absorb
+        // that, because isProcessed/markProcessed is a check-then-set with
+        // the listener's jitter sleep in front of the check.
+        const log = {
+          address: ADDR_A.toLowerCase(),
+          topics: [TOPIC_EMITTED],
+        };
+        let releaseHandler: (() => void) | null = null;
+        const handlerGate = new Promise<void>((r) => {
+          releaseHandler = r;
+        });
+        const handler = vi.fn(() => handlerGate);
 
-        const stuck = provider.emitBlock(2_000);
+        const mgr = new ChainProviderManager({
+          factory: factoryBundle.factory,
+          onPermanentFailure,
+        });
+        const before = factoryBundle.created.length;
+        await mgr.subscribeToLogs({
+          chainId: CHAIN_A,
+          wssUrl: "ws://a",
+          address: ADDR_A,
+          topic0: TOPIC_EMITTED,
+          handler,
+        });
+        const provider = factoryBundle.created[before];
+        provider.sendResponses = [[log]];
+
+        // Not awaited: the handler holds this dispatch open.
+        void provider.emitBlock(3_000);
         await vi.advanceTimersByTimeAsync(100);
+        expect(handler).toHaveBeenCalledTimes(1);
 
+        // The socket drops while that dispatch is still in flight.
         provider.emitError(new Error("socket closed"));
         await vi.advanceTimersByTimeAsync(3_000);
 
-        const replacement = factoryBundle.created[1];
+        const replacement = factoryBundle.created[before + 1];
         expect(replacement).toBeDefined();
+        // Armed so that a replacement drain of the same range would deliver
+        // the same log again - the assertion is only meaningful because this
+        // is here.
+        replacement.sendResponses = [[log]];
+        // Not awaited: if the replacement does re-dispatch, it blocks on the
+        // same held handler, and awaiting here would hang the test instead
+        // of reporting the duplicate.
+        void replacement.emitBlock(3_001);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 3);
 
-        // The replacement moves on and fetches its own range before the old
-        // request ever answers.
-        await replacement.emitBlock(2_010);
-        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
-        expect(getLogsCalls(replacement).length).toBeGreaterThan(0);
-        const callsBeforeLateResponse = getLogsCalls(replacement).length;
+        expect(handler).toHaveBeenCalledTimes(1);
 
-        // The old request finally answers - late, against a connection
-        // nobody is using anymore.
-        provider.sendResponses = [[]];
-        release?.();
-        await stuck;
+        releaseHandler?.();
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS);
+        await mgr.destroy();
+      });
 
-        // The late settlement must not touch the replacement's flag or
-        // mark: another block should still drain normally.
-        await replacement.emitBlock(2_011);
-        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
-        expect(getLogsCalls(replacement).length).toBeGreaterThan(
-          callsBeforeLateResponse,
-        );
+      it("reconnects after a run of getLogs timeouts on one socket", async () => {
+        const provider = await subscribe();
+        const reasons: string[] = [];
+        manager.onDisconnect(CHAIN_A, (ev) => {
+          reasons.push(ev.reason);
+        });
+        // Answers the heartbeat, never answers getLogs. Every other liveness
+        // check this class has keeps passing, so the timeout has to escalate
+        // on its own or the chain retries into the void forever.
+        provider.beforeSend = (method) =>
+          method === "eth_getLogs" ? new Promise<void>(() => undefined) : null;
+
+        for (let i = 0; i < GETLOGS_TIMEOUT_RECONNECT_THRESHOLD; i += 1) {
+          void provider.emitBlock(4_000 + i);
+          await vi.advanceTimersByTimeAsync(GETLOGS_TIMEOUT_MS);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+        }
+
+        expect(reasons).toContain("getlogs_timeout");
       });
     });
 
