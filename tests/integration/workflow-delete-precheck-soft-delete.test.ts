@@ -1,3 +1,5 @@
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Pulls in the same server-only-gated modules as the other route tests in
@@ -80,25 +82,31 @@ vi.mock("@/lib/db", () => ({
 import { DELETE as purgeExecutions } from "@/app/api/workflows/[workflowId]/executions/route";
 import { DELETE as deleteWorkflow } from "@/app/api/workflows/[workflowId]/route";
 
-/** Every column referenced anywhere in a drizzle SQL predicate tree -- same
- * helper, copied verbatim from
- * tests/unit/workflows-list-soft-delete.test.ts, which uses it to prove a
- * query filters on a given column without a live database. */
-function columnsIn(node: unknown, found: string[] = []): string[] {
-  if (node === null || typeof node !== "object") {
-    return found;
-  }
-  const candidate = node as { name?: unknown; queryChunks?: unknown };
-  if (typeof candidate.name === "string" && "table" in candidate) {
-    found.push(candidate.name);
-  }
-  const chunks = candidate.queryChunks;
-  if (Array.isArray(chunks)) {
-    for (const chunk of chunks) {
-      columnsIn(chunk, found);
-    }
-  }
-  return found;
+/** The predicate the route hands to findFirst, compiled to SQL. This test
+ * mocks @/lib/db, so db.dialect is not reachable -- a standalone dialect
+ * compiles the same predicate tree. */
+function compiledPredicate(where: SQL): string {
+  return new PgDialect().sqlToQuery(where).sql;
+}
+
+/** Whether the predicate excludes purged runs, i.e. constrains this table's
+ * deleted_at to null rather than merely mentioning the column. */
+function excludesPurgedRuns(where: SQL): boolean {
+  return /"workflow_executions"\."deleted_at"\s+is\s+null/.test(
+    compiledPredicate(where)
+  );
+}
+
+/** Stands in for the real findFirst over `rows`. It is not a SQL engine; it is
+ * honest about the one thing under test -- a predicate that constrains
+ * deleted_at to null can only match rows that were never purged, and any other
+ * predicate matches this workflow's rows regardless of deleted_at. */
+function findFirstOver(rows: { id: string; deletedAt: Date | null }[]) {
+  return ({ where }: { where: SQL }) => {
+    const liveOnly = excludesPurgedRuns(where);
+    const match = rows.find((row) => !liveOnly || row.deletedAt === null);
+    return Promise.resolve(match ? { id: match.id } : undefined);
+  };
 }
 
 function createDeleteRequest(): Request {
@@ -138,19 +146,24 @@ beforeEach(() => {
 });
 
 describe("DELETE /api/workflows/[workflowId] — soft-deleted execution pre-check", () => {
-  it("builds a predicate that references deleted_at, not just workflow_id", async () => {
-    mockExecutionsFindFirst.mockResolvedValue(undefined);
+  it("builds a predicate that constrains deleted_at, not just workflow_id", async () => {
+    mockExecutionsFindFirst.mockImplementation(findFirstOver([]));
 
     await deleteWorkflow(createDeleteRequest(), { params: mockParams });
 
     const [{ where }] = mockExecutionsFindFirst.mock.calls[0];
-    const columns = columnsIn(where);
-    expect(columns).toContain("workflow_id");
-    expect(columns).toContain("deleted_at");
+    const predicate = compiledPredicate(where);
+    expect(predicate).toMatch(/"workflow_executions"\."workflow_id"\s*=/);
+    expect(predicate).toMatch(
+      /"workflow_executions"\."deleted_at"\s+is\s+null/
+    );
+    expect(predicate).not.toMatch(/is\s+not\s+null/);
   });
 
   it("returns 409 when a live execution is found", async () => {
-    mockExecutionsFindFirst.mockResolvedValue({ id: "exec-1" });
+    mockExecutionsFindFirst.mockImplementation(
+      findFirstOver([{ id: "exec-1", deletedAt: null }])
+    );
 
     const response = await deleteWorkflow(createDeleteRequest(), {
       params: mockParams,
@@ -161,8 +174,10 @@ describe("DELETE /api/workflows/[workflowId] — soft-deleted execution pre-chec
     expect(body.hasExecutions).toBe(true);
   });
 
-  it("deletes without force when no live execution is found (e.g. all soft-deleted)", async () => {
-    mockExecutionsFindFirst.mockResolvedValue(undefined);
+  it("deletes without force when every execution is soft-deleted", async () => {
+    mockExecutionsFindFirst.mockImplementation(
+      findFirstOver([{ id: "exec-1", deletedAt: new Date() }])
+    );
 
     const response = await deleteWorkflow(createDeleteRequest(), {
       params: mockParams,
@@ -203,9 +218,9 @@ describe("DELETE /api/workflows/[workflowId] — soft-deleted execution pre-chec
       expect(purgeBody.deletedCount).toBe(1);
       expect(rows[0].deletedAt).not.toBeNull();
 
-      // The purge left no live execution, so the pre-check's findFirst
-      // (real query semantics aside) resolves to nothing.
-      mockExecutionsFindFirst.mockResolvedValue(undefined);
+      // The pre-check reads the same rows the purge just stamped, through
+      // its own predicate -- nothing about the outcome is fixed up front.
+      mockExecutionsFindFirst.mockImplementation(findFirstOver(rows));
 
       const deleteResponse = await deleteWorkflow(createDeleteRequest(), {
         params: mockParams,
