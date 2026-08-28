@@ -5,7 +5,7 @@ import { RobinhoodIcon } from "./icon";
 /**
  * Robinhood Chain stock tokens.
  *
- * Read-only. These actions exist because the assets are tokenised equities
+ * These actions exist because the assets are tokenised equities
  * rather than tokens, and the generic web3 actions cannot express that: a
  * balance rescales without a transfer, a price has two conventions that are not
  * interchangeable, and the market behind the asset closes while the chain does
@@ -43,7 +43,7 @@ const robinhoodPlugin: IntegrationPlugin = {
   egress: "fixed-host",
   label: "Robinhood",
   description:
-    "Read prices, positions and trading status for the tokenised equities on Robinhood Chain, in share terms rather than raw token units",
+    "Read prices, positions and trading status for the tokenised equities on Robinhood Chain, and trade them against USDG, in share terms rather than raw token units",
 
   icon: RobinhoodIcon,
 
@@ -165,6 +165,95 @@ const robinhoodPlugin: IntegrationPlugin = {
         },
         { field: "currency", description: "Currency of valueAtBid" },
         { field: "error", description: "Error message when the read failed" },
+      ],
+    },
+    {
+      slug: "trade-stock-token",
+      label: "Trade Stock Token",
+      description:
+        "Swap USDG into a tokenised equity or back out, through Uniswap v4. Takes an explicit pool key and a minimum output rather than choosing a route: this chain carries hundreds of pools per stock token at fee tiers reaching 95 percent, none distinguished on-chain, so any pool a heuristic would pick is one a griefer can aim at",
+      category: "Robinhood",
+      stepFunction: "tradeStockTokenStep",
+      stepImportPath: "trade-stock-token",
+      configFields: [
+        networkField,
+        symbolField,
+        {
+          key: "side",
+          label: "Side",
+          type: "select" as const,
+          options: [
+            { label: "Buy (spend USDG)", value: "buy" },
+            { label: "Sell (spend shares)", value: "sell" },
+          ],
+          required: true,
+        },
+        {
+          key: "amountIn",
+          label: "Amount In",
+          type: "template-input" as const,
+          placeholder: "Buy: USDG to spend. Sell: shares to sell",
+          required: true,
+        },
+        {
+          key: "minAmountOut",
+          label: "Minimum Amount Out",
+          type: "template-input" as const,
+          placeholder: "Buy: minimum shares. Sell: minimum USDG",
+          required: true,
+        },
+        {
+          key: "poolFee",
+          label: "Pool Fee",
+          type: "template-input" as const,
+          placeholder: "3000",
+          example: "3000",
+          required: true,
+        },
+        {
+          key: "poolTickSpacing",
+          label: "Pool Tick Spacing",
+          type: "template-input" as const,
+          placeholder: "60",
+          example: "60",
+          required: true,
+        },
+        {
+          key: "poolHooks",
+          label: "Pool Hooks",
+          type: "template-input" as const,
+          placeholder: "0x0000000000000000000000000000000000000000",
+          required: false,
+        },
+        {
+          key: "deadlineSeconds",
+          label: "Deadline (seconds)",
+          type: "template-input" as const,
+          placeholder: "300",
+          required: false,
+        },
+      ],
+      outputFields: [
+        { field: "success", description: "Whether the swap was broadcast" },
+        { field: "transactionHash", description: "The swap transaction hash" },
+        { field: "chainId", description: "Chain the swap was broadcast on" },
+        { field: "symbol", description: "The resolved ticker" },
+        { field: "side", description: "buy or sell" },
+        { field: "amountIn", description: "Amount spent, as supplied" },
+        {
+          field: "minAmountOut",
+          description: "The floor the router enforced, as supplied",
+        },
+        { field: "poolFee", description: "Fee tier of the pool traded" },
+        {
+          field: "poolTickSpacing",
+          description: "Tick spacing of the pool traded",
+        },
+        {
+          field: "error",
+          description:
+            "Why the trade was refused or failed, including the Permit2 allowances to set when they are missing",
+        },
       ],
     },
     {

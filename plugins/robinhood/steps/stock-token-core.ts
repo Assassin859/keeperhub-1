@@ -351,6 +351,16 @@ export async function readOnChainState(
   if (multiplier.state === "unknown") {
     unknown.push("uiMultiplier");
   }
+  // These two decide whether a corporate action is pending. An unreadable one
+  // leaves hasPending false below, which reads as "no action scheduled" rather
+  // than "could not tell" - and a swap into a token about to rescale is the
+  // exact case the pending check exists to stop.
+  if (pending.state === "unknown") {
+    unknown.push("newUIMultiplier");
+  }
+  if (effective.state === "unknown") {
+    unknown.push("effectiveAt");
+  }
   const scale =
     multiplier.state === "ok" && multiplier.value > BigInt(0)
       ? multiplier.value
