@@ -47,7 +47,10 @@ import {
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
-import { revertedTransactionHash } from "@/lib/web3/onchain-revert";
+import {
+  broadcastTransactionHash,
+  isOnChainPendingError,
+} from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import type { ExecutedCall } from "@/lib/web3/trace-decode";
@@ -683,7 +686,11 @@ export async function transferTokenCore(
         }
       );
       const rejection = classifyRevert(error, contract.interface);
-      const errorClass = rpcRelayErrorClass(error);
+      // Attributed as a system fault so the execution log records a fault
+      // domain for it; a relay-determined class is more specific, so it wins.
+      const errorClass =
+        rpcRelayErrorClass(error) ??
+        (isOnChainPendingError(error) ? ExecutionErrorType.SYSTEM : undefined);
       return {
         success: false,
         error: formatContractError(
@@ -693,8 +700,8 @@ export async function transferTokenCore(
         ),
         ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
-        ...(revertedTransactionHash(error)
-          ? { transactionHash: revertedTransactionHash(error), chainId }
+        ...(broadcastTransactionHash(error)
+          ? { transactionHash: broadcastTransactionHash(error), chainId }
           : {}),
       };
     }
