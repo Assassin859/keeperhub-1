@@ -10,8 +10,10 @@ const USDG = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
 const AAPL = "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9";
 const ZERO_HOOKS = "0x0000000000000000000000000000000000000000";
 
-// Live pool shape: USDG sorts below AAPL, and every pool on this chain that we
-// inspected carries no hook.
+// Live pool shape: USDG sorts below AAPL. The USDG-quoted stock pools that
+// actually trade are hookless and use canonical tiers (NVDA at 3000/60, AMD,
+// MU and SNDK at 10000/200). Pools elsewhere on this chain do carry hooks and
+// dynamic fees, so this is a fact about the stock pairs, not the chain.
 const POOL: PoolKey = {
   currency0: USDG,
   currency1: AAPL,
@@ -76,7 +78,9 @@ describe("the non-canonical struct", () => {
     // And the canonical five-field shape must NOT round-trip to the same
     // values, which is the whole reason this encoding is hand-written.
     const canonical = coder.encode(
-      ["tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)"],
+      [
+        "tuple(tuple(address,address,uint24,int24,address),bool,uint128,uint128,bytes)",
+      ],
       [[[USDG, AAPL, 10_000, 200, ZERO_HOOKS], true, ONE_USDG, MIN_OUT, "0x"]]
     );
     expect(canonical).not.toBe(params[0]);
