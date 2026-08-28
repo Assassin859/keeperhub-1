@@ -26,6 +26,7 @@ vi.mock("@/lib/rpc/providers/error-classification", () => ({
 
 import {
   __clearUiMultiplierCache,
+  chainMayScaleTokens,
   convertAmountForWrite,
   isScaledToken,
   rawToUi,
@@ -37,6 +38,7 @@ import {
 
 const CRWD = "0xea72Ecca2d0f6bFA1394DBBCff85b52CD4233931";
 const USDG = "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168";
+const DAI = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
 const FOUR = BigInt(4) * UI_MULTIPLIER_UNIT;
 
 const absent = () =>
@@ -187,5 +189,33 @@ describe("resolveForWrite", () => {
       ok: true,
       multiplier: UI_MULTIPLIER_UNIT,
     });
+  });
+});
+
+describe("chain scoping", () => {
+  it("knows which chains can host the standard", () => {
+    expect(chainMayScaleTokens(4663)).toBe(true);
+    expect(chainMayScaleTokens(46_630)).toBe(true);
+    expect(chainMayScaleTokens(1)).toBe(false);
+    expect(chainMayScaleTokens(8453)).toBe(false);
+  });
+
+  it("never probes a chain that cannot host one", async () => {
+    mockContract.mockRejectedValue(transient());
+    await expect(resolveForDisplay(run, 1, DAI)).resolves.toBe(
+      UI_MULTIPLIER_UNIT
+    );
+    expect(mockContract).not.toHaveBeenCalled();
+  });
+
+  it("does not refuse a write on a chain that cannot host one", async () => {
+    // The whole point of the scoping: a transient RPC failure must not block a
+    // DAI transfer on Ethereum, where an ERC-8056 token cannot exist.
+    mockContract.mockRejectedValue(transient());
+    await expect(resolveForWrite(run, 1, DAI)).resolves.toEqual({
+      ok: true,
+      multiplier: UI_MULTIPLIER_UNIT,
+    });
+    expect(mockContract).not.toHaveBeenCalled();
   });
 });

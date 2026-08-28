@@ -25,12 +25,43 @@ import { isNonRetryableError } from "@/lib/rpc/providers/error-classification";
  * proceeds unscaled moves several times the intended amount. So the display
  * helper falls back and the write helper refuses. Use `resolveForDisplay` for
  * anything that renders and `resolveForWrite` for anything that signs.
+ *
+ * Because the write helper refuses, the probe is scoped to chains that can
+ * actually host these tokens. Detecting by call alone would be more general,
+ * but it would also make an extra `eth_call` a hard dependency of every ERC-20
+ * transfer on every chain: a transient RPC failure would block a DAI transfer
+ * on Ethereum, where an ERC-8056 token cannot exist. That trades a real bug on
+ * one chain for an availability regression on all of them. The cost of the
+ * probe belongs where the risk is.
  */
 
 /** Fixed-point scale of `uiMultiplier()`, i.e. a multiplier of 1.0. */
 export const UI_MULTIPLIER_UNIT = BigInt("1000000000000000000");
 
 const ZERO = BigInt(0);
+
+/**
+ * Chains whose tokens may implement ERC-8056.
+ *
+ * Robinhood Chain and its testnet are the only deployments of the standard
+ * today. Everywhere else this module is the identity and costs nothing: no
+ * call, no cache entry, and no new way for a transfer to fail.
+ *
+ * Add a chain here when it gains scaled tokens. Until then, a token on an
+ * unlisted chain is treated as unscaled without being asked, which is what it
+ * is. Kept in code rather than on the chains table for the same reason
+ * SPONSORSHIP_CHAINS and GAS_TOKEN_USD_FEEDS are: it is a property of the
+ * standard's deployment, not of our configuration of the chain.
+ */
+const SCALED_TOKEN_CHAIN_IDS: ReadonlySet<number> = new Set([
+  4663, // Robinhood Chain
+  46_630, // Robinhood Chain Testnet
+]);
+
+/** Whether a token on this chain could carry a UI multiplier at all. */
+export function chainMayScaleTokens(chainId: number): boolean {
+  return SCALED_TOKEN_CHAIN_IDS.has(chainId);
+}
 
 const UI_MULTIPLIER_ABI = [
   "function uiMultiplier() view returns (uint256)",
@@ -180,6 +211,10 @@ export async function resolveForDisplay(
   chainId: number,
   tokenAddress: string
 ): Promise<bigint> {
+  if (!chainMayScaleTokens(chainId)) {
+    return UI_MULTIPLIER_UNIT;
+  }
+
   const key = cacheKey(chainId, tokenAddress);
   const cached = cache.get(key);
   if (
@@ -212,6 +247,10 @@ export async function resolveForWrite(
   chainId: number,
   tokenAddress: string
 ): Promise<MultiplierResult> {
+  if (!chainMayScaleTokens(chainId)) {
+    return { ok: true, multiplier: UI_MULTIPLIER_UNIT };
+  }
+
   const key = cacheKey(chainId, tokenAddress);
   const cached = cache.get(key);
   if (cached?.fetchedAt === null) {
