@@ -1625,18 +1625,128 @@ describe("ChainProviderManager", () => {
         }
       });
 
-      it("does not rewind for a height it has not served yet", async () => {
+      it("does not rewind for a height nothing has requested yet", async () => {
+        const logSpy = vi
+          .spyOn(console, "log")
+          .mockImplementation(() => undefined);
+        try {
+          const provider = await subscribe();
+          await provider.emitBlock(300);
+          // Short of the minimum interval, so the next block only arms the
+          // catch-up: 301-310 has genuinely not been requested when 305
+          // arrives, rather than having been served by an awaited drain.
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS / 10);
+          await provider.emitBlock(310);
+          await provider.emitBlock(305);
+          await vi.advanceTimersByTimeAsync(STATS_LOG_INTERVAL_MS);
+
+          expect(ranges(provider)).toEqual([
+            { from: 300, to: 300 },
+            { from: 301, to: 310 },
+          ]);
+          // Asserted through the counter rather than the ranges: a rewind to
+          // 304 would produce the same two ranges, so only this tells the two
+          // apart.
+          expect(statsLines(logSpy)[0]).toContain("reorgRewinds=0");
+        } finally {
+          logSpy.mockRestore();
+        }
+      });
+
+      it("re-queries a height re-announced while a drain is in flight", async () => {
         const provider = await subscribe();
-        await provider.emitBlock(300);
-        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
-        await provider.emitBlock(310);
-        // 305 arrives before the drain covering 301-310 has run: it is already
-        // owed, so this must not rewind the mark backwards past work in hand.
-        await provider.emitBlock(305);
+        await emitBlocks(provider, 100, 2, GETLOGS_MIN_INTERVAL_MS * 2);
+
+        // Served through 101. Hold the request for 102 open so the
+        // re-announcement lands while that drain owns the mark - it commits
+        // its own `to` when it finishes, so a mark moved backwards underneath
+        // it is overwritten and 101 is never re-read.
+        let release: () => void = () => undefined;
+        provider.beforeSend = (method) =>
+          method === "eth_getLogs"
+            ? new Promise<void>((r) => {
+                release = r;
+              })
+            : null;
+        const held = provider.emitBlock(102);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS);
+        const before = ranges(provider).length;
+
+        void provider.emitBlock(101);
+        await vi.advanceTimersByTimeAsync(10);
+        provider.beforeSend = null;
+        release();
+        await held;
         await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 3);
 
-        const served = ranges(provider);
-        expect(served.every((r) => r.from >= 300)).toBe(true);
+        const served = ranges(provider).slice(before);
+        expect(served.some((r) => r.from <= 101 && r.to >= 101)).toBe(true);
+      });
+
+      it("re-queries a height re-announced inside the range being fetched", async () => {
+        const provider = await subscribe();
+        await provider.emitBlock(100);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+        let release: () => void = () => undefined;
+        provider.beforeSend = (method) =>
+          method === "eth_getLogs"
+            ? new Promise<void>((r) => {
+                release = r;
+              })
+            : null;
+        // Requests 101-105 and holds it open.
+        const held = provider.emitBlock(105);
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS);
+        const before = ranges(provider).length;
+
+        // 103 is above the mark but inside the range already in flight. That
+        // request went out before the reorg, so it carries the pre-reorg logs
+        // and its commit moves the mark past 103 with nothing having fetched
+        // the replacement.
+        void provider.emitBlock(103);
+        await vi.advanceTimersByTimeAsync(10);
+        provider.beforeSend = null;
+        release();
+        await held;
+        await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 3);
+
+        const served = ranges(provider).slice(before);
+        expect(served.some((r) => r.from <= 103 && r.to >= 103)).toBe(true);
+      });
+
+      it("counts every refused rewind and warns once per interval", async () => {
+        const logSpy = vi
+          .spyOn(console, "log")
+          .mockImplementation(() => undefined);
+        const warnSpy = vi
+          .spyOn(console, "warn")
+          .mockImplementation(() => undefined);
+        try {
+          const provider = await subscribe();
+          await provider.emitBlock(1_000);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+          await provider.emitBlock(1_000 + REORG_REWIND_MAX_BLOCKS + 10);
+          await vi.advanceTimersByTimeAsync(GETLOGS_MIN_INTERVAL_MS * 2);
+
+          // An upstream announcing heights far below the mark does it on
+          // every block, so the warn is once per interval and the counter
+          // carries the rest - refusing is the other path that drops events
+          // on purpose, and it has to be countable rather than greppable.
+          await provider.emitBlock(1_000);
+          await provider.emitBlock(1_001);
+          await vi.advanceTimersByTimeAsync(STATS_LOG_INTERVAL_MS);
+
+          expect(
+            warnSpy.mock.calls
+              .map((a) => String(a[0]))
+              .filter((l) => l.includes("below the mark")),
+          ).toHaveLength(1);
+          expect(statsLines(logSpy)[0]).toContain("reorgRewindsRefused=2");
+        } finally {
+          logSpy.mockRestore();
+          warnSpy.mockRestore();
+        }
       });
     });
 
