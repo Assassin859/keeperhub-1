@@ -453,6 +453,12 @@ async function selfHealWorkflowAfterLateStepCommit(
     .set({
       status: "success",
       error: null,
+      // The classification columns are written alongside `error` at finalize.
+      // Clearing only the message left a success row still labelled with the
+      // spurious failure (e.g. E-0002), which the UI reads as a failed run.
+      errorCategory: null,
+      errorType: null,
+      errorCode: null,
       completedAt: new Date(),
       duration: newDuration,
       currentNodeId: null,
