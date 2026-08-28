@@ -41,7 +41,7 @@ const symbolField = {
 const robinhoodPlugin: IntegrationPlugin = {
   type: "robinhood",
   egress: "fixed-host",
-  label: "Robinhood Stock Tokens",
+  label: "Robinhood",
   description:
     "Read prices, positions and trading status for the tokenised equities on Robinhood Chain, in share terms rather than raw token units",
 
