@@ -2,6 +2,7 @@ import "server-only";
 
 import { ethers } from "ethers";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
+import { getUiMultiplier, rawToUi } from "@/lib/web3/ui-multiplier";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
@@ -101,20 +102,26 @@ async function stepHandler(
   const adapter = getChainAdapter(chainId);
 
   try {
-    const [allowanceRaw, decimals, symbol] = await adapter.executeWithFailover(
-      rpcManager,
-      (provider) => {
+    const [allowanceRaw, decimals, symbol, uiMultiplier] =
+      await adapter.executeWithFailover(rpcManager, (provider) => {
         const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
         return Promise.all([
           contract.allowance(ownerAddress, spenderAddress) as Promise<bigint>,
           contract.decimals() as Promise<bigint>,
           contract.symbol() as Promise<string>,
+          getUiMultiplier((op) => op(provider), chainId, tokenAddress),
         ]);
-      }
-    );
+      });
 
     const decimalsNum = Number(decimals);
-    const allowance = ethers.formatUnits(allowanceRaw, decimalsNum);
+    // Reported in the same units the approve step accepts, so a user can
+    // compare what they granted against what is left without converting.
+    // `allowanceRaw` keeps the on-chain value, which is what transferFrom
+    // actually spends.
+    const allowance = ethers.formatUnits(
+      rawToUi(allowanceRaw, uiMultiplier),
+      decimalsNum
+    );
 
     return {
       success: true,

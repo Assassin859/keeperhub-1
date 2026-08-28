@@ -25,6 +25,7 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import { getUiMultiplier, uiToRaw } from "@/lib/web3/ui-multiplier";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
@@ -270,7 +271,12 @@ export async function POST(request: Request) {
             if (!amount) {
               throw new Error("Missing amount for ERC20 Safe withdraw");
             }
-            safeAmountWei = ethers.parseUnits(amountStr, decimals);
+            // ERC-8056 tokens are shown to the holder in scaled units but
+            // transfer in raw ones. Identity for every ordinary ERC-20.
+            safeAmountWei = uiToRaw(
+              ethers.parseUnits(amountStr, decimals),
+              await getUiMultiplier((op) => op(provider), chainId, tokenAddress)
+            );
           } else if (fromMax) {
             safeAmountWei = await provider.getBalance(safe.safeAddress);
             if (safeAmountWei === BigInt(0)) {
@@ -355,7 +361,10 @@ export async function POST(request: Request) {
           );
           const decimalsResult: bigint = await contract.decimals();
           const decimals = Number(decimalsResult);
-          amountWei = ethers.parseUnits(amountStr, decimals);
+          amountWei = uiToRaw(
+            ethers.parseUnits(amountStr, decimals),
+            await getUiMultiplier((op) => op(provider), chainId, tokenAddress)
+          );
           estimatedGas = await contract.transfer.estimateGas(
             recipientAddr,
             amountWei

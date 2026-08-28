@@ -57,6 +57,7 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import { getUiMultiplier, rawToUi, uiToRaw } from "@/lib/web3/ui-multiplier";
 
 export type TransferTokenCoreInput = {
   network: string;
@@ -442,7 +443,18 @@ export async function transferTokenCore(
           ]);
         }
       );
-      const amountRaw = ethers.parseUnits(amount, Number(decimals));
+      // `amount` is expressed in the units the holder is shown. On an ERC-8056
+      // token those are UI units, which `transfer` does not accept, so convert
+      // down. Identity for every ordinary ERC-20.
+      const uiMultiplier = await getUiMultiplier(
+        (op) => rpcManager.executeWithFailover(op),
+        chainId,
+        tokenAddress
+      );
+      const amountRaw = uiToRaw(
+        ethers.parseUnits(amount, Number(decimals)),
+        uiMultiplier
+      );
 
       const sponsoredResult = await executeSponsoredContractTransaction({
         organizationId,
@@ -570,10 +582,23 @@ export async function transferTokenCore(
 
       const decimalsNum = Number(decimals);
 
+      // `amount` is in the units the holder is shown. On an ERC-8056 token
+      // those are UI units and `transfer` takes raw ones, so the typed amount
+      // has to be converted down and the on-chain balance converted up before
+      // the two are compared. Identity for every ordinary ERC-20.
+      const uiMultiplier = await getUiMultiplier(
+        (op) => rpcManager.executeWithFailover(op),
+        chainId,
+        tokenAddress
+      );
+
       // Convert amount to raw units
       let amountRaw: bigint;
       try {
-        amountRaw = ethers.parseUnits(amount, decimalsNum);
+        amountRaw = uiToRaw(
+          ethers.parseUnits(amount, decimalsNum),
+          uiMultiplier
+        );
       } catch (error) {
         return {
           success: false,
@@ -583,7 +608,12 @@ export async function transferTokenCore(
 
       // Check balance before transfer
       if (balance < amountRaw) {
-        const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
+        // Report the shortfall in the same units the caller asked in, or the
+        // message compares a UI figure against a raw one and reads as nonsense.
+        const balanceFormatted = ethers.formatUnits(
+          rawToUi(balance, uiMultiplier),
+          decimalsNum
+        );
         return {
           success: false,
           error: `Insufficient ${symbol} balance. Have: ${balanceFormatted}, Need: ${amount}`,

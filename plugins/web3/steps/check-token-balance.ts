@@ -2,6 +2,7 @@ import "server-only";
 
 import { ethers } from "ethers";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
+import { getUiMultiplier, rawToUi } from "@/lib/web3/ui-multiplier";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
@@ -68,19 +69,28 @@ async function fetchStringOrBytes32(
 async function fetchTokenBalance(
   provider: ethers.JsonRpcProvider,
   walletAddress: string,
-  tokenAddress: string
+  tokenAddress: string,
+  chainId: number
 ): Promise<TokenBalanceInfo> {
   const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
-  const [balanceRaw, decimals, symbol, name] = await Promise.all([
+  const [balanceRaw, decimals, symbol, name, uiMultiplier] = await Promise.all([
     contract.balanceOf(walletAddress) as Promise<bigint>,
     contract.decimals() as Promise<bigint>,
     fetchStringOrBytes32(provider, tokenAddress, "symbol"),
     fetchStringOrBytes32(provider, tokenAddress, "name"),
+    getUiMultiplier((op) => op(provider), chainId, tokenAddress),
   ]);
 
   const decimalsNum = Number(decimals);
-  const balance = ethers.formatUnits(balanceRaw, decimalsNum);
+  // On an ERC-8056 token the holder is shown the scaled balance, so report
+  // that. `balanceRaw` stays the unscaled on-chain value it has always been:
+  // it is what a transfer moves, and a caller comparing it against an explorer
+  // needs it to keep meaning the same thing.
+  const balance = ethers.formatUnits(
+    rawToUi(balanceRaw, uiMultiplier),
+    decimalsNum
+  );
 
   return {
     balance,
@@ -126,7 +136,8 @@ async function checkEvmTokenBalance(
   try {
     const balance = await adapter.executeWithFailover(
       rpcManager,
-      async (provider) => fetchTokenBalance(provider, address, tokenAddress)
+      async (provider) =>
+        fetchTokenBalance(provider, address, tokenAddress, chainId)
     );
     const addressLink = await adapter.getAddressUrl(address);
 
