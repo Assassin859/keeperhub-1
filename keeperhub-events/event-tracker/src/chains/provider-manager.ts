@@ -206,6 +206,34 @@ const PROBE_TIMEOUT_MS = 10_000;
  * connect-time reachability gates fail at the same scale.
  */
 const CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * Cap on an `eth_getLogs` round-trip in `processBlockRange`. A request
+ * already written to the socket has no other timeout: ethers does not
+ * reject it on its own, and a heartbeat on the same socket can keep
+ * passing while this specific request never answers.
+ *
+ * Deliberately looser than the 10 s connect and probe gates. Those bound a
+ * handshake and a single trivial frame; this bounds a real query over up to
+ * `GETLOGS_MAX_BLOCK_SPAN` blocks and `GETLOGS_ADDRESS_BATCH` addresses,
+ * which on a busy chain or a loaded upstream can legitimately take many
+ * seconds. Sizing it to match the connect gate would turn slow-but-working
+ * queries into permanent failures, and a range that never succeeds never
+ * advances the mark.
+ */
+export const GETLOGS_TIMEOUT_MS = 30_000;
+/**
+ * Consecutive `eth_getLogs` timeouts on one connection before the chain is
+ * reconnected. A single timeout is a slow upstream and worth retrying in
+ * place; a run of them is a socket that will not serve this call again, and
+ * no other check in this class notices - the heartbeat is a different
+ * request and still answers, and blocks keep arriving so the staleness
+ * watchdog never fires. Without this the chain retries into the void until
+ * the gap crosses `GETLOGS_MAX_CATCHUP_BLOCKS` and its events are dropped.
+ */
+export const GETLOGS_TIMEOUT_RECONNECT_THRESHOLD = 3;
+
+/** Marks the timeout branch of the `eth_getLogs` race, for escalation. */
+class GetLogsTimeoutError extends Error {}
 
 export type LogHandler = (log: ethers.Log) => void | Promise<void>;
 export type Unsubscribe = () => void;
@@ -216,7 +244,8 @@ export type DisconnectReason =
   | "provider_error"
   | "heartbeat_failure"
   | "heartbeat_timeout"
-  | "block_staleness";
+  | "block_staleness"
+  | "getlogs_timeout";
 
 export interface DisconnectEvent {
   chainId: number;
@@ -226,6 +255,40 @@ export interface DisconnectEvent {
 
 export type DisconnectHandler = (ev: DisconnectEvent) => void | Promise<void>;
 
+/**
+ * Reduce an RPC URL to what an operator needs and nothing more.
+ *
+ * The configured URLs carry credentials at runtime. `chain-config` stores
+ * `${DRPC_API_KEY}` as a placeholder, but the deploy workflow substitutes the
+ * real key into the value before writing it to SSM, so the string this process
+ * holds is a live secret for 19 of 22 chains.
+ *
+ * Only scheme and host survive. That is the whole diagnostic purpose - which
+ * upstream is serving, and therefore whether failover has kicked in - while
+ * the chain is already identified by `chainId`, so nothing is lost by dropping
+ * the path. Fails closed: a URL that will not parse is replaced entirely
+ * rather than passed through on the assumption it holds no secret.
+ *
+ * The host is kept deliberately, and that is an assumption rather than a
+ * guarantee: a provider that puts the token in the subdomain - QuickNode and
+ * Chainstack both do - would survive this untouched. No configured upstream
+ * does today (checked across both env files: no userinfo, no query strings, no
+ * host-borne credentials), and the host is what makes failover diagnosable, so
+ * it stays. Revisit when an upstream of that shape is added.
+ */
+export function redactRpcUrl(url: string | null): string | null {
+  if (url === null) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    const hasMore = parsed.pathname !== "/" || parsed.search !== "";
+    return `${parsed.protocol}//${parsed.host}${hasMore ? "/[redacted]" : ""}`;
+  } catch {
+    return "[redacted]";
+  }
+}
+
 export interface ChainHealth {
   chainId: number;
   /**
@@ -234,11 +297,15 @@ export interface ChainHealth {
    * fallback when the most recent successful (re)connect landed on it;
    * resets to the configured primary during a mid-reconnect window
    * because `reconnect()` clears `activeWssUrl` before re-attempting.
+   *
+   * Scheme and host only - see `redactRpcUrl`. The configured value carries a
+   * live credential at runtime.
    */
   wssUrl: string;
   /**
    * Configured fallback URL, or null if none. Surfaced so operators can
-   * see whether failover capacity exists for this chain.
+   * see whether failover capacity exists for this chain. Scheme and host
+   * only, for the same reason as `wssUrl`.
    */
   fallbackWssUrl: string | null;
   connected: boolean;
@@ -402,6 +469,14 @@ interface ChainEntry {
    * The next drain applies this, taking whichever of the two is lower.
    */
   pendingRewindTo: number | null;
+  /**
+   * Consecutive `eth_getLogs` timeouts on the current connection, reset by
+   * any range that returns and by every fresh connection. A socket that
+   * answers heartbeat pings but never answers `eth_getLogs` passes every
+   * other liveness check this class has, so the timeout has to escalate on
+   * its own or the chain retries into the void forever.
+   */
+  consecutiveGetLogsTimeouts: number;
   /**
    * Populated when `createProvider` rejects (most often the
    * subscription probe). Cleared on the next successful creation.
@@ -720,8 +795,11 @@ export class ChainProviderManager {
       // Active URL when a provider is live, primary otherwise. Lets
       // operators see whether failover kicked in without exposing a
       // stale "active" value when nothing is connected.
-      wssUrl: entry.activeWssUrl ?? entry.wssUrl,
-      fallbackWssUrl: entry.fallbackWssUrl,
+      // Redacted here rather than at serialisation: every consumer of
+      // getAllHealth() then gets the safe value, and a future caller cannot
+      // reach a credential by reading the field directly.
+      wssUrl: redactRpcUrl(entry.activeWssUrl ?? entry.wssUrl) ?? "[redacted]",
+      fallbackWssUrl: redactRpcUrl(entry.fallbackWssUrl),
       connected: entry.provider != null && !entry.isReconnecting,
       reconnecting: entry.isReconnecting,
       lastBlockAt: entry.lastBlockAt,
@@ -792,7 +870,7 @@ export class ChainProviderManager {
       // first caller's failover behaviour.
       if (existing.wssUrl !== wssUrl || existing.fallbackWssUrl !== fallback) {
         throw new Error(
-          `chainId ${chainId} already registered with wssUrl=${existing.wssUrl} fallbackWssUrl=${existing.fallbackWssUrl}; refusing to reuse for wssUrl=${wssUrl} fallbackWssUrl=${fallback}`,
+          `chainId ${chainId} already registered with wssUrl=${redactRpcUrl(existing.wssUrl)} fallbackWssUrl=${redactRpcUrl(existing.fallbackWssUrl)}; refusing to reuse for wssUrl=${redactRpcUrl(wssUrl)} fallbackWssUrl=${redactRpcUrl(fallback)}`,
         );
       }
       return existing;
@@ -823,6 +901,7 @@ export class ChainProviderManager {
       draining: false,
       drainingTo: null,
       pendingRewindTo: null,
+      consecutiveGetLogsTimeouts: 0,
       lastCreateError: null,
       disconnectHandlers: new Set(),
       stats: newChainStats(),
@@ -892,7 +971,11 @@ export class ChainProviderManager {
         return { provider, urlUsed: url };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        failures.push(`${url}: ${message}`);
+        // Redacted here, not at the reader. This string is stored on
+        // `lastCreateError` and served in the /healthz body, logged by the
+        // reconnect loop, and embedded in the stack the listener registry
+        // prints - so a raw URL here leaks through every one of them.
+        failures.push(`${redactRpcUrl(url)}: ${message}`);
         if (provider) {
           try {
             await provider.destroy();
@@ -916,7 +999,7 @@ export class ChainProviderManager {
     entry.activeWssUrl = urlUsed;
     if (urlUsed !== entry.wssUrl) {
       logger.warn(
-        `[ChainProviderManager] chain=${entry.chainId} primary failed; running on fallback ${urlUsed}`,
+        `[ChainProviderManager] chain=${entry.chainId} primary failed; running on fallback ${redactRpcUrl(urlUsed)}`,
       );
     }
     // Clear the prior failure marker now that we have a working provider.
@@ -1031,6 +1114,12 @@ export class ChainProviderManager {
     entry.blockIntervalEwmaMs = null;
     entry.blockIntervalSamples = 0;
     entry.blockIntervalFirstSampleAt = null;
+    // Per connection, like the cadence estimate above: a run of timeouts is
+    // evidence about one socket, and this is a different one. `entry` is
+    // shared though, so a request stranded by the old connection settles
+    // after the swap and counts against the replacement. It takes a full run
+    // to matter and any served range clears it.
+    entry.consecutiveGetLogsTimeouts = 0;
     entry.provider.on("block", listener);
     this.startStatsTimer();
   }
@@ -1180,6 +1269,17 @@ export class ChainProviderManager {
     const from = entry.lastProcessedBlock + 1;
     const to = Math.min(entry.headBlock, from + GETLOGS_MAX_BLOCK_SPAN - 1);
 
+    // `draining` is held for the whole drain, dispatch included, and is
+    // released only here. Nothing else clears it - a reconnect must not,
+    // because releasing a drain that already has its logs and is part way
+    // through dispatching them lets the replacement re-fetch the same
+    // unadvanced range and dispatch those logs a second time, concurrently.
+    // Dedup cannot absorb that: `isProcessed`/`markProcessed` is a
+    // check-then-set with the listener's jitter sleep before the check, so
+    // two concurrent dispatches of one log both see "not processed".
+    // The `eth_getLogs` timeout below bounds the fetch, so a stranded request
+    // cannot hold `draining`. Dispatch is not bounded, so a handler that never
+    // settles still can.
     entry.draining = true;
     entry.drainingTo = to;
     try {
@@ -1544,6 +1644,12 @@ export class ChainProviderManager {
     if (this.isDestroyed) {
       return;
     }
+    // `draining` is deliberately left alone. A drain in flight here is
+    // either waiting on `eth_getLogs` - bounded by `GETLOGS_TIMEOUT_MS`, so
+    // it releases the flag on its own - or already dispatching, and forcing
+    // it open there would let this replacement re-fetch and re-dispatch the
+    // same logs concurrently with it. The drain also captures its provider,
+    // so it cannot issue anything against the connection built below.
     // Tear down the old provider (best-effort) and unhook listeners so
     // the old provider cannot trigger another reconnect while we are
     // building the new one.
@@ -1587,7 +1693,7 @@ export class ChainProviderManager {
     entry.activeWssUrl = urlUsed;
     if (urlUsed !== entry.wssUrl) {
       logger.warn(
-        `[ChainProviderManager] chain=${entry.chainId} reconnected on fallback ${urlUsed}`,
+        `[ChainProviderManager] chain=${entry.chainId} reconnected on fallback ${redactRpcUrl(urlUsed)}`,
       );
     }
     // Successful reconnect clears any prior failure marker so /healthz
@@ -1625,7 +1731,13 @@ export class ChainProviderManager {
     toBlock: number,
   ): Promise<boolean> {
     const subscribers = [...entry.subscribers];
-    if (subscribers.length === 0 || !entry.provider) {
+    // Captured once. A multi-chunk range spans several awaits, and
+    // `entry.provider` can be replaced (or nulled) by a reconnect during
+    // any of them - re-reading it would issue the remaining chunks against
+    // a connection this range does not belong to, or throw a TypeError that
+    // the catch below would report as an ordinary getLogs failure.
+    const provider = entry.provider;
+    if (subscribers.length === 0 || !provider) {
       return false;
     }
 
@@ -1635,20 +1747,55 @@ export class ChainProviderManager {
     try {
       const logs: ethers.Log[] = [];
       for (let i = 0; i < addresses.length; i += GETLOGS_ADDRESS_BATCH) {
+        // A reconnect between chunks means this range is being served by a
+        // socket that is already gone. Stop rather than bill more requests
+        // against it; the mark has not moved, so the range is still owed.
+        if (entry.provider !== provider) {
+          return false;
+        }
         const chunk = addresses.slice(i, i + GETLOGS_ADDRESS_BATCH);
         // Counted at the call rather than the range: one range over more
         // than GETLOGS_ADDRESS_BATCH addresses is still several requests,
         // and requests are the quantity the provider bills.
         entry.stats.getLogsCalls += 1;
         entry.stats.getLogsCallsTotal += 1;
-        const batch = (await entry.provider.send("eth_getLogs", [
-          {
-            fromBlock: fromHex,
-            toBlock: toHex,
-            address: chunk,
-            topics: [topic0s],
-          },
-        ])) as ethers.Log[];
+        // Raced against an explicit timeout for the same reason as the
+        // probe in `probeSubscriptionSupport`: ethers gives no externally
+        // controllable timeout on `provider.send`, and a request already
+        // written to a socket that is then destroyed is never settled by
+        // ethers at all. This race is what guarantees a drain always
+        // finishes, which is in turn what lets `draining` be owned by the
+        // drain alone.
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new GetLogsTimeoutError(
+                  `eth_getLogs timed out after ${GETLOGS_TIMEOUT_MS}ms`,
+                ),
+              ),
+            GETLOGS_TIMEOUT_MS,
+          );
+        });
+        let batch: ethers.Log[];
+        try {
+          batch = (await Promise.race([
+            provider.send("eth_getLogs", [
+              {
+                fromBlock: fromHex,
+                toBlock: toHex,
+                address: chunk,
+                topics: [topic0s],
+              },
+            ]),
+            timeoutPromise,
+          ])) as ethers.Log[];
+        } finally {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+        }
         logs.push(...batch);
       }
 
@@ -1664,6 +1811,9 @@ export class ChainProviderManager {
       entry.stats.ranges += 1;
       entry.stats.blocksCovered += toBlock - fromBlock + 1;
       entry.stats.logsDispatched += logs.length;
+      // The connection served a range, so whatever timeouts preceded it were
+      // a slow upstream rather than a socket that stopped answering.
+      entry.consecutiveGetLogsTimeouts = 0;
       return true;
     } catch (err) {
       entry.stats.getLogsErrors += 1;
@@ -1674,6 +1824,27 @@ export class ChainProviderManager {
       logger.warn(
         `[ChainProviderManager] chain=${entry.chainId} ${range} getLogs failed, will retry: ${String(err)}`,
       );
+      if (err instanceof GetLogsTimeoutError) {
+        entry.consecutiveGetLogsTimeouts += 1;
+        if (
+          entry.consecutiveGetLogsTimeouts >=
+          GETLOGS_TIMEOUT_RECONNECT_THRESHOLD
+        ) {
+          // Replace the socket rather than keep retrying against one that
+          // has stopped serving this call. Safe to call from here: the
+          // reconnect loop yields at its first await, so this drain still
+          // returns and releases `draining` before any teardown runs.
+          this.triggerReconnect(
+            entry,
+            "getlogs_timeout",
+            `${entry.consecutiveGetLogsTimeouts} consecutive eth_getLogs timeouts`,
+          );
+        }
+      } else {
+        // Only an unbroken run of timeouts indicates a socket that will not
+        // serve this call again; an ordinary rejection means it answered.
+        entry.consecutiveGetLogsTimeouts = 0;
+      }
       return false;
     }
   }
