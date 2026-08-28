@@ -5,7 +5,7 @@ import { RobinhoodIcon } from "./icon";
 /**
  * Robinhood Chain stock tokens.
  *
- * Read-only. These actions exist because the assets are tokenised equities
+ * These actions exist because the assets are tokenised equities
  * rather than tokens, and the generic web3 actions cannot express that: a
  * balance rescales without a transfer, a price has two conventions that are not
  * interchangeable, and the market behind the asset closes while the chain does
@@ -43,7 +43,7 @@ const robinhoodPlugin: IntegrationPlugin = {
   egress: "fixed-host",
   label: "Robinhood",
   description:
-    "Read prices, positions and trading status for the tokenised equities on Robinhood Chain, in share terms rather than raw token units",
+    "Read prices, positions and trading status for the tokenised equities on Robinhood Chain, and trade them against USDG, in share terms rather than raw token units",
 
   icon: RobinhoodIcon,
 

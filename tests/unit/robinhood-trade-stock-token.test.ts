@@ -67,6 +67,7 @@ vi.mock("@/lib/web3/wallet-helpers", () => ({
     Promise.resolve("0x1111111111111111111111111111111111111111"),
 }));
 
+const mockGasCheck = vi.fn(() => ({ affordable: true }));
 const mockExecute = vi.fn();
 vi.mock("@/lib/web3/chain-adapter", () => ({
   getChainAdapter: () => ({ executeContractCall: () => mockExecute() }),
@@ -83,6 +84,11 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 vi.mock("@/lib/safe/execute-as-safe", () => ({
   executeContractCallAsRole: vi.fn(),
   executeContractCallAsSafe: vi.fn(),
+}));
+
+vi.mock("@/lib/web3/gas-preflight", () => ({
+  preflightGasBalance: () => Promise.resolve(mockGasCheck()),
+  resolveFundingHolder: (_m: unknown, addr: string) => addr,
 }));
 
 vi.mock("@/lib/web3/gas-defaults", () => ({
@@ -132,10 +138,16 @@ function baseInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Both allowances plentiful and unexpired. */
+/**
+ * Both allowances plentiful, with an expiry well beyond the trade deadline.
+ * Permit2 rewrites an expiration of 0 to block.timestamp on approve, so a
+ * stored 0 means "never set" rather than "never expires"; using 0 here would
+ * assert the wrong reading of the field.
+ */
+const FUTURE = BigInt(Math.floor(Date.now() / 1000) + 86_400);
 function allowancesOk() {
   mockAllowance.mockImplementation((...args: unknown[]) =>
-    Promise.resolve(args.length === 3 ? [HUGE, BigInt(0), BigInt(0)] : HUGE)
+    Promise.resolve(args.length === 3 ? [HUGE, FUTURE, BigInt(0)] : HUGE)
   );
 }
 
@@ -151,6 +163,7 @@ beforeEach(() => {
   mockOnChain.mockResolvedValue(CLEAN_STATE);
   mockResolveForWrite.mockResolvedValue({ ok: true, multiplier: UNIT });
   mockExecute.mockResolvedValue({ hash: "0xdead" });
+  mockGasCheck.mockReturnValue({ affordable: true });
 });
 
 describe("chain and symbol gates", () => {
@@ -202,9 +215,7 @@ describe("trading gates", () => {
 describe("Permit2 allowances", () => {
   it("refuses and names the missing token approval", async () => {
     mockAllowance.mockImplementation((...args: unknown[]) =>
-      Promise.resolve(
-        args.length === 3 ? [HUGE, BigInt(0), BigInt(0)] : BigInt(0)
-      )
+      Promise.resolve(args.length === 3 ? [HUGE, FUTURE, BigInt(0)] : BigInt(0))
     );
     const r = await tradeStockTokenCore(baseInput());
     expect(r.success).toBe(false);
@@ -216,9 +227,7 @@ describe("Permit2 allowances", () => {
 
   it("refuses when Permit2 has not authorised the router", async () => {
     mockAllowance.mockImplementation((...args: unknown[]) =>
-      Promise.resolve(
-        args.length === 3 ? [BigInt(0), BigInt(0), BigInt(0)] : HUGE
-      )
+      Promise.resolve(args.length === 3 ? [BigInt(0), FUTURE, BigInt(0)] : HUGE)
     );
     const r = await tradeStockTokenCore(baseInput());
     expect(r.success).toBe(false);
@@ -235,7 +244,7 @@ describe("Permit2 allowances", () => {
     const r = await tradeStockTokenCore(baseInput());
     expect(r.success).toBe(false);
     if (!r.success) {
-      expect(r.error).toMatch(/expired/);
+      expect(r.error).toMatch(/expires too soon|never set/);
     }
   });
 });
@@ -258,5 +267,48 @@ describe("a clean trade", () => {
     const r = await tradeStockTokenCore(baseInput({ poolFee: "not-a-number" }));
     expect(r.success).toBe(false);
     expect(mockOnChain).not.toHaveBeenCalled();
+  });
+});
+
+describe("refusals added after review", () => {
+  it("refuses a deadline that is not a positive whole number", async () => {
+    const r = await tradeStockTokenCore(baseInput({ deadlineSeconds: "5m" }));
+    // Must be a refusal, not a RangeError escaping the step.
+    expect(r.success).toBe(false);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a negative deadline rather than building a past one", async () => {
+    const r = await tradeStockTokenCore(baseInput({ deadlineSeconds: "-100" }));
+    expect(r.success).toBe(false);
+  });
+
+  it("refuses a Permit2 allowance that lapses before the deadline", async () => {
+    const soon = BigInt(Math.floor(Date.now() / 1000) + 10);
+    mockAllowance.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(args.length === 3 ? [HUGE, soon, BigInt(0)] : HUGE)
+    );
+    const r = await tradeStockTokenCore(baseInput({ deadlineSeconds: "300" }));
+    expect(r.success).toBe(false);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the wallet cannot pay for gas, before taking the nonce lock", async () => {
+    mockGasCheck.mockReturnValue({
+      affordable: false,
+      message: "insufficient gas",
+    } as never);
+    const r = await tradeStockTokenCore(baseInput());
+    expect(r.success).toBe(false);
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the pending-action reads could not be made", async () => {
+    mockOnChain.mockResolvedValue({
+      ...CLEAN_STATE,
+      unknown: ["newUIMultiplier"],
+    });
+    const r = await tradeStockTokenCore(baseInput());
+    expect(r.success).toBe(false);
   });
 });

@@ -12,6 +12,10 @@ import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getErrorMessage } from "@/lib/utils";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
+import {
+  preflightGasBalance,
+  resolveFundingHolder,
+} from "@/lib/web3/gas-preflight";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import {
   convertAmountForWrite,
@@ -108,7 +112,8 @@ async function checkPermit2Allowances(
   runFailover: <T>(op: (p: ethers.ContractRunner) => Promise<T>) => Promise<T>,
   token: string,
   owner: string,
-  amount: bigint
+  amount: bigint,
+  deadlineSeconds: number
 ): Promise<string | null> {
   const [toPermit2, permit2ToRouter] = await Promise.all([
     runFailover((p) =>
@@ -136,10 +141,14 @@ async function checkPermit2Allowances(
   if (allowed < amount) {
     return `Permit2 has not authorised the Universal Router to spend ${token}. Call approve(${token}, ${UNIVERSAL_ROUTER}, amount, expiration) on Permit2 at ${PERMIT2}.`;
   }
-  if (expiration !== BigInt(0) && expiration <= now) {
-    return `The Permit2 allowance for ${token} to the Universal Router expired at ${new Date(
-      Number(expiration) * 1000
-    ).toISOString()}. Re-approve it on Permit2 at ${PERMIT2}.`;
+  // Permit2 rewrites an expiration of 0 to block.timestamp on approve, so a
+  // stored 0 means the allowance was never set rather than that it never
+  // expires. The deadline margin matters too: an allowance lapsing between now
+  // and the deadline reverts on-chain after gas has been spent.
+  if (expiration <= now + BigInt(deadlineSeconds)) {
+    return `The Permit2 allowance for ${token} to the Universal Router ${
+      expiration === BigInt(0) ? "was never set" : "expires too soon"
+    }. Re-approve it on Permit2 at ${PERMIT2} with an expiration beyond the trade deadline.`;
   }
   return null;
 }
@@ -178,6 +187,16 @@ export async function tradeStockTokenCore(
   const tickSpacing = Number(input.poolTickSpacing);
   if (!(Number.isInteger(fee) && Number.isInteger(tickSpacing))) {
     return refuse("poolFee and poolTickSpacing must be integers.");
+  }
+
+  const deadlineSeconds = Number(input.deadlineSeconds || "300");
+  if (!(Number.isInteger(deadlineSeconds) && deadlineSeconds > 0)) {
+    // A template-input resolves to any string at runtime. Left unchecked,
+    // "5m" throws out of the function as a RangeError rather than returning a
+    // refusal, and "-100" silently builds a deadline already in the past.
+    return refuse(
+      `deadlineSeconds must be a positive whole number of seconds, got: ${input.deadlineSeconds}`
+    );
   }
 
   let rpcManager: Awaited<ReturnType<typeof getRpcProvider>>;
@@ -294,8 +313,16 @@ export async function tradeStockTokenCore(
   }
 
   const rpcUrl = rpcManager.getProvider()._getConnection().url;
-  const signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
-  const signerAddress = await getOrganizationWalletAddress(organizationId);
+  let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
+  let signerAddress: string;
+  try {
+    signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
+    signerAddress = await getOrganizationWalletAddress(organizationId);
+  } catch (error) {
+    return refuse(
+      `Failed to initialize organization wallet: ${getErrorMessage(error)}`
+    );
+  }
   const spender =
     signerMode.kind === SIGNER_MODE.SAFE_ROLE ||
     signerMode.kind === SIGNER_MODE.SAFE
@@ -306,16 +333,30 @@ export async function tradeStockTokenCore(
     runFailover,
     inputCurrency,
     spender,
-    amountInRaw
+    amountInRaw,
+    deadlineSeconds
   );
   if (allowanceProblem) {
     return refuse(allowanceProblem);
   }
 
   const deadline =
-    BigInt(Math.floor(Date.now() / 1000)) +
-    BigInt(Number(input.deadlineSeconds || "300"));
+    BigInt(Math.floor(Date.now() / 1000)) + BigInt(deadlineSeconds);
   const args = [encoded.commands, encoded.inputs, deadline];
+
+  // Before the nonce session, deliberately. A holder that cannot pay would
+  // otherwise take the lock, discover it at broadcast, and stall every other
+  // execution for the same wallet behind a failover round.
+  const gasCheck = await preflightGasBalance({
+    chainId,
+    rpcManager,
+    // Gas is drawn from the Safe in Safe modes and the EOA otherwise, which is
+    // a different address from the nonce key above.
+    holderAddress: resolveFundingHolder(signerMode, signerAddress),
+  });
+  if (!gasCheck.affordable) {
+    return refuse(gasCheck.message);
+  }
 
   try {
     const adapter = getChainAdapter(chainId);
@@ -328,9 +369,16 @@ export async function tradeStockTokenCore(
       rpcManager,
     };
 
+    // Keyed on the EOA, not on `spender`. In Safe mode `spender` is the Safe,
+    // but the nonce this session hands out is applied to the outer transaction
+    // the EOA signs, so keying on the Safe would read the proxy's transaction
+    // count and sign with a nonce that is far too low. It would also take the
+    // lock on the wrong key, leaving a concurrent transfer on the same EOA
+    // unserialised. `spender` stays the Permit2 owner, where it is correct:
+    // in Safe mode the Safe is msgSender() to the router.
     const hash: string = await withNonceSession(
       txContext,
-      spender,
+      signerAddress,
       async (session) => {
         const { multiplierOverride, gasLimitOverride } =
           resolveGasLimitOverrides(undefined);
