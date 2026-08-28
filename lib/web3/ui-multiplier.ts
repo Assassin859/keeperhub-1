@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import { isNonRetryableError } from "@/lib/rpc/providers/error-classification";
 
 /**
  * ERC-8056 UI multiplier handling.
@@ -7,92 +8,118 @@ import { ethers } from "ethers";
  * returns raw units; `balanceOfUI` returns `raw * uiMultiplier / 1e18`. A
  * corporate action such as a stock split changes the multiplier rather than
  * moving tokens, so the raw balance is untouched and the UI balance is what
- * changes. Robinhood's own app shows the UI number, and it is the one that
- * corresponds to a share count.
+ * changes. Robinhood's own app shows the UI number, and it is the share count.
  *
  * `transfer` and `transferFrom` take RAW units, and the standard has no
  * `transferUI`. So the display path and the mutation path speak different units
- * and nothing on-chain reconciles them. Ignoring the multiplier is therefore
- * wrong in both directions at once: a balance reads low by the multiplier, and
- * an amount the user typed against the number they were shown transfers high by
- * it. On CRWD at 4.0 that is a 4x over-send.
+ * and nothing on-chain reconciles them. Ignoring the multiplier is wrong in both
+ * directions at once: a balance reads low by the multiplier, and an amount typed
+ * against the number the user was shown transfers high by it. On CRWD at 4.0
+ * that is a 4x over-send.
  *
- * UI units are canonical here: reads are converted up, writes are converted
- * down. A plain ERC-20 has a multiplier of exactly UNIT, so every conversion is
- * the identity and no other chain changes behaviour.
+ * UI units are canonical: reads convert up, writes convert down.
+ *
+ * READS AND WRITES DO NOT SHARE A FAILURE MODE, and that distinction is the
+ * whole safety argument of this module. If the multiplier cannot be read, a
+ * balance that renders unscaled is a cosmetic degradation, while a transfer that
+ * proceeds unscaled moves several times the intended amount. So the display
+ * helper falls back and the write helper refuses. Use `resolveForDisplay` for
+ * anything that renders and `resolveForWrite` for anything that signs.
  */
 
 /** Fixed-point scale of `uiMultiplier()`, i.e. a multiplier of 1.0. */
 export const UI_MULTIPLIER_UNIT = BigInt("1000000000000000000");
+
+const ZERO = BigInt(0);
 
 const UI_MULTIPLIER_ABI = [
   "function uiMultiplier() view returns (uint256)",
 ] as const;
 
 /**
- * Cache of resolved multipliers, keyed by `chainId:token`.
+ * How long a successfully read multiplier may be reused when rendering.
  *
- * Negative results are cached too. Most tokens are plain ERC-20s where the call
- * reverts, and without caching the miss every balance read would pay for a
- * failed eth_call. A token that does not implement ERC-8056 cannot start doing
- * so, since that would require new code at the same address.
- *
- * Positive results carry a TTL because `updateMultiplier` is callable by the
- * issuer at any time. Five minutes bounds how long a stale multiplier can be
- * applied while keeping the steady-state cost near zero.
+ * Only the display path consults this. `updateMultiplier` is callable by the
+ * issuer at will, so a write must never build a transaction on a cached value:
+ * the cost of re-reading is one `eth_call` against the transaction it is about
+ * to sign, which is negligible, and the cost of being wrong is the bug this
+ * module exists to prevent.
  */
-const POSITIVE_TTL_MS = 5 * 60 * 1000;
+const DISPLAY_TTL_MS = 5 * 60 * 1000;
 
-type CacheEntry = { multiplier: bigint; fetchedAt: number | null };
+/**
+ * Cap on distinct tokens remembered. The generic transfer node accepts any
+ * address, so this map would otherwise grow without bound in a long-lived
+ * process. Eviction is oldest-inserted-first, which is adequate: the entries
+ * worth keeping are re-read and reinserted.
+ */
+const MAX_CACHE_ENTRIES = 5000;
+
+type CacheEntry = {
+  multiplier: bigint;
+  /** null when the token provably has no such function, so it never expires. */
+  fetchedAt: number | null;
+};
 
 const cache = new Map<string, CacheEntry>();
+/** De-duplicates concurrent first reads of the same token. */
+const inFlight = new Map<string, Promise<CacheEntry | null>>();
 
 /** Exposed for tests; not part of the runtime contract. */
 export function __clearUiMultiplierCache(): void {
   cache.clear();
+  inFlight.clear();
+}
+
+function remember(key: string, entry: CacheEntry): void {
+  if (cache.size >= MAX_CACHE_ENTRIES && !cache.has(key)) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) {
+      cache.delete(oldest.value);
+    }
+  }
+  cache.set(key, entry);
 }
 
 /**
  * How to run one read against a provider.
  *
  * A function rather than the RpcManager itself, because the callers are split:
- * the transfer and approve paths hold an RpcManager and want failover, while
- * the balance readers are handed a single provider already. Both express
- * themselves in one line, and neither has to reach for the other's plumbing.
+ * some hold an RpcManager, others are handed a provider already. Pass a runner
+ * that fails over where one is available; the multiplier read should be no less
+ * reliable than the balance read it accompanies.
  */
 export type ProviderRunner = <T>(
   operation: (provider: ethers.ContractRunner) => Promise<T>
 ) => Promise<T>;
 
-/**
- * Resolve a token's ERC-8056 UI multiplier.
- *
- * Returns `UI_MULTIPLIER_UNIT` for any token that does not implement it, which
- * is every token on every chain other than Robinhood Chain. Detection is the
- * call itself rather than a chain-id allowlist, so nothing here has to be
- * updated when a chain is added, and a chain that later gains such tokens works
- * without a code change.
- *
- * Never throws. A multiplier that cannot be read falls back to UNIT, which
- * preserves today's behaviour rather than failing a transfer that would
- * otherwise succeed.
- */
-export async function getUiMultiplier(
-  run: ProviderRunner,
-  chainId: number,
-  tokenAddress: string
-): Promise<bigint> {
-  const key = `${chainId}:${tokenAddress.toLowerCase()}`;
-  const cached = cache.get(key);
-  if (cached !== undefined) {
-    const fresh =
-      cached.fetchedAt === null ||
-      Date.now() - cached.fetchedAt < POSITIVE_TTL_MS;
-    if (fresh) {
-      return cached.multiplier;
-    }
-  }
+export type MultiplierResult =
+  | { ok: true; multiplier: bigint }
+  | { ok: false; error: unknown };
 
+function cacheKey(chainId: number, tokenAddress: string): string {
+  return `${chainId}:${tokenAddress.toLowerCase()}`;
+}
+
+/**
+ * Read `uiMultiplier()` once and decide what the answer means.
+ *
+ * A non-retryable error (`CALL_EXCEPTION`, or a permanent `BAD_DATA`) means the
+ * function is not there, which is every ordinary ERC-20. That verdict is cached
+ * forever, because a contract cannot start implementing an interface at an
+ * address it already occupies, and it is what keeps the steady-state cost of
+ * this module at zero for non-Robinhood tokens.
+ *
+ * A transport failure -- timeout, rate limit, 5xx, dropped connection -- means
+ * we do not know. It is deliberately NOT cached. Caching it would pin a scaled
+ * token to unit for the lifetime of the process on the strength of one bad
+ * second, silently restoring the over-send this module prevents.
+ */
+async function readMultiplier(
+  run: ProviderRunner,
+  key: string,
+  tokenAddress: string
+): Promise<CacheEntry | null> {
   try {
     const value = await run((provider) => {
       const contract = new ethers.Contract(
@@ -103,22 +130,105 @@ export async function getUiMultiplier(
       return contract.uiMultiplier() as Promise<bigint>;
     });
 
-    // A zero multiplier would silently zero every balance and make uiToRaw
-    // divide by zero. Treat it as "not an ERC-8056 token" rather than trusting
-    // it; no legitimate deployment reports zero.
-    if (value <= BigInt(0)) {
-      cache.set(key, { multiplier: UI_MULTIPLIER_UNIT, fetchedAt: null });
-      return UI_MULTIPLIER_UNIT;
+    // A zero or negative multiplier would zero every balance and make the
+    // write conversion divide by zero. No legitimate deployment reports it;
+    // treat it as "not an ERC-8056 token" rather than trusting it.
+    const entry: CacheEntry =
+      value > ZERO
+        ? { multiplier: value, fetchedAt: Date.now() }
+        : { multiplier: UI_MULTIPLIER_UNIT, fetchedAt: null };
+    remember(key, entry);
+    return entry;
+  } catch (error) {
+    if (isNonRetryableError(error)) {
+      const entry: CacheEntry = {
+        multiplier: UI_MULTIPLIER_UNIT,
+        fetchedAt: null,
+      };
+      remember(key, entry);
+      return entry;
     }
-
-    cache.set(key, { multiplier: value, fetchedAt: Date.now() });
-    return value;
-  } catch {
-    // The call reverting is the ordinary case: a plain ERC-20 has no such
-    // function. Cached without a timestamp so it is never re-attempted.
-    cache.set(key, { multiplier: UI_MULTIPLIER_UNIT, fetchedAt: null });
-    return UI_MULTIPLIER_UNIT;
+    return null;
   }
+}
+
+function readMultiplierDeduped(
+  run: ProviderRunner,
+  key: string,
+  tokenAddress: string
+): Promise<CacheEntry | null> {
+  const pending = inFlight.get(key);
+  if (pending) {
+    return pending;
+  }
+  const promise = readMultiplier(run, key, tokenAddress).finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, promise);
+  return promise;
+}
+
+/**
+ * The multiplier to render a balance or allowance with.
+ *
+ * Never throws and never fails. When the multiplier cannot be read, a
+ * previously known value is preferred over unit, because a stale scaled value
+ * is closer to the truth than an unscaled one; unit is the last resort.
+ */
+export async function resolveForDisplay(
+  run: ProviderRunner,
+  chainId: number,
+  tokenAddress: string
+): Promise<bigint> {
+  const key = cacheKey(chainId, tokenAddress);
+  const cached = cache.get(key);
+  if (
+    cached &&
+    (cached.fetchedAt === null ||
+      Date.now() - cached.fetchedAt < DISPLAY_TTL_MS)
+  ) {
+    return cached.multiplier;
+  }
+
+  const entry = await readMultiplierDeduped(run, key, tokenAddress);
+  if (entry) {
+    return entry.multiplier;
+  }
+  // Refresh failed. Keep whatever we last knew rather than downgrading a token
+  // we have already established is scaled.
+  return cached?.multiplier ?? UI_MULTIPLIER_UNIT;
+}
+
+/**
+ * The multiplier to build a transaction with.
+ *
+ * Reports failure instead of guessing. The only cached answer it will accept is
+ * the permanent "this token has no such function" verdict; a positive value is
+ * always re-read, because the issuer can change it between the read and the
+ * signature.
+ */
+export async function resolveForWrite(
+  run: ProviderRunner,
+  chainId: number,
+  tokenAddress: string
+): Promise<MultiplierResult> {
+  const key = cacheKey(chainId, tokenAddress);
+  const cached = cache.get(key);
+  if (cached?.fetchedAt === null) {
+    return { ok: true, multiplier: cached.multiplier };
+  }
+
+  const entry = await readMultiplierDeduped(run, key, tokenAddress);
+  if (entry) {
+    return { ok: true, multiplier: entry.multiplier };
+  }
+  return {
+    ok: false,
+    error: new Error(
+      `Could not read the UI multiplier for ${tokenAddress} on chain ${chainId}. ` +
+        "Refusing to build a transfer that could move the wrong amount."
+    ),
+  };
 }
 
 /** Raw on-chain units to the UI units a holder is shown. */
@@ -134,14 +244,42 @@ export function rawToUi(raw: bigint, multiplier: bigint): bigint {
  *
  * Floors. The division is rarely exact once a multiplier drifts off 1.0 through
  * dividend accrual, and rounding up would move more of the asset than the user
- * asked for. Erring low costs the user a rounding-unit of dust; erring high
- * spends their money.
+ * asked for. Erring low costs a rounding unit of dust; erring high spends their
+ * money.
  */
 export function uiToRaw(ui: bigint, multiplier: bigint): bigint {
   if (multiplier === UI_MULTIPLIER_UNIT) {
     return ui;
   }
   return (ui * UI_MULTIPLIER_UNIT) / multiplier;
+}
+
+export type AmountConversion =
+  | { ok: true; raw: bigint }
+  | { ok: false; error: string };
+
+/**
+ * Convert a typed amount for a transfer or an approval.
+ *
+ * Rejects a non-zero request that floors to zero. `transfer(to, 0)` succeeds
+ * on-chain and moves nothing, and `approve(spender, 0)` is a revocation, so
+ * executing either while reporting the amount the user asked for would be a
+ * silent no-op or a silent revocation.
+ */
+export function convertAmountForWrite(
+  ui: bigint,
+  multiplier: bigint
+): AmountConversion {
+  const raw = uiToRaw(ui, multiplier);
+  if (raw === ZERO && ui > ZERO) {
+    return {
+      ok: false,
+      error:
+        "Amount is too small for this token: it rounds to zero once converted " +
+        "to on-chain units. Use a larger amount.",
+    };
+  }
+  return { ok: true, raw };
 }
 
 /** True when this token scales, i.e. the conversions are not the identity. */

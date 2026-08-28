@@ -25,7 +25,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
-import { getUiMultiplier, uiToRaw } from "@/lib/web3/ui-multiplier";
+import {
+  convertAmountForWrite,
+  resolveForWrite,
+} from "@/lib/web3/ui-multiplier";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
@@ -273,10 +276,24 @@ export async function POST(request: Request) {
             }
             // ERC-8056 tokens are shown to the holder in scaled units but
             // transfer in raw ones. Identity for every ordinary ERC-20.
-            safeAmountWei = uiToRaw(
-              ethers.parseUnits(amountStr, decimals),
-              await getUiMultiplier((op) => op(provider), chainId, tokenAddress)
+            // Throws rather than falling back: an unscaled amount here would
+            // move several times what was asked for.
+            const mult = await resolveForWrite(
+              (op) => op(provider),
+              chainId,
+              tokenAddress
             );
+            if (!mult.ok) {
+              throw mult.error;
+            }
+            const converted = convertAmountForWrite(
+              ethers.parseUnits(amountStr, decimals),
+              mult.multiplier
+            );
+            if (!converted.ok) {
+              throw new Error(converted.error);
+            }
+            safeAmountWei = converted.raw;
           } else if (fromMax) {
             safeAmountWei = await provider.getBalance(safe.safeAddress);
             if (safeAmountWei === BigInt(0)) {
@@ -361,10 +378,22 @@ export async function POST(request: Request) {
           );
           const decimalsResult: bigint = await contract.decimals();
           const decimals = Number(decimalsResult);
-          amountWei = uiToRaw(
-            ethers.parseUnits(amountStr, decimals),
-            await getUiMultiplier((op) => op(provider), chainId, tokenAddress)
+          const mult = await resolveForWrite(
+            (op) => op(provider),
+            chainId,
+            tokenAddress
           );
+          if (!mult.ok) {
+            throw mult.error;
+          }
+          const convertedAmount = convertAmountForWrite(
+            ethers.parseUnits(amountStr, decimals),
+            mult.multiplier
+          );
+          if (!convertedAmount.ok) {
+            throw new Error(convertedAmount.error);
+          }
+          amountWei = convertedAmount.raw;
           estimatedGas = await contract.transfer.estimateGas(
             recipientAddr,
             amountWei

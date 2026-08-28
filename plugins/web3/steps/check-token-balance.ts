@@ -2,7 +2,7 @@ import "server-only";
 
 import { ethers } from "ethers";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
-import { getUiMultiplier, rawToUi } from "@/lib/web3/ui-multiplier";
+import { rawToUi, resolveForDisplay } from "@/lib/web3/ui-multiplier";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider, isSolanaChain } from "@/lib/rpc/provider-factory";
@@ -70,16 +70,15 @@ async function fetchTokenBalance(
   provider: ethers.JsonRpcProvider,
   walletAddress: string,
   tokenAddress: string,
-  chainId: number
+  uiMultiplier: bigint
 ): Promise<TokenBalanceInfo> {
   const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
-  const [balanceRaw, decimals, symbol, name, uiMultiplier] = await Promise.all([
+  const [balanceRaw, decimals, symbol, name] = await Promise.all([
     contract.balanceOf(walletAddress) as Promise<bigint>,
     contract.decimals() as Promise<bigint>,
     fetchStringOrBytes32(provider, tokenAddress, "symbol"),
     fetchStringOrBytes32(provider, tokenAddress, "name"),
-    getUiMultiplier((op) => op(provider), chainId, tokenAddress),
   ]);
 
   const decimalsNum = Number(decimals);
@@ -134,10 +133,19 @@ async function checkEvmTokenBalance(
   const adapter = getChainAdapter(chainId);
 
   try {
+    // Resolved through failover in its own right, rather than pinned to the
+    // single provider the balance read happens to land on. A multiplier read
+    // that quietly failed while the balance succeeded on a retry would report
+    // a scaled token's balance understated, as a success.
+    const uiMultiplier = await resolveForDisplay(
+      (op) => adapter.executeWithFailover(rpcManager, op),
+      chainId,
+      tokenAddress
+    );
     const balance = await adapter.executeWithFailover(
       rpcManager,
       async (provider) =>
-        fetchTokenBalance(provider, address, tokenAddress, chainId)
+        fetchTokenBalance(provider, address, tokenAddress, uiMultiplier)
     );
     const addressLink = await adapter.getAddressUrl(address);
 

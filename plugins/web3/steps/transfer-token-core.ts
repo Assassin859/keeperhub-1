@@ -57,7 +57,11 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
-import { getUiMultiplier, rawToUi, uiToRaw } from "@/lib/web3/ui-multiplier";
+import {
+  convertAmountForWrite,
+  rawToUi,
+  resolveForWrite,
+} from "@/lib/web3/ui-multiplier";
 
 export type TransferTokenCoreInput = {
   network: string;
@@ -443,18 +447,26 @@ export async function transferTokenCore(
           ]);
         }
       );
-      // `amount` is expressed in the units the holder is shown. On an ERC-8056
-      // token those are UI units, which `transfer` does not accept, so convert
-      // down. Identity for every ordinary ERC-20.
-      const uiMultiplier = await getUiMultiplier(
+      // `amount` is in the units the holder is shown. On an ERC-8056 token
+      // those are UI units and `transfer` takes raw ones, so convert down.
+      // Identity for every ordinary ERC-20. Refuses rather than guessing: an
+      // unscaled fallback here would move several times the intended amount.
+      const multiplier = await resolveForWrite(
         (op) => rpcManager.executeWithFailover(op),
         chainId,
         tokenAddress
       );
-      const amountRaw = uiToRaw(
+      if (!multiplier.ok) {
+        return { success: false, error: getErrorMessage(multiplier.error) };
+      }
+      const converted = convertAmountForWrite(
         ethers.parseUnits(amount, Number(decimals)),
-        uiMultiplier
+        multiplier.multiplier
       );
+      if (!converted.ok) {
+        return { success: false, error: converted.error };
+      }
+      const amountRaw = converted.raw;
 
       const sponsoredResult = await executeSponsoredContractTransaction({
         organizationId,
@@ -584,21 +596,33 @@ export async function transferTokenCore(
 
       // `amount` is in the units the holder is shown. On an ERC-8056 token
       // those are UI units and `transfer` takes raw ones, so the typed amount
-      // has to be converted down and the on-chain balance converted up before
-      // the two are compared. Identity for every ordinary ERC-20.
-      const uiMultiplier = await getUiMultiplier(
+      // converts down and the on-chain balance converts up before the two are
+      // compared. Identity for every ordinary ERC-20. Refuses rather than
+      // guessing: an unscaled fallback would move several times the ask.
+      const multiplierResult = await resolveForWrite(
         (op) => rpcManager.executeWithFailover(op),
         chainId,
         tokenAddress
       );
+      if (!multiplierResult.ok) {
+        return {
+          success: false,
+          error: getErrorMessage(multiplierResult.error),
+        };
+      }
+      const uiMultiplier = multiplierResult.multiplier;
 
       // Convert amount to raw units
       let amountRaw: bigint;
       try {
-        amountRaw = uiToRaw(
+        const converted = convertAmountForWrite(
           ethers.parseUnits(amount, decimalsNum),
           uiMultiplier
         );
+        if (!converted.ok) {
+          return { success: false, error: converted.error };
+        }
+        amountRaw = converted.raw;
       } catch (error) {
         return {
           success: false,

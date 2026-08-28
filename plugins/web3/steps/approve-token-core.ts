@@ -53,7 +53,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
-import { getUiMultiplier, uiToRaw } from "@/lib/web3/ui-multiplier";
+import {
+  convertAmountForWrite,
+  resolveForWrite,
+} from "@/lib/web3/ui-multiplier";
 import { parseTokenAddress } from "./transfer-token-core";
 
 export type ApproveTokenCoreInput = {
@@ -326,18 +329,25 @@ export async function approveTokenCore(
         approvedAmountDisplay = "unlimited";
       } else {
         // An allowance is spent by transferFrom in raw units, so an amount the
-        // user expressed in the units they were shown has to be converted down
-        // the same way a transfer is. Identity for every ordinary ERC-20.
-        // "max" is untouched: MaxUint256 is a sentinel, not a quantity.
-        const uiMultiplier = await getUiMultiplier(
+        // user expressed in the units they were shown converts down the same
+        // way a transfer does. Identity for every ordinary ERC-20. "max" never
+        // reaches here: MaxUint256 is a sentinel, not a quantity.
+        const multiplier = await resolveForWrite(
           (op) => rpcManager.executeWithFailover(op),
           chainId,
           tokenAddress
         );
-        amountRaw = uiToRaw(
+        if (!multiplier.ok) {
+          return { success: false, error: getErrorMessage(multiplier.error) };
+        }
+        const converted = convertAmountForWrite(
           ethers.parseUnits(amount, Number(decimals)),
-          uiMultiplier
+          multiplier.multiplier
         );
+        if (!converted.ok) {
+          return { success: false, error: converted.error };
+        }
+        amountRaw = converted.raw;
         approvedAmountDisplay = amount;
       }
 
@@ -489,19 +499,26 @@ export async function approveTokenCore(
         amountRaw = ethers.MaxUint256;
         approvedAmountDisplay = "unlimited";
       } else {
+        const multiplier = await resolveForWrite(
+          (op) => rpcManager.executeWithFailover(op),
+          chainId,
+          tokenAddress
+        );
+        if (!multiplier.ok) {
+          return { success: false, error: getErrorMessage(multiplier.error) };
+        }
         try {
           // Same conversion as the sponsored branch above: an allowance is
           // spent in raw units, so a UI amount converts down. Identity for
           // every ordinary ERC-20.
-          const uiMultiplier = await getUiMultiplier(
-            (op) => rpcManager.executeWithFailover(op),
-            chainId,
-            tokenAddress
-          );
-          amountRaw = uiToRaw(
+          const converted = convertAmountForWrite(
             ethers.parseUnits(amount, decimalsNum),
-            uiMultiplier
+            multiplier.multiplier
           );
+          if (!converted.ok) {
+            return { success: false, error: converted.error };
+          }
+          amountRaw = converted.raw;
           approvedAmountDisplay = amount;
         } catch (error) {
           return {
