@@ -9,6 +9,7 @@ import {
   type StepInput,
 } from "@/lib/workflow/executor/step-handler";
 import {
+  type ChainlinkFeed,
   fetchQuote,
   loadChainlinkFeeds,
   readChainlinkFeed,
@@ -38,7 +39,7 @@ type StockMarketStatusResult =
       oraclePaused: boolean;
       tokenPaused: boolean;
       paused: boolean;
-      quoteAgeSeconds: number;
+      quoteAgeSeconds: number | null;
       feedAgeSeconds: number | null;
       feedBeyondHeartbeat: boolean | null;
       /** Set when a corporate action is scheduled but has not yet landed. */
@@ -83,8 +84,15 @@ async function stepHandler(
 
   try {
     const rpcManager = await getRpcProvider({ chainId });
-    const feeds = await loadChainlinkFeeds();
-    const feed = feeds.get(token.symbol);
+    // The feed directory is a third party that most tickers do not need: 35 of
+    // 194 have a feed. Its being down must not take the whole guard down.
+    let feed: ChainlinkFeed | undefined;
+    let feedDirectoryUnavailable = false;
+    try {
+      feed = (await loadChainlinkFeeds()).get(token.symbol);
+    } catch {
+      feedDirectoryUnavailable = true;
+    }
 
     const [quote, onChain, reading] = await Promise.all([
       fetchQuote(token.symbol),
@@ -111,17 +119,31 @@ async function stepHandler(
     if (onChain.oraclePaused) {
       blockedBy.push("oracle paused");
     }
-    if (quote.quoteAgeSeconds > QUOTE_USABLE_WINDOW_SECONDS) {
+    if (quote.quoteAgeSeconds === null) {
+      // Age unknown is not age zero. Blocking, because quote age is also how
+      // this action decides whether the market is open.
+      blockedBy.push("quote carried no usable timestamp");
+    } else if (quote.quoteAgeSeconds > QUOTE_USABLE_WINDOW_SECONDS) {
       blockedBy.push(
         `quote is ${quote.quoteAgeSeconds}s old, market likely closed`
       );
     }
     // Judged against the feed's own heartbeat, not a constant. These feeds run
     // on a 24 hour heartbeat and sit hours old overnight by design.
-    if (reading?.beyondHeartbeat) {
+    if (reading?.beyondHeartbeat === true) {
       blockedBy.push(
         `price feed is ${reading.ageSeconds}s old, beyond its ${reading.heartbeatSeconds}s heartbeat`
       );
+    }
+    if (reading?.beyondHeartbeat === null) {
+      blockedBy.push("price feed publishes no heartbeat, staleness unknown");
+    }
+    if (feedDirectoryUnavailable) {
+      blockedBy.push("price feed directory unavailable, staleness unknown");
+    }
+    // A flag we could not read is not a flag that is clear.
+    for (const field of onChain.unknown) {
+      blockedBy.push(`could not read ${field}`);
     }
     if (onChain.pendingMultiplier) {
       blockedBy.push("corporate action pending");

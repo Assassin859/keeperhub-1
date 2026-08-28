@@ -9,6 +9,7 @@ import {
   type StepInput,
 } from "@/lib/workflow/executor/step-handler";
 import {
+  type ChainlinkFeed,
   fetchQuote,
   type FeedReading,
   loadChainlinkFeeds,
@@ -34,7 +35,7 @@ type GetStockPriceResult =
       ask: string;
       currency: string;
       quoteGeneratedAt: string;
-      quoteAgeSeconds: number;
+      quoteAgeSeconds: number | null;
       /**
        * Chainlink's token price, with the multiplier already applied, when a
        * feed exists. Null for most tickers: 35 of 194 are covered.
@@ -77,8 +78,14 @@ async function stepHandler(
 
   try {
     const rpcManager = await getRpcProvider({ chainId });
-    const feeds = await loadChainlinkFeeds();
-    const feed = feeds.get(token.symbol);
+    // Corroboration only, and absent for most tickers, so a directory outage
+    // must not fail a price the issuer answered perfectly well.
+    let feed: ChainlinkFeed | undefined;
+    try {
+      feed = (await loadChainlinkFeeds()).get(token.symbol);
+    } catch {
+      feed = undefined;
+    }
 
     const [quote, onChain, reading] = await Promise.all([
       fetchQuote(token.symbol),

@@ -32,8 +32,9 @@ const symbolField = {
   type: "template-input" as const,
   placeholder: "AAPL or {{NodeName.symbol}}",
   example: "AAPL",
-  helpText:
-    "The equity ticker. Resolved to a contract address through the issuer's asset registry, which is the only authority on which address is which equity: a symbol search on the chain explorer returns many lookalikes, several with more holders than the real token.",
+  // No helpText: it exists only on IntegrationPlugin.formFields, not on an
+  // action config field, and nothing renders it. The guidance it carried is in
+  // each action's description instead, where it does reach the user.
   required: true,
 };
 
@@ -55,7 +56,7 @@ const robinhoodPlugin: IntegrationPlugin = {
       slug: "get-stock-price",
       label: "Get Stock Token Price",
       description:
-        "Quote a stock token. Returns the issuer's bid and ask for the underlying equity alongside the Chainlink token price where a feed exists, each with its own age, rather than reconciling them into one number",
+        "Quote a stock token by ticker, resolved through the issuer's asset registry rather than an address you paste: a symbol search on the chain explorer returns many lookalikes, several with more holders than the real token. Returns the issuer bid and ask for the underlying equity alongside the Chainlink token price where a feed exists, each with its own age, rather than reconciling them into one number",
       category: "Robinhood",
       stepFunction: "getStockPriceStep",
       stepImportPath: "get-stock-price",
@@ -63,7 +64,17 @@ const robinhoodPlugin: IntegrationPlugin = {
       outputFields: [
         { field: "success", description: "Whether the read succeeded" },
         { field: "symbol", description: "The resolved ticker" },
+        { field: "name", description: "The asset's display name" },
         { field: "tokenAddress", description: "Token contract on chain 4663" },
+        { field: "currency", description: "Currency of bid and ask" },
+        {
+          field: "quoteGeneratedAt",
+          description: "When the issuer produced the quote",
+        },
+        {
+          field: "feedUpdatedAt",
+          description: "When Chainlink last updated, null when there is no feed",
+        },
         {
           field: "bid",
           description:
@@ -127,6 +138,12 @@ const robinhoodPlugin: IntegrationPlugin = {
       outputFields: [
         { field: "success", description: "Whether the read succeeded" },
         { field: "symbol", description: "The resolved ticker" },
+        { field: "tokenAddress", description: "Token contract on chain 4663" },
+        { field: "address", description: "The holder that was read" },
+        {
+          field: "quoteAgeSeconds",
+          description: "Age of the quote behind valueAtBid, null when absent",
+        },
         {
           field: "shares",
           description:
@@ -172,7 +189,17 @@ const robinhoodPlugin: IntegrationPlugin = {
             "Every reason tradeable is false, so a workflow can branch on cause rather than re-deriving it",
         },
         { field: "isTradingHalt", description: "Issuer-reported trading halt" },
-        { field: "quoteAgeSeconds", description: "Age of the issuer quote" },
+        { field: "paused", description: "On-chain global pause flag" },
+        { field: "tokenPaused", description: "On-chain transfer pause flag" },
+        { field: "oraclePaused", description: "On-chain oracle pause flag" },
+        {
+          field: "quoteAgeSeconds",
+          description: "Age of the issuer quote, null when it carried no timestamp",
+        },
+        {
+          field: "feedAgeSeconds",
+          description: "Age of the Chainlink answer, null when there is no feed",
+        },
         {
           field: "feedBeyondHeartbeat",
           description: "Whether the Chainlink feed is past its own heartbeat",

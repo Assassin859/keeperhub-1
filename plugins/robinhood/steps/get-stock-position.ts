@@ -87,10 +87,16 @@ async function stepHandler(
     let quoteAgeSeconds: number | null = null;
     try {
       const quote = await fetchQuote(token.symbol);
-      const bid = Number(quote.bid);
-      const shares = Number(position.ui);
-      if (Number.isFinite(bid) && Number.isFinite(shares)) {
-        valueAtBid = (bid * shares).toFixed(2);
+      // Fixed point, not float. `shares` carries up to 18 decimals and a double
+      // loses the tail of a large position, in a monetary figure a workflow may
+      // branch on. Both sides are scaled to integers before multiplying.
+      const CENTS = BigInt(100);
+      const bidCents = ethers.parseUnits(quote.bid || "0", 2);
+      const sharesUnits = ethers.parseUnits(position.ui, token.decimals);
+      if (bidCents > BigInt(0)) {
+        const scale = BigInt(10) ** BigInt(token.decimals);
+        const cents = (bidCents * sharesUnits) / scale;
+        valueAtBid = `${cents / CENTS}.${String(cents % CENTS).padStart(2, "0")}`;
         currency = quote.currency;
         quoteAgeSeconds = quote.quoteAgeSeconds;
       }

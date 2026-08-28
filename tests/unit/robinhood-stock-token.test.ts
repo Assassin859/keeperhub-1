@@ -7,6 +7,19 @@ vi.mock("@/lib/safe-fetch", () => ({
   safeFetch: (url: string) => mockFetch(url),
 }));
 
+vi.mock("@/lib/rpc/providers/error-classification", () => ({
+  isNonRetryableError: (e: unknown) =>
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    (e as { code: string }).code === "CALL_EXCEPTION",
+}));
+
+const absent = () =>
+  Object.assign(new Error("missing revert data"), { code: "CALL_EXCEPTION" });
+const transient = () =>
+  Object.assign(new Error("timeout"), { code: "TIMEOUT" });
+
 const contractCalls = vi.fn();
 const CONTRACT_METHODS = [
   "uiMultiplier",
@@ -296,5 +309,118 @@ describe("readPosition", () => {
     });
     const position = await readPosition(runner, token, "0x1");
     expect(position.ui).toBe(position.raw);
+  });
+});
+
+describe("absent is not the same as unknown", () => {
+  const runner = {} as never;
+  const token = {
+    symbol: "CRWD",
+    name: "CrowdStrike",
+    address: CRWD,
+    decimals: 18,
+    currentMultiplier: "4",
+    pendingMultiplier: "",
+    active: true,
+  };
+
+  it("treats a missing pause function as not paused, and says nothing is unknown", async () => {
+    contractCalls.mockImplementation((_a: string, fn: string) => {
+      if (fn === "uiMultiplier") {
+        return Promise.resolve(FOUR);
+      }
+      return Promise.reject(absent());
+    });
+    const state = await readOnChainState(runner, CRWD);
+    expect(state.paused).toBe(false);
+    expect(state.unknown).toEqual([]);
+  });
+
+  it("records an unreadable pause flag as unknown rather than clear", async () => {
+    contractCalls.mockImplementation((_a: string, fn: string) => {
+      if (fn === "uiMultiplier") {
+        return Promise.resolve(FOUR);
+      }
+      return Promise.reject(transient());
+    });
+    const state = await readOnChainState(runner, CRWD);
+    // The guard must block on these. Reporting false would mean "not paused"
+    // when what we know is "could not check".
+    expect(state.unknown).toContain("paused");
+    expect(state.unknown).toContain("tokenPaused");
+    expect(state.unknown).toContain("oraclePaused");
+  });
+
+  it("refuses to report a share count when the multiplier is unreadable", async () => {
+    contractCalls.mockImplementation((_a: string, fn: string) => {
+      if (fn === "balanceOf") {
+        return Promise.resolve(UNIT);
+      }
+      return Promise.reject(transient());
+    });
+    // Falling back to unit here would understate a CRWD position fourfold
+    // while reporting a scale of 1.0.
+    await expect(readPosition(runner, token, "0x1")).rejects.toThrow(
+      /multiplier/i
+    );
+  });
+
+  it("rejects a zero multiplier rather than zeroing the position", async () => {
+    contractCalls.mockImplementation((_a: string, fn: string) => {
+      if (fn === "balanceOf") {
+        return Promise.resolve(UNIT);
+      }
+      return Promise.resolve(BigInt(0));
+    });
+    await expect(readPosition(runner, token, "0x1")).rejects.toThrow();
+  });
+});
+
+describe("empty results are not cached as authoritative", () => {
+  it("does not cache an empty registry as the answer", async () => {
+    mockFetch.mockReturnValueOnce(json({ assets: [] }));
+    const first = await resolveStockToken("CRWD");
+    expect(first.ok).toBe(false);
+    // A shape change upstream must not answer "AAPL is not listed" for a
+    // minute. The next call re-fetches.
+    mockFetch.mockReturnValueOnce(json(ASSETS));
+    await expect(resolveStockToken("CRWD")).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("does not cache an empty feed map for an hour", async () => {
+    mockFetch.mockReturnValueOnce(json([{ name: "ETH / USD" }]));
+    expect((await loadChainlinkFeeds()).size).toBe(0);
+    mockFetch.mockReturnValueOnce(
+      json([
+        {
+          name: "Robinhood AAPL / USD",
+          proxyAddress: "0xaaa",
+          heartbeat: 86_400,
+        },
+      ])
+    );
+    expect((await loadChainlinkFeeds()).size).toBe(1);
+  });
+});
+
+describe("unknown quote age blocks rather than reading as fresh", () => {
+  it("returns null when the issuer sent no parseable timestamp", async () => {
+    mockFetch.mockReturnValue(
+      json({
+        quotes: [
+          {
+            tokenSymbol: "AAPL",
+            bid: "1",
+            ask: "1",
+            generatedAt: "not a date",
+          },
+        ],
+      })
+    );
+    const quote = await fetchQuote("AAPL");
+    // -1 would compare as fresher than any threshold.
+    expect(quote.quoteAgeSeconds).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import "server-only";
 
 import { ethers } from "ethers";
 import { safeFetch } from "@/lib/safe-fetch";
+import { isNonRetryableError } from "@/lib/rpc/providers/error-classification";
 import { rawToUi, UI_MULTIPLIER_UNIT } from "@/lib/web3/ui-multiplier";
 
 /**
@@ -58,7 +59,8 @@ export type StockQuote = {
   isTradingHalt: boolean;
   /** When Robinhood produced this quote. */
   generatedAt: string;
-  quoteAgeSeconds: number;
+  /** Null when the issuer sent no parseable timestamp, which blocks. */
+  quoteAgeSeconds: number | null;
   dailyHigh?: string;
   dailyLow?: string;
   dailyTradingVolume?: string;
@@ -135,7 +137,12 @@ export async function loadStockTokens(): Promise<Map<string, StockToken>> {
     });
   }
 
-  registryCache = { value: tokens, fetchedAt: Date.now() };
+  // An empty map means the payload shape changed, not that the chain has no
+  // stock tokens. Caching it would answer "AAPL is not listed" confidently for
+  // a full minute.
+  if (tokens.size > 0) {
+    registryCache = { value: tokens, fetchedAt: Date.now() };
+  }
   return tokens;
 }
 
@@ -193,8 +200,10 @@ export async function fetchQuote(symbol: string): Promise<StockQuote> {
     currency: String(quote.currency ?? "USD"),
     isTradingHalt: Boolean(quote.isTradingHalt),
     generatedAt,
+    // Null rather than a sentinel. A -1 compares as fresher than any
+    // threshold, so an unknown age would have read as an open market.
     quoteAgeSeconds: Number.isNaN(generatedMs)
-      ? -1
+      ? null
       : Math.max(0, Math.round((Date.now() - generatedMs) / 1000)),
     dailyHigh: quote.dailyHigh ? String(quote.dailyHigh) : undefined,
     dailyLow: quote.dailyLow ? String(quote.dailyLow) : undefined,
@@ -236,18 +245,30 @@ export async function loadChainlinkFeeds(): Promise<Map<string, ChainlinkFeed>> 
     if (!(symbol && address)) {
       continue;
     }
+    const heartbeat = Number(feed.heartbeat);
     feeds.set(symbol, {
       address,
-      heartbeatSeconds: Number(feed.heartbeat ?? 0),
+      // Zero when the directory gives nothing usable. Treated as unknown
+      // rather than as "never stale" at the point of comparison.
+      heartbeatSeconds: Number.isFinite(heartbeat) && heartbeat > 0 ? heartbeat : 0,
     });
   }
 
-  feedsCache = { value: feeds, fetchedAt: Date.now() };
+  // Same reasoning as the registry, and worse here: an upstream rename would
+  // silently disable every feed staleness check for an hour.
+  if (feeds.size > 0) {
+    feedsCache = { value: feeds, fetchedAt: Date.now() };
+  }
   return feeds;
 }
 
 export type OnChainState = {
   uiMultiplier: string;
+  /**
+   * Fields that could not be read. A caller gating on this state must treat a
+   * non-empty list as blocking: an unreadable pause flag is not an unset one.
+   */
+  unknown: string[];
   pendingMultiplier: string | null;
   /** Unix seconds a pending multiplier takes effect, when one is scheduled. */
   effectiveAt: number | null;
@@ -270,12 +291,25 @@ const CHAINLINK_ABI = [
   "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)",
 ] as const;
 
-/** Read a value, returning null rather than throwing when it is unavailable. */
-async function tryRead<T>(read: () => Promise<T>): Promise<T | null> {
+/**
+ * Read one value, separating "this contract does not implement it" from "we
+ * could not tell".
+ *
+ * The distinction is the whole point. A missing function is a fact about the
+ * token and it is safe to treat the value as absent. A timeout or a rate limit
+ * is not a fact about anything, and collapsing the two lets a guard report
+ * "nothing is wrong" when what it means is "I could not check".
+ */
+type ReadOutcome<T> =
+  | { state: "ok"; value: T }
+  | { state: "absent" }
+  | { state: "unknown" };
+
+async function tryRead<T>(read: () => Promise<T>): Promise<ReadOutcome<T>> {
   try {
-    return await read();
-  } catch {
-    return null;
+    return { state: "ok", value: await read() };
+  } catch (error) {
+    return isNonRetryableError(error) ? { state: "absent" } : { state: "unknown" };
   }
 }
 
@@ -303,22 +337,42 @@ export async function readOnChainState(
       tryRead(() => contract.oraclePaused() as Promise<boolean>),
     ]);
 
-  const effectiveAt = effective === null ? null : Number(effective);
+  const unknown: string[] = [];
+  const flag = (name: string, outcome: ReadOutcome<boolean>): boolean => {
+    if (outcome.state === "unknown") {
+      unknown.push(name);
+      // Reported as unknown rather than false. The caller blocks on it.
+      return false;
+    }
+    // An absent function means the token has no such switch, so it is not set.
+    return outcome.state === "ok" ? outcome.value : false;
+  };
+
+  if (multiplier.state === "unknown") {
+    unknown.push("uiMultiplier");
+  }
+  const scale =
+    multiplier.state === "ok" && multiplier.value > BigInt(0)
+      ? multiplier.value
+      : UI_MULTIPLIER_UNIT;
+
+  const effectiveAt = effective.state === "ok" ? Number(effective.value) : null;
   // A pending multiplier only means anything alongside a future effective
   // date; the fields hold their last values once an action has landed.
   const hasPending =
-    pending !== null &&
-    pending > BigInt(0) &&
+    pending.state === "ok" &&
+    pending.value > BigInt(0) &&
     effectiveAt !== null &&
     effectiveAt * 1000 > Date.now();
 
   return {
-    uiMultiplier: ethers.formatUnits(multiplier ?? UI_MULTIPLIER_UNIT, 18),
-    pendingMultiplier: hasPending ? ethers.formatUnits(pending, 18) : null,
+    uiMultiplier: ethers.formatUnits(scale, 18),
+    unknown,
+    pendingMultiplier: hasPending ? ethers.formatUnits(pending.value, 18) : null,
     effectiveAt: hasPending ? effectiveAt : null,
-    paused: paused ?? false,
-    tokenPaused: tokenPaused ?? false,
-    oraclePaused: oraclePaused ?? false,
+    paused: flag("paused", paused),
+    tokenPaused: flag("tokenPaused", tokenPaused),
+    oraclePaused: flag("oraclePaused", oraclePaused),
   };
 }
 
@@ -328,8 +382,8 @@ export type FeedReading = {
   updatedAt: string;
   ageSeconds: number;
   heartbeatSeconds: number;
-  /** True when the feed is older than its own published heartbeat. */
-  beyondHeartbeat: boolean;
+  /** True past the feed's own heartbeat; null when no heartbeat is published. */
+  beyondHeartbeat: boolean | null;
 };
 
 /**
@@ -345,17 +399,17 @@ export async function readChainlinkFeed(
   feed: ChainlinkFeed
 ): Promise<FeedReading | null> {
   const contract = new ethers.Contract(feed.address, CHAINLINK_ABI, provider);
-  const result = await tryRead(
+  const outcome = await tryRead(
     () =>
       contract.latestRoundData() as Promise<
         [bigint, bigint, bigint, bigint, bigint]
       >
   );
-  if (!result) {
+  if (outcome.state !== "ok") {
     return null;
   }
 
-  const [, answer, , updatedAt] = result;
+  const [, answer, , updatedAt] = outcome.value;
   const updatedMs = Number(updatedAt) * 1000;
   const ageSeconds = Math.max(0, Math.round((Date.now() - updatedMs) / 1000));
 
@@ -366,8 +420,10 @@ export async function readChainlinkFeed(
     updatedAt: new Date(updatedMs).toISOString(),
     ageSeconds,
     heartbeatSeconds: feed.heartbeatSeconds,
+    // Null when there is no usable heartbeat to judge against. A caller must
+    // treat null as unknown, not as fresh.
     beyondHeartbeat:
-      feed.heartbeatSeconds > 0 && ageSeconds > feed.heartbeatSeconds,
+      feed.heartbeatSeconds > 0 ? ageSeconds > feed.heartbeatSeconds : null,
   };
 }
 
@@ -382,7 +438,23 @@ export async function readPosition(
     contract.balanceOf(holder) as Promise<bigint>,
     tryRead(() => contract.uiMultiplier() as Promise<bigint>),
   ]);
-  const effective = multiplier ?? UI_MULTIPLIER_UNIT;
+
+  // `shares` is the field this action tells callers to act on, so it must not
+  // be quietly wrong. A multiplier we could not read would understate a CRWD
+  // position fourfold while reporting a scale of 1.0, so it fails instead.
+  // An absent function is different: the token genuinely does not scale.
+  if (multiplier.state === "unknown") {
+    throw new Error(
+      `Could not read the UI multiplier for ${token.symbol}. Refusing to report a share count that may be understated.`
+    );
+  }
+  if (multiplier.state === "ok" && multiplier.value <= BigInt(0)) {
+    throw new Error(
+      `${token.symbol} reported a zero UI multiplier, which cannot be right.`
+    );
+  }
+  const effective =
+    multiplier.state === "ok" ? multiplier.value : UI_MULTIPLIER_UNIT;
 
   return {
     raw: ethers.formatUnits(balanceRaw, token.decimals),
