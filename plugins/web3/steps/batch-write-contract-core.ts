@@ -48,7 +48,11 @@ import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
 } from "@/lib/web3/gas-defaults";
-import { broadcastTransactionHash, isOnChainRevertError } from "@/lib/web3/onchain-revert";
+import {
+  broadcastTransactionHash,
+  isOnChainPendingError,
+  isOnChainRevertError,
+} from "@/lib/web3/onchain-revert";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import type { TransactionContext } from "@/lib/web3/transaction-manager";
 import { withNonceSession } from "@/lib/web3/transaction-manager";
@@ -726,7 +730,12 @@ export async function batchWriteContractCore(
       };
     } catch (error) {
       const rejection = classifyRevert(error, revertIface);
-      const errorClass = rpcRelayErrorClass(error);
+      // Set so a failOnError=false node cannot soften an unresolved in-flight
+      // send into success. A relay-determined class is the more specific
+      // answer, so it wins.
+      const errorClass =
+        rpcRelayErrorClass(error) ??
+        (isOnChainPendingError(error) ? ExecutionErrorType.SYSTEM : undefined);
       const broadcastHash = broadcastTransactionHash(error);
       const base = {
         success: false as const,

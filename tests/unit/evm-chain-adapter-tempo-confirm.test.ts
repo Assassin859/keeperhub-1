@@ -1,6 +1,17 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+
+// The receipt poll's only pause is lib/sleep, so counting what it sleeps and
+// reading Date.now() off that counter walks the 60s deadline in a few real
+// milliseconds.
+const clock = vi.hoisted(() => ({ elapsedMs: 0 }));
+vi.mock("@/lib/sleep", () => ({
+  sleep: (ms: number) => {
+    clock.elapsedMs += ms;
+    return Promise.resolve();
+  },
+}));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/db/schema", () => ({ explorerConfigs: {} }));
 vi.mock("drizzle-orm", () => ({ eq: () => ({}) }));
@@ -176,5 +187,47 @@ describe("EvmChainAdapter unreadable receipt", () => {
 
     expect(isOnChainPendingError(error)).toBe(false);
     expect(broadcastTransactionHash(error)).toBeUndefined();
+  });
+});
+
+describe("EvmChainAdapter Tempo receipt-poll timeout", () => {
+  let nowSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clock.elapsedMs = 0;
+    const base = Date.now();
+    nowSpy = vi
+      .spyOn(Date, "now")
+      .mockImplementation(() => base + clock.elapsedMs);
+  });
+
+  afterEach(() => {
+    nowSpy?.mockRestore();
+  });
+
+  // Tempo is the one chain that polls precisely because wait() misbehaves
+  // there, so it is the one chain whose broadcast-but-unread case never
+  // reached the empty-receipt branch above. It needs its own carrier.
+  it("keeps the hash on the error when the poll lapses before the chain answers", async () => {
+    const h = createHarness(TEMPO_TESTNET, badDataWait());
+    h.getTransactionReceipt.mockResolvedValue(null);
+
+    const error = await send(h).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+
+    expect(isOnChainPendingError(error)).toBe(true);
+    expect(broadcastTransactionHash(error)).toBe(TX_HASH);
+  });
+
+  it("leaves the timeout message untouched for callers that only read it", async () => {
+    const h = createHarness(TEMPO_TESTNET, badDataWait());
+    h.getTransactionReceipt.mockResolvedValue(null);
+
+    await expect(send(h)).rejects.toThrow(
+      `Timed out waiting for Tempo transaction receipt (${TX_HASH})`
+    );
   });
 });

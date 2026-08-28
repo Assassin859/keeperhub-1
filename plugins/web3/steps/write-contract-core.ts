@@ -52,7 +52,10 @@ import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import type { ExecutedCall } from "@/lib/web3/trace-decode";
 import { traceExecutedCallWithFailover } from "@/lib/web3/trace-executed-call";
-import { broadcastTransactionHash } from "@/lib/web3/onchain-revert";
+import {
+  broadcastTransactionHash,
+  isOnChainPendingError,
+} from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
@@ -703,7 +706,12 @@ export async function writeContractCore(
       );
       const rejection = classifyRevert(error, contractInterface);
       const broadcastHash = broadcastTransactionHash(error);
-      const errorClass = rpcRelayErrorClass(error);
+      // Set so a failOnError=false node cannot soften an unresolved in-flight
+      // send into success. A relay-determined class is the more specific
+      // answer, so it wins.
+      const errorClass =
+        rpcRelayErrorClass(error) ??
+        (isOnChainPendingError(error) ? ExecutionErrorType.SYSTEM : undefined);
       return {
         success: false,
         error: formatContractError(error, contractInterface),

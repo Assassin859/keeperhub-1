@@ -342,9 +342,15 @@ export class EvmChainAdapter implements ChainAdapter {
       }
       await sleep(TEMPO_RECEIPT_POLL_INTERVAL_MS);
     }
-    throw new Error(
-      `Timed out waiting for Tempo transaction receipt (${tx.hash})`
-    );
+    // The poll ran out of time, but the transaction is on the network: the
+    // same unknown-not-failed case as an empty receipt in confirmTransaction
+    // below. The hash rides on the error rather than living only in the
+    // message text, so the finalizer can settle the row as `unconfirmed` and
+    // hand it to the reconciler.
+    throw new OnChainPendingError({
+      message: `Timed out waiting for Tempo transaction receipt (${tx.hash})`,
+      transactionHash: tx.hash,
+    });
   }
 
   private async confirmTransaction(
