@@ -1,0 +1,83 @@
+/**
+ * Absent field paths in a condition resolve to undefined rather than throwing.
+ *
+ * Every reference is resolved before the expression is evaluated, so throwing
+ * on an absent path also defeated an author's own `is not undefined` guard --
+ * the `&&` never got to short-circuit.
+ */
+
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
+
+const outputs = {
+  trigger: {
+    label: "Manual",
+    data: {
+      triggered: true,
+      timestamp: 1,
+      triggeredAt: "x",
+      nested: { a: null },
+    },
+  },
+};
+const ABSENT = "{{@trigger:Manual.triggeredAtss}}";
+
+describe("condition references to absent field paths", () => {
+  it("lets an is-not-undefined guard short-circuit to false", () => {
+    const r = evaluateConditionExpression(
+      `(${ABSENT} !== undefined) && ${ABSENT} == {{@trigger:Manual.timestamp}}`,
+      outputs
+    );
+    expect(r.result).toBe(false);
+  });
+
+  it("makes the is-undefined operator usable", () => {
+    expect(
+      evaluateConditionExpression(`${ABSENT} === undefined`, outputs).result
+    ).toBe(true);
+  });
+
+  it("reports the absent path with the available fields", () => {
+    const r = evaluateConditionExpression(`${ABSENT} === undefined`, outputs);
+    expect(r.unresolvedFields).toHaveLength(1);
+    expect(r.unresolvedFields?.[0]).toContain("triggeredAtss");
+    expect(r.unresolvedFields?.[0]).toContain(
+      "Available fields: triggered, timestamp, triggeredAt, nested"
+    );
+  });
+
+  it("reports nothing when every reference resolves", () => {
+    const r = evaluateConditionExpression(
+      "{{@trigger:Manual.timestamp}} == 1",
+      outputs
+    );
+    expect(r.result).toBe(true);
+    expect(r.unresolvedFields).toBeUndefined();
+  });
+
+  it("keeps a present-but-null field distinct from an absent one", () => {
+    const r = evaluateConditionExpression(
+      "{{@trigger:Manual.nested.a}} === null",
+      outputs
+    );
+    expect(r.result).toBe(true);
+    expect(r.unresolvedFields).toBeUndefined();
+  });
+
+  it("still throws when the referenced node produced no output at all", () => {
+    expect(() =>
+      evaluateConditionExpression("{{@nope:Nope.x}} == 1", outputs)
+    ).toThrow(/no output was found/);
+  });
+
+  it("compares two absent paths as undefined == undefined", () => {
+    // Documents the JS semantics: a bare self-comparison on a mistyped path is
+    // true, which is why the absent path is reported on the step output.
+    expect(
+      evaluateConditionExpression(`${ABSENT} == ${ABSENT}`, outputs).result
+    ).toBe(true);
+  });
+});

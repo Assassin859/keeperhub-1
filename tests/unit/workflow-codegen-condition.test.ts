@@ -341,15 +341,19 @@ describe("runtime condition evaluation", () => {
       );
     });
 
-    it("should throw error when referenced field is undefined", () => {
+    it("resolves an absent field to undefined and reports the path", () => {
+      // Superseded: an absent field no longer throws. Resolution runs for
+      // every reference before the expression does, so throwing here also
+      // defeated an author's own `is not undefined` guard. The path is
+      // reported on the result instead. Node-level misses below still throw.
       const expression = "{{@node1:Label.missingField}} > 100";
       const outputs = {
         node1: { label: "Label", data: { existingField: 42 } },
       };
 
-      expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
-        FIELD_NOT_EXIST_REGEX
-      );
+      const result = evaluateConditionExpression(expression, outputs);
+      expect(result.result).toBe(false);
+      expect(result.unresolvedFields?.[0]).toMatch(FIELD_NOT_EXIST_REGEX);
     });
 
     it("should throw error when node data is null", () => {
