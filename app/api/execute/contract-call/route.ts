@@ -278,6 +278,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // KEEP-1927: abiFunction is the workflow web3 action node's name for this
+  // same value; accept it as an alias so payloads copied between the two
+  // layers bind without a rename. Only fills functionName in when it's
+  // absent -- if both are present, schema validation below rejects a
+  // mismatch (400) rather than silently picking one, so a differing pair
+  // never reaches this branch with one value quietly discarded.
+  if (
+    typeof body.functionName !== "string" &&
+    typeof body.abiFunction === "string"
+  ) {
+    body.functionName = body.abiFunction;
+  }
+
   const simulateFlag = parseSimulateFlag(body);
   if (!simulateFlag.ok) {
     return NextResponse.json(

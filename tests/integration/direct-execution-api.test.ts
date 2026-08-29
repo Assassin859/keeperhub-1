@@ -649,6 +649,58 @@ describe("Direct Execution API", () => {
       expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
     });
 
+    it("accepts abiFunction as an alias for functionName (KEEP-1927)", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: "1000000",
+      });
+
+      const { functionName, ...bodyWithoutFunctionName } = validReadBody;
+      const body = { ...bodyWithoutFunctionName, abiFunction: functionName };
+
+      const response = await contractCallPOST(postRequest("/contract-call", body));
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.result).toBe("1000000");
+      expect(mocks.readContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({ abiFunction: "balanceOf" })
+      );
+    });
+
+    it("accepts functionName and abiFunction together when they agree", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: "1000000",
+      });
+
+      const body = { ...validReadBody, abiFunction: validReadBody.functionName };
+
+      const response = await contractCallPOST(postRequest("/contract-call", body));
+
+      expect(response.status).toBe(200);
+      expect(mocks.readContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({ abiFunction: "balanceOf" })
+      );
+    });
+
+    it("rejects functionName and abiFunction when they disagree (KEEP-1927)", async () => {
+      setupPassingGuards();
+
+      const body = { ...validReadBody, abiFunction: "someOtherFunction" };
+
+      const response = await contractCallPOST(postRequest("/contract-call", body));
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.field).toBe("abiFunction");
+      expect(data.details).toContain("balanceOf");
+      expect(data.details).toContain("someOtherFunction");
+      expect(mocks.readContractCore).not.toHaveBeenCalled();
+    });
+
     it("returns 202 for write call with execution record", async () => {
       setupPassingGuards();
       mocks.writeContractCore.mockResolvedValue({

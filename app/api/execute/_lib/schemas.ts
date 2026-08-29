@@ -33,6 +33,39 @@ function hasChainInput(record: Record<string, unknown>): boolean {
   return isNonEmptyString(record.chainId) || isNonEmptyString(record.network);
 }
 
+// KEEP-1927: functionName is canonical on direct-exec routes; abiFunction is
+// the workflow web3 action node's name for the same value. Either counts as
+// present. Unlike hasChainInput's chainId/network handling above, KEEP-490
+// never picks a winner when both are set (it only falls back to network when
+// chainId is absent) -- there is no "silently prefer the canonical field"
+// precedent to extend here, so a conflict between the two is treated as
+// caller error rather than resolved for them. This endpoint broadcasts: a
+// mismatched pair (e.g. functionName: "transfer" vs abiFunction:
+// "transferFrom") describes two different transactions, and only one of them
+// is what the caller meant.
+function hasFunctionNameInput(record: Record<string, unknown>): boolean {
+  return (
+    isNonEmptyString(record.functionName) || isNonEmptyString(record.abiFunction)
+  );
+}
+
+function functionNameConflict(
+  record: Record<string, unknown>
+): ExecuteErrorResponse | null {
+  if (
+    !isNonEmptyString(record.functionName) ||
+    !isNonEmptyString(record.abiFunction) ||
+    record.functionName === record.abiFunction
+  ) {
+    return null;
+  }
+  return {
+    error: "Conflicting field values",
+    field: "abiFunction",
+    details: `functionName and abiFunction disagree ('${record.functionName}' vs '${record.abiFunction}'); send one, or the same value in both. functionName is canonical.`,
+  };
+}
+
 function requiredFieldError(field: string): ExecuteErrorResponse {
   return {
     error: "Missing required field",
@@ -146,8 +179,13 @@ export const contractCallInputSchema = objectBase.superRefine((record, ctx) => {
     addError(ctx, chainFieldError);
     return;
   }
-  if (!isNonEmptyString(record.functionName)) {
+  if (!hasFunctionNameInput(record)) {
     addError(ctx, requiredFieldError("functionName"));
+    return;
+  }
+  const conflict = functionNameConflict(record);
+  if (conflict) {
+    addError(ctx, conflict);
     return;
   }
   if ("functionArgs" in record && typeof record.functionArgs !== "string") {
