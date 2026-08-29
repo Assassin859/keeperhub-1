@@ -108,6 +108,20 @@ describe("runGasDisplay", () => {
     ).toBe("0.10 POL");
   });
 
+  it("renders no amount for a read-only run that touched several chains", () => {
+    // The bug this guards: reading three targeted chains as a multi-chain
+    // spend labelled every read-only cross-chain run "Composed".
+    expect(
+      runGasDisplay(
+        run({
+          networks: [BASE, POLYGON, AVALANCHE],
+          gasNetworks: [],
+          network: BASE,
+        })
+      )
+    ).toBe("-");
+  });
+
   it("renders no amount for a run that failed before broadcast", () => {
     expect(
       runGasDisplay(
@@ -118,7 +132,7 @@ describe("runGasDisplay", () => {
           network: BASE,
         })
       )
-    ).toBe("--");
+    ).toBe("-");
   });
 
   it("denominates a run on a chain the sponsorship table does not cover", () => {

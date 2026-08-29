@@ -53,9 +53,12 @@ const LEADING_ZEROS_RE = /^0+(?=\d)/;
 const TRAILING_ZEROS_RE = /0+$/;
 const NON_DIGIT_RE = /\D/;
 
+/** Placeholder for a cell whose value does not apply to this row. */
+const NO_VALUE = "-";
+
 function formatNetworks(networks: string[], chains: ChainDisplay): string {
   if (networks.length === 0) {
-    return "--";
+    return NO_VALUE;
   }
   const names = networks.map(chains.name);
   if (names.length <= 2) {
@@ -73,7 +76,7 @@ function formatGasNative(
 ): string {
   const value = Number(wei);
   if (!wei || Number.isNaN(value) || value === 0) {
-    return "--";
+    return NO_VALUE;
   }
   const amount = new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
@@ -97,14 +100,14 @@ function formatGasNativeExact(
   chains: ChainDisplay
 ): string {
   if (!wei || wei === "0" || NON_DIGIT_RE.test(wei)) {
-    return "--";
+    return NO_VALUE;
   }
   return `${formatWeiToDecimal(wei)} ${chains.gasSymbol(network)}`.trimEnd();
 }
 
 function formatDuration(ms: number | null): string {
   if (ms === null) {
-    return "--";
+    return NO_VALUE;
   }
   if (ms < 1000) {
     return `${Math.round(ms)}ms`;
@@ -117,21 +120,15 @@ function formatDuration(ms: number | null): string {
   return `${minutes}m ${seconds}s`;
 }
 
-function formatGasAsEth(weiString: string | null): string {
-  if (!weiString) {
-    return "--";
-  }
-  const wei = Number(weiString);
-  if (Number.isNaN(wei) || wei === 0) {
-    return "0 ETH";
-  }
-  const eth = wei / 1e18;
-  return `${eth.toFixed(4)} ETH`;
-}
-
 // Run-level gas: a run that spent on more than one chain can't sum into one
 // token, so it renders as "Composed" (per-network amounts live in the expanded
 // steps). A single chain shows its total in that chain's token.
+//
+// A run that paid nothing renders as no value no matter how many chains it
+// touched. "Composed" answers which chains the spend was split across, so a
+// read-only run has nothing to compose - `networks` counts every chain the run
+// reached, reads included, and reading that count as a spend put the word on
+// runs with an empty gas column in every step.
 //
 // The question is which chains the gas landed on, not which chains the run
 // touched - `networks` carries the second and answers the first only for a run
@@ -141,7 +138,8 @@ function formatGasAsEth(weiString: string | null): string {
 //
 // Ledger-only gas (a sponsored leg with no step rollup) names no chain of its
 // own, so it borrows the run's, which is unambiguous only when the run touched
-// a single one.
+// a single one. Sponsored wei counts as spend here: the org drew on gas credit
+// for it, and `gasCostWei` is the ledger total.
 //
 // The step rollup wins over the sponsorship ledger because it covers every
 // transaction the run made. A run that starts sponsored and falls back to
@@ -151,21 +149,21 @@ export function runGasDisplay(
   run: UnifiedRun,
   chains: ChainDisplay = FALLBACK_CHAIN_DISPLAY
 ): ReactNode {
+  const wei = run.gasUsedWei ?? run.gasCostWei;
+  if (!wei) {
+    return NO_VALUE;
+  }
   const spentAcrossChains =
     run.gasNetworks.length > 1 ||
     (run.gasNetworks.length === 0 && run.networks.length > 1);
   if (spentAcrossChains) {
     return "Composed";
   }
-  const wei = run.gasUsedWei ?? run.gasCostWei;
-  if (wei) {
-    return formatGasNative(
-      wei,
-      run.gasNetworks[0] ?? run.networks[0] ?? run.network,
-      chains
-    );
-  }
-  return formatGasAsEth(run.gasUsedWei);
+  return formatGasNative(
+    wei,
+    run.gasNetworks[0] ?? run.networks[0] ?? run.network,
+    chains
+  );
 }
 
 function formatTimeAgo(dateString: string): string {
@@ -363,7 +361,7 @@ function StepLogRow({ step }: StepLogRowProps): ReactNode {
         {formatDuration(step.durationMs)}
       </td>
       <td className="whitespace-nowrap py-1.5 pr-3 text-xs text-muted-foreground">
-        {step.network ? chains.name(step.network) : "--"}
+        {step.network ? chains.name(step.network) : NO_VALUE}
       </td>
       <td className="whitespace-nowrap py-1.5 pr-3 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
