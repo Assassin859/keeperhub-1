@@ -1,7 +1,7 @@
 "use client";
 
 import { useAtom } from "jotai";
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/workflow/editor/template-utils";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,23 @@ export function hasUsableSelection(
 ): selection is Selection {
   return selection !== null && selection.rangeCount > 0;
 }
+
+// Length of the trailing "}}" so the caret can be parked just inside the token
+// when a badge is opened for editing.
+const CLOSING_BRACES_LENGTH = 2;
+
+/**
+ * Caret offset to use when a badge is opened for editing: just inside the
+ * closing braces, so typing extends the field path rather than appending text
+ * after the token. Falls back to the end for a token that is not brace-closed.
+ */
+export function caretOffsetForBadgeEdit(rawTemplate: string): number {
+  return rawTemplate.endsWith("}}")
+    ? rawTemplate.length - CLOSING_BRACES_LENGTH
+    : rawTemplate.length;
+}
+
+const EDIT_BADGE_HINT = "Double-click to edit this reference";
 
 export type TemplateBadgeEditorMultilineOptions = {
   rows: number;
@@ -394,6 +411,7 @@ export function TemplateBadgeEditor({
         : "inline-flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-red-600 dark:text-red-400 font-mono text-xs border border-red-500/20 mx-0.5";
       badge.contentEditable = "false";
       badge.setAttribute("data-template", fullMatch);
+      badge.title = EDIT_BADGE_HINT;
       // Use current node label for display
       badge.textContent = getDisplayTextForTemplate(fullMatch, nodes);
       container.appendChild(badge);
@@ -553,6 +571,50 @@ export function TemplateBadgeEditor({
 
     pendingCursorPosition.current = targetCursorPosition;
     contentRef.current.focus();
+  };
+
+  // Open a badge for editing: swap it for its raw `{{@nodeId:Label.path}}` text
+  // with the caret just inside the closing braces. The autocomplete can only
+  // offer field paths it has seen in a previous run, so a path on a node that
+  // has never executed is otherwise unreachable -- the badge is
+  // contentEditable=false and there is no cursor position inside it.
+  //
+  // No re-render is needed here: extractValue() reads a badge as its
+  // data-template and raw text as itself, so the serialized value is unchanged.
+  // Typing inside the token keeps the token count stable, which handleInput
+  // treats as "typing around existing badges" and leaves the DOM alone.
+  // handleBlur re-renders the badge with the edited path.
+  const handleDoubleClick = (e: ReactMouseEvent<HTMLDivElement>): void => {
+    if (disabled || !contentRef.current) {
+      return;
+    }
+    const target = e.target as HTMLElement | null;
+    const badge = target?.closest?.("[data-template]") as HTMLElement | null;
+    if (!badge || !contentRef.current.contains(badge)) {
+      return;
+    }
+    const raw = badge.getAttribute("data-template");
+    if (!raw) {
+      return;
+    }
+
+    e.preventDefault();
+    const textNode = document.createTextNode(raw);
+    badge.replaceWith(textNode);
+
+    const caret = caretOffsetForBadgeEdit(raw);
+    const selection = window.getSelection();
+    try {
+      const range = document.createRange();
+      range.setStart(textNode, caret);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    } catch {
+      // Caret placement is a convenience; the text is editable regardless.
+    }
+    contentRef.current.focus();
+    shouldUpdateDisplay.current = false;
   };
 
   const handleFocus = (): void => {
@@ -758,6 +820,7 @@ export function TemplateBadgeEditor({
           contentEditable={!disabled}
           id={id}
           onBlur={handleBlur}
+          onDoubleClick={handleDoubleClick}
           onFocus={handleFocus}
           onInput={handleInput}
           onKeyDown={handleKeyDown}

@@ -848,8 +848,12 @@ function replaceConfigTemplate(
       : [];
   console.log("[Template] Output data top-level keys:", dataKeys);
 
-  const resolved = resolveFromOutputData(data, fieldPath);
-  if (resolved === undefined || resolved === null) {
+  // Checked walk (the same one the Condition path uses) so a key that exists
+  // but holds null/undefined resolves to that value. Inferring "missing" from a
+  // nullish result conflated the two and failed the action on a path that was
+  // present and legitimately empty.
+  const checked = resolveFromOutputDataChecked(data, fieldPath);
+  if (!checked.found) {
     if (hasNestedDataShape(data)) {
       const innerKeys = Object.keys(data.data as Record<string, unknown>);
       console.log("[Template] Trying inner output.data, keys:", innerKeys);
@@ -866,6 +870,7 @@ function replaceConfigTemplate(
     return "";
   }
 
+  const resolved = checked.value;
   console.log(
     "[Template] Resolved, type:",
     typeof resolved,
@@ -1055,8 +1060,10 @@ function resolveStoredCodeRef(
   const fieldPath = rest.includes(".")
     ? rest.substring(rest.indexOf(".") + 1).trim()
     : "";
-  const resolved = resolveFromOutputData(data, fieldPath);
-  if (resolved === undefined || resolved === null) {
+  // Checked walk: a key that exists holding null/undefined is a real value and
+  // renders as the `null` literal, not an unresolved reference.
+  const checked = resolveFromOutputDataChecked(data, fieldPath);
+  if (!checked.found) {
     recordUnresolved(tracker, {
       token: full,
       reason: "no-path",
@@ -1064,7 +1071,7 @@ function resolveStoredCodeRef(
     });
     return "null";
   }
-  return formatCodeValue(resolved);
+  return formatCodeValue(checked.value);
 }
 
 function resolveDisplayCodeRef(
