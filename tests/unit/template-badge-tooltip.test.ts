@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { badgeTooltip } from "@/components/ui/template-badge-editor";
+import {
+  badgeTooltip,
+  isBadgeClipped,
+} from "@/components/ui/template-badge-editor";
 import {
   getDisplayTextForTemplate,
   type TemplateNode,
@@ -71,5 +74,32 @@ describe("badgeTooltip over a rendered reference", () => {
     const displayText = getDisplayTextForTemplate(template, nodes);
 
     expect(badgeTooltip(displayText)).toBe(`Manual\n${EDIT_HINT}`);
+  });
+});
+
+describe("isBadgeClipped", () => {
+  it("gates the tooltip off for a badge the field shows in full", () => {
+    // "Manual.data" inside a 240px operand field.
+    expect(isBadgeClipped({ right: 88, visibleWidth: 240 })).toBe(false);
+  });
+
+  it("catches a badge whose right edge runs past the field", () => {
+    // "Get hat execution.result.timestamp" needs about 250px in the same field.
+    expect(isBadgeClipped({ right: 250, visibleWidth: 240 })).toBe(true);
+  });
+
+  it("treats a badge ending exactly at the edge as shown in full", () => {
+    expect(isBadgeClipped({ right: 240, visibleWidth: 240 })).toBe(false);
+  });
+
+  it("follows the field width, not the length of the reference", () => {
+    // The same short "Manual.data" badge, in a field narrowed until it no
+    // longer fits.
+    expect(isBadgeClipped({ right: 88, visibleWidth: 240 })).toBe(false);
+    expect(isBadgeClipped({ right: 88, visibleWidth: 60 })).toBe(true);
+  });
+
+  it("stays quiet before layout, when nothing has a width yet", () => {
+    expect(isBadgeClipped({ right: 0, visibleWidth: 0 })).toBe(false);
   });
 });

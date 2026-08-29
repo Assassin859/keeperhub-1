@@ -42,12 +42,36 @@ export function caretOffsetForBadgeEdit(rawTemplate: string): number {
 const EDIT_BADGE_HINT = "Double-click to edit this reference";
 
 /**
- * Tooltip text for a badge. Narrow hosts clip the badge -- the condition
- * builder's operand fields scroll horizontally with the scrollbar hidden --
- * so the full reference leads, and the edit hint keeps its own line below.
+ * Tooltip text for a badge whose reference the field cuts off: the full
+ * reference leads, and the edit hint keeps its own line below.
  */
 export function badgeTooltip(displayText: string): string {
   return displayText ? `${displayText}\n${EDIT_BADGE_HINT}` : EDIT_BADGE_HINT;
+}
+
+/**
+ * Geometry of one badge inside the field that holds it, measured in the
+ * field's content box so a scrolled field gives the same answer as an
+ * unscrolled one.
+ */
+export type BadgeExtent = {
+  /** Right edge of the badge, from the start of the field's content. */
+  right: number;
+  /** Width the field actually shows. */
+  visibleWidth: number;
+};
+
+/**
+ * Whether the field cuts the badge off. A badge never truncates itself -- it
+ * sits at full width inside a wrapper that scrolls -- so the test is its right
+ * edge against the visible width, where `TruncatedTooltip` asks the same
+ * question of text that truncates against its own box.
+ *
+ * A badge that fits keeps the edit hint alone, so hovering a reference you can
+ * already read in full does not repeat it back.
+ */
+export function isBadgeClipped({ right, visibleWidth }: BadgeExtent): boolean {
+  return visibleWidth > 0 && right > visibleWidth;
 }
 
 export type TemplateBadgeEditorMultilineOptions = {
@@ -370,6 +394,31 @@ export function TemplateBadgeEditor({
     container.appendChild(document.createTextNode(text));
   };
 
+  // Give the full reference only to the badges the field cuts off, measuring
+  // each against the content box so the answer does not move when the field is
+  // scrolled. Mirrors TruncatedTooltip: measure, gate, re-measure on resize.
+  const syncBadgeTooltips = (): void => {
+    const container = contentRef.current;
+    if (!container) {
+      return;
+    }
+
+    const visibleWidth = container.clientWidth;
+    const containerLeft = container.getBoundingClientRect().left;
+
+    for (const badge of container.querySelectorAll<HTMLElement>(
+      "[data-template]"
+    )) {
+      const right =
+        badge.getBoundingClientRect().right -
+        containerLeft +
+        container.scrollLeft;
+      badge.title = isBadgeClipped({ right, visibleWidth })
+        ? badgeTooltip(badge.textContent ?? "")
+        : EDIT_BADGE_HINT;
+    }
+  };
+
   // Parse text and render with badges
   const updateDisplay = (): void => {
     if (!contentRef.current || !shouldUpdateDisplay.current) return;
@@ -421,9 +470,10 @@ export function TemplateBadgeEditor({
       badge.contentEditable = "false";
       badge.setAttribute("data-template", fullMatch);
       // Use current node label for display
-      const displayText = getDisplayTextForTemplate(fullMatch, nodes);
-      badge.textContent = displayText;
-      badge.title = badgeTooltip(displayText);
+      badge.textContent = getDisplayTextForTemplate(fullMatch, nodes);
+      // Upgraded to the full reference by syncBadgeTooltips once the badge has
+      // been laid out and its width against the field is known.
+      badge.title = EDIT_BADGE_HINT;
       container.appendChild(badge);
 
       lastIndex = pattern.lastIndex;
@@ -441,6 +491,8 @@ export function TemplateBadgeEditor({
     }
 
     shouldUpdateDisplay.current = false;
+
+    syncBadgeTooltips();
 
     // Restore cursor position after updating
     if (cursorPos) {
@@ -775,6 +827,18 @@ export function TemplateBadgeEditor({
       updateDisplay();
     }
   }, [internalValue, isFocused]);
+
+  // A field that grows or shrinks changes which badges are cut off, and the
+  // panel holding these fields is resizable.
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => syncBadgeTooltips());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   // Hint 2: clicking the "@" chip focuses the editor, inserts an "@" at the
   // cursor (or at the end if none), and lets handleInput open the dropdown.
