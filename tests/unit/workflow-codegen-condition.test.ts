@@ -341,46 +341,37 @@ describe("runtime condition evaluation", () => {
       );
     });
 
-    it("resolves an absent field to undefined and reports the path", () => {
-      // Superseded: an absent field no longer throws. Resolution runs for
-      // every reference before the expression does, so throwing here also
-      // defeated an author's own `is not undefined` guard. The path is
-      // reported on the result instead. Node-level misses below still throw.
+    it("should throw error when referenced field is undefined", () => {
+      // Unguarded comparison: the absent path is rejected. A presence operator
+      // is what makes it evaluate instead -- see condition-absent-field-paths.
       const expression = "{{@node1:Label.missingField}} > 100";
       const outputs = {
         node1: { label: "Label", data: { existingField: 42 } },
       };
 
-      const result = evaluateConditionExpression(expression, outputs);
-      expect(result.result).toBe(false);
-      expect(result.unresolvedFields?.[0]).toMatch(FIELD_NOT_EXIST_REGEX);
+      expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
+        FIELD_NOT_EXIST_REGEX
+      );
     });
 
-    it("resolves a field on null node data to undefined and reports it", () => {
-      // Superseded alongside the absent-field case: a node that produced no
-      // data is the same situation as a field that is not there, and throwing
-      // defeats a presence guard the author wrote for it.
+    it("should throw error when node data is null", () => {
       const expression = "{{@node1:Label.value}} > 100";
       const outputs = {
         node1: { label: "Label", data: null },
       };
 
-      const result = evaluateConditionExpression(expression, outputs);
-      expect(result.result).toBe(false);
-      expect(result.unresolvedFields?.[0]).toMatch(
+      expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
         COULD_NOT_RESOLVE_NULL_REGEX
       );
     });
 
-    it("resolves a field on undefined node data to undefined and reports it", () => {
+    it("should throw error when node data is undefined", () => {
       const expression = "{{@node1:Label.value}} > 100";
       const outputs = {
         node1: { label: "Label", data: undefined },
       };
 
-      const result = evaluateConditionExpression(expression, outputs);
-      expect(result.result).toBe(false);
-      expect(result.unresolvedFields?.[0]).toMatch(
+      expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
         COULD_NOT_RESOLVE_UNDEFINED_REGEX
       );
     });

@@ -80,6 +80,10 @@ import {
   TemplateResolutionError,
   type TemplateResolutionTracker,
 } from "@/lib/workflow/executor/template-resolution";
+import {
+  isMissingReference,
+  makeMissingReference,
+} from "@/lib/workflow/nodes/condition/missing-reference";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { safeEvaluateCondition } from "@/lib/workflow/nodes/condition/safe-eval";
 import {
@@ -180,7 +184,7 @@ const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
  * through plain objects and arrays. Display-only; never fed back into eval.
  */
 function formatConditionValueForDisplay(value: unknown): unknown {
-  if (value === undefined) {
+  if (value === undefined || isMissingReference(value)) {
     return "undefined";
   }
   if (Array.isArray(value)) {
@@ -328,10 +332,9 @@ function replaceTemplateVariable(
     // not there: bind undefined so a presence guard can handle it, and report
     // the path. Only a reference to a node with no output entry at all still
     // throws, since that is a broken reference rather than an empty result.
-    unresolvedFields?.push(
-      `"${rest}": the node output data is ${output.data === null ? "null" : "undefined"}.`
-    );
-    value = undefined;
+    const detail = `"${rest}": the node output data is ${output.data === null ? "null" : "undefined"}.`;
+    unresolvedFields?.push(detail);
+    value = makeMissingReference(detail);
   } else {
     // Wrapper-aware lookup: matches resolveFromOutputData's three-shape walk
     // (top-level → { data: ... } → { result: ... }) so paths like
@@ -354,8 +357,9 @@ function replaceTemplateVariable(
     // `a !== undefined && a == b`, the `&&` never gets to short-circuit
     // because `a` is resolved before evaluation starts. The path is reported
     // on the step output so a mistyped field is still visible in the run.
-    unresolvedFields?.push(describeMissingFieldPath(output.data, fieldPath));
-    value = undefined;
+    const detail = describeMissingFieldPath(output.data, fieldPath);
+    unresolvedFields?.push(detail);
+    value = makeMissingReference(detail);
   }
 
   const varName = `__v${varCounter.value}`;
@@ -379,7 +383,7 @@ type ConditionEvalResult = {
 // Render a resolved value as it should appear inside the resolved expression:
 // strings quoted, numbers/booleans/null bare, undefined as the keyword.
 function renderConditionLiteral(value: unknown): string {
-  if (value === undefined) {
+  if (value === undefined || isMissingReference(value)) {
     return "undefined";
   }
   if (typeof value === "bigint") {

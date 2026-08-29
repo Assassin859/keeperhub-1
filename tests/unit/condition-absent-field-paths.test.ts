@@ -98,11 +98,36 @@ describe("condition references to absent field paths", () => {
     ).toThrow(/no output was found/);
   });
 
-  it("compares two absent paths as undefined == undefined", () => {
-    // Documents the JS semantics: a bare self-comparison on a mistyped path is
-    // true, which is why the absent path is reported on the step output.
+  it("rejects an absent path under a comparison operator", () => {
+    expect(() =>
+      evaluateConditionExpression(`${ABSENT} > 100`, outputs)
+    ).toThrow(/does not exist on the data/);
+  });
+
+  it("rejects two absent paths compared to each other", () => {
+    expect(() =>
+      evaluateConditionExpression(`${ABSENT} == ${ABSENT}`, outputs)
+    ).toThrow(/does not exist on the data/);
+  });
+
+  it("points at the presence operators in the rejection", () => {
+    expect(() =>
+      evaluateConditionExpression(`${ABSENT} == 1`, outputs)
+    ).toThrow(/is not undefined/);
+  });
+
+  it("supports the exists and does-not-exist shapes", () => {
     expect(
-      evaluateConditionExpression(`${ABSENT} == ${ABSENT}`, outputs).result
+      evaluateConditionExpression(
+        `${ABSENT} !== null && ${ABSENT} !== undefined`,
+        outputs
+      ).result
+    ).toBe(false);
+    expect(
+      evaluateConditionExpression(
+        `${ABSENT} === null || ${ABSENT} === undefined`,
+        outputs
+      ).result
     ).toBe(true);
   });
 });
