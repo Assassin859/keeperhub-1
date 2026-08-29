@@ -41,6 +41,15 @@ export function caretOffsetForBadgeEdit(rawTemplate: string): number {
 
 const EDIT_BADGE_HINT = "Double-click to edit this reference";
 
+/**
+ * Tooltip text for a badge. Narrow hosts clip the badge -- the condition
+ * builder's operand fields scroll horizontally with the scrollbar hidden --
+ * so the full reference leads, and the edit hint keeps its own line below.
+ */
+export function badgeTooltip(displayText: string): string {
+  return displayText ? `${displayText}\n${EDIT_BADGE_HINT}` : EDIT_BADGE_HINT;
+}
+
 export type TemplateBadgeEditorMultilineOptions = {
   rows: number;
   /** When set, limits visible height to this many rows and makes content scrollable */
@@ -411,9 +420,10 @@ export function TemplateBadgeEditor({
         : "inline-flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-red-600 dark:text-red-400 font-mono text-xs border border-red-500/20 mx-0.5";
       badge.contentEditable = "false";
       badge.setAttribute("data-template", fullMatch);
-      badge.title = EDIT_BADGE_HINT;
       // Use current node label for display
-      badge.textContent = getDisplayTextForTemplate(fullMatch, nodes);
+      const displayText = getDisplayTextForTemplate(fullMatch, nodes);
+      badge.textContent = displayText;
+      badge.title = badgeTooltip(displayText);
       container.appendChild(badge);
 
       lastIndex = pattern.lastIndex;
