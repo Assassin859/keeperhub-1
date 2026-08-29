@@ -324,10 +324,14 @@ function replaceTemplateVariable(
   if (!fieldPath) {
     value = output.data;
   } else if (output.data === null || output.data === undefined) {
-    // KEEP-1284: Throw error when node data is null/undefined
-    throw new Error(
-      `Condition references "${rest}" but the node output data is ${output.data === null ? "null" : "undefined"}. Ensure the referenced node produces valid output.`
+    // A node that produced no data is the same situation as a field that is
+    // not there: bind undefined so a presence guard can handle it, and report
+    // the path. Only a reference to a node with no output entry at all still
+    // throws, since that is a broken reference rather than an empty result.
+    unresolvedFields?.push(
+      `"${rest}": the node output data is ${output.data === null ? "null" : "undefined"}.`
     );
+    value = undefined;
   } else {
     // Wrapper-aware lookup: matches resolveFromOutputData's three-shape walk
     // (top-level → { data: ... } → { result: ... }) so paths like

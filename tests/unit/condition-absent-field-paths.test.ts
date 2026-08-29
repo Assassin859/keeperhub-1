@@ -67,6 +67,31 @@ describe("condition references to absent field paths", () => {
     expect(r.unresolvedFields).toBeUndefined();
   });
 
+  it("treats a null node output as an absent path, not a throw", () => {
+    const r = evaluateConditionExpression(
+      "{{@blank:Blank.foo}} !== undefined",
+      { ...outputs, blank: { label: "Blank", data: null } }
+    );
+    expect(r.result).toBe(false);
+    expect(r.unresolvedFields?.[0]).toContain("null");
+  });
+
+  it("resolves a path that breaks on an intermediate segment", () => {
+    for (const path of [
+      "Manual.missing.deep",
+      "Manual.nested.nope",
+      "Manual.timestamp.x",
+      "Manual.nested.a.x",
+    ]) {
+      const r = evaluateConditionExpression(
+        `{{@trigger:${path}}} !== undefined`,
+        outputs
+      );
+      expect(r.result).toBe(false);
+      expect(r.unresolvedFields).toHaveLength(1);
+    }
+  });
+
   it("still throws when the referenced node produced no output at all", () => {
     expect(() =>
       evaluateConditionExpression("{{@nope:Nope.x}} == 1", outputs)

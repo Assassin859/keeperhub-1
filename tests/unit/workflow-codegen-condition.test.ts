@@ -356,24 +356,31 @@ describe("runtime condition evaluation", () => {
       expect(result.unresolvedFields?.[0]).toMatch(FIELD_NOT_EXIST_REGEX);
     });
 
-    it("should throw error when node data is null", () => {
+    it("resolves a field on null node data to undefined and reports it", () => {
+      // Superseded alongside the absent-field case: a node that produced no
+      // data is the same situation as a field that is not there, and throwing
+      // defeats a presence guard the author wrote for it.
       const expression = "{{@node1:Label.value}} > 100";
       const outputs = {
         node1: { label: "Label", data: null },
       };
 
-      expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
+      const result = evaluateConditionExpression(expression, outputs);
+      expect(result.result).toBe(false);
+      expect(result.unresolvedFields?.[0]).toMatch(
         COULD_NOT_RESOLVE_NULL_REGEX
       );
     });
 
-    it("should throw error when node data is undefined", () => {
+    it("resolves a field on undefined node data to undefined and reports it", () => {
       const expression = "{{@node1:Label.value}} > 100";
       const outputs = {
         node1: { label: "Label", data: undefined },
       };
 
-      expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
+      const result = evaluateConditionExpression(expression, outputs);
+      expect(result.result).toBe(false);
+      expect(result.unresolvedFields?.[0]).toMatch(
         COULD_NOT_RESOLVE_UNDEFINED_REGEX
       );
     });
