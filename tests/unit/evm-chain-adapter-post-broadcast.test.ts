@@ -23,10 +23,7 @@ const TX_HASH = "0xf00d";
 const REPLACEMENT_HASH = "0xbeef";
 const SEPOLIA = 11_155_111;
 
-function buildReceipt(
-  hash: string,
-  status = 1
-): Record<string, unknown> {
+function buildReceipt(hash: string, status = 1): Record<string, unknown> {
   return {
     hash,
     status,
@@ -127,7 +124,9 @@ describe("EvmChainAdapter post-broadcast failures (non-Tempo)", () => {
     // reason "repriced" means same work, same nonce, higher fee. The
     // replacement's receipt IS the outcome of our transaction, so this must not
     // fail at all — and the hash worth recording is the one that landed.
-    const h = createHarness(vi.fn().mockRejectedValue(replacedError("repriced")));
+    const h = createHarness(
+      vi.fn().mockRejectedValue(replacedError("repriced"))
+    );
 
     const result = await send(h);
 
@@ -145,22 +144,22 @@ describe("EvmChainAdapter post-broadcast failures (non-Tempo)", () => {
     expect(broadcastTransactionHash(error)).toBe(REPLACEMENT_HASH);
   });
 
-  it.each(["cancelled", "replaced"] as const)(
-    "settles a %s transaction terminally instead of leaving it pending",
-    async (reason) => {
-      // The nonce is spent by something else: our transaction was not executed
-      // and never will be. Conclusive, not unknown. Routing it to pending would
-      // create a row the reconciler can never close.
-      const h = createHarness(vi.fn().mockRejectedValue(replacedError(reason)));
+  it.each([
+    "cancelled",
+    "replaced",
+  ] as const)("settles a %s transaction terminally instead of leaving it pending", async (reason) => {
+    // The nonce is spent by something else: our transaction was not executed
+    // and never will be. Conclusive, not unknown. Routing it to pending would
+    // create a row the reconciler can never close.
+    const h = createHarness(vi.fn().mockRejectedValue(replacedError(reason)));
 
-      const error = await sendAndCatch(h);
+    const error = await sendAndCatch(h);
 
-      expect(isOnChainPendingError(error)).toBe(false);
-      expect(isOnChainRevertError(error)).toBe(true);
-      expect(broadcastTransactionHash(error)).toBe(REPLACEMENT_HASH);
-      expect((error as Error).message).toContain(reason);
-    }
-  );
+    expect(isOnChainPendingError(error)).toBe(false);
+    expect(isOnChainRevertError(error)).toBe(true);
+    expect(broadcastTransactionHash(error)).toBe(REPLACEMENT_HASH);
+    expect((error as Error).message).toContain(reason);
+  });
 
   it("keeps a detected revert on the revert path with its hash", async () => {
     const h = createHarness(
@@ -199,9 +198,11 @@ describe("EvmChainAdapter post-broadcast failures (non-Tempo)", () => {
     // that code, while treating it as pending costs only a row the reconciler
     // resolves. Cheap in one direction, expensive in the other.
     const h = createHarness(
-      vi.fn().mockRejectedValue(
-        Object.assign(new Error("something new"), { code: "FUTURE_CODE" })
-      )
+      vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("something new"), { code: "FUTURE_CODE" })
+        )
     );
 
     const error = await sendAndCatch(h);

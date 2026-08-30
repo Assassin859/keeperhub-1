@@ -353,7 +353,6 @@ export class EvmChainAdapter implements ChainAdapter {
     });
   }
 
-
   // Confirm through ethers `tx.wait()`, converting its post-broadcast throws
   // into the carriers the finalizer understands (#2177).
   //
