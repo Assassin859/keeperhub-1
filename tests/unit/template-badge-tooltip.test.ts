@@ -51,7 +51,7 @@ describe("badgeTooltip over a rendered reference", () => {
     expect(badgeTooltip(displayText)).toBe(`${displayText}\n${EDIT_HINT}`);
   });
 
-  it("follows a renamed node rather than the label stored in the token", () => {
+  it("uses the node's current label, not the one stored in the token", () => {
     const template = "{{@JRY0lGfsvlwszZ797lIFz:Old label.result.timestamp}}";
     const displayText = getDisplayTextForTemplate(template, nodes);
 
