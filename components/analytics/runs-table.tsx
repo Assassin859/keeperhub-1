@@ -56,6 +56,16 @@ const NON_DIGIT_RE = /\D/;
 /** Placeholder for a cell whose value does not apply to this row. */
 const NO_VALUE = "-";
 
+// The default tooltip surface inverts the page; run details read better on the
+// same panel the rest of the table uses. The arrow goes with it.
+const TOOLTIP_SURFACE =
+  "border bg-popover text-popover-foreground shadow-md [&>span]:hidden";
+
+const CHAIN_LIST = new Intl.ListFormat("en-US", {
+  style: "long",
+  type: "conjunction",
+});
+
 function formatNetworks(networks: string[], chains: ChainDisplay): string {
   if (networks.length === 0) {
     return NO_VALUE;
@@ -140,7 +150,46 @@ function formatDuration(ms: number | null): string {
 // own, so it borrows the run's, which is unambiguous only when the run touched
 // a single one. Sponsored wei counts as spend here: the org drew on gas credit
 // for it, and `gasCostWei` is the ledger total.
-//
+export function runGasComposed(run: UnifiedRun): boolean {
+  if (!(run.gasUsedWei ?? run.gasCostWei)) {
+    return false;
+  }
+  return (
+    run.gasNetworks.length > 1 ||
+    (run.gasNetworks.length === 0 && run.networks.length > 1)
+  );
+}
+
+// The chains a composed run split its gas across. `gasNetworks` names them
+// outright; a ledger-only sponsored leg names none of its own, so it falls back
+// to every chain the run touched, which is the ambiguity that composed it.
+function composedGasNetworks(run: UnifiedRun): string[] {
+  return run.gasNetworks.length > 0 ? run.gasNetworks : run.networks;
+}
+
+/** "Composed" carries no meaning alone, so the tooltip names the chains. */
+function ComposedGasCell({
+  chains,
+  run,
+}: {
+  chains: ChainDisplay;
+  run: UnifiedRun;
+}): ReactNode {
+  const names = CHAIN_LIST.format(composedGasNetworks(run).map(chains.name));
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help underline decoration-dotted underline-offset-4">
+          Composed
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className={cn(TOOLTIP_SURFACE, "max-w-xs text-left")}>
+        {`This run spent gas on ${names}. Those networks have different native tokens, so there is no single total to show. Expand the run for the amount on each.`}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 // The step rollup wins over the sponsorship ledger because it covers every
 // transaction the run made. A run that starts sponsored and falls back to
 // direct signing has only its sponsored leg in the ledger, so preferring the
@@ -153,11 +202,8 @@ export function runGasDisplay(
   if (!wei) {
     return NO_VALUE;
   }
-  const spentAcrossChains =
-    run.gasNetworks.length > 1 ||
-    (run.gasNetworks.length === 0 && run.networks.length > 1);
-  if (spentAcrossChains) {
-    return "Composed";
+  if (runGasComposed(run)) {
+    return <ComposedGasCell chains={chains} run={run} />;
   }
   return formatGasNative(
     wei,
@@ -271,11 +317,6 @@ function getStepStatusColor(status: string): string {
 
 const COPIED_FOR_MS = 1500;
 
-// The default tooltip surface inverts the page; an error blob reads better on
-// the same panel the rest of the run details use. The arrow goes with it.
-const ERROR_TOOLTIP_SURFACE =
-  "border bg-popover text-popover-foreground shadow-md [&>span]:hidden";
-
 function CopyErrorButton({ text }: { text: string }): ReactNode {
   const [copied, setCopied] = useState(false);
 
@@ -301,7 +342,7 @@ function CopyErrorButton({ text }: { text: string }): ReactNode {
           {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
         </button>
       </TooltipTrigger>
-      <TooltipContent className={ERROR_TOOLTIP_SURFACE}>
+      <TooltipContent className={TOOLTIP_SURFACE}>
         {copied ? "Copied" : "Copy error"}
       </TooltipContent>
     </Tooltip>
@@ -320,7 +361,7 @@ function StepErrorMessage({ message }: { message: string }): ReactNode {
         </TooltipTrigger>
         <TooltipContent
           className={cn(
-            ERROR_TOOLTIP_SURFACE,
+            TOOLTIP_SURFACE,
             "max-w-sm text-left font-mono text-[11px] leading-relaxed wrap-anywhere"
           )}
         >
@@ -433,7 +474,7 @@ function ExpandedStepRows({
               </TooltipTrigger>
               <TooltipContent
                 className={cn(
-                  ERROR_TOOLTIP_SURFACE,
+                  TOOLTIP_SURFACE,
                   "max-w-sm text-left font-mono text-[11px] leading-relaxed wrap-anywhere"
                 )}
               >
