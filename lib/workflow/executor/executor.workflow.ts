@@ -1573,8 +1573,7 @@ function findDirectNestedForEachIds(
 
     const actionType = node.data.config?.actionType as string | undefined;
     const isCollect = node.data.type === "action" && actionType === "Collect";
-    const isForEach =
-      node.data.type === "action" && actionType === "For Each";
+    const isForEach = node.data.type === "action" && actionType === "For Each";
 
     if (isCollect && entry.depth === 0) {
       continue;
