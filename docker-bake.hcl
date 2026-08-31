@@ -35,6 +35,19 @@ variable "EXECUTOR_ECR_REPO" { default = "" }
 variable "SANDBOX_ECR_REPO" { default = "" }
 variable "METRICS_COLLECTOR_ECR_REPO" { default = "" }
 
+# The per-commit sandbox tag, for example "sandbox-1a2b3c4". Empty by default, so
+# only a caller that really needs the tag creates it. deploy-sandbox.yaml sets it,
+# because its Helm values reference the image by that tag. The pipeline bake in
+# build-images.yml leaves it empty and resolves the image by digest instead.
+#
+# Do not set this from a workflow that runs on every push. The sandbox Dockerfile
+# copies a small, stable set of inputs, so the image digest does not change between
+# commits, and since KEEP-1257 removed the attestation wrapper every push lands on
+# the SAME image object. A per-commit tag there adds one more tag to that one image
+# on every push. ECR allows 1000 tags per image and does not adjust that limit, so
+# the push starts to fail once the count is reached. KEEP-1259.
+variable "SANDBOX_COMMIT_TAG" { default = "" }
+
 group "default" {
   targets = ["app", "migrator", "workflow-runner"]
 }
@@ -285,7 +298,7 @@ target "sandbox" {
   context    = "."
   dockerfile = "sandbox/Dockerfile"
   tags = compact([
-    "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:sandbox-${IMAGE_TAG}",
+    SANDBOX_COMMIT_TAG != "" ? "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:${SANDBOX_COMMIT_TAG}" : "",
     "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:sandbox-latest",
     ENVIRONMENT_TAG != "" ? "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:${ENVIRONMENT_TAG}" : "",
   ])
