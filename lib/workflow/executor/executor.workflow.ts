@@ -1598,18 +1598,41 @@ function findDirectNestedForEachIds(
 }
 
 /**
+ * The single wording for "two For Each loops resolve the same Collect",
+ * shared by `claimCollectOwner` and `identifyLoopBody`'s in-BFS check so one
+ * mis-wire reads the same however it is detected.
+ *
+ * It states only what either site has established: both loops resolve this
+ * Collect. Neither site tests ancestry, so neither may claim one loop
+ * encloses the other - non-nested sibling loops wired to a shared Collect
+ * reach this message too, and which loop is named first only reflects
+ * processing order.
+ */
+function collectOwnershipConflictMessage(
+  collectNodeId: string,
+  forEachId: string,
+  claimedBy: string
+): string {
+  return (
+    `For Each "${forEachId}" resolves Collect "${collectNodeId}", but it ` +
+    `already belongs to For Each "${claimedBy}". Two For Each loops ` +
+    "cannot share the same Collect node."
+  );
+}
+
+/**
  * Record `forEachId` as the owner of `collectNodeId` in `claimedCollectOwners`,
  * or throw if it is already claimed by a different loop.
  *
  * `identifyLoopBody`'s own ownership check (#2157) only fires while its
  * depth-0 body BFS is walking -- it never sees a Collect resolved via the
  * done-handle target loop, since that path doesn't go through the BFS. This
- * closes that gap: both `collectNodeId` and `doneCollectNodeId` are claimed
- * through this function, so two loops resolving the same Collect by any
- * route are still caught, in case the ordering that
+ * closes that gap: every Collect a loop resolves, in-body or on the done
+ * handle, is claimed through this function, so two loops resolving the same
+ * Collect by any route are still caught, in case the ordering that
  * `orderForEachNodesOuterFirst` establishes were ever wrong.
  */
-function claimCollectOwner(
+export function claimCollectOwner(
   claimedCollectOwners: Map<string, string>,
   collectNodeId: string,
   forEachId: string
@@ -1617,9 +1640,7 @@ function claimCollectOwner(
   const claimedBy = claimedCollectOwners.get(collectNodeId);
   if (claimedBy && claimedBy !== forEachId) {
     throw new Error(
-      `For Each "${forEachId}" resolves Collect "${collectNodeId}", but it ` +
-        `already belongs to For Each "${claimedBy}". Two For Each loops ` +
-        "cannot share the same Collect node."
+      collectOwnershipConflictMessage(collectNodeId, forEachId, claimedBy)
     );
   }
   claimedCollectOwners.set(collectNodeId, forEachId);
@@ -1636,8 +1657,18 @@ function claimCollectOwner(
  * Built from `findDirectNestedForEachIds` via a parent map, then a
  * breadth-first walk from root loops (no parent among the given ids) down
  * through children. Any id never reached (should not happen for a valid
- * workflow DAG) is appended in its original position so it still gets
+ * workflow DAG - a nesting cycle leaves every loop parented) is appended
+ * after the walk, in its original relative order, so it still gets
  * validated.
+ *
+ * `findDirectNestedForEachIds` descends transitively in legacy (no
+ * sourceHandle) graphs, so one child can be reported by several enclosing
+ * loops: in `L1 -> L2 -> L3` a grandparent lists its grandchild alongside
+ * the real parent. Taking the first reporter would let the grandparent win
+ * and order `L3` before `L2`, inverting the very invariant this function
+ * exists to establish. So the reporters of a child are walked keeping the
+ * deepest one seen: a candidate that the current best encloses replaces it,
+ * leaving the nearest enclosing loop as the parent.
  */
 export function orderForEachNodesOuterFirst(
   forEachNodeIds: string[],
@@ -1645,18 +1676,40 @@ export function orderForEachNodesOuterFirst(
   nodeMap: Map<string, WorkflowNode>,
   edgesBySourceHandle?: EdgesBySourceHandle
 ): string[] {
-  const parentOf = new Map<string, string>();
+  const nestedOf = new Map<string, string[]>();
   for (const id of forEachNodeIds) {
-    for (const childId of findDirectNestedForEachIds(
+    nestedOf.set(
       id,
-      edgesBySource,
-      nodeMap,
-      edgesBySourceHandle
-    )) {
-      if (!parentOf.has(childId)) {
-        parentOf.set(childId, id);
+      findDirectNestedForEachIds(
+        id,
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      )
+    );
+  }
+
+  const candidateParentsOf = new Map<string, string[]>();
+  for (const id of forEachNodeIds) {
+    for (const childId of nestedOf.get(id) ?? []) {
+      const candidates = candidateParentsOf.get(childId);
+      if (candidates) {
+        candidates.push(id);
+      } else {
+        candidateParentsOf.set(childId, [id]);
       }
     }
+  }
+
+  const parentOf = new Map<string, string>();
+  for (const [childId, candidates] of candidateParentsOf) {
+    let nearest = candidates[0];
+    for (const candidate of candidates) {
+      if ((nestedOf.get(nearest) ?? []).includes(candidate)) {
+        nearest = candidate;
+      }
+    }
+    parentOf.set(childId, nearest);
   }
 
   const childrenOf = new Map<string, string[]>();
@@ -1714,7 +1767,7 @@ export function orderForEachNodesOuterFirst(
  * forEachNodeId that already resolved it as its own. If this scan's depth-0
  * Collect is claimed by a *different* loop, it throws immediately naming
  * both loops (#2157) instead of either colliding with a same-scan double
- * Collect (below) or silently adopting the ancestor's Collect as its own.
+ * Collect (below) or silently adopting the other loop's Collect as its own.
  * Callers that omit the map get today's unqualified behavior unchanged.
  */
 export function identifyLoopBody(
@@ -1781,11 +1834,7 @@ export function identifyLoopBody(
       const claimedBy = claimedCollectOwners?.get(nodeId);
       if (claimedBy && claimedBy !== forEachNodeId) {
         throw new Error(
-          `For Each "${forEachNodeId}" body reaches Collect "${nodeId}", ` +
-            `which already belongs to ancestor For Each "${claimedBy}". ` +
-            "A nested For Each's body must not cross into an enclosing " +
-            "loop's Collect boundary -- give the nested loop its own " +
-            "done-handle Collect."
+          collectOwnershipConflictMessage(nodeId, forEachNodeId, claimedBy)
         );
       }
       if (collectNodeId && collectNodeId !== nodeId) {
@@ -2141,12 +2190,18 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       loopBodyNodeIds.add(body.collectNodeId);
       claimCollectOwner(claimedCollectOwners, body.collectNodeId, forEachId);
     }
-    if (body.doneCollectNodeId) {
-      claimCollectOwner(
-        claimedCollectOwners,
-        body.doneCollectNodeId,
-        forEachId
-      );
+    // Every done-handle Collect, not just the promoted `doneCollectNodeId`:
+    // `identifyLoopBody` stops promoting at the first Collect among the done
+    // targets, so claiming only that one would leave a second done-handle
+    // Collect unowned and free for another loop to adopt.
+    for (const doneEntryNodeId of body.doneEntryNodeIds) {
+      const doneEntryNode = nodeMap.get(doneEntryNodeId);
+      if (
+        doneEntryNode?.data.type === "action" &&
+        doneEntryNode.data.config?.actionType === "Collect"
+      ) {
+        claimCollectOwner(claimedCollectOwners, doneEntryNodeId, forEachId);
+      }
     }
   }
 
