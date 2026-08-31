@@ -41,7 +41,8 @@ function hasChainInput(record: Record<string, unknown>): boolean {
 // only one of which is what the caller meant.
 function hasFunctionNameInput(record: Record<string, unknown>): boolean {
   return (
-    isNonEmptyString(record.functionName) || isNonEmptyString(record.abiFunction)
+    isNonEmptyString(record.functionName) ||
+    isNonEmptyString(record.abiFunction)
   );
 }
 
@@ -57,7 +58,7 @@ function trimmedText(value: unknown): string {
 function functionNameConflict(
   record: Record<string, unknown>
 ): ExecuteErrorResponse | null {
-  if (!("functionName" in record) || !("abiFunction" in record)) {
+  if (!(("functionName" in record) && ("abiFunction" in record))) {
     return null;
   }
   const functionName = trimmedText(record.functionName);
