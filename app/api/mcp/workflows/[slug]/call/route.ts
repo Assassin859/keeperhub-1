@@ -19,6 +19,13 @@ import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { HttpStatus } from "@/lib/http-status";
+import {
+  beginIdempotentFromRequest,
+  type IdempotencyOutcome,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+  withIdempotencyHeartbeat,
+} from "@/lib/idempotency";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   checkIpRateLimit,
@@ -53,12 +60,52 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, PAYMENT-SIGNATURE",
+    "Content-Type, Authorization, PAYMENT-SIGNATURE, Idempotency-Key",
   "Access-Control-Expose-Headers": "Payment-Receipt",
 } as const;
 
 export function OPTIONS(): NextResponse {
   return NextResponse.json({}, { headers: corsHeaders });
+}
+
+type CallIdempotencyStart =
+  | { kind: "early"; response: NextResponse }
+  | { kind: "proceed"; idem: IdempotencyOutcome | null };
+
+/**
+ * Reserve an Idempotency-Key for an executing marketplace call.
+ * Callers must not invoke this on 402 payment-challenge probes -- locking a
+ * challenge would poison the later paid retry under the same key.
+ * Namespace is the listing owner's org + workflow id (callers are anonymous).
+ */
+async function beginCallIdempotency(
+  request: Request,
+  workflow: CallRouteWorkflow,
+  body: Record<string, unknown>
+): Promise<CallIdempotencyStart> {
+  if (!workflow.organizationId) {
+    return { kind: "proceed", idem: null };
+  }
+
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: workflow.organizationId,
+    scope: `mcp-call:${workflow.id}`,
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return {
+        kind: "early",
+        response: NextResponse.json(early.body, {
+          status: early.status,
+          headers: corsHeaders,
+        }),
+      };
+    }
+  }
+  return { kind: "proceed", idem };
 }
 
 /**
@@ -288,16 +335,26 @@ async function createAndStartExecution(
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<NextResponse> {
+  const started = await beginCallIdempotency(request, workflow, body);
+  if (started.kind === "early") {
+    return started.response;
+  }
+  const { idem } = started;
+
   const prepared = await prepareExecution(request, workflow, body);
   if ("error" in prepared) {
-    return prepared.error;
+    // Pre-broadcast gate failure: release so the same key can retry.
+    return await recordIdempotentResponse(idem, prepared.error, "release");
   }
   await startExecutionInBackground(workflow, body, prepared.executionId);
-  const responseBody = await buildCallCompletionResponse(
-    prepared.executionId,
-    workflow.outputMapping
+  const responseBody = await withIdempotencyHeartbeat(idem, () =>
+    buildCallCompletionResponse(prepared.executionId, workflow.outputMapping)
   );
-  return NextResponse.json(responseBody, { headers: corsHeaders });
+  return await recordIdempotentResponse(
+    idem,
+    NextResponse.json(responseBody, { headers: corsHeaders }),
+    "success"
+  );
 }
 
 async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
@@ -395,7 +452,8 @@ function calldataResponse(deliverable: PaymentDeliverable): NextResponse {
 async function gateWriteCall(
   request: Request,
   workflow: CallRouteWorkflow,
-  deliverable: PaymentDeliverable | null
+  deliverable: PaymentDeliverable | null,
+  body: Record<string, unknown> = {}
 ): Promise<NextResponse> {
   const creatorWalletAddress = await resolveCreatorWallet(
     workflow.organizationId
@@ -435,6 +493,14 @@ async function gateWriteCall(
           );
         }
 
+        // Begin only inside the gated handler (after payment is present), never
+        // on the 402 probe path above.
+        const started = await beginCallIdempotency(request, workflow, body);
+        if (started.kind === "early") {
+          return started.response;
+        }
+        const { idem } = started;
+
         try {
           await recordPayment({
             workflowId: workflow.id,
@@ -461,7 +527,11 @@ async function gateWriteCall(
               err,
               { workflowId: workflow.id, paymentHash: meta.paymentHash }
             );
-            return calldataResponse(deliverable);
+            return await recordIdempotentResponse(
+              idem,
+              calldataResponse(deliverable),
+              "success"
+            );
           }
           // x402 settles AFTER this handler returns and skips settlement
           // entirely for any >=400 response, so a 503 here means no funds
@@ -472,16 +542,24 @@ async function gateWriteCall(
             err,
             { workflowId: workflow.id }
           );
-          return NextResponse.json(
-            {
-              error:
-                "Payment could not be recorded. No funds were taken -- retry the same request.",
-            },
-            { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
+          return await recordIdempotentResponse(
+            idem,
+            NextResponse.json(
+              {
+                error:
+                  "Payment could not be recorded. No funds were taken -- retry the same request.",
+              },
+              { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
+            ),
+            "release"
           );
         }
 
-        return calldataResponse(deliverable);
+        return await recordIdempotentResponse(
+          idem,
+          calldataResponse(deliverable),
+          "success"
+        );
       };
     }
   );
@@ -533,10 +611,18 @@ async function handleWriteWorkflow(
   };
 
   if (!isPaid) {
-    return calldataResponse(deliverable);
+    const started = await beginCallIdempotency(request, workflow, writeBody);
+    if (started.kind === "early") {
+      return started.response;
+    }
+    return await recordIdempotentResponse(
+      started.idem,
+      calldataResponse(deliverable),
+      "success"
+    );
   }
 
-  return await gateWriteCall(request, workflow, deliverable);
+  return await gateWriteCall(request, workflow, deliverable, writeBody);
 }
 
 async function handlePaidWorkflow(
@@ -564,9 +650,21 @@ async function handlePaidWorkflow(
     creatorWalletAddress,
     (meta: PaymentMeta) => {
       return async (_req: NextRequest): Promise<NextResponse> => {
+        // Begin only after payment is present (gatePayment invoked this
+        // factory). 402 probes never reach here.
+        const started = await beginCallIdempotency(request, workflow, body);
+        if (started.kind === "early") {
+          return started.response;
+        }
+        const { idem } = started;
+
         const prepared = await prepareExecution(request, workflow, body);
         if ("error" in prepared) {
-          return prepared.error;
+          return await recordIdempotentResponse(
+            idem,
+            prepared.error,
+            "release"
+          );
         }
         const { executionId } = prepared;
 
@@ -640,16 +738,27 @@ async function handlePaidWorkflow(
               persistedStatus: "error",
             });
           }
+          await recordIdempotentResponse(
+            idem,
+            NextResponse.json(
+              { error: errorMessage, executionId, status: "error" },
+              { status: HttpStatus.INTERNAL_SERVER_ERROR, headers: corsHeaders }
+            ),
+            "failed"
+          );
           throw err;
         }
 
         await startExecutionInBackground(workflow, body, executionId);
 
-        const responseBody = await buildCallCompletionResponse(
-          executionId,
-          workflow.outputMapping
+        const responseBody = await withIdempotencyHeartbeat(idem, () =>
+          buildCallCompletionResponse(executionId, workflow.outputMapping)
         );
-        return NextResponse.json(responseBody, { headers: corsHeaders });
+        return await recordIdempotentResponse(
+          idem,
+          NextResponse.json(responseBody, { headers: corsHeaders }),
+          "success"
+        );
       };
     }
   );
