@@ -263,7 +263,7 @@ function describeMissingFieldPath(data: unknown, fieldPath: string): string {
       const [, key, indexStr] = arrayMatch;
       const index = Number.parseInt(indexStr, 10);
       if (!(key in container)) {
-        return `"${fieldPath}": "${key}" does not exist on the data. Available fields: ${Object.keys(container).join(", ") || "(none)"}`;
+        return `"${fieldPath}": "${key}" does not exist on the data. Available fields: ${Object.keys(container).join(", ") || "(none)"}.`;
       }
       const arr = container[key];
       if (!Array.isArray(arr)) {
@@ -277,7 +277,7 @@ function describeMissingFieldPath(data: unknown, fieldPath: string): string {
     }
 
     if (!(segment in container)) {
-      return `"${fieldPath}": "${segment}" does not exist on the data. Available fields: ${Object.keys(container).join(", ") || "(none)"}`;
+      return `"${fieldPath}": "${segment}" does not exist on the data. Available fields: ${Object.keys(container).join(", ") || "(none)"}.`;
     }
     current = container[segment];
   }
