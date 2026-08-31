@@ -380,8 +380,10 @@ Call any smart contract function. Automatically detects read vs write operations
 - `functionName` (required): Name of the function to call. The workflow web3
   action node config calls this same value `abiFunction`; this route accepts
   `abiFunction` as an alias so payloads copied between the two layers bind
-  without a rename. If both are present they must agree; a mismatch is
-  rejected with a 400 naming both values.
+  without a rename. If both keys are present their values must agree once
+  surrounding whitespace is trimmed; a mismatch - including an empty or
+  non-string `functionName` next to a different `abiFunction` - is rejected
+  with a 400 naming both values.
 - `functionArgs` (optional): JSON array string of function arguments (e.g., `"[\"0x...\", \"1000\"]"`)
 - `abi` (optional): Contract ABI as JSON string. Auto-fetched from block explorer if omitted.
 - `value` (optional): Native value to send with the call, as a decimal string in ether units (e.g. `0.1`) (for payable functions)
@@ -390,13 +392,18 @@ Call any smart contract function. Automatically detects read vs write operations
 **Direct execution vs. workflow node field names**
 
 The same values carry different field names depending on which surface you're
-building against. Both are accepted on `/api/execute/contract-call`; only the
-canonical name is accepted in workflow node config.
+building against. This route accepts either spelling; workflow node config
+accepts only the single spelling in the right-hand column, which is not the
+canonical one in either row.
 
-| Meaning | Direct execution (`/api/execute/*`) | Workflow web3 action node config |
+| Meaning | `POST /api/execute/contract-call` | Workflow web3 action node config |
 |---|---|---|
 | Chain to execute on | `chainId` (canonical), `network` (deprecated alias) | `network` |
 | Function to call | `functionName` (canonical), `abiFunction` (alias) | `abiFunction` |
+
+The `abiFunction` alias is specific to this route. `check-and-execute` still
+requires `functionName` (and `action.functionName`), so a body that carries
+only `abiFunction` is rejected there with a 400.
 
 ### Response
 

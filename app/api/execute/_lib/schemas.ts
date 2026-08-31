@@ -35,34 +35,40 @@ function hasChainInput(record: Record<string, unknown>): boolean {
 
 // KEEP-1927: functionName is canonical on direct-exec routes; abiFunction is
 // the workflow web3 action node's name for the same value. Either counts as
-// present. Unlike hasChainInput's chainId/network handling above, KEEP-490
-// never picks a winner when both are set (it only falls back to network when
-// chainId is absent) -- there is no "silently prefer the canonical field"
-// precedent to extend here, so a conflict between the two is treated as
-// caller error rather than resolved for them. This endpoint broadcasts: a
-// mismatched pair (e.g. functionName: "transfer" vs abiFunction:
-// "transferFrom") describes two different transactions, and only one of them
-// is what the caller meant.
+// present. A mismatched pair is caller error rather than something to resolve
+// for them: this endpoint broadcasts, and two names that are both in the ABI
+// (e.g. "transfer" vs "transferFrom") describe two different transactions,
+// only one of which is what the caller meant.
 function hasFunctionNameInput(record: Record<string, unknown>): boolean {
   return (
     isNonEmptyString(record.functionName) || isNonEmptyString(record.abiFunction)
   );
 }
 
+function trimmedText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : String(value);
+}
+
+// Conflict is keyed on the keys being present, not on their values being
+// usable strings, because the contract-call route fills functionName in from
+// abiFunction under the same test. A functionName the route cannot use ("" or
+// a non-string) is still the caller's stated intent, so it conflicts with a
+// differing abiFunction instead of being quietly overwritten.
 function functionNameConflict(
   record: Record<string, unknown>
 ): ExecuteErrorResponse | null {
-  if (
-    !isNonEmptyString(record.functionName) ||
-    !isNonEmptyString(record.abiFunction) ||
-    record.functionName === record.abiFunction
-  ) {
+  if (!("functionName" in record) || !("abiFunction" in record)) {
+    return null;
+  }
+  const functionName = trimmedText(record.functionName);
+  const abiFunction = trimmedText(record.abiFunction);
+  if (functionName === abiFunction) {
     return null;
   }
   return {
     error: "Conflicting field values",
     field: "abiFunction",
-    details: `functionName and abiFunction disagree ('${record.functionName}' vs '${record.abiFunction}'); send one, or the same value in both. functionName is canonical.`,
+    details: `functionName and abiFunction disagree ('${functionName}' vs '${abiFunction}'); send one, or the same value in both. functionName is canonical.`,
   };
 }
 
