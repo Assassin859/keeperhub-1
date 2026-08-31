@@ -306,16 +306,27 @@ async function executeProtocolAction(
     outcome = { status: settled.status, error: result.error };
   }
 
-  const responseBody =
-    outcome.status === "completed"
-      ? result
-      : { ...result, success: false, error: outcome.error };
+  // Match contract-call / transfer: expose executionId so callers can poll
+  // /api/execute/{executionId}/status and idempotency can bind resourceId.
+  // Include transactionHash whenever one exists (even on failure) so a
+  // broadcast that reverted or could not be read back is still look-up-able.
+  const responseBody: ExecuteResponse = {
+    executionId,
+    status: outcome.status,
+    ...(result.transactionHash
+      ? { transactionHash: result.transactionHash }
+      : {}),
+    ...(result.success && result.transactionLink
+      ? { transactionLink: result.transactionLink }
+      : {}),
+    ...(outcome.error ? { error: outcome.error } : {}),
+  };
 
   // The tx reached the broadcast path, so finalize as success or failed and
   // never release: a retry on the same key must not re-broadcast.
   return recordIdempotentResponse(
     idem,
-    NextResponse.json(responseBody),
+    NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
     outcome.status === "completed" ? "success" : "failed"
   );
 }

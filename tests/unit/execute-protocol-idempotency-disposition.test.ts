@@ -82,10 +82,11 @@ vi.mock("../../app/api/execute/_lib/concurrency-limit", () => ({
   enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
 }));
 
+const failExecutionMock = vi.fn().mockResolvedValue({ status: "failed" });
 vi.mock("../../app/api/execute/_lib/execution-service", () => ({
   markRunning: vi.fn(),
   completeExecution: vi.fn().mockResolvedValue({ status: "completed" }),
-  failExecution: vi.fn(),
+  failExecution: (...args: unknown[]) => failExecutionMock(...args),
   redactInput: (x: unknown) => x,
   withRejectedSignerOverride: (a: unknown) => a,
 }));
@@ -179,19 +180,53 @@ describe("execute protocol idempotency disposition", () => {
   });
 
   it("finalizes as success when the write broadcasts and succeeds", async () => {
-    await postSwap();
+    const response = await postSwap();
+    const body = (await response.json()) as {
+      executionId: string;
+      status: string;
+      transactionHash?: string;
+    };
 
+    expect(response.status).toBe(202);
+    expect(body).toEqual(
+      expect.objectContaining({
+        executionId: "exec_1",
+        status: "completed",
+        transactionHash: "0xtx",
+      })
+    );
     expect(lastDisposition()).toBe("success");
+    expect(recordIdempotentResponseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 202 }),
+      "success"
+    );
   });
 
   it("finalizes as failed when the write reverts after broadcast", async () => {
     writeContractCoreMock.mockResolvedValue({
       success: false,
       error: "reverted",
+      transactionHash: "0xfailed",
     });
 
-    await postSwap();
+    const response = await postSwap();
+    const body = (await response.json()) as {
+      executionId: string;
+      status: string;
+      error?: string;
+      transactionHash?: string;
+    };
 
+    expect(response.status).toBe(202);
+    expect(body).toEqual(
+      expect.objectContaining({
+        executionId: "exec_1",
+        status: "failed",
+        error: "reverted",
+        transactionHash: "0xfailed",
+      })
+    );
     expect(lastDisposition()).toBe("failed");
   });
 });
