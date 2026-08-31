@@ -66,6 +66,24 @@ group "all" {
   targets = ["app", "migrator", "workflow-runner", "event-tracker", "solana-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox", "metrics-collector"]
 }
 
+# Every target below sets `attest` explicitly, and a new target must set it too.
+# docker/bake-action reads the resolved bake definition. For each target that
+# declares no provenance entry, the action appends
+# `--set <target>.attest=type=provenance,mode=max`. ECR indexes the pushed
+# attestation as a referrer of the image, and it allows only 100 referrers per
+# subject. The sandbox image digest does not change between commits, so its
+# referrers reached 100 and every staging deploy failed for about 14 hours on
+# 2026-08-29.
+#
+# Two forms look correct and do nothing. Do not use either one:
+#   * `attest = []` is omitempty, so the key disappears from `docker buildx bake
+#     --print`. The action then treats the target as undeclared and injects
+#     provenance for it.
+#   * `provenance = false` is not a bake attribute. Bake drops an unknown target
+#     field without an error, so the line parses and has no effect.
+# Only `attest = ["type=provenance,disabled=true"]` survives `--print`, which is
+# what the "Bake Provenance Disabled" check in maintainability.yml asserts.
+
 target "app" {
   context    = "."
   dockerfile = "Dockerfile"
@@ -89,6 +107,7 @@ target "app" {
   ]) : []
   cache-from = ECR_REGISTRY != "" ? ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app"] : []
   cache-to   = ECR_REGISTRY != "" ? ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app,mode=max"] : []
+  attest     = ["type=provenance,disabled=true"]
 }
 
 target "sentry-upload" {
@@ -115,6 +134,7 @@ target "sentry-upload" {
   }
   tags       = []
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app"]
+  attest     = ["type=provenance,disabled=true"]
 }
 
 target "migrator" {
@@ -130,6 +150,7 @@ target "migrator" {
     "type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-migrator",
   ]
   cache-to = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-migrator,mode=max"]
+  attest   = ["type=provenance,disabled=true"]
 }
 
 target "workflow-runner" {
@@ -161,7 +182,7 @@ target "workflow-runner" {
     "type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-workflow-runner",
   ]
   cache-to = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-workflow-runner,mode=max"]
-  attest   = []
+  attest   = ["type=provenance,disabled=true"]
 }
 
 target "event-tracker" {
@@ -174,7 +195,7 @@ target "event-tracker" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache,mode=max"]
-  attest     = []
+  attest     = ["type=provenance,disabled=true"]
 }
 
 # Solana ingestion (event + block triggers). Shares the events ECR repo, so all
@@ -190,7 +211,7 @@ target "solana-tracker" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache-solana"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EVENTS_ECR_TRACKER_REPO}:cache-solana,mode=max"]
-  attest     = []
+  attest     = ["type=provenance,disabled=true"]
 }
 
 target "schedule-dispatcher" {
@@ -207,7 +228,7 @@ target "schedule-dispatcher" {
     "type=registry,ref=${ECR_REGISTRY}/${SCHEDULER_ECR_REPO}:cache-dispatcher",
   ]
   cache-to = ["type=registry,ref=${ECR_REGISTRY}/${SCHEDULER_ECR_REPO}:cache-dispatcher,mode=max"]
-  attest   = []
+  attest   = ["type=provenance,disabled=true"]
 }
 
 target "block-dispatcher" {
@@ -224,7 +245,7 @@ target "block-dispatcher" {
     "type=registry,ref=${ECR_REGISTRY}/${SCHEDULER_ECR_REPO}:cache-block-dispatcher",
   ]
   cache-to = ["type=registry,ref=${ECR_REGISTRY}/${SCHEDULER_ECR_REPO}:cache-block-dispatcher,mode=max"]
-  attest   = []
+  attest   = ["type=provenance,disabled=true"]
 }
 
 target "executor" {
@@ -253,7 +274,7 @@ target "executor" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:cache,mode=max"]
-  attest     = []
+  attest     = ["type=provenance,disabled=true"]
 }
 
 # v1.9 Code Sandbox standalone HTTP service. Runs user-supplied JS in a
@@ -270,7 +291,7 @@ target "sandbox" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache,mode=max"]
-  attest     = []
+  attest     = ["type=provenance,disabled=true"]
 }
 
 # Metrics collector (TECH-6484). Context is repo root because the stage reuses
@@ -286,5 +307,5 @@ target "metrics-collector" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:cache,mode=max"]
-  attest     = []
+  attest     = ["type=provenance,disabled=true"]
 }
