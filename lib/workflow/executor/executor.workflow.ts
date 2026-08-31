@@ -2031,6 +2031,49 @@ export function planIterationContinuation(
   return { kind: "none" };
 }
 
+export type ForEachIterationFailure = { success: false; error: string };
+
+/**
+ * First failed iteration result, if any. Used to flip the For Each log and
+ * to gate post-loop Collect / done-targets continuation.
+ */
+export function findFirstIterationFailure(
+  iterationResults: unknown[]
+): ForEachIterationFailure | undefined {
+  return iterationResults.find(
+    (r): r is ForEachIterationFailure =>
+      r !== null &&
+      typeof r === "object" &&
+      "success" in (r as object) &&
+      (r as { success: unknown }).success === false
+  );
+}
+
+/**
+ * Dispatch Collect aggregation or done-targets after runIterations.
+ * Skips entirely when any iteration failed so downstream side effects
+ * (transfers, webhooks) do not fire after a failed loop body.
+ */
+export async function dispatchForEachPostLoopIfNeeded(params: {
+  firstIterationFailure: ForEachIterationFailure | undefined;
+  continuation: IterationContinuation;
+  onAggregateCollect: (collectNodeId: string) => Promise<void>;
+  onDoneTargets: (targets: string[]) => Promise<void>;
+}): Promise<"skipped" | "aggregate-collect" | "done-targets" | "none"> {
+  if (params.firstIterationFailure) {
+    return "skipped";
+  }
+  if (params.continuation.kind === "aggregate-collect") {
+    await params.onAggregateCollect(params.continuation.collectNodeId);
+    return "aggregate-collect";
+  }
+  if (params.continuation.kind === "done-targets") {
+    await params.onDoneTargets(params.continuation.targets);
+    return "done-targets";
+  }
+  return "none";
+}
+
 /**
  * Resolve a template string to its raw array value.
  * Accepts {{@nodeId:Label.field}} syntax or a JSON array literal.
@@ -2796,13 +2839,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
 
     // 5a. If any iteration failed, flip the For Each node's own log row to error
     // so the UI can surface which step errored rather than showing all green.
-    const firstIterationFailure = iterationResults.find(
-      (r): r is { success: false; error: string } =>
-        r !== null &&
-        typeof r === "object" &&
-        "success" in (r as object) &&
-        (r as { success: unknown }).success === false
-    );
+    const firstIterationFailure = findFirstIterationFailure(iterationResults);
     if (firstIterationFailure && executionId) {
       await triggerStep({
         triggerData: {},
@@ -2828,67 +2865,71 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     //                      ordinary post-loop steps via continueWithDoneTargets
     //                      (no aggregation injection).
     //   none:              fire-and-forget loop, nothing to do here.
-    if (continuation.kind === "aggregate-collect") {
-      const aggregateCollectNodeId = continuation.collectNodeId;
-      const collectData = {
-        results: iterationResults,
-        count: iterationResults.length,
-      };
-      const sanitizedCollectId = aggregateCollectNodeId.replace(
-        /[^a-zA-Z0-9]/g,
-        "_"
-      );
-      const collectNode = nodeMap.get(aggregateCollectNodeId);
-      const collectLabel = collectNode ? getNodeName(collectNode) : "Collect";
+    // Any failed iteration skips this block entirely (no Collect / downstream).
+    await dispatchForEachPostLoopIfNeeded({
+      firstIterationFailure,
+      continuation,
+      onAggregateCollect: async (aggregateCollectNodeId) => {
+        const collectData = {
+          results: iterationResults,
+          count: iterationResults.length,
+        };
+        const sanitizedCollectId = aggregateCollectNodeId.replace(
+          /[^a-zA-Z0-9]/g,
+          "_"
+        );
+        const collectNode = nodeMap.get(aggregateCollectNodeId);
+        const collectLabel = collectNode ? getNodeName(collectNode) : "Collect";
 
-      const collectAction = SYSTEM_ACTIONS.Collect;
-      if (collectAction) {
-        const mod = await collectAction.importer();
-        await mod[collectAction.stepFunction]({
-          ...collectData,
-          _context: {
-            executionId,
-            nodeId: aggregateCollectNodeId,
-            nodeName: collectLabel,
-            nodeType: "Collect",
-            forEachNodeId,
-            organizationId,
-            orgSlug: organizationSlug,
-            createdBy,
-            workflowId,
-          } satisfies StepContext,
-        });
-      }
+        const collectAction = SYSTEM_ACTIONS.Collect;
+        if (collectAction) {
+          const mod = await collectAction.importer();
+          await mod[collectAction.stepFunction]({
+            ...collectData,
+            _context: {
+              executionId,
+              nodeId: aggregateCollectNodeId,
+              nodeName: collectLabel,
+              nodeType: "Collect",
+              forEachNodeId,
+              organizationId,
+              orgSlug: organizationSlug,
+              createdBy,
+              workflowId,
+            } satisfies StepContext,
+          });
+        }
 
-      currentOutputs[sanitizedCollectId] = {
-        label: collectLabel,
-        data: collectData,
-      };
-      currentResults[aggregateCollectNodeId] = {
-        success: true,
-        data: collectData,
-      };
-      currentVisited.add(aggregateCollectNodeId);
+        currentOutputs[sanitizedCollectId] = {
+          label: collectLabel,
+          data: collectData,
+        };
+        currentResults[aggregateCollectNodeId] = {
+          success: true,
+          data: collectData,
+        };
+        currentVisited.add(aggregateCollectNodeId);
 
-      // Skip the legacy in-body Collect in mixed wiring: don't re-fire it,
-      // but mark it visited so the parent DAG dispatcher leaves it alone.
-      if (
-        doneCollectNodeId &&
-        collectNodeId &&
-        collectNodeId !== doneCollectNodeId
-      ) {
-        currentVisited.add(collectNodeId);
-      }
+        // Skip the legacy in-body Collect in mixed wiring: don't re-fire it,
+        // but mark it visited so the parent DAG dispatcher leaves it alone.
+        if (
+          doneCollectNodeId &&
+          collectNodeId &&
+          collectNodeId !== doneCollectNodeId
+        ) {
+          currentVisited.add(collectNodeId);
+        }
 
-      if (continueAfterCollect) {
-        await continueAfterCollect(aggregateCollectNodeId);
-      }
-    } else if (
-      continuation.kind === "done-targets" &&
-      continueWithDoneTargets
-    ) {
-      await continueWithDoneTargets(forEachNodeId, continuation.targets);
-    }
+        if (continueAfterCollect) {
+          await continueAfterCollect(aggregateCollectNodeId);
+        }
+      },
+      onDoneTargets: async (targets) => {
+        if (continueWithDoneTargets) {
+          await continueWithDoneTargets(forEachNodeId, targets);
+        }
+      },
+    });
 
     return {
       arrayLength: resolvedArray.length,
