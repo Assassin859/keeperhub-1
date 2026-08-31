@@ -268,10 +268,10 @@ jobs:
             exit 0
           fi
           if [[ "${RETRY}" == "success" ]]; then
-            echo "::warning title=KEEP-1206 image build retried::The image build failed on its first attempt and succeeded on the retry. This is the known memory ceiling, not a random flake - the build needs up to 20 GiB and a standard runner has about 20 GiB including swap. Track how often this warning appears; if it becomes common the job needs more memory or the module graph needs to shrink."
+            echo "::warning title=Image build needed its retry::The first bake attempt failed and the retry passed. Open the failed Build and push all images to ECR step and read the last BuildKit error before you record a cause. A memory failure says cannot allocate memory or ResourceExhausted. That build needs up to 20 GiB and a standard runner has about 20 GiB including swap, so the retry resumes from the layers the first attempt finished. Any other error is a transient fault that the retry hid. Track how often this warning appears. If the memory case becomes common, give the job more memory or make the module graph smaller."
             exit 0
           fi
-          echo "::error title=KEEP-1206 image build failed twice::The image build failed on both attempts. If the logs show 'cannot allocate memory' or 'ResourceExhausted', the runner ran out of memory and re-running will not reliably help - this job needs more memory than a standard runner has."
+          echo "::error title=Image build failed twice::Both bake attempts failed. Do not assume a cause. Open the Build and push all images to ECR step and read the last BuildKit error. Three signatures are known. 1. cannot allocate memory or ResourceExhausted means the runner ran out of memory, and a re-run does not reliably help because this job needs more memory than a standard runner has. 2. denied, the subject of your artifact has the maximum number of artifacts, means ECR refused an attestation push. Every re-run fails the same way until the attestation is disabled or the referrers are removed, so stop retrying. 3. any other denied or unauthorized is an ECR authentication or repository policy problem. Re-run only when the log shows a fault that is really transient."
           exit 1
 
       # Sentry source-map upload moved out to its own sentry-upload.yml job,
