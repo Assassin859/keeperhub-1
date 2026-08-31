@@ -4,6 +4,7 @@ import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import {
+  isOnChainPendingError,
   OnChainPendingError,
   OnChainRevertError,
 } from "@/lib/web3/onchain-revert";
@@ -377,7 +378,10 @@ export class EvmChainAdapter implements ChainAdapter {
         transactionHash: tx.hash,
       });
     } catch (error) {
-      if (error instanceof OnChainPendingError) {
+      // The module's own duck-typed guard, not `instanceof`: onchain-revert is
+      // `server-only` and can be instantiated in more than one module registry,
+      // where the classes are distinct and `instanceof` silently misses.
+      if (isOnChainPendingError(error)) {
         throw error;
       }
       const code = (error as { code?: string } | null)?.code;
@@ -414,17 +418,29 @@ export class EvmChainAdapter implements ChainAdapter {
         // replaced / cancelled: our transaction was not executed and never will
         // be, because the nonce is spent by something else. That is conclusive,
         // not unknown. Routing it to pending would create a row the reconciler
-        // can never close — #2020 entered from the other end. Terminal, but
-        // carrying the replacement hash so the record still points at the
-        // transaction that actually landed, and keeping `reason` in the message
-        // because "cancelled" and "replaced" mean different things to whoever
-        // reads the row later.
-        const landed = replaced.receipt?.hash ?? tx.hash;
-        throw new OnChainRevertError({
-          message: `Transaction ${tx.hash} was ${replaced.reason ?? "replaced"} by ${landed}; its effects cannot be assured`,
-          transactionHash: landed,
-          blockNumber: replaced.receipt?.blockNumber,
-        });
+        // can never close — #2020 entered from the other end.
+        //
+        // The hash on the error stays OURS. The replacement is a transaction
+        // we did not send and it usually succeeded, so recording its hash
+        // would let the finalizer re-verify a stranger's receipt: `verified:
+        // true` off the status alone, and the reconciler settles this
+        // execution `completed`.
+        // The replacement hash belongs in the message, where it still tells
+        // whoever reads the row which transaction took the nonce, and `reason`
+        // stays there too because "cancelled" and "replaced" mean different
+        // things to that reader.
+        //
+        // Only an explicit `cancelled` is conclusive. An absent one is a shape
+        // we do not recognise, and unknown shapes take the pending default
+        // below for the same reason unknown codes do.
+        if (typeof replaced.cancelled === "boolean") {
+          const landed = replaced.receipt?.hash ?? tx.hash;
+          throw new OnChainRevertError({
+            message: `Transaction ${tx.hash} was ${replaced.reason ?? "replaced"} by ${landed}; its effects cannot be assured`,
+            transactionHash: tx.hash,
+            blockNumber: replaced.receipt?.blockNumber,
+          });
+        }
       }
 
       // Everything else — provider, network, TIMEOUT, BAD_DATA out of the

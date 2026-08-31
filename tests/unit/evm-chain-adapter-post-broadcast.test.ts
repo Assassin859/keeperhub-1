@@ -59,7 +59,13 @@ function createGasStrategy(): unknown {
   };
 }
 
-function createNonceManager(): unknown {
+type MockNonceManager = {
+  getNextNonce: ReturnType<typeof vi.fn>;
+  recordTransaction: ReturnType<typeof vi.fn>;
+  confirmTransaction: ReturnType<typeof vi.fn>;
+};
+
+function createNonceManager(): MockNonceManager {
   return {
     getNextNonce: vi.fn().mockReturnValue(7),
     recordTransaction: vi.fn().mockResolvedValue(undefined),
@@ -71,6 +77,7 @@ type Harness = {
   adapter: EvmChainAdapter;
   signer: unknown;
   wait: ReturnType<typeof vi.fn>;
+  nonceManager: MockNonceManager;
 };
 
 function createHarness(wait: ReturnType<typeof vi.fn>): Harness {
@@ -86,12 +93,13 @@ function createHarness(wait: ReturnType<typeof vi.fn>): Harness {
     provider,
     sendTransaction: vi.fn().mockResolvedValue(txResponse),
   };
+  const nonceManager = createNonceManager();
   const adapter = new EvmChainAdapter(
     SEPOLIA,
     createGasStrategy() as ConstructorParameters<typeof EvmChainAdapter>[1],
-    createNonceManager() as ConstructorParameters<typeof EvmChainAdapter>[2]
+    nonceManager as unknown as ConstructorParameters<typeof EvmChainAdapter>[2]
   );
-  return { adapter, signer, wait };
+  return { adapter, signer, wait, nonceManager };
 }
 
 async function send(h: Harness): Promise<{ hash: string }> {
@@ -120,6 +128,15 @@ describe("EvmChainAdapter post-broadcast failures (non-Tempo)", () => {
     vi.clearAllMocks();
   });
 
+  it("returns the receipt when wait() resolves normally", async () => {
+    const h = createHarness(vi.fn().mockResolvedValue(buildReceipt(TX_HASH)));
+
+    const result = await send(h);
+
+    expect(result.hash).toBe(TX_HASH);
+    expect(h.nonceManager.confirmTransaction).toHaveBeenCalledWith(TX_HASH);
+  });
+
   it("treats a repriced replacement as our own result, under the new hash", async () => {
     // reason "repriced" means same work, same nonce, higher fee. The
     // replacement's receipt IS the outcome of our transaction, so this must not
@@ -131,6 +148,14 @@ describe("EvmChainAdapter post-broadcast failures (non-Tempo)", () => {
     const result = await send(h);
 
     expect(result.hash).toBe(REPLACEMENT_HASH);
+    // The nonce session only ever knew the original hash: that is what
+    // recordTransaction was given, and confirmTransaction has to match it or
+    // the session is never closed. So the two hashes diverge here by design -
+    // the returned receipt is the replacement's, the session's is ours.
+    expect(h.nonceManager.confirmTransaction).toHaveBeenCalledWith(TX_HASH);
+    expect(h.nonceManager.confirmTransaction).not.toHaveBeenCalledWith(
+      REPLACEMENT_HASH
+    );
   });
 
   it("reports a repriced replacement that reverted as a revert, not a success", async () => {
@@ -157,8 +182,46 @@ describe("EvmChainAdapter post-broadcast failures (non-Tempo)", () => {
 
     expect(isOnChainPendingError(error)).toBe(false);
     expect(isOnChainRevertError(error)).toBe(true);
-    expect(broadcastTransactionHash(error)).toBe(REPLACEMENT_HASH);
+    expect(broadcastTransactionHash(error)).toBe(TX_HASH);
     expect((error as Error).message).toContain(reason);
+  });
+
+  it("records our own hash on the error, never the replacement's", async () => {
+    // The replacement is a transaction we did not send and it landed with
+    // status 1. Recording its hash would have the finalizer verify a stranger's
+    // receipt as a success and the reconciler settle this execution
+    // `completed` - a failed write reported as done.
+    const h = createHarness(
+      vi.fn().mockRejectedValue(replacedError("replaced"))
+    );
+
+    const error = await sendAndCatch(h);
+
+    expect(broadcastTransactionHash(error)).toBe(TX_HASH);
+    expect(broadcastTransactionHash(error)).not.toBe(REPLACEMENT_HASH);
+    // Still readable in the record: the message names what took the nonce.
+    expect((error as Error).message).toContain(REPLACEMENT_HASH);
+  });
+
+  it("defaults a replacement error with no `cancelled` flag to pending", async () => {
+    // An unrecognised shape is not conclusive. Same trade as an unrecognised
+    // code: pending costs a row the reconciler resolves, terminal re-creates
+    // #2020.
+    const h = createHarness(
+      vi.fn().mockRejectedValue(
+        Object.assign(new Error("transaction was replaced"), {
+          code: "TRANSACTION_REPLACED",
+          reason: "replaced",
+          hash: TX_HASH,
+          receipt: buildReceipt(REPLACEMENT_HASH),
+        })
+      )
+    );
+
+    const error = await sendAndCatch(h);
+
+    expect(isOnChainPendingError(error)).toBe(true);
+    expect(broadcastTransactionHash(error)).toBe(TX_HASH);
   });
 
   it("keeps a detected revert on the revert path with its hash", async () => {
