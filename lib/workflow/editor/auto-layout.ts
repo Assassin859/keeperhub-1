@@ -1,3 +1,5 @@
+import { sourceHandleRank } from "@/lib/workflow/source-handles";
+
 // Local structural types instead of importing @xyflow/react, so this pure
 // layout helper can also run server-side (e.g. seeding onboarding workflow
 // fixtures). Real @xyflow/react Node/Edge are structural supersets, so editor
@@ -25,24 +27,20 @@ const ROW_STEP = NODE_HEIGHT + V_GAP;
 // under their parents; more passes stop changing the picture.
 const REFINE_PASSES = 2;
 
-/** Order outgoing edges: true/loop first, normal next, false/done last. */
+// An edge with no named handle sits between the upper and the lower handle.
+const UNNAMED_RANK = 0.5;
+
+/**
+ * Order outgoing edges the way their handles sit on the node: the upper handle
+ * (true, done) first, then edges with no named handle, then the lower one
+ * (false, loop). Sorting is stable, so edges sharing a handle keep their order.
+ */
 function sortEdges(edges: Edge[]): Edge[] {
-  const top: Edge[] = [];
-  const normal: Edge[] = [];
-  const bottom: Edge[] = [];
-
-  for (const edge of edges) {
-    const handle = edge.sourceHandle;
-    if (handle === "true" || handle === "loop") {
-      top.push(edge);
-    } else if (handle === "false" || handle === "done") {
-      bottom.push(edge);
-    } else {
-      normal.push(edge);
-    }
-  }
-
-  return [...top, ...normal, ...bottom];
+  return [...edges].sort(
+    (a, b) =>
+      (sourceHandleRank(a.sourceHandle) ?? UNNAMED_RANK) -
+      (sourceHandleRank(b.sourceHandle) ?? UNNAMED_RANK)
+  );
 }
 
 /** Walk the trigger first, then unreferenced nodes, then anything left on a cycle. */
@@ -130,12 +128,15 @@ type Graph = {
   children: Map<string, string[]>;
   parents: Map<string, string[]>;
   inDegree: Map<string, number>;
+  /** Where the edge leaves its source, keyed "source->target". */
+  edgeRank: Map<string, number>;
 };
 
 function buildGraph(realNodes: Node[], forwardEdges: Edge[]): Graph {
   const children = new Map<string, string[]>();
   const parents = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
+  const edgeRank = new Map<string, number>();
 
   for (const node of realNodes) {
     children.set(node.id, []);
@@ -158,10 +159,14 @@ function buildGraph(realNodes: Node[], forwardEdges: Edge[]): Graph {
       children.get(node.id)?.push(edge.target);
       parents.get(edge.target)?.push(node.id);
       inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+      edgeRank.set(
+        `${node.id}->${edge.target}`,
+        sourceHandleRank(edge.sourceHandle) ?? UNNAMED_RANK
+      );
     }
   }
 
-  return { children, parents, inDegree };
+  return { children, parents, inDegree, edgeRank };
 }
 
 function findRoots(realNodes: Node[], inDegree: Map<string, number>): string[] {
@@ -221,9 +226,77 @@ function assignColumns(roots: string[], graph: Graph): Map<string, number> {
 }
 
 /**
- * Vertical order of each column, taken from a depth-first walk of the graph so
- * that a branch and everything below it stay together, true/loop above
- * false/done.
+ * The branch turns taken to reach a node, one entry per step: which root it
+ * came from, then where each edge left its source. Comparing two of these
+ * decides which node belongs higher in a column, so a true branch stays above
+ * a false branch even where the two meet nodes placed from another path.
+ *
+ * A node is reached through the parent that fixed its column, which is the one
+ * furthest right; nodes on a cycle with no path from a root sort last.
+ */
+function branchPaths(
+  realNodes: Node[],
+  roots: string[],
+  graph: Graph,
+  columns: Map<string, number>
+): Map<string, number[]> {
+  const paths = new Map<string, number[]>();
+  for (const [index, root] of roots.entries()) {
+    paths.set(root, [index]);
+  }
+
+  const byColumn: string[][] = [];
+  for (const node of realNodes) {
+    const col = columns.get(node.id) ?? 0;
+    byColumn[col] = byColumn[col] ?? [];
+    byColumn[col].push(node.id);
+  }
+
+  for (const ids of byColumn) {
+    for (const id of ids ?? []) {
+      if (paths.has(id)) {
+        continue;
+      }
+      let from: string | undefined;
+      let fromColumn = Number.NEGATIVE_INFINITY;
+      for (const parent of graph.parents.get(id) ?? []) {
+        const col = columns.get(parent) ?? 0;
+        if (paths.has(parent) && col > fromColumn) {
+          from = parent;
+          fromColumn = col;
+        }
+      }
+      const parentPath = from === undefined ? undefined : paths.get(from);
+      if (parentPath) {
+        paths.set(id, [
+          ...parentPath,
+          graph.edgeRank.get(`${from}->${id}`) ?? UNNAMED_RANK,
+        ]);
+      }
+    }
+  }
+
+  for (const node of realNodes) {
+    if (!paths.has(node.id)) {
+      paths.set(node.id, [Number.POSITIVE_INFINITY]);
+    }
+  }
+
+  return paths;
+}
+
+function comparePaths(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    if (a[i] !== b[i]) {
+      return a[i] - b[i];
+    }
+  }
+  return a.length - b.length;
+}
+
+/**
+ * Vertical order of each column: upper branches first, and within a branch the
+ * order the nodes were declared.
  */
 function orderColumns(
   realNodes: Node[],
@@ -231,39 +304,22 @@ function orderColumns(
   graph: Graph,
   columns: Map<string, number>
 ): string[][] {
+  const paths = branchPaths(realNodes, roots, graph, columns);
   const order: string[][] = [];
-  const seen = new Set<string>();
+  const seq = new Map<string, number>();
 
-  const push = (nodeId: string): void => {
-    const col = columns.get(nodeId) ?? 0;
-    const list = order[col];
-    if (list) {
-      list.push(nodeId);
-    } else {
-      order[col] = [nodeId];
-    }
-  };
-
-  const visit = (nodeId: string): void => {
-    if (seen.has(nodeId)) {
-      return;
-    }
-    seen.add(nodeId);
-    push(nodeId);
-    for (const child of graph.children.get(nodeId) ?? []) {
-      visit(child);
-    }
-  };
-
-  for (const root of roots) {
-    visit(root);
-  }
-  for (const node of realNodes) {
-    visit(node.id);
+  for (const [index, node] of realNodes.entries()) {
+    const col = columns.get(node.id) ?? 0;
+    order[col] = order[col] ?? [];
+    order[col].push(node.id);
+    seq.set(node.id, index);
   }
 
   for (let col = 0; col < order.length; col++) {
-    order[col] ??= [];
+    order[col] = (order[col] ?? []).sort((a, b) => {
+      const byPath = comparePaths(paths.get(a) ?? [], paths.get(b) ?? []);
+      return byPath === 0 ? (seq.get(a) ?? 0) - (seq.get(b) ?? 0) : byPath;
+    });
   }
 
   return order;
@@ -372,7 +428,7 @@ function refineRows(
  *
  * - Columns via longest-path topological sort (handles convergence)
  * - Rows via a layered sweep that keeps every column free of overlap
- * - Edge ordering: true/loop on top, false/done on bottom
+ * - Branches follow their handles: true/done above, false/loop below
  * - Loop bodies lay out to the right of their For Each node; only the edges
  *   that close a cycle are ignored
  */

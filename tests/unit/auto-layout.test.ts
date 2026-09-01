@@ -177,6 +177,39 @@ describe("computeAutoLayout", () => {
     expect(Math.abs(middle - rowOf(positions, "condition"))).toBeLessThan(1);
   });
 
+  it("puts the done branch above the loop body, the way the handles sit", () => {
+    const { nodes, edges } = graph(
+      ["trigger", "each", "body", "collect"],
+      [
+        ["trigger", "each"],
+        ["each", "body", "loop"],
+        ["each", "collect", "done"],
+      ]
+    );
+
+    const positions = computeAutoLayout(nodes, edges);
+
+    expect(rowOf(positions, "collect")).toBeLessThan(rowOf(positions, "body"));
+    const middle = (rowOf(positions, "collect") + rowOf(positions, "body")) / 2;
+    expect(Math.abs(middle - rowOf(positions, "each"))).toBeLessThan(1);
+  });
+
+  it("keeps a lone branch on its parent's row whichever handle it leaves from", () => {
+    for (const handle of ["true", "false", "loop", "done"]) {
+      const { nodes, edges } = graph(
+        ["trigger", "branch", "only"],
+        [
+          ["trigger", "branch"],
+          ["branch", "only", handle],
+        ]
+      );
+
+      const positions = computeAutoLayout(nodes, edges);
+
+      expect(rowOf(positions, "only")).toBe(rowOf(positions, "branch"));
+    }
+  });
+
   it("lays out a loop whose body feeds back into the loop node", () => {
     const { nodes, edges } = graph(
       ["trigger", "loop", "body", "collect"],
