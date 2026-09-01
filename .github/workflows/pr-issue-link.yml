@@ -23,17 +23,25 @@ name: PR Issue Link
 # is reported as CONTRIBUTOR, which is why the old author-only skip failed
 # team pull requests.
 #
+# When the check fails it leaves one comment on the pull request saying what
+# it found and what to do, and edits that same comment on every later run,
+# down to a one-line resolved note once the check passes. The comment never
+# echoes the title, description or branch name back: they are contributor-
+# controlled text and, rendered as Markdown, could carry mentions or links.
+# The job log keeps them.
+#
 # The job runs on synchronize as well as open and edit so that a result
 # exists for every head commit. A required status check is evaluated per
 # commit; without synchronize it would sit at "Expected" after each push
 # until someone edited the title. The job never checks out code, so
 # rerunning it is free.
 #
-# SAFETY: pull_request_target runs with the base repository's token. This job
-# therefore never checks out, builds, or executes pull request code. It reads
-# the title, body, branch name and labels from the event payload, and the
-# referenced issue through the API, and nothing else. Do not add a checkout
-# step to this file.
+# SAFETY: pull_request_target runs with the base repository's token, which
+# here can write to pull requests so the job can leave its comment. The job
+# therefore never checks out, builds, or executes pull request code. It
+# reads the title, body, branch name and labels from the event payload and
+# the referenced issue through the API, and writes nothing but its own
+# comment. Do not add a checkout step to this file.
 
 on:
   pull_request_target:
@@ -45,7 +53,7 @@ on:
 permissions:
   contents: read
   issues: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   check-issue-link:
@@ -62,6 +70,7 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           EXEMPT_LABEL: no-issue-required
@@ -82,55 +91,77 @@ jobs:
             OWNER|MEMBER|COLLABORATOR) is_team=true ;;
           esac
 
+          # The one comment this check owns on the pull request, found by its
+          # marker. Edited in place if present; created only when asked to.
+          # A comment failure must never change the check result, so every
+          # API write degrades to a warning.
+          marker='<!-- check-issue-link -->'
+          comment() {
+            local body id
+            body=$(printf '%s\n%s\n' "$marker" "$1")
+            id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | startswith("<!-- check-issue-link -->")) | .id' \
+              2>/dev/null | head -n1 || true)
+            if [ -n "$id" ]; then
+              jq -n --arg body "$body" '{body: $body}' \
+                | gh api -X PATCH "repos/$REPO/issues/comments/$id" --input - >/dev/null \
+                || echo "::warning::Could not update the check-issue-link comment."
+            elif [ "${2:-}" = "create" ]; then
+              jq -n --arg body "$body" '{body: $body}' \
+                | gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" --input - >/dev/null \
+                || echo "::warning::Could not create the check-issue-link comment."
+            fi
+          }
+
+          pass() {
+            echo "$1"
+            comment "Resolved. $1"
+            exit 0
+          }
+
           fail() {
+            local headline="$1" reasons="${2:-}" md
+            md="### This pull request needs an issue or ticket reference"$'\n\n'
+            md+="$headline"$'\n\n'
+            if [ -n "$reasons" ]; then
+              md+="$(printf '%s' "$reasons" | sed 's/^ */- /')"$'\n\n'
+            fi
+            if [ "$is_team" = true ]; then
+              md+="**Team pull requests** carry the Linear ticket in the branch name, "
+              md+="\`feat/$LINEAR_TEAM_KEY-1234-short-description\`. Rename the branch and "
+              md+="GitHub moves this pull request with it. Referencing an accepted GitHub "
+              md+="issue as below also works."$'\n\n'
+            fi
+            md+="**Outside contributions** start with an issue. Open one, wait for a "
+            md+="maintainer to apply the \`$ACCEPTED_LABEL\` label, then put \`#N\` in the "
+            md+="title, for example \`fix: #1978 return 403 with a body on public /api/chains\`. "
+            md+="No issue is needed for typos, broken links, formatting, or docs corrected to "
+            md+="match existing behaviour; retitle with one of: \`$EXEMPT_TYPES\`. Full policy: "
+            md+="[ISSUES.md](https://github.com/$REPO/blob/staging/ISSUES.md)."$'\n\n'
+            md+="This check reruns on every push and edit, but not when the issue changes; "
+            md+="re-run the job or edit the title to retrigger it."
+
             echo "----------------------------------------------"
-            echo "  ERROR: $1"
+            echo "  ERROR: $headline"
             echo "----------------------------------------------"
             echo ""
-            if [ -n "${2:-}" ]; then
-              printf '%s\n' "$2"
-            fi
             echo "  Got title:  $PR_TITLE"
             echo "  Got branch: $HEAD_REF"
             echo ""
-            if [ "$is_team" = true ]; then
-              echo "  Team pull requests carry their Linear ticket in the branch name:"
-              echo ""
-              echo "    feat/$LINEAR_TEAM_KEY-1234-short-description"
-              echo ""
-              echo "  Rename the branch (GitHub moves the open pull request with it),"
-              echo "  or reference an accepted GitHub issue as below."
-              echo ""
-            fi
-            echo "  KeeperHub takes issues before pull requests. Open an issue,"
-            echo "  wait for a maintainer to apply the '$ACCEPTED_LABEL' label,"
-            echo "  then reference it in this PR's title:"
-            echo ""
-            echo "    fix: #1978 return 403 with a body on public /api/chains"
-            echo "    feat(cli): #2014 add --require-verified to execute status"
-            echo ""
-            echo "  No issue needed for typos, broken links, formatting, or docs"
-            echo "  corrected to match existing behaviour. Retitle as one of:"
-            echo "    $EXEMPT_TYPES"
-            echo ""
-            echo "  Full policy: https://github.com/$REPO/blob/staging/ISSUES.md"
-            echo ""
-            echo "  Already labelled '$ACCEPTED_LABEL'? This check reruns on every"
-            echo "  push and edit, but not when the issue changes - re-run the job,"
-            echo "  or edit the PR title to retrigger it."
+            printf '%s\n' "$md"
+            comment "$md" create
+            echo "::error title=check-issue-link::$headline"
             exit 1
           }
 
           if printf '%s' "$PR_LABELS" | grep -qF "\"$EXEMPT_LABEL\""; then
-            echo "Exempt: pull request carries the '$EXEMPT_LABEL' label."
-            exit 0
+            pass "Exempt: pull request carries the '$EXEMPT_LABEL' label."
           fi
 
           pr_type=$(printf '%s' "$PR_TITLE" | sed -nE 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/p' | tr '[:upper:]' '[:lower:]')
           for exempt in $EXEMPT_TYPES; do
             if [ "$pr_type" = "$exempt" ]; then
-              echo "Exempt: '$pr_type' changes do not require a reference."
-              exit 0
+              pass "Exempt: '$pr_type' changes do not require a reference."
             fi
           done
 
@@ -141,8 +172,7 @@ jobs:
             ticket=$(printf '%s\n%s\n%s\n' "$PR_TITLE" "$PR_BODY" "$HEAD_REF" \
               | grep -oiE "\b$LINEAR_TEAM_KEY-[0-9]+\b" | head -n1 | tr '[:lower:]' '[:upper:]' || true)
             if [ -n "$ticket" ]; then
-              echo "References Linear ticket $ticket."
-              exit 0
+              pass "References Linear ticket $ticket."
             fi
           fi
 
@@ -159,7 +189,7 @@ jobs:
           )
 
           if [ -z "$candidates" ]; then
-            fail "No issue or ticket reference in the title, description, or branch name."
+            fail "No issue or ticket reference was found in the title, description, or branch name."
           fi
 
           reasons=""
@@ -179,8 +209,7 @@ jobs:
               reasons+="  #$n is not marked '$ACCEPTED_LABEL' (state: $state; labels: ${labels:-none})."$'\n'
               continue
             fi
-            echo "References accepted issue #$n."
-            exit 0
+            pass "References accepted issue #$n."
           done
 
-          fail "No referenced issue passes." "$reasons"
+          fail "None of the referenced issues can be merged against:" "$reasons"
