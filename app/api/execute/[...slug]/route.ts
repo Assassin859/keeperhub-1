@@ -309,15 +309,16 @@ async function executeProtocolAction(
 
   // Match contract-call / transfer: expose executionId so callers can poll
   // /api/execute/{executionId}/status and idempotency can bind resourceId.
-  // Include transactionHash whenever one exists (even on failure) so a
-  // broadcast that reverted or could not be read back is still look-up-able.
+  // Include transactionHash and transactionLink whenever the step returned
+  // them (even on failure) so a broadcast that reverted or could not be read
+  // back stays look-up-able in the explorer.
   const responseBody: ExecuteResponse = {
     executionId,
     status: outcome.status,
     ...(result.transactionHash
       ? { transactionHash: result.transactionHash }
       : {}),
-    ...(result.success && result.transactionLink
+    ...(result.transactionLink
       ? { transactionLink: result.transactionLink }
       : {}),
     ...(outcome.error ? { error: outcome.error } : {}),

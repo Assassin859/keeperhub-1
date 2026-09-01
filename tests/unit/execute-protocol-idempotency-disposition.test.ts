@@ -208,6 +208,7 @@ describe("execute protocol idempotency disposition", () => {
       success: false,
       error: "reverted",
       transactionHash: "0xfailed",
+      transactionLink: "https://scan/0xfailed",
     });
 
     const response = await postSwap();
@@ -216,6 +217,7 @@ describe("execute protocol idempotency disposition", () => {
       status: string;
       error?: string;
       transactionHash?: string;
+      transactionLink?: string;
     };
 
     expect(response.status).toBe(202);
@@ -225,6 +227,7 @@ describe("execute protocol idempotency disposition", () => {
         status: "failed",
         error: "reverted",
         transactionHash: "0xfailed",
+        transactionLink: "https://scan/0xfailed",
       })
     );
     expect(lastDisposition()).toBe("failed");
