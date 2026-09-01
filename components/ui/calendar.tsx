@@ -44,28 +44,21 @@ export function Calendar({
         weekday:
           "w-8 rounded-md font-normal text-[0.7rem] text-muted-foreground",
         week: "mt-1 flex w-full",
-        day: cn(
-          "relative p-0 text-center text-sm",
-          // The middle of a range paints the whole cell, so the days have to
-          // sit flush; only the ends keep the control radius.
-          "[&:has([aria-selected])]:bg-accent",
-          "[&:has([aria-selected].day-range-end)]:rounded-r-md",
-          "[&:has([aria-selected].day-range-start)]:rounded-l-md",
-          "first:[&:has([aria-selected])]:rounded-l-md",
-          "last:[&:has([aria-selected])]:rounded-r-md"
-        ),
-        day_button: cn(
-          buttonVariants({ variant: "ghost" }),
-          "size-8 p-0 font-normal aria-selected:opacity-100"
-        ),
-        range_start: "day-range-start",
-        range_end: "day-range-end",
+        // v10 puts these modifier classes on the day cell, not on its button.
+        // So the cell carries the band and the button carries the pill: the
+        // ends round because the button rounds, and the middle stays flat so a
+        // run of days reads as one continuous band rather than separate chips.
+        day: "relative p-0 text-center text-sm",
+        day_button:
+          "size-8 rounded-md p-0 font-normal transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected:
-          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
+          "[&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground",
+        range_start: "rounded-l-md",
+        range_end: "rounded-r-md",
         range_middle:
-          "aria-selected:bg-accent aria-selected:text-accent-foreground",
-        today: "bg-accent text-accent-foreground",
-        outside: "text-muted-foreground/60 aria-selected:text-muted-foreground",
+          "bg-accent [&>button]:bg-transparent [&>button]:text-accent-foreground [&>button]:hover:bg-transparent",
+        today: "[&>button]:ring-1 [&>button]:ring-primary",
+        outside: "text-muted-foreground/60",
         disabled: "text-muted-foreground opacity-50",
         hidden: "invisible",
         ...classNames,
