@@ -86,13 +86,16 @@ export function DateRangeFilter(): ReactNode {
 
   const presets = useMemo(() => buildPresets(new Date()), []);
 
+  // Applying deliberately leaves the popover open. Picking a window is often
+  // several attempts at the same question, and closing on the second click cost
+  // a reopen every time. It closes on a click outside or on Escape, like any
+  // other popover.
   const apply = useCallback(
     (from: Date, to: Date): void => {
       setCustomStart(from.toISOString());
       setCustomEnd(to.toISOString());
       setRange("custom");
       setDraft(undefined);
-      setOpen(false);
     },
     [setCustomStart, setCustomEnd, setRange]
   );
@@ -153,7 +156,6 @@ export function DateRangeFilter(): ReactNode {
     setCustomEnd(null);
     setRange(DEFAULT_RANGE);
     setDraft(undefined);
-    setOpen(false);
   }, [setCustomStart, setCustomEnd, setRange]);
 
   const onOpenChange = useCallback((next: boolean): void => {
