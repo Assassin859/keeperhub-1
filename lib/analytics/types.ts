@@ -141,8 +141,16 @@ export type NetworkBreakdown = {
  * statuses, two networks). Values inside a dimension OR together; the
  * dimensions AND together.
  */
+/**
+ * Whether a run spent gas. "paid" is a run that put native currency on chain,
+ * whether the org's wallet or KeeperHub's gas credit covered it; "free" is a
+ * run that only read, or never reached a broadcast.
+ */
+export type GasSpend = "paid" | "free";
+
 export type RunQueryFilters = {
   statuses?: NormalizedStatus[];
+  gas?: GasSpend[];
   sources?: RunSource[];
   networks?: string[];
   /** Inclusive lower bound on run duration, in milliseconds. */

@@ -1,4 +1,9 @@
-import type { NormalizedStatus, RunQueryFilters, RunSource } from "./types";
+import type {
+  GasSpend,
+  NormalizedStatus,
+  RunQueryFilters,
+  RunSource,
+} from "./types";
 
 const VALID_STATUSES = new Set<NormalizedStatus>([
   "pending",
@@ -12,6 +17,8 @@ const VALID_STATUSES = new Set<NormalizedStatus>([
 ]);
 
 const VALID_SOURCES = new Set<RunSource>(["workflow", "direct"]);
+
+const VALID_GAS = new Set<GasSpend>(["paid", "free"]);
 
 // A search long enough to be a run id is as long as a search ever needs to be,
 // and the cap keeps an ILIKE pattern from being handed an arbitrary payload.
@@ -42,12 +49,16 @@ export function parseRunFilters(params: URLSearchParams): RunQueryFilters {
       VALID_SOURCES.has(value as RunSource)
     );
   const networks = params.getAll("network").filter((value) => value.length > 0);
+  const gas = params
+    .getAll("gas")
+    .filter((value): value is GasSpend => VALID_GAS.has(value as GasSpend));
   const search = params.get("search")?.trim().slice(0, MAX_SEARCH_LENGTH);
 
   return {
     ...(statuses.length > 0 ? { statuses: [...new Set(statuses)] } : {}),
     ...(sources.length > 0 ? { sources: [...new Set(sources)] } : {}),
     ...(networks.length > 0 ? { networks: [...new Set(networks)] } : {}),
+    ...(gas.length > 0 ? { gas: [...new Set(gas)] } : {}),
     ...(parseNonNegativeInt(params.get("durationMin")) === undefined
       ? {}
       : { durationMinMs: parseNonNegativeInt(params.get("durationMin")) }),

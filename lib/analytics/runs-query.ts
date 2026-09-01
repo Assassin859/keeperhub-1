@@ -1,11 +1,12 @@
 import { type DurationPresetId, durationPreset } from "./duration-presets";
-import type { NormalizedStatus, RunSource, TimeRange } from "./types";
+import type { GasSpend, NormalizedStatus, RunSource, TimeRange } from "./types";
 
 export type RunsQueryInput = {
   range: TimeRange;
   statuses?: NormalizedStatus[];
   sources?: RunSource[];
   networks?: string[];
+  gas?: GasSpend[];
   duration?: DurationPresetId | null;
   search?: string;
   projectId?: string | null;
@@ -33,6 +34,9 @@ export function buildRunsQuery(input: RunsQueryInput): string {
   }
   for (const network of input.networks ?? []) {
     params.append("network", network);
+  }
+  for (const value of input.gas ?? []) {
+    params.append("gas", value);
   }
 
   const preset = durationPreset(input.duration ?? null);

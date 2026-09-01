@@ -2,6 +2,7 @@ import { atom } from "jotai";
 import type { DurationPresetId } from "@/lib/analytics/duration-presets";
 import type {
   AnalyticsSummary,
+  GasSpend,
   NetworkBreakdown,
   NormalizedStatus,
   RunSource,
@@ -29,6 +30,7 @@ export const analyticsErrorAtom = atom<string | null>(null);
 export const analyticsStatusFiltersAtom = atom<NormalizedStatus[]>([]);
 export const analyticsSourceFiltersAtom = atom<RunSource[]>([]);
 export const analyticsNetworkFiltersAtom = atom<string[]>([]);
+export const analyticsGasFiltersAtom = atom<GasSpend[]>([]);
 
 // Duration is the one dimension where overlapping choices would be confusing,
 // so it stays a single bucket.

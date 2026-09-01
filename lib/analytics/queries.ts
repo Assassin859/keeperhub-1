@@ -45,6 +45,7 @@ import {
 } from "./time-range";
 import type {
   AnalyticsSummary,
+  GasSpend,
   NetworkBreakdown,
   NormalizedStatus,
   RunQueryFilters,
@@ -226,6 +227,49 @@ function directSearchCondition(term: string): SQL {
 const directDurationMs = sql`(EXTRACT(EPOCH FROM (${directExecutions.completedAt} - ${directExecutions.createdAt})) * 1000)`;
 
 /**
+ * Did this run spend gas? Reads the same two sources the Gas column renders
+ * from: the per-step rollup (which covers every transaction the run made) and
+ * the sponsorship ledger (which covers a leg KeeperHub paid for). A run counts
+ * as paid if either says so, so a sponsored run is not filed as free.
+ */
+function workflowPaidCondition(): SQL {
+  return sql`(
+    EXISTS (
+      SELECT 1
+        FROM ${workflowExecutionLogs}
+       WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+         AND COALESCE(
+               ${workflowExecutionLogs.gasUsedWei},
+               CAST(NULLIF(${logOutputField("gasUsed")}, '') AS NUMERIC)
+             ) > 0
+    )
+    OR EXISTS (
+      SELECT 1
+        FROM ${gasCreditUsage}
+       WHERE ${gasCreditUsage.executionId} = ${workflowExecutions.id}
+         AND CAST(${gasCreditUsage.gasCostWei} AS NUMERIC) > 0
+    )
+  )`;
+}
+
+/**
+ * Both values selected is the same as neither, so the predicate is only built
+ * when exactly one side is asked for.
+ */
+function gasCondition(gas: GasSpend[], paid: SQL): SQL | undefined {
+  const wanted = new Set(gas);
+  if (wanted.size !== 1) {
+    return undefined;
+  }
+  return wanted.has("paid") ? paid : sql`NOT ${paid}`;
+}
+
+const directPaidCondition = sql`(
+  ${directExecutions.gasUsedWei} IS NOT NULL
+  AND CAST(NULLIF(${directExecutions.gasUsedWei}, '') AS NUMERIC) > 0
+)`;
+
+/**
  * Every workflow-side predicate for a set of filters. `skipStatuses` lifts the
  * status dimension for the facet counts, which have to count what each status
  * would add rather than what the current status selection already shows.
@@ -257,6 +301,10 @@ function workflowFilterConditions(
   if (search) {
     conditions.push(workflowSearchCondition(search));
   }
+  const gas = gasCondition(filters.gas ?? [], workflowPaidCondition());
+  if (gas) {
+    conditions.push(gas);
+  }
   return conditions;
 }
 
@@ -287,6 +335,10 @@ function directFilterConditions(
   const search = filters.search?.trim();
   if (search) {
     conditions.push(directSearchCondition(search));
+  }
+  const gas = gasCondition(filters.gas ?? [], directPaidCondition);
+  if (gas) {
+    conditions.push(gas);
   }
   return conditions;
 }
@@ -1496,6 +1548,7 @@ function hasFilters(filters: RunQueryFilters): boolean {
       (filters.networks?.length ?? 0) > 0 ||
       filters.durationMinMs !== undefined ||
       filters.durationMaxMs !== undefined ||
+      (filters.gas?.length ?? 0) > 0 ||
       filters.search?.trim()
   );
 }

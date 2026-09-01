@@ -16,6 +16,7 @@ import type {
 import {
   analyticsDurationFilterAtom,
   analyticsErrorAtom,
+  analyticsGasFiltersAtom,
   analyticsLastUpdatedAtom,
   analyticsLoadingAtom,
   analyticsNetworkFiltersAtom,
@@ -95,6 +96,7 @@ export function useAnalytics(): UseAnalyticsReturn {
   const statusFilters = useAtomValue(analyticsStatusFiltersAtom);
   const sourceFilters = useAtomValue(analyticsSourceFiltersAtom);
   const networkFilters = useAtomValue(analyticsNetworkFiltersAtom);
+  const gasFilters = useAtomValue(analyticsGasFiltersAtom);
   const durationFilter = useAtomValue(analyticsDurationFilterAtom);
   const search = useAtomValue(analyticsSearchAtom);
   const projectId = useAtomValue(analyticsProjectIdAtom);
@@ -130,6 +132,7 @@ export function useAnalytics(): UseAnalyticsReturn {
       statuses: statusFilters,
       sources: sourceFilters,
       networks: networkFilters,
+      gas: gasFilters,
       duration: durationFilter,
       search,
       projectId,
@@ -252,6 +255,7 @@ export function useAnalytics(): UseAnalyticsReturn {
     statusFilters,
     sourceFilters,
     networkFilters,
+    gasFilters,
     durationFilter,
     search,
     projectId,

@@ -17,6 +17,8 @@ type FilterPopoverProps = {
   /** Number of values held in this dimension; 0 renders no badge. */
   selectedCount: number;
   onClear: () => void;
+  /** Omitted by a single-choice dimension, which has nothing to select all of. */
+  onSelectAll?: () => void;
   children: ReactNode;
 };
 
@@ -25,6 +27,7 @@ export function FilterPopover({
   label,
   selectedCount,
   onClear,
+  onSelectAll,
   children,
 }: FilterPopoverProps): ReactNode {
   return (
@@ -53,15 +56,27 @@ export function FilterPopover({
           <span className="text-[11px] text-muted-foreground">
             {selectedCount > 0 ? `${selectedCount} selected` : "Showing all"}
           </span>
-          <Button
-            className="h-6 px-2 text-xs"
-            disabled={selectedCount === 0}
-            onClick={onClear}
-            size="sm"
-            variant="ghost"
-          >
-            Clear
-          </Button>
+          <div className="flex items-center gap-1">
+            {onSelectAll ? (
+              <Button
+                className="h-6 px-2 text-xs"
+                onClick={onSelectAll}
+                size="sm"
+                variant="ghost"
+              >
+                Select all
+              </Button>
+            ) : null}
+            <Button
+              className="h-6 px-2 text-xs"
+              disabled={selectedCount === 0}
+              onClick={onClear}
+              size="sm"
+              variant="ghost"
+            >
+              Clear
+            </Button>
+          </div>
         </div>
       </PopoverContent>
     </Popover>
@@ -70,6 +85,8 @@ export function FilterPopover({
 
 type FilterCheckboxProps = {
   label: string;
+  /** Tailwind background class for the status swatch, when the row has one. */
+  dot?: string;
   count?: number;
   checked: boolean;
   /** Some but not all of a group's members are selected. */
@@ -80,6 +97,7 @@ type FilterCheckboxProps = {
 
 export function FilterCheckbox({
   label,
+  dot,
   count,
   checked,
   indeterminate = false,
@@ -100,6 +118,9 @@ export function FilterCheckbox({
         className="pointer-events-none"
         tabIndex={-1}
       />
+      {dot ? (
+        <span className={cn("size-2 shrink-0 rounded-full", dot)} />
+      ) : null}
       <span className={cn("flex-1", !indented && "font-medium")}>{label}</span>
       {count !== undefined && (
         <span className="text-[11px] text-muted-foreground tabular-nums">

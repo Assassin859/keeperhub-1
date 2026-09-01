@@ -10,9 +10,15 @@ import {
   DURATION_PRESETS,
   type DurationPresetId,
 } from "@/lib/analytics/duration-presets";
-import type { NormalizedStatus, RunSource } from "@/lib/analytics/types";
+import { STATUS_DISPLAY } from "@/lib/analytics/status-display";
+import type {
+  GasSpend,
+  NormalizedStatus,
+  RunSource,
+} from "@/lib/analytics/types";
 import {
   analyticsDurationFilterAtom,
+  analyticsGasFiltersAtom,
   analyticsNetworkFiltersAtom,
   analyticsNetworksAtom,
   analyticsSearchAtom,
@@ -20,6 +26,7 @@ import {
   analyticsStatusFacetsAtom,
   analyticsStatusFiltersAtom,
 } from "@/lib/atoms/analytics";
+import { sortChainsByName } from "@/lib/chains/sort-chains";
 import {
   ChainDisplayProvider,
   useChainDisplay,
@@ -110,10 +117,19 @@ function StatusFilter(): ReactNode {
 
   const clear = useCallback((): void => setStatuses([]), [setStatuses]);
 
+  const selectAll = useCallback((): void => {
+    setStatuses(
+      STATUS_GROUPS.flatMap((group) =>
+        group.members.map((member) => member.value)
+      )
+    );
+  }, [setStatuses]);
+
   return (
     <FilterPopover
       label="Status"
       onClear={clear}
+      onSelectAll={selectAll}
       selectedCount={statuses.length}
     >
       {STATUS_GROUPS.map((group) => {
@@ -128,6 +144,11 @@ function StatusFilter(): ReactNode {
             <FilterCheckbox
               checked={selected.length === members.length}
               count={groupCount}
+              dot={
+                members.length === 1
+                  ? STATUS_DISPLAY[members[0]].dot
+                  : undefined
+              }
               indeterminate={
                 selected.length > 0 && selected.length < members.length
               }
@@ -139,6 +160,7 @@ function StatusFilter(): ReactNode {
                 <FilterCheckbox
                   checked={statuses.includes(member.value)}
                   count={facets[member.value] ?? 0}
+                  dot={STATUS_DISPLAY[member.value].dot}
                   indented
                   key={member.value}
                   label={member.label}
@@ -155,11 +177,16 @@ function StatusFilter(): ReactNode {
 function SourceFilter(): ReactNode {
   const [sources, setSources] = useAtom(analyticsSourceFiltersAtom);
   const clear = useCallback((): void => setSources([]), [setSources]);
+  const selectAll = useCallback(
+    (): void => setSources(SOURCE_OPTIONS.map((option) => option.value)),
+    [setSources]
+  );
 
   return (
     <FilterPopover
       label="Source"
       onClear={clear}
+      onSelectAll={selectAll}
       selectedCount={sources.length}
     >
       {SOURCE_OPTIONS.map((option) => (
@@ -182,24 +209,33 @@ function NetworkFilter(): ReactNode {
   const chains = useChainDisplay();
   const clear = useCallback((): void => setNetworks([]), [setNetworks]);
 
-  // Chains the window actually saw, busiest first. A chain with no runs in the
-  // window is not an option, because selecting it could only return nothing.
+  // Chains the window actually saw. A chain with no runs in the window is not
+  // an option, because selecting it could only return nothing. Ordered through
+  // the same comparator the chain picker on a web3 node uses, so the two lists
+  // read the same way.
   const options = useMemo(
     () =>
-      [...breakdown]
-        .sort((a, b) => b.executionCount - a.executionCount)
-        .map((entry) => ({
+      sortChainsByName(
+        breakdown.map((entry) => ({
           value: entry.network,
           label: chains.name(entry.network),
           count: entry.executionCount,
         })),
+        (option) => option.label
+      ),
     [breakdown, chains]
+  );
+
+  const selectAll = useCallback(
+    (): void => setNetworks(options.map((option) => option.value)),
+    [setNetworks, options]
   );
 
   return (
     <FilterPopover
       label="Network"
       onClear={clear}
+      onSelectAll={options.length > 0 ? selectAll : undefined}
       selectedCount={networks.length}
     >
       {options.length === 0 ? (
@@ -223,6 +259,42 @@ function NetworkFilter(): ReactNode {
   );
 }
 
+const GAS_OPTIONS: Array<{ value: GasSpend; label: string }> = [
+  { value: "paid", label: "Used gas" },
+  { value: "free", label: "No gas" },
+];
+
+/**
+ * Whether a run spent anything on chain. Sponsored runs count as paid: the org
+ * drew on gas credit for them, so they are not free.
+ */
+function GasFilter(): ReactNode {
+  const [gas, setGas] = useAtom(analyticsGasFiltersAtom);
+  const clear = useCallback((): void => setGas([]), [setGas]);
+  const selectAll = useCallback(
+    (): void => setGas(GAS_OPTIONS.map((option) => option.value)),
+    [setGas]
+  );
+
+  return (
+    <FilterPopover
+      label="Gas"
+      onClear={clear}
+      onSelectAll={selectAll}
+      selectedCount={gas.length}
+    >
+      {GAS_OPTIONS.map((option) => (
+        <FilterCheckbox
+          checked={gas.includes(option.value)}
+          key={option.value}
+          label={option.label}
+          onToggle={() => setGas((current) => toggle(current, option.value))}
+        />
+      ))}
+    </FilterPopover>
+  );
+}
+
 function DurationFilter(): ReactNode {
   const [duration, setDuration] = useAtom(analyticsDurationFilterAtom);
   const clear = useCallback((): void => setDuration(null), [setDuration]);
@@ -240,6 +312,7 @@ function DurationFilter(): ReactNode {
       onClear={clear}
       selectedCount={duration ? 1 : 0}
     >
+      <FilterRadio checked={duration === null} label="Any" onSelect={clear} />
       {DURATION_PRESETS.map((preset) => (
         <FilterRadio
           checked={duration === preset.id}
@@ -301,6 +374,7 @@ function ClearAllButton(): ReactNode {
   const [sources, setSources] = useAtom(analyticsSourceFiltersAtom);
   const [networks, setNetworks] = useAtom(analyticsNetworkFiltersAtom);
   const [duration, setDuration] = useAtom(analyticsDurationFilterAtom);
+  const [gas, setGas] = useAtom(analyticsGasFiltersAtom);
   const [search, setSearch] = useAtom(analyticsSearchAtom);
 
   const clearAll = useCallback((): void => {
@@ -308,14 +382,16 @@ function ClearAllButton(): ReactNode {
     setSources([]);
     setNetworks([]);
     setDuration(null);
+    setGas([]);
     setSearch("");
-  }, [setStatuses, setSources, setNetworks, setDuration, setSearch]);
+  }, [setStatuses, setSources, setNetworks, setDuration, setGas, setSearch]);
 
   const active =
     statuses.length > 0 ||
     sources.length > 0 ||
     networks.length > 0 ||
     duration !== null ||
+    gas.length > 0 ||
     search.trim().length > 0;
 
   if (!active) {
@@ -343,6 +419,7 @@ export function RunsFilters(): ReactNode {
         <StatusFilter />
         <NetworkFilter />
         <DurationFilter />
+        <GasFilter />
         <SourceFilter />
         <ClearAllButton />
       </div>

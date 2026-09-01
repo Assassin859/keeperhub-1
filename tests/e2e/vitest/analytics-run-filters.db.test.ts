@@ -187,6 +187,7 @@ describe.skipIf(SKIP)("analytics run filters", () => {
       nodeType: string;
       status: "success";
       network: string;
+      gasUsedWei: string | null;
       startedAt: Date;
     }> = [];
     for (const seed of SEEDS) {
@@ -201,6 +202,7 @@ describe.skipIf(SKIP)("analytics run filters", () => {
         nodeType: "web3/transfer",
         status: "success" as const,
         network: seed.network,
+        gasUsedWei: seed.status === "success" ? "21000" : null,
         startedAt: now,
       });
     }
@@ -273,6 +275,19 @@ describe.skipIf(SKIP)("analytics run filters", () => {
     expect(byName).not.toContain(`${PREFIX}ok`);
 
     expect(await idsFor({ search: `${PREFIX}ok` })).toEqual([`${PREFIX}ok`]);
+  });
+
+  it("separates runs that spent gas from those that did not", async () => {
+    // Only the seeded success rows carry gas on their step log.
+    const paid = await idsFor({ gas: ["paid"] });
+    expect(paid).toEqual([`${PREFIX}ok`]);
+
+    const free = await idsFor({ gas: ["free"] });
+    expect(free).not.toContain(`${PREFIX}ok`);
+    expect(free).toContain(`${PREFIX}user_err`);
+
+    // Both values selected is the same as neither: no narrowing at all.
+    expect(await idsFor({ gas: ["paid", "free"] })).toEqual(await idsFor({}));
   });
 
   it("reports the total under the filters, not the unfiltered count", async () => {

@@ -32,6 +32,12 @@ describe("parseRunFilters", () => {
     expect(parse("durationMin=30000").durationMinMs).toBe(30_000);
   });
 
+  it("reads the gas dimension", () => {
+    expect(parse("gas=paid").gas).toEqual(["paid"]);
+    expect(parse("gas=paid&gas=free").gas).toEqual(["paid", "free"]);
+    expect(parse("gas=maybe").gas).toBeUndefined();
+  });
+
   it("trims search and caps its length", () => {
     expect(parse("search=%20%20nightly%20%20").search).toBe("nightly");
     expect(parse(`search=${"a".repeat(500)}`).search).toHaveLength(128);
@@ -46,10 +52,12 @@ describe("buildRunsQuery", () => {
       sources: ["workflow"],
       networks: ["8453", "42161"],
       duration: "over30s",
+      gas: ["paid"],
       search: "nightly",
     });
 
     const parsed = parse(query);
+    expect(parsed.gas).toEqual(["paid"]);
     expect(parsed.statuses).toEqual(["error", "system_error"]);
     expect(parsed.sources).toEqual(["workflow"]);
     expect(parsed.networks).toEqual(["8453", "42161"]);
