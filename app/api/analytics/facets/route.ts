@@ -1,13 +1,18 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { parseRunFilters } from "@/lib/analytics/parse-run-filters";
-import { getUnifiedRuns } from "@/lib/analytics/queries";
+import { getStatusFacets } from "@/lib/analytics/queries";
 import { parseTimeRange } from "@/lib/analytics/time-range";
 import { apiError } from "@/lib/api-error";
 import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 
+/**
+ * Run counts per status for the runs filter. Takes the same query string the
+ * runs listing takes, so the counts sit under the filters the reader already
+ * has applied.
+ */
 export async function GET(req: NextRequest): Promise<Response> {
   const authCtx = await resolveOrganizationId(req);
   if ("error" in authCtx) {
@@ -25,31 +30,18 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   try {
     const params = req.nextUrl.searchParams;
-    const range = parseTimeRange(params.get("range"));
-    const customStart = params.get("customStart") ?? undefined;
-    const customEnd = params.get("customEnd") ?? undefined;
-    const cursor = params.get("cursor") ?? undefined;
-
-    const pageParam = params.get("page");
-    const page = pageParam ? Math.max(1, Number(pageParam)) : undefined;
-
-    const limitParam = params.get("limit");
-    const limit = limitParam ? Number(limitParam) : undefined;
-
-    const projectId = params.get("projectId") ?? undefined;
-
-    const result = await getUnifiedRuns(authCtx.organizationId, range, {
-      cursor,
-      page,
-      limit,
-      customStart,
-      customEnd,
-      projectId,
-      ...parseRunFilters(params),
-    });
-
-    return NextResponse.json(result);
+    const statusCounts = await getStatusFacets(
+      authCtx.organizationId,
+      parseTimeRange(params.get("range")),
+      {
+        customStart: params.get("customStart") ?? undefined,
+        customEnd: params.get("customEnd") ?? undefined,
+        projectId: params.get("projectId") ?? undefined,
+        ...parseRunFilters(params),
+      }
+    );
+    return NextResponse.json({ statusCounts });
   } catch (error: unknown) {
-    return apiError(error, "Failed to fetch analytics runs");
+    return apiError(error, "Failed to fetch analytics facets");
   }
 }

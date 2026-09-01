@@ -2,6 +2,7 @@
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useRef } from "react";
+import { buildRunsQuery } from "@/lib/analytics/runs-query";
 import {
   normalizeRunsResponse,
   type WireRunsResponse,
@@ -9,18 +10,23 @@ import {
 import type {
   AnalyticsSummary,
   NetworkBreakdown,
+  StatusFacets,
   TimeSeriesBucket,
 } from "@/lib/analytics/types";
 import {
+  analyticsDurationFilterAtom,
   analyticsErrorAtom,
   analyticsLastUpdatedAtom,
   analyticsLoadingAtom,
+  analyticsNetworkFiltersAtom,
   analyticsNetworksAtom,
   analyticsProjectIdAtom,
   analyticsRangeAtom,
   analyticsRunsAtom,
-  analyticsSourceFilterAtom,
-  analyticsStatusFilterAtom,
+  analyticsSearchAtom,
+  analyticsSourceFiltersAtom,
+  analyticsStatusFacetsAtom,
+  analyticsStatusFiltersAtom,
   analyticsSummaryAtom,
   analyticsTimeSeriesAtom,
 } from "@/lib/atoms/analytics";
@@ -86,8 +92,11 @@ export function useAnalytics(): UseAnalyticsReturn {
   const activeOrgId = activeOrg?.id ?? null;
 
   const range = useAtomValue(analyticsRangeAtom);
-  const statusFilter = useAtomValue(analyticsStatusFilterAtom);
-  const sourceFilter = useAtomValue(analyticsSourceFilterAtom);
+  const statusFilters = useAtomValue(analyticsStatusFiltersAtom);
+  const sourceFilters = useAtomValue(analyticsSourceFiltersAtom);
+  const networkFilters = useAtomValue(analyticsNetworkFiltersAtom);
+  const durationFilter = useAtomValue(analyticsDurationFilterAtom);
+  const search = useAtomValue(analyticsSearchAtom);
   const projectId = useAtomValue(analyticsProjectIdAtom);
   const [loading, setLoading] = useAtom(analyticsLoadingAtom);
   const [error, setError] = useAtom(analyticsErrorAtom);
@@ -96,6 +105,7 @@ export function useAnalytics(): UseAnalyticsReturn {
   const setTimeSeries = useSetAtom(analyticsTimeSeriesAtom);
   const setNetworks = useSetAtom(analyticsNetworksAtom);
   const setRuns = useSetAtom(analyticsRunsAtom);
+  const setStatusFacets = useSetAtom(analyticsStatusFacetsAtom);
   const setLastUpdated = useSetAtom(analyticsLastUpdatedAtom);
 
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -115,12 +125,19 @@ export function useAnalytics(): UseAnalyticsReturn {
     setError(null);
 
     const baseQuery = buildQuery({ range, projectId: projectId ?? undefined });
-    const runsQuery = buildQuery({
+    const filters = {
       range,
-      status: statusFilter,
-      source: sourceFilter,
-      projectId: projectId ?? undefined,
-    });
+      statuses: statusFilters,
+      sources: sourceFilters,
+      networks: networkFilters,
+      duration: durationFilter,
+      search,
+      projectId,
+    };
+    const runsQuery = buildRunsQuery(filters);
+    // The status counts sit under every filter except status itself, so the
+    // facets request carries the same query with that one dimension lifted.
+    const facetsQuery = buildRunsQuery({ ...filters, omitStatus: true });
 
     const { signal } = controller;
 
@@ -135,8 +152,11 @@ export function useAnalytics(): UseAnalyticsReturn {
       signal,
     });
     const runsPromise = fetch(`/api/analytics/runs?${runsQuery}`, { signal });
+    const facetsPromise = fetch(`/api/analytics/facets?${facetsQuery}`, {
+      signal,
+    });
 
-    let pendingCount = 4;
+    let pendingCount = 5;
     const ctx: FetchContext = {
       aborted: false,
       onAbort: (message: string): void => {
@@ -215,12 +235,25 @@ export function useAnalytics(): UseAnalyticsReturn {
           setRuns(normalizeRunsResponse(data));
         })
       ),
+      wrapSection(
+        processSection<{ statusCounts: StatusFacets }>(
+          facetsPromise,
+          "Facets",
+          ctx,
+          (data) => {
+            setStatusFacets(data.statusCounts);
+          }
+        )
+      ),
     ]);
   }, [
     activeOrgId,
     range,
-    statusFilter,
-    sourceFilter,
+    statusFilters,
+    sourceFilters,
+    networkFilters,
+    durationFilter,
+    search,
     projectId,
     setLoading,
     setError,
@@ -228,6 +261,7 @@ export function useAnalytics(): UseAnalyticsReturn {
     setTimeSeries,
     setNetworks,
     setRuns,
+    setStatusFacets,
     setLastUpdated,
   ]);
 

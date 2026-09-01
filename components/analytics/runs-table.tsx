@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { MouseEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { buildRunsQuery } from "@/lib/analytics/runs-query";
 import {
   normalizeRunsResponse,
   type WireRunsResponse,
@@ -31,12 +32,15 @@ import type {
   UnifiedRun,
 } from "@/lib/analytics/types";
 import {
+  analyticsDurationFilterAtom,
   analyticsLoadingAtom,
+  analyticsNetworkFiltersAtom,
+  analyticsProjectIdAtom,
   analyticsRangeAtom,
   analyticsRunsAtom,
   analyticsSearchAtom,
-  analyticsSourceFilterAtom,
-  analyticsStatusFilterAtom,
+  analyticsSourceFiltersAtom,
+  analyticsStatusFiltersAtom,
 } from "@/lib/atoms/analytics";
 import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
 import type { ChainDisplay } from "@/lib/hooks/use-chain-display";
@@ -48,7 +52,6 @@ import {
 import { cn } from "@/lib/utils";
 import { ProjectDrawer } from "./project-drawer";
 
-const WHITESPACE_RE = /\s+/;
 const LEADING_ZEROS_RE = /^0+(?=\d)/;
 const TRAILING_ZEROS_RE = /0+$/;
 const NON_DIGIT_RE = /\D/;
@@ -713,9 +716,12 @@ export function RunsTable(): ReactNode {
   const [runsData, setRunsData] = useAtom(analyticsRunsAtom);
   const loading = useAtomValue(analyticsLoadingAtom);
   const range = useAtomValue(analyticsRangeAtom);
-  const statusFilter = useAtomValue(analyticsStatusFilterAtom);
-  const sourceFilter = useAtomValue(analyticsSourceFilterAtom);
+  const statuses = useAtomValue(analyticsStatusFiltersAtom);
+  const sources = useAtomValue(analyticsSourceFiltersAtom);
+  const networks = useAtomValue(analyticsNetworkFiltersAtom);
+  const duration = useAtomValue(analyticsDurationFilterAtom);
   const search = useAtomValue(analyticsSearchAtom);
+  const projectId = useAtomValue(analyticsProjectIdAtom);
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pageLoading, setPageLoading] = useState(false);
@@ -737,20 +743,18 @@ export function RunsTable(): ReactNode {
       router.replace(url.pathname + url.search, { scroll: false });
 
       try {
-        const params = new URLSearchParams({
+        const query = buildRunsQuery({
           range,
-          page: String(newPage),
+          statuses,
+          sources,
+          networks,
+          duration,
+          search,
+          projectId,
+          page: newPage,
         });
-        if (statusFilter) {
-          params.set("status", statusFilter);
-        }
-        if (sourceFilter) {
-          params.set("source", sourceFilter);
-        }
 
-        const response = await fetch(
-          `/api/analytics/runs?${params.toString()}`
-        );
+        const response = await fetch(`/api/analytics/runs?${query}`);
         if (response.ok) {
           const data = (await response.json()) as WireRunsResponse;
           setRunsData(normalizeRunsResponse(data));
@@ -763,7 +767,17 @@ export function RunsTable(): ReactNode {
         setPageLoading(false);
       }
     },
-    [range, statusFilter, sourceFilter, setRunsData, router]
+    [
+      range,
+      statuses,
+      sources,
+      networks,
+      duration,
+      search,
+      projectId,
+      setRunsData,
+      router,
+    ]
   );
 
   // Restore page from URL ?page= param once after initial data load
@@ -779,23 +793,10 @@ export function RunsTable(): ReactNode {
     });
   }, [urlPage, runsData, handlePageChange]);
 
-  const allRuns = runsData?.runs ?? [];
-
-  const runs = useMemo((): UnifiedRun[] => {
-    const query = search.trim().toLowerCase();
-    if (!query) {
-      return allRuns;
-    }
-    const terms = query.split(WHITESPACE_RE);
-    return allRuns.filter((run) => {
-      const name = (run.workflowName ?? run.directType ?? "").toLowerCase();
-      const network = (run.network ?? "").toLowerCase();
-      const status = run.status.toLowerCase();
-      const id = run.id.toLowerCase();
-      const searchable = `${name} ${network} ${status} ${id}`;
-      return terms.every((term) => searchable.includes(term));
-    });
-  }, [allRuns, search]);
+  // Every filter, search included, now narrows the query, so the page the
+  // server returned is the page to render. Filtering it again here would make
+  // the row count disagree with the pagination total.
+  const runs = runsData?.runs ?? [];
 
   const isEmpty = runs.length === 0;
   const isReady = !(loading && isEmpty);
