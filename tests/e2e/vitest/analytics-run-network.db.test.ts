@@ -10,6 +10,7 @@ import {
   workflowExecutions,
   workflows,
 } from "../../../lib/db/schema";
+import { gasCreditUsage } from "../../../lib/db/schema-extensions";
 
 // vitest runs in Node, not an SSR context.
 vi.mock("server-only", () => ({}));
@@ -38,6 +39,8 @@ const LEGACY_ID = `${PREFIX}exec_legacy`;
 const LEGACY_GAS_ID = `${PREFIX}exec_legacy_gas`;
 /** Same shape as LEGACY_ID, reserved for the backfill to repair in place. */
 const BACKFILL_ID = `${PREFIX}exec_backfill`;
+/** A run whose only record of spend is the sponsorship ledger, not a step. */
+const SPONSORED_ID = `${PREFIX}exec_sponsored`;
 
 // Log ids are the backfill's keyset cursor, so they are chosen, not incidental:
 // the backfill case runs one batch from the cursor below, and every other
@@ -60,6 +63,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
   let applyBatch: (afterId: string, batchSize: number) => Promise<number>;
 
   async function cleanup(): Promise<void> {
+    await queryClient`DELETE FROM gas_credit_usage WHERE execution_id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflow_execution_logs WHERE execution_id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
@@ -124,6 +128,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
         execution(LEGACY_ID, "Insufficient BASE balance"),
         execution(LEGACY_GAS_ID),
         execution(BACKFILL_ID, "Insufficient BASE balance"),
+        execution(SPONSORED_ID),
       ]);
 
     // Two row shapes matter here, and they are seeded separately on purpose.
@@ -214,7 +219,35 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
         network: null,
         gasUsedWei: null,
       },
+      {
+        id: `${PREFIX}log_sponsored`,
+        executionId: SPONSORED_ID,
+        nodeId: "call-1",
+        nodeName: "Contract call",
+        nodeType: "web3",
+        status: "success",
+        input: {},
+        startedAt: now,
+        network: null,
+        gasUsedWei: null,
+      },
     ]);
+
+    // The sponsored leg: KeeperHub paid, so the chain and the cost are in the
+    // ledger and nowhere else on this run.
+    await db.insert(gasCreditUsage).values({
+      id: `${PREFIX}ledger_sponsored`,
+      organizationId: ORG_ID,
+      chainId: 8453,
+      txHash: `0x${"a".repeat(64)}`,
+      executionId: SPONSORED_ID,
+      gasUsed: "21000",
+      gasPriceWei: "1000000000",
+      gasCostWei: "50000",
+      gasCostMicroUsd: "1",
+      ethPriceUsd: "3000",
+      createdAt: now,
+    });
 
     ({ getUnifiedRuns } = await import("@/lib/analytics/queries"));
     ({ applyBatch } = await import(
@@ -272,6 +305,17 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     expect(run.network).toBe("base");
     // The COALESCE arm feeds gasNetworks too, not just the scalar network.
     expect(run.gasNetworks).toEqual(["base"]);
+  });
+
+  it("names the chain a ledger-only sponsored run spent on", async () => {
+    const run = await runById(SPONSORED_ID);
+    // No step logged a chain or any gas, so before the ledger was read this run
+    // had a cost to show and no chain to denominate it in.
+    expect(run.gasUsedWei).toBeNull();
+    expect(run.gasCostWei).toBe("50000");
+    expect(run.gasNetworks).toEqual(["8453"]);
+    expect(run.networks).toEqual(["8453"]);
+    expect(run.network).toBe("8453");
   });
 
   it("backfills a gas-free legacy row, so the read moves onto the column", async () => {
