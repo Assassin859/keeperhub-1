@@ -10,6 +10,9 @@ export type RunsQueryInput = {
   duration?: DurationPresetId | null;
   search?: string;
   projectId?: string | null;
+  /** ISO bounds, sent only for the custom range. */
+  customStart?: string | null;
+  customEnd?: string | null;
   page?: number;
   /** Drop the status dimension, for the facet request that counts each status. */
   omitStatus?: boolean;
@@ -53,6 +56,12 @@ export function buildRunsQuery(input: RunsQueryInput): string {
   }
   if (input.projectId) {
     params.set("projectId", input.projectId);
+  }
+  if (input.customStart) {
+    params.set("customStart", input.customStart);
+  }
+  if (input.customEnd) {
+    params.set("customEnd", input.customEnd);
   }
   if (input.page !== undefined && input.page > 1) {
     params.set("page", String(input.page));

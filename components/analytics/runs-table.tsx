@@ -33,6 +33,8 @@ import type {
   UnifiedRun,
 } from "@/lib/analytics/types";
 import {
+  analyticsCustomEndAtom,
+  analyticsCustomStartAtom,
   analyticsDurationFilterAtom,
   analyticsGasFiltersAtom,
   analyticsLoadingAtom,
@@ -703,6 +705,8 @@ export function RunsTable(): ReactNode {
   const duration = useAtomValue(analyticsDurationFilterAtom);
   const search = useAtomValue(analyticsSearchAtom);
   const projectId = useAtomValue(analyticsProjectIdAtom);
+  const customStart = useAtomValue(analyticsCustomStartAtom);
+  const customEnd = useAtomValue(analyticsCustomEndAtom);
   const router = useRouter();
   const searchParams = useSearchParams();
   const [pageLoading, setPageLoading] = useState(false);
@@ -733,6 +737,8 @@ export function RunsTable(): ReactNode {
           duration,
           search,
           projectId,
+          customStart,
+          customEnd,
           page: newPage,
         });
 
@@ -758,6 +764,8 @@ export function RunsTable(): ReactNode {
       duration,
       search,
       projectId,
+      customStart,
+      customEnd,
       setRunsData,
       router,
     ]

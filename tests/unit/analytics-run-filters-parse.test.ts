@@ -79,6 +79,24 @@ describe("buildRunsQuery", () => {
     expect(parse(query).networks).toEqual(["8453"]);
   });
 
+  it("carries a custom window so the picked dates reach the server", () => {
+    const query = buildRunsQuery({
+      range: "custom",
+      customStart: "2026-08-01T00:00:00.000Z",
+      customEnd: "2026-08-31T23:59:59.999Z",
+    });
+    const params = new URLSearchParams(query);
+    expect(params.get("range")).toBe("custom");
+    expect(params.get("customStart")).toBe("2026-08-01T00:00:00.000Z");
+    expect(params.get("customEnd")).toBe("2026-08-31T23:59:59.999Z");
+  });
+
+  it("omits the window on a preset range", () => {
+    const params = new URLSearchParams(buildRunsQuery({ range: "7d" }));
+    expect(params.get("customStart")).toBeNull();
+    expect(params.get("customEnd")).toBeNull();
+  });
+
   it("leaves page 1 off the query so the first page has a clean URL", () => {
     expect(buildRunsQuery({ range: "24h", page: 1 })).toBe("range=24h");
     expect(buildRunsQuery({ range: "24h", page: 3 })).toContain("page=3");

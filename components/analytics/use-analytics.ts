@@ -14,6 +14,8 @@ import type {
   TimeSeriesBucket,
 } from "@/lib/analytics/types";
 import {
+  analyticsCustomEndAtom,
+  analyticsCustomStartAtom,
   analyticsDurationFilterAtom,
   analyticsErrorAtom,
   analyticsGasFiltersAtom,
@@ -100,6 +102,8 @@ export function useAnalytics(): UseAnalyticsReturn {
   const durationFilter = useAtomValue(analyticsDurationFilterAtom);
   const search = useAtomValue(analyticsSearchAtom);
   const projectId = useAtomValue(analyticsProjectIdAtom);
+  const customStart = useAtomValue(analyticsCustomStartAtom);
+  const customEnd = useAtomValue(analyticsCustomEndAtom);
   const [loading, setLoading] = useAtom(analyticsLoadingAtom);
   const [error, setError] = useAtom(analyticsErrorAtom);
 
@@ -126,7 +130,12 @@ export function useAnalytics(): UseAnalyticsReturn {
     setLoading(true);
     setError(null);
 
-    const baseQuery = buildQuery({ range, projectId: projectId ?? undefined });
+    const baseQuery = buildQuery({
+      range,
+      projectId: projectId ?? undefined,
+      customStart: customStart ?? undefined,
+      customEnd: customEnd ?? undefined,
+    });
     const filters = {
       range,
       statuses: statusFilters,
@@ -136,6 +145,8 @@ export function useAnalytics(): UseAnalyticsReturn {
       duration: durationFilter,
       search,
       projectId,
+      customStart,
+      customEnd,
     };
     const runsQuery = buildRunsQuery(filters);
     // The status counts sit under every filter except status itself, so the
@@ -259,6 +270,8 @@ export function useAnalytics(): UseAnalyticsReturn {
     durationFilter,
     search,
     projectId,
+    customStart,
+    customEnd,
     setLoading,
     setError,
     setSummary,
@@ -295,7 +308,12 @@ export function useAnalytics(): UseAnalyticsReturn {
   const startSSE = useCallback((): void => {
     cleanupSSE();
 
-    const query = buildQuery({ range, projectId: projectId ?? undefined });
+    const query = buildQuery({
+      range,
+      projectId: projectId ?? undefined,
+      customStart: customStart ?? undefined,
+      customEnd: customEnd ?? undefined,
+    });
     const source = new EventSource(`/api/analytics/stream?${query}`);
 
     source.onmessage = (event: MessageEvent): void => {
@@ -327,6 +345,8 @@ export function useAnalytics(): UseAnalyticsReturn {
   }, [
     range,
     projectId,
+    customStart,
+    customEnd,
     cleanupSSE,
     setSummary,
     setLastUpdated,
