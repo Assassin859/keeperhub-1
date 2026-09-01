@@ -9,11 +9,19 @@ name: PR Issue Link
 #
 #   - a GitHub issue (`#1978`) that exists, is an issue, and carries the
 #     `accepted` label - the issue-first policy in ISSUES.md; or
-#   - a Linear ticket (`KEEP-1234`), which only counts from a team author
-#     (OWNER, MEMBER, COLLABORATOR), since outside contributors cannot have
-#     one. Team branches are named `feat/KEEP-1234-description`, which is
-#     also what Linear's GitHub integration links on. The ticket is matched
-#     by shape only; Linear is not consulted.
+#   - a Linear ticket (`KEEP-1234`), which only counts on a team pull
+#     request, since outside contributors cannot have one. Team branches
+#     are named `feat/KEEP-1234-description`, which is also what Linear's
+#     GitHub integration links on. The ticket is matched by shape only;
+#     Linear is not consulted.
+#
+# A pull request is a team pull request when its head branch lives in this
+# repository (only push access can create one) or when the payload's
+# author_association is OWNER, MEMBER or COLLABORATOR. The head-repository
+# test comes first because author_association is computed from what the
+# workflow token can see: a member whose organization membership is private
+# is reported as CONTRIBUTOR, which is why the old author-only skip failed
+# team pull requests.
 #
 # The job runs on synchronize as well as open and edit so that a result
 # exists for every head commit. A required status check is evaluated per
@@ -51,6 +59,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           REPO: ${{ github.repository }}
@@ -66,6 +75,9 @@ jobs:
           set -euo pipefail
 
           is_team=false
+          if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$REPO" ]; then
+            is_team=true
+          fi
           case "$AUTHOR_ASSOCIATION" in
             OWNER|MEMBER|COLLABORATOR) is_team=true ;;
           esac
