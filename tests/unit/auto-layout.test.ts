@@ -68,6 +68,44 @@ function rowOf(
   return positions.get(id)?.y ?? 0;
 }
 
+/** Pairs of edges whose endpoints swap vertical order while their spans overlap. */
+function crossings(
+  positions: Map<string, { x: number; y: number }>,
+  edges: TestEdge[]
+): string[] {
+  const found: string[] = [];
+  for (let i = 0; i < edges.length; i++) {
+    for (let j = i + 1; j < edges.length; j++) {
+      const a = edges[i];
+      const b = edges[j];
+      const as = positions.get(a.source);
+      const at = positions.get(a.target);
+      const bs = positions.get(b.source);
+      const bt = positions.get(b.target);
+      if (!(as && at && bs && bt)) {
+        continue;
+      }
+      const overlap =
+        Math.min(at.x, bt.x) > Math.max(as.x, bs.x) ||
+        (as.x === bs.x && at.x === bt.x);
+      if (!overlap) {
+        continue;
+      }
+      if ((as.y - bs.y) * (at.y - bt.y) < 0) {
+        found.push(`${a.source}->${a.target} x ${b.source}->${b.target}`);
+      }
+    }
+  }
+  return found;
+}
+
+function rowsOf(
+  positions: Map<string, { x: number; y: number }>,
+  ids: string[]
+): number[] {
+  return ids.map((id) => positions.get(id)?.y ?? 0);
+}
+
 describe("computeAutoLayout", () => {
   it("keeps a loop body clear of the branch that runs beside it", () => {
     const { nodes, edges } = graph(
@@ -208,6 +246,85 @@ describe("computeAutoLayout", () => {
 
       expect(rowOf(positions, "only")).toBe(rowOf(positions, "branch"));
     }
+  });
+
+  it("gives each branch its own band of rows", () => {
+    const { nodes, edges } = graph(
+      ["trigger", "split", "up1", "up2", "up3", "down1", "down2", "down3"],
+      [
+        ["trigger", "split"],
+        ["split", "up1", "true"],
+        ["up1", "up2"],
+        ["up2", "up3"],
+        ["split", "down1", "false"],
+        ["down1", "down2"],
+        ["down2", "down3"],
+      ]
+    );
+
+    const positions = computeAutoLayout(nodes, edges);
+
+    const upper = rowsOf(positions, ["up1", "up2", "up3"]);
+    const lower = rowsOf(positions, ["down1", "down2", "down3"]);
+    expect(Math.max(...upper)).toBeLessThan(Math.min(...lower));
+    expect(crossings(positions, edges)).toEqual([]);
+  });
+
+  it("does not run a branching node's rows through a neighbouring branch", () => {
+    const { nodes, edges } = graph(
+      [
+        "trigger",
+        "split",
+        "first",
+        "firstYes",
+        "firstNo",
+        "second",
+        "secondOnly",
+        "third",
+        "thirdYes",
+        "thirdNo",
+      ],
+      [
+        ["trigger", "split"],
+        ["split", "first", "true"],
+        ["first", "firstYes", "true"],
+        ["first", "firstNo", "false"],
+        ["split", "second"],
+        ["second", "secondOnly", "true"],
+        ["split", "third", "false"],
+        ["third", "thirdYes", "true"],
+        ["third", "thirdNo", "false"],
+      ]
+    );
+
+    const positions = computeAutoLayout(nodes, edges);
+
+    expect(crossings(positions, edges)).toEqual([]);
+    expect(overlaps(positions)).toEqual([]);
+    const firstBand = rowsOf(positions, ["first", "firstYes", "firstNo"]);
+    const secondBand = rowsOf(positions, ["second", "secondOnly"]);
+    const thirdBand = rowsOf(positions, ["third", "thirdYes", "thirdNo"]);
+    expect(Math.max(...firstBand)).toBeLessThan(Math.min(...secondBand));
+    expect(Math.max(...secondBand)).toBeLessThan(Math.min(...thirdBand));
+  });
+
+  it("keeps both sides apart when the branches merge again", () => {
+    const { nodes, edges } = graph(
+      ["trigger", "exists", "cast", "alert"],
+      [
+        ["trigger", "exists"],
+        ["exists", "cast", "true"],
+        ["exists", "alert", "false"],
+        ["alert", "cast"],
+      ]
+    );
+
+    const positions = computeAutoLayout(nodes, edges);
+
+    expect(rowOf(positions, "cast")).toBeLessThan(rowOf(positions, "exists"));
+    expect(rowOf(positions, "alert")).toBeGreaterThan(
+      rowOf(positions, "exists")
+    );
   });
 
   it("lays out a loop whose body feeds back into the loop node", () => {

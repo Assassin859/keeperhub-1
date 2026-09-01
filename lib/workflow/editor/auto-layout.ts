@@ -23,10 +23,6 @@ const V_GAP = 40;
 const COLUMN_STEP = NODE_WIDTH + H_GAP;
 const ROW_STEP = NODE_HEIGHT + V_GAP;
 
-// Two sweeps are enough to pull parents onto their children and children back
-// under their parents; more passes stop changing the picture.
-const REFINE_PASSES = 2;
-
 // An edge with no named handle sits between the upper and the lower handle.
 const UNNAMED_RANK = 0.5;
 
@@ -128,15 +124,15 @@ type Graph = {
   children: Map<string, string[]>;
   parents: Map<string, string[]>;
   inDegree: Map<string, number>;
-  /** Where the edge leaves its source, keyed "source->target". */
-  edgeRank: Map<string, number>;
+  /** Edges that leave a named handle, keyed "source->target". */
+  branchEdges: Set<string>;
 };
 
 function buildGraph(realNodes: Node[], forwardEdges: Edge[]): Graph {
   const children = new Map<string, string[]>();
   const parents = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
-  const edgeRank = new Map<string, number>();
+  const branchEdges = new Set<string>();
 
   for (const node of realNodes) {
     children.set(node.id, []);
@@ -159,14 +155,13 @@ function buildGraph(realNodes: Node[], forwardEdges: Edge[]): Graph {
       children.get(node.id)?.push(edge.target);
       parents.get(edge.target)?.push(node.id);
       inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
-      edgeRank.set(
-        `${node.id}->${edge.target}`,
-        sourceHandleRank(edge.sourceHandle) ?? UNNAMED_RANK
-      );
+      if (sourceHandleRank(edge.sourceHandle) !== undefined) {
+        branchEdges.add(`${node.id}->${edge.target}`);
+      }
     }
   }
 
-  return { children, parents, inDegree, edgeRank };
+  return { children, parents, inDegree, branchEdges };
 }
 
 function findRoots(realNodes: Node[], inDegree: Map<string, number>): string[] {
@@ -226,24 +221,21 @@ function assignColumns(roots: string[], graph: Graph): Map<string, number> {
 }
 
 /**
- * The branch turns taken to reach a node, one entry per step: which root it
- * came from, then where each edge left its source. Comparing two of these
- * decides which node belongs higher in a column, so a true branch stays above
- * a false branch even where the two meet nodes placed from another path.
- *
- * A node is reached through the parent that fixed its column, which is the one
- * furthest right; nodes on a cycle with no path from a root sort last.
+ * Pick one parent per node, so the graph reduces to a tree that can be given
+ * tidy bands. A branch owns its target: a node reached from a named handle
+ * hangs off that node, even when another path also leads into it, which is what
+ * keeps a true target above the false target it later merges with. Failing
+ * that, a node hangs off the parent furthest to the right. The remaining edges
+ * are drawn but do not decide where anything sits.
  */
-function branchPaths(
+function spanningTree(
   realNodes: Node[],
   roots: string[],
   graph: Graph,
   columns: Map<string, number>
-): Map<string, number[]> {
-  const paths = new Map<string, number[]>();
-  for (const [index, root] of roots.entries()) {
-    paths.set(root, [index]);
-  }
+): { roots: string[]; children: Map<string, string[]> } {
+  const treeParent = new Map<string, string>();
+  const attached = new Set(roots);
 
   const byColumn: string[][] = [];
   for (const node of realNodes) {
@@ -252,182 +244,95 @@ function branchPaths(
     byColumn[col].push(node.id);
   }
 
-  for (const ids of byColumn) {
+  const treeRoots = [...roots];
+
+  for (const [col, ids] of byColumn.entries()) {
     for (const id of ids ?? []) {
-      if (paths.has(id)) {
+      if (attached.has(id)) {
         continue;
       }
       let from: string | undefined;
       let fromColumn = Number.NEGATIVE_INFINITY;
+      let fromBranch = false;
       for (const parent of graph.parents.get(id) ?? []) {
-        const col = columns.get(parent) ?? 0;
-        if (paths.has(parent) && col > fromColumn) {
+        const parentColumn = columns.get(parent) ?? 0;
+        if (!attached.has(parent) || parentColumn >= col) {
+          continue;
+        }
+        const isBranch = graph.branchEdges.has(`${parent}->${id}`);
+        const better =
+          isBranch === fromBranch ? parentColumn > fromColumn : isBranch;
+        if (better) {
           from = parent;
-          fromColumn = col;
+          fromColumn = parentColumn;
+          fromBranch = isBranch;
         }
       }
-      const parentPath = from === undefined ? undefined : paths.get(from);
-      if (parentPath) {
-        paths.set(id, [
-          ...parentPath,
-          graph.edgeRank.get(`${from}->${id}`) ?? UNNAMED_RANK,
-        ]);
+      attached.add(id);
+      if (from === undefined) {
+        treeRoots.push(id);
+      } else {
+        treeParent.set(id, from);
       }
     }
   }
 
+  // Children keep the order their edges leave the node: upper handle first.
+  const children = new Map<string, string[]>();
   for (const node of realNodes) {
-    if (!paths.has(node.id)) {
-      paths.set(node.id, [Number.POSITIVE_INFINITY]);
-    }
+    const kept = (graph.children.get(node.id) ?? []).filter(
+      (child) => treeParent.get(child) === node.id
+    );
+    children.set(node.id, kept);
   }
 
-  return paths;
-}
-
-function comparePaths(a: number[], b: number[]): number {
-  for (let i = 0; i < Math.min(a.length, b.length); i++) {
-    if (a[i] !== b[i]) {
-      return a[i] - b[i];
-    }
-  }
-  return a.length - b.length;
+  return { roots: treeRoots, children };
 }
 
 /**
- * Vertical order of each column: upper branches first, and within a branch the
- * order the nodes were declared.
+ * Give every subtree its own band of rows. A node with no branches of its own
+ * takes one row; a node that branches spans the bands of its branches and sits
+ * in the middle of them. Bands never overlap, so two branches never interleave
+ * and their edges have no reason to cross.
  */
-function orderColumns(
-  realNodes: Node[],
-  roots: string[],
-  graph: Graph,
-  columns: Map<string, number>
-): string[][] {
-  const paths = branchPaths(realNodes, roots, graph, columns);
-  const order: string[][] = [];
-  const seq = new Map<string, number>();
-
-  for (const [index, node] of realNodes.entries()) {
-    const col = columns.get(node.id) ?? 0;
-    order[col] = order[col] ?? [];
-    order[col].push(node.id);
-    seq.set(node.id, index);
-  }
-
-  for (let col = 0; col < order.length; col++) {
-    order[col] = (order[col] ?? []).sort((a, b) => {
-      const byPath = comparePaths(paths.get(a) ?? [], paths.get(b) ?? []);
-      return byPath === 0 ? (seq.get(a) ?? 0) - (seq.get(b) ?? 0) : byPath;
-    });
-  }
-
-  return order;
-}
-
-/** Average row of the neighbours that already have one. */
-function averageRow(
-  neighbours: string[],
-  rows: Map<string, number>
-): number | undefined {
-  let sum = 0;
-  let count = 0;
-  for (const id of neighbours) {
-    const row = rows.get(id);
-    if (row !== undefined) {
-      sum += row;
-      count++;
-    }
-  }
-  return count > 0 ? sum / count : undefined;
-}
-
-/**
- * Write one column's rows, keeping every node at least a full node height
- * apart. Packing can only push nodes down, so the column is shifted back up by
- * the average displacement and stays centred on where its nodes wanted to be.
- */
-function packColumn(
-  ids: string[],
-  targets: number[],
-  rows: Map<string, number>
-): void {
-  const packed: number[] = [];
-  let drift = 0;
-
-  for (let i = 0; i < ids.length; i++) {
-    const min = packed[i - 1] + ROW_STEP;
-    const row = i === 0 ? targets[i] : Math.max(targets[i], min);
-    packed.push(row);
-    drift += row - targets[i];
-  }
-
-  const shift = ids.length > 0 ? drift / ids.length : 0;
-  for (let i = 0; i < ids.length; i++) {
-    rows.set(ids[i], packed[i] - shift);
-  }
-}
-
-/**
- * First pass: sweep left to right, hanging each node off its parents. Every
- * parent lives in a lower column, so it always has a row by the time its
- * children are placed.
- */
-function seedRows(order: string[][], graph: Graph): Map<string, number> {
+function assignRows(
+  treeRoots: string[],
+  children: Map<string, string[]>
+): Map<string, number> {
   const rows = new Map<string, number>();
+  let nextRow = 0;
 
-  for (const ids of order) {
-    const targets: number[] = [];
-    let previous: number | undefined;
-    for (const id of ids) {
-      const fromParents = averageRow(graph.parents.get(id) ?? [], rows);
-      const target =
-        fromParents ?? (previous === undefined ? 0 : previous + ROW_STEP);
-      targets.push(target);
-      previous = target;
+  const place = (id: string): { first: number; last: number } => {
+    const kids = children.get(id) ?? [];
+    if (kids.length === 0) {
+      const row = nextRow++;
+      rows.set(id, row * ROW_STEP);
+      return { first: row, last: row };
     }
-    packColumn(ids, targets, rows);
+
+    let first = Number.POSITIVE_INFINITY;
+    let last = Number.NEGATIVE_INFINITY;
+    for (const kid of kids) {
+      const band = place(kid);
+      first = Math.min(first, band.first);
+      last = Math.max(last, band.last);
+    }
+    rows.set(id, ((first + last) / 2) * ROW_STEP);
+    return { first, last };
+  };
+
+  for (const root of treeRoots) {
+    place(root);
   }
 
   return rows;
 }
 
 /**
- * Later passes: pull each node onto the average of its children (right to
- * left), then back onto the average of its parents (left to right). This is
- * what centres a branch node between its branches and a join node between the
- * paths that feed it.
- */
-function refineRows(
-  order: string[][],
-  graph: Graph,
-  rows: Map<string, number>
-): void {
-  const sweep = (
-    columnIds: string[],
-    neighboursOf: (id: string) => string[]
-  ): void => {
-    const targets = columnIds.map(
-      (id) => averageRow(neighboursOf(id), rows) ?? rows.get(id) ?? 0
-    );
-    packColumn(columnIds, targets, rows);
-  };
-
-  for (let pass = 0; pass < REFINE_PASSES; pass++) {
-    for (let col = order.length - 1; col >= 0; col--) {
-      sweep(order[col], (id) => graph.children.get(id) ?? []);
-    }
-    for (const ids of order) {
-      sweep(ids, (id) => graph.parents.get(id) ?? []);
-    }
-  }
-}
-
-/**
  * Compute a clean left-to-right DAG layout for workflow nodes.
  *
  * - Columns via longest-path topological sort (handles convergence)
- * - Rows via a layered sweep that keeps every column free of overlap
+ * - Rows via tidy bands: each branch owns a range of rows nothing else uses
  * - Branches follow their handles: true/done above, false/loop below
  * - Loop bodies lay out to the right of their For Each node; only the edges
  *   that close a cycle are ignored
@@ -441,10 +346,8 @@ export function computeAutoLayout(
   const graph = buildGraph(realNodes, forwardEdges);
   const roots = findRoots(realNodes, graph.inDegree);
   const columns = assignColumns(roots, graph);
-  const order = orderColumns(realNodes, roots, graph, columns);
-
-  const rows = seedRows(order, graph);
-  refineRows(order, graph, rows);
+  const tree = spanningTree(realNodes, roots, graph, columns);
+  const rows = assignRows(tree.roots, tree.children);
 
   let topRow = Number.POSITIVE_INFINITY;
   for (const row of rows.values()) {
