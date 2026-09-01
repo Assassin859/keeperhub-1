@@ -83,6 +83,7 @@ export function DateRangeFilter(): ReactNode {
   const setCustomEnd = useSetAtom(analyticsCustomEndAtom);
   const [customEnd] = useAtom(analyticsCustomEndAtom);
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<DateRange | undefined>(undefined);
 
   const presets = useMemo(() => buildPresets(new Date()), []);
 
@@ -91,19 +92,22 @@ export function DateRangeFilter(): ReactNode {
       setCustomStart(from.toISOString());
       setCustomEnd(to.toISOString());
       setRange("custom");
+      setDraft(undefined);
       setOpen(false);
     },
     [setCustomStart, setCustomEnd, setRange]
   );
 
+  // The first click of a range only names its start, so the picker holds the
+  // half-made selection itself and commits once both ends are known. Applying
+  // on the first click would close the popover with a one-day window and leave
+  // no way to reach the second date.
   const onSelect = useCallback(
     (selected: DateRange | undefined): void => {
-      if (!selected?.from) {
-        return;
+      setDraft(selected);
+      if (selected?.from && selected.to) {
+        apply(startOfDay(selected.from), endOfDay(selected.to));
       }
-      // One click is a single day until a second lands, so the picker is
-      // usable for "one specific day" without a second click.
-      apply(startOfDay(selected.from), endOfDay(selected.to ?? selected.from));
     },
     [apply]
   );
@@ -123,6 +127,9 @@ export function DateRangeFilter(): ReactNode {
   }, [active, customStart, customEnd]);
 
   const selected = useMemo((): DateRange | undefined => {
+    if (draft) {
+      return draft;
+    }
     if (!(active && customStart)) {
       return undefined;
     }
@@ -130,10 +137,17 @@ export function DateRangeFilter(): ReactNode {
       from: new Date(customStart),
       to: customEnd ? new Date(customEnd) : undefined,
     };
-  }, [active, customStart, customEnd]);
+  }, [draft, active, customStart, customEnd]);
+
+  const onOpenChange = useCallback((next: boolean): void => {
+    setOpen(next);
+    if (!next) {
+      setDraft(undefined);
+    }
+  }, []);
 
   return (
-    <Popover onOpenChange={setOpen} open={open}>
+    <Popover onOpenChange={onOpenChange} open={open}>
       <PopoverTrigger asChild>
         <Button
           aria-label="Custom date range"
