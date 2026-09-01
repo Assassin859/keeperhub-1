@@ -2,7 +2,7 @@ import "dotenv/config";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { UnifiedRun } from "../../../lib/analytics/types";
+import type { StepLog, UnifiedRun } from "../../../lib/analytics/types";
 import {
   organization,
   users,
@@ -41,6 +41,8 @@ const LEGACY_GAS_ID = `${PREFIX}exec_legacy_gas`;
 const BACKFILL_ID = `${PREFIX}exec_backfill`;
 /** A run whose only record of spend is the sponsorship ledger, not a step. */
 const SPONSORED_ID = `${PREFIX}exec_sponsored`;
+/** An event-triggered run: trigger, a write that pays its own gas, a read. */
+const STEPS_ID = `${PREFIX}exec_steps`;
 
 // Log ids are the backfill's keyset cursor, so they are chosen, not incidental:
 // the backfill case runs one batch from the cursor below, and every other
@@ -61,6 +63,10 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     options?: { limit?: number }
   ) => Promise<{ runs: UnifiedRun[] }>;
   let applyBatch: (afterId: string, batchSize: number) => Promise<number>;
+  let getStepLogs: (
+    executionId: string,
+    organizationId: string
+  ) => Promise<StepLog[]>;
 
   async function cleanup(): Promise<void> {
     await queryClient`DELETE FROM gas_credit_usage WHERE execution_id LIKE ${`${PREFIX}%`}`;
@@ -129,6 +135,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
         execution(LEGACY_GAS_ID),
         execution(BACKFILL_ID, "Insufficient BASE balance"),
         execution(SPONSORED_ID),
+        { ...execution(STEPS_ID), totalSteps: "3", completedSteps: "3" },
       ]);
 
     // Two row shapes matter here, and they are seeded separately on purpose.
@@ -220,6 +227,43 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
         gasUsedWei: null,
       },
       {
+        id: `${PREFIX}log_steps_a_trigger`,
+        executionId: STEPS_ID,
+        nodeId: "trigger-1",
+        nodeName: "Event",
+        nodeType: "trigger",
+        status: "success",
+        input: { network: "8453" },
+        startedAt: now,
+        network: "8453",
+        gasUsedWei: null,
+      },
+      {
+        id: `${PREFIX}log_steps_b_write`,
+        executionId: STEPS_ID,
+        nodeId: "write-1",
+        nodeName: "Write contract",
+        nodeType: "web3/write-contract",
+        status: "success",
+        input: { network: "8453" },
+        output: { gasUsed: "41000" },
+        startedAt: now,
+        network: "8453",
+        gasUsedWei: "41000",
+      },
+      {
+        id: `${PREFIX}log_steps_c_read`,
+        executionId: STEPS_ID,
+        nodeId: "read-1",
+        nodeName: "Read contract",
+        nodeType: "web3/read-contract",
+        status: "success",
+        input: { network: "8453" },
+        startedAt: now,
+        network: "8453",
+        gasUsedWei: null,
+      },
+      {
         id: `${PREFIX}log_sponsored`,
         executionId: SPONSORED_ID,
         nodeId: "call-1",
@@ -249,7 +293,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
       createdAt: now,
     });
 
-    ({ getUnifiedRuns } = await import("@/lib/analytics/queries"));
+    ({ getUnifiedRuns, getStepLogs } = await import("@/lib/analytics/queries"));
     ({ applyBatch } = await import(
       "@/scripts/lib/exec-log-network-gas-backfill"
     ));
@@ -316,6 +360,23 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
     expect(run.gasNetworks).toEqual(["8453"]);
     expect(run.networks).toEqual(["8453"]);
     expect(run.network).toBe("8453");
+  });
+
+  it("shows per-node gas the organization's own wallet paid for", async () => {
+    const steps = await getStepLogs(STEPS_ID, ORG_ID);
+    const byNode = new Map(steps.map((step) => [step.nodeId, step]));
+
+    // The write spent gas and nothing sponsored it, so the ledger holds no row
+    // for it. Its own receipt is the only record, and reading the ledger alone
+    // left this cell empty.
+    expect(byNode.get("write-1")?.gasCostWei).toBe("41000");
+    expect(byNode.get("write-1")?.sponsored).toBe(false);
+
+    // A read makes no transaction, so no gas is the right answer, not a gap.
+    expect(byNode.get("read-1")?.gasCostWei).toBeNull();
+    // The trigger names the chain it watches but spends nothing itself.
+    expect(byNode.get("trigger-1")?.network).toBe("8453");
+    expect(byNode.get("trigger-1")?.gasCostWei).toBeNull();
   });
 
   it("backfills a gas-free legacy row, so the read moves onto the column", async () => {
