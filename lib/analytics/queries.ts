@@ -45,9 +45,12 @@ import {
 } from "./time-range";
 import type {
   AnalyticsSummary,
+  GasSpend,
   NetworkBreakdown,
   NormalizedStatus,
+  RunQueryFilters,
   RunSource,
+  StatusFacets,
   StepLog,
   TimeRange,
   TimeSeriesBucket,
@@ -150,6 +153,259 @@ function workflowStatusCondition(status: NormalizedStatus): SQL {
     return sql`${inClause} AND ${workflowExecutions.errorType} IS DISTINCT FROM ${ExecutionErrorType.EXTERNAL}`;
   }
   return inClause;
+}
+
+/**
+ * OR the per-status predicates together. A status filter holding several values
+ * is a union, which is the whole point of the multi-select: "Errors" ticks
+ * error, external_error and system_error and asks for all three at once.
+ */
+function workflowStatusesCondition(statuses: NormalizedStatus[]): SQL {
+  return sql`(${sql.join(
+    statuses.map((status) => workflowStatusCondition(status)),
+    sql` OR `
+  )})`;
+}
+
+/**
+ * direct_executions carries no error_type, so it has no external or system
+ * failures and no refused runs. Those statuses map to values the column never
+ * holds, which is correct: selecting only them returns no direct runs.
+ */
+function directStatusesCondition(statuses: NormalizedStatus[]): SQL {
+  const dbStatuses = [...new Set(statuses.flatMap(directDbStatuses))];
+  return sql`${directExecutions.status} IN (${sql.join(
+    dbStatuses.map((status) => sql`${status}`),
+    sql`, `
+  )})`;
+}
+
+/**
+ * A workflow run has no chain of its own: its chains live on its step logs, the
+ * same COALESCE(column, JSONB) the listing reads them through. EXISTS keeps a
+ * run that touched any selected chain without multiplying it per matching step.
+ */
+function workflowNetworkCondition(networks: string[]): SQL {
+  return sql`EXISTS (
+    SELECT 1
+      FROM ${workflowExecutionLogs}
+     WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+       AND COALESCE(${workflowExecutionLogs.network}, ${logInputField("network")}) IN (${sql.join(
+         networks.map((network) => sql`${network}`),
+         sql`, `
+       )})
+  )`;
+}
+
+// The name match gets its own alias because both callers already have
+// `workflows` in scope, one through a join and one through a scoping subquery.
+function workflowSearchCondition(term: string): SQL {
+  const pattern = `%${term}%`;
+  return sql`(
+    ${workflowExecutions.id} ILIKE ${pattern}
+    OR EXISTS (
+      SELECT 1
+        FROM ${workflows} AS search_wf
+       WHERE search_wf.id = ${workflowExecutions.workflowId}
+         AND search_wf.name ILIKE ${pattern}
+    )
+  )`;
+}
+
+function directSearchCondition(term: string): SQL {
+  const pattern = `%${term}%`;
+  return sql`(
+    ${directExecutions.id} ILIKE ${pattern}
+    OR ${directExecutions.type} ILIKE ${pattern}
+    OR ${directExecutions.network} ILIKE ${pattern}
+  )`;
+}
+
+// Duration in milliseconds. A run still in flight has no duration, and a NULL
+// comparison is false, so a duration filter drops it - which is what a reader
+// asking for "runs over 30s" means.
+const directDurationMs = sql`(EXTRACT(EPOCH FROM (${directExecutions.completedAt} - ${directExecutions.createdAt})) * 1000)`;
+
+// Wei the run's steps burned, and the slice of it gas credit covered. The step
+// rollup is the total, not the unsponsored remainder, so the wallet's share is
+// the difference rather than the whole.
+const workflowStepGasWei = sql`COALESCE((
+  SELECT SUM(COALESCE(
+           ${workflowExecutionLogs.gasUsedWei},
+           CAST(NULLIF(${logOutputField("gasUsed")}, '') AS NUMERIC)
+         ))
+    FROM ${workflowExecutionLogs}
+   WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+), 0)`;
+
+const workflowSponsoredGasWei = sql`COALESCE((
+  SELECT SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC))
+    FROM ${gasCreditUsage}
+   WHERE ${gasCreditUsage.executionId} = ${workflowExecutions.id}
+), 0)`;
+
+// The same marker the sponsored chip on a run reads: a web3 step core writes
+// `sponsored: true` into its output when the gas station covered the gas. Taken
+// alongside the ledger rather than instead of it, so a run is still sponsored
+// if only one of the two recorded it.
+const workflowSponsoredStep = sql`EXISTS (
+  SELECT 1
+    FROM ${workflowExecutionLogs}
+   WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+     AND ${workflowExecutionLogs.outputRaw}->>'sponsored' = 'true'
+)`;
+
+/**
+ * One predicate per gas category. Sponsored is "gas credit covered a leg";
+ * wallet is "the run burned more than credit covered", which is what makes a
+ * part-sponsored run answer to both.
+ */
+function workflowGasCondition(value: GasSpend): SQL {
+  if (value === "sponsored") {
+    return sql`(${workflowSponsoredStep} OR ${workflowSponsoredGasWei} > 0)`;
+  }
+  if (value === "wallet") {
+    // Both signals have to agree there is an unsponsored share: a step that
+    // burned gas without the sponsored marker, and a total the ledger did not
+    // fully cover. Either alone misfiles a run that only one of the two
+    // recorded.
+    return sql`(
+      EXISTS (
+        SELECT 1
+          FROM ${workflowExecutionLogs}
+         WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+           AND COALESCE(
+                 ${workflowExecutionLogs.gasUsedWei},
+                 CAST(NULLIF(${logOutputField("gasUsed")}, '') AS NUMERIC)
+               ) > 0
+           AND ${workflowExecutionLogs.outputRaw}->>'sponsored' IS DISTINCT FROM 'true'
+      )
+      AND ${workflowStepGasWei} > ${workflowSponsoredGasWei}
+    )`;
+  }
+  return sql`(
+    ${workflowStepGasWei} = 0
+    AND ${workflowSponsoredGasWei} = 0
+    AND NOT ${workflowSponsoredStep}
+  )`;
+}
+
+// A direct execution carries no link into the gas-credit ledger, so its spend
+// can only be read as the wallet's. Selecting "sponsored" therefore returns no
+// direct runs rather than guessing at them.
+function directGasCondition(value: GasSpend): SQL {
+  const spent = sql`(
+    ${directExecutions.gasUsedWei} IS NOT NULL
+    AND CAST(NULLIF(${directExecutions.gasUsedWei}, '') AS NUMERIC) > 0
+  )`;
+  if (value === "wallet") {
+    return spent;
+  }
+  if (value === "free") {
+    return sql`NOT ${spent}`;
+  }
+  return sql`false`;
+}
+
+/** The chosen categories OR together, like every other dimension. */
+function gasCondition(
+  gas: GasSpend[],
+  predicate: (value: GasSpend) => SQL
+): SQL | undefined {
+  const wanted = [...new Set(gas)];
+  if (wanted.length === 0 || wanted.length === 3) {
+    return undefined;
+  }
+  return sql`(${sql.join(wanted.map(predicate), sql` OR `)})`;
+}
+
+/**
+ * Every workflow-side predicate for a set of filters. `skipStatuses` lifts the
+ * status dimension for the facet counts, which have to count what each status
+ * would add rather than what the current status selection already shows.
+ */
+function workflowFilterConditions(
+  filters: RunQueryFilters,
+  skipStatuses = false
+): SQL[] {
+  const conditions: SQL[] = [];
+  const statuses = filters.statuses ?? [];
+  if (!skipStatuses && statuses.length > 0) {
+    conditions.push(workflowStatusesCondition(statuses));
+  }
+  const networks = filters.networks ?? [];
+  if (networks.length > 0) {
+    conditions.push(workflowNetworkCondition(networks));
+  }
+  if (filters.durationMinMs !== undefined) {
+    conditions.push(
+      sql`${workflowExecutions.duration} >= ${filters.durationMinMs}`
+    );
+  }
+  if (filters.durationMaxMs !== undefined) {
+    conditions.push(
+      sql`${workflowExecutions.duration} < ${filters.durationMaxMs}`
+    );
+  }
+  const search = filters.search?.trim();
+  if (search) {
+    conditions.push(workflowSearchCondition(search));
+  }
+  const gas = gasCondition(filters.gas ?? [], workflowGasCondition);
+  if (gas) {
+    conditions.push(gas);
+  }
+  return conditions;
+}
+
+function directFilterConditions(
+  filters: RunQueryFilters,
+  skipStatuses = false
+): SQL[] {
+  const conditions: SQL[] = [];
+  const statuses = filters.statuses ?? [];
+  if (!skipStatuses && statuses.length > 0) {
+    conditions.push(directStatusesCondition(statuses));
+  }
+  const networks = filters.networks ?? [];
+  if (networks.length > 0) {
+    conditions.push(
+      sql`${directExecutions.network} IN (${sql.join(
+        networks.map((network) => sql`${network}`),
+        sql`, `
+      )})`
+    );
+  }
+  if (filters.durationMinMs !== undefined) {
+    conditions.push(sql`${directDurationMs} >= ${filters.durationMinMs}`);
+  }
+  if (filters.durationMaxMs !== undefined) {
+    conditions.push(sql`${directDurationMs} < ${filters.durationMaxMs}`);
+  }
+  const search = filters.search?.trim();
+  if (search) {
+    conditions.push(directSearchCondition(search));
+  }
+  const gas = gasCondition(filters.gas ?? [], directGasCondition);
+  if (gas) {
+    conditions.push(gas);
+  }
+  return conditions;
+}
+
+/** Whether each source is in play, given the source filter and project scope. */
+function resolveSources(
+  sources: RunSource[] | undefined,
+  projectId: string | undefined
+): { workflow: boolean; direct: boolean } {
+  const selected = sources ?? [];
+  const all = selected.length === 0;
+  return {
+    workflow: all || selected.includes("workflow"),
+    // A project scopes to its workflows, and a direct execution belongs to no
+    // workflow, so no direct run can be in a project.
+    direct: (all || selected.includes("direct")) && !projectId,
+  };
 }
 
 /**
@@ -890,12 +1146,10 @@ async function computeNetworkBreakdown(
 export async function getUnifiedRuns(
   organizationId: string,
   range: TimeRange,
-  options: {
+  options: RunQueryFilters & {
     cursor?: string;
     page?: number;
     limit?: number;
-    status?: NormalizedStatus;
-    source?: RunSource;
     customStart?: string;
     customEnd?: string;
     projectId?: string;
@@ -911,16 +1165,15 @@ export async function getUnifiedRuns(
     cursor,
     page = 1,
     limit = 50,
-    status,
-    source,
     customStart,
     customEnd,
     projectId,
+    ...filters
   } = options;
   const rangeStart = getTimeRangeStart(range, customStart);
   const rangeEnd = customEnd ? new Date(customEnd) : new Date();
   const pageLimit = Math.min(limit, 100);
-  const skipDirect = Boolean(projectId) || source === "direct";
+  const wanted = resolveSources(filters.sources, projectId);
   const offset = cursor ? 0 : (page - 1) * pageLimit;
 
   // Fetch enough rows from each source to fill the requested page after merging.
@@ -930,33 +1183,32 @@ export async function getUnifiedRuns(
 
   // Fire run fetches and count queries in parallel
   const [workflowRuns, directRuns, total] = await Promise.all([
-    source === "direct"
-      ? ([] as UnifiedRun[])
-      : fetchWorkflowRuns(
+    wanted.workflow
+      ? fetchWorkflowRuns(
           organizationId,
           rangeStart,
           rangeEnd,
-          status,
+          filters,
           cursor,
           fetchLimit,
           projectId
-        ),
-    skipDirect || source === "workflow"
-      ? ([] as UnifiedRun[])
-      : fetchDirectRuns(
+        )
+      : ([] as UnifiedRun[]),
+    wanted.direct
+      ? fetchDirectRuns(
           organizationId,
           rangeStart,
           rangeEnd,
-          status,
+          filters,
           cursor,
           fetchLimit
-        ),
+        )
+      : ([] as UnifiedRun[]),
     getUnifiedRunsTotal(
       organizationId,
       rangeStart,
       rangeEnd,
-      status,
-      source,
+      filters,
       projectId
     ),
   ]);
@@ -979,7 +1231,7 @@ async function fetchWorkflowRuns(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
-  status: NormalizedStatus | undefined,
+  filters: RunQueryFilters,
   cursor: string | undefined,
   limit: number,
   projectId?: string
@@ -1004,9 +1256,7 @@ async function fetchWorkflowRuns(
     isNull(workflowExecutions.deletedAt),
   ];
 
-  if (status) {
-    conditions.push(workflowStatusCondition(status));
-  }
+  conditions.push(...workflowFilterConditions(filters));
 
   if (cursor) {
     conditions.push(lt(workflowExecutions.startedAt, new Date(cursor)));
@@ -1192,7 +1442,7 @@ async function fetchDirectRuns(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
-  status: NormalizedStatus | undefined,
+  filters: RunQueryFilters,
   cursor: string | undefined,
   limit: number
 ): Promise<UnifiedRun[]> {
@@ -1200,17 +1450,8 @@ async function fetchDirectRuns(
     eq(directExecutions.organizationId, organizationId),
     gte(directExecutions.createdAt, rangeStart),
     lt(directExecutions.createdAt, rangeEnd),
+    ...directFilterConditions(filters),
   ];
-
-  if (status) {
-    const dbStatuses = directDbStatuses(status);
-    conditions.push(
-      sql`${directExecutions.status} IN (${sql.join(
-        dbStatuses.map((s) => sql`${s}`),
-        sql`, `
-      )})`
-    );
-  }
 
   if (cursor) {
     conditions.push(lt(directExecutions.createdAt, new Date(cursor)));
@@ -1278,7 +1519,7 @@ async function getWorkflowRunsTotal(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
-  status: NormalizedStatus | undefined,
+  filters: RunQueryFilters,
   projectId?: string
 ): Promise<number> {
   const conditions = [
@@ -1292,9 +1533,7 @@ async function getWorkflowRunsTotal(
   if (projectId) {
     conditions.push(eq(workflows.projectId, projectId));
   }
-  if (status) {
-    conditions.push(workflowStatusCondition(status));
-  }
+  conditions.push(...workflowFilterConditions(filters));
   const result = await db
     .select({ count: count() })
     .from(workflowExecutions)
@@ -1307,22 +1546,14 @@ async function getDirectRunsTotal(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
-  status: NormalizedStatus | undefined
+  filters: RunQueryFilters
 ): Promise<number> {
   const conditions = [
     eq(directExecutions.organizationId, organizationId),
     gte(directExecutions.createdAt, rangeStart),
     lt(directExecutions.createdAt, rangeEnd),
+    ...directFilterConditions(filters),
   ];
-  if (status) {
-    const dbStatuses = directDbStatuses(status);
-    conditions.push(
-      sql`${directExecutions.status} IN (${sql.join(
-        dbStatuses.map((s) => sql`${s}`),
-        sql`, `
-      )})`
-    );
-  }
   const result = await db
     .select({ count: count() })
     .from(directExecutions)
@@ -1330,30 +1561,151 @@ async function getDirectRunsTotal(
   return Number(result[0]?.count) || 0;
 }
 
+/**
+ * The normalized status of a workflow row, expressed in SQL. Mirrors
+ * normalizeStatus so a grouped count and a listed row never disagree about
+ * which bucket a run belongs to.
+ */
+const workflowNormalizedStatus = sql<string>`CASE
+  WHEN ${workflowExecutions.status} = 'error'
+   AND ${workflowExecutions.errorType} = ${ExecutionErrorType.EXTERNAL} THEN 'external_error'
+  WHEN ${workflowExecutions.status} = 'phantom' THEN 'pending'
+  WHEN ${workflowExecutions.status} = 'unconfirmed' THEN 'running'
+  ELSE ${workflowExecutions.status}
+END`;
+
+const directNormalizedStatus = sql<string>`CASE
+  WHEN ${directExecutions.status} = 'completed' THEN 'success'
+  WHEN ${directExecutions.status} = 'failed' THEN 'error'
+  WHEN ${directExecutions.status} = 'unconfirmed' THEN 'running'
+  ELSE ${directExecutions.status}
+END`;
+
+/**
+ * Run counts per normalized status, for the counts beside each option in the
+ * status filter. Every other filter applies; the status filter itself does not,
+ * so a count says how many runs ticking that status would bring in.
+ */
+export function getStatusFacets(
+  organizationId: string,
+  range: TimeRange,
+  options: RunQueryFilters & {
+    customStart?: string;
+    customEnd?: string;
+    projectId?: string;
+  } = {}
+): Promise<StatusFacets> {
+  const { customStart, customEnd, projectId, ...filters } = options;
+  const compute = () =>
+    computeStatusFacets(
+      organizationId,
+      range,
+      filters,
+      customStart,
+      customEnd,
+      projectId
+    );
+  // Only the unfiltered facets are hot enough to cache; a filtered combination
+  // is effectively single-use and would grow the key space for no hit rate.
+  if (!isCacheableRange(range, customStart, customEnd) || hasFilters(filters)) {
+    return compute();
+  }
+  return cachedAnalytics(
+    analyticsCacheKey("facets", [organizationId, range, projectId]),
+    compute
+  );
+}
+
+function hasFilters(filters: RunQueryFilters): boolean {
+  return Boolean(
+    (filters.sources?.length ?? 0) > 0 ||
+      (filters.networks?.length ?? 0) > 0 ||
+      filters.durationMinMs !== undefined ||
+      filters.durationMaxMs !== undefined ||
+      (filters.gas?.length ?? 0) > 0 ||
+      filters.search?.trim()
+  );
+}
+
+async function computeStatusFacets(
+  organizationId: string,
+  range: TimeRange,
+  filters: RunQueryFilters,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<StatusFacets> {
+  const rangeStart = getTimeRangeStart(range, customStart);
+  const rangeEnd = customEnd ? new Date(customEnd) : new Date();
+  const wanted = resolveSources(filters.sources, projectId);
+
+  const workflowRows = wanted.workflow
+    ? await db
+        .select({ status: workflowNormalizedStatus, value: count() })
+        .from(workflowExecutions)
+        .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
+        .where(
+          and(
+            eq(workflows.organizationId, organizationId),
+            projectId ? eq(workflows.projectId, projectId) : undefined,
+            gte(workflowExecutions.startedAt, rangeStart),
+            lt(workflowExecutions.startedAt, rangeEnd),
+            isNull(workflowExecutions.deletedAt),
+            ...workflowFilterConditions(filters, true)
+          )
+        )
+        // Group by the select ordinal: the CASE carries a bound parameter, and
+        // repeating the expression here would bind a second placeholder that
+        // Postgres does not recognise as the same expression.
+        .groupBy(sql`1`)
+    : [];
+
+  const directRows = wanted.direct
+    ? await db
+        .select({ status: directNormalizedStatus, value: count() })
+        .from(directExecutions)
+        .where(
+          and(
+            eq(directExecutions.organizationId, organizationId),
+            gte(directExecutions.createdAt, rangeStart),
+            lt(directExecutions.createdAt, rangeEnd),
+            ...directFilterConditions(filters, true)
+          )
+        )
+        .groupBy(sql`1`)
+    : [];
+
+  const facets: StatusFacets = {};
+  for (const row of [...workflowRows, ...directRows]) {
+    const status = row.status as NormalizedStatus;
+    facets[status] = (facets[status] ?? 0) + (Number(row.value) || 0);
+  }
+  return facets;
+}
+
 async function getUnifiedRunsTotal(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
-  status: NormalizedStatus | undefined,
-  source: RunSource | undefined,
+  filters: RunQueryFilters,
   projectId?: string
 ): Promise<number> {
-  const skipDirect = Boolean(projectId);
+  const wanted = resolveSources(filters.sources, projectId);
 
   // Run both count queries in parallel
   const [workflowTotal, directTotal] = await Promise.all([
-    source === "direct"
-      ? 0
-      : getWorkflowRunsTotal(
+    wanted.workflow
+      ? getWorkflowRunsTotal(
           organizationId,
           rangeStart,
           rangeEnd,
-          status,
+          filters,
           projectId
-        ),
-    skipDirect || source === "workflow"
-      ? 0
-      : getDirectRunsTotal(organizationId, rangeStart, rangeEnd, status),
+        )
+      : 0,
+    wanted.direct
+      ? getDirectRunsTotal(organizationId, rangeStart, rangeEnd, filters)
+      : 0,
   ]);
 
   return workflowTotal + directTotal;
