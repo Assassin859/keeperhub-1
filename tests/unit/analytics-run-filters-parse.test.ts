@@ -33,8 +33,8 @@ describe("parseRunFilters", () => {
   });
 
   it("reads the gas dimension", () => {
-    expect(parse("gas=paid").gas).toEqual(["paid"]);
-    expect(parse("gas=paid&gas=free").gas).toEqual(["paid", "free"]);
+    expect(parse("gas=sponsored").gas).toEqual(["sponsored"]);
+    expect(parse("gas=wallet&gas=free").gas).toEqual(["wallet", "free"]);
     expect(parse("gas=maybe").gas).toBeUndefined();
   });
 
@@ -52,12 +52,12 @@ describe("buildRunsQuery", () => {
       sources: ["workflow"],
       networks: ["8453", "42161"],
       duration: "over30s",
-      gas: ["paid"],
+      gas: ["wallet"],
       search: "nightly",
     });
 
     const parsed = parse(query);
-    expect(parsed.gas).toEqual(["paid"]);
+    expect(parsed.gas).toEqual(["wallet"]);
     expect(parsed.statuses).toEqual(["error", "system_error"]);
     expect(parsed.sources).toEqual(["workflow"]);
     expect(parsed.networks).toEqual(["8453", "42161"]);

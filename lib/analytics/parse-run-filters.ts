@@ -18,7 +18,7 @@ const VALID_STATUSES = new Set<NormalizedStatus>([
 
 const VALID_SOURCES = new Set<RunSource>(["workflow", "direct"]);
 
-const VALID_GAS = new Set<GasSpend>(["paid", "free"]);
+const VALID_GAS = new Set<GasSpend>(["sponsored", "wallet", "free"]);
 
 // A search long enough to be a run id is as long as a search ever needs to be,
 // and the cap keeps an ILIKE pattern from being handed an arbitrary payload.

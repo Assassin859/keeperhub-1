@@ -226,48 +226,98 @@ function directSearchCondition(term: string): SQL {
 // asking for "runs over 30s" means.
 const directDurationMs = sql`(EXTRACT(EPOCH FROM (${directExecutions.completedAt} - ${directExecutions.createdAt})) * 1000)`;
 
+// Wei the run's steps burned, and the slice of it gas credit covered. The step
+// rollup is the total, not the unsponsored remainder, so the wallet's share is
+// the difference rather than the whole.
+const workflowStepGasWei = sql`COALESCE((
+  SELECT SUM(COALESCE(
+           ${workflowExecutionLogs.gasUsedWei},
+           CAST(NULLIF(${logOutputField("gasUsed")}, '') AS NUMERIC)
+         ))
+    FROM ${workflowExecutionLogs}
+   WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+), 0)`;
+
+const workflowSponsoredGasWei = sql`COALESCE((
+  SELECT SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC))
+    FROM ${gasCreditUsage}
+   WHERE ${gasCreditUsage.executionId} = ${workflowExecutions.id}
+), 0)`;
+
+// The same marker the sponsored chip on a run reads: a web3 step core writes
+// `sponsored: true` into its output when the gas station covered the gas. Taken
+// alongside the ledger rather than instead of it, so a run is still sponsored
+// if only one of the two recorded it.
+const workflowSponsoredStep = sql`EXISTS (
+  SELECT 1
+    FROM ${workflowExecutionLogs}
+   WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+     AND ${workflowExecutionLogs.outputRaw}->>'sponsored' = 'true'
+)`;
+
 /**
- * Did this run spend gas? Reads the same two sources the Gas column renders
- * from: the per-step rollup (which covers every transaction the run made) and
- * the sponsorship ledger (which covers a leg KeeperHub paid for). A run counts
- * as paid if either says so, so a sponsored run is not filed as free.
+ * One predicate per gas category. Sponsored is "gas credit covered a leg";
+ * wallet is "the run burned more than credit covered", which is what makes a
+ * part-sponsored run answer to both.
  */
-function workflowPaidCondition(): SQL {
+function workflowGasCondition(value: GasSpend): SQL {
+  if (value === "sponsored") {
+    return sql`(${workflowSponsoredStep} OR ${workflowSponsoredGasWei} > 0)`;
+  }
+  if (value === "wallet") {
+    // Both signals have to agree there is an unsponsored share: a step that
+    // burned gas without the sponsored marker, and a total the ledger did not
+    // fully cover. Either alone misfiles a run that only one of the two
+    // recorded.
+    return sql`(
+      EXISTS (
+        SELECT 1
+          FROM ${workflowExecutionLogs}
+         WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+           AND COALESCE(
+                 ${workflowExecutionLogs.gasUsedWei},
+                 CAST(NULLIF(${logOutputField("gasUsed")}, '') AS NUMERIC)
+               ) > 0
+           AND ${workflowExecutionLogs.outputRaw}->>'sponsored' IS DISTINCT FROM 'true'
+      )
+      AND ${workflowStepGasWei} > ${workflowSponsoredGasWei}
+    )`;
+  }
   return sql`(
-    EXISTS (
-      SELECT 1
-        FROM ${workflowExecutionLogs}
-       WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
-         AND COALESCE(
-               ${workflowExecutionLogs.gasUsedWei},
-               CAST(NULLIF(${logOutputField("gasUsed")}, '') AS NUMERIC)
-             ) > 0
-    )
-    OR EXISTS (
-      SELECT 1
-        FROM ${gasCreditUsage}
-       WHERE ${gasCreditUsage.executionId} = ${workflowExecutions.id}
-         AND CAST(${gasCreditUsage.gasCostWei} AS NUMERIC) > 0
-    )
+    ${workflowStepGasWei} = 0
+    AND ${workflowSponsoredGasWei} = 0
+    AND NOT ${workflowSponsoredStep}
   )`;
 }
 
-/**
- * Both values selected is the same as neither, so the predicate is only built
- * when exactly one side is asked for.
- */
-function gasCondition(gas: GasSpend[], paid: SQL): SQL | undefined {
-  const wanted = new Set(gas);
-  if (wanted.size !== 1) {
-    return undefined;
+// A direct execution carries no link into the gas-credit ledger, so its spend
+// can only be read as the wallet's. Selecting "sponsored" therefore returns no
+// direct runs rather than guessing at them.
+function directGasCondition(value: GasSpend): SQL {
+  const spent = sql`(
+    ${directExecutions.gasUsedWei} IS NOT NULL
+    AND CAST(NULLIF(${directExecutions.gasUsedWei}, '') AS NUMERIC) > 0
+  )`;
+  if (value === "wallet") {
+    return spent;
   }
-  return wanted.has("paid") ? paid : sql`NOT ${paid}`;
+  if (value === "free") {
+    return sql`NOT ${spent}`;
+  }
+  return sql`false`;
 }
 
-const directPaidCondition = sql`(
-  ${directExecutions.gasUsedWei} IS NOT NULL
-  AND CAST(NULLIF(${directExecutions.gasUsedWei}, '') AS NUMERIC) > 0
-)`;
+/** The chosen categories OR together, like every other dimension. */
+function gasCondition(
+  gas: GasSpend[],
+  predicate: (value: GasSpend) => SQL
+): SQL | undefined {
+  const wanted = [...new Set(gas)];
+  if (wanted.length === 0 || wanted.length === 3) {
+    return undefined;
+  }
+  return sql`(${sql.join(wanted.map(predicate), sql` OR `)})`;
+}
 
 /**
  * Every workflow-side predicate for a set of filters. `skipStatuses` lifts the
@@ -301,7 +351,7 @@ function workflowFilterConditions(
   if (search) {
     conditions.push(workflowSearchCondition(search));
   }
-  const gas = gasCondition(filters.gas ?? [], workflowPaidCondition());
+  const gas = gasCondition(filters.gas ?? [], workflowGasCondition);
   if (gas) {
     conditions.push(gas);
   }
@@ -336,7 +386,7 @@ function directFilterConditions(
   if (search) {
     conditions.push(directSearchCondition(search));
   }
-  const gas = gasCondition(filters.gas ?? [], directPaidCondition);
+  const gas = gasCondition(filters.gas ?? [], directGasCondition);
   if (gas) {
     conditions.push(gas);
   }

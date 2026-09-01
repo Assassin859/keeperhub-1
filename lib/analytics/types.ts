@@ -142,11 +142,16 @@ export type NetworkBreakdown = {
  * dimensions AND together.
  */
 /**
- * Whether a run spent gas. "paid" is a run that put native currency on chain,
- * whether the org's wallet or KeeperHub's gas credit covered it; "free" is a
- * run that only read, or never reached a broadcast.
+ * How a run's on-chain cost was met. "sponsored" is a run with a leg KeeperHub
+ * covered from gas credit; "wallet" is a run that spent more than the credit
+ * covered, so the org's own funds paid for part of it; "free" is a run that
+ * only read, or never reached a broadcast.
+ *
+ * Sponsored and wallet deliberately overlap. A run that starts sponsored and
+ * falls back to direct signing genuinely is both, and filing it under only one
+ * would hide it from the other filter.
  */
-export type GasSpend = "paid" | "free";
+export type GasSpend = "sponsored" | "wallet" | "free";
 
 export type RunQueryFilters = {
   statuses?: NormalizedStatus[];

@@ -45,6 +45,8 @@ type Seed = {
   errorType?: ExecutionErrorType;
   durationMs?: number;
   network?: string;
+  /** Carries the gas-station marker a web3 step core writes on a sponsored tx. */
+  sponsored?: boolean;
 };
 
 // One run per interesting combination, so a filter that over- or under-selects
@@ -80,6 +82,14 @@ const SEEDS: Seed[] = [
     status: "success",
     durationMs: 2000,
     network: ARBITRUM,
+  },
+  {
+    id: `${PREFIX}sponsored`,
+    workflowId: REBALANCE_ID,
+    status: "success",
+    durationMs: 3000,
+    network: BASE,
+    sponsored: true,
   },
   {
     id: `${PREFIX}skipped`,
@@ -188,6 +198,7 @@ describe.skipIf(SKIP)("analytics run filters", () => {
       status: "success";
       network: string;
       gasUsedWei: string | null;
+      outputRaw: { sponsored: boolean } | null;
       startedAt: Date;
     }> = [];
     for (const seed of SEEDS) {
@@ -203,6 +214,7 @@ describe.skipIf(SKIP)("analytics run filters", () => {
         status: "success" as const,
         network: seed.network,
         gasUsedWei: seed.status === "success" ? "21000" : null,
+        outputRaw: seed.sponsored ? { sponsored: true } : null,
         startedAt: now,
       });
     }
@@ -265,7 +277,7 @@ describe.skipIf(SKIP)("analytics run filters", () => {
       [`${PREFIX}external_err`, `${PREFIX}system_err`].sort()
     );
     expect(await idsFor({ durationMaxMs: 5000 })).toEqual(
-      [`${PREFIX}ok`, `${PREFIX}user_err`].sort()
+      [`${PREFIX}ok`, `${PREFIX}sponsored`, `${PREFIX}user_err`].sort()
     );
   });
 
@@ -277,17 +289,24 @@ describe.skipIf(SKIP)("analytics run filters", () => {
     expect(await idsFor({ search: `${PREFIX}ok` })).toEqual([`${PREFIX}ok`]);
   });
 
-  it("separates runs that spent gas from those that did not", async () => {
-    // Only the seeded success rows carry gas on their step log.
-    const paid = await idsFor({ gas: ["paid"] });
-    expect(paid).toEqual([`${PREFIX}ok`]);
+  it("separates runs by who paid the gas", async () => {
+    // Only the seeded success row carries gas, and none of the rows carry a
+    // sponsorship marker, so the wallet covered all of it.
+    // The sponsored run burned gas, but the gas station covered it, so it
+    // answers to sponsored and not to wallet.
+    expect(await idsFor({ gas: ["sponsored"] })).toEqual([
+      `${PREFIX}sponsored`,
+    ]);
+    expect(await idsFor({ gas: ["wallet"] })).toEqual([`${PREFIX}ok`]);
 
     const free = await idsFor({ gas: ["free"] });
     expect(free).not.toContain(`${PREFIX}ok`);
     expect(free).toContain(`${PREFIX}user_err`);
 
-    // Both values selected is the same as neither: no narrowing at all.
-    expect(await idsFor({ gas: ["paid", "free"] })).toEqual(await idsFor({}));
+    // Every category selected is the same as none: no narrowing at all.
+    expect(await idsFor({ gas: ["sponsored", "wallet", "free"] })).toEqual(
+      await idsFor({})
+    );
   });
 
   it("reports the total under the filters, not the unfiltered count", async () => {
@@ -303,7 +322,7 @@ describe.skipIf(SKIP)("analytics run filters", () => {
     expect(facets.error).toBe(1);
     expect(facets.external_error).toBe(1);
     expect(facets.system_error).toBe(1);
-    expect(facets.success).toBe(1);
+    expect(facets.success).toBe(2);
     expect(facets.skipped).toBe(1);
     expect(facets.running).toBe(1);
   });

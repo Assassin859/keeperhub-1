@@ -259,10 +259,32 @@ function NetworkFilter(): ReactNode {
   );
 }
 
-const GAS_OPTIONS: Array<{ value: GasSpend; label: string }> = [
-  { value: "paid", label: "Used gas" },
-  { value: "free", label: "No gas" },
+// Grouped like the statuses: one click for "it cost something", with who paid
+// nested under it. Sponsored and wallet overlap on a run that started sponsored
+// and fell back, which is why they are separate ticks rather than a toggle.
+const GAS_GROUPS: Array<{
+  key: string;
+  label: string;
+  members: Array<{ value: GasSpend; label: string }>;
+}> = [
+  {
+    key: "spent",
+    label: "Used gas",
+    members: [
+      { value: "sponsored", label: "Sponsored" },
+      { value: "wallet", label: "Wallet paid" },
+    ],
+  },
+  {
+    key: "free",
+    label: "No gas",
+    members: [{ value: "free", label: "No gas" }],
+  },
 ];
+
+const ALL_GAS: GasSpend[] = GAS_GROUPS.flatMap((group) =>
+  group.members.map((member) => member.value)
+);
 
 /**
  * Whether a run spent anything on chain. Sponsored runs count as paid: the org
@@ -271,8 +293,18 @@ const GAS_OPTIONS: Array<{ value: GasSpend; label: string }> = [
 function GasFilter(): ReactNode {
   const [gas, setGas] = useAtom(analyticsGasFiltersAtom);
   const clear = useCallback((): void => setGas([]), [setGas]);
-  const selectAll = useCallback(
-    (): void => setGas(GAS_OPTIONS.map((option) => option.value)),
+  const selectAll = useCallback((): void => setGas(ALL_GAS), [setGas]);
+
+  const toggleGroup = useCallback(
+    (members: GasSpend[]): void => {
+      setGas((current) => {
+        const allOn = members.every((value) => current.includes(value));
+        if (allOn) {
+          return current.filter((value) => !members.includes(value));
+        }
+        return [...new Set([...current, ...members])];
+      });
+    },
     [setGas]
   );
 
@@ -283,14 +315,34 @@ function GasFilter(): ReactNode {
       onSelectAll={selectAll}
       selectedCount={gas.length}
     >
-      {GAS_OPTIONS.map((option) => (
-        <FilterCheckbox
-          checked={gas.includes(option.value)}
-          key={option.value}
-          label={option.label}
-          onToggle={() => setGas((current) => toggle(current, option.value))}
-        />
-      ))}
+      {GAS_GROUPS.map((group) => {
+        const members = group.members.map((member) => member.value);
+        const selected = members.filter((value) => gas.includes(value));
+        return (
+          <div key={group.key}>
+            <FilterCheckbox
+              checked={selected.length === members.length}
+              indeterminate={
+                selected.length > 0 && selected.length < members.length
+              }
+              label={group.label}
+              onToggle={() => toggleGroup(members)}
+            />
+            {group.members.length > 1 &&
+              group.members.map((member) => (
+                <FilterCheckbox
+                  checked={gas.includes(member.value)}
+                  indented
+                  key={member.value}
+                  label={member.label}
+                  onToggle={() =>
+                    setGas((current) => toggle(current, member.value))
+                  }
+                />
+              ))}
+          </div>
+        );
+      })}
     </FilterPopover>
   );
 }
