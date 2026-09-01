@@ -31,7 +31,9 @@ name: PR Issue Link
 #
 # When the check fails it leaves one comment on the pull request saying what
 # it found and what to do, and edits that same comment on every later run,
-# down to a one-line resolved note once the check passes. The comment never
+# down to a one-line resolved note once the check passes. When a referenced
+# issue is open and simply not yet accepted, the comment says the wait is on
+# the maintainers and gives the contributor nothing to do. The comment never
 # echoes the title, description or branch name back: they are contributor-
 # controlled text and, rendered as Markdown, could carry mentions or links.
 # The job log keeps them. Issue numbers in the comment sit in code spans so
@@ -136,9 +138,16 @@ jobs:
             exit 0
           }
 
+          # fail <headline> [reasons] [awaiting]. With awaiting set, a referenced
+          # issue is open and simply not yet accepted: the contributor has done
+          # their part, so the comment says the wait is ours and asks nothing.
           fail() {
-            local headline="$1" reasons="${2:-}" md
-            md="### This pull request needs an issue or ticket reference"$'\n\n'
+            local headline="$1" reasons="${2:-}" awaiting="${3:-}" md
+            if [ -n "$awaiting" ]; then
+              md="### This pull request is waiting on issue triage"$'\n\n'
+            else
+              md="### This pull request needs an issue or ticket reference"$'\n\n'
+            fi
             md+="$headline"$'\n\n'
             if [ -n "$reasons" ]; then
               md+="$(printf '%s' "$reasons" | sed 's/^ */- /')"$'\n\n'
@@ -147,16 +156,24 @@ jobs:
               md+="**Team pull requests** carry the Linear ticket in the branch name, "
               md+="\`feat/$LINEAR_TEAM_KEY-1234-short-description\`. Rename the branch and "
               md+="GitHub moves this pull request with it. Referencing an accepted GitHub "
-              md+="issue as below also works."$'\n\n'
+              md+="issue also works."$'\n\n'
             fi
-            md+="**Outside contributions** start with an issue. Open one, wait for a "
-            md+="maintainer to apply the \`$ACCEPTED_LABEL\` label, then put \`#N\` in the "
-            md+="title, for example \`fix: #1978 return 403 with a body on public /api/chains\`. "
-            md+="No issue is needed for typos, broken links, formatting, or docs corrected to "
-            md+="match existing behaviour; retitle with one of: \`$EXEMPT_TYPES\`. Full policy: "
-            md+="[ISSUES.md](https://github.com/$REPO/blob/staging/ISSUES.md)."$'\n\n'
-            md+="This check reruns on every push and edit, but not when the issue changes; "
-            md+="re-run the job or edit the title to retrigger it."
+            if [ -n "$awaiting" ]; then
+              md+="**Nothing to do on your side.** The issue is filed and is waiting for a "
+              md+="maintainer to triage it and apply the \`$ACCEPTED_LABEL\` label; that step "
+              md+="is ours, not yours. This check reruns when the pull request is pushed or "
+              md+="edited, not when the issue is labelled, so once \`$ACCEPTED_LABEL\` lands, "
+              md+="re-run the job or edit the title to retrigger it."
+            else
+              md+="**Outside contributions** start with an issue. Open one, wait for a "
+              md+="maintainer to apply the \`$ACCEPTED_LABEL\` label, then put \`#N\` in the "
+              md+="title, for example \`fix: #1978 return 403 with a body on public /api/chains\`. "
+              md+="No issue is needed for typos, broken links, formatting, or docs corrected to "
+              md+="match existing behaviour; retitle with one of: \`$EXEMPT_TYPES\`. Full policy: "
+              md+="[ISSUES.md](https://github.com/$REPO/blob/staging/ISSUES.md)."$'\n\n'
+              md+="This check reruns on every push and edit, but not when the issue changes; "
+              md+="re-run the job or edit the title to retrigger it."
+            fi
 
             echo "----------------------------------------------"
             echo "  ERROR: $headline"
@@ -209,6 +226,7 @@ jobs:
           fi
 
           reasons=""
+          awaiting=""
           for n in $candidates; do
             if ! issue_json=$(gh api "repos/$REPO/issues/$n" 2>/dev/null); then
               reasons+="  \`#$n\` does not resolve to an issue in $REPO."$'\n'
@@ -223,9 +241,17 @@ jobs:
               state=$(printf '%s' "$issue_json" | jq -r '.state')
               labels=$(printf '%s' "$issue_json" | jq -r '[.labels[].name] | join(", ")')
               reasons+="  \`#$n\` is not marked '$ACCEPTED_LABEL' (state: $state; labels: ${labels:-none})."$'\n'
+              # An open issue without the label is in our triage queue, not
+              # the contributor's hands. A closed one is a decision already made.
+              if [ "$state" = "open" ]; then
+                awaiting=true
+              fi
               continue
             fi
             pass "References accepted issue #$n."
           done
 
+          if [ -n "$awaiting" ]; then
+            fail "A referenced issue is filed but not yet marked '$ACCEPTED_LABEL'." "$reasons" "$awaiting"
+          fi
           fail "None of the referenced issues can be merged against:" "$reasons"
