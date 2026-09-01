@@ -24,16 +24,20 @@ export function Calendar({
       classNames={{
         months: "relative flex flex-col gap-4 sm:flex-row",
         month: "flex flex-col gap-4",
-        month_caption: "flex h-7 items-center justify-center",
+        month_caption: "flex h-7 items-center justify-center px-8",
         caption_label: "font-medium text-sm",
-        nav: "flex items-center gap-1",
+        // The nav is one element for the whole grid, so it spans the months
+        // and pins to their top edge. Positioning the buttons individually let
+        // them fall to wherever the nav happened to flow, which was on top of
+        // the first week's dates.
+        nav: "absolute inset-x-0 top-0 flex items-center justify-between",
         button_previous: cn(
           buttonVariants({ variant: "ghost" }),
-          "absolute left-3 size-7 p-0 opacity-60 hover:opacity-100"
+          "size-7 p-0 opacity-60 hover:opacity-100"
         ),
         button_next: cn(
           buttonVariants({ variant: "ghost" }),
-          "absolute right-3 size-7 p-0 opacity-60 hover:opacity-100"
+          "size-7 p-0 opacity-60 hover:opacity-100"
         ),
         month_grid: "w-full border-collapse space-y-1",
         weekdays: "flex",
