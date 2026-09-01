@@ -30,6 +30,7 @@ export function FilterPopover({
   onSelectAll,
   children,
 }: FilterPopoverProps): ReactNode {
+  const slug = label.toLowerCase().replace(/\s+/g, "-");
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -38,6 +39,7 @@ export function FilterPopover({
             "h-8 gap-1.5 px-2.5 text-xs",
             selectedCount > 0 && "border-primary/40"
           )}
+          data-testid={`filter-${slug}`}
           size="sm"
           variant="outline"
         >
@@ -50,7 +52,11 @@ export function FilterPopover({
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-0">
+      <PopoverContent
+        align="start"
+        className="w-64 p-0"
+        data-testid={`filter-${slug}-panel`}
+      >
         <div className="max-h-80 overflow-y-auto p-1.5">{children}</div>
         <div className="flex items-center justify-between border-t px-2 py-1.5">
           <span className="text-[11px] text-muted-foreground">
