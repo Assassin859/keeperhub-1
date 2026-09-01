@@ -397,6 +397,23 @@ function renderConditionLiteral(value: unknown): string {
 }
 
 /**
+ * The chain a Block/Event/Transfer trigger watches, as the text form the
+ * execution log's `network` column holds. That config is the only place an
+ * on-chain trigger names its chain, so without logging it a run whose later
+ * steps name no chain of their own reaches /analytics with no Network at all.
+ * A trigger with no chain (Manual, Schedule, Webhook) yields undefined.
+ */
+// Exported for testing
+export function triggerConfigNetwork(
+  config: Record<string, unknown>
+): string | undefined {
+  const raw = config.network;
+  return typeof raw === "string" || typeof raw === "number"
+    ? String(raw)
+    : undefined;
+}
+
+/**
  * Evaluate condition expression with template variable replacement.
  *
  * Security (A-01): The transformed expression is evaluated by a safe AST
@@ -3118,6 +3135,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         // Execute trigger step (handles logging internally)
         const triggerResult = await triggerStep({
           triggerData,
+          network: triggerConfigNetwork(config),
           _context: triggerContext,
         });
 

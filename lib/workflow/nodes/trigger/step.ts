@@ -28,6 +28,13 @@ type TriggerResult = {
 
 export type TriggerInput = StepInput & {
   triggerData: Record<string, unknown>;
+  /**
+   * The chain the trigger node is configured against, when it has one. Logged
+   * rather than executed: it is what puts an on-chain trigger's network into
+   * the run's `workflow_execution_logs` row, which is where /analytics reads
+   * the Network column from.
+   */
+  network?: string;
   /** If set, this call is just to log workflow completion (no trigger execution) */
   _workflowComplete?: {
     executionId: string;
