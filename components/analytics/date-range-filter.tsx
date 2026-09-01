@@ -13,6 +13,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  endOfDay,
+  nextRangeStep,
+  startOfDay,
+} from "@/lib/analytics/date-range-selection";
+import {
   analyticsCustomEndAtom,
   analyticsCustomStartAtom,
   analyticsRangeAtom,
@@ -30,18 +35,9 @@ const MONTH_LABEL = new Intl.DateTimeFormat("en-US", { month: "long" });
 // Where clearing lands, matching the range the page opens in.
 const DEFAULT_RANGE = "24h" as const;
 
-function startOfDay(date: Date): Date {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
-/** Exclusive end: the instant after the chosen day, so that day is included. */
-function endOfDay(date: Date): Date {
-  const copy = new Date(date);
-  copy.setHours(23, 59, 59, 999);
-  return copy;
-}
+const NOOP = (): void => {
+  // Selection is handled in onDayClick.
+};
 
 type Preset = { key: string; label: string; from: Date; to: Date };
 
@@ -101,18 +97,25 @@ export function DateRangeFilter(): ReactNode {
     [setCustomStart, setCustomEnd, setRange]
   );
 
-  // The first click of a range only names its start, so the picker holds the
-  // half-made selection itself and commits once both ends are known. Applying
-  // on the first click would close the popover with a one-day window and leave
-  // no way to reach the second date.
-  const onSelect = useCallback(
-    (selected: DateRange | undefined): void => {
-      setDraft(selected);
-      if (selected?.from && selected.to) {
-        apply(startOfDay(selected.from), endOfDay(selected.to));
+  /**
+   * Selection is driven from the raw day click rather than the library's range
+   * accumulation. Handed an already-committed range as its current value, that
+   * accumulation reads the next click as closing that range, so it reported
+   * both ends at once and the popover applied and shut on every single click.
+   *
+   * Here the first click after opening always starts a new range and the second
+   * closes it, whatever was selected before.
+   */
+  const onDayClick = useCallback(
+    (day: Date): void => {
+      const step = nextRangeStep(draft, day);
+      if (step.kind === "start") {
+        setDraft({ from: step.from, to: undefined });
+        return;
       }
+      apply(step.from, step.to);
     },
-    [apply]
+    [draft, apply]
   );
 
   const active = range === "custom" && customStart !== null;
@@ -199,11 +202,13 @@ export function DateRangeFilter(): ReactNode {
           </div>
         </div>
         <Calendar
-          autoFocus
           defaultMonth={selected?.from}
           mode="range"
           numberOfMonths={2}
-          onSelect={onSelect}
+          onDayClick={onDayClick}
+          // Required by the range mode's types; the click handler above owns
+          // the transitions, so this deliberately does nothing.
+          onSelect={NOOP}
           selected={selected}
         />
       </PopoverContent>
