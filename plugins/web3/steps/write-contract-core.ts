@@ -142,6 +142,7 @@ export type WriteContractResult =
       // on pre-broadcast failures, where no transaction exists.
       transactionHash?: string;
       chainId?: number;
+      transactionLink?: string;
       // True when the terminal failure came from the gas-sponsored path, so
       // the finalizer can report the route accurately on a failed execution.
       sponsored?: boolean;
