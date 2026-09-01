@@ -1,8 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -64,47 +63,6 @@ export function FilterPopover({
             Clear
           </Button>
         </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-type ValuePopoverProps = {
-  label: string;
-  /** The current choice, shown on the trigger so the bar reads at a glance. */
-  value: string;
-  /** Receives a closer, because picking a single choice should dismiss it. */
-  children: (close: () => void) => ReactNode;
-};
-
-/**
- * Single-choice dimension: the trigger carries the current value rather than a
- * count, and picking an option closes the panel, since there is nothing more to
- * choose.
- */
-export function ValuePopover({
-  label,
-  value,
-  children,
-}: ValuePopoverProps): ReactNode {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Popover onOpenChange={setOpen} open={open}>
-      <PopoverTrigger asChild>
-        <Button
-          aria-label={label}
-          className="h-8 gap-1.5 px-2.5 text-xs"
-          size="sm"
-          variant="outline"
-        >
-          <span className="text-muted-foreground">{label}:</span>
-          {value}
-          <ChevronDown className="size-3.5 text-muted-foreground" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-48 p-1.5">
-        {children(() => setOpen(false))}
       </PopoverContent>
     </Popover>
   );
@@ -174,27 +132,5 @@ export function FilterRadio({
       />
       <span className="flex-1">{label}</span>
     </button>
-  );
-}
-
-type FilterChipProps = {
-  label: string;
-  onRemove: () => void;
-};
-
-/** One applied filter, shown under the bar so the narrowing stays visible. */
-export function FilterChip({ label, onRemove }: FilterChipProps): ReactNode {
-  return (
-    <Badge className="gap-1 pr-1 font-normal" variant="secondary">
-      {label}
-      <button
-        aria-label={`Remove ${label} filter`}
-        className="rounded-sm p-0.5 hover:bg-background/60"
-        onClick={onRemove}
-        type="button"
-      >
-        <X className="size-3" />
-      </button>
-    </Badge>
   );
 }

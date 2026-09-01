@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import {
   DURATION_PRESETS,
   type DurationPresetId,
-  durationPreset,
 } from "@/lib/analytics/duration-presets";
 import type { NormalizedStatus, RunSource } from "@/lib/analytics/types";
 import {
@@ -25,12 +24,7 @@ import {
   ChainDisplayProvider,
   useChainDisplay,
 } from "@/lib/hooks/use-chain-display";
-import {
-  FilterCheckbox,
-  FilterChip,
-  FilterPopover,
-  FilterRadio,
-} from "./filter-popover";
+import { FilterCheckbox, FilterPopover, FilterRadio } from "./filter-popover";
 
 type StatusGroup = {
   key: string;
@@ -38,18 +32,10 @@ type StatusGroup = {
   members: Array<{ value: NormalizedStatus; label: string }>;
 };
 
-// Errors group first, and its three statuses sit under one parent: ticking
-// "Errors" is the whole reason the status filter had to become a multi-select.
+// Ordered by how often a reader reaches for them: the healthy case, then what
+// is still in flight, then the failures with their three subtypes nested under
+// one parent so all of them can be selected in a single click.
 const STATUS_GROUPS: StatusGroup[] = [
-  {
-    key: "errors",
-    label: "Errors",
-    members: [
-      { value: "error", label: "User" },
-      { value: "external_error", label: "External" },
-      { value: "system_error", label: "System" },
-    ],
-  },
   {
     key: "success",
     label: "Success",
@@ -64,6 +50,15 @@ const STATUS_GROUPS: StatusGroup[] = [
     ],
   },
   {
+    key: "errors",
+    label: "Errors",
+    members: [
+      { value: "error", label: "User" },
+      { value: "external_error", label: "External" },
+      { value: "system_error", label: "System" },
+    ],
+  },
+  {
     key: "cancelled",
     label: "Cancelled",
     members: [{ value: "cancelled", label: "Cancelled" }],
@@ -74,17 +69,6 @@ const STATUS_GROUPS: StatusGroup[] = [
     members: [{ value: "skipped", label: "Skipped" }],
   },
 ];
-
-const STATUS_CHIP_LABELS: Record<NormalizedStatus, string> = {
-  error: "Error: User",
-  external_error: "Error: External",
-  system_error: "Error: System",
-  success: "Success",
-  pending: "Pending",
-  running: "Running",
-  cancelled: "Cancelled",
-  skipped: "Skipped",
-};
 
 const SOURCE_OPTIONS: Array<{ value: RunSource; label: string }> = [
   { value: "workflow", label: "Workflow" },
@@ -307,92 +291,17 @@ function SearchBox(): ReactNode {
   );
 }
 
-type Chip = { key: string; label: string; onRemove: () => void };
-
-function useFilterChips(): Chip[] {
+/**
+ * One control to drop every narrowing at once. The dropdown triggers already
+ * show what is selected, so there is no chip row restating it; this is only the
+ * escape hatch out of a combination.
+ */
+function ClearAllButton(): ReactNode {
   const [statuses, setStatuses] = useAtom(analyticsStatusFiltersAtom);
   const [sources, setSources] = useAtom(analyticsSourceFiltersAtom);
   const [networks, setNetworks] = useAtom(analyticsNetworkFiltersAtom);
   const [duration, setDuration] = useAtom(analyticsDurationFilterAtom);
   const [search, setSearch] = useAtom(analyticsSearchAtom);
-  const chains = useChainDisplay();
-
-  const chips: Chip[] = [];
-
-  for (const group of STATUS_GROUPS) {
-    const members = group.members.map((member) => member.value);
-    const selected = members.filter((value) => statuses.includes(value));
-    if (selected.length === 0) {
-      continue;
-    }
-    // A fully-ticked group collapses to one chip so "Errors" reads as one
-    // decision rather than three.
-    if (selected.length === members.length && members.length > 1) {
-      chips.push({
-        key: group.key,
-        label: `${group.label} (${members.length})`,
-        onRemove: () =>
-          setStatuses((current) =>
-            current.filter((value) => !members.includes(value))
-          ),
-      });
-      continue;
-    }
-    for (const value of selected) {
-      chips.push({
-        key: value,
-        label: STATUS_CHIP_LABELS[value],
-        onRemove: () =>
-          setStatuses((current) => current.filter((entry) => entry !== value)),
-      });
-    }
-  }
-
-  for (const source of sources) {
-    chips.push({
-      key: `source-${source}`,
-      label: source === "workflow" ? "Workflow" : "Direct",
-      onRemove: () =>
-        setSources((current) => current.filter((entry) => entry !== source)),
-    });
-  }
-
-  for (const network of networks) {
-    chips.push({
-      key: `network-${network}`,
-      label: chains.name(network),
-      onRemove: () =>
-        setNetworks((current) => current.filter((entry) => entry !== network)),
-    });
-  }
-
-  const preset = durationPreset(duration);
-  if (preset) {
-    chips.push({
-      key: "duration",
-      label: preset.label,
-      onRemove: () => setDuration(null),
-    });
-  }
-
-  if (search.trim()) {
-    chips.push({
-      key: "search",
-      label: `"${search.trim()}"`,
-      onRemove: () => setSearch(""),
-    });
-  }
-
-  return chips;
-}
-
-function ActiveFilters(): ReactNode {
-  const chips = useFilterChips();
-  const setStatuses = useSetAtom(analyticsStatusFiltersAtom);
-  const setSources = useSetAtom(analyticsSourceFiltersAtom);
-  const setNetworks = useSetAtom(analyticsNetworkFiltersAtom);
-  const setDuration = useSetAtom(analyticsDurationFilterAtom);
-  const setSearch = useSetAtom(analyticsSearchAtom);
 
   const clearAll = useCallback((): void => {
     setStatuses([]);
@@ -402,44 +311,40 @@ function ActiveFilters(): ReactNode {
     setSearch("");
   }, [setStatuses, setSources, setNetworks, setDuration, setSearch]);
 
-  if (chips.length === 0) {
+  const active =
+    statuses.length > 0 ||
+    sources.length > 0 ||
+    networks.length > 0 ||
+    duration !== null ||
+    search.trim().length > 0;
+
+  if (!active) {
     return null;
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {chips.map((chip) => (
-        <FilterChip
-          key={chip.key}
-          label={chip.label}
-          onRemove={chip.onRemove}
-        />
-      ))}
-      <Button
-        className="h-6 px-2 text-xs text-muted-foreground"
-        onClick={clearAll}
-        size="sm"
-        variant="ghost"
-      >
-        Clear all
-      </Button>
-    </div>
+    <Button
+      className="h-8 px-2 text-muted-foreground text-xs"
+      onClick={clearAll}
+      size="sm"
+      variant="ghost"
+    >
+      Clear all
+    </Button>
   );
 }
 
 export function RunsFilters(): ReactNode {
   return (
     <ChainDisplayProvider>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <SearchBox />
-          <div className="h-5 w-px bg-border" />
-          <StatusFilter />
-          <SourceFilter />
-          <NetworkFilter />
-          <DurationFilter />
-        </div>
-        <ActiveFilters />
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchBox />
+        <div className="h-5 w-px bg-border" />
+        <StatusFilter />
+        <NetworkFilter />
+        <DurationFilter />
+        <SourceFilter />
+        <ClearAllButton />
       </div>
     </ChainDisplayProvider>
   );

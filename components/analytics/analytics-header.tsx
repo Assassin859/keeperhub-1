@@ -2,7 +2,7 @@
 
 import { useAtom, useAtomValue } from "jotai";
 import { RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -15,18 +15,12 @@ import {
   analyticsRangeAtom,
 } from "@/lib/atoms/analytics";
 import { cn } from "@/lib/utils";
-import { FilterRadio, ValuePopover } from "./filter-popover";
 
-// `label` is what the trigger shows once chosen, `option` what the list reads.
-const RANGE_OPTIONS: Array<{
-  value: TimeRange;
-  label: string;
-  option: string;
-}> = [
-  { value: "1h", label: "1h", option: "Last hour" },
-  { value: "24h", label: "24h", option: "Last 24 hours" },
-  { value: "7d", label: "7d", option: "Last 7 days" },
-  { value: "30d", label: "30d", option: "Last 30 days" },
+const RANGE_OPTIONS: Array<{ value: TimeRange; label: string }> = [
+  { value: "1h", label: "1h" },
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
 ];
 
 function formatTimeAgo(date: Date): string {
@@ -96,8 +90,20 @@ export function AnalyticsHeader({
     [setRange]
   );
 
-  const rangeLabel =
-    RANGE_OPTIONS.find((option) => option.value === range)?.label ?? "Custom";
+  const rangeButtons = useMemo(
+    () =>
+      RANGE_OPTIONS.map((option) => (
+        <Button
+          key={option.value}
+          onClick={() => handleRangeChange(option.value)}
+          size="sm"
+          variant={range === option.value ? "default" : "outline"}
+        >
+          {option.label}
+        </Button>
+      )),
+    [range, handleRangeChange]
+  );
 
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -106,21 +112,9 @@ export function AnalyticsHeader({
       </div>
 
       <div className="flex items-center gap-3">
-        <ValuePopover label="Time" value={rangeLabel}>
-          {(close) =>
-            RANGE_OPTIONS.map((option) => (
-              <FilterRadio
-                checked={range === option.value}
-                key={option.value}
-                label={option.option}
-                onSelect={() => {
-                  handleRangeChange(option.value);
-                  close();
-                }}
-              />
-            ))
-          }
-        </ValuePopover>
+        <nav aria-label="Time range" className="flex items-center gap-1">
+          {rangeButtons}
+        </nav>
 
         {onRefetch ? (
           <Tooltip>
