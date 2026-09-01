@@ -2033,6 +2033,15 @@ export function planIterationContinuation(
 
 export type ForEachIterationFailure = { success: false; error: string };
 
+export type ForEachIterationSummary = {
+  arrayLength: number;
+  maxIterations: number;
+  iterationsRan: number;
+  failedIterations: number;
+  firstFailureError?: string;
+  firstFailureNodeId?: string;
+};
+
 /**
  * First failed iteration result, if any. Used to flip the For Each log and
  * to gate post-loop Collect / done-targets continuation.
@@ -2577,7 +2586,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         forEachNode: nestedForEachNode,
         processedConfig,
       }) => {
-        await handleForEachExecution({
+        return await handleForEachExecution({
           forEachNodeId: nestedForEachNodeId,
           forEachNode: nestedForEachNode,
           processedConfig,
@@ -2642,14 +2651,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       fromNodeId: string,
       targets: string[]
     ) => Promise<void>;
-  }): Promise<{
-    arrayLength: number;
-    maxIterations: number;
-    iterationsRan: number;
-    failedIterations: number;
-    firstFailureError?: string;
-    firstFailureNodeId?: string;
-  }> {
+  }): Promise<ForEachIterationSummary> {
     const {
       forEachNodeId,
       forEachNode,
