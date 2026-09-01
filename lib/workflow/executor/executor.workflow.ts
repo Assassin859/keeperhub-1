@@ -3060,6 +3060,10 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           timestamp: Date.now(),
           triggeredAt: new Date().toISOString(),
         };
+        // Gas burned by the transaction that fired an on-chain trigger. Held
+        // apart from triggerData so it reaches the log as its own field rather
+        // than as trigger output a template could read.
+        let triggerGasUsed: string | undefined;
 
         // Handle webhook mock request for test runs
         if (
@@ -3108,6 +3112,21 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
               } catch {
                 // Non-critical: skip explorer links if lookup fails
               }
+
+              if (typeof triggerData.transactionHash === "string") {
+                try {
+                  const { fetchTriggerTransactionGas } = await import(
+                    "@/lib/workflow/nodes/trigger-gas/step"
+                  );
+                  triggerGasUsed =
+                    (await fetchTriggerTransactionGas(
+                      triggerData.transactionHash,
+                      config.network as string | number
+                    )) ?? undefined;
+                } catch {
+                  // Non-critical: the trigger simply reports no gas.
+                }
+              }
             }
           } else if (
             triggerType === "Schedule" &&
@@ -3136,6 +3155,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         const triggerResult = await triggerStep({
           triggerData,
           network: triggerConfigNetwork(config),
+          triggerGasUsed,
           _context: triggerContext,
         });
 

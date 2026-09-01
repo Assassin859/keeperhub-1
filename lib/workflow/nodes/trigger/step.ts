@@ -24,6 +24,8 @@ import {
 type TriggerResult = {
   success: true;
   data: Record<string, unknown>;
+  /** See TriggerInput.triggerGasUsed. Omitted when there is nothing to report. */
+  triggerGasUsed?: string;
 };
 
 export type TriggerInput = StepInput & {
@@ -35,6 +37,13 @@ export type TriggerInput = StepInput & {
    * the Network column from.
    */
   network?: string;
+  /**
+   * Native cost, in wei, of the transaction that fired an on-chain trigger.
+   * Reported under its own key rather than `gasUsed` on purpose: that key is
+   * what every gas rollup sums, and this transaction was sent by whoever
+   * emitted the event, not by the keeper. See lib/workflow/nodes/trigger-gas.
+   */
+  triggerGasUsed?: string;
   /** If set, this call is just to log workflow completion (no trigger execution) */
   _workflowComplete?: {
     executionId: string;
@@ -77,6 +86,7 @@ function executeTrigger(input: TriggerInput): TriggerResult {
   return {
     success: true,
     data: input.triggerData,
+    ...(input.triggerGasUsed ? { triggerGasUsed: input.triggerGasUsed } : {}),
   };
 }
 

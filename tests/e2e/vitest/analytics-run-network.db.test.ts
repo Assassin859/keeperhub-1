@@ -234,6 +234,7 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
         nodeType: "trigger",
         status: "success",
         input: { network: "8453" },
+        output: { triggerGasUsed: "77000" },
         startedAt: now,
         network: "8453",
         gasUsedWei: null,
@@ -374,9 +375,20 @@ describe.skipIf(SKIP)("run network on a pre-broadcast failure", () => {
 
     // A read makes no transaction, so no gas is the right answer, not a gap.
     expect(byNode.get("read-1")?.gasCostWei).toBeNull();
-    // The trigger names the chain it watches but spends nothing itself.
+    // The event's own transaction: shown on the trigger row, and not sponsored,
+    // because whoever emitted the event paid for it.
     expect(byNode.get("trigger-1")?.network).toBe("8453");
-    expect(byNode.get("trigger-1")?.gasCostWei).toBeNull();
+    expect(byNode.get("trigger-1")?.gasCostWei).toBe("77000");
+    expect(byNode.get("trigger-1")?.sponsored).toBe(false);
+  });
+
+  it("keeps the triggering transaction's gas out of the run's own total", async () => {
+    const run = await runById(STEPS_ID);
+    // Only the write's 41000. Counting the trigger's 77000 here would report a
+    // third party's spend as the organization's own, and the Gas Spent KPI
+    // derives the wallet share from this figure.
+    expect(run.gasUsedWei).toBe("41000");
+    expect(run.gasNetworks).toEqual(["8453"]);
   });
 
   it("backfills a gas-free legacy row, so the read moves onto the column", async () => {

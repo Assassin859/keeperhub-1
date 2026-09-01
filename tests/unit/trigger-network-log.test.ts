@@ -28,7 +28,9 @@ vi.mock("@/lib/workflow/executor/logging", () => ({
 }));
 
 const { triggerStep } = await import("@/lib/workflow/nodes/trigger/step");
-const { extractLogNetwork } = await import("@/lib/db/execution-log-fields");
+const { extractLogGasUsedWei, extractLogNetwork } = await import(
+  "@/lib/db/execution-log-fields"
+);
 const { triggerConfigNetwork } = await import(
   "@/lib/workflow/executor/executor.workflow"
 );
@@ -89,6 +91,30 @@ describe("trigger step network logging", () => {
     });
 
     expect(result.data).toEqual({ triggered: true, amount: 5 });
+  });
+
+  it("reports the triggering transaction's gas under its own key", async () => {
+    const result = await triggerStep({
+      triggerData: { triggered: true, transactionHash: "0xabc" },
+      network: "8453",
+      triggerGasUsed: "77000",
+      _context: context,
+    });
+
+    // Never as `gasUsed`: that is the key resolveGasTotal and the analytics
+    // rollups sum, and this fee was paid by whoever emitted the event.
+    expect(extractLogGasUsedWei(result)).toBeNull();
+    expect(result.triggerGasUsed).toBe("77000");
+  });
+
+  it("omits the key entirely when no gas could be read", async () => {
+    const result = await triggerStep({
+      triggerData: { triggered: true },
+      network: "8453",
+      _context: context,
+    });
+
+    expect(result).not.toHaveProperty("triggerGasUsed");
   });
 
   it("records no chain for a trigger that has none", async () => {

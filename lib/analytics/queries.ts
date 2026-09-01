@@ -1386,7 +1386,16 @@ export async function getStepLogs(
   // runs table, so a row the backfill has reached and one it has not resolve
   // the same way.
   const stepNetwork = sql`COALESCE(${workflowExecutionLogs.network}, ${logInputField("network")})`;
-  const stepOwnGasWei = sql`COALESCE(${workflowExecutionLogs.gasUsedWei}, CAST(${logOutputField("gasUsed")} AS NUMERIC))`;
+  // `triggerGasUsed` is the last arm on purpose: it is the fee on the
+  // transaction that fired an on-chain trigger, which the keeper did not send.
+  // It is deliberately absent from `gasUsed` so no rollup counts it as the
+  // organization's spend, and is read here only so the trigger's own row shows
+  // what that transaction cost. See lib/workflow/nodes/trigger-gas.
+  const stepOwnGasWei = sql`COALESCE(
+    ${workflowExecutionLogs.gasUsedWei},
+    CAST(${logOutputField("gasUsed")} AS NUMERIC),
+    CAST(${logOutputField("triggerGasUsed")} AS NUMERIC)
+  )`;
 
   const result = await db
     .select({
