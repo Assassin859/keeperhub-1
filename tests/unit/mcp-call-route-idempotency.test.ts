@@ -5,6 +5,8 @@ const {
   mockDbInsert,
   mockDbUpdate,
   mockDbUpdateSet,
+  mockDbTransaction,
+  mockRecordPayment,
   mockResolveExecutionOrgMetadata,
   mockStart,
   mockEnforceExecutionLimit,
@@ -22,6 +24,8 @@ const {
   mockDbInsert: vi.fn(),
   mockDbUpdate: vi.fn(),
   mockDbUpdateSet: vi.fn(),
+  mockDbTransaction: vi.fn(),
+  mockRecordPayment: vi.fn(),
   mockResolveExecutionOrgMetadata: vi.fn(),
   mockStart: vi.fn(),
   mockEnforceExecutionLimit: vi.fn(),
@@ -46,6 +50,7 @@ vi.mock("@/lib/db", () => ({
     select: mockDbSelect,
     insert: mockDbInsert,
     update: mockDbUpdate,
+    transaction: mockDbTransaction,
   },
 }));
 
@@ -104,7 +109,7 @@ vi.mock("@/lib/payments/x402/execution-wait", () => ({
 }));
 
 vi.mock("@/lib/payments/x402/payment-gate", () => ({
-  recordPayment: vi.fn(),
+  recordPayment: mockRecordPayment,
   resolveCreatorWallet: vi.fn().mockResolvedValue("0xCreator"),
 }));
 
@@ -136,6 +141,8 @@ vi.mock("@/lib/idempotency", () => ({
   withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
     mockWithIdempotencyHeartbeat(idem, work),
 }));
+
+vi.mock("server-only", () => ({}));
 
 const FREE_WORKFLOW = {
   id: "wf-1",
@@ -197,7 +204,11 @@ function setupDbInsertExecution(executionId: string) {
 
 function makeRequest(
   slug: string,
-  options?: { body?: Record<string, unknown>; idempotencyKey?: string }
+  options?: {
+    body?: Record<string, unknown>;
+    idempotencyKey?: string;
+    paymentSignature?: string;
+  }
 ): Request {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -205,11 +216,38 @@ function makeRequest(
   if (options?.idempotencyKey) {
     headers["Idempotency-Key"] = options.idempotencyKey;
   }
+  if (options?.paymentSignature) {
+    headers["PAYMENT-SIGNATURE"] = options.paymentSignature;
+  }
   return new Request(`http://localhost/api/mcp/workflows/${slug}/call`, {
     method: "POST",
     headers,
     body: JSON.stringify(options?.body ?? {}),
   });
+}
+
+function makePassThroughGatePayment(): void {
+  mockGatePayment.mockImplementation(
+    (
+      request: Request,
+      _workflow: unknown,
+      _wallet: string,
+      createHandler: (meta: {
+        protocol: string;
+        chain: string;
+        payerAddress: string | null;
+        paymentHash: string;
+      }) => (req: Request) => Promise<Response>
+    ) => {
+      const handler = createHandler({
+        protocol: "x402",
+        chain: "base",
+        payerAddress: "0xPayer",
+        paymentHash: "hash-first",
+      });
+      return handler(request as never);
+    }
+  );
 }
 
 beforeEach(() => {
@@ -238,6 +276,13 @@ beforeEach(() => {
   );
   mockWithIdempotencyHeartbeat.mockImplementation(
     (_idem: unknown, work: () => unknown) => work()
+  );
+  mockRecordPayment.mockResolvedValue(undefined);
+  mockDbTransaction.mockImplementation(
+    async (cb: (tx: { update: typeof mockDbUpdate }) => Promise<unknown>) =>
+      cb({
+        update: mockDbUpdate,
+      })
   );
 });
 
@@ -316,5 +361,79 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(response.status).toBe(402);
     expect(mockBeginIdempotentFromRequest).not.toHaveBeenCalled();
     expect(mockDbInsert).not.toHaveBeenCalled();
+  });
+
+  it("replays before gatePayment on same key with a new payment signature", async () => {
+    setupDbSelectWorkflow(PAID_WORKFLOW);
+    setupDbInsertExecution("exec-paid-1");
+    mockDetectProtocol.mockReturnValue("x402");
+    makePassThroughGatePayment();
+
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+
+    const first = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-paid-replay",
+        paymentSignature: "sig-first",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+    expect(first.status).toBe(200);
+    expect(mockGatePayment).toHaveBeenCalledTimes(1);
+    expect(mockRecordPayment).toHaveBeenCalledTimes(1);
+
+    mockIdempotencyEarlyResponse.mockReturnValue({
+      status: 200,
+      body: { executionId: "exec-cached", status: "success" },
+    });
+
+    const second = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-paid-replay",
+        paymentSignature: "sig-second",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+    const body = (await second.json()) as { executionId: string };
+
+    expect(second.status).toBe(200);
+    expect(body.executionId).toBe("exec-cached");
+    expect(mockGatePayment).toHaveBeenCalledTimes(1);
+    expect(mockRecordPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 503 and releases idempotency when recordPayment fails", async () => {
+    setupDbSelectWorkflow(PAID_WORKFLOW);
+    setupDbInsertExecution("exec-paid-fail");
+    mockDetectProtocol.mockReturnValue("x402");
+    makePassThroughGatePayment();
+    mockDbTransaction.mockRejectedValue(new Error("db down"));
+    mockDbUpdate.mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          returning: vi
+            .fn()
+            .mockResolvedValue([{ workflowId: PAID_WORKFLOW.id }]),
+        }),
+      }),
+    });
+
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-record-fail",
+        paymentSignature: "sig-fail",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(503);
+    expect(body.error).toContain("Payment could not be recorded");
+    expect(mockRecordIdempotentResponse).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Response),
+      "release"
+    );
   });
 });

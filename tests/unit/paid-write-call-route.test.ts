@@ -25,6 +25,10 @@ const {
   mockGenerateCalldata,
   mockLogSystemError,
   mockCheckIpRateLimit,
+  mockBeginIdempotentFromRequest,
+  mockIdempotencyEarlyResponse,
+  mockRecordIdempotentResponse,
+  mockWithIdempotencyHeartbeat,
 } = vi.hoisted(() => ({
   mockDbSelect: vi.fn(),
   mockRecordPayment: vi.fn(),
@@ -34,6 +38,15 @@ const {
   mockGenerateCalldata: vi.fn(),
   mockLogSystemError: vi.fn(),
   mockCheckIpRateLimit: vi.fn(),
+  mockBeginIdempotentFromRequest: vi.fn(),
+  mockIdempotencyEarlyResponse: vi.fn(),
+  mockRecordIdempotentResponse: vi.fn(
+    (_idem: unknown, response: Response, _disposition?: string) =>
+      Promise.resolve(response)
+  ),
+  mockWithIdempotencyHeartbeat: vi.fn((_idem: unknown, work: () => unknown) =>
+    work()
+  ),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -115,6 +128,22 @@ vi.mock("@/lib/errors/classify", () => ({
 }));
 vi.mock("@/lib/errors/finalize-error", () => ({
   recordExecutionErrorFinalized: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("server-only", () => ({}));
+
+vi.mock("@/lib/idempotency", () => ({
+  beginIdempotentFromRequest: (...args: unknown[]) =>
+    mockBeginIdempotentFromRequest(...args),
+  idempotencyEarlyResponse: (...args: unknown[]) =>
+    mockIdempotencyEarlyResponse(...args),
+  recordIdempotentResponse: (
+    idem: unknown,
+    response: Response,
+    disposition?: string
+  ) => mockRecordIdempotentResponse(idem, response, disposition),
+  withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
+    mockWithIdempotencyHeartbeat(idem, work),
 }));
 
 const CREATOR_WALLET = "0xCreatorWallet";
@@ -215,6 +244,15 @@ beforeEach(() => {
   mockResolveCreatorWallet.mockResolvedValue(CREATOR_WALLET);
   mockGenerateCalldata.mockReturnValue(CALLDATA);
   mockRecordPayment.mockResolvedValue(undefined);
+  mockBeginIdempotentFromRequest.mockResolvedValue({ kind: "proceed" });
+  mockIdempotencyEarlyResponse.mockReturnValue(null);
+  mockRecordIdempotentResponse.mockImplementation(
+    (_idem: unknown, response: Response, _disposition?: string) =>
+      Promise.resolve(response)
+  );
+  mockWithIdempotencyHeartbeat.mockImplementation(
+    (_idem: unknown, work: () => unknown) => work()
+  );
 });
 
 describe("paid write listings", () => {

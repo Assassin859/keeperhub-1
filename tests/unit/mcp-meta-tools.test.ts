@@ -841,6 +841,10 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     mockAuthenticateApiKey,
     mockAuthenticateOAuthToken,
     mockBuildCallCompletionResponse,
+    mockBeginIdempotentFromRequest,
+    mockIdempotencyEarlyResponse,
+    mockRecordIdempotentResponse,
+    mockWithIdempotencyHeartbeat,
   } = vi.hoisted(() => ({
     mockDbSelect: vi.fn(),
     mockDbInsert: vi.fn(),
@@ -861,6 +865,15 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     mockAuthenticateApiKey: vi.fn(),
     mockAuthenticateOAuthToken: vi.fn(),
     mockBuildCallCompletionResponse: vi.fn(),
+    mockBeginIdempotentFromRequest: vi.fn(),
+    mockIdempotencyEarlyResponse: vi.fn(),
+    mockRecordIdempotentResponse: vi.fn(
+      (_idem: unknown, response: Response, _disposition?: string) =>
+        Promise.resolve(response)
+    ),
+    mockWithIdempotencyHeartbeat: vi.fn((_idem: unknown, work: () => unknown) =>
+      work()
+    ),
   }));
 
   vi.mock("@/lib/db", () => ({
@@ -970,6 +983,22 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     recordExecutionErrorFinalized: vi.fn().mockResolvedValue(undefined),
   }));
 
+  vi.mock("server-only", () => ({}));
+
+  vi.mock("@/lib/idempotency", () => ({
+    beginIdempotentFromRequest: (...args: unknown[]) =>
+      mockBeginIdempotentFromRequest(...args),
+    idempotencyEarlyResponse: (...args: unknown[]) =>
+      mockIdempotencyEarlyResponse(...args),
+    recordIdempotentResponse: (
+      idem: unknown,
+      response: Response,
+      disposition?: string
+    ) => mockRecordIdempotentResponse(idem, response, disposition),
+    withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
+      mockWithIdempotencyHeartbeat(idem, work),
+  }));
+
   const WRITE_WORKFLOW = {
     id: "wf-write-1",
     name: "Write Workflow",
@@ -1069,6 +1098,15 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
       organizationId: "caller-org-1",
       apiKeyId: "key-1",
     });
+    mockBeginIdempotentFromRequest.mockResolvedValue({ kind: "proceed" });
+    mockIdempotencyEarlyResponse.mockReturnValue(null);
+    mockRecordIdempotentResponse.mockImplementation(
+      (_idem: unknown, response: Response, _disposition?: string) =>
+        Promise.resolve(response)
+    );
+    mockWithIdempotencyHeartbeat.mockImplementation(
+      (_idem: unknown, work: () => unknown) => work()
+    );
   });
 
   it("Test 26: write workflow returns {type: 'calldata', to, data, value} instead of executing", async () => {

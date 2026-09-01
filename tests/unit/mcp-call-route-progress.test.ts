@@ -18,6 +18,10 @@ const {
   mockBuildCallCompletionResponse,
   mockDetectProtocol,
   mockGatePayment,
+  mockBeginIdempotentFromRequest,
+  mockIdempotencyEarlyResponse,
+  mockRecordIdempotentResponse,
+  mockWithIdempotencyHeartbeat,
 } = vi.hoisted(() => ({
   mockDbSelect: vi.fn(),
   mockDbInsert: vi.fn(),
@@ -32,6 +36,15 @@ const {
   mockBuildCallCompletionResponse: vi.fn(),
   mockDetectProtocol: vi.fn(),
   mockGatePayment: vi.fn(),
+  mockBeginIdempotentFromRequest: vi.fn(),
+  mockIdempotencyEarlyResponse: vi.fn(),
+  mockRecordIdempotentResponse: vi.fn(
+    (_idem: unknown, response: Response, _disposition?: string) =>
+      Promise.resolve(response)
+  ),
+  mockWithIdempotencyHeartbeat: vi.fn((_idem: unknown, work: () => unknown) =>
+    work()
+  ),
 }));
 
 // ---------------------------------------------------------------------------
@@ -120,6 +133,22 @@ vi.mock("@/lib/errors/finalize-error", () => ({
   recordExecutionErrorFinalized: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("server-only", () => ({}));
+
+vi.mock("@/lib/idempotency", () => ({
+  beginIdempotentFromRequest: (...args: unknown[]) =>
+    mockBeginIdempotentFromRequest(...args),
+  idempotencyEarlyResponse: (...args: unknown[]) =>
+    mockIdempotencyEarlyResponse(...args),
+  recordIdempotentResponse: (
+    idem: unknown,
+    response: Response,
+    disposition?: string
+  ) => mockRecordIdempotentResponse(idem, response, disposition),
+  withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
+    mockWithIdempotencyHeartbeat(idem, work),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -190,6 +219,15 @@ function makeRequest(slug: string): Request {
 describe("startExecutionInBackground (MCP call route) - progress initialization", () => {
   it("initializes totalSteps from the workflow graph before start() is called", async () => {
     vi.clearAllMocks();
+    mockBeginIdempotentFromRequest.mockResolvedValue({ kind: "proceed" });
+    mockIdempotencyEarlyResponse.mockReturnValue(null);
+    mockRecordIdempotentResponse.mockImplementation(
+      (_idem: unknown, response: Response, _disposition?: string) =>
+        Promise.resolve(response)
+    );
+    mockWithIdempotencyHeartbeat.mockImplementation(
+      (_idem: unknown, work: () => unknown) => work()
+    );
     setupDbSelectWorkflow(FREE_WORKFLOW);
     setupDbInsertExecution("exec-progress-1");
     mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });

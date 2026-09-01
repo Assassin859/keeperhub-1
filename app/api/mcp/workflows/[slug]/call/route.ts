@@ -469,6 +469,17 @@ async function gateWriteCall(
     );
   }
 
+  // Reserve idempotency before gatePayment so HTTP replays skip x402
+  // settlement entirely. Never begin on the null-deliverable 402 probe.
+  let idem: IdempotencyOutcome | null = null;
+  if (deliverable !== null) {
+    const started = await beginCallIdempotency(request, workflow, body);
+    if (started.kind === "early") {
+      return started.response;
+    }
+    idem = started.idem;
+  }
+
   return gatePayment(
     request,
     workflow,
@@ -492,14 +503,6 @@ async function gateWriteCall(
             { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
           );
         }
-
-        // Begin only inside the gated handler (after payment is present), never
-        // on the 402 probe path above.
-        const started = await beginCallIdempotency(request, workflow, body);
-        if (started.kind === "early") {
-          return started.response;
-        }
-        const { idem } = started;
 
         try {
           await recordPayment({
@@ -644,20 +647,24 @@ async function handlePaidWorkflow(
     );
   }
 
+  // Reserve idempotency before gatePayment so HTTP replays skip x402
+  // settlement. Skip on 402 probes (no payment credential present).
+  let idem: IdempotencyOutcome | null = null;
+  const protocol = detectProtocol(request);
+  if (protocol === "x402" || protocol === "mpp") {
+    const started = await beginCallIdempotency(request, workflow, body);
+    if (started.kind === "early") {
+      return started.response;
+    }
+    idem = started.idem;
+  }
+
   return gatePayment(
     request,
     workflow,
     creatorWalletAddress,
     (meta: PaymentMeta) => {
       return async (_req: NextRequest): Promise<NextResponse> => {
-        // Begin only after payment is present (gatePayment invoked this
-        // factory). 402 probes never reach here.
-        const started = await beginCallIdempotency(request, workflow, body);
-        if (started.kind === "early") {
-          return started.response;
-        }
-        const { idem } = started;
-
         const prepared = await prepareExecution(request, workflow, body);
         if ("error" in prepared) {
           return await recordIdempotentResponse(
@@ -738,15 +745,26 @@ async function handlePaidWorkflow(
               persistedStatus: "error",
             });
           }
-          await recordIdempotentResponse(
+          // x402 settles AFTER this handler returns and skips settlement
+          // entirely for any >=400 response, so a 503 here means no funds
+          // move and the same signature can simply be retried.
+          logSystemError(
+            ErrorCategory.DATABASE,
+            "[x402/call] Failed to record execution payment, settlement cancelled",
+            err,
+            { workflowId: workflow.id, executionId }
+          );
+          return await recordIdempotentResponse(
             idem,
             NextResponse.json(
-              { error: errorMessage, executionId, status: "error" },
-              { status: HttpStatus.INTERNAL_SERVER_ERROR, headers: corsHeaders }
+              {
+                error:
+                  "Payment could not be recorded. No funds were taken -- retry the same request.",
+              },
+              { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
             ),
-            "failed"
+            "release"
           );
-          throw err;
         }
 
         await startExecutionInBackground(workflow, body, executionId);
