@@ -217,6 +217,57 @@ describe("buildProtocolFunctionArgs", () => {
     });
   });
 
+  it("rejects null as a blank required field", async () => {
+    getProtocolMock.mockReturnValue(
+      protocolWithSupplyInputs([
+        { name: "asset" },
+        { name: "amount" },
+        { name: "referralCode", default: "0" },
+      ])
+    );
+
+    const { buildProtocolFunctionArgs } = await import(
+      "@/app/api/execute/_lib/protocol-function-args"
+    );
+    const result = buildProtocolFunctionArgs(
+      { asset: "0xToken", amount: null },
+      "test-protocol",
+      "pool",
+      "supply"
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      field: "amount",
+      error: "Missing required field: amount",
+    });
+  });
+
+  it("rejects blank when required is true even if a default exists", async () => {
+    getProtocolMock.mockReturnValue(
+      protocolWithSupplyInputs([
+        { name: "asset" },
+        { name: "amount", required: true, default: "0" },
+      ])
+    );
+
+    const { buildProtocolFunctionArgs } = await import(
+      "@/app/api/execute/_lib/protocol-function-args"
+    );
+    const result = buildProtocolFunctionArgs(
+      { asset: "0xToken" },
+      "test-protocol",
+      "pool",
+      "supply"
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      field: "amount",
+      error: "Missing required field: amount",
+    });
+  });
+
   it("allows blank when required is false and no default", async () => {
     getProtocolMock.mockReturnValue(
       protocolWithSupplyInputs([
@@ -351,6 +402,27 @@ describe("POST /api/execute/{protocol}/{action} required params", () => {
       expect.any(NextResponse),
       "release"
     );
+  });
+
+  it("returns 400 and does not broadcast when a required field is null", async () => {
+    const response = await postSupply({
+      chainId: 8453,
+      asset: "0xToken",
+      amount: null,
+    });
+    const body = (await response.json()) as {
+      success: boolean;
+      error: string;
+      field: string;
+    };
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({
+      success: false,
+      error: "Missing required field: amount",
+      field: "amount",
+    });
+    expect(writeContractCoreMock).not.toHaveBeenCalled();
   });
 
   it("applies defaults and broadcasts when only optional fields are omitted", async () => {

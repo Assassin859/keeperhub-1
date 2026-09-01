@@ -7,26 +7,28 @@ export type BuildProtocolFunctionArgsResult =
   | { ok: false; error: string; field: string };
 
 function isBlank(value: unknown): boolean {
-  return value === undefined || value === "";
+  return value === undefined || value === null || value === "";
 }
 
 function resolveInputValue(
   inp: ProtocolActionInput,
   raw: unknown
 ): { ok: true; value: string } | { ok: false; error: string; field: string } {
+  // Match buildInputField in lib/protocol-registry.ts:
+  // isRequired = required ?? (default === undefined). Reject blank required
+  // fields first; apply registry defaults only for optional blanks.
+  const isRequired = inp.required ?? inp.default === undefined;
+
   if (isBlank(raw)) {
-    if (inp.default !== undefined) {
-      return { ok: true, value: String(inp.default) };
-    }
-    // Match buildInputField in lib/protocol-registry.ts:
-    // required ?? (default === undefined)
-    const isRequired = inp.required ?? true;
     if (isRequired) {
       return {
         ok: false,
         field: inp.name,
         error: `Missing required field: ${inp.name}`,
       };
+    }
+    if (inp.default !== undefined) {
+      return { ok: true, value: String(inp.default) };
     }
     return { ok: true, value: "" };
   }
