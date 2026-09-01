@@ -27,6 +27,9 @@ const DAY_LABEL = new Intl.DateTimeFormat("en-US", {
 
 const MONTH_LABEL = new Intl.DateTimeFormat("en-US", { month: "long" });
 
+// Where clearing lands, matching the range the page opens in.
+const DEFAULT_RANGE = "24h" as const;
+
 function startOfDay(date: Date): Date {
   const copy = new Date(date);
   copy.setHours(0, 0, 0, 0);
@@ -139,6 +142,17 @@ export function DateRangeFilter(): ReactNode {
     };
   }, [draft, active, customStart, customEnd]);
 
+  // Drops the hand-picked window and falls back to the default preset, which is
+  // the state the page opens in. Without this the only way out of a custom
+  // range is to pick a preset, which is not obviously a way out.
+  const clear = useCallback((): void => {
+    setCustomStart(null);
+    setCustomEnd(null);
+    setRange(DEFAULT_RANGE);
+    setDraft(undefined);
+    setOpen(false);
+  }, [setCustomStart, setCustomEnd, setRange]);
+
   const onOpenChange = useCallback((next: boolean): void => {
     setOpen(next);
     if (!next) {
@@ -172,6 +186,17 @@ export function DateRangeFilter(): ReactNode {
               {preset.label}
             </Button>
           ))}
+          <div className="mt-1 border-t pt-1">
+            <Button
+              className="h-7 w-full justify-start px-2 text-muted-foreground text-xs"
+              disabled={!active}
+              onClick={clear}
+              size="sm"
+              variant="ghost"
+            >
+              Clear range
+            </Button>
+          </div>
         </div>
         <Calendar
           autoFocus
