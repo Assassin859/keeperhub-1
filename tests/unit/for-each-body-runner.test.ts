@@ -33,6 +33,7 @@ import {
   type BodyExecutionResult,
   type BodyNodeOutputs,
   type BodyStepRunner,
+  type NestedForEachHandler,
   type RunBodyContext,
   runBodyNode,
   type SpuriousRecoveryResolver,

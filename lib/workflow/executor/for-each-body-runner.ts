@@ -26,7 +26,10 @@
  *    actions or conditions came before it in the iteration body.
  */
 import type { EdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
-import { resolveBodyConditionTargets } from "@/lib/workflow/executor/executor.workflow";
+import {
+  type ForEachIterationSummary,
+  resolveBodyConditionTargets,
+} from "@/lib/workflow/executor/executor.workflow";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
   FAILED_AFTER_RETRIES_REGEX,
