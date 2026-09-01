@@ -1,22 +1,35 @@
 name: PR Issue Link
 
-# Runs on pull_request_target so it also runs on fork pull requests, which are
-# the ones this gate exists for. Fork runs of `pull_request` need per-run
-# maintainer approval, which would leave the gate silent exactly where it is
-# needed.
+# Runs on pull_request_target so it also runs on fork pull requests. Fork runs
+# of `pull_request` need per-run maintainer approval, which would leave the
+# gate silent exactly where it is needed.
 #
-# The gate applies to outside contributors only: the job skips when the PR
-# author is an OWNER, MEMBER, or COLLABORATOR (team PRs are tracked in Linear,
-# not GitHub issues). A skipped job still satisfies branch protection.
+# Every pull request into staging or prod must reference the work it belongs
+# to, in its title, its description, or its branch name:
+#
+#   - a GitHub issue (`#1978`) that exists, is an issue, and carries the
+#     `accepted` label - the issue-first policy in ISSUES.md; or
+#   - a Linear ticket (`KEEP-1234`), which only counts from a team author
+#     (OWNER, MEMBER, COLLABORATOR), since outside contributors cannot have
+#     one. Team branches are named `feat/KEEP-1234-description`, which is
+#     also what Linear's GitHub integration links on. The ticket is matched
+#     by shape only; Linear is not consulted.
+#
+# The job runs on synchronize as well as open and edit so that a result
+# exists for every head commit. A required status check is evaluated per
+# commit; without synchronize it would sit at "Expected" after each push
+# until someone edited the title. The job never checks out code, so
+# rerunning it is free.
 #
 # SAFETY: pull_request_target runs with the base repository's token. This job
 # therefore never checks out, builds, or executes pull request code. It reads
-# the title, the labels, and the referenced issue through the API and nothing
-# else. Do not add a checkout step to this file.
+# the title, body, branch name and labels from the event payload, and the
+# referenced issue through the API, and nothing else. Do not add a checkout
+# step to this file.
 
 on:
   pull_request_target:
-    types: [opened, edited, reopened, labeled, unlabeled]
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
     branches:
       - staging
       - prod
@@ -28,35 +41,55 @@ permissions:
 
 jobs:
   check-issue-link:
-    if: >-
-      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
-      github.event.pull_request.author_association)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Require an accepted issue in the PR title
+      - name: Require an issue or ticket reference
         env:
           # Untrusted input. Passed through the environment and never
           # interpolated into the script body.
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           EXEMPT_LABEL: no-issue-required
           ACCEPTED_LABEL: accepted
-          # Types that never require an issue. Keep in step with the
-          # "not required" list in ISSUES.md.
-          EXEMPT_TYPES: docs chore style
+          LINEAR_TEAM_KEY: KEEP
+          # Types that never require a reference. Keep in step with the
+          # "not required" list in ISSUES.md. release covers the
+          # staging-to-prod pull requests.
+          EXEMPT_TYPES: docs chore style release
         run: |
           set -euo pipefail
+
+          is_team=false
+          case "$AUTHOR_ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) is_team=true ;;
+          esac
 
           fail() {
             echo "----------------------------------------------"
             echo "  ERROR: $1"
             echo "----------------------------------------------"
             echo ""
-            echo "  Got title: $PR_TITLE"
+            if [ -n "${2:-}" ]; then
+              printf '%s\n' "$2"
+            fi
+            echo "  Got title:  $PR_TITLE"
+            echo "  Got branch: $HEAD_REF"
             echo ""
+            if [ "$is_team" = true ]; then
+              echo "  Team pull requests carry their Linear ticket in the branch name:"
+              echo ""
+              echo "    feat/$LINEAR_TEAM_KEY-1234-short-description"
+              echo ""
+              echo "  Rename the branch (GitHub moves the open pull request with it),"
+              echo "  or reference an accepted GitHub issue as below."
+              echo ""
+            fi
             echo "  KeeperHub takes issues before pull requests. Open an issue,"
             echo "  wait for a maintainer to apply the '$ACCEPTED_LABEL' label,"
             echo "  then reference it in this PR's title:"
@@ -70,9 +103,9 @@ jobs:
             echo ""
             echo "  Full policy: https://github.com/$REPO/blob/staging/ISSUES.md"
             echo ""
-            echo "  Already labelled '$ACCEPTED_LABEL'? This check does not rerun"
-            echo "  by itself when the issue changes - re-run the job, or edit"
-            echo "  the PR title to retrigger it."
+            echo "  Already labelled '$ACCEPTED_LABEL'? This check reruns on every"
+            echo "  push and edit, but not when the issue changes - re-run the job,"
+            echo "  or edit the PR title to retrigger it."
             exit 1
           }
 
@@ -84,29 +117,58 @@ jobs:
           pr_type=$(printf '%s' "$PR_TITLE" | sed -nE 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/p' | tr '[:upper:]' '[:lower:]')
           for exempt in $EXEMPT_TYPES; do
             if [ "$pr_type" = "$exempt" ]; then
-              echo "Exempt: '$pr_type' changes do not require an issue."
+              echo "Exempt: '$pr_type' changes do not require a reference."
               exit 0
             fi
           done
 
-          issue_number=$(printf '%s' "$PR_TITLE" | grep -oE '#[0-9]+' | head -n1 | tr -d '#')
-          if [ -z "$issue_number" ]; then
-            fail "PR title carries no issue reference."
+          # Every grep below may legitimately match nothing. `|| true` keeps
+          # pipefail from ending the script before fail() can explain why.
+
+          if [ "$is_team" = true ]; then
+            ticket=$(printf '%s\n%s\n%s\n' "$PR_TITLE" "$PR_BODY" "$HEAD_REF" \
+              | grep -oiE "\b$LINEAR_TEAM_KEY-[0-9]+\b" | head -n1 | tr '[:lower:]' '[:upper:]' || true)
+            if [ -n "$ticket" ]; then
+              echo "References Linear ticket $ticket."
+              exit 0
+            fi
           fi
 
-          if ! issue_json=$(gh api "repos/$REPO/issues/$issue_number" 2>/dev/null); then
-            fail "#$issue_number does not resolve to an issue in $REPO."
+          # `#N` in the title or body, plus a delimited bare number in the
+          # branch name (fix/2057-manual-run-input). Ticket references are
+          # removed from the branch first so KEEP-1080 is not read as #1080.
+          # At most ten distinct candidates are looked up.
+          candidates=$(
+            {
+              printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -oE '#[0-9]+' | tr -d '#' || true
+              printf '%s\n' "$HEAD_REF" | sed -E "s/$LINEAR_TEAM_KEY-[0-9]+//Ig" \
+                | grep -oE '(^|[-_/])[0-9]+([-_/]|$)' | tr -d '_/-' || true
+            } | awk '!seen[$0]++ { if (++n <= 10) print }'
+          )
+
+          if [ -z "$candidates" ]; then
+            fail "No issue or ticket reference in the title, description, or branch name."
           fi
 
-          if printf '%s' "$issue_json" | jq -e '.pull_request' >/dev/null 2>&1; then
-            fail "#$issue_number is a pull request, not an issue."
-          fi
+          reasons=""
+          for n in $candidates; do
+            if ! issue_json=$(gh api "repos/$REPO/issues/$n" 2>/dev/null); then
+              reasons+="  #$n does not resolve to an issue in $REPO."$'\n'
+              continue
+            fi
+            if printf '%s' "$issue_json" | jq -e '.pull_request' >/dev/null 2>&1; then
+              reasons+="  #$n is a pull request, not an issue."$'\n'
+              continue
+            fi
+            if ! printf '%s' "$issue_json" | jq -e --arg l "$ACCEPTED_LABEL" \
+              '.labels | map(.name) | index($l)' >/dev/null 2>&1; then
+              state=$(printf '%s' "$issue_json" | jq -r '.state')
+              labels=$(printf '%s' "$issue_json" | jq -r '[.labels[].name] | join(", ")')
+              reasons+="  #$n is not marked '$ACCEPTED_LABEL' (state: $state; labels: ${labels:-none})."$'\n'
+              continue
+            fi
+            echo "References accepted issue #$n."
+            exit 0
+          done
 
-          if ! printf '%s' "$issue_json" | jq -e --arg l "$ACCEPTED_LABEL" \
-            '.labels | map(.name) | index($l)' >/dev/null 2>&1; then
-            state=$(printf '%s' "$issue_json" | jq -r '.state')
-            labels=$(printf '%s' "$issue_json" | jq -r '[.labels[].name] | join(", ")')
-            fail "#$issue_number is not marked '$ACCEPTED_LABEL' (state: $state; labels: ${labels:-none})."
-          fi
-
-          echo "PR title references accepted issue #$issue_number."
+          fail "No referenced issue passes." "$reasons"
