@@ -42,6 +42,7 @@ import { buildProtocolFunctionArgs } from "../_lib/protocol-function-args";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseNativeValueWei } from "../_lib/reserved-value";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
+import type { ExecuteResponse } from "../_lib/types";
 import { requireWallet } from "../_lib/wallet-check";
 
 async function executeProtocolAction(
