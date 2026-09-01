@@ -23,12 +23,21 @@ name: PR Issue Link
 # is reported as CONTRIBUTOR, which is why the old author-only skip failed
 # team pull requests.
 #
+# HTML comments are removed from the description before it is searched, so
+# the examples in the pull request template can neither satisfy nor confuse
+# the check. A GitHub issue is taken from the branch name only in an explicit
+# form (issue-1978, issue/1978, gh-1978): a bare number in a branch name is
+# not a reference, and can coincide with an unrelated accepted issue.
+#
 # When the check fails it leaves one comment on the pull request saying what
 # it found and what to do, and edits that same comment on every later run,
 # down to a one-line resolved note once the check passes. The comment never
 # echoes the title, description or branch name back: they are contributor-
 # controlled text and, rendered as Markdown, could carry mentions or links.
-# The job log keeps them.
+# The job log keeps them. Issue numbers in the comment sit in code spans so
+# they neither autolink nor leave "mentioned" events on the issues. The
+# concurrency group keeps two overlapping runs (an open followed at once by
+# a label, say) from each creating a comment.
 #
 # The job runs on synchronize as well as open and edit so that a result
 # exists for every head commit. A required status check is evaluated per
@@ -49,6 +58,10 @@ on:
     branches:
       - staging
       - prod
+
+concurrency:
+  group: pr-issue-link-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -90,6 +103,10 @@ jobs:
           case "$AUTHOR_ASSOCIATION" in
             OWNER|MEMBER|COLLABORATOR) is_team=true ;;
           esac
+
+          # The description is searched with HTML comments removed, so the
+          # pull request template's own examples never become candidates.
+          body=$(printf '%s' "$PR_BODY" | perl -0pe 's/<!--.*?-->//gs')
 
           # The one comment this check owns on the pull request, found by its
           # marker. Edited in place if present; created only when asked to.
@@ -169,22 +186,21 @@ jobs:
           # pipefail from ending the script before fail() can explain why.
 
           if [ "$is_team" = true ]; then
-            ticket=$(printf '%s\n%s\n%s\n' "$PR_TITLE" "$PR_BODY" "$HEAD_REF" \
+            ticket=$(printf '%s\n%s\n%s\n' "$PR_TITLE" "$body" "$HEAD_REF" \
               | grep -oiE "\b$LINEAR_TEAM_KEY-[0-9]+\b" | head -n1 | tr '[:lower:]' '[:upper:]' || true)
             if [ -n "$ticket" ]; then
               pass "References Linear ticket $ticket."
             fi
           fi
 
-          # `#N` in the title or body, plus a delimited bare number in the
-          # branch name (fix/2057-manual-run-input). Ticket references are
-          # removed from the branch first so KEEP-1080 is not read as #1080.
-          # At most ten distinct candidates are looked up.
+          # `#N` in the title or body, plus an explicit issue form in the
+          # branch name (issue-2057, issue/2057, gh-2057). A bare number in a
+          # branch name is not a reference: it can coincide with an unrelated
+          # accepted issue. At most ten distinct candidates are looked up.
           candidates=$(
             {
-              printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -oE '#[0-9]+' | tr -d '#' || true
-              printf '%s\n' "$HEAD_REF" | sed -E "s/$LINEAR_TEAM_KEY-[0-9]+//Ig" \
-                | grep -oE '(^|[-_/])[0-9]+([-_/]|$)' | tr -d '_/-' || true
+              printf '%s\n%s\n' "$PR_TITLE" "$body" | grep -oE '#[0-9]+' | tr -d '#' || true
+              printf '%s\n' "$HEAD_REF" | grep -oiE '(^|/)(issue|gh)[-/]?[0-9]+' | grep -oE '[0-9]+$' || true
             } | awk '!seen[$0]++ { if (++n <= 10) print }'
           )
 
@@ -195,18 +211,18 @@ jobs:
           reasons=""
           for n in $candidates; do
             if ! issue_json=$(gh api "repos/$REPO/issues/$n" 2>/dev/null); then
-              reasons+="  #$n does not resolve to an issue in $REPO."$'\n'
+              reasons+="  \`#$n\` does not resolve to an issue in $REPO."$'\n'
               continue
             fi
             if printf '%s' "$issue_json" | jq -e '.pull_request' >/dev/null 2>&1; then
-              reasons+="  #$n is a pull request, not an issue."$'\n'
+              reasons+="  \`#$n\` is a pull request, not an issue."$'\n'
               continue
             fi
             if ! printf '%s' "$issue_json" | jq -e --arg l "$ACCEPTED_LABEL" \
               '.labels | map(.name) | index($l)' >/dev/null 2>&1; then
               state=$(printf '%s' "$issue_json" | jq -r '.state')
               labels=$(printf '%s' "$issue_json" | jq -r '[.labels[].name] | join(", ")')
-              reasons+="  #$n is not marked '$ACCEPTED_LABEL' (state: $state; labels: ${labels:-none})."$'\n'
+              reasons+="  \`#$n\` is not marked '$ACCEPTED_LABEL' (state: $state; labels: ${labels:-none})."$'\n'
               continue
             fi
             pass "References accepted issue #$n."
