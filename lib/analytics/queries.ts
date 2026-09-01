@@ -533,6 +533,19 @@ async function getSponsoredGasTotal(
   return result[0]?.totalWei ?? "0";
 }
 
+/**
+ * Chains a run touched, from two sources that each miss cases the other covers:
+ * the step logs name a chain only when the step's own input carried one, and
+ * the sponsorship ledger names one only for transactions KeeperHub paid for.
+ * A run whose spend is ledger-only would otherwise have no chain at all.
+ */
+function unionNetworks(
+  fromLogs: string[] | null,
+  fromLedger: string[] | null
+): string[] {
+  return [...new Set([...(fromLogs ?? []), ...(fromLedger ?? [])])];
+}
+
 function computeAvgDuration(sum: number, durationCount: number): number | null {
   if (durationCount === 0) {
     return null;
@@ -832,10 +845,11 @@ async function computeNetworkBreakdown(
   }
 
   for (const row of workflowResult) {
-    const { network } = row;
-    if (!network) {
-      continue;
-    }
+    // A gas-bearing step whose chain was never recorded used to be skipped
+    // outright, so its gas vanished from the breakdown rather than showing up
+    // anywhere. Bucket it the way the direct arm above already buckets its
+    // own unnamed chains, so the totals stay whole.
+    const network = row.network ?? "unknown";
     const existing = networkMap.get(network);
     if (existing) {
       existing.totalGasWei = addBigIntStrings(
@@ -1094,6 +1108,15 @@ async function fetchWorkflowRuns(
         sql<string>`COALESCE(SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC)), 0)::text`.as(
           "gasCostWei"
         ),
+      // The ledger records the chain of every sponsored transaction, which is
+      // the only place a run's spend names a chain when the step that made it
+      // logged none. Without it a ledger-only run had no chain to denominate
+      // its own gas in and the cell fell back to guessing from `networks`.
+      ledgerNetworks: sql<
+        string[]
+      >`COALESCE(ARRAY_AGG(DISTINCT ${gasCreditUsage.chainId}::text), '{}')`.as(
+        "ledgerNetworks"
+      ),
     })
     .from(gasCreditUsage)
     .where(sql`${gasCreditUsage.executionId} IN (${pagedExecutionIds})`)
@@ -1116,6 +1139,7 @@ async function fetchWorkflowRuns(
       networks: logSummary.networks,
       gasNetworks: logSummary.gasNetworks,
       gasCostWei: gasCostSummary.gasCostWei,
+      ledgerNetworks: gasCostSummary.ledgerNetworks,
       transactionHashes: workflowExecutions.transactionHashes,
       error: workflowExecutions.error,
       errorCode: workflowExecutions.errorCode,
@@ -1145,9 +1169,9 @@ async function fetchWorkflowRuns(
     workflowId: row.workflowId,
     workflowName: row.workflowName ?? "(Deleted)",
     directType: null,
-    network: row.network ?? null,
-    networks: row.networks ?? [],
-    gasNetworks: row.gasNetworks ?? [],
+    network: row.network ?? row.ledgerNetworks?.[0] ?? null,
+    networks: unionNetworks(row.networks, row.ledgerNetworks),
+    gasNetworks: unionNetworks(row.gasNetworks, row.ledgerNetworks),
     gasCostWei:
       row.gasCostWei && row.gasCostWei !== "0" ? row.gasCostWei : null,
     transactionHashes: row.transactionHashes,
@@ -1358,6 +1382,21 @@ export async function getStepLogs(
   executionId: string,
   organizationId: string
 ): Promise<StepLog[]> {
+  // Both read the denormalised column first and the JSONB second, matching the
+  // runs table, so a row the backfill has reached and one it has not resolve
+  // the same way.
+  const stepNetwork = sql`COALESCE(${workflowExecutionLogs.network}, ${logInputField("network")})`;
+  // `triggerGasUsed` is the last arm on purpose: it is the fee on the
+  // transaction that fired an on-chain trigger, which the keeper did not send.
+  // It is deliberately absent from `gasUsed` so no rollup counts it as the
+  // organization's spend, and is read here only so the trigger's own row shows
+  // what that transaction cost. See lib/workflow/nodes/trigger-gas.
+  const stepOwnGasWei = sql`COALESCE(
+    ${workflowExecutionLogs.gasUsedWei},
+    CAST(${logOutputField("gasUsed")} AS NUMERIC),
+    CAST(${logOutputField("triggerGasUsed")} AS NUMERIC)
+  )`;
+
   const result = await db
     .select({
       id: workflowExecutionLogs.id,
@@ -1371,19 +1410,22 @@ export async function getStepLogs(
       error: workflowExecutionLogs.error,
       iterationIndex: workflowExecutionLogs.iterationIndex,
       forEachNodeId: workflowExecutionLogs.forEachNodeId,
-      network: sql<string | null>`${logInputField("network")}`,
-      // Native gas cost this step's transaction incurred, from the sponsorship
-      // ledger. Present only for sponsored transactions, which is also how we
-      // mark a step as sponsored. Matched by (execution, chain) rather than tx
-      // hash, so a run with multiple on-chain writes on the same chain would
-      // show that chain's combined total on each of those steps; correct for
-      // the common one-tx-per-chain case.
-      gasCostWei: sql<string | null>`(
+      network: sql<string | null>`${stepNetwork}`,
+      // Native gas cost this step's transaction incurred, preferring the
+      // sponsorship ledger and falling back to what the step itself reported.
+      // The ledger covers only transactions KeeperHub paid for, so reading it
+      // alone left every directly-paid write showing no gas at all, even though
+      // its own receipt recorded the cost and the run total already counted it.
+      // The ledger is still matched by (execution, chain) rather than tx hash,
+      // so a run with multiple writes on one chain shows that chain's combined
+      // total on each of them; correct for the common one-tx-per-chain case.
+      sponsoredGasWei: sql<string | null>`(
         SELECT SUM(CAST(${gasCreditUsage.gasCostWei} AS NUMERIC))::text
         FROM ${gasCreditUsage}
         WHERE ${gasCreditUsage.executionId} = ${workflowExecutionLogs.executionId}
-        AND ${gasCreditUsage.chainId}::text = ${logInputField("network")}
+        AND ${gasCreditUsage.chainId}::text = ${stepNetwork}
       )`,
+      stepGasWei: sql<string | null>`${stepOwnGasWei}::text`,
     })
     .from(workflowExecutionLogs)
     .innerJoin(
@@ -1415,8 +1457,10 @@ export async function getStepLogs(
     iterationIndex: row.iterationIndex,
     forEachNodeId: row.forEachNodeId,
     network: row.network,
-    gasCostWei: row.gasCostWei,
-    sponsored: row.gasCostWei !== null,
+    gasCostWei: row.sponsoredGasWei ?? row.stepGasWei,
+    // Only ledger-backed gas is sponsored; a step's own receipt means the
+    // organization's wallet paid for it.
+    sponsored: row.sponsoredGasWei !== null,
   }));
 }
 
