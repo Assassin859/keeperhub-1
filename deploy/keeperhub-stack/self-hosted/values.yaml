@@ -283,12 +283,12 @@ app:
           - |
             set -e
             echo "Setting up workflow postgres tables..."
-            # Same line staging runs. workflow-postgres-setup parses the URL
+            # Same line staging runs. The bootstrap command parses the URL
             # itself and does not tolerate unencoded characters in the userinfo
             # component, while drizzle goes through getDatabaseUrl and is already
             # safe. A generated password is where that difference shows up.
             export WORKFLOW_POSTGRES_URL=$(tsx scripts/encode-pg-url.ts)
-            pnpm exec workflow-postgres-setup
+            pnpm exec bootstrap
             echo "Running database migrations..."
             pnpm db:migrate
             echo "Seeding chains..."

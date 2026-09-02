@@ -34,7 +34,7 @@
     "dev:login": "tsx scripts/dev-login.ts",
     "dev:totp": "tsx scripts/dev-totp.ts",
     "db:setup": "pnpm db:migrate && pnpm db:setup-workflow && pnpm db:seed",
-    "db:setup-workflow": "workflow-postgres-setup",
+    "db:setup-workflow": "bootstrap",
     "discover-plugins": "tsx scripts/discover-plugins.ts",
     "pin-agent-card": "tsx scripts/pin-agent-card.ts",
     "update-agent-uri": "tsx scripts/update-agent-uri.ts",
