@@ -13,6 +13,18 @@ const isSolanaChain = vi.fn(
   (chainId: number) => chainId === 101 || chainId === 103
 );
 
+type SolanaConnectionMock = {
+  getSignatureStatuses: ReturnType<typeof vi.fn>;
+};
+const getSignatureStatuses = vi.fn();
+const solanaConnection: SolanaConnectionMock = { getSignatureStatuses };
+const solanaExecuteWithFailover =
+  vi.fn<
+    (
+      operation: (connection: SolanaConnectionMock) => Promise<unknown>
+    ) => Promise<unknown>
+  >();
+
 vi.mock("@/lib/rpc/providers", () => ({
   // Regular function, not an arrow function: `new RpcProviderManager(...)` in
   // the module under test requires a constructible mock. Returning an object
@@ -21,6 +33,14 @@ vi.mock("@/lib/rpc/providers", () => ({
   RpcProviderManager: vi.fn().mockImplementation(function RpcProviderManager() {
     return { executeWithFailover, getFallbackProvider };
   }),
+}));
+vi.mock("@/lib/rpc/providers/solana", () => ({
+  // Same constructible-mock shape as RpcProviderManager above.
+  SolanaProviderManager: vi
+    .fn()
+    .mockImplementation(function SolanaProviderManager() {
+      return { executeWithFailover: solanaExecuteWithFailover };
+    }),
 }));
 vi.mock("@/lib/rpc/config-service", () => ({
   resolveRpcConfig: (...args: unknown[]) => resolveRpcConfig(...args),
@@ -210,16 +230,6 @@ describe("verifyExecutionReceipts", () => {
     expect(results[0].status).toBe("timeout");
   });
 
-  it("Solana chainIds pass through as verified/success without any RPC call", async () => {
-    const { allVerified, results } = await verifyExecutionReceipts([
-      { hash: HASH, chainId: 101 },
-    ]);
-    expect(allVerified).toBe(true);
-    expect(results[0]).toMatchObject({ verified: true, status: "success" });
-    expect(executeWithFailover).not.toHaveBeenCalled();
-    expect(resolveRpcConfig).not.toHaveBeenCalled();
-  });
-
   it("groups hashes by chainId, building one manager per distinct chain", async () => {
     const { RpcProviderManager } = await import("@/lib/rpc/providers");
     executeWithFailover.mockResolvedValue(makeReceipt(1));
@@ -245,6 +255,206 @@ describe("verifyExecutionReceipts", () => {
     ]);
     expect(allVerified).toBe(false);
     expect(results).toHaveLength(2);
+  });
+});
+
+const SOLANA_CHAIN_ID = 101;
+const SIGNATURE =
+  "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW";
+
+type SignatureStatusMock = {
+  slot: number;
+  confirmations: number | null;
+  err: unknown;
+  confirmationStatus: "processed" | "confirmed" | "finalized";
+};
+
+function makeSignatureStatus(
+  confirmationStatus: SignatureStatusMock["confirmationStatus"],
+  err: unknown = null
+): SignatureStatusMock {
+  return {
+    slot: 250_000_000,
+    confirmations: confirmationStatus === "finalized" ? null : 5,
+    err,
+    confirmationStatus,
+  };
+}
+
+// Solana hashes are base58 signatures read through getSignatureStatuses. The
+// adapter confirms at "confirmed", so that level and "finalized" verify; a
+// lower level, a null entry, or a thrown read never does.
+describe("Solana signatures", () => {
+  beforeEach(() => {
+    executeWithFailover.mockReset();
+    fallbackGetTransactionReceipt.mockReset();
+    fallbackGetTransactionReceipt.mockResolvedValue(null);
+    resolveRpcConfig.mockReset();
+    resolveRpcConfig.mockResolvedValue({
+      chainId: SOLANA_CHAIN_ID,
+      chainName: "solana",
+      primaryRpcUrl: "https://solana-primary.example",
+      fallbackRpcUrl: "https://solana-fallback.example",
+    });
+    getSignatureStatuses.mockReset();
+    getSignatureStatuses.mockResolvedValue({ value: [null] });
+    solanaExecuteWithFailover.mockReset();
+    solanaExecuteWithFailover.mockImplementation((operation) =>
+      operation(solanaConnection)
+    );
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("a confirmed signature with no error verifies as success", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("confirmed")],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts([
+      { hash: SIGNATURE, chainId: SOLANA_CHAIN_ID },
+    ]);
+
+    expect(resolveRpcConfig).toHaveBeenCalledWith(SOLANA_CHAIN_ID);
+    expect(getSignatureStatuses).toHaveBeenCalledWith([SIGNATURE], {
+      searchTransactionHistory: true,
+    });
+    expect(allVerified).toBe(true);
+    expect(results[0]).toMatchObject({
+      hash: SIGNATURE,
+      chainId: SOLANA_CHAIN_ID,
+      verified: true,
+      status: "success",
+    });
+  });
+
+  it("a finalized signature is at or above the adapter's commitment and verifies as success", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("finalized")],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts([
+      { hash: SIGNATURE, chainId: SOLANA_CHAIN_ID },
+    ]);
+
+    expect(allVerified).toBe(true);
+    expect(results[0].status).toBe("success");
+  });
+
+  it("a signature with an execution error verifies as reverted and is not retried away", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [
+        makeSignatureStatus("confirmed", { InstructionError: [0, "Custom"] }),
+      ],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      FAST_RETRY
+    );
+
+    expect(allVerified).toBe(false);
+    expect(results[0]).toMatchObject({ verified: false, status: "reverted" });
+    expect(getSignatureStatuses).toHaveBeenCalledTimes(1);
+  });
+
+  it("a signature the cluster does not report verifies as not_found", async () => {
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(allVerified).toBe(false);
+    expect(results[0]).toMatchObject({ verified: false, status: "not_found" });
+  });
+
+  it("a signature still at processed is below the adapter's commitment and is not verified", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("processed")],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(allVerified).toBe(false);
+    expect(results[0]).toMatchObject({ verified: false, status: "not_found" });
+  });
+
+  it("an RPC that throws on every attempt verifies as timeout, fail-closed", async () => {
+    solanaExecuteWithFailover.mockRejectedValue(
+      new Error("Solana RPC failed on both endpoints")
+    );
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(allVerified).toBe(false);
+    expect(results[0]).toMatchObject({ verified: false, status: "timeout" });
+  });
+
+  it("a signature invisible on the first read is found on a later one", async () => {
+    getSignatureStatuses
+      .mockResolvedValueOnce({ value: [null] })
+      .mockResolvedValueOnce({ value: [null] })
+      .mockResolvedValue({ value: [makeSignatureStatus("confirmed")] });
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      FAST_RETRY
+    );
+
+    expect(allVerified).toBe(true);
+    expect(results[0].status).toBe("success");
+    expect(getSignatureStatuses).toHaveBeenCalledTimes(3);
+  });
+
+  it("unresolvable Solana chain (resolveRpcConfig returns null) fails closed as timeout", async () => {
+    resolveRpcConfig.mockResolvedValueOnce(null);
+
+    const { allVerified, results } = await verifyExecutionReceipts([
+      { hash: SIGNATURE, chainId: SOLANA_CHAIN_ID },
+    ]);
+
+    expect(allVerified).toBe(false);
+    expect(results[0].status).toBe("timeout");
+    expect(getSignatureStatuses).not.toHaveBeenCalled();
+  });
+
+  it("the Solana manager gets the resolved endpoints and the same retry budget as the EVM manager", async () => {
+    const { RpcProviderManager } = await import("@/lib/rpc/providers");
+    const { SolanaProviderManager } = await import(
+      "@/lib/rpc/providers/solana"
+    );
+    executeWithFailover.mockResolvedValue(makeReceipt(1));
+    getSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("confirmed")],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts([
+      { hash: HASH, chainId: CHAIN_ID },
+      { hash: SIGNATURE, chainId: SOLANA_CHAIN_ID },
+    ]);
+
+    const evmConfig = vi
+      .mocked(RpcProviderManager)
+      .mock.calls.at(-1)?.[0].config;
+    const solanaConfig = vi
+      .mocked(SolanaProviderManager)
+      .mock.calls.at(-1)?.[0].config;
+    expect(evmConfig).toBeDefined();
+    expect(solanaConfig).toMatchObject({
+      primaryRpcUrl: "https://solana-primary.example",
+      fallbackRpcUrl: "https://solana-fallback.example",
+      maxRetries: evmConfig?.maxRetries,
+      timeoutMs: evmConfig?.timeoutMs,
+    });
+    expect(allVerified).toBe(true);
+    expect(results.map((result) => result.hash)).toEqual([HASH, SIGNATURE]);
   });
 });
 
