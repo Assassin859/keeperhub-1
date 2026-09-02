@@ -172,7 +172,7 @@ app:
             set -e
             echo "Setting up workflow postgres tables..."
             export WORKFLOW_POSTGRES_URL=$(tsx scripts/encode-pg-url.ts)
-            pnpm exec workflow-postgres-setup
+            pnpm exec bootstrap
             echo "Running database migrations..."
             pnpm db:migrate
             echo "Seeding chains..."
