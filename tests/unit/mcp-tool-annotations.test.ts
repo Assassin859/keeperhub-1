@@ -360,17 +360,17 @@ describe("per-listing workflow MCP server annotations", () => {
   // no cached _protocolMeta, so the registry lookup is the only thing that can
   // classify them; dropping that import empties the registry and turns every
   // one of these read-only again, silently.
-  it.each([
-    "sky/approve-usds",
-    "sky/st-usds-vault-deposit",
-  ])("treats a read-typed listing containing %s as destructive without cached metadata", (actionType) => {
-    const annotation = listingAnnotations({
-      workflowType: "read" as const,
-      nodes: [protocolActionNode("n1", actionType)],
-    });
-    expect(annotation.readOnlyHint).toBe(false);
-    expect(annotation.destructiveHint).toBe(true);
-  });
+  it.each(["sky/approve-usds", "sky/st-usds-vault-deposit"])(
+    "treats a read-typed listing containing %s as destructive without cached metadata",
+    (actionType) => {
+      const annotation = listingAnnotations({
+        workflowType: "read" as const,
+        nodes: [protocolActionNode("n1", actionType)],
+      });
+      expect(annotation.readOnlyHint).toBe(false);
+      expect(annotation.destructiveHint).toBe(true);
+    }
+  );
 
   // The other half of the acceptance criteria: widening the check must not
   // swallow the protocol reads, which are the bulk of the listed catalogue.
