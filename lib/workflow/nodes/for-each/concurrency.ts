@@ -11,6 +11,7 @@ export type IterationExecutor<T> = (item: T, index: number) => Promise<unknown>;
 export type ErrorHandler = (error: unknown) => Promise<string>;
 
 interface IterationFailure {
+  __forEachBodyFailure: true;
   success: false;
   error: string;
 }
@@ -23,8 +24,8 @@ interface IterationFailure {
  * - **custom**: worker-pool with at most `concurrencyLimit` concurrent.
  *
  * Results are always returned in iteration order regardless of mode.
- * Individual iteration failures are captured as `{ success: false, error }`,
- * they never abort sibling iterations.
+ * Individual iteration failures are captured as tagged `{ success: false, error }`
+ * objects (`__forEachBodyFailure`), they never abort sibling iterations.
  */
 export async function runIterations<T>(
   items: T[],
@@ -61,6 +62,7 @@ async function runSequential<T>(
     } catch (error) {
       const errorMessage = await handleError(error);
       results.push({
+        __forEachBodyFailure: true,
         success: false,
         error: errorMessage,
       } satisfies IterationFailure);
@@ -84,6 +86,7 @@ async function runParallel<T>(
     } else {
       const errorMessage = await handleError(entry.reason);
       results.push({
+        __forEachBodyFailure: true,
         success: false,
         error: errorMessage,
       } satisfies IterationFailure);
@@ -109,6 +112,7 @@ async function runWorkerPool<T>(
       } catch (error) {
         const errorMessage = await handleError(error);
         results[i] = {
+          __forEachBodyFailure: true,
           success: false,
           error: errorMessage,
         } satisfies IterationFailure;

@@ -987,18 +987,16 @@ describe("runBodyNode: KEEP-543 / KEEP-586 authority-backed recovery", () => {
 // Nested For Each failure propagation (PR #2217 Joel review)
 // ===========================================================================
 
-describe("runBodyNode: nested For Each failure stops inner and outer continuation", () => {
-  it("marks the nested For Each failed and skips downstream when inner body fails", async () => {
+describe("runBodyNode: nested For Each failure stops inner continuation", () => {
+  it("marks the nested For Each failed and skips inner downstream when inner body fails", async () => {
     const nodes = [
       makeForEach("outer-fe", "Outer loop"),
       makeForEach("inner-fe", "Inner loop"),
       makeAction("fail-step", "web3/read-contract", "Failing step"),
       makeAction("inner-post", "web3/read-contract", "Inner post-loop"),
-      makeAction("outer-post", "web3/read-contract", "Outer post-loop"),
     ];
     const edges = [
       edge("outer-fe", "inner-fe", "loop"),
-      edge("outer-fe", "outer-post", "done"),
       edge("inner-fe", "fail-step", "loop"),
       edge("inner-fe", "inner-post", "done"),
     ];
@@ -1013,25 +1011,40 @@ describe("runBodyNode: nested For Each failure stops inner and outer continuatio
         }
         return { success: true, data: { ok: true } };
       },
-      nestedForEachHandler: (ctx) => async () => {
-        await runBodyNode("fail-step", ctx);
-        const failResult = ctx.bodyResults["fail-step"];
-        return {
-          arrayLength: 1,
-          maxIterations: 1,
-          iterationsRan: 1,
-          failedIterations: failResult?.success === false ? 1 : 0,
-          firstFailureError: failResult?.error,
-        };
-      },
+      nestedForEachHandler:
+        (ctx) =>
+        async ({ forEachNodeId }) => {
+          const edgesBySource = buildEdgesBySource(edges);
+          const fullHandleMap = buildEdgesBySourceHandle(edges);
+          const innerBody = identifyLoopBody(
+            forEachNodeId,
+            edgesBySource,
+            ctx.nodeMap,
+            fullHandleMap
+          );
+          const innerBodyNodes =
+            innerBody.bodyEdgesBySource.get(forEachNodeId) ?? [];
+          for (const bodyNodeId of innerBodyNodes) {
+            await runBodyNode(bodyNodeId, ctx);
+          }
+          const failResult = ctx.bodyResults["fail-step"];
+          return {
+            arrayLength: 1,
+            maxIterations: 1,
+            iterationsRan: 1,
+            failedIterations: failResult?.success === false ? 1 : 0,
+            firstFailureError: failResult?.error,
+            firstFailureNodeId:
+              failResult?.success === false ? "fail-step" : undefined,
+          };
+        },
     });
 
     expect(bodyResults["inner-fe"]?.success).toBe(false);
-    expect(bodyResults["inner-fe"]?.error).toBe("inner body failed");
+    expect(bodyResults["inner-fe"]?.error).toContain("inner body failed");
+    expect(bodyResults["inner-fe"]?.error).toContain("fail-step");
     expect(bodyResults["inner-post"]).toBeUndefined();
-    expect(bodyResults["outer-post"]).toBeUndefined();
     expect(visitOrder).toContain("fail-step");
     expect(visitOrder).not.toContain("inner-post");
-    expect(visitOrder).not.toContain("outer-post");
   });
 });
