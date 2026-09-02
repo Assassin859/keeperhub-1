@@ -38,6 +38,7 @@ import {
 import { redactAllUrls, redactSecretUrls } from "@/lib/rpc/scrub-rpc-urls";
 import { executionLogNotDeleted } from "@/lib/workflow/soft-delete";
 import { analyticsCacheKey, cachedAnalytics } from "./cache";
+import { likePattern } from "./like-pattern";
 import {
   getBucketInterval,
   getPreviousPeriodStart,
@@ -200,24 +201,24 @@ function workflowNetworkCondition(networks: string[]): SQL {
 // The name match gets its own alias because both callers already have
 // `workflows` in scope, one through a join and one through a scoping subquery.
 function workflowSearchCondition(term: string): SQL {
-  const pattern = `%${term}%`;
+  const pattern = likePattern(term);
   return sql`(
-    ${workflowExecutions.id} ILIKE ${pattern}
+    ${workflowExecutions.id} ILIKE ${pattern} ESCAPE '\\'
     OR EXISTS (
       SELECT 1
         FROM ${workflows} AS search_wf
        WHERE search_wf.id = ${workflowExecutions.workflowId}
-         AND search_wf.name ILIKE ${pattern}
+         AND search_wf.name ILIKE ${pattern} ESCAPE '\\'
     )
   )`;
 }
 
 function directSearchCondition(term: string): SQL {
-  const pattern = `%${term}%`;
+  const pattern = likePattern(term);
   return sql`(
-    ${directExecutions.id} ILIKE ${pattern}
-    OR ${directExecutions.type} ILIKE ${pattern}
-    OR ${directExecutions.network} ILIKE ${pattern}
+    ${directExecutions.id} ILIKE ${pattern} ESCAPE '\\'
+    OR ${directExecutions.type} ILIKE ${pattern} ESCAPE '\\'
+    OR ${directExecutions.network} ILIKE ${pattern} ESCAPE '\\'
   )`;
 }
 
