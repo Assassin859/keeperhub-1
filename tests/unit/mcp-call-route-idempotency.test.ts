@@ -42,8 +42,12 @@ const {
       Promise.resolve(response)
   ),
   mockSafeRecordIdempotentResponse: vi.fn(
-    (_idem: unknown, response: Response, _disposition?: string) =>
-      Promise.resolve(response)
+    (
+      _idem: unknown,
+      response: Response,
+      _disposition?: string,
+      _context?: string
+    ) => Promise.resolve(response)
   ),
   mockWithIdempotencyHeartbeat: vi.fn((_idem: unknown, work: () => unknown) =>
     work()
@@ -299,8 +303,12 @@ beforeEach(() => {
       Promise.resolve(response)
   );
   mockSafeRecordIdempotentResponse.mockImplementation(
-    (_idem: unknown, response: Response, _disposition?: string) =>
-      Promise.resolve(response)
+    (
+      _idem: unknown,
+      response: Response,
+      _disposition?: string,
+      _context?: string
+    ) => Promise.resolve(response)
   );
   mockWithIdempotencyHeartbeat.mockImplementation(
     (_idem: unknown, work: () => unknown) => work()

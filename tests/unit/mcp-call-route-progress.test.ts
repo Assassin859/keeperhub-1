@@ -21,6 +21,7 @@ const {
   mockBeginIdempotentFromRequest,
   mockIdempotencyEarlyResponse,
   mockRecordIdempotentResponse,
+  mockSafeRecordIdempotentResponse,
   mockWithIdempotencyHeartbeat,
 } = vi.hoisted(() => ({
   mockDbSelect: vi.fn(),
@@ -41,6 +42,14 @@ const {
   mockRecordIdempotentResponse: vi.fn(
     (_idem: unknown, response: Response, _disposition?: string) =>
       Promise.resolve(response)
+  ),
+  mockSafeRecordIdempotentResponse: vi.fn(
+    (
+      _idem: unknown,
+      response: Response,
+      _disposition?: string,
+      _context?: string
+    ) => Promise.resolve(response)
   ),
   mockWithIdempotencyHeartbeat: vi.fn((_idem: unknown, work: () => unknown) =>
     work()
@@ -150,7 +159,7 @@ vi.mock("@/lib/idempotency", () => ({
     response: Response,
     disposition?: string,
     context?: string
-  ) => mockRecordIdempotentResponse(idem, response, disposition, context),
+  ) => mockSafeRecordIdempotentResponse(idem, response, disposition, context),
   withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
     mockWithIdempotencyHeartbeat(idem, work),
 }));

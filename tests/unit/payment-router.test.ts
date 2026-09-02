@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/idempotency", () => ({
+  safeRecordIdempotentResponse: vi.fn(
+    async (_outcome: unknown, response: Response) => response
+  ),
+}));
+
 vi.mock("@x402/next", () => ({ withX402: vi.fn() }));
 vi.mock("@/lib/payments/x402/payment-gate", () => ({
   buildPaymentConfig: vi.fn(),
