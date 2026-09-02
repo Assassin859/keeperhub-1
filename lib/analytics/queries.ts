@@ -190,7 +190,7 @@ function workflowNetworkCondition(networks: string[], logsFrom: Date): SQL {
   return sql`${workflowExecutions.id} IN (
     SELECT ${workflowExecutionLogs.executionId}
       FROM ${workflowExecutionLogs}
-     WHERE ${workflowExecutionLogs.startedAt} >= ${logsFrom}
+     WHERE ${gte(workflowExecutionLogs.startedAt, logsFrom)}
        AND COALESCE(${workflowExecutionLogs.network}, ${logInputField("network")}) IN (${sql.join(
          networks.map((network) => sql`${network}`),
          sql`, `
@@ -258,7 +258,7 @@ function workflowGasTotals(logsFrom: Date): SQL {
              AND ${workflowExecutionLogs.outputRaw}->>'sponsored' IS DISTINCT FROM 'true'
            ), false) AS unsponsored_gas_step
       FROM ${workflowExecutionLogs}
-     WHERE ${workflowExecutionLogs.startedAt} >= ${logsFrom}
+     WHERE ${gte(workflowExecutionLogs.startedAt, logsFrom)}
      GROUP BY ${workflowExecutionLogs.executionId}
   )`;
 }
@@ -292,7 +292,7 @@ function workflowGasCondition(value: GasSpend, logsFrom: Date): SQL {
       ${workflowExecutions.id} IN (
         SELECT ${workflowExecutionLogs.executionId}
           FROM ${workflowExecutionLogs}
-         WHERE ${workflowExecutionLogs.startedAt} >= ${logsFrom}
+         WHERE ${gte(workflowExecutionLogs.startedAt, logsFrom)}
            AND ${filterStepSponsored}
       )
       OR ${workflowExecutions.id} IN (
