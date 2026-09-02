@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   type DirectExecution,
@@ -9,7 +9,7 @@ import {
   type TransactionHashEntry,
   workflowExecutions,
 } from "@/lib/db/schema";
-import { ErrorCategory, logInfo, logSystemWarn } from "@/lib/logging";
+import { ErrorCategory, logInfo, logSystemWarn, logWarn } from "@/lib/logging";
 import { recordWorkflowExecutionFinished } from "@/lib/metrics/collectors/prometheus";
 import { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
 import { resolveOrgSlugForCounter } from "@/lib/metrics/org-slug.server";
@@ -20,9 +20,9 @@ import {
 } from "@/lib/web3/verify-receipt";
 
 /**
- * Settles direct executions left in `unconfirmed`: a transaction was broadcast
- * but the chain had not yet told us whether it landed by the time the request
- * had to answer.
+ * Settles executions left in `unconfirmed`: a transaction was broadcast but
+ * the chain had not yet told us whether it landed by the time the request had
+ * to answer. Covers direct executions and workflow runs alike.
  *
  * Holding these open is the point. Reporting a broadcast as failed is what
  * makes a caller retry an action that already moved funds, so the row keeps its
@@ -37,13 +37,24 @@ import {
 const DROPPED_AFTER_MS = 24 * 60 * 60 * 1000;
 // Give the write path's own retries room to finish before re-reading.
 const MIN_AGE_MS = 30 * 1000;
-const DEFAULT_BATCH_SIZE = 200;
+// Every eligible row is read in one narrow query, so a backlog of rows that
+// stay unreadable cannot hide the rows behind them. This cap only bounds memory;
+// the work a run does is bounded by the time budget below.
+const DEFAULT_MAX_ROWS = 2000;
+// Wall-clock budget for one run. The CronJob fires every two minutes with
+// concurrencyPolicy Forbid, and a receipt lookup against an endpoint that times
+// out instead of answering can take tens of seconds, so without a budget one
+// unreachable chain would keep a run going indefinitely and every other row
+// would wait behind it.
+const DEFAULT_TIME_BUDGET_MS = 60 * 1000;
 
 export type ReconcileSummary = {
   examined: number;
   completed: number;
   failed: number;
   stillUnconfirmed: number;
+  // Eligible rows the run did not reach before its time budget ran out.
+  deferred: number;
 };
 
 export type ReconcileReport = {
@@ -51,8 +62,28 @@ export type ReconcileReport = {
   workflows: ReconcileSummary;
 };
 
-function emptySummary(examined: number): ReconcileSummary {
-  return { examined, completed: 0, failed: 0, stillUnconfirmed: 0 };
+type SettleOutcome = "completed" | "failed" | "unconfirmed";
+
+type UnconfirmedDirectExecution = Pick<
+  DirectExecution,
+  "id" | "transactionHash" | "network" | "receipts" | "createdAt"
+>;
+
+type UnconfirmedWorkflowExecution = {
+  id: string;
+  workflowId: string;
+  transactionHashes: TransactionHashEntry[] | null;
+  startedAt: Date;
+};
+
+function emptySummary(): ReconcileSummary {
+  return {
+    examined: 0,
+    completed: 0,
+    failed: 0,
+    stillUnconfirmed: 0,
+    deferred: 0,
+  };
 }
 
 function tally(summary: ReconcileSummary, outcome: SettleOutcome): void {
@@ -65,9 +96,7 @@ function tally(summary: ReconcileSummary, outcome: SettleOutcome): void {
   }
 }
 
-type SettleOutcome = "completed" | "failed" | "unconfirmed";
-
-function resolveChainId(execution: DirectExecution): number | null {
+function resolveChainId(execution: UnconfirmedDirectExecution): number | null {
   const fromReceipt = execution.receipts.find(
     (receipt) => receipt.chainId !== undefined
   )?.chainId;
@@ -92,6 +121,8 @@ function toReceiptEntries(
   }));
 }
 
+// Every write below is guarded on the row still being unconfirmed, so a run
+// never overwrites a verdict something else reached first.
 async function settle(
   executionId: string,
   status: "completed" | "failed",
@@ -101,13 +132,18 @@ async function settle(
   await db
     .update(directExecutions)
     .set({ status, error, receipts, completedAt: new Date() })
-    .where(eq(directExecutions.id, executionId));
+    .where(
+      and(
+        eq(directExecutions.id, executionId),
+        eq(directExecutions.status, "unconfirmed")
+      )
+    );
 }
 
 async function reconcileOne(
-  execution: DirectExecution,
+  execution: UnconfirmedDirectExecution,
   now: Date
-): Promise<"completed" | "failed" | "unconfirmed"> {
+): Promise<SettleOutcome> {
   const chainId = resolveChainId(execution);
   const hash = execution.transactionHash;
   if (!hash || chainId === null) {
@@ -160,17 +196,15 @@ async function reconcileOne(
   await db
     .update(directExecutions)
     .set({ receipts })
-    .where(eq(directExecutions.id, execution.id));
+    .where(
+      and(
+        eq(directExecutions.id, execution.id),
+        eq(directExecutions.status, "unconfirmed")
+      )
+    );
   return "unconfirmed";
 }
 
-/**
- * Settle one unconfirmed workflow run.
- *
- * A workflow claims many hashes, so it settles to success only when every hash
- * verifies, and to error only when at least one is conclusively bad. While any
- * hash is merely unreadable the run stays open.
- */
 /**
  * Emit the finished sample that logWorkflowCompleteDb deliberately skipped for
  * an unconfirmed run, so the counter still means "finished" and a success rate
@@ -191,13 +225,41 @@ async function recordSettled(
   }
 }
 
+/**
+ * Apply a verdict to a workflow run that is still unconfirmed. The finished
+ * sample is emitted only when this call performed the transition: a late
+ * finalizer or a second reconciler run that settled the row first has already
+ * emitted it, and the counter is append-only.
+ */
+async function settleWorkflow(
+  execution: UnconfirmedWorkflowExecution,
+  status: "success" | "error",
+  error: string | null
+): Promise<void> {
+  const updated = await db
+    .update(workflowExecutions)
+    .set({ status, error, completedAt: new Date() })
+    .where(
+      and(
+        eq(workflowExecutions.id, execution.id),
+        eq(workflowExecutions.status, "unconfirmed")
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  if (updated.length > 0) {
+    await recordSettled(execution.workflowId, status);
+  }
+}
+
+/**
+ * Settle one unconfirmed workflow run.
+ *
+ * A workflow claims many hashes, so it settles to success only when every hash
+ * verifies, and to error only when at least one is conclusively bad. While any
+ * hash is merely unreadable the run stays open.
+ */
 async function reconcileWorkflow(
-  execution: {
-    id: string;
-    workflowId: string;
-    transactionHashes: TransactionHashEntry[] | null;
-    startedAt: Date;
-  },
+  execution: UnconfirmedWorkflowExecution,
   now: Date
 ): Promise<SettleOutcome> {
   const entries = execution.transactionHashes ?? [];
@@ -207,14 +269,11 @@ async function reconcileWorkflow(
   );
 
   if (verifiable.length === 0) {
-    await db
-      .update(workflowExecutions)
-      .set({
-        status: "error",
-        error: "On-chain verification failed: no verifiable transaction hashes",
-      })
-      .where(eq(workflowExecutions.id, execution.id));
-    await recordSettled(execution.workflowId, "error");
+    await settleWorkflow(
+      execution,
+      "error",
+      "On-chain verification failed: no verifiable transaction hashes"
+    );
     return "failed";
   }
 
@@ -223,11 +282,7 @@ async function reconcileWorkflow(
   );
 
   if (allVerified) {
-    await db
-      .update(workflowExecutions)
-      .set({ status: "success", error: null, completedAt: new Date() })
-      .where(eq(workflowExecutions.id, execution.id));
-    await recordSettled(execution.workflowId, "success");
+    await settleWorkflow(execution, "success", null);
     return "completed";
   }
 
@@ -237,30 +292,77 @@ async function reconcileWorkflow(
     return "unconfirmed";
   }
 
-  await db
-    .update(workflowExecutions)
-    .set({
-      status: "error",
-      error: stillUnreadable
-        ? `Transactions were broadcast but never appeared on chain; treating them as dropped after ${Math.round(
-            DROPPED_AFTER_MS / 3_600_000
-          )}h`
-        : describeVerificationFailure(results),
-      completedAt: new Date(),
-    })
-    .where(eq(workflowExecutions.id, execution.id));
-  await recordSettled(execution.workflowId, "error");
+  await settleWorkflow(
+    execution,
+    "error",
+    stillUnreadable
+      ? `Transactions were broadcast but never appeared on chain; treating them as dropped after ${Math.round(
+          DROPPED_AFTER_MS / 3_600_000
+        )}h`
+      : describeVerificationFailure(results)
+  );
   return "failed";
 }
 
+/**
+ * Re-verify rows in order until the list is exhausted or the deadline passes.
+ * The deadline is checked between rows, so a run can overshoot it by one
+ * lookup; rows not reached are reported as deferred and picked up next run.
+ */
+async function drain<T extends { id: string }>(
+  rows: T[],
+  deadline: number,
+  reconcile: (row: T) => Promise<SettleOutcome>,
+  failureMessage: string
+): Promise<ReconcileSummary> {
+  const summary = emptySummary();
+  for (const row of rows) {
+    if (Date.now() >= deadline) {
+      summary.deferred = rows.length - summary.examined;
+      break;
+    }
+    summary.examined += 1;
+    try {
+      tally(summary, await reconcile(row));
+    } catch (error) {
+      summary.stillUnconfirmed += 1;
+      logSystemWarn(
+        ErrorCategory.NETWORK_RPC,
+        failureMessage,
+        error instanceof Error ? error : new Error(String(error)),
+        { execution_id: row.id }
+      );
+    }
+  }
+  return summary;
+}
+
+/**
+ * Rows are read newest first. A row that has sat unconfirmed for hours has
+ * already been re-read many times and is the least likely to change, while a
+ * row broadcast a minute ago usually settles on its first re-read. So when the
+ * budget does run out it is the stale rows that wait, and the one verdict that
+ * is delayed is "dropped after 24h", which is the safe direction to be late in.
+ *
+ * Direct rows get at most half the budget so a slow direct backlog cannot
+ * starve workflow rows; whatever they leave unused rolls over.
+ */
 export async function reconcileUnconfirmedExecutions(
   now: Date = new Date(),
-  batchSize: number = DEFAULT_BATCH_SIZE
+  maxRows: number = DEFAULT_MAX_ROWS,
+  timeBudgetMs: number = DEFAULT_TIME_BUDGET_MS
 ): Promise<ReconcileReport> {
   const cutoff = new Date(now.getTime() - MIN_AGE_MS);
+  const startedAt = Date.now();
 
   const pending = await db
-    .select()
+    .select({
+      id: directExecutions.id,
+      transactionHash: directExecutions.transactionHash,
+      network: directExecutions.network,
+      receipts: directExecutions.receipts,
+      createdAt: directExecutions.createdAt,
+    })
     .from(directExecutions)
     .where(
       and(
@@ -269,24 +371,15 @@ export async function reconcileUnconfirmedExecutions(
         lt(directExecutions.createdAt, cutoff)
       )
     )
-    .orderBy(asc(directExecutions.createdAt))
-    .limit(batchSize);
+    .orderBy(desc(directExecutions.createdAt))
+    .limit(maxRows);
 
-  const direct = emptySummary(pending.length);
-
-  for (const execution of pending) {
-    try {
-      tally(direct, await reconcileOne(execution, now));
-    } catch (error) {
-      direct.stillUnconfirmed += 1;
-      logSystemWarn(
-        ErrorCategory.NETWORK_RPC,
-        "[Reconciler] Failed to re-verify an unconfirmed execution; leaving it open",
-        error instanceof Error ? error : new Error(String(error)),
-        { execution_id: execution.id }
-      );
-    }
-  }
+  const direct = await drain(
+    pending,
+    startedAt + timeBudgetMs / 2,
+    (execution) => reconcileOne(execution, now),
+    "[Reconciler] Failed to re-verify an unconfirmed execution; leaving it open"
+  );
 
   const pendingWorkflows = await db
     .select({
@@ -302,23 +395,25 @@ export async function reconcileUnconfirmedExecutions(
         lt(workflowExecutions.startedAt, cutoff)
       )
     )
-    .orderBy(asc(workflowExecutions.startedAt))
-    .limit(batchSize);
+    .orderBy(desc(workflowExecutions.startedAt))
+    .limit(maxRows);
 
-  const workflows = emptySummary(pendingWorkflows.length);
+  const workflows = await drain(
+    pendingWorkflows,
+    startedAt + timeBudgetMs,
+    (execution) => reconcileWorkflow(execution, now),
+    "[Reconciler] Failed to re-verify an unconfirmed workflow run; leaving it open"
+  );
 
-  for (const execution of pendingWorkflows) {
-    try {
-      tally(workflows, await reconcileWorkflow(execution, now));
-    } catch (error) {
-      workflows.stillUnconfirmed += 1;
-      logSystemWarn(
-        ErrorCategory.NETWORK_RPC,
-        "[Reconciler] Failed to re-verify an unconfirmed workflow run; leaving it open",
-        error instanceof Error ? error : new Error(String(error)),
-        { execution_id: execution.id }
-      );
-    }
+  if (direct.deferred > 0 || workflows.deferred > 0) {
+    logWarn(
+      "[Reconciler] Time budget exhausted before every unconfirmed row was examined",
+      {
+        direct_deferred: String(direct.deferred),
+        workflow_deferred: String(workflows.deferred),
+        budget_ms: String(timeBudgetMs),
+      }
+    );
   }
 
   if (direct.examined > 0 || workflows.examined > 0) {
