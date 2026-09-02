@@ -1699,7 +1699,7 @@ export function registerTools(
           "- deploy_template: Clone a template into your org",
           "",
           "DIRECT EXECUTION (EVM WRITES)",
-          "1. Call execute_transfer, execute_contract_call, or execute_check_and_execute with simulate=true",
+          "1. Call execute_transfer, execute_contract_call, execute_protocol_action (writes), or execute_check_and_execute with simulate=true",
           "2. Continue only after success=true and wouldRevert=false; any tool error is a hard stop",
           "3. Repeat the same arguments with simulate omitted and a unique idempotency_key",
           "4. Poll get_direct_execution_status with bounded backoff until completed or failed",
@@ -1933,7 +1933,7 @@ export function registerTools(
       execution_id: z
         .string()
         .describe(
-          "The execution ID returned by execute_transfer, execute_contract_call, or execute_check_and_execute"
+          "The execution ID returned by execute_transfer, execute_contract_call, execute_protocol_action, or execute_check_and_execute"
         ),
     },
     {
@@ -2418,7 +2418,7 @@ export function registerMetaTools(
   // Meta-tool 2: Execute any protocol action by actionType
   server.tool(
     "execute_protocol_action",
-    "Execute a DeFi protocol action directly. Use search_protocol_actions first to discover available actions and their required parameters. The actionType follows the format 'protocol/action-slug' (e.g., 'chronicle/eth-usd-read', 'aave-v3/supply', 'morpho/get-position'). Pass all required parameters in the params object. For writes, pass idempotency_key and retry with the same key when the previous attempt's outcome is unknown (e.g. after a timeout).",
+    "Execute a DeFi protocol action directly. Use search_protocol_actions first to discover available actions and their required parameters. The actionType follows the format 'protocol/action-slug' (e.g., 'chronicle/eth-usd-read', 'aave-v3/supply', 'morpho/get-position'). Pass all required parameters in the params object. Write actions return HTTP 202 with executionId and status; poll get_direct_execution_status for the full receipt. For writes, pass idempotency_key and retry with the same key when the previous attempt's outcome is unknown (e.g. after a timeout).",
     {
       actionType: z
         .string()

@@ -209,6 +209,8 @@ describe("execute protocol idempotency disposition", () => {
       error: "reverted",
       transactionHash: "0xfailed",
       transactionLink: "https://scan/0xfailed",
+      rejection: { kind: "string-revert", reason: "execution reverted" },
+      errorClass: "external",
     });
 
     const response = await postSwap();
@@ -218,6 +220,8 @@ describe("execute protocol idempotency disposition", () => {
       error?: string;
       transactionHash?: string;
       transactionLink?: string;
+      rejection?: { kind: string; reason?: string };
+      errorClass?: string;
     };
 
     expect(response.status).toBe(202);
@@ -228,6 +232,18 @@ describe("execute protocol idempotency disposition", () => {
         error: "reverted",
         transactionHash: "0xfailed",
         transactionLink: "https://scan/0xfailed",
+        rejection: { kind: "string-revert", reason: "execution reverted" },
+        errorClass: "external",
+      })
+    );
+    expect(failExecutionMock).toHaveBeenCalledWith(
+      "exec_1",
+      "reverted",
+      expect.objectContaining({
+        transactionHash: "0xfailed",
+        transactionLink: "https://scan/0xfailed",
+        rejection: { kind: "string-revert", reason: "execution reverted" },
+        errorClass: "external",
       })
     );
     expect(lastDisposition()).toBe("failed");

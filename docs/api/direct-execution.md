@@ -440,6 +440,50 @@ a failure before submission.
 `transactionLink` accompanies the hash for a successful broadcast. A reverted
 call returns the hash without a link.
 
+## Protocol Actions
+
+```http
+POST /api/execute/{protocol}/{action-slug}
+```
+
+Execute a registered protocol action (for example `POST /api/execute/aave-v3/supply`).
+Use `search_protocol_actions` via MCP or the protocol registry to discover
+available actions and their parameters.
+
+### Request Body
+
+Pass action parameters as a JSON object. `chainId` is required for most actions
+(the legacy `network` field is accepted as a deprecated alias). Required fields
+for each action are defined in the protocol registry.
+
+### Response
+
+**Read actions** return the plugin result directly with HTTP `200`.
+
+**Write actions** return HTTP `202 Accepted` with the same envelope as
+[Call Smart Contract](#call-smart-contract) writes:
+
+```json
+{
+  "executionId": "direct_123",
+  "status": "failed",
+  "transactionHash": "0x...",
+  "transactionLink": "https://etherscan.io/tx/0x...",
+  "error": "execution reverted",
+  "rejection": {
+    "kind": "string-revert",
+    "reason": "execution reverted"
+  }
+}
+```
+
+`executionId` and `status` are always present. `transactionHash` and
+`transactionLink` are included whenever the write broadcast a transaction,
+including on failure, so a reverted call stays look-up-able in the explorer.
+`rejection` carries a typed revert classification when the write step could
+determine one. Poll `GET /api/execute/{executionId}/status` for receipts and
+the persisted result.
+
 ## Check and Execute
 
 ```http

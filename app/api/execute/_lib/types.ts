@@ -1,4 +1,6 @@
 import type { DirectExecutionReceiptEntry } from "@/lib/db/schema";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import type { RevertKind } from "@/lib/web3/decode-revert-error";
 
 /**
  * `unconfirmed` is non-terminal and means a transaction was broadcast but the
@@ -24,6 +26,9 @@ export type ExecuteResponse = {
   // reconciliation failure message (e.g. reverted, receipt not found) when
   // that's what failed the execution, not just a self-reported broadcast error.
   error?: string;
+  // Typed revert classification from the write step, when available.
+  rejection?: RevertKind;
+  errorClass?: ExecutionErrorType;
 };
 
 export type ExecutionStatusResponse = {

@@ -281,10 +281,7 @@ async function executeProtocolAction(
   // completeExecution independently re-verifies the claimed transaction
   // against the chain (KEEP-966) -- its returned outcome, not result.success,
   // is authoritative for the response and idempotency cache.
-  let outcome: CompleteExecutionOutcome = {
-    status: "failed",
-    error: result.success ? undefined : result.error,
-  };
+  let outcome: CompleteExecutionOutcome;
   if (result.success) {
     outcome = await completeExecution(executionId, {
       transactionHash: result.transactionHash,
@@ -303,15 +300,18 @@ async function executeProtocolAction(
       transactionHash: result.transactionHash,
       chainId: result.chainId,
       sponsored: result.sponsored,
+      transactionLink: result.transactionLink,
+      rejection: result.rejection,
+      errorClass: result.errorClass,
     });
     outcome = { status: settled.status, error: result.error };
   }
 
   // Match contract-call / transfer: expose executionId so callers can poll
   // /api/execute/{executionId}/status and idempotency can bind resourceId.
-  // Include transactionHash and transactionLink whenever the step returned
-  // them (even on failure) so a broadcast that reverted or could not be read
-  // back stays look-up-able in the explorer.
+  // write-contract-core sets transactionHash and transactionLink whenever a
+  // broadcast hash exists, including on failure, so reverted txs stay
+  // look-up-able in the explorer.
   const responseBody: ExecuteResponse = {
     executionId,
     status: outcome.status,
@@ -322,6 +322,12 @@ async function executeProtocolAction(
       ? { transactionLink: result.transactionLink }
       : {}),
     ...(outcome.error ? { error: outcome.error } : {}),
+    ...(!result.success && result.rejection
+      ? { rejection: result.rejection }
+      : {}),
+    ...(!result.success && result.errorClass
+      ? { errorClass: result.errorClass }
+      : {}),
   };
 
   // The tx reached the broadcast path, so finalize as success or failed and

@@ -6,7 +6,9 @@ import {
   type DirectExecutionReceiptEntry,
   directExecutions,
 } from "@/lib/db/schema";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { generateId } from "@/lib/utils/id";
+import type { RevertKind } from "@/lib/web3/decode-revert-error";
 import {
   describeVerificationFailure,
   hasUnreadableReceipt,
@@ -154,6 +156,9 @@ type FailParams = {
   // status route derives `sponsored` from it -- without this a sponsored
   // failure reports sponsored: false.
   sponsored?: boolean;
+  transactionLink?: string;
+  rejection?: RevertKind;
+  errorClass?: ExecutionErrorType;
 };
 
 /**
@@ -203,6 +208,20 @@ export async function failExecution(
       ? "unconfirmed"
       : "failed";
 
+  const failureOutput: Record<string, unknown> = {};
+  if (params.sponsored !== undefined) {
+    failureOutput.sponsored = params.sponsored;
+  }
+  if (params.transactionLink) {
+    failureOutput.transactionLink = params.transactionLink;
+  }
+  if (params.rejection) {
+    failureOutput.rejection = params.rejection;
+  }
+  if (params.errorClass) {
+    failureOutput.errorClass = params.errorClass;
+  }
+
   await db
     .update(directExecutions)
     .set({
@@ -212,10 +231,10 @@ export async function failExecution(
         ? { transactionHash: params.transactionHash }
         : {}),
       ...(receipts.length > 0 ? { receipts } : {}),
-      ...(params.sponsored === undefined
-        ? {}
-        : // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
-          { output: { sponsored: params.sponsored } as any }),
+      ...(Object.keys(failureOutput).length > 0
+        ? // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
+          { output: failureOutput as any }
+        : {}),
       // The reconciler finds rows still needing settlement by their null
       // completedAt, so an unconfirmed row must not carry one.
       completedAt: status === "failed" ? new Date() : null,

@@ -122,19 +122,20 @@ vi.mock("@/lib/abi/function-key", () => ({
 
 // Spy on executeContractCall so tests can inspect the gasOverrides arg.
 // Hoisted so the mock factory below sees an initialized value at module load.
-const { mockExecuteContractCall } = vi.hoisted(() => ({
+const { mockExecuteContractCall, mockGetTransactionUrl } = vi.hoisted(() => ({
   mockExecuteContractCall: vi.fn().mockResolvedValue({
     hash: "0xhash",
     gasUsed: BigInt(21_000),
     effectiveGasPrice: BigInt(1_000_000_000),
   }),
+  mockGetTransactionUrl: vi
+    .fn()
+    .mockResolvedValue("https://etherscan.io/tx/0xhash"),
 }));
 vi.mock("@/lib/web3/chain-adapter", () => ({
   getChainAdapter: vi.fn().mockReturnValue({
     executeContractCall: mockExecuteContractCall,
-    getTransactionUrl: vi
-      .fn()
-      .mockResolvedValue("https://etherscan.io/tx/0xhash"),
+    getTransactionUrl: mockGetTransactionUrl,
   }),
 }));
 
@@ -574,6 +575,8 @@ describe("writeContractCore broadcast with an unreadable receipt", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.transactionHash).toBe("0xpending");
+      expect(result.transactionLink).toBe("https://etherscan.io/tx/0xhash");
+      expect(mockGetTransactionUrl).toHaveBeenCalledWith("0xpending");
       expect(result.errorClass).toBe(ExecutionErrorType.SYSTEM);
     }
 

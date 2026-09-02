@@ -557,13 +557,31 @@ export async function writeContractCore(
         chainId,
       });
       if (!decision.fallback) {
+        let sponsoredFailureLink: string | undefined;
+        if (decision.transactionHash) {
+          const explorerConfig = await db.query.explorerConfigs.findFirst({
+            where: eq(explorerConfigs.chainId, chainId),
+          });
+          if (explorerConfig) {
+            sponsoredFailureLink = getTransactionUrl(
+              explorerConfig,
+              decision.transactionHash
+            );
+          }
+        }
         return {
           success: false,
           error: decision.error,
           errorClass: decision.errorClass,
           sponsored: true,
           ...(decision.transactionHash
-            ? { transactionHash: decision.transactionHash, chainId }
+            ? {
+                transactionHash: decision.transactionHash,
+                chainId,
+                ...(sponsoredFailureLink
+                  ? { transactionLink: sponsoredFailureLink }
+                  : {}),
+              }
             : {}),
         };
       }
@@ -707,6 +725,15 @@ export async function writeContractCore(
       );
       const rejection = classifyRevert(error, contractInterface);
       const broadcastHash = broadcastTransactionHash(error);
+      let broadcastTransactionLink: string | undefined;
+      if (broadcastHash) {
+        try {
+          broadcastTransactionLink =
+            await adapter.getTransactionUrl(broadcastHash);
+        } catch {
+          // Non-critical -- the hash alone is enough to look up the tx.
+        }
+      }
       // Set so a failOnError=false node cannot soften an unresolved in-flight
       // send into success. A relay-determined class is the more specific
       // answer, so it wins.
@@ -719,7 +746,13 @@ export async function writeContractCore(
         ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
         ...(broadcastHash
-          ? { transactionHash: broadcastHash, chainId }
+          ? {
+              transactionHash: broadcastHash,
+              chainId,
+              ...(broadcastTransactionLink
+                ? { transactionLink: broadcastTransactionLink }
+                : {}),
+            }
           : {}),
       };
     }
