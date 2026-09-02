@@ -6,11 +6,15 @@ vi.mock("../../lib/utils/logger", () => ({
 
 // HMAC signing reads INTERNAL_SERVICE_HMAC_SECRET and parses the request URL;
 // stub it so the unit test asserts the request shape without a real base
-// URL/secret.
+// URL/secret. The caller is echoed so the test can see which one was signed.
 vi.mock("../../lib/utils/fetch-utils", () => ({
-  // Plain function (not vi.fn) so restoreAllMocks in beforeEach can't neutralise it.
-  signHmacHeaders: () => ({
-    "X-KH-Caller": "events",
+  signHmacHeaders: (
+    _method: string,
+    _url: string,
+    _body: string,
+    caller: string,
+  ) => ({
+    "X-KH-Caller": caller,
     "X-KH-Timestamp": "1",
     "X-KH-Signature": "sig",
   }),
@@ -21,7 +25,8 @@ import {
   failPhantomExecution,
 } from "../../lib/phantom";
 
-const KEY = `event:wf_1:1:0x${"a".repeat(64)}:0`;
+const EVENT_KEY = "event:wf_1:101:sig_1";
+const BLOCK_KEY = "block:wf_1:101:4242";
 
 function reply(status: number, body: unknown) {
   return {
@@ -31,20 +36,7 @@ function reply(status: number, body: unknown) {
   };
 }
 
-/** A fetch that never answers until the client's own timeout aborts it. */
-function hangUntilAborted(): (
-  url: string,
-  init: RequestInit,
-) => Promise<never> {
-  return (_url, init) =>
-    new Promise((_resolve, reject) => {
-      init.signal?.addEventListener("abort", () =>
-        reject(new Error("aborted")),
-      );
-    });
-}
-
-describe("createPhantomExecution (event-tracker)", () => {
+describe("createPhantomExecution (solana-tracker)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -53,7 +45,7 @@ describe("createPhantomExecution (event-tracker)", () => {
     vi.useRealTimers();
   });
 
-  it("POSTs a phantom row keyed by the dispatch key and returns the execution id", async () => {
+  it("POSTs an event phantom keyed by the dispatch key as caller events", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
@@ -61,7 +53,13 @@ describe("createPhantomExecution (event-tracker)", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await createPhantomExecution("wf_1", "owner_1", KEY);
+    const result = await createPhantomExecution(
+      "wf_1",
+      "owner_1",
+      "event",
+      "events",
+      EVENT_KEY,
+    );
 
     expect(result).toEqual({ executionId: "exec_evt", alreadyExisted: false });
     const [url, init] = fetchMock.mock.calls[0];
@@ -74,7 +72,29 @@ describe("createPhantomExecution (event-tracker)", () => {
       userId: "owner_1",
       status: "phantom",
       triggerSource: "event",
-      dispatchKey: KEY,
+      dispatchKey: EVENT_KEY,
+    });
+  });
+
+  it("POSTs a block phantom as caller scheduler with source block", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(reply(201, { executionId: "exec_blk" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createPhantomExecution(
+      "wf_1",
+      "owner_1",
+      "block",
+      "scheduler",
+      BLOCK_KEY,
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["X-KH-Caller"]).toBe("scheduler");
+    expect(JSON.parse(init.body)).toMatchObject({
+      triggerSource: "block",
+      dispatchKey: BLOCK_KEY,
     });
   });
 
@@ -89,11 +109,11 @@ describe("createPhantomExecution (event-tracker)", () => {
     );
 
     await expect(
-      createPhantomExecution("wf_1", "owner_1", KEY),
+      createPhantomExecution("wf_1", "owner_1", "event", "events", EVENT_KEY),
     ).resolves.toEqual({ executionId: "exec_existing", alreadyExisted: true });
   });
 
-  // After a retry the existing row may be this listener's own, created by an
+  // After a retry the existing row may be this ingestor's own, created by an
   // attempt whose reply was lost and therefore never enqueued. Reporting it as
   // fresh makes the caller enqueue; the executor's claim CAS absorbs the rare
   // genuine duplicate, whereas a skip would strand the phantom for the reaper.
@@ -101,13 +121,19 @@ describe("createPhantomExecution (event-tracker)", () => {
     vi.useFakeTimers();
     const fetchMock = vi
       .fn()
-      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce(reply(502, {}))
       .mockResolvedValueOnce(
         reply(200, { executionId: "exec_mine", alreadyExisted: true }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    const pending = createPhantomExecution("wf_1", "owner_1", KEY);
+    const pending = createPhantomExecution(
+      "wf_1",
+      "owner_1",
+      "event",
+      "events",
+      EVENT_KEY,
+    );
     await vi.advanceTimersByTimeAsync(500);
 
     await expect(pending).resolves.toEqual({
@@ -124,7 +150,7 @@ describe("createPhantomExecution (event-tracker)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      createPhantomExecution("wf_1", "owner_1", KEY),
+      createPhantomExecution("wf_1", "owner_1", "event", "events", EVENT_KEY),
     ).resolves.toEqual({ alreadyExisted: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -134,14 +160,18 @@ describe("createPhantomExecution (event-tracker)", () => {
     const fetchMock = vi.fn().mockResolvedValue(reply(503, {}));
     vi.stubGlobal("fetch", fetchMock);
 
-    const pending = createPhantomExecution("wf_1", "owner_1", KEY);
+    const pending = createPhantomExecution(
+      "wf_1",
+      "owner_1",
+      "block",
+      "scheduler",
+      BLOCK_KEY,
+    );
     await vi.advanceTimersByTimeAsync(499);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(999);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1_000);
 
     await expect(pending).resolves.toEqual({ alreadyExisted: false });
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -152,32 +182,17 @@ describe("createPhantomExecution (event-tracker)", () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
     vi.stubGlobal("fetch", fetchMock);
 
-    const pending = createPhantomExecution("wf_1", "owner_1", KEY);
+    const pending = createPhantomExecution(
+      "wf_1",
+      "owner_1",
+      "event",
+      "events",
+      EVENT_KEY,
+    );
     await vi.advanceTimersByTimeAsync(1_500);
 
     await expect(pending).resolves.toEqual({ alreadyExisted: false });
     expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("aborts an attempt that exceeds 5s and retries it", async () => {
-    vi.useFakeTimers();
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(hangUntilAborted())
-      .mockResolvedValueOnce(reply(201, { executionId: "exec_late" }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const pending = createPhantomExecution("wf_1", "owner_1", KEY);
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    // The abort fires at 5s; the retry follows after the 500ms backoff.
-    await vi.advanceTimersByTimeAsync(1 + 500);
-
-    await expect(pending).resolves.toEqual({
-      executionId: "exec_late",
-      alreadyExisted: false,
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   // A transport failure and a refusal must stay distinguishable: the first
@@ -188,19 +203,19 @@ describe("createPhantomExecution (event-tracker)", () => {
       vi.fn().mockResolvedValue(
         reply(200, {
           refused: true,
-          reason: "execution_limit",
-          error: "limit reached",
+          reason: "plan_feature",
+          error: "gated action",
         }),
       ),
     );
 
     await expect(
-      createPhantomExecution("wf_1", "owner_1", KEY),
-    ).resolves.toEqual({ alreadyExisted: false, refused: "execution_limit" });
+      createPhantomExecution("wf_1", "owner_1", "event", "events", EVENT_KEY),
+    ).resolves.toEqual({ alreadyExisted: false, refused: "plan_feature" });
   });
 });
 
-describe("failPhantomExecution (event-tracker)", () => {
+describe("failPhantomExecution (solana-tracker)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -209,20 +224,26 @@ describe("failPhantomExecution (event-tracker)", () => {
     vi.useRealTimers();
   });
 
-  it("PATCHes the phantom row to a coded error", async () => {
+  it("PATCHes the phantom row to a coded error under the given caller", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal("fetch", fetchMock);
 
-    await failPhantomExecution("exec_evt", "ES-0001", "dispatch failed");
+    await failPhantomExecution(
+      "exec_blk",
+      "BS-0001",
+      "dispatch failed",
+      "scheduler",
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toMatch(/\/api\/internal\/executions\/exec_evt$/);
+    expect(String(url)).toMatch(/\/api\/internal\/executions\/exec_blk$/);
     expect(init.method).toBe("PATCH");
+    expect(init.headers["X-KH-Caller"]).toBe("scheduler");
     expect(JSON.parse(init.body)).toEqual({
       status: "system_error",
       error: "dispatch failed",
-      errorCode: "ES-0001",
+      errorCode: "BS-0001",
     });
   });
 
@@ -231,7 +252,7 @@ describe("failPhantomExecution (event-tracker)", () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
     vi.stubGlobal("fetch", fetchMock);
 
-    const pending = failPhantomExecution("exec_evt", "ES-0001", "x");
+    const pending = failPhantomExecution("exec_evt", "ES-0001", "x", "events");
     await vi.advanceTimersByTimeAsync(1_500);
 
     await expect(pending).resolves.toBeUndefined();

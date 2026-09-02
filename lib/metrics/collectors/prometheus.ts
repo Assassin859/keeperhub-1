@@ -1058,7 +1058,7 @@ export function recordWorkflowExecutionFinished(labels: {
 const workflowExecutionsSkipped = getOrCreateCounter(
   apiRegistry,
   "keeperhub_workflow_executions_skipped_total",
-  "Workflow executions refused before starting, by org_slug and reason (execution_limit, plan_feature, payg_unpaid). Not failures: these runs never executed.",
+  "Workflow executions skipped before starting, by org_slug and reason: plan refusals (execution_limit, plan_feature, payg_unpaid) and lifecycle skips the executor resolves (not_found, deleted, deactivated, org_deactivated, disabled, schedule_invalid). Not failures: these runs never executed.",
   ["org_slug", "reason"]
 );
 
