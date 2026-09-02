@@ -798,9 +798,9 @@ describe("NonceManager", () => {
       await vi.advanceTimersByTimeAsync(BEAT_MS);
 
       expect(set).toHaveBeenCalledTimes(1);
-      const { expiresAt } = set.mock.calls[0]?.[0] as { expiresAt: Date };
+      const { expiresAt } = set.mock.calls[0][0] as { expiresAt: Date };
       expect(expiresAt.getTime()).toBe(Date.now() + TTL_MS);
-      expect(boundParams(where.mock.calls[0]?.[0])).toEqual([
+      expect(boundParams(where.mock.calls[0][0])).toEqual([
         "wallet_address",
         WALLET,
         "chain_id",
