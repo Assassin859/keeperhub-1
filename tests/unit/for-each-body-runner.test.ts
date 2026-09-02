@@ -1019,7 +1019,7 @@ describe("runBodyNode: nested For Each failure stops inner continuation", () => 
           const innerBody = identifyLoopBody(
             forEachNodeId,
             edgesBySource,
-            ctx.nodeMap,
+            new Map(ctx.nodeMap),
             fullHandleMap
           );
           const innerBodyNodes =
