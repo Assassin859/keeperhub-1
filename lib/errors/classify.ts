@@ -293,8 +293,20 @@ const RULES: readonly Rule[] = [
     errorType: ExecutionErrorType.SYSTEM,
     code: "N-0001",
   },
+  // `primary endpoint` is the same exhaustion when no fallback is configured.
   {
-    pattern: /RPC failed on both endpoints/i,
+    pattern: /RPC failed on (both endpoints|primary endpoint)/i,
+    errorCategory: ErrorCategory.NETWORK_RPC,
+    errorType: ExecutionErrorType.SYSTEM,
+    code: "N-0001",
+  },
+  // The RPC managers' per-attempt timeout wrapper produces this shape, so a
+  // timeout that surfaces without the `RPC failed on` prefix is still a
+  // KeeperHub-managed endpoint that did not answer. Start-anchored: a
+  // third-party body quoted after `HTTP NNN:` can carry the same words and
+  // must keep its own rules below.
+  {
+    pattern: /^Timeout after \d+ms/i,
     errorCategory: ErrorCategory.NETWORK_RPC,
     errorType: ExecutionErrorType.SYSTEM,
     code: "N-0001",
