@@ -443,10 +443,10 @@ call returns the hash without a link.
 ## Protocol Actions
 
 ```http
-POST /api/execute/{protocol}/{action-slug}
+POST /api/execute/{protocol}/{action-slug} <!-- api-docs-ignore -->
 ```
 
-Execute a registered protocol action (for example `POST /api/execute/aave-v3/supply`).
+Execute a registered protocol action (for example `POST /api/execute/aave-v3/supply`). <!-- api-docs-ignore -->
 Use `search_protocol_actions` via MCP or the protocol registry to discover
 available actions and their parameters.
 
