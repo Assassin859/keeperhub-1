@@ -26,6 +26,7 @@ import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { initializeWalletSigner } from "@/lib/web3/wallet-helpers";
 import { getGasStrategy } from "./gas-strategy";
 import { getNonceManager, type NonceSession } from "./nonce-manager";
+import { OnChainRevertError } from "./onchain-revert";
 import {
   type BroadcastResult,
   submitSignedTransactionWithFailover,
@@ -163,6 +164,21 @@ async function confirmAndBuildResult(
 // ---------------------------------------------------------------------------
 
 /**
+ * `waitForTransaction` resolves a mined receipt whatever its status, so a
+ * reverted transaction (status 0) has to become a failure here or the caller
+ * reads it as `success: true`.
+ */
+function throwIfReverted(receipt: ethers.TransactionReceipt | null): void {
+  if (receipt?.status === 0) {
+    throw new OnChainRevertError({
+      message: `Transaction ${receipt.hash} reverted on-chain (status 0, block ${receipt.blockNumber})`,
+      transactionHash: receipt.hash,
+      blockNumber: receipt.blockNumber,
+    });
+  }
+}
+
+/**
  * Execute a single transaction with nonce management and gas strategy.
  */
 export async function executeTransaction(
@@ -234,6 +250,7 @@ export async function executeTransaction(
         (rpcProvider) => rpcProvider.waitForTransaction(broadcast.hash),
         "read"
       ));
+    throwIfReverted(receipt);
 
     await nonceManager.confirmTransaction(broadcast.hash);
 
@@ -336,6 +353,7 @@ export async function executeContractTransaction(
         (rpcProvider) => rpcProvider.waitForTransaction(broadcast.hash),
         "read"
       ));
+    throwIfReverted(receipt);
 
     await nonceManager.confirmTransaction(broadcast.hash);
 
