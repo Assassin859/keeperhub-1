@@ -373,13 +373,12 @@ export async function withNonceSession<T>(
   fn: (session: NonceSession) => Promise<T>
 ): Promise<T> {
   const nonceManager = getNonceManager();
-  const provider = context.rpcManager.getProvider();
 
   const { session, validation } = await nonceManager.startSession(
     walletAddress,
     context.chainId,
     context.executionId,
-    provider
+    context.rpcManager
   );
 
   if (!validation.valid) {
