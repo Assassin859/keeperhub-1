@@ -145,6 +145,12 @@ vi.mock("@/lib/idempotency", () => ({
     response: Response,
     disposition?: string
   ) => mockRecordIdempotentResponse(idem, response, disposition),
+  safeRecordIdempotentResponse: (
+    idem: unknown,
+    response: Response,
+    disposition?: string,
+    context?: string
+  ) => mockRecordIdempotentResponse(idem, response, disposition, context),
   withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
     mockWithIdempotencyHeartbeat(idem, work),
 }));

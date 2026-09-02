@@ -95,6 +95,7 @@ vi.mock("@/lib/payments/x402/payment-gate", () => ({
   hashPaymentSignature: mockHashPaymentSignature,
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: mockResolveCreatorWallet,
+  extractPayerAddress: vi.fn().mockReturnValue("0xPayer"),
 }));
 
 vi.mock("@/lib/payments/mpp/server", () => ({
@@ -179,6 +180,12 @@ vi.mock("@/lib/idempotency", () => ({
     response: Response,
     disposition?: string
   ) => mockRecordIdempotentResponse(idem, response, disposition),
+  safeRecordIdempotentResponse: (
+    idem: unknown,
+    response: Response,
+    disposition?: string,
+    context?: string
+  ) => mockRecordIdempotentResponse(idem, response, disposition, context),
   withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
     mockWithIdempotencyHeartbeat(idem, work),
 }));
@@ -738,7 +745,8 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(mockRecordIdempotentResponse).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(Response),
-      "release"
+      "release",
+      expect.any(String)
     );
     // The workflow itself was never started.
     expect(mockStart).not.toHaveBeenCalled();

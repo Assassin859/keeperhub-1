@@ -78,6 +78,7 @@ vi.mock("@/lib/db/schema", () => ({
 vi.mock("@/lib/payments/x402/payment-gate", () => ({
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: mockResolveCreatorWallet,
+  extractPayerAddress: vi.fn().mockReturnValue("0xPayer"),
 }));
 
 vi.mock("@/lib/payments/router", () => ({
@@ -142,6 +143,12 @@ vi.mock("@/lib/idempotency", () => ({
     response: Response,
     disposition?: string
   ) => mockRecordIdempotentResponse(idem, response, disposition),
+  safeRecordIdempotentResponse: (
+    idem: unknown,
+    response: Response,
+    disposition?: string,
+    context?: string
+  ) => mockRecordIdempotentResponse(idem, response, disposition, context),
   withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
     mockWithIdempotencyHeartbeat(idem, work),
 }));

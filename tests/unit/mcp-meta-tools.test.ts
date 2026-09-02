@@ -995,6 +995,12 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
       response: Response,
       disposition?: string
     ) => mockRecordIdempotentResponse(idem, response, disposition),
+    safeRecordIdempotentResponse: (
+      idem: unknown,
+      response: Response,
+      disposition?: string,
+      context?: string
+    ) => mockRecordIdempotentResponse(idem, response, disposition, context),
     withIdempotencyHeartbeat: (idem: unknown, work: () => unknown) =>
       mockWithIdempotencyHeartbeat(idem, work),
   }));
