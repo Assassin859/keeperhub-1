@@ -110,6 +110,18 @@ let isShuttingDown = false;
 let currentExecutionId: string | null = null;
 let currentScheduleId: string | null = null;
 
+// A SIGTERM that lands while the workflow is finishing lets both the shutdown
+// handler and main()'s finally reach the end of the run. The counter snapshot
+// is cumulative, so shipping it twice would double-count: share one shipment.
+let metricsShipment: Promise<void> | null = null;
+
+function shipMetricsOnce(): Promise<void> {
+  if (!metricsShipment) {
+    metricsShipment = shipMetricsToExecutor();
+  }
+  return metricsShipment;
+}
+
 async function handleGracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) {
     console.log(`[Runner] Already shutting down, ignoring ${signal}`);
@@ -148,6 +160,11 @@ async function handleGracefulShutdown(signal: string): Promise<void> {
   } catch (error) {
     console.error("[Runner] Error during graceful shutdown:", error);
   } finally {
+    // The status write above incremented the terminal counters in this
+    // process; they only reach the executor if shipped before exit. Shipping
+    // is bounded by its own fetch timeout, and the forced-exit timer stays
+    // armed until it resolves.
+    await shipMetricsOnce();
     clearTimeout(shutdownTimeout);
     console.log("[Runner] Graceful shutdown complete");
     process.exit(1);
@@ -287,7 +304,7 @@ async function main(): Promise<void> {
       console.log("[Runner] Error recorded to database, exiting normally");
     }
   } finally {
-    await shipMetricsToExecutor();
+    await shipMetricsOnce();
     if (!isShuttingDown) {
       await queryClient.end();
       console.log("[Runner] Database connection closed");
