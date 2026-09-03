@@ -14,7 +14,7 @@
  * visible) resolves to `verified: false`, never `verified: true`.
  */
 import "server-only";
-import type { SignatureStatus } from "@solana/web3.js";
+import type { Connection, SignatureStatus } from "@solana/web3.js";
 import { ethers } from "ethers";
 import { resolveRpcConfig } from "@/lib/rpc/config-service";
 import { isSolanaChain } from "@/lib/rpc/provider-factory";
@@ -83,9 +83,13 @@ const VERIFY_CONCURRENCY_LIMIT = 20;
 // checked between rounds, so one already in flight runs to completion. Rounds
 // against a responsive endpoint cost milliseconds, but a round whose endpoints
 // time out instead of answering can overrun the budget by
-// VERIFY_MAX_RETRIES x VERIFY_TIMEOUT_MS per provider, primary then fallback.
-// That case only arises for a transaction no endpoint can see, which the
-// unconfirmed state and the reconciler then own.
+// VERIFY_MAX_RETRIES x VERIFY_TIMEOUT_MS plus the provider manager's own
+// exponential backoff between attempts (1s, 2s, 4s, 5s, i.e. 12s at five
+// retries), per provider, primary then fallback. At the constants above that
+// is about 104s of wall clock, not the 12s this budget names, and the
+// finalize gate it sits behind is a synchronous HTTP path. That case only
+// arises for a transaction no endpoint can see, which the unconfirmed state
+// and the reconciler then own.
 const LOOKUP_BUDGET_MS = 12_000;
 const LOOKUP_RETRY_DELAY_MS = 1500;
 
@@ -310,11 +314,43 @@ type SignatureLookup = {
  * commitment plays no part in that call, so this comparison is the gate.
  * Requiring "finalized" instead would add the confirmed-to-finalized gap to
  * every Solana finalize for nothing the write path did not already accept.
+ *
+ * confirmationStatus is optional on SignatureStatus, and a node or proxy that
+ * omits it would otherwise never satisfy this gate, leaving every Solana
+ * execution unconfirmed until the reconciler called it dropped. `confirmations`
+ * is the older, universally present signal: null means the transaction is
+ * rooted, which is at or above "finalized". It is only consulted when
+ * confirmationStatus is absent, so an explicit "processed" is never overridden.
  */
 function reachedVerifyCommitment(status: SignatureStatus): boolean {
+  if (status.confirmationStatus === undefined) {
+    return status.confirmations === null;
+  }
   return (
     status.confirmationStatus === "confirmed" ||
     status.confirmationStatus === "finalized"
+  );
+}
+
+async function readSignatureStatus(
+  connection: Connection,
+  signature: string
+): Promise<SignatureStatus | null> {
+  const response = await connection.getSignatureStatuses([signature], {
+    searchTransactionHistory: true,
+  });
+  return response.value[0] ?? null;
+}
+
+/**
+ * A "processed" status with no error is a node that has not caught up to the
+ * adapter's commitment yet, so it is re-asked like a null answer.
+ */
+function isDecisiveSignatureStatus(
+  status: SignatureStatus | null
+): status is SignatureStatus {
+  return (
+    status != null && (status.err != null || reachedVerifyCommitment(status))
   );
 }
 
@@ -329,9 +365,14 @@ function reachedVerifyCommitment(status: SignatureStatus): boolean {
  * null for every signature the 24h reconciler re-reads, and the reconciler
  * settles a hash that stays absent as dropped.
  *
- * Unlike lookupReceipt there is no explicit read against the fallback endpoint
- * after a null answer: SolanaProviderManager does not expose its fallback
- * connection, so the retry rounds are what cover a lagging primary here.
+ * As in lookupReceipt, a null answer is followed by an explicit read against
+ * the fallback endpoint. getSignatureStatuses resolves to a null entry for an
+ * unknown signature rather than throwing, so `executeWithFailover` counts that
+ * as a successful call and never moves off the primary. The primary for
+ * solana-mainnet is a proxy that has been observed serving no transaction
+ * history at all, which is exactly the capability searchTransactionHistory
+ * needs. Retry rounds do not cover that: every round asks the same endpoint
+ * and gets the same valid empty answer.
  */
 async function lookupSignatureStatus(
   signature: string,
@@ -351,19 +392,27 @@ async function lookupSignatureStatus(
     firstRound = false;
 
     try {
-      const status = await manager.executeWithFailover(async (connection) => {
-        const response = await connection.getSignatureStatuses([signature], {
-          searchTransactionHistory: true,
-        });
-        return response.value[0] ?? null;
-      }, "read");
-      // A "processed" status with no error is a node that has not caught up to
-      // the adapter's commitment yet, so it is re-asked like a null answer.
-      if (status && (status.err != null || reachedVerifyCommitment(status))) {
+      const status = await manager.executeWithFailover(
+        (connection) => readSignatureStatus(connection, signature),
+        "read"
+      );
+      if (isDecisiveSignatureStatus(status)) {
         return { status, errored: false };
       }
     } catch {
       errored = true;
+    }
+
+    const fallback = manager.getFallbackConnection();
+    if (fallback) {
+      try {
+        const status = await readSignatureStatus(fallback, signature);
+        if (isDecisiveSignatureStatus(status)) {
+          return { status, errored: false };
+        }
+      } catch {
+        errored = true;
+      }
     }
   }
 

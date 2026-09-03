@@ -18,6 +18,11 @@ type SolanaConnectionMock = {
 };
 const getSignatureStatuses = vi.fn();
 const solanaConnection: SolanaConnectionMock = { getSignatureStatuses };
+const fallbackGetSignatureStatuses = vi.fn();
+const solanaFallbackConnection: SolanaConnectionMock = {
+  getSignatureStatuses: fallbackGetSignatureStatuses,
+};
+const getFallbackConnection = vi.fn(() => solanaFallbackConnection);
 const solanaExecuteWithFailover =
   vi.fn<
     (
@@ -39,7 +44,10 @@ vi.mock("@/lib/rpc/providers/solana", () => ({
   SolanaProviderManager: vi
     .fn()
     .mockImplementation(function SolanaProviderManager() {
-      return { executeWithFailover: solanaExecuteWithFailover };
+      return {
+        executeWithFailover: solanaExecuteWithFailover,
+        getFallbackConnection,
+      };
     }),
 }));
 vi.mock("@/lib/rpc/config-service", () => ({
@@ -259,6 +267,7 @@ describe("verifyExecutionReceipts", () => {
 });
 
 const SOLANA_CHAIN_ID = 101;
+const SOLANA_DEVNET_CHAIN_ID = 103;
 const SIGNATURE =
   "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW";
 
@@ -298,6 +307,10 @@ describe("Solana signatures", () => {
     });
     getSignatureStatuses.mockReset();
     getSignatureStatuses.mockResolvedValue({ value: [null] });
+    fallbackGetSignatureStatuses.mockReset();
+    fallbackGetSignatureStatuses.mockResolvedValue({ value: [null] });
+    getFallbackConnection.mockReset();
+    getFallbackConnection.mockReturnValue(solanaFallbackConnection);
     solanaExecuteWithFailover.mockReset();
     solanaExecuteWithFailover.mockImplementation((operation) =>
       operation(solanaConnection)
@@ -455,6 +468,90 @@ describe("Solana signatures", () => {
     });
     expect(allVerified).toBe(true);
     expect(results.map((result) => result.hash)).toEqual([HASH, SIGNATURE]);
+  });
+
+  it("groups signatures by chainId, building one Solana manager per distinct chain", async () => {
+    const { SolanaProviderManager } = await import(
+      "@/lib/rpc/providers/solana"
+    );
+    getSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("confirmed")],
+    });
+
+    await verifyExecutionReceipts([
+      { hash: SIGNATURE, chainId: SOLANA_CHAIN_ID },
+      { hash: `${SIGNATURE.slice(0, -1)}X`, chainId: SOLANA_CHAIN_ID },
+      { hash: SIGNATURE, chainId: SOLANA_DEVNET_CHAIN_ID },
+    ]);
+
+    // one construction per distinct chainId (2), not per signature (3)
+    expect(SolanaProviderManager).toHaveBeenCalledTimes(2);
+    expect(getSignatureStatuses).toHaveBeenCalledTimes(3);
+  });
+
+  // @solana/web3.js types confirmationStatus as optional, and a node or proxy
+  // that omits it would otherwise never satisfy the commitment gate: every
+  // Solana execution would sit unconfirmed until the reconciler called it
+  // dropped. confirmations === null is the rooted signal that predates it.
+  it("a rooted status with no confirmationStatus verifies as success", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [{ slot: 250_000_000, confirmations: null, err: null }],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(allVerified).toBe(true);
+    expect(results[0].status).toBe("success");
+  });
+
+  it("a not-yet-rooted status with no confirmationStatus is not verified", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [{ slot: 250_000_000, confirmations: 5, err: null }],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(allVerified).toBe(false);
+    expect(results[0].status).toBe("not_found");
+  });
+
+  // A null entry is a valid JSON-RPC answer, so executeWithFailover treats it
+  // as a successful call and never moves off the primary, which is exactly
+  // the endpoint observed serving no transaction history at all.
+  it("consults the fallback endpoint when the primary reports no status", async () => {
+    fallbackGetSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("finalized")],
+    });
+
+    const { allVerified, results } = await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(fallbackGetSignatureStatuses).toHaveBeenCalledWith([SIGNATURE], {
+      searchTransactionHistory: true,
+    });
+    expect(allVerified).toBe(true);
+    expect(results[0].status).toBe("success");
+  });
+
+  it("does not read the fallback when the primary already answered", async () => {
+    getSignatureStatuses.mockResolvedValue({
+      value: [makeSignatureStatus("confirmed")],
+    });
+
+    await verifyExecutionReceipts(
+      [{ hash: SIGNATURE, chainId: SOLANA_CHAIN_ID }],
+      SINGLE_ROUND
+    );
+
+    expect(fallbackGetSignatureStatuses).not.toHaveBeenCalled();
   });
 });
 
