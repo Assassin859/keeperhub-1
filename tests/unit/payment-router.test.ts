@@ -49,9 +49,9 @@ vi.mock("mppx", () => ({
   },
 }));
 
+import { withX402 } from "@x402/next";
 import { Challenge, Expires } from "mppx";
 import { NextResponse } from "next/server";
-import { withX402 } from "@x402/next";
 import { safeRecordIdempotentResponse } from "@/lib/idempotency";
 import { getMppServer, hashMppCredential } from "@/lib/payments/mpp/server";
 import {

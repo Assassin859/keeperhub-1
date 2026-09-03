@@ -752,7 +752,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
       })
     );
     expect(mockSafeRecordIdempotentResponse).toHaveBeenCalledWith(
-      expect.anything(),
+      null,
       expect.any(Response),
       "release",
       expect.any(String)
