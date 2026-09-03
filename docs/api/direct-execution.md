@@ -460,8 +460,13 @@ for each action are defined in the protocol registry.
 
 **Read actions** return the plugin result directly with HTTP `200`.
 
-**Write actions** return HTTP `202 Accepted` with the same envelope as
-[Call Smart Contract](#call-smart-contract) writes:
+**Write actions** return HTTP `202 Accepted` with this endpoint's envelope
+(`executionId`, `status`, and the optional fields below). `status` is one of
+`completed`, `failed`, or `unconfirmed`. Unlike [Call Smart
+Contract](#call-smart-contract) writes, protocol writes may include `rejection`
+and `errorClass` on a failed write, and they include `transactionLink` whenever
+the write step produced one (including on revert). Call Smart Contract writes
+omit `rejection`/`errorClass` and omit the link on a reverted call.
 
 ```json
 {
@@ -470,6 +475,7 @@ for each action are defined in the protocol registry.
   "transactionHash": "0x...",
   "transactionLink": "https://etherscan.io/tx/0x...",
   "error": "execution reverted",
+  "errorClass": "external",
   "rejection": {
     "kind": "string-revert",
     "reason": "execution reverted"
@@ -479,10 +485,18 @@ for each action are defined in the protocol registry.
 
 `executionId` and `status` are always present. `transactionHash` and
 `transactionLink` are included whenever the write broadcast a transaction,
-including on failure, so a reverted call stays look-up-able in the explorer.
-`rejection` carries a typed revert classification when the write step could
-determine one. Poll `GET /api/execute/{executionId}/status` for receipts and
-the persisted result.
+including on `failed` and `unconfirmed`, so a reverted or still-pending call
+stays look-up-able in the explorer.
+
+`error` is present only when `status` is `failed`. `rejection` and `errorClass`
+are optional and appear only on failed writes when the step could classify the
+revert.
+
+`unconfirmed` is non-terminal and poll-only: the transaction was broadcast but
+the chain has not confirmed it yet. Do not treat the body as a failure. Do not
+rotate `Idempotency-Key` or re-submit; the transaction may still land and a
+second send moves funds twice. Poll `GET /api/execute/{executionId}/status`
+until `completed` or `failed` for receipts and the persisted result.
 
 ## Check and Execute
 

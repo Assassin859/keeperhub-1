@@ -304,7 +304,10 @@ async function executeProtocolAction(
       rejection: result.rejection,
       errorClass: result.errorClass,
     });
-    outcome = { status: settled.status, error: result.error };
+    outcome = {
+      status: settled.status,
+      ...(settled.status === "failed" ? { error: result.error } : {}),
+    };
   }
 
   // Match contract-call / transfer: expose executionId so callers can poll
@@ -312,6 +315,9 @@ async function executeProtocolAction(
   // write-contract-core sets transactionHash and transactionLink whenever a
   // broadcast hash exists, including on failure, so reverted txs stay
   // look-up-able in the explorer.
+  // `error` is only on status "failed". `unconfirmed` is poll-only: a caller
+  // that treats any error string as a terminal failure will rotate the key
+  // and double-broadcast a tx that may still land.
   const responseBody: ExecuteResponse = {
     executionId,
     status: outcome.status,
@@ -321,7 +327,9 @@ async function executeProtocolAction(
     ...(result.transactionLink
       ? { transactionLink: result.transactionLink }
       : {}),
-    ...(outcome.error ? { error: outcome.error } : {}),
+    ...(outcome.status === "failed" && outcome.error
+      ? { error: outcome.error }
+      : {}),
     ...(!result.success && result.rejection
       ? { rejection: result.rejection }
       : {}),

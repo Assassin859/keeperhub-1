@@ -559,14 +559,18 @@ export async function writeContractCore(
       if (!decision.fallback) {
         let sponsoredFailureLink: string | undefined;
         if (decision.transactionHash) {
-          const explorerConfig = await db.query.explorerConfigs.findFirst({
-            where: eq(explorerConfigs.chainId, chainId),
-          });
-          if (explorerConfig) {
-            sponsoredFailureLink = getTransactionUrl(
-              explorerConfig,
-              decision.transactionHash
-            );
+          try {
+            const explorerConfig = await db.query.explorerConfigs.findFirst({
+              where: eq(explorerConfigs.chainId, chainId),
+            });
+            if (explorerConfig) {
+              sponsoredFailureLink = getTransactionUrl(
+                explorerConfig,
+                decision.transactionHash
+              );
+            }
+          } catch {
+            // Non-critical -- the hash alone is enough to look up the tx.
           }
         }
         return {

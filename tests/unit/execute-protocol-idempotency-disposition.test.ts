@@ -137,6 +137,7 @@ beforeEach(() => {
     allowed: true,
     executionId: "exec_1",
   });
+  failExecutionMock.mockResolvedValue({ status: "failed" });
   writeContractCoreMock.mockResolvedValue({
     success: true,
     transactionHash: "0xtx",
@@ -246,6 +247,26 @@ describe("execute protocol idempotency disposition", () => {
         errorClass: "external",
       })
     );
+    expect(lastDisposition()).toBe("failed");
+  });
+
+  it("omits error on unconfirmed so callers poll instead of retrying", async () => {
+    writeContractCoreMock.mockResolvedValue({
+      success: false,
+      error: "receipt unreadable",
+      transactionHash: "0xpending",
+      transactionLink: "https://scan/0xpending",
+    });
+    failExecutionMock.mockResolvedValue({ status: "unconfirmed" });
+
+    const response = await postSwap();
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(202);
+    expect(body.status).toBe("unconfirmed");
+    expect(body.transactionHash).toBe("0xpending");
+    expect(body.transactionLink).toBe("https://scan/0xpending");
+    expect(body).not.toHaveProperty("error");
     expect(lastDisposition()).toBe("failed");
   });
 });
