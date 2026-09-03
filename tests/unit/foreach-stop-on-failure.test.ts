@@ -70,11 +70,11 @@ describe("countIterationFailures", () => {
   it("counts only marked body failures", () => {
     const results = Array.from({ length: 500 }, (_, index) => {
       if (index === 1 || index === 50 || index === 400) {
-          return {
-            [FOR_EACH_BODY_FAILURE_MARKER]: true as const,
-            success: false as const,
-            error: `fail-${index}`,
-          };
+        return {
+          [FOR_EACH_BODY_FAILURE_MARKER]: true as const,
+          success: false as const,
+          error: `fail-${index}`,
+        };
       }
       if (index === 10) {
         return { success: false, error: "api-shaped output" };

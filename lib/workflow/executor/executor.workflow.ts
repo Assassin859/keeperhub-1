@@ -105,8 +105,7 @@ import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
-export type { ForEachIterationFailure };
-export { isForEachBodyFailureResult };
+export { isForEachBodyFailureResult, type ForEachIterationFailure };
 
 // System actions that don't have plugins - maps to module import functions.
 // `satisfies Record<SystemActionType, ...>` makes the dispatch table and the
