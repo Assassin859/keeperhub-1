@@ -57,7 +57,7 @@ The field also shows a live gas estimate when enough configuration is filled in 
 
 ### Example
 
-If the network estimates 100,000 gas for your transaction:
+If the network estimates 100,000 gas for your transaction and the network's default multiplier is 2.0x:
 
 | Gas Limit Setting | Result |
 |-------------------|--------|
