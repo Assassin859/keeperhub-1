@@ -26,8 +26,8 @@
  */
 
 import type { TransactionHashEntry } from "@/lib/db/schema";
-import { isSolanaChain } from "@/lib/rpc/provider-factory";
-import { validateChainTxHash } from "@/lib/web3/validate-chain-address";
+import { isSolanaChain } from "@/lib/rpc/solana-chains";
+import { validateChainTxHash } from "@/lib/web3/validate-chain-tx-hash";
 import type { StepContext } from "./step-handler";
 
 /**
@@ -48,6 +48,11 @@ import type { StepContext } from "./step-handler";
  * as failed. Those steps not reporting chainId is a separate defect; dropping
  * their hash is what happens today and is the lesser of the two errors until
  * it is fixed.
+ *
+ * Both helpers are imported from leaf modules rather than provider-factory /
+ * validate-chain-address: this file is reachable from executor.workflow.ts,
+ * so whatever it imports is compiled into the workflow-function bundle, where
+ * @solana/web3.js, ethers, safeFetch and the db client are all rejected.
  */
 export function isRecordableTransactionHash(
   hash: string,
