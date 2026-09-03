@@ -298,6 +298,27 @@ describe("submitAndConfirm", () => {
       )
     ).rejects.toThrow("receipt not available");
   });
+
+  it("throws and leaves the nonce unconfirmed when the mined receipt has status 0", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xreverted",
+      response: makeMockTxResponse("0xreverted"),
+    });
+    const options = makeOptions(undefined);
+    options.rpcManager = makeRpcManager(makeMockReceipt("0xreverted", 0));
+
+    await expect(
+      submitAndConfirm(
+        {} as never,
+        { to: "0xrecipient", value: BigInt(0), nonce: 42 },
+        options
+      )
+    ).rejects.toThrow(
+      "Transaction 0xreverted reverted on-chain (status 0, block 500)"
+    );
+
+    expect(mockConfirmTransaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("submitContractCallAndConfirm", () => {
@@ -437,6 +458,25 @@ describe("executeTransaction", () => {
     expect(result.receipt?.status).toBe(1);
     expect(mockConfirmTransaction).toHaveBeenCalledWith("0xmined");
   });
+
+  it("returns success: false rather than a receiptless success when the receipt is null", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xunread",
+      response: makeMockTxResponse("0xunread"),
+    });
+    const rpcManager = makeRpcManager(null);
+
+    const result = await executeTransaction(
+      makeContext(rpcManager),
+      "0xABCD",
+      () => ({ to: "0xrecipient", value: BigInt(0) }),
+      makeSession()
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Transaction sent but receipt not available");
+    expect(mockConfirmTransaction).not.toHaveBeenCalled();
+  });
 });
 
 describe("executeContractTransaction", () => {
@@ -488,5 +528,50 @@ describe("executeContractTransaction", () => {
     expect(result.success).toBe(true);
     expect(result.txHash).toBe("0xmined");
     expect(mockConfirmTransaction).toHaveBeenCalledWith("0xmined");
+  });
+
+  it("treats a status-0 preExistingReceipt from broadcast reconciliation as a revert", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xreverted",
+      response: makeMockTxResponse("0xreverted"),
+      preExistingReceipt: makeMockReceipt("0xreverted", 0),
+    });
+    const rpcManager = makeRpcManager();
+
+    const result = await executeContractTransaction(
+      makeContext(rpcManager),
+      "0xABCD",
+      makeContract(),
+      "transfer",
+      ["0xrecipient", BigInt(1000)],
+      makeSession()
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("reverted on-chain (status 0");
+    expect(mockConfirmTransaction).not.toHaveBeenCalled();
+  });
+
+  it("returns success: false rather than a receiptless success when the receipt is null", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xunread",
+      response: makeMockTxResponse("0xunread"),
+    });
+    const rpcManager = makeRpcManager(null);
+
+    const result = await executeContractTransaction(
+      makeContext(rpcManager),
+      "0xABCD",
+      makeContract(),
+      "transfer",
+      ["0xrecipient", BigInt(1000)],
+      makeSession()
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(
+      "Contract transaction sent but receipt not available"
+    );
+    expect(mockConfirmTransaction).not.toHaveBeenCalled();
   });
 });

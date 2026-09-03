@@ -139,6 +139,7 @@ async function confirmAndBuildResult(
   if (!receipt) {
     throw new Error("Transaction sent but receipt not available");
   }
+  throwIfReverted(receipt);
 
   await nonceManager.confirmTransaction(broadcast.hash);
 
@@ -250,6 +251,9 @@ export async function executeTransaction(
         (rpcProvider) => rpcProvider.waitForTransaction(broadcast.hash),
         "read"
       ));
+    if (!receipt) {
+      throw new Error("Transaction sent but receipt not available");
+    }
     throwIfReverted(receipt);
 
     await nonceManager.confirmTransaction(broadcast.hash);
@@ -353,6 +357,9 @@ export async function executeContractTransaction(
         (rpcProvider) => rpcProvider.waitForTransaction(broadcast.hash),
         "read"
       ));
+    if (!receipt) {
+      throw new Error("Contract transaction sent but receipt not available");
+    }
     throwIfReverted(receipt);
 
     await nonceManager.confirmTransaction(broadcast.hash);
