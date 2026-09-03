@@ -256,6 +256,8 @@ describe("execute protocol idempotency disposition", () => {
       error: "receipt unreadable",
       transactionHash: "0xpending",
       transactionLink: "https://scan/0xpending",
+      rejection: { kind: "string-revert", reason: "pending" },
+      errorClass: "external",
     });
     failExecutionMock.mockResolvedValue({ status: "unconfirmed" });
 
@@ -267,6 +269,8 @@ describe("execute protocol idempotency disposition", () => {
     expect(body.transactionHash).toBe("0xpending");
     expect(body.transactionLink).toBe("https://scan/0xpending");
     expect(body).not.toHaveProperty("error");
+    expect(body).not.toHaveProperty("rejection");
+    expect(body).not.toHaveProperty("errorClass");
     expect(lastDisposition()).toBe("failed");
   });
 });

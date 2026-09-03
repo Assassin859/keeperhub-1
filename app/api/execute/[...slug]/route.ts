@@ -330,10 +330,10 @@ async function executeProtocolAction(
     ...(outcome.status === "failed" && outcome.error
       ? { error: outcome.error }
       : {}),
-    ...(!result.success && result.rejection
+    ...(outcome.status === "failed" && result.rejection
       ? { rejection: result.rejection }
       : {}),
-    ...(!result.success && result.errorClass
+    ...(outcome.status === "failed" && result.errorClass
       ? { errorClass: result.errorClass }
       : {}),
   };
