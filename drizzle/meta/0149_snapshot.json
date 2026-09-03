@@ -1,6 +1,6 @@
 {
-  "id": "512146b7-0b85-4434-b83a-4e1c29f356d8",
-  "prevId": "39750404-418c-40f9-a389-8a13f5083611",
+  "id": "65277850-ba2d-4916-b3a4-e77ed4bd6487",
+  "prevId": "512146b7-0b85-4434-b83a-4e1c29f356d8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7616,6 +7616,21 @@
           "columns": [
             {
               "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_exec_logs_execution_id": {
+          "name": "idx_exec_logs_execution_id",
+          "columns": [
+            {
+              "expression": "execution_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
