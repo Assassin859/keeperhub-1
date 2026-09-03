@@ -161,12 +161,23 @@ export async function reapStaleExecutions(
         )
       );
 
-    // Release any nonce locks still held by reaped executions so affected
-    // wallets are unwedged immediately instead of waiting for the TTL.
+    // Release nonce locks still held by reaped executions, but only ones that
+    // have already lapsed. A lock whose expires_at is still in the future is
+    // being renewed by a live heartbeat, and clearing it hands the wallet to a
+    // waiter while the holder is mid-write: the waiter reads getTransactionCount
+    // and computes the very nonce the holder is about to broadcast at. A holder
+    // that is genuinely dead stops beating and lapses within one TTL, which is
+    // far inside the (much longer) threshold that got it reaped in the first
+    // place, so nothing that used to be unwedged here stays wedged.
     await db
       .update(walletLocks)
       .set({ lockedBy: null, lockedAt: null, expiresAt: sql`NOW()` })
-      .where(inArray(walletLocks.lockedBy, reapedIds));
+      .where(
+        and(
+          inArray(walletLocks.lockedBy, reapedIds),
+          lt(walletLocks.expiresAt, sql`NOW()`)
+        )
+      );
   }
 
   return reapedIds;
