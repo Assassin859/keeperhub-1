@@ -32,7 +32,6 @@ import {
   getClientIp,
   type RateLimitResult,
 } from "@/lib/mcp/rate-limit";
-import { hashMppCredential } from "@/lib/payments/mpp/server";
 import {
   detectProtocol,
   gatePayment,
@@ -40,7 +39,6 @@ import {
 } from "@/lib/payments/router";
 import { buildCallCompletionResponse } from "@/lib/payments/x402/execution-wait";
 import {
-  hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
 } from "@/lib/payments/x402/payment-gate";
@@ -76,46 +74,17 @@ type CallIdempotencyStart =
   | { kind: "proceed"; idem: IdempotencyOutcome | null };
 
 /**
- * Hash of the presented payment credential. Unforgeable without the header,
- * so a completed replay cannot be stolen by stuffing a victim's `from`
- * address into an unsigned PAYMENT-SIGNATURE JSON blob.
- */
-function paymentCredentialScope(
-  request: Request,
-  workflowId: string
-): string | null {
-  const protocol = detectProtocol(request);
-  if (protocol === "x402") {
-    const signature = request.headers.get("PAYMENT-SIGNATURE");
-    if (!signature) {
-      return null;
-    }
-    return `mcp-call:${workflowId}:x402:${hashPaymentSignature(signature)}`;
-  }
-  if (protocol === "mpp") {
-    const authorization = request.headers.get("authorization");
-    if (!authorization?.startsWith("Payment ")) {
-      return null;
-    }
-    return `mcp-call:${workflowId}:mpp:${hashMppCredential(
-      authorization.slice("Payment ".length)
-    )}`;
-  }
-  return null;
-}
-
-/**
- * Reserve an Idempotency-Key for a paid marketplace call.
- * Callers must not invoke this on 402 payment-challenge probes -- locking a
- * challenge would poison the later paid retry under the same key.
- * Scope is the SHA-256 of the payment credential so unrelated callers cannot
- * collide and a replay cannot be served without presenting the same header.
- * A new PAYMENT-SIGNATURE is a new charge.
+ * Reserve an Idempotency-Key for a paid marketplace call after the payment
+ * gate has verified the credential. Scope is the verified payer address so
+ * the same key cannot collide across callers and cannot be forged from an
+ * unsigned header. Call only from inside the gatePayment handler factory --
+ * never on a 402 probe, and never before verification.
  */
 async function beginCallIdempotency(
   request: Request,
   workflow: CallRouteWorkflow,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  payerAddress: string | null
 ): Promise<CallIdempotencyStart> {
   const key = request.headers.get("Idempotency-Key")?.trim();
   if (!key) {
@@ -125,14 +94,13 @@ async function beginCallIdempotency(
     return { kind: "proceed", idem: null };
   }
 
-  const scope = paymentCredentialScope(request, workflow.id);
-  if (!scope) {
+  if (!payerAddress) {
     return {
       kind: "error",
       response: NextResponse.json(
         {
           error:
-            "Idempotency-Key requires a payment credential (PAYMENT-SIGNATURE or Authorization: Payment). The key is ignored without one, which would make retries unsafe.",
+            "Idempotency-Key requires a verified payer address from the payment credential.",
         },
         { status: HttpStatus.BAD_REQUEST, headers: corsHeaders }
       ),
@@ -142,7 +110,7 @@ async function beginCallIdempotency(
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: workflow.organizationId,
-    scope,
+    scope: `mcp-call:${workflow.id}:${payerAddress.toLowerCase()}`,
     requestBody: body,
   });
   if (idem) {
@@ -536,18 +504,8 @@ async function gateWriteCall(
     );
   }
 
-  // Reserve idempotency before gatePayment so HTTP replays skip x402
-  // settlement entirely. Never begin on the null-deliverable 402 probe.
-  // Scope is the payment-credential hash, not a decoded payer address.
-  let idem: IdempotencyOutcome | null = null;
-  if (deliverable !== null) {
-    const started = await beginCallIdempotency(request, workflow, body);
-    if (started.kind === "early" || started.kind === "error") {
-      return started.response;
-    }
-    idem = started.idem;
-  }
-
+  // Idempotency is reserved inside the handler after the gate has verified
+  // the payer. A 402 probe never reaches this factory.
   return gatePayment(
     request,
     workflow,
@@ -571,6 +529,17 @@ async function gateWriteCall(
             { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
           );
         }
+
+        const started = await beginCallIdempotency(
+          request,
+          workflow,
+          body,
+          meta.payerAddress
+        );
+        if (started.kind === "early" || started.kind === "error") {
+          return started.response;
+        }
+        const idem = started.idem;
 
         try {
           await recordPayment({
@@ -598,14 +567,7 @@ async function gateWriteCall(
               err,
               { workflowId: workflow.id, paymentHash: meta.paymentHash }
             );
-            return meta.protocol === "mpp"
-              ? calldataResponse(deliverable)
-              : await safeRecordIdempotentResponse(
-                  idem,
-                  calldataResponse(deliverable),
-                  "success",
-                  "[x402/call] Idempotency finalize failed after MPP calldata delivery"
-                );
+            return calldataResponse(deliverable);
           }
           // x402 settles AFTER this handler returns and skips settlement
           // entirely for any >=400 response, so a 503 here means no funds
@@ -639,8 +601,7 @@ async function gateWriteCall(
               "[x402/call] Idempotency finalize failed after calldata delivery"
             );
       };
-    },
-    { idem }
+    }
   );
 }
 
@@ -715,25 +676,25 @@ async function handlePaidWorkflow(
     );
   }
 
-  // Reserve idempotency before gatePayment so HTTP replays skip x402
-  // settlement. Skip on 402 probes (no payment credential present).
-  // Scope is the payment-credential hash, not a decoded payer address.
-  let idem: IdempotencyOutcome | null = null;
-  const protocol = detectProtocol(request);
-  if (protocol === "x402" || protocol === "mpp") {
-    const started = await beginCallIdempotency(request, workflow, body);
-    if (started.kind === "early" || started.kind === "error") {
-      return started.response;
-    }
-    idem = started.idem;
-  }
-
+  // Reservation happens inside the handler after the gate verifies the payer.
+  // 402 probes never reach that factory, so they cannot lock the key.
   return gatePayment(
     request,
     workflow,
     creatorWalletAddress,
     (meta: PaymentMeta) => {
       return async (_req: NextRequest): Promise<NextResponse> => {
+        const started = await beginCallIdempotency(
+          request,
+          workflow,
+          body,
+          meta.payerAddress
+        );
+        if (started.kind === "early" || started.kind === "error") {
+          return started.response;
+        }
+        const idem = started.idem;
+
         const prepared = await prepareExecution(request, workflow, body);
         if ("error" in prepared) {
           return await safeRecordIdempotentResponse(
@@ -870,8 +831,7 @@ async function handlePaidWorkflow(
           meta.protocol === "mpp"
         );
       };
-    },
-    { idem }
+    }
   );
 }
 

@@ -252,7 +252,7 @@ function makeRequest(
   });
 }
 
-function makePassThroughGatePayment(): void {
+function makePassThroughGatePayment(payerAddress: string | null = "0xPayer"): void {
   mockGatePayment.mockImplementation(
     (
       request: Request,
@@ -263,16 +263,14 @@ function makePassThroughGatePayment(): void {
         chain: string;
         payerAddress: string | null;
         paymentHash: string;
-      }) => (req: Request) => Promise<Response>,
-      options?: { idem?: unknown }
+      }) => (req: Request) => Promise<Response>
     ) => {
       const handler = createHandler({
         protocol: "x402",
         chain: "base",
-        payerAddress: "0xPayer",
+        payerAddress,
         paymentHash: "hash-first",
       });
-      expect(options?.idem).toBeDefined();
       return handler(request as never);
     }
   );
@@ -342,7 +340,7 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(mockSafeRecordIdempotentResponse).not.toHaveBeenCalled();
   });
 
-  it("scopes paid idempotency to the payment credential hash", async () => {
+  it("scopes paid idempotency to the verified payer address", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
     setupDbInsertExecution("exec-paid-1");
     mockDetectProtocol.mockReturnValue("x402");
@@ -357,31 +355,34 @@ describe("marketplace call route HTTP idempotency", () => {
       { params: Promise.resolve({ slug: "paid-workflow" }) }
     );
 
+    expect(mockGatePayment).toHaveBeenCalled();
     expect(mockBeginIdempotentFromRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: "org-1",
-        scope: "mcp-call:wf-paid:x402:hash-sig-first",
+        scope: "mcp-call:wf-paid:0xpayer",
       })
     );
   });
 
-  it("returns 400 when Idempotency-Key is present without a payment credential", async () => {
+  it("returns 400 when Idempotency-Key is present without a verified payer", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
     mockDetectProtocol.mockReturnValue("x402");
+    makePassThroughGatePayment(null);
 
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
     const response = await POST(
       makeRequest("paid-workflow", {
-        idempotencyKey: "idem-no-cred",
+        idempotencyKey: "idem-no-payer",
+        paymentSignature: "sig-no-payer",
       }),
       { params: Promise.resolve({ slug: "paid-workflow" }) }
     );
     const body = (await response.json()) as { error: string };
 
     expect(response.status).toBe(400);
-    expect(body.error).toContain("payment credential");
+    expect(body.error).toContain("verified payer");
     expect(mockBeginIdempotentFromRequest).not.toHaveBeenCalled();
-    expect(mockGatePayment).not.toHaveBeenCalled();
+    expect(mockGatePayment).toHaveBeenCalled();
   });
 
   it("releases the reservation when the completion body is still running", async () => {
@@ -414,9 +415,10 @@ describe("marketplace call route HTTP idempotency", () => {
     );
   });
 
-  it("replays early and does not insert an execution when the key is already complete", async () => {
+  it("replays after gatePayment and does not insert an execution when the key is already complete", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
     mockDetectProtocol.mockReturnValue("x402");
+    makePassThroughGatePayment();
     mockBeginIdempotentFromRequest.mockResolvedValue({ kind: "replay" });
     mockIdempotencyEarlyResponse.mockReturnValue({
       status: 200,
@@ -439,9 +441,9 @@ describe("marketplace call route HTTP idempotency", () => {
 
     expect(response.status).toBe(200);
     expect(body.executionId).toBe("exec-cached");
+    expect(mockGatePayment).toHaveBeenCalled();
     expect(mockDbInsert).not.toHaveBeenCalled();
     expect(mockStart).not.toHaveBeenCalled();
-    expect(mockGatePayment).not.toHaveBeenCalled();
   });
 
   it("does not begin idempotency on a paid 402 probe without payment headers", async () => {
@@ -465,7 +467,7 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(mockDbInsert).not.toHaveBeenCalled();
   });
 
-  it("replays before gatePayment on same key with a new payment signature", async () => {
+  it("replays the same payer and key after a new payment signature without a second execution", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
     setupDbInsertExecution("exec-paid-1");
     mockDetectProtocol.mockReturnValue("x402");
@@ -483,6 +485,7 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(first.status).toBe(200);
     expect(mockGatePayment).toHaveBeenCalledTimes(1);
     expect(mockRecordPayment).toHaveBeenCalledTimes(1);
+    expect(mockStart).toHaveBeenCalledTimes(1);
 
     mockIdempotencyEarlyResponse.mockReturnValue({
       status: 200,
@@ -500,8 +503,9 @@ describe("marketplace call route HTTP idempotency", () => {
 
     expect(second.status).toBe(200);
     expect(body.executionId).toBe("exec-cached");
-    expect(mockGatePayment).toHaveBeenCalledTimes(1);
+    expect(mockGatePayment).toHaveBeenCalledTimes(2);
     expect(mockRecordPayment).toHaveBeenCalledTimes(1);
+    expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
   it("returns 503 and releases idempotency when x402 recordPayment fails", async () => {
