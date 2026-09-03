@@ -94,11 +94,19 @@ import {
   preValidateConditionExpression,
   validateConditionExpression,
 } from "@/lib/workflow/nodes/condition/validator";
+import {
+  FOR_EACH_BODY_FAILURE_MARKER,
+  type ForEachIterationFailure,
+  isForEachBodyFailureResult,
+} from "@/lib/workflow/nodes/for-each/iteration-failure";
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
+
+export type { ForEachIterationFailure };
+export { isForEachBodyFailureResult };
 
 // System actions that don't have plugins - maps to module import functions.
 // `satisfies Record<SystemActionType, ...>` makes the dispatch table and the
@@ -2031,13 +2039,6 @@ export function planIterationContinuation(
   return { kind: "none" };
 }
 
-export type ForEachIterationFailure = {
-  __forEachBodyFailure: true;
-  success: false;
-  error: string;
-  nodeId?: string;
-};
-
 export type ForEachIterationSummary = {
   arrayLength: number;
   maxIterations: number;
@@ -2046,17 +2047,6 @@ export type ForEachIterationSummary = {
   firstFailureError?: string;
   firstFailureNodeId?: string;
 };
-
-function isForEachBodyFailureResult(
-  result: unknown
-): result is ForEachIterationFailure {
-  return (
-    result !== null &&
-    typeof result === "object" &&
-    "__forEachBodyFailure" in (result as object) &&
-    (result as { __forEachBodyFailure?: unknown }).__forEachBodyFailure === true
-  );
-}
 
 /**
  * First failed iteration result, if any. Used to flip the For Each log and
@@ -2083,16 +2073,25 @@ export function markCollectSkippedOnForEachFailure(params: {
   collectNodeId: string | undefined;
   doneCollectNodeId: string | undefined;
   error: string;
+  iterationResults: unknown[];
   currentVisited: Set<string>;
   currentResults: Record<
     string,
     { success: boolean; error?: string; data?: unknown }
   >;
+  attemptedNodes: Set<string>;
 }): void {
+  const skipData = {
+    results: params.iterationResults,
+    count: params.iterationResults.length,
+    skipped: true as const,
+  };
   params.currentVisited.add(params.aggregateCollectNodeId);
+  params.attemptedNodes.add(params.aggregateCollectNodeId);
   params.currentResults[params.aggregateCollectNodeId] = {
     success: false,
     error: params.error,
+    data: skipData,
   };
 
   if (
@@ -2101,6 +2100,7 @@ export function markCollectSkippedOnForEachFailure(params: {
     params.collectNodeId !== params.doneCollectNodeId
   ) {
     params.currentVisited.add(params.collectNodeId);
+    params.attemptedNodes.add(params.collectNodeId);
   }
 }
 
@@ -2127,6 +2127,57 @@ export async function dispatchForEachPostLoopIfNeeded(params: {
     return "done-targets";
   }
   return "none";
+}
+
+export type ForEachPostLoopResult =
+  | "skipped"
+  | "aggregate-collect"
+  | "done-targets"
+  | "none";
+
+/**
+ * Dispatch post-loop continuation, or mark Collect skipped with an explicit
+ * result so the parent DAG cannot re-fire it and execution output still has
+ * a `data` payload.
+ */
+export async function settleForEachPostLoop(params: {
+  firstIterationFailure: ForEachIterationFailure | undefined;
+  continuation: IterationContinuation;
+  onAggregateCollect: (collectNodeId: string) => Promise<void>;
+  onDoneTargets: (targets: string[]) => Promise<void>;
+  collectNodeId: string | undefined;
+  doneCollectNodeId: string | undefined;
+  iterationResults: unknown[];
+  currentVisited: Set<string>;
+  currentResults: Record<
+    string,
+    { success: boolean; error?: string; data?: unknown }
+  >;
+  attemptedNodes: Set<string>;
+}): Promise<ForEachPostLoopResult> {
+  const postLoopResult = await dispatchForEachPostLoopIfNeeded({
+    firstIterationFailure: params.firstIterationFailure,
+    continuation: params.continuation,
+    onAggregateCollect: params.onAggregateCollect,
+    onDoneTargets: params.onDoneTargets,
+  });
+  if (
+    postLoopResult === "skipped" &&
+    params.continuation.kind === "aggregate-collect" &&
+    params.firstIterationFailure
+  ) {
+    markCollectSkippedOnForEachFailure({
+      aggregateCollectNodeId: params.continuation.collectNodeId,
+      collectNodeId: params.collectNodeId,
+      doneCollectNodeId: params.doneCollectNodeId,
+      error: params.firstIterationFailure.error,
+      iterationResults: params.iterationResults,
+      currentVisited: params.currentVisited,
+      currentResults: params.currentResults,
+      attemptedNodes: params.attemptedNodes,
+    });
+  }
+  return postLoopResult;
 }
 
 /**
@@ -2821,11 +2872,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           `[Workflow Executor] For Each "${getNodeName(forEachNode)}" iteration ${index} failed at node "${getNodeName(nodeMap.get(bodyFailure[0]) ?? forEachNode)}" (${bodyFailure[0]}): ${bodyFailure[1].error}`
         );
         return {
-          __forEachBodyFailure: true as const,
-          success: false as const,
+          [FOR_EACH_BODY_FAILURE_MARKER]: true,
+          success: false,
           error: bodyFailure[1].error ?? "Body node failed",
           nodeId: bodyFailure[0],
-        };
+        } satisfies ForEachIterationFailure;
       }
 
       // Capture output from the last body node(s) that produced data.
@@ -2914,7 +2965,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     //                      (no aggregation injection).
     //   none:              fire-and-forget loop, nothing to do here.
     // Any failed iteration skips this block entirely (no Collect / downstream).
-    const postLoopResult = await dispatchForEachPostLoopIfNeeded({
+    await settleForEachPostLoop({
       firstIterationFailure,
       continuation,
       onAggregateCollect: async (aggregateCollectNodeId) => {
@@ -2977,22 +3028,13 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           await continueWithDoneTargets(forEachNodeId, targets);
         }
       },
+      collectNodeId,
+      doneCollectNodeId,
+      iterationResults,
+      currentVisited,
+      currentResults,
+      attemptedNodes,
     });
-
-    if (
-      postLoopResult === "skipped" &&
-      continuation.kind === "aggregate-collect" &&
-      firstIterationFailure
-    ) {
-      markCollectSkippedOnForEachFailure({
-        aggregateCollectNodeId: continuation.collectNodeId,
-        collectNodeId,
-        doneCollectNodeId,
-        error: firstIterationFailure.error,
-        currentVisited,
-        currentResults,
-      });
-    }
 
     return {
       arrayLength: resolvedArray.length,

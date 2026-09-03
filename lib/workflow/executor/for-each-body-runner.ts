@@ -200,14 +200,9 @@ async function routeAfterSuccess(params: {
         bodyVisited: ctx.bodyVisited,
       });
       if (summary.failedIterations > 0) {
-        const nodeHint = summary.firstFailureNodeId
-          ? ` at node ${summary.firstFailureNodeId}`
-          : "";
-        const baseError =
-          summary.firstFailureError ?? "For Each iteration body failed";
         ctx.bodyResults[nodeId] = {
           success: false,
-          error: `${baseError}${nodeHint}`,
+          error: summary.firstFailureError ?? "For Each iteration body failed",
         };
         return;
       }

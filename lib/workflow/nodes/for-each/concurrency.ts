@@ -4,17 +4,16 @@
  * Extracted from the workflow executor to enable isolated unit testing.
  */
 
+import {
+  FOR_EACH_BODY_FAILURE_MARKER,
+  type ForEachIterationFailure,
+} from "@/lib/workflow/nodes/for-each/iteration-failure";
+
 export type ConcurrencyMode = "sequential" | "parallel" | "custom";
 
 export type IterationExecutor<T> = (item: T, index: number) => Promise<unknown>;
 
 export type ErrorHandler = (error: unknown) => Promise<string>;
-
-interface IterationFailure {
-  __forEachBodyFailure: true;
-  success: false;
-  error: string;
-}
 
 /**
  * Run iterations over `items` with the specified concurrency strategy.
@@ -62,10 +61,10 @@ async function runSequential<T>(
     } catch (error) {
       const errorMessage = await handleError(error);
       results.push({
-        __forEachBodyFailure: true,
+        [FOR_EACH_BODY_FAILURE_MARKER]: true,
         success: false,
         error: errorMessage,
-      } satisfies IterationFailure);
+      } satisfies ForEachIterationFailure);
     }
   }
   return results;
@@ -86,10 +85,10 @@ async function runParallel<T>(
     } else {
       const errorMessage = await handleError(entry.reason);
       results.push({
-        __forEachBodyFailure: true,
+        [FOR_EACH_BODY_FAILURE_MARKER]: true,
         success: false,
         error: errorMessage,
-      } satisfies IterationFailure);
+      } satisfies ForEachIterationFailure);
     }
   }
   return results;
@@ -112,10 +111,10 @@ async function runWorkerPool<T>(
       } catch (error) {
         const errorMessage = await handleError(error);
         results[i] = {
-          __forEachBodyFailure: true,
+          [FOR_EACH_BODY_FAILURE_MARKER]: true,
           success: false,
           error: errorMessage,
-        } satisfies IterationFailure;
+        } satisfies ForEachIterationFailure;
       }
     }
   };

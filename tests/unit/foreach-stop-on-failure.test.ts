@@ -10,11 +10,14 @@ import {
   countIterationFailures,
   dispatchForEachPostLoopIfNeeded,
   findFirstIterationFailure,
+  isForEachBodyFailureResult,
   markCollectSkippedOnForEachFailure,
+  settleForEachPostLoop,
 } from "@/lib/workflow/executor/executor.workflow";
+import { FOR_EACH_BODY_FAILURE_MARKER } from "@/lib/workflow/nodes/for-each/iteration-failure";
 
 const markedFailure = {
-  __forEachBodyFailure: true as const,
+  [FOR_EACH_BODY_FAILURE_MARKER]: true as const,
   success: false as const,
   error: "boom",
   nodeId: "step-a",
@@ -36,7 +39,7 @@ describe("findFirstIterationFailure", () => {
         { success: true },
         markedFailure,
         {
-          __forEachBodyFailure: true as const,
+          [FOR_EACH_BODY_FAILURE_MARKER]: true as const,
           success: false as const,
           error: "later",
         },
@@ -67,11 +70,11 @@ describe("countIterationFailures", () => {
   it("counts only marked body failures", () => {
     const results = Array.from({ length: 500 }, (_, index) => {
       if (index === 1 || index === 50 || index === 400) {
-        return {
-          __forEachBodyFailure: true as const,
-          success: false as const,
-          error: `fail-${index}`,
-        };
+          return {
+            [FOR_EACH_BODY_FAILURE_MARKER]: true as const,
+            success: false as const,
+            error: `fail-${index}`,
+          };
       }
       if (index === 10) {
         return { success: false, error: "api-shaped output" };
@@ -83,33 +86,55 @@ describe("countIterationFailures", () => {
   });
 });
 
+describe("isForEachBodyFailureResult", () => {
+  it("accepts only the shared marker", () => {
+    expect(isForEachBodyFailureResult(markedFailure)).toBe(true);
+    expect(
+      isForEachBodyFailureResult({ success: false, error: "api-shaped" })
+    ).toBe(false);
+    expect(isForEachBodyFailureResult(null)).toBe(false);
+  });
+});
+
 describe("markCollectSkippedOnForEachFailure", () => {
-  it("marks aggregate Collect visited and records explicit failure", () => {
+  it("marks aggregate Collect visited and records explicit failure with data", () => {
     const visited = new Set<string>();
+    const attempted = new Set<string>();
     const results: Record<
       string,
       { success: boolean; error?: string; data?: unknown }
     > = {};
+    const iterationResults = [markedFailure, { ok: 2 }];
 
     markCollectSkippedOnForEachFailure({
       aggregateCollectNodeId: "done-collect",
       collectNodeId: "legacy-collect",
       doneCollectNodeId: "done-collect",
       error: "body failed",
+      iterationResults,
       currentVisited: visited,
       currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect(visited.has("done-collect")).toBe(true);
     expect(visited.has("legacy-collect")).toBe(true);
+    expect(attempted.has("done-collect")).toBe(true);
+    expect(attempted.has("legacy-collect")).toBe(true);
     expect(results["done-collect"]).toEqual({
       success: false,
       error: "body failed",
+      data: {
+        results: iterationResults,
+        count: 2,
+        skipped: true,
+      },
     });
   });
 
   it("does not mark legacy in-body Collect when it is the done Collect", () => {
     const visited = new Set<string>();
+    const attempted = new Set<string>();
     const results: Record<
       string,
       { success: boolean; error?: string; data?: unknown }
@@ -120,12 +145,20 @@ describe("markCollectSkippedOnForEachFailure", () => {
       collectNodeId: "collect-1",
       doneCollectNodeId: "collect-1",
       error: "body failed",
+      iterationResults: [markedFailure],
       currentVisited: visited,
       currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect([...visited]).toEqual(["collect-1"]);
+    expect([...attempted]).toEqual(["collect-1"]);
     expect(results["collect-1"]?.success).toBe(false);
+    expect(results["collect-1"]?.data).toEqual({
+      results: [markedFailure],
+      count: 1,
+      skipped: true,
+    });
   });
 });
 
@@ -215,5 +248,49 @@ describe("dispatchForEachPostLoopIfNeeded", () => {
     expect(result).toBe("none");
     expect(onAggregateCollect).not.toHaveBeenCalled();
     expect(onDoneTargets).not.toHaveBeenCalled();
+  });
+});
+
+describe("settleForEachPostLoop", () => {
+  it("skips Collect dispatch and marks Collect skipped with data", async () => {
+    const onAggregateCollect = vi.fn();
+    const onDoneTargets = vi.fn();
+    const visited = new Set<string>();
+    const attempted = new Set<string>();
+    const results: Record<
+      string,
+      { success: boolean; error?: string; data?: unknown }
+    > = {
+      "for-each": { success: false, error: "body failed" },
+    };
+    const iterationResults = [markedFailure];
+
+    const outcome = await settleForEachPostLoop({
+      firstIterationFailure: markedFailure,
+      continuation: { kind: "aggregate-collect", collectNodeId: "collect-1" },
+      onAggregateCollect,
+      onDoneTargets,
+      collectNodeId: "collect-1",
+      doneCollectNodeId: "collect-1",
+      iterationResults,
+      currentVisited: visited,
+      currentResults: results,
+      attemptedNodes: attempted,
+    });
+
+    expect(outcome).toBe("skipped");
+    expect(onAggregateCollect).not.toHaveBeenCalled();
+    expect(visited.has("collect-1")).toBe(true);
+    expect(attempted.has("collect-1")).toBe(true);
+    expect(results["collect-1"]?.data).toEqual({
+      results: iterationResults,
+      count: 1,
+      skipped: true,
+    });
+    expect(Object.values(results).at(-1)?.data).toEqual({
+      results: iterationResults,
+      count: 1,
+      skipped: true,
+    });
   });
 });
