@@ -66,6 +66,7 @@ describe.skipIf(SKIP)(
       runningNoLogsStale: `${PREFIX}running_nolog_stale`,
       runningWithLogStale: `${PREFIX}running_log_stale`,
       runningRecentlyActive: `${PREFIX}running_recent`,
+      runningOldCompletedStep: `${PREFIX}running_old_completed`,
       pendingNoLogsStale: `${PREFIX}pending_nolog_stale`,
       phantomStale: `${PREFIX}phantom_stale`,
       runningNoLogsQueued: `${PREFIX}running_nolog_queued`,
@@ -162,9 +163,20 @@ describe.skipIf(SKIP)(
       await seedStepLog(ID.runningWithLogStale, "running", null);
 
       // running, older than 30 min, but a step COMPLETED within the threshold:
-      // actively progressing - never reaped (excludeIds).
+      // actively progressing - never reaped.
       await seedExecution(ID.runningRecentlyActive, "running", minutesAgo(31));
       await seedStepLog(ID.runningRecentlyActive, "success", minutesAgo(1));
+
+      // running, older than 30 min, with a step that COMPLETED before the
+      // threshold window opened: progress stopped, so it IS reaped. This is the
+      // boundary the exclusion must respect - "has a completed step" is not the
+      // test, "completed one inside the window" is.
+      await seedExecution(
+        ID.runningOldCompletedStep,
+        "running",
+        minutesAgo(45)
+      );
+      await seedStepLog(ID.runningOldCompletedStep, "success", minutesAgo(40));
 
       // pending, no logs, older than 5 min: unchanged - infrastructure/P-0001.
       await seedExecution(ID.pendingNoLogsStale, "pending", minutesAgo(6));
@@ -219,6 +231,14 @@ describe.skipIf(SKIP)(
       expect((await readExecution(ID.runningRecentlyActive)).status).toBe(
         "running"
       );
+    });
+
+    it("DOES reap a running row whose completed step predates the window", async () => {
+      expect(reapedIds).toContain(ID.runningOldCompletedStep);
+      const row = await readExecution(ID.runningOldCompletedStep);
+      expect(row.status).toBe("system_error");
+      expect(row.errorCategory).toBe("workflow_engine");
+      expect(row.errorCode).toBe("E-0001");
     });
 
     it("reaps a stale pending row as infrastructure/P-0001 (unchanged)", async () => {
