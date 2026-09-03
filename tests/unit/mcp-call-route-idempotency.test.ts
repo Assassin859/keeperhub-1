@@ -120,7 +120,7 @@ vi.mock("@/lib/payments/x402/execution-wait", () => ({
 vi.mock("@/lib/payments/x402/payment-gate", () => ({
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: vi.fn().mockResolvedValue("0xCreator"),
-  extractPayerAddress: vi.fn().mockReturnValue("0xpayer"),
+  hashPaymentSignature: (sig: string) => `hash-${sig}`,
 }));
 
 vi.mock("@/lib/payments/router", () => ({
@@ -165,7 +165,7 @@ vi.mock("mppx", () => ({
 }));
 
 vi.mock("@/lib/payments/mpp/server", () => ({
-  extractMppPayerAddress: vi.fn().mockReturnValue("0xmpppayer"),
+  hashMppCredential: (value: string) => `mpp-hash-${value}`,
 }));
 
 vi.mock("server-only", () => ({}));
@@ -289,7 +289,7 @@ beforeEach(() => {
   });
   mockBuildCallCompletionResponse.mockResolvedValue({
     executionId: "exec-1",
-    status: "running",
+    status: "success",
   });
   mockDbUpdateSet.mockReturnValue({
     where: vi.fn().mockResolvedValue(undefined),
@@ -342,7 +342,7 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(mockSafeRecordIdempotentResponse).not.toHaveBeenCalled();
   });
 
-  it("scopes paid idempotency to the verified payer address", async () => {
+  it("scopes paid idempotency to the payment credential hash", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
     setupDbInsertExecution("exec-paid-1");
     mockDetectProtocol.mockReturnValue("x402");
@@ -360,8 +360,57 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(mockBeginIdempotentFromRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: "org-1",
-        scope: "mcp-call:wf-paid:0xpayer",
+        scope: "mcp-call:wf-paid:x402:hash-sig-first",
       })
+    );
+  });
+
+  it("returns 400 when Idempotency-Key is present without a payment credential", async () => {
+    setupDbSelectWorkflow(PAID_WORKFLOW);
+    mockDetectProtocol.mockReturnValue("x402");
+
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-no-cred",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("payment credential");
+    expect(mockBeginIdempotentFromRequest).not.toHaveBeenCalled();
+    expect(mockGatePayment).not.toHaveBeenCalled();
+  });
+
+  it("releases the reservation when the completion body is still running", async () => {
+    setupDbSelectWorkflow(PAID_WORKFLOW);
+    setupDbInsertExecution("exec-running");
+    mockDetectProtocol.mockReturnValue("x402");
+    makePassThroughGatePayment();
+    mockBuildCallCompletionResponse.mockResolvedValue({
+      executionId: "exec-running",
+      status: "running",
+    });
+
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-running",
+        paymentSignature: "sig-running",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+    const body = (await response.json()) as { status: string };
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("running");
+    expect(mockSafeRecordIdempotentResponse).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Response),
+      "release",
+      expect.stringContaining("paid execution start")
     );
   });
 
@@ -541,7 +590,7 @@ describe("marketplace call route HTTP idempotency", () => {
 
     expect(response.status).toBe(200);
     expect(mockStart).toHaveBeenCalled();
-    expect(mockSafeRecordIdempotentResponse).toHaveBeenCalledWith(
+    expect(mockSafeRecordIdempotentResponse).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.any(Response),
       "success",

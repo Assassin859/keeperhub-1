@@ -931,6 +931,10 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     extractPayerAddress: mockExtractPayerAddress,
   }));
 
+  vi.mock("@/lib/payments/mpp/server", () => ({
+    hashMppCredential: (value: string) => `mpp-hash-${value}`,
+  }));
+
   vi.mock("@/lib/payments/x402/reconcile", () => ({
     isTimeoutError: vi.fn().mockReturnValue(false),
     pollForPaymentConfirmation: vi.fn().mockResolvedValue(false),

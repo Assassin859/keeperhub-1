@@ -258,7 +258,7 @@ export type GatePaymentOptions = {
 async function finalizeGateExit(
   idem: IdempotencyOutcome | null | undefined,
   response: NextResponse,
-  disposition: "success" | "release"
+  disposition: "success" | "release" | "failed"
 ): Promise<NextResponse> {
   if (!idem) {
     return response;
@@ -269,6 +269,35 @@ async function finalizeGateExit(
     disposition,
     "[payments/router] Idempotency finalize failed on gate exit"
   );
+}
+
+function paymentVerificationFailedResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error: "Payment verification failed. Retry the same Idempotency-Key.",
+    },
+    { status: 503, headers: CORS_HEADERS }
+  );
+}
+
+async function finalizeAfterMppReceipt(
+  idem: IdempotencyOutcome | null | undefined,
+  wrapped: NextResponse
+): Promise<NextResponse> {
+  let completionStatus: string | undefined;
+  try {
+    const body = (await wrapped.clone().json()) as { status?: string };
+    completionStatus = body.status;
+  } catch {
+    completionStatus = undefined;
+  }
+  if (completionStatus === "running") {
+    return await finalizeGateExit(idem, wrapped, "release");
+  }
+  if (wrapped.status >= 400) {
+    return await finalizeGateExit(idem, wrapped, "failed");
+  }
+  return await finalizeGateExit(idem, wrapped, "success");
 }
 
 async function checkIdempotency(
@@ -372,6 +401,13 @@ async function handleX402(
         }
       }
     }
+    if (options?.idem && !handlerInvoked) {
+      return await finalizeGateExit(
+        options.idem,
+        paymentVerificationFailedResponse(),
+        "release"
+      );
+    }
     throw gateErr;
   }
 }
@@ -416,34 +452,49 @@ async function handleMpp(
     recipient: creatorWalletAddress,
   });
 
-  const result = await chargeIntent(request);
-
-  if (result.status === 402) {
-    const challenge = result.challenge as unknown as NextResponse;
-    for (const [key, value] of Object.entries(CORS_HEADERS)) {
-      challenge.headers.set(key, value);
-    }
-    return await finalizeGateExit(options?.idem, challenge, "release");
-  }
-
-  let credentialSource: string | null = null;
+  let settled = false;
   try {
-    const credential = Credential.fromRequest(request);
-    credentialSource = credential.source ?? null;
-  } catch {
-    // credential source is optional -- wallets may omit it
+    const result = await chargeIntent(request);
+
+    if (result.status === 402) {
+      const challenge = result.challenge as unknown as NextResponse;
+      for (const [key, value] of Object.entries(CORS_HEADERS)) {
+        challenge.headers.set(key, value);
+      }
+      return await finalizeGateExit(options?.idem, challenge, "release");
+    }
+
+    settled = true;
+
+    let credentialSource: string | null = null;
+    try {
+      const credential = Credential.fromRequest(request);
+      credentialSource = credential.source ?? null;
+    } catch {
+      // credential source is optional -- wallets may omit it
+    }
+    const payerAddress = extractMppPayerAddress(credentialSource);
+
+    const innerHandler = createHandler({
+      protocol: "mpp",
+      chain: "tempo",
+      payerAddress,
+      paymentHash,
+    });
+
+    const response = await innerHandler(request as NextRequest);
+    const wrapped = result.withReceipt(response) as unknown as NextResponse;
+    return await finalizeAfterMppReceipt(options?.idem, wrapped);
+  } catch (gateErr) {
+    if (options?.idem && !settled) {
+      return await finalizeGateExit(
+        options.idem,
+        paymentVerificationFailedResponse(),
+        "release"
+      );
+    }
+    throw gateErr;
   }
-  const payerAddress = extractMppPayerAddress(credentialSource);
-
-  const innerHandler = createHandler({
-    protocol: "mpp",
-    chain: "tempo",
-    payerAddress,
-    paymentHash,
-  });
-
-  const response = await innerHandler(request as NextRequest);
-  return result.withReceipt(response) as unknown as NextResponse;
 }
 
 export function gatePayment(

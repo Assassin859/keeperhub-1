@@ -132,6 +132,10 @@ vi.mock("@/lib/payments/router", () => ({
   detectProtocol: mockDetectProtocol,
 }));
 
+vi.mock("@/lib/payments/mpp/server", () => ({
+  hashMppCredential: (value: string) => `mpp-hash-${value}`,
+}));
+
 vi.mock("@/lib/errors/classify", () => ({
   classifyExecutionError: vi.fn().mockReturnValue({
     errorCategory: "workflow_engine",

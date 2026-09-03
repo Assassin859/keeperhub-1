@@ -88,11 +88,16 @@ vi.mock("@/lib/payments/x402/payment-gate", () => ({
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: mockResolveCreatorWallet,
   extractPayerAddress: vi.fn().mockReturnValue("0xPayer"),
+  hashPaymentSignature: (sig: string) => `hash-${sig}`,
 }));
 
 vi.mock("@/lib/payments/router", () => ({
   gatePayment: mockGatePayment,
   detectProtocol: mockDetectProtocol,
+}));
+
+vi.mock("@/lib/payments/mpp/server", () => ({
+  hashMppCredential: (value: string) => `mpp-hash-${value}`,
 }));
 
 vi.mock("@/lib/mcp/calldata", () => ({
