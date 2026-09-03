@@ -339,6 +339,29 @@ describe("classifyExecutionError", () => {
     });
   });
 
+  describe("a chain rejection quoted inside a failover exhaustion", () => {
+    // The wrapper rules match the wrapper, not the body, so without a rule
+    // above them a deterministic chain verdict would be read as an endpoint
+    // outage and take N-0001's message and system_error status.
+    it.each([
+      "RPC failed on primary endpoint: nonce too low",
+      "RPC failed on primary endpoint: replacement transaction underpriced",
+      "RPC failed on primary endpoint: already known",
+      "RPC failed on primary endpoint: intrinsic gas too low",
+      "RPC failed on both endpoints. Primary: nonce too low. Fallback: nonce too low",
+    ])("keeps %s off the network_rpc code", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).not.toBe(ErrorCategory.NETWORK_RPC);
+      expect(r.code).not.toBe("N-0001");
+      expect(isDefaultClassification(r)).toBe(true);
+    });
+
+    it("leaves an unwrapped chain rejection where it already landed", () => {
+      const r = classifyExecutionError("nonce too low");
+      expect(r).toEqual(classifyExecutionError("some unmatched failure"));
+    });
+  });
+
   describe("system: KeeperHub-managed RPC failures", () => {
     it("RPC failed on both endpoints: network_rpc + system", () => {
       const r = classifyExecutionError(

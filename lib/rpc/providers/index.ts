@@ -373,7 +373,9 @@ export class RpcProviderManager {
         // Both failed -- throw without redundant retry
         this.metricsCollector.recordBothFailed(this.config.chainName);
         // Both endpoints are KeeperHub-managed, so exhausting them is a
-        // platform fault: error level, system-error metric, Sentry.
+        // platform fault: error level and the system-error metric. The Sentry
+        // event only reaches Sentry from the Next.js runtimes - the
+        // workflow-runner pods initialise no Sentry client.
         logSystemError(
           ErrorCategory.NETWORK_RPC,
           `[RPC] Both primary and fallback RPC failed for ${this.config.chainName}`,
