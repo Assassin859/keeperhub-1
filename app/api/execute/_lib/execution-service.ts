@@ -134,8 +134,10 @@ export async function completeExecution(
       estimatedCostUsd: result.estimatedCostUsd ?? null,
       // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
       output: (result.output ?? {}) as any,
-      // An unconfirmed execution has not completed, and the reconciler uses a
-      // null completedAt to find rows that still need settling.
+      // An unconfirmed execution has not completed, so it carries no
+      // completedAt. The reconciler finds rows that still need settling by
+      // status = 'unconfirmed' (lib/execute/reconcile-executions.ts), not by a
+      // null completedAt.
       completedAt: isTerminal ? new Date() : null,
     })
     .where(eq(directExecutions.id, executionId));
@@ -235,8 +237,9 @@ export async function failExecution(
         ? // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
           { output: failureOutput as any }
         : {}),
-      // The reconciler finds rows still needing settlement by their null
-      // completedAt, so an unconfirmed row must not carry one.
+      // The reconciler finds rows still needing settlement by
+      // status = 'unconfirmed' (lib/execute/reconcile-executions.ts); an
+      // unconfirmed row carries no completedAt because it has not finished.
       completedAt: status === "failed" ? new Date() : null,
     })
     .where(eq(directExecutions.id, executionId));
