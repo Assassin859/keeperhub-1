@@ -8,7 +8,6 @@ vi.mock("server-only", () => ({}));
 
 import {
   countIterationFailures,
-  dispatchForEachPostLoopIfNeeded,
   findFirstIterationFailure,
   isForEachBodyFailureResult,
   markCollectSkippedOnForEachFailure,
@@ -125,7 +124,7 @@ describe("markCollectSkippedOnForEachFailure", () => {
       success: false,
       error: "body failed",
       data: {
-        results: iterationResults,
+        results: ["boom", { ok: 2 }],
         count: 2,
         skipped: true,
       },
@@ -155,47 +154,67 @@ describe("markCollectSkippedOnForEachFailure", () => {
     expect([...attempted]).toEqual(["collect-1"]);
     expect(results["collect-1"]?.success).toBe(false);
     expect(results["collect-1"]?.data).toEqual({
-      results: [markedFailure],
+      results: ["boom"],
       count: 1,
       skipped: true,
     });
   });
 });
 
-describe("dispatchForEachPostLoopIfNeeded", () => {
+describe("settleForEachPostLoop", () => {
+  const emptyVisited = () => ({
+    visited: new Set<string>(),
+    attempted: new Set<string>(),
+    results: {} as Record<
+      string,
+      { success: boolean; error?: string; data?: unknown }
+    >,
+  });
+
   it("skips Collect and done-targets when an iteration failed", async () => {
     const onAggregateCollect = vi.fn();
     const onDoneTargets = vi.fn();
+    const { visited, attempted, results } = emptyVisited();
 
-    const result = await dispatchForEachPostLoopIfNeeded({
-      firstIterationFailure: {
-        __forEachBodyFailure: true,
-        success: false,
-        error: "body failed",
-      },
+    const result = await settleForEachPostLoop({
+      firstIterationFailure: markedFailure,
       continuation: { kind: "aggregate-collect", collectNodeId: "collect-1" },
       onAggregateCollect,
       onDoneTargets,
+      collectNodeId: "collect-1",
+      doneCollectNodeId: "collect-1",
+      iterationResults: [markedFailure],
+      currentVisited: visited,
+      currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect(result).toBe("skipped");
     expect(onAggregateCollect).not.toHaveBeenCalled();
     expect(onDoneTargets).not.toHaveBeenCalled();
+    expect(results["collect-1"]?.data).toEqual({
+      results: ["boom"],
+      count: 1,
+      skipped: true,
+    });
   });
 
   it("skips done-targets continuation when an iteration failed", async () => {
     const onAggregateCollect = vi.fn();
     const onDoneTargets = vi.fn();
+    const { visited, attempted, results } = emptyVisited();
 
-    const result = await dispatchForEachPostLoopIfNeeded({
-      firstIterationFailure: {
-        __forEachBodyFailure: true,
-        success: false,
-        error: "body failed",
-      },
+    const result = await settleForEachPostLoop({
+      firstIterationFailure: markedFailure,
       continuation: { kind: "done-targets", targets: ["after-1"] },
       onAggregateCollect,
       onDoneTargets,
+      collectNodeId: undefined,
+      doneCollectNodeId: undefined,
+      iterationResults: [markedFailure],
+      currentVisited: visited,
+      currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect(result).toBe("skipped");
@@ -205,12 +224,19 @@ describe("dispatchForEachPostLoopIfNeeded", () => {
   it("runs aggregate-collect when all iterations succeeded", async () => {
     const onAggregateCollect = vi.fn().mockResolvedValue(undefined);
     const onDoneTargets = vi.fn();
+    const { visited, attempted, results } = emptyVisited();
 
-    const result = await dispatchForEachPostLoopIfNeeded({
+    const result = await settleForEachPostLoop({
       firstIterationFailure: undefined,
       continuation: { kind: "aggregate-collect", collectNodeId: "collect-1" },
       onAggregateCollect,
       onDoneTargets,
+      collectNodeId: "collect-1",
+      doneCollectNodeId: "collect-1",
+      iterationResults: [{ ok: true }],
+      currentVisited: visited,
+      currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect(result).toBe("aggregate-collect");
@@ -221,12 +247,19 @@ describe("dispatchForEachPostLoopIfNeeded", () => {
   it("runs done-targets when all iterations succeeded", async () => {
     const onAggregateCollect = vi.fn();
     const onDoneTargets = vi.fn().mockResolvedValue(undefined);
+    const { visited, attempted, results } = emptyVisited();
 
-    const result = await dispatchForEachPostLoopIfNeeded({
+    const result = await settleForEachPostLoop({
       firstIterationFailure: undefined,
       continuation: { kind: "done-targets", targets: ["a", "b"] },
       onAggregateCollect,
       onDoneTargets,
+      collectNodeId: undefined,
+      doneCollectNodeId: undefined,
+      iterationResults: [{ ok: true }],
+      currentVisited: visited,
+      currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect(result).toBe("done-targets");
@@ -237,21 +270,26 @@ describe("dispatchForEachPostLoopIfNeeded", () => {
   it("returns none when there is no post-loop continuation", async () => {
     const onAggregateCollect = vi.fn();
     const onDoneTargets = vi.fn();
+    const { visited, attempted, results } = emptyVisited();
 
-    const result = await dispatchForEachPostLoopIfNeeded({
+    const result = await settleForEachPostLoop({
       firstIterationFailure: undefined,
       continuation: { kind: "none" },
       onAggregateCollect,
       onDoneTargets,
+      collectNodeId: undefined,
+      doneCollectNodeId: undefined,
+      iterationResults: [{ ok: true }],
+      currentVisited: visited,
+      currentResults: results,
+      attemptedNodes: attempted,
     });
 
     expect(result).toBe("none");
     expect(onAggregateCollect).not.toHaveBeenCalled();
     expect(onDoneTargets).not.toHaveBeenCalled();
   });
-});
 
-describe("settleForEachPostLoop", () => {
   it("skips Collect dispatch and marks Collect skipped with data", async () => {
     const onAggregateCollect = vi.fn();
     const onDoneTargets = vi.fn();
@@ -283,12 +321,12 @@ describe("settleForEachPostLoop", () => {
     expect(visited.has("collect-1")).toBe(true);
     expect(attempted.has("collect-1")).toBe(true);
     expect(results["collect-1"]?.data).toEqual({
-      results: iterationResults,
+      results: ["boom"],
       count: 1,
       skipped: true,
     });
     expect(Object.values(results).at(-1)?.data).toEqual({
-      results: iterationResults,
+      results: ["boom"],
       count: 1,
       skipped: true,
     });

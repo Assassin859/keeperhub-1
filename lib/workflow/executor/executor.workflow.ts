@@ -105,7 +105,10 @@ import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
-export { isForEachBodyFailureResult, type ForEachIterationFailure };
+export {
+  isForEachBodyFailureResult,
+  type ForEachIterationFailure,
+} from "@/lib/workflow/nodes/for-each/iteration-failure";
 
 // System actions that don't have plugins - maps to module import functions.
 // `satisfies Record<SystemActionType, ...>` makes the dispatch table and the
@@ -2081,7 +2084,9 @@ export function markCollectSkippedOnForEachFailure(params: {
   attemptedNodes: Set<string>;
 }): void {
   const skipData = {
-    results: params.iterationResults,
+    results: params.iterationResults.map((result) =>
+      isForEachBodyFailureResult(result) ? result.error : result
+    ),
     count: params.iterationResults.length,
     skipped: true as const,
   };
@@ -2108,7 +2113,7 @@ export function markCollectSkippedOnForEachFailure(params: {
  * Skips entirely when any iteration failed so downstream side effects
  * (transfers, webhooks) do not fire after a failed loop body.
  */
-export async function dispatchForEachPostLoopIfNeeded(params: {
+async function dispatchForEachPostLoopIfNeeded(params: {
   firstIterationFailure: ForEachIterationFailure | undefined;
   continuation: IterationContinuation;
   onAggregateCollect: (collectNodeId: string) => Promise<void>;

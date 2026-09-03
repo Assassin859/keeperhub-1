@@ -203,6 +203,7 @@ async function routeAfterSuccess(params: {
         ctx.bodyResults[nodeId] = {
           success: false,
           error: summary.firstFailureError ?? "For Each iteration body failed",
+          data: summary,
         };
         return;
       }

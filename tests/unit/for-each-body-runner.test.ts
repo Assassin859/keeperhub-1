@@ -1043,6 +1043,10 @@ describe("runBodyNode: nested For Each failure stops inner continuation", () => 
     expect(bodyResults["inner-fe"]?.success).toBe(false);
     expect(bodyResults["inner-fe"]?.error).toBe("inner body failed");
     expect(bodyResults["inner-fe"]?.error).not.toContain(" at node ");
+    expect(bodyResults["inner-fe"]?.data).toMatchObject({
+      firstFailureNodeId: "fail-step",
+      failedIterations: 1,
+    });
     expect(bodyResults["inner-post"]).toBeUndefined();
     expect(visitOrder).toContain("fail-step");
     expect(visitOrder).not.toContain("inner-post");
