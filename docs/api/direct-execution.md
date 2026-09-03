@@ -761,13 +761,15 @@ Check the status of a direct execution.
   evidence that nothing was retried. Where the field is set, each count is a
   fresh execution of the step rather than a replacement of an earlier
   transaction: nothing is resubmitted at a pinned nonce and no gas price is
-  bumped. Retries are limited to failures that returned no result at all
-  (connection resets and timeouts); an error reporting that a transaction is
-  already live - a used nonce, an already-known hash, an underpriced
-  replacement - is never retried, because a retry there would sign a second,
-  independent transaction at the next nonce. A timeout is the one case where
-  the earlier attempt may still be in flight: it is abandoned rather than
-  cancelled, so a per-attempt timeout shorter than the chain's confirmation
+  bumped. A failure that carries a transaction hash is therefore never
+  retried, whatever its message says: the hash means a transaction is already
+  live, and a retry would sign a second one rather than replace it. Of the
+  failures that carry no hash, only connection-level errors (resets and
+  timeouts) are retried, and an error reporting that a transaction is already
+  live - a used nonce, an already-known hash, an underpriced replacement - is
+  not. The one case left open is an attempt that exceeds its own per-attempt
+  timeout: it is abandoned rather than cancelled, so nothing comes back to
+  carry a hash, and a per-attempt timeout shorter than the chain's confirmation
   latency can leave two transactions confirmed.
 - `gasPriceWei`: the effective gas price, as a decimal string. On EVM chains
   this is in wei. On Solana it is the micro-lamports-per-compute-unit price of
