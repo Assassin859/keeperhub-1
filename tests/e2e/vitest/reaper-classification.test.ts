@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   organization,
   users,
+  walletLocks,
   workflowExecutionLogs,
   workflowExecutions,
   workflows,
@@ -75,7 +76,14 @@ describe.skipIf(SKIP)(
 
     let reapedIds: string[] = [];
 
+    // Two wallets, so the two lock fixtures below do not collide on the
+    // (wallet_address, chain_id) primary key.
+    const LAPSED_LOCK_WALLET = `0x${"1".repeat(40)}`;
+    const LIVE_LOCK_WALLET = `0x${"2".repeat(40)}`;
+    const LOCK_CHAIN_ID = 987_654;
+
     async function cleanup(): Promise<void> {
+      await queryClient`DELETE FROM wallet_locks WHERE wallet_address IN (${LAPSED_LOCK_WALLET}, ${LIVE_LOCK_WALLET})`;
       await queryClient`DELETE FROM workflow_execution_logs WHERE execution_id LIKE ${`${PREFIX}%`}`;
       await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
       await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
@@ -195,6 +203,27 @@ describe.skipIf(SKIP)(
       await seedExecution(ID.runningWithLogFresh, "running", minutesAgo(10));
       await seedStepLog(ID.runningWithLogFresh, "running", null);
 
+      // Two wallet locks held by executions this pass reaps. The only thing
+      // separating them is whether a heartbeat is still renewing expires_at:
+      // the lapsed one is safe to clear, the live one is a holder mid-write
+      // whose nonce a waiter would otherwise duplicate.
+      await db.insert(walletLocks).values([
+        {
+          walletAddress: LAPSED_LOCK_WALLET,
+          chainId: LOCK_CHAIN_ID,
+          lockedBy: ID.runningNoLogsStale,
+          lockedAt: minutesAgo(40),
+          expiresAt: minutesAgo(35),
+        },
+        {
+          walletAddress: LIVE_LOCK_WALLET,
+          chainId: LOCK_CHAIN_ID,
+          lockedBy: ID.runningWithLogStale,
+          lockedAt: minutesAgo(40),
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        },
+      ]);
+
       // NOTE: reapStaleExecutions is GLOBAL - it reaps every stale row in the DB,
       // not just this suite's PREFIX. On the shared local/CI database this can
       // flip stale rows another suite left behind. Assertions below are therefore
@@ -269,6 +298,23 @@ describe.skipIf(SKIP)(
       expect((await readExecution(ID.runningWithLogFresh)).status).toBe(
         "running"
       );
+    });
+
+    it("clears a lapsed wallet lock held by a reaped execution", async () => {
+      const [row] = await db
+        .select()
+        .from(walletLocks)
+        .where(eq(walletLocks.walletAddress, LAPSED_LOCK_WALLET));
+      expect(row.lockedBy).toBeNull();
+    });
+
+    it("leaves a wallet lock a live heartbeat is still renewing", async () => {
+      const [row] = await db
+        .select()
+        .from(walletLocks)
+        .where(eq(walletLocks.walletAddress, LIVE_LOCK_WALLET));
+      expect(row.lockedBy).toBe(ID.runningWithLogStale);
+      expect(row.expiresAt.getTime()).toBeGreaterThan(Date.now());
     });
   }
 );
