@@ -754,11 +754,21 @@ Check the status of a direct execution.
   When a body sends both, the routes disagree about which wins: `contract-call`
   takes `network`, while `transfer` and `check-and-execute` take `chainId`.
   Send one.
-- `retryCount`: internal re-submissions of a node execution, which is
+- `retryCount`: internal re-executions of a node execution, which is
   `/api/execute/node` and is not covered by this page. It is always `0` for the
   transfer, contract-call and check-and-execute endpoints documented here,
-  whatever happened internally - those paths never set it. A `0` is therefore
-  not evidence that no nonce replacement or gas bump occurred.
+  whatever happened internally - those paths never set it, so a `0` is not
+  evidence that nothing was retried. Where the field is set, each count is a
+  fresh execution of the step rather than a replacement of an earlier
+  transaction: nothing is resubmitted at a pinned nonce and no gas price is
+  bumped. Retries are limited to failures that returned no result at all
+  (connection resets and timeouts); an error reporting that a transaction is
+  already live - a used nonce, an already-known hash, an underpriced
+  replacement - is never retried, because a retry there would sign a second,
+  independent transaction at the next nonce. A timeout is the one case where
+  the earlier attempt may still be in flight: it is abandoned rather than
+  cancelled, so a per-attempt timeout shorter than the chain's confirmation
+  latency can leave two transactions confirmed.
 - `gasPriceWei`: the effective gas price, as a decimal string. On EVM chains
   this is in wei. On Solana it is the micro-lamports-per-compute-unit price of
   the priority component, as described in

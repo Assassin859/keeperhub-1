@@ -4,17 +4,12 @@ import type { RetryConfig } from "./types";
 
 const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_GAS_BUMP_PERCENT = 10;
 
 export type TransactionResult =
   | { success: true; transactionHash: string; [key: string]: unknown }
   | { success: false; error: string };
 
-type GasBumpOverrides = {
-  gasBumpMultiplier?: number;
-};
-
-type ExecuteFn<T> = (overrides?: GasBumpOverrides) => Promise<T>;
+type ExecuteFn<T> = () => Promise<T>;
 
 /**
  * Determines whether a result represents a successful execution.
@@ -32,7 +27,6 @@ function resolveConfig(config?: RetryConfig): Required<RetryConfig> {
   return {
     maxRetries: config?.maxRetries ?? DEFAULT_MAX_RETRIES,
     timeoutMs: config?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    gasBumpPercent: config?.gasBumpPercent ?? DEFAULT_GAS_BUMP_PERCENT,
   };
 }
 
@@ -81,20 +75,19 @@ export const genericRetryOptions: RetryOptions<unknown> = {
 };
 
 /**
- * Execute a function with automatic retry and optional gas price bumping.
+ * Execute a function with automatic retry.
  *
- * On timeout or failure, resubmits with a higher gas price multiplier.
- * Each retry bumps the multiplier by gasBumpPercent (default 10%).
+ * A retry re-runs executeFn from scratch. It is not a replacement transaction:
+ * nothing is pinned, so a web3 step that retries opens a new nonce session and
+ * signs an independent transaction at the next nonce. Retries are therefore
+ * only safe when the previous attempt is known not to have broadcast, which is
+ * what isRetryableError below is responsible for deciding.
  *
- * The executeFn receives optional GasBumpOverrides containing a cumulative
- * gas bump multiplier. The caller is responsible for applying this multiplier
- * to maxFeePerGas/maxPriorityFeePerGas when building the transaction.
- *
- * NOTE: On timeout, the original executeFn promise is abandoned but not cancelled.
- * For EVM transactions this is acceptable -- the retry uses a bumped gas price which
- * acts as a replacement transaction at the same nonce. If the original tx already
- * mined before the retry is submitted, the retry will fail with "nonce already used"
- * which is classified as retryable but will ultimately exhaust retries harmlessly.
+ * The timeout path is the exception, and the caller carries it: on timeout the
+ * in-flight executeFn promise is abandoned but not cancelled, and a transaction
+ * it already broadcast can still confirm. A timeoutMs below the chain's
+ * confirmation latency can therefore produce two confirmed transactions. Set
+ * timeoutMs above the confirmation latency of the target chain.
  */
 export async function executeWithRetry<T>(
   executeFn: ExecuteFn<T>,
@@ -103,16 +96,9 @@ export async function executeWithRetry<T>(
 ): Promise<RetryResult<T>> {
   const resolved = resolveConfig(config);
   let retryCount = 0;
-  let cumulativeBumpMultiplier = 1.0;
 
   for (let attempt = 0; attempt <= resolved.maxRetries; attempt++) {
-    const overrides: GasBumpOverrides =
-      attempt === 0 ? {} : { gasBumpMultiplier: cumulativeBumpMultiplier };
-
-    const resultOrTimeout = await withTimeout(
-      executeFn(overrides),
-      resolved.timeoutMs
-    );
+    const resultOrTimeout = await withTimeout(executeFn(), resolved.timeoutMs);
 
     if (resultOrTimeout === "timeout") {
       if (attempt >= resolved.maxRetries) {
@@ -123,7 +109,6 @@ export async function executeWithRetry<T>(
         };
       }
       retryCount++;
-      cumulativeBumpMultiplier *= 1 + resolved.gasBumpPercent / 100;
       continue;
     }
 
@@ -138,7 +123,6 @@ export async function executeWithRetry<T>(
     }
 
     retryCount++;
-    cumulativeBumpMultiplier *= 1 + resolved.gasBumpPercent / 100;
   }
 
   return {
@@ -148,15 +132,15 @@ export async function executeWithRetry<T>(
   };
 }
 
-const RETRYABLE_PATTERNS = [
-  "replacement fee too low",
-  "nonce has already been used",
-  "transaction underpriced",
-  "already known",
-  "timeout",
-  "ETIMEDOUT",
-  "ECONNRESET",
-];
+/**
+ * Connection-level failures only: the attempt came back with no result at all.
+ * A retry signs a fresh transaction at the next nonce, so nothing that says a
+ * transaction is already live may be listed here - "nonce has already been
+ * used", "already known", "replacement fee too low" and "transaction
+ * underpriced" each report a broadcast that happened, and retrying on them
+ * sends a second, independent transaction rather than replacing the first.
+ */
+const RETRYABLE_PATTERNS = ["timeout", "ETIMEDOUT", "ECONNRESET"];
 
 function isRetryableError(error: string): boolean {
   const lower = error.toLowerCase();
