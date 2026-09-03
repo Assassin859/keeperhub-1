@@ -227,6 +227,90 @@ jobs:
       - name: Run executor type check
         run: pnpm type-check:executor
 
+  # KEEP-1210 compile surface phase 3: trial tsgo (the native TypeScript port)
+  # as a faster replacement for the tsc gate. Deliberately non-gating - it is
+  # gathering parity evidence, not guarding anything, so it must never be able
+  # to block a PR. Two independent safeguards: continue-on-error on the job,
+  # and the comparison step always exiting 0.
+  #
+  # `needs: typecheck` + `if: always()` is what makes this a parity trial rather
+  # than just a second type check: it lets the job read the tsc job's conclusion
+  # and decide agreement mechanically per PR. always() is required because the
+  # failure mode that would actually bite us - tsc red, tsgo green - is only
+  # observable on runs where tsc failed, and a needs-dependency is skipped by
+  # default in exactly that case.
+  #
+  # Promote per KEEP-1210 item 2 once this reports PARITY across a few weeks of
+  # real PRs; until then tsc remains the required gate.
+  typecheck-tsgo:
+    runs-on: ubuntu-latest
+    needs: typecheck
+    if: always()
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js + pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          # The generated plugin registry is a real input to the program;
+          # without it the checker reports phantom missing-module errors and
+          # the parity comparison would be meaningless.
+          discover-plugins: "true"
+
+      # No tsbuildinfo cache here on purpose: tsgo does not consume it, and
+      # sharing the tsc job's cache key would let the two jobs clobber it.
+      - name: Run tsgo type check
+        id: tsgo
+        run: |
+          set +e
+          pnpm type-check:tsgo
+          root=$?
+          pnpm type-check:tsgo:executor
+          executor=$?
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "executor=$executor" >> "$GITHUB_OUTPUT"
+          if [ "$root" -eq 0 ] && [ "$executor" -eq 0 ]; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Compare against tsc
+        env:
+          TSC_RESULT: ${{ needs.typecheck.result }}
+          TSGO_RESULT: ${{ steps.tsgo.outputs.result }}
+          TSGO_ROOT_EXIT: ${{ steps.tsgo.outputs.root }}
+          TSGO_EXECUTOR_EXIT: ${{ steps.tsgo.outputs.executor }}
+        run: |
+          # Note: tsc exits 2 on diagnostics while tsgo exits 1, so agreement is
+          # compared on pass/fail, never on the numeric exit code.
+          {
+            echo "### tsgo parity trial (KEEP-1210)"
+            echo ""
+            echo "| Checker | Result |"
+            echo "| --- | --- |"
+            echo "| tsc (gating) | \`$TSC_RESULT\` |"
+            echo "| tsgo (trial) | \`$TSGO_RESULT\` (root exit $TSGO_ROOT_EXIT, executor exit $TSGO_EXECUTOR_EXIT) |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Only success/failure are comparable; cancelled or skipped tsc runs
+          # carry no signal about agreement and must not be scored as parity.
+          if [ "$TSC_RESULT" != "success" ] && [ "$TSC_RESULT" != "failure" ]; then
+            echo "INCONCLUSIVE: tsc job was '$TSC_RESULT'; no parity signal." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=tsgo parity::Inconclusive - tsc job was '$TSC_RESULT'."
+          elif [ "$TSC_RESULT" = "$TSGO_RESULT" ]; then
+            echo "PARITY: both checkers agree (\`$TSC_RESULT\`)." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=tsgo parity::PARITY - both agree ($TSC_RESULT)."
+          else
+            echo "MISMATCH: tsc=\`$TSC_RESULT\` tsgo=\`$TSGO_RESULT\`. Do not promote tsgo; investigate." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=tsgo parity::MISMATCH - tsc=$TSC_RESULT tsgo=$TSGO_RESULT."
+          fi
+          exit 0
+
   build:
     runs-on: ubuntu-latest
     environment: staging
