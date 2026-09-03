@@ -676,7 +676,7 @@ app:
           repository: ${ECR_REGISTRY}/keeperhub-prod
           tag: app-${IMAGE_TAG}
           imagePullPolicy: Always
-        schedule: "*/2 * * * *" # every 2 minutes; the reconciler only re-reads rows older than 30s
+        schedule: "1-59/2 * * * *" # every 2 minutes, offset by 1 minute per this file's convention; the reconciler only re-reads rows older than 30s
         command: ["/bin/sh"]
         args:
           - "/app/deploy/scripts/reaper.sh"

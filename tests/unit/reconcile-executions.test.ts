@@ -173,12 +173,24 @@ function verifyResolves(status: ReceiptVerificationResult["status"]): void {
   });
 }
 
+// Each table is read twice per run (newest-first, then the oldest-first slice)
+// and the stub hands out result sets in call order, so one run consumes four.
 function run(
   direct: Row[],
   workflows: Row[],
-  options: { maxRows?: number; budgetMs?: number } = {}
+  options: {
+    maxRows?: number;
+    budgetMs?: number;
+    oldestDirect?: Row[];
+    oldestWorkflows?: Row[];
+  } = {}
 ) {
-  selectResults = [direct, workflows];
+  selectResults = [
+    direct,
+    options.oldestDirect ?? [],
+    workflows,
+    options.oldestWorkflows ?? [],
+  ];
   return reconcileUnconfirmedExecutions(
     NOW,
     options.maxRows ?? 2000,
@@ -306,6 +318,22 @@ describe("direct executions", () => {
     expect(sql).toMatch(/"id" = \$1 and .*"status" = \$2/);
     expect(params).toEqual(["de_1", "unconfirmed"]);
   });
+
+  it("does not tally a settle another writer won the race for", async () => {
+    verifyResolves("success");
+    returningRows = [];
+
+    const report = await run([directRow()], []);
+
+    expect(directUpdates()).toHaveLength(1);
+    expect(report.direct).toEqual({
+      examined: 1,
+      completed: 0,
+      failed: 0,
+      stillUnconfirmed: 1,
+      deferred: 0,
+    });
+  });
 });
 
 describe("workflow runs", () => {
@@ -403,19 +431,65 @@ describe("workflow runs", () => {
 });
 
 describe("scheduling safety", () => {
-  it("reads the whole eligible set newest first, up to the row cap", async () => {
+  it("reads each table newest first up to the row cap, plus an oldest-first slice", async () => {
     verifyResolves("success");
 
     await run([], [], { maxRows: 2000 });
 
-    expect(selectCalls).toHaveLength(2);
-    expect(render(selectCalls[0].orderBy).sql).toBe(
-      '"direct_executions"."created_at" desc'
-    );
-    expect(render(selectCalls[1].orderBy).sql).toBe(
-      '"workflow_executions"."started_at" desc'
-    );
-    expect(selectCalls.map((call) => call.limit)).toEqual([2000, 2000]);
+    expect(selectCalls).toHaveLength(4);
+    expect(selectCalls.map((call) => render(call.orderBy).sql)).toEqual([
+      '"direct_executions"."created_at" desc',
+      '"direct_executions"."created_at" asc',
+      '"workflow_executions"."started_at" desc',
+      '"workflow_executions"."started_at" asc',
+    ]);
+    expect(selectCalls.map((call) => call.limit)).toEqual([
+      2000, 100, 2000, 100,
+    ]);
+  });
+
+  it("never asks for a slice wider than the row cap", async () => {
+    verifyResolves("success");
+
+    await run([], [], { maxRows: 10 });
+
+    expect(selectCalls.map((call) => call.limit)).toEqual([10, 10, 10, 10]);
+  });
+
+  it("examines the oldest slice before the newest-first sweep", async () => {
+    verifyResolves("success");
+
+    await run([directRow({ id: "de_new" })], [], {
+      oldestDirect: [directRow({ id: "de_old" })],
+    });
+
+    const settled = directUpdates().map((call) => render(call.where).params[0]);
+    expect(settled).toEqual(["de_old", "de_new"]);
+  });
+
+  it("examines a row returned by both reads only once", async () => {
+    verifyResolves("success");
+    const row = directRow({ id: "de_1" });
+
+    const report = await run([row], [], { oldestDirect: [row] });
+
+    expect(report.direct.examined).toBe(1);
+    expect(directUpdates()).toHaveLength(1);
+  });
+
+  it("reaches the tail of a backlog larger than the row cap", async () => {
+    verifyResolves("success");
+    // The newest-first read is capped at 2 rows and can never see de_tail; the
+    // oldest-first slice is the only thing that settles it.
+    const newest = [directRow({ id: "de_a" }), directRow({ id: "de_b" })];
+
+    await run(newest, [], {
+      maxRows: 2,
+      oldestDirect: [directRow({ id: "de_tail" })],
+    });
+
+    const settled = directUpdates().map((call) => render(call.where).params[0]);
+    expect(settled).toEqual(["de_tail", "de_a", "de_b"]);
   });
 
   it("examines every row it read rather than the first 200", async () => {

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNotNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   type DirectExecution,
@@ -37,10 +37,15 @@ import {
 const DROPPED_AFTER_MS = 24 * 60 * 60 * 1000;
 // Give the write path's own retries room to finish before re-reading.
 const MIN_AGE_MS = 30 * 1000;
-// Every eligible row is read in one narrow query, so a backlog of rows that
-// stay unreadable cannot hide the rows behind them. This cap only bounds memory;
+// Upper bound on the rows one run reads newest-first. It bounds memory only;
 // the work a run does is bounded by the time budget below.
 const DEFAULT_MAX_ROWS = 2000;
+// Once the eligible set exceeds DEFAULT_MAX_ROWS the newest-first read can
+// never reach its tail, and the tail is exactly the set old enough to reach the
+// 24h dropped verdict and leave. So every run also reads a small oldest-first
+// slice and examines it before the newest-first sweep, which drains that tail
+// at a bounded rate however large the backlog grows.
+const OLDEST_SLICE_ROWS = 100;
 // Wall-clock budget for one run. The CronJob fires every two minutes with
 // concurrencyPolicy Forbid, and a receipt lookup against an endpoint that times
 // out instead of answering can take tens of seconds, so without a budget one
@@ -52,6 +57,8 @@ export type ReconcileSummary = {
   examined: number;
   completed: number;
   failed: number;
+  // Rows this run did not move to a terminal state: still open, or settled by
+  // another writer before this run's guarded update reached them.
   stillUnconfirmed: number;
   // Eligible rows the run did not reach before its time budget ran out.
   deferred: number;
@@ -122,14 +129,16 @@ function toReceiptEntries(
 }
 
 // Every write below is guarded on the row still being unconfirmed, so a run
-// never overwrites a verdict something else reached first.
+// never overwrites a verdict something else reached first. Reports whether this
+// call performed the transition, so a run that lost the race does not tally a
+// settle it did not make - the same reason settleWorkflow reads `returning`.
 async function settle(
   executionId: string,
   status: "completed" | "failed",
   receipts: DirectExecutionReceiptEntry[],
   error: string | null
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const updated = await db
     .update(directExecutions)
     .set({ status, error, receipts, completedAt: new Date() })
     .where(
@@ -137,7 +146,19 @@ async function settle(
         eq(directExecutions.id, executionId),
         eq(directExecutions.status, "unconfirmed")
       )
-    );
+    )
+    .returning({ id: directExecutions.id });
+  return updated.length > 0;
+}
+
+// A settle that matched no row means another writer reached a verdict first;
+// this run neither completed nor failed the row, so it reports the outcome it
+// did reach.
+function settledOutcome(
+  settled: boolean,
+  verdict: "completed" | "failed"
+): SettleOutcome {
+  return settled ? verdict : "unconfirmed";
 }
 
 async function reconcileOne(
@@ -147,13 +168,13 @@ async function reconcileOne(
   const chainId = resolveChainId(execution);
   const hash = execution.transactionHash;
   if (!hash || chainId === null) {
-    await settle(
+    const settled = await settle(
       execution.id,
       "failed",
       execution.receipts,
       "Unable to verify transaction: chain could not be resolved"
     );
-    return "failed";
+    return settledOutcome(settled, "failed");
   }
 
   const { allVerified, results } = await verifyExecutionReceipts([
@@ -162,8 +183,8 @@ async function reconcileOne(
   const receipts = toReceiptEntries(results);
 
   if (allVerified) {
-    await settle(execution.id, "completed", receipts, null);
-    return "completed";
+    const settled = await settle(execution.id, "completed", receipts, null);
+    return settledOutcome(settled, "completed");
   }
 
   const conclusive = results.every(
@@ -171,18 +192,18 @@ async function reconcileOne(
       result.status === "reverted" || result.status === "safe_inner_failure"
   );
   if (conclusive) {
-    await settle(
+    const settled = await settle(
       execution.id,
       "failed",
       receipts,
       describeVerificationFailure(results)
     );
-    return "failed";
+    return settledOutcome(settled, "failed");
   }
 
   const age = now.getTime() - execution.createdAt.getTime();
   if (age >= DROPPED_AFTER_MS) {
-    await settle(
+    const settled = await settle(
       execution.id,
       "failed",
       receipts,
@@ -190,7 +211,7 @@ async function reconcileOne(
         DROPPED_AFTER_MS / 3_600_000
       )}h`
     );
-    return "failed";
+    return settledOutcome(settled, "failed");
   }
 
   await db
@@ -338,11 +359,25 @@ async function drain<T extends { id: string }>(
 }
 
 /**
- * Rows are read newest first. A row that has sat unconfirmed for hours has
- * already been re-read many times and is the least likely to change, while a
- * row broadcast a minute ago usually settles on its first re-read. So when the
- * budget does run out it is the stale rows that wait, and the one verdict that
- * is delayed is "dropped after 24h", which is the safe direction to be late in.
+ * Put the oldest slice at the front of the newest-first read, dropping the rows
+ * both reads returned. When the eligible set fits under the row cap the two
+ * reads cover the same rows and this only reorders them.
+ */
+function tailFirst<T extends { id: string }>(oldest: T[], newest: T[]): T[] {
+  const inSlice = new Set(oldest.map((row) => row.id));
+  return [...oldest, ...newest.filter((row) => !inSlice.has(row.id))];
+}
+
+/**
+ * Rows are read newest first, then examined behind a small oldest-first slice.
+ *
+ * A row that has sat unconfirmed for hours has already been re-read many times
+ * and is the least likely to change, while a row broadcast a minute ago usually
+ * settles on its first re-read, so the bulk of a run's budget goes to the fresh
+ * end. But a newest-first read alone never reaches the tail of a set larger
+ * than `maxRows`, and under inflow at or above the drain rate that tail is
+ * exactly the set old enough to reach the 24h dropped verdict and leave. The
+ * slice keeps that tail draining at up to OLDEST_SLICE_ROWS rows per run.
  *
  * Direct rows get at most half the budget so a slow direct backlog cannot
  * starve workflow rows; whatever they leave unused rolls over.
@@ -354,52 +389,69 @@ export async function reconcileUnconfirmedExecutions(
 ): Promise<ReconcileReport> {
   const cutoff = new Date(now.getTime() - MIN_AGE_MS);
   const startedAt = Date.now();
+  const sliceRows = Math.min(OLDEST_SLICE_ROWS, maxRows);
 
-  const pending = await db
-    .select({
-      id: directExecutions.id,
-      transactionHash: directExecutions.transactionHash,
-      network: directExecutions.network,
-      receipts: directExecutions.receipts,
-      createdAt: directExecutions.createdAt,
-    })
-    .from(directExecutions)
-    .where(
-      and(
-        eq(directExecutions.status, "unconfirmed"),
-        isNotNull(directExecutions.transactionHash),
-        lt(directExecutions.createdAt, cutoff)
-      )
-    )
-    .orderBy(desc(directExecutions.createdAt))
-    .limit(maxRows);
+  const directColumns = {
+    id: directExecutions.id,
+    transactionHash: directExecutions.transactionHash,
+    network: directExecutions.network,
+    receipts: directExecutions.receipts,
+    createdAt: directExecutions.createdAt,
+  };
+  const directEligible = and(
+    eq(directExecutions.status, "unconfirmed"),
+    isNotNull(directExecutions.transactionHash),
+    lt(directExecutions.createdAt, cutoff)
+  );
+  const [newestDirect, oldestDirect] = await Promise.all([
+    db
+      .select(directColumns)
+      .from(directExecutions)
+      .where(directEligible)
+      .orderBy(desc(directExecutions.createdAt))
+      .limit(maxRows),
+    db
+      .select(directColumns)
+      .from(directExecutions)
+      .where(directEligible)
+      .orderBy(asc(directExecutions.createdAt))
+      .limit(sliceRows),
+  ]);
 
   const direct = await drain(
-    pending,
+    tailFirst(oldestDirect, newestDirect),
     startedAt + timeBudgetMs / 2,
     (execution) => reconcileOne(execution, now),
     "[Reconciler] Failed to re-verify an unconfirmed execution; leaving it open"
   );
 
-  const pendingWorkflows = await db
-    .select({
-      id: workflowExecutions.id,
-      workflowId: workflowExecutions.workflowId,
-      transactionHashes: workflowExecutions.transactionHashes,
-      startedAt: workflowExecutions.startedAt,
-    })
-    .from(workflowExecutions)
-    .where(
-      and(
-        eq(workflowExecutions.status, "unconfirmed"),
-        lt(workflowExecutions.startedAt, cutoff)
-      )
-    )
-    .orderBy(desc(workflowExecutions.startedAt))
-    .limit(maxRows);
+  const workflowColumns = {
+    id: workflowExecutions.id,
+    workflowId: workflowExecutions.workflowId,
+    transactionHashes: workflowExecutions.transactionHashes,
+    startedAt: workflowExecutions.startedAt,
+  };
+  const workflowEligible = and(
+    eq(workflowExecutions.status, "unconfirmed"),
+    lt(workflowExecutions.startedAt, cutoff)
+  );
+  const [newestWorkflows, oldestWorkflows] = await Promise.all([
+    db
+      .select(workflowColumns)
+      .from(workflowExecutions)
+      .where(workflowEligible)
+      .orderBy(desc(workflowExecutions.startedAt))
+      .limit(maxRows),
+    db
+      .select(workflowColumns)
+      .from(workflowExecutions)
+      .where(workflowEligible)
+      .orderBy(asc(workflowExecutions.startedAt))
+      .limit(sliceRows),
+  ]);
 
   const workflows = await drain(
-    pendingWorkflows,
+    tailFirst(oldestWorkflows, newestWorkflows),
     startedAt + timeBudgetMs,
     (execution) => reconcileWorkflow(execution, now),
     "[Reconciler] Failed to re-verify an unconfirmed workflow run; leaving it open"
