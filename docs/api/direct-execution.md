@@ -437,8 +437,8 @@ transaction, and the hash is how you find out what the chain said about it. It
 is absent only when the call never broadcast - a guard, a validation error, or
 a failure before submission.
 
-`transactionLink` accompanies the hash for a successful broadcast. A reverted
-call returns the hash without a link.
+`transactionLink` accompanies the hash whenever the write produced an explorer
+URL, including a reverted or unreadable broadcast.
 
 ## Protocol Actions
 
@@ -452,7 +452,7 @@ available actions and their parameters.
 
 ### Request Body
 
-Pass action parameters as a JSON object. `chainId` is required for most actions
+Pass action parameters as a JSON object. `chainId` is required for every action
 (the legacy `network` field is accepted as a deprecated alias). Required fields
 for each action are defined in the protocol registry.
 
