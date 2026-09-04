@@ -109,8 +109,13 @@ vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
 }));
 
 vi.mock("@/lib/logging", () => ({
-  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine", DATABASE: "database" },
+  ErrorCategory: {
+    WORKFLOW_ENGINE: "workflow_engine",
+    DATABASE: "database",
+    VALIDATION: "validation",
+  },
   logSystemError: vi.fn(),
+  logSystemWarn: vi.fn(),
 }));
 
 vi.mock("@/lib/payments/x402/execution-wait", () => ({
@@ -252,7 +257,10 @@ function makeRequest(
   });
 }
 
-function makePassThroughGatePayment(payerAddress: string | null = "0xPayer"): void {
+function makePassThroughGatePayment(
+  payerAddress: string | null = "0xPayer",
+  protocol: "x402" | "mpp" = "x402"
+): void {
   mockGatePayment.mockImplementation(
     (
       request: Request,
@@ -263,15 +271,37 @@ function makePassThroughGatePayment(payerAddress: string | null = "0xPayer"): vo
         chain: string;
         payerAddress: string | null;
         paymentHash: string;
-      }) => (req: Request) => Promise<Response>
+      }) => (req: Request) => Promise<Response>,
+      options?: { getIdem?: () => unknown }
     ) => {
       const handler = createHandler({
-        protocol: "x402",
-        chain: "base",
+        protocol,
+        chain: protocol === "mpp" ? "tempo" : "base",
         payerAddress,
-        paymentHash: "hash-first",
+        paymentHash: protocol === "mpp" ? "hash-mpp" : "hash-first",
       });
-      return handler(request as never);
+      return (async () => {
+        const response = await handler(request as never);
+        // Mirror router finalizeAfterMppReceipt: finalize after the handler
+        // returns so MPP keeps a receipt-wrapped body on the record.
+        if (protocol === "mpp") {
+          const idem = options?.getIdem?.() ?? null;
+          const body = (await response.clone().json()) as { status?: string };
+          let disposition: "success" | "release" | "failed" = "success";
+          if (body.status === "running") {
+            disposition = "release";
+          } else if (response.status >= 400) {
+            disposition = "failed";
+          }
+          return mockSafeRecordIdempotentResponse(
+            idem,
+            response,
+            disposition,
+            "[payments/router] Idempotency finalize failed on gate exit"
+          );
+        }
+        return response;
+      })();
     }
   );
 }
@@ -359,13 +389,14 @@ describe("marketplace call route HTTP idempotency", () => {
     expect(mockBeginIdempotentFromRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: "org-1",
-        scope: "mcp-call:wf-paid:0xpayer",
+        scope: "mcp-call:wf-paid:x402:0xpayer",
       })
     );
   });
 
-  it("returns 400 when Idempotency-Key is present without a verified payer", async () => {
+  it("proceeds without reservation when Idempotency-Key has no verified payer", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
+    setupDbInsertExecution("exec-no-payer");
     mockDetectProtocol.mockReturnValue("x402");
     makePassThroughGatePayment(null);
 
@@ -377,11 +408,10 @@ describe("marketplace call route HTTP idempotency", () => {
       }),
       { params: Promise.resolve({ slug: "paid-workflow" }) }
     );
-    const body = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(400);
-    expect(body.error).toContain("verified payer");
+    expect(response.status).toBe(200);
     expect(mockBeginIdempotentFromRequest).not.toHaveBeenCalled();
+    expect(mockStart).toHaveBeenCalled();
     expect(mockGatePayment).toHaveBeenCalled();
   });
 
@@ -544,31 +574,11 @@ describe("marketplace call route HTTP idempotency", () => {
     );
   });
 
-  it("starts execution and finalizes success when MPP recordPayment fails", async () => {
+  it("starts execution and finalizes via getIdem when MPP recordPayment fails", async () => {
     setupDbSelectWorkflow(PAID_WORKFLOW);
     setupDbInsertExecution("exec-mpp-fail");
-    mockDetectProtocol.mockReturnValue("x402");
-    mockGatePayment.mockImplementation(
-      (
-        request: Request,
-        _workflow: unknown,
-        _wallet: string,
-        createHandler: (meta: {
-          protocol: string;
-          chain: string;
-          payerAddress: string | null;
-          paymentHash: string;
-        }) => (req: Request) => Promise<Response>
-      ) => {
-        const handler = createHandler({
-          protocol: "mpp",
-          chain: "tempo",
-          payerAddress: "0xMppPayer",
-          paymentHash: "hash-mpp",
-        });
-        return handler(request as never);
-      }
-    );
+    mockDetectProtocol.mockReturnValue("mpp");
+    makePassThroughGatePayment("0xMppPayer", "mpp");
     mockDbTransaction.mockRejectedValue(new Error("db down"));
     mockDbUpdate.mockReturnValue({
       set: vi.fn().mockReturnValue({
@@ -594,11 +604,78 @@ describe("marketplace call route HTTP idempotency", () => {
 
     expect(response.status).toBe(200);
     expect(mockStart).toHaveBeenCalled();
+    // Handler skips in-handler success finalize for MPP; the gate mock
+    // finalizes after return the way finalizeAfterMppReceipt does.
     expect(mockSafeRecordIdempotentResponse).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.any(Response),
       "success",
       expect.stringContaining("MPP recordPayment")
+    );
+    expect(mockSafeRecordIdempotentResponse).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Response),
+      "success",
+      expect.stringContaining("gate exit")
+    );
+  });
+
+  it("finalizes MPP success after the handler via getIdem", async () => {
+    setupDbSelectWorkflow(PAID_WORKFLOW);
+    setupDbInsertExecution("exec-mpp-ok");
+    mockDetectProtocol.mockReturnValue("mpp");
+    makePassThroughGatePayment("0xMppPayer", "mpp");
+
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-mpp-ok",
+        paymentSignature: "sig-mpp-ok",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockBeginIdempotentFromRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: "mcp-call:wf-paid:mpp:0xmpppayer",
+      })
+    );
+    expect(mockSafeRecordIdempotentResponse).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Response),
+      "success",
+      expect.stringContaining("gate exit")
+    );
+  });
+
+  it("releases MPP reservation when completion body is still running", async () => {
+    setupDbSelectWorkflow(PAID_WORKFLOW);
+    setupDbInsertExecution("exec-mpp-running");
+    mockDetectProtocol.mockReturnValue("mpp");
+    makePassThroughGatePayment("0xMppPayer", "mpp");
+    mockBuildCallCompletionResponse.mockResolvedValue({
+      executionId: "exec-mpp-running",
+      status: "running",
+    });
+
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const response = await POST(
+      makeRequest("paid-workflow", {
+        idempotencyKey: "idem-mpp-running",
+        paymentSignature: "sig-mpp-running",
+      }),
+      { params: Promise.resolve({ slug: "paid-workflow" }) }
+    );
+    const body = (await response.json()) as { status: string };
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("running");
+    expect(mockSafeRecordIdempotentResponse).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Response),
+      "release",
+      expect.stringContaining("gate exit")
     );
   });
 

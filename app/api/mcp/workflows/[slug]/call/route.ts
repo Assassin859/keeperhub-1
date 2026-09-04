@@ -26,12 +26,13 @@ import {
   safeRecordIdempotentResponse,
   withIdempotencyHeartbeat,
 } from "@/lib/idempotency";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   checkIpRateLimit,
   getClientIp,
   type RateLimitResult,
 } from "@/lib/mcp/rate-limit";
+import type { PaymentProtocol } from "@/lib/payments/rails";
 import {
   detectProtocol,
   gatePayment,
@@ -70,21 +71,26 @@ export function OPTIONS(): NextResponse {
 
 type CallIdempotencyStart =
   | { kind: "early"; response: NextResponse }
-  | { kind: "error"; response: NextResponse }
   | { kind: "proceed"; idem: IdempotencyOutcome | null };
 
 /**
  * Reserve an Idempotency-Key for a paid marketplace call after the payment
- * gate has verified the credential. Scope is the verified payer address so
- * the same key cannot collide across callers and cannot be forged from an
- * unsigned header. Call only from inside the gatePayment handler factory --
- * never on a 402 probe, and never before verification.
+ * gate has verified the credential. Scope includes protocol and the verified
+ * payer so the same key cannot collide across callers or rails and cannot be
+ * forged from an unsigned header. Call only from inside the gatePayment
+ * handler factory -- never on a 402 probe, and never before verification.
+ *
+ * When a key is present but the verified meta has no payer (e.g. MPP wallet
+ * omitted `credential.source`), proceed without a reservation rather than
+ * returning 400: this helper only runs after settlement on MPP, so rejecting
+ * would take funds and deliver nothing.
  */
 async function beginCallIdempotency(
   request: Request,
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>,
-  payerAddress: string | null
+  payerAddress: string | null,
+  protocol: PaymentProtocol
 ): Promise<CallIdempotencyStart> {
   const key = request.headers.get("Idempotency-Key")?.trim();
   if (!key) {
@@ -95,22 +101,19 @@ async function beginCallIdempotency(
   }
 
   if (!payerAddress) {
-    return {
-      kind: "error",
-      response: NextResponse.json(
-        {
-          error:
-            "Idempotency-Key requires a verified payer address from the payment credential.",
-        },
-        { status: HttpStatus.BAD_REQUEST, headers: corsHeaders }
-      ),
-    };
+    logSystemWarn(
+      ErrorCategory.VALIDATION,
+      "[x402/call] Idempotency-Key ignored: verified payment has no payer address",
+      undefined,
+      { workflowId: workflow.id, protocol }
+    );
+    return { kind: "proceed", idem: null };
   }
 
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: workflow.organizationId,
-    scope: `mcp-call:${workflow.id}:${payerAddress.toLowerCase()}`,
+    scope: `mcp-call:${workflow.id}:${protocol}:${payerAddress.toLowerCase()}`,
     requestBody: body,
   });
   if (idem) {
@@ -128,9 +131,9 @@ async function beginCallIdempotency(
   return { kind: "proceed", idem };
 }
 
-function completionIdempotencyDisposition(
-  body: { status?: string }
-): "success" | "release" {
+function completionIdempotencyDisposition(body: {
+  status?: string;
+}): "success" | "release" {
   return body.status === "running" ? "release" : "success";
 }
 
@@ -505,7 +508,9 @@ async function gateWriteCall(
   }
 
   // Idempotency is reserved inside the handler after the gate has verified
-  // the payer. A 402 probe never reaches this factory.
+  // the payer. A 402 probe never reaches this factory. MPP finalizes after
+  // withReceipt via getIdem so the stored body keeps Payment-Receipt.
+  const idemHold: { current: IdempotencyOutcome | null } = { current: null };
   return gatePayment(
     request,
     workflow,
@@ -534,12 +539,14 @@ async function gateWriteCall(
           request,
           workflow,
           body,
-          meta.payerAddress
+          meta.payerAddress,
+          meta.protocol
         );
-        if (started.kind === "early" || started.kind === "error") {
+        if (started.kind === "early") {
           return started.response;
         }
         const idem = started.idem;
+        idemHold.current = idem;
 
         try {
           await recordPayment({
@@ -560,7 +567,7 @@ async function gateWriteCall(
             // path. The caller's funds have already moved, so failing here
             // would take money and deliver nothing. Deliver, and log loudly:
             // a missing earnings row can be reconciled by hand, a stolen
-            // payment cannot.
+            // payment cannot. Router finalizes via getIdem after withReceipt.
             logSystemError(
               ErrorCategory.DATABASE,
               "[x402/call] Calldata payment row lost after MPP settlement",
@@ -601,7 +608,8 @@ async function gateWriteCall(
               "[x402/call] Idempotency finalize failed after calldata delivery"
             );
       };
-    }
+    },
+    { getIdem: () => idemHold.current }
   );
 }
 
@@ -677,7 +685,10 @@ async function handlePaidWorkflow(
   }
 
   // Reservation happens inside the handler after the gate verifies the payer.
-  // 402 probes never reach that factory, so they cannot lock the key.
+  // 402 probes never reach that factory, so they cannot lock the key. MPP
+  // finalizes after withReceipt via getIdem so the stored body keeps
+  // Payment-Receipt.
+  const idemHold: { current: IdempotencyOutcome | null } = { current: null };
   return gatePayment(
     request,
     workflow,
@@ -688,12 +699,14 @@ async function handlePaidWorkflow(
           request,
           workflow,
           body,
-          meta.payerAddress
+          meta.payerAddress,
+          meta.protocol
         );
-        if (started.kind === "early" || started.kind === "error") {
+        if (started.kind === "early") {
           return started.response;
         }
         const idem = started.idem;
+        idemHold.current = idem;
 
         const prepared = await prepareExecution(request, workflow, body);
         if ("error" in prepared) {
@@ -779,6 +792,7 @@ async function handlePaidWorkflow(
           if (meta.protocol === "mpp") {
             // MPP settles BEFORE this handler runs. Deliver anyway and log
             // loudly: a missing earnings row can be reconciled by hand.
+            // Router finalizes via getIdem after withReceipt.
             logSystemError(
               ErrorCategory.DATABASE,
               "[x402/call] Execution payment row lost after MPP settlement",
@@ -831,7 +845,8 @@ async function handlePaidWorkflow(
           meta.protocol === "mpp"
         );
       };
-    }
+    },
+    { getIdem: () => idemHold.current }
   );
 }
 

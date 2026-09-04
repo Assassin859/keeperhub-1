@@ -252,8 +252,24 @@ type HandlerFactory = (
 ) => (req: NextRequest) => Promise<NextResponse>;
 
 export type GatePaymentOptions = {
+  /**
+   * Outcome reserved before the gate. The marketplace call route reserves
+   * inside the verified handler instead; prefer `getIdem` there.
+   */
   idem?: IdempotencyOutcome | null;
+  /**
+   * Lazy read of an outcome reserved inside the verified handler. MPP
+   * finalizes after `withReceipt` via this so the stored body keeps
+   * `Payment-Receipt`.
+   */
+  getIdem?: () => IdempotencyOutcome | null | undefined;
 };
+
+function resolveGateIdem(
+  options?: GatePaymentOptions
+): IdempotencyOutcome | null | undefined {
+  return options?.getIdem?.() ?? options?.idem;
+}
 
 async function finalizeGateExit(
   idem: IdempotencyOutcome | null | undefined,
@@ -345,7 +361,10 @@ async function handleX402(
   const paymentSig = request.headers.get("PAYMENT-SIGNATURE");
   const paymentHash = paymentSig ? hashPaymentSignature(paymentSig) : null;
   if (paymentHash) {
-    const idempotent = await checkIdempotency(paymentHash, options?.idem);
+    const idempotent = await checkIdempotency(
+      paymentHash,
+      resolveGateIdem(options)
+    );
     if (idempotent) {
       return idempotent;
     }
@@ -372,8 +391,14 @@ async function handleX402(
     const response = (await gatedHandler(
       request as NextRequest
     )) as NextResponse;
-    if (options?.idem && !handlerInvoked) {
-      return await finalizeGateExit(options.idem, response, "release");
+    // 402 probe / verify failure never reaches the handler, so there is no
+    // post-gate reservation to release. Return the challenge as-is.
+    if (!handlerInvoked) {
+      return await finalizeGateExit(
+        resolveGateIdem(options),
+        response,
+        "release"
+      );
     }
     return response;
   } catch (gateErr) {
@@ -390,7 +415,7 @@ async function handleX402(
           if (paymentHash) {
             const idempotent = await checkIdempotency(
               paymentHash,
-              options?.idem
+              resolveGateIdem(options)
             );
             if (idempotent) {
               return idempotent;
@@ -401,9 +426,11 @@ async function handleX402(
         }
       }
     }
-    if (options?.idem && !handlerInvoked) {
+    // Always 503 when verification threw before the handler ran, even with
+    // no idempotency record: the caller should retry the same key.
+    if (!handlerInvoked) {
       return await finalizeGateExit(
-        options.idem,
+        resolveGateIdem(options),
         paymentVerificationFailedResponse(),
         "release"
       );
@@ -424,7 +451,10 @@ async function handleMpp(
     ? hashMppCredential(authHeader.slice("Payment ".length))
     : null;
   if (paymentHash) {
-    const idempotent = await checkIdempotency(paymentHash, options?.idem);
+    const idempotent = await checkIdempotency(
+      paymentHash,
+      resolveGateIdem(options)
+    );
     if (idempotent) {
       return idempotent;
     }
@@ -461,7 +491,11 @@ async function handleMpp(
       for (const [key, value] of Object.entries(CORS_HEADERS)) {
         challenge.headers.set(key, value);
       }
-      return await finalizeGateExit(options?.idem, challenge, "release");
+      return await finalizeGateExit(
+        resolveGateIdem(options),
+        challenge,
+        "release"
+      );
     }
 
     settled = true;
@@ -484,11 +518,13 @@ async function handleMpp(
 
     const response = await innerHandler(request as NextRequest);
     const wrapped = result.withReceipt(response) as unknown as NextResponse;
-    return await finalizeAfterMppReceipt(options?.idem, wrapped);
+    // Handler may have reserved via getIdem after settlement; finalize the
+    // receipt-wrapped body so replays keep Payment-Receipt.
+    return await finalizeAfterMppReceipt(resolveGateIdem(options), wrapped);
   } catch (gateErr) {
-    if (options?.idem && !settled) {
+    if (!settled) {
       return await finalizeGateExit(
-        options.idem,
+        resolveGateIdem(options),
         paymentVerificationFailedResponse(),
         "release"
       );
@@ -508,7 +544,7 @@ export function gatePayment(
 
   if (protocol === "error") {
     return finalizeGateExit(
-      options?.idem,
+      resolveGateIdem(options),
       NextResponse.json(
         {
           error:
