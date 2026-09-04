@@ -702,7 +702,9 @@ describe("writeContractCore sponsored-relay failure link", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.transactionHash).toBe("0xsponsored");
-      expect(result.transactionLink).toBe("https://etherscan.io/tx/0xsponsored");
+      expect(result.transactionLink).toBe(
+        "https://etherscan.io/tx/0xsponsored"
+      );
       expect(result.sponsored).toBe(true);
       expect(result.errorClass).toBe(ExecutionErrorType.EXTERNAL);
     }
