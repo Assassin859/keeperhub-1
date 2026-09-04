@@ -106,8 +106,8 @@ import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
 export {
-  isForEachBodyFailureResult,
   type ForEachIterationFailure,
+  isForEachBodyFailureResult,
 } from "@/lib/workflow/nodes/for-each/iteration-failure";
 
 // System actions that don't have plugins - maps to module import functions.
@@ -2051,6 +2051,18 @@ export type ForEachIterationSummary = {
 };
 
 /**
+ * Prefer a nested For Each summary's firstFailureNodeId over the bodyResults
+ * key. Insertion order records the nested loop id before routeAfterSuccess
+ * overwrites the entry with data: summary.
+ */
+export function resolveBodyFailureNodeId(
+  bodyFailure: [string, { success: boolean; error?: string; data?: unknown }]
+): string {
+  const summary = bodyFailure[1].data as ForEachIterationSummary | undefined;
+  return summary?.firstFailureNodeId ?? bodyFailure[0];
+}
+
+/**
  * First failed iteration result, if any. Used to flip the For Each log and
  * to gate post-loop Collect / done-targets continuation.
  */
@@ -2085,7 +2097,9 @@ export function markCollectSkippedOnForEachFailure(params: {
 }): void {
   const skipData = {
     results: params.iterationResults.map((result) =>
-      isForEachBodyFailureResult(result) ? result.error : result
+      isForEachBodyFailureResult(result)
+        ? { error: result.error, nodeId: result.nodeId }
+        : result
     ),
     count: params.iterationResults.length,
     skipped: true as const,
@@ -2108,6 +2122,12 @@ export function markCollectSkippedOnForEachFailure(params: {
   }
 }
 
+export type ForEachPostLoopResult =
+  | "skipped"
+  | "aggregate-collect"
+  | "done-targets"
+  | "none";
+
 /**
  * Dispatch Collect aggregation or done-targets after runIterations.
  * Skips entirely when any iteration failed so downstream side effects
@@ -2118,7 +2138,7 @@ async function dispatchForEachPostLoopIfNeeded(params: {
   continuation: IterationContinuation;
   onAggregateCollect: (collectNodeId: string) => Promise<void>;
   onDoneTargets: (targets: string[]) => Promise<void>;
-}): Promise<"skipped" | "aggregate-collect" | "done-targets" | "none"> {
+}): Promise<ForEachPostLoopResult> {
   if (params.firstIterationFailure) {
     return "skipped";
   }
@@ -2132,12 +2152,6 @@ async function dispatchForEachPostLoopIfNeeded(params: {
   }
   return "none";
 }
-
-export type ForEachPostLoopResult =
-  | "skipped"
-  | "aggregate-collect"
-  | "done-targets"
-  | "none";
 
 /**
  * Dispatch post-loop continuation, or mark Collect skipped with an explicit
@@ -2872,14 +2886,15 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         ([, r]) => !r.success
       );
       if (bodyFailure) {
+        const failureNodeId = resolveBodyFailureNodeId(bodyFailure);
         console.log(
-          `[Workflow Executor] For Each "${getNodeName(forEachNode)}" iteration ${index} failed at node "${getNodeName(nodeMap.get(bodyFailure[0]) ?? forEachNode)}" (${bodyFailure[0]}): ${bodyFailure[1].error}`
+          `[Workflow Executor] For Each "${getNodeName(forEachNode)}" iteration ${index} failed at node "${getNodeName(nodeMap.get(failureNodeId) ?? forEachNode)}" (${failureNodeId}): ${bodyFailure[1].error}`
         );
         return {
           [FOR_EACH_BODY_FAILURE_MARKER]: true,
           success: false,
           error: bodyFailure[1].error ?? "Body node failed",
-          nodeId: bodyFailure[0],
+          nodeId: failureNodeId,
         } satisfies ForEachIterationFailure;
       }
 

@@ -6,11 +6,17 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+vi.mock("@/lib/step-registry", () => ({
+  getActionLabel: (actionType: string) => actionType,
+  getStepImporter: () => undefined,
+}));
+
 import {
   countIterationFailures,
   findFirstIterationFailure,
   isForEachBodyFailureResult,
   markCollectSkippedOnForEachFailure,
+  resolveBodyFailureNodeId,
   settleForEachPostLoop,
 } from "@/lib/workflow/executor/executor.workflow";
 import { FOR_EACH_BODY_FAILURE_MARKER } from "@/lib/workflow/nodes/for-each/iteration-failure";
@@ -21,6 +27,8 @@ const markedFailure = {
   error: "boom",
   nodeId: "step-a",
 };
+
+const mappedFailure = { error: "boom", nodeId: "step-a" };
 
 describe("findFirstIterationFailure", () => {
   it("returns undefined when all iterations succeeded", () => {
@@ -124,7 +132,7 @@ describe("markCollectSkippedOnForEachFailure", () => {
       success: false,
       error: "body failed",
       data: {
-        results: ["boom", { ok: 2 }],
+        results: [mappedFailure, { ok: 2 }],
         count: 2,
         skipped: true,
       },
@@ -154,10 +162,34 @@ describe("markCollectSkippedOnForEachFailure", () => {
     expect([...attempted]).toEqual(["collect-1"]);
     expect(results["collect-1"]?.success).toBe(false);
     expect(results["collect-1"]?.data).toEqual({
-      results: ["boom"],
+      results: [mappedFailure],
       count: 1,
       skipped: true,
     });
+  });
+});
+
+describe("resolveBodyFailureNodeId", () => {
+  it("prefers nested summary firstFailureNodeId over the bodyResults key", () => {
+    expect(
+      resolveBodyFailureNodeId([
+        "inner-fe",
+        {
+          success: false,
+          error: "inner body failed",
+          data: {
+            firstFailureNodeId: "fail-step",
+            failedIterations: 1,
+          },
+        },
+      ])
+    ).toBe("fail-step");
+  });
+
+  it("falls back to the bodyResults key when summary has no firstFailureNodeId", () => {
+    expect(
+      resolveBodyFailureNodeId(["step-a", { success: false, error: "boom" }])
+    ).toBe("step-a");
   });
 });
 
@@ -193,7 +225,7 @@ describe("settleForEachPostLoop", () => {
     expect(onAggregateCollect).not.toHaveBeenCalled();
     expect(onDoneTargets).not.toHaveBeenCalled();
     expect(results["collect-1"]?.data).toEqual({
-      results: ["boom"],
+      results: [mappedFailure],
       count: 1,
       skipped: true,
     });
@@ -321,12 +353,12 @@ describe("settleForEachPostLoop", () => {
     expect(visited.has("collect-1")).toBe(true);
     expect(attempted.has("collect-1")).toBe(true);
     expect(results["collect-1"]?.data).toEqual({
-      results: ["boom"],
+      results: [mappedFailure],
       count: 1,
       skipped: true,
     });
     expect(Object.values(results).at(-1)?.data).toEqual({
-      results: ["boom"],
+      results: [mappedFailure],
       count: 1,
       skipped: true,
     });
