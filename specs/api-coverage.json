@@ -146,7 +146,7 @@
       "path": "/api/execute/{executionId}/status",
       "route_file": "app/api/execute/[executionId]/status/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 1147
+      "line": 1163
     },
     {
       "method": "GET",
@@ -552,7 +552,7 @@
       "path": "/api/workflows/{workflowId}/simulate",
       "route_file": "app/api/workflows/[workflowId]/simulate/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 1332
+      "line": 1348
     },
     {
       "method": "POST",

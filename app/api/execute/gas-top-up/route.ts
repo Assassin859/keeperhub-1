@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { parseUnits } from "viem";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
@@ -14,6 +15,8 @@ import {
   isOrgHalted,
   ORG_HALTED_REASON,
 } from "@/lib/execute/org-circuit-breaker";
+import { getDefaultDailyGasTopUpCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
+import { sumOrgGasTopUpTodayMicroUsd } from "@/lib/execute/value-ledger";
 import { HttpStatus, type HttpStatusCode } from "@/lib/http-status";
 import {
   beginIdempotentFromRequest,
@@ -63,6 +66,7 @@ type GasTopUpResponse = ExecuteResponse &
     | "quotedWethOut"
     | "amountOutMinimum"
     | "sponsored"
+    | "warning"
   > & { chainId: number; wallet: string };
 
 /**
@@ -96,12 +100,16 @@ async function settle(
   if (result.success) {
     // KEEP-966: the final (unwrap) hash is re-verified on chain; its verdict,
     // not result.success, is what the response and idempotency record carry.
+    // completeExecution persists only `output`, so the link rides inside it
+    // for the status endpoint to read back.
     return await completeExecution(executionId, {
       transactionHash: result.finalTransactionHash,
       transactionLink: result.finalTransactionLink,
       chainId: result.chainId,
       gasUsedWei: result.gasUsedWei,
-      output,
+      output: result.finalTransactionLink
+        ? { ...output, transactionLink: result.finalTransactionLink }
+        : output,
     });
   }
   const error = result.error ?? "Gas top-up failed";
@@ -110,6 +118,7 @@ async function settle(
   // leave a stopped sequence reading as in-flight.
   const settled = await failExecution(executionId, error, {
     transactionHash: result.failure?.transactionHash,
+    transactionLink: result.failure?.transactionLink,
     chainId: result.chainId,
     sponsored: true,
     broadcastAttempted: result.failure?.broadcastAttempted,
@@ -126,15 +135,15 @@ function buildResponse(
 ): GasTopUpResponse {
   const transactionHash =
     result.finalTransactionHash ?? result.failure?.transactionHash;
+  const transactionLink =
+    result.finalTransactionLink ?? result.failure?.transactionLink;
   return {
     executionId,
     status: outcome.status,
     chainId: result.chainId,
     wallet: result.wallet,
     ...(transactionHash ? { transactionHash } : {}),
-    ...(result.finalTransactionLink
-      ? { transactionLink: result.finalTransactionLink }
-      : {}),
+    ...(transactionLink ? { transactionLink } : {}),
     steps: result.steps,
     ...(result.usdcSpent === undefined ? {} : { usdcSpent: result.usdcSpent }),
     ...(result.ethReceived ? { ethReceived: result.ethReceived } : {}),
@@ -144,6 +153,7 @@ function buildResponse(
       ? { amountOutMinimum: result.amountOutMinimum }
       : {}),
     sponsored: true,
+    ...(result.warning ? { warning: result.warning } : {}),
     ...(outcome.error ? { error: outcome.error } : {}),
     ...(result.failure?.errorClass
       ? { errorClass: result.failure.errorClass }
@@ -231,9 +241,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     return applyRateLimitHeaders(walletError, rateLimit);
   }
 
-  // checkAndReserveExecution only consults the breaker when native value is
-  // reserved, and this route reserves 0 (the USDC leaves as a token, the ETH
-  // arrives rather than leaves), so the breaker is checked here explicitly.
+  // checkAndReserveExecution checks the breaker again under the cap lock; this
+  // earlier check refuses a halted org before any RPC, quote or Turnkey work.
   if (await isOrgHalted(db, organizationId)) {
     logSecurityEvent("org_circuit_breaker_blocked", {
       organizationId,
@@ -247,6 +256,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
       rateLimit
     );
+  }
+
+  const concurrency = await enforceDirectExecutionConcurrency(organizationId);
+  if (concurrency) {
+    return concurrency;
   }
 
   const preparation = await prepareGasTopUp({
@@ -268,11 +282,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const concurrency = await enforceDirectExecutionConcurrency(organizationId);
-  if (concurrency) {
-    return concurrency;
-  }
-
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId,
@@ -289,14 +298,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
+  // amountUsdc is validated to at most 6 decimals, so this is exact.
+  const amountMicroUsd = parseUnits(amountUsdc, 6);
   const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId: apiKeyCtx.apiKeyId,
     type: "gas-top-up",
     network: String(chainId),
-    input: redactInput(body),
+    input: { ...redactInput(body), amountMicroUsd: amountMicroUsd.toString() },
     reserved: { kind: "evm", valueWei: "0" },
     paygOverflow: executionGuard.limitResult?.paygOverflow === true,
+    stablecoinDaily: {
+      amountMicroUsd,
+      capMicroUsd: BigInt(getDefaultDailyGasTopUpCapMicroUsd()),
+      sumTodayMicroUsd: sumOrgGasTopUpTodayMicroUsd,
+      label: "gas top-up",
+    },
   });
   if (!reserve.allowed) {
     return applyRateLimitHeaders(

@@ -53,8 +53,10 @@ vi.mock("../../app/api/execute/_lib/spending-cap", () => ({
     checkAndReserveExecutionMock(params),
 }));
 
+const enforceConcurrencyMock = vi.fn();
 vi.mock("../../app/api/execute/_lib/concurrency-limit", () => ({
-  enforceDirectExecutionConcurrency: vi.fn().mockResolvedValue(null),
+  enforceDirectExecutionConcurrency: (orgId: string) =>
+    enforceConcurrencyMock(orgId),
 }));
 
 const completeExecutionMock = vi.fn();
@@ -139,6 +141,7 @@ beforeEach(() => {
   enforceExecutionLimitMock.mockResolvedValue({ blocked: false });
   requireWalletMock.mockResolvedValue(null);
   isOrgHaltedMock.mockResolvedValue(false);
+  enforceConcurrencyMock.mockResolvedValue(null);
   prepareMock.mockResolvedValue({ ok: true, plan: PLAN });
   executeMock.mockResolvedValue(successResult);
   checkAndReserveExecutionMock.mockResolvedValue({
@@ -173,11 +176,24 @@ describe("POST /api/execute/gas-top-up", () => {
       expect.objectContaining({
         type: "gas-top-up",
         reserved: { kind: "evm", valueWei: "0" },
+        // The day's total is summed from this field, so it must be exact.
+        input: expect.objectContaining({ amountMicroUsd: "5000000" }),
+        stablecoinDaily: expect.objectContaining({
+          amountMicroUsd: BigInt(5_000_000),
+          capMicroUsd: BigInt(200_000_000),
+        }),
       })
     );
+    // The status endpoint reads the link back from the stored output.
     expect(completeExecutionMock).toHaveBeenCalledWith(
       "exec_1",
-      expect.objectContaining({ transactionHash: "0xu", chainId: 8453 })
+      expect.objectContaining({
+        transactionHash: "0xu",
+        chainId: 8453,
+        output: expect.objectContaining({
+          transactionLink: "https://basescan.org/tx/0xu",
+        }),
+      })
     );
   });
 
@@ -187,6 +203,20 @@ describe("POST /api/execute/gas-top-up", () => {
     const response = await post({ chainId: 8453, amountUsdc: "5" });
 
     expect(response.status).toBe(403);
+    expect(prepareMock).not.toHaveBeenCalled();
+    expect(checkAndReserveExecutionMock).not.toHaveBeenCalled();
+    expect(executeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses at the concurrency limit before any RPC, quote or Turnkey work", async () => {
+    enforceConcurrencyMock.mockResolvedValue(
+      NextResponse.json({ error: "Too many in-flight" }, { status: 429 })
+    );
+
+    const response = await post({ chainId: 8453, amountUsdc: "5" });
+
+    expect(response.status).toBe(429);
+    expect(enforceConcurrencyMock).toHaveBeenCalledWith("org_1");
     expect(prepareMock).not.toHaveBeenCalled();
     expect(checkAndReserveExecutionMock).not.toHaveBeenCalled();
     expect(executeMock).not.toHaveBeenCalled();
@@ -323,6 +353,7 @@ describe("POST /api/execute/gas-top-up", () => {
         step: "unwrap",
         error: "the swapped WETH is left unwrapped",
         transactionHash: "0xu",
+        transactionLink: "https://basescan.org/tx/0xu",
         broadcastAttempted: true,
       },
     });
@@ -335,6 +366,7 @@ describe("POST /api/execute/gas-top-up", () => {
       usdcSpent: "5",
       wethReceived: "0.001",
       transactionHash: "0xu",
+      transactionLink: "https://basescan.org/tx/0xu",
     });
     expect(body.steps.map((s: { status: string }) => s.status)).toEqual([
       "confirmed",
@@ -349,6 +381,7 @@ describe("POST /api/execute/gas-top-up", () => {
       "the swapped WETH is left unwrapped",
       expect.objectContaining({
         transactionHash: "0xu",
+        transactionLink: "https://basescan.org/tx/0xu",
         chainId: 8453,
         sponsored: true,
         output: expect.objectContaining({ swapLanded: true }),

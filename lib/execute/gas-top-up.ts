@@ -4,16 +4,21 @@ import { and, eq } from "drizzle-orm";
 import {
   type Abi,
   type Address,
+  decodeEventLog,
   decodeFunctionResult,
   encodeFunctionData,
   formatUnits,
   getAddress,
   type Hex,
   isAddress,
+  isAddressEqual,
+  parseAbiItem,
   parseUnits,
+  toEventSelector,
 } from "viem";
 import { checkGasCredits } from "@/lib/billing/gas-credits";
 import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
+import { getChainTokens } from "@/lib/contracts/tokens";
 import { db } from "@/lib/db";
 import { explorerConfigs, supportedTokens } from "@/lib/db/schema";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
@@ -23,6 +28,7 @@ import {
 } from "@/lib/execute/gas-top-up-chains";
 import { checkStablecoinTransferAmount } from "@/lib/execute/stablecoin-cap";
 import { getTransactionUrl } from "@/lib/explorer";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
@@ -45,6 +51,13 @@ const erc20Abi = erc20AbiJson as Abi;
 const quoterAbi = quoterAbiJson as Abi;
 const swapRouterAbi = swapRouterAbiJson as Abi;
 const wethAbi = wethAbiJson as Abi;
+// SwapRouter02's exactInputSingle has no deadline of its own; its
+// MulticallExtended entry point reverts once block.timestamp passes it.
+const swapRouterMulticallAbi = [
+  parseAbiItem(
+    "function multicall(uint256 deadline, bytes[] data) payable returns (bytes[] results)"
+  ),
+] as const;
 
 /**
  * The USDC/WETH pool each chain swaps through. 0.05% is the deepest USDC/WETH
@@ -60,8 +73,10 @@ const POOL_FEE: Readonly<Record<GasTopUpChainId, number>> = {
 };
 
 /** Same default the Tempo DEX swap applies (plugins/tempo/steps/dex-swap.ts). */
-export const GAS_TOP_UP_SLIPPAGE_BPS = 50;
+const GAS_TOP_UP_SLIPPAGE_BPS = 50;
 const BPS_DENOMINATOR = 10_000;
+/** A swap still in the mempool this long after the quote is not executed. */
+const GAS_TOP_UP_DEADLINE_SECONDS = 600;
 const WETH_DECIMALS = 18;
 const LOG_PREFIX = "[Gas Top-up]";
 const ACTION_NAME = "gas-top-up";
@@ -113,12 +128,23 @@ export function resolveGasTopUpContracts(
 
 type UsdcToken = { address: Address; decimals: number };
 
+/**
+ * The address is pinned to canonical USDC from the static token list; a
+ * `supported_tokens` row is matched by that address, never by symbol, so a
+ * second row labelled USDC cannot redirect the swap to another token. The
+ * row must exist (the stablecoin cap meters it) and supplies the decimals.
+ */
 async function resolveUsdc(chainId: number): Promise<UsdcToken | null> {
+  const canonical = getChainTokens(chainId).find(
+    (token) => token.symbol === "USDC"
+  );
+  if (!canonical) {
+    return null;
+  }
   const rows = await db
     .select({
       tokenAddress: supportedTokens.tokenAddress,
       decimals: supportedTokens.decimals,
-      symbol: supportedTokens.symbol,
     })
     .from(supportedTokens)
     .where(
@@ -129,13 +155,12 @@ async function resolveUsdc(chainId: number): Promise<UsdcToken | null> {
     );
   const row = rows.find(
     (candidate) =>
-      candidate.symbol.toUpperCase() === "USDC" &&
-      isAddress(candidate.tokenAddress)
+      candidate.tokenAddress.toLowerCase() === canonical.address.toLowerCase()
   );
   if (!row) {
     return null;
   }
-  return { address: getAddress(row.tokenAddress), decimals: row.decimals };
+  return { address: getAddress(canonical.address), decimals: row.decimals };
 }
 
 export type GasTopUpPlan = {
@@ -199,7 +224,7 @@ export async function prepareGasTopUp(params: {
     return {
       ok: false,
       code: "USDC_NOT_CONFIGURED",
-      error: `USDC is not a supported stablecoin on chain ${chainId}`,
+      error: `Canonical USDC is not a supported stablecoin on chain ${chainId}`,
       field: "chainId",
     };
   }
@@ -308,6 +333,7 @@ export type GasTopUpFailure = {
   step: GasTopUpStepName | "preflight";
   error: string;
   transactionHash?: string;
+  transactionLink?: string;
   broadcastAttempted: boolean;
   errorClass?: ExecutionErrorType;
 };
@@ -331,6 +357,8 @@ export type GasTopUpResult = {
   gasUsedWei: string;
   finalTransactionHash?: string;
   finalTransactionLink?: string;
+  /** Set when the run completed but part of the output may remain as WETH. */
+  warning?: string;
   error?: string;
   failure?: GasTopUpFailure;
 };
@@ -346,6 +374,7 @@ type SendOutcome =
       kind: "failed";
       error: string;
       transactionHash?: string;
+      transactionLink?: string;
       broadcastAttempted: boolean;
       /** Broadcast but unconfirmed: it may still land. */
       pending?: boolean;
@@ -424,6 +453,9 @@ async function sendSponsored(params: {
           kind: "failed",
           error: decision.error,
           transactionHash: decision.transactionHash,
+          transactionLink: decision.transactionHash
+            ? await buildTransactionLink(plan.chainId, decision.transactionHash)
+            : undefined,
           broadcastAttempted: true,
           pending: isSponsoredTxPendingError(error),
           errorClass: decision.errorClass,
@@ -463,7 +495,7 @@ async function readBalance(
  * amounts), so this reads the pool's price at the moment of the request.
  * Tuple order differs from the router's: amountIn precedes fee here.
  */
-export async function quoteUsdcToWeth(
+async function quoteUsdcToWeth(
   rpcManager: RpcProviderManager,
   plan: GasTopUpPlan
 ): Promise<bigint> {
@@ -489,6 +521,83 @@ export async function quoteUsdcToWeth(
     data: raw as Hex,
   }) as readonly [bigint, bigint, number, bigint];
   return decoded[0];
+}
+
+const TRANSFER_EVENT = parseAbiItem(
+  "event Transfer(address indexed from, address indexed to, uint256 value)"
+);
+const TRANSFER_TOPIC = toEventSelector(TRANSFER_EVENT);
+
+type ReceiptLog = {
+  address: string;
+  topics: readonly string[];
+  data: string;
+};
+
+/**
+ * WETH the swap paid to the wallet, read from its own receipt: the sum of
+ * WETH Transfer events to `wallet`. Exact, and unaffected by WETH the wallet
+ * held before or received from elsewhere in the meantime.
+ */
+export function wethReceivedFromLogs(
+  logs: readonly ReceiptLog[],
+  weth: Address,
+  wallet: Address
+): bigint {
+  let total = BigInt(0);
+  for (const log of logs) {
+    if (
+      !(
+        isAddress(log.address) &&
+        isAddressEqual(log.address, weth) &&
+        log.topics[0]?.toLowerCase() === TRANSFER_TOPIC &&
+        log.topics.length === 3
+      )
+    ) {
+      continue;
+    }
+    const decoded = decodeEventLog({
+      abi: [TRANSFER_EVENT],
+      data: log.data as Hex,
+      topics: log.topics as [Hex, ...Hex[]],
+    });
+    if (isAddressEqual(decoded.args.to, wallet)) {
+      total += decoded.args.value;
+    }
+  }
+  return total;
+}
+
+type SwapOutput = { ok: true; amount: bigint } | { ok: false; error: unknown };
+
+async function readSwapWethReceived(
+  rpcManager: RpcProviderManager,
+  plan: GasTopUpPlan,
+  swapHash: string
+): Promise<SwapOutput> {
+  try {
+    const receipt = await rpcManager.executeWithFailover(
+      (provider) => provider.getTransactionReceipt(swapHash),
+      "read"
+    );
+    if (!receipt) {
+      return { ok: false, error: new Error("swap receipt not found") };
+    }
+    const amount = wethReceivedFromLogs(
+      receipt.logs,
+      plan.contracts.weth,
+      plan.wallet
+    );
+    if (amount === BigInt(0)) {
+      return {
+        ok: false,
+        error: new Error("swap receipt has no WETH transfer to the wallet"),
+      };
+    }
+    return { ok: true, amount };
+  } catch (error) {
+    return { ok: false, error };
+  }
 }
 
 function skippedSteps(from: GasTopUpStepName): GasTopUpStep[] {
@@ -517,10 +626,10 @@ function partialMessage(
 }
 
 /**
- * approve(exact amount) -> exactInputSingle(recipient = wallet, floor from a
- * same-request quote) -> WETH.withdraw(received). Three separate sponsored
- * transactions: SwapRouter02's registered ABI has no multicall/unwrapWETH9, so
- * the sequence can stop part-way, and the result says exactly where.
+ * approve(exact amount) -> multicall(deadline, [exactInputSingle(recipient =
+ * wallet, floor from a same-request quote)]) -> WETH.withdraw(received). Three
+ * separate sponsored transactions, so the sequence can stop part-way, and the
+ * result says exactly where.
  */
 export async function executeGasTopUp(params: {
   plan: GasTopUpPlan;
@@ -585,17 +694,6 @@ export async function executeGasTopUp(params: {
     amountOutMinimum: amountOutMinimum.toString(),
   };
 
-  let wethBefore: bigint | null = null;
-  try {
-    wethBefore = await readBalance(
-      rpcManager,
-      plan.contracts.weth,
-      plan.wallet
-    );
-  } catch {
-    wethBefore = null;
-  }
-
   const stop = (
     step: GasTopUpStepName,
     outcome: Extract<SendOutcome, { kind: "failed" }>,
@@ -621,6 +719,9 @@ export async function executeGasTopUp(params: {
           ...(outcome.transactionHash
             ? { transactionHash: outcome.transactionHash }
             : {}),
+          ...(outcome.transactionLink
+            ? { transactionLink: outcome.transactionLink }
+            : {}),
           error: outcome.error,
         },
         ...(next ? skippedSteps(next) : []),
@@ -636,6 +737,7 @@ export async function executeGasTopUp(params: {
         step,
         error,
         transactionHash: outcome.transactionHash,
+        transactionLink: outcome.transactionLink,
         broadcastAttempted: outcome.broadcastAttempted,
         errorClass: outcome.errorClass,
       },
@@ -663,11 +765,7 @@ export async function executeGasTopUp(params: {
     transactionLink: approve.transactionLink,
   });
 
-  const swap = await sendSponsored({
-    plan,
-    executionId,
-    rpcUrl,
-    to: plan.contracts.router,
+  const exactInputSingle = encodeFunctionData({
     abi: swapRouterAbi,
     functionName: "exactInputSingle",
     args: [
@@ -682,6 +780,18 @@ export async function executeGasTopUp(params: {
       },
     ],
   });
+  const deadline = BigInt(
+    Math.floor(Date.now() / 1000) + GAS_TOP_UP_DEADLINE_SECONDS
+  );
+  const swap = await sendSponsored({
+    plan,
+    executionId,
+    rpcUrl,
+    to: plan.contracts.router,
+    abi: swapRouterMulticallAbi as unknown as Abi,
+    functionName: "multicall",
+    args: [deadline, [exactInputSingle]],
+  });
   if (swap.kind === "failed") {
     return stop("swap", swap);
   }
@@ -693,25 +803,32 @@ export async function executeGasTopUp(params: {
     transactionLink: swap.transactionLink,
   });
 
-  // The router enforces amountOutMinimum, so the wallet received at least
-  // that much. The balance delta is the exact figure; when it cannot be read,
-  // or reads below the floor because something else moved WETH meanwhile, the
-  // floor is the amount known to have arrived and is what gets unwrapped.
-  let wethReceived = amountOutMinimum;
-  if (wethBefore !== null) {
-    try {
-      const wethAfter = await readBalance(
-        rpcManager,
-        plan.contracts.weth,
-        plan.wallet
-      );
-      const delta = wethAfter - wethBefore;
-      if (delta > amountOutMinimum) {
-        wethReceived = delta;
+  // The router enforces amountOutMinimum, so at least the floor arrived. The
+  // swap's own receipt gives the exact figure. If it cannot be read, the floor
+  // is unwrapped and the shortfall is reported and logged, never passed off as
+  // the whole output.
+  let wethReceived: bigint;
+  let warning: string | undefined;
+  const swapOutput = await readSwapWethReceived(
+    rpcManager,
+    plan,
+    swap.transactionHash
+  );
+  if (swapOutput.ok) {
+    wethReceived = swapOutput.amount;
+  } else {
+    wethReceived = amountOutMinimum;
+    warning = `The exact swap output could not be read (${getErrorMessage(swapOutput.error)}), so the guaranteed minimum of ${formatUnits(amountOutMinimum, WETH_DECIMALS)} WETH was unwrapped. Any WETH the swap delivered above that minimum remains in the wallet; unwrap it with the wrapped/unwrap protocol action.`;
+    logSystemWarn(
+      ErrorCategory.NETWORK_RPC,
+      `${LOG_PREFIX} Could not read the swap's WETH output; unwrapping the minimum`,
+      swapOutput.error,
+      {
+        chain_id: String(plan.chainId),
+        execution_id: executionId,
+        transaction_hash: swap.transactionHash,
       }
-    } catch {
-      wethReceived = amountOutMinimum;
-    }
+    );
   }
 
   const swapLandedFields: Partial<GasTopUpResult> = {
@@ -719,6 +836,7 @@ export async function executeGasTopUp(params: {
     swapLanded: true,
     wethReceived: formatUnits(wethReceived, WETH_DECIMALS),
     broadcastAttempted: true,
+    ...(warning ? { warning } : {}),
   };
 
   const unwrap = await sendSponsored({
@@ -754,5 +872,6 @@ export async function executeGasTopUp(params: {
     gasUsedWei: gasUsedWei.toString(),
     finalTransactionHash: unwrap.transactionHash,
     finalTransactionLink: unwrap.transactionLink,
+    ...(warning ? { warning } : {}),
   };
 }

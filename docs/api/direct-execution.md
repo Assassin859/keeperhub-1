@@ -797,9 +797,12 @@ Turnkey EOA:
 2. `exactInputSingle` USDC to WETH, with the wallet as recipient. The minimum
    output is set server-side from a Uniswap QuoterV2 `quoteExactInputSingle`
    call taken in the same request, less 0.5%. A zero or failed quote refuses
-   the request before anything is sent.
-3. `withdraw` on WETH for the amount the swap delivered, which pays native ETH
-   to the wallet.
+   the request before anything is sent. The swap goes through the router's
+   `multicall` with a deadline 10 minutes after the quote, so a swap left in
+   the mempool past that reverts instead of filling at a stale price.
+3. `withdraw` on WETH for the amount the swap delivered, read from the swap's
+   own receipt, which pays native ETH to the wallet. WETH the wallet already
+   held is left alone.
 
 Requires `mcp:write`. There is no dry-run mode: `simulate` is refused.
 
@@ -829,11 +832,19 @@ Checked before an execution is reserved or anything is sent:
 | `400` | Unsupported chain, invalid amount, unknown field, or `simulate` present |
 | `403` | Organization circuit breaker engaged |
 | `403` | `amountUsdc` above the per-call stablecoin cap (100 USD by default) |
+| `403` | `amountUsdc` would take the organization past its daily gas top-up limit (200 USD per UTC day by default). The error gives the amount used today, the amount requested, and the limit |
 | `422` | Gas sponsorship unavailable: not enabled on the chain, credits exhausted, or no Turnkey wallet. The route never falls back to self-paid gas |
-| `422` | `WALLET_NOT_CONFIGURED`, or USDC is not a supported stablecoin on the chain |
+| `422` | `WALLET_NOT_CONFIGURED`, or the chain's canonical USDC is not a supported stablecoin |
 
 An insufficient USDC balance or a failed quote is reported after the execution
 is reserved, as `202` with `status: "failed"` and no transaction sent.
+
+The daily limit counts completed, unconfirmed and in-flight top-ups, and any
+failed top-up whose swap landed (its USDC is spent). It is checked atomically
+with the reservation, so concurrent requests cannot both fit under the last of
+the day's allowance. Self-hosted deployments can change it with
+`EXECUTE_DEFAULT_DAILY_GAS_TOP_UP_CAP_MICRO_USD` (micro-USD, so `200000000` is
+200 USD).
 
 ### Response
 
@@ -861,6 +872,11 @@ is reserved, as `202` with `status: "failed"` and no transaction sent.
 
 `transactionHash` is the unwrap transaction on success. `quotedWethOut` and
 `amountOutMinimum` are in wei.
+
+If the swap's receipt cannot be read, the route unwraps `amountOutMinimum`,
+which the swap is guaranteed to have delivered, and the response carries a
+`warning`: any WETH above that minimum stays in the wallet. Unwrap it with the
+`wrapped/unwrap` protocol action.
 
 ### Partial completion
 
