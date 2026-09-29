@@ -501,6 +501,7 @@ describe("redactExecutionStatusForPublicView", () => {
   it("strips node-identifying fields from public payloads", () => {
     const payload = {
       status: "error",
+      pollIntervalHint: 0,
       nodeStatuses: [{ nodeId: "n1", status: "error" as const }],
       progress: {
         totalSteps: 1,
@@ -533,6 +534,7 @@ describe("redactExecutionStatusForPublicView", () => {
 
     const redacted = redactExecutionStatusForPublicView(payload);
 
+    expect(redacted.pollIntervalHint).toBe(0);
     expect(redacted.nodeStatuses).toEqual([{ nodeId: "", status: "error" }]);
     expect(redacted.progress.currentNodeId).toBeNull();
     expect(redacted.progress.currentNodeName).toBeNull();
