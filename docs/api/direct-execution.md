@@ -774,6 +774,110 @@ The request field is `condition` and the response field is `conditionResult`, on
 both the broadcast and the `simulate: true` paths. A parser written once against
 this endpoint works for both.
 
+## Gas Top-Up
+
+```http
+POST /api/execute/gas-top-up
+```
+
+Convert USDC in the organization's Turnkey wallet into native ETH on that same
+wallet. Gas sponsorship pays network fees only; it does not give the wallet
+spendable ETH. Use this route when the wallet holds USDC but needs native
+balance, for example for ETH value transfers, withdrawals, or writes that fall
+back to self-paid gas.
+
+This is not the pay-as-you-go billing top-up. Sending USDC to the organization
+wallet for billing pays for executions and KeeperHub covers gas; this route
+converts the wallet's own USDC into ETH that stays in the wallet.
+
+The route sends three gas-sponsored transactions from the organization's
+Turnkey EOA:
+
+1. `approve` exactly `amountUsdc` to Uniswap V3 SwapRouter02 (never unlimited).
+2. `exactInputSingle` USDC to WETH, with the wallet as recipient. The minimum
+   output is set server-side from a Uniswap QuoterV2 `quoteExactInputSingle`
+   call taken in the same request, less 0.5%. A zero or failed quote refuses
+   the request before anything is sent.
+3. `withdraw` on WETH for the amount the swap delivered, which pays native ETH
+   to the wallet.
+
+Requires `mcp:write`. There is no dry-run mode: `simulate` is refused.
+
+### Request Body
+
+```json
+{
+  "chainId": 8453,
+  "amountUsdc": "5"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `chainId` | number or numeric string | `1` (Ethereum), `8453` (Base), `42161` (Arbitrum), or `11155111` (Sepolia) |
+| `amountUsdc` | string | USDC to convert, positive, at most 6 decimal places |
+
+Any other field is rejected with `400`. There is no recipient parameter (the
+ETH always lands in the wallet that paid the USDC) and no slippage parameter.
+
+### Limits and refusals
+
+Checked before an execution is reserved or anything is sent:
+
+| Status | When |
+|---|---|
+| `400` | Unsupported chain, invalid amount, unknown field, or `simulate` present |
+| `403` | Organization circuit breaker engaged |
+| `403` | `amountUsdc` above the per-call stablecoin cap (100 USD by default) |
+| `422` | Gas sponsorship unavailable: not enabled on the chain, credits exhausted, or no Turnkey wallet. The route never falls back to self-paid gas |
+| `422` | `WALLET_NOT_CONFIGURED`, or USDC is not a supported stablecoin on the chain |
+
+An insufficient USDC balance or a failed quote is reported after the execution
+is reserved, as `202` with `status: "failed"` and no transaction sent.
+
+### Response
+
+```json
+{
+  "executionId": "k72596auc9fwidsvm8jxu",
+  "status": "completed",
+  "chainId": 8453,
+  "wallet": "0xc63a364f8bbaa6be263f577762e7c180a68b9fac",
+  "transactionHash": "0x...",
+  "transactionLink": "https://basescan.org/tx/0x...",
+  "steps": [
+    { "name": "approve", "status": "confirmed", "transactionHash": "0x..." },
+    { "name": "swap", "status": "confirmed", "transactionHash": "0x..." },
+    { "name": "unwrap", "status": "confirmed", "transactionHash": "0x..." }
+  ],
+  "usdcSpent": "5",
+  "wethReceived": "0.0019",
+  "ethReceived": "0.0019",
+  "quotedWethOut": "1909500000000000",
+  "amountOutMinimum": "1899952500000000",
+  "sponsored": true
+}
+```
+
+`transactionHash` is the unwrap transaction on success. `quotedWethOut` and
+`amountOutMinimum` are in wei.
+
+### Partial completion
+
+The three transactions are separate, so a run can stop after one or two. The
+response says which landed: each entry in `steps` is `confirmed`, `failed`, or
+`skipped`. `error` explains what state the wallet is left in:
+
+- Approve failed: no USDC was spent.
+- Swap failed: no USDC was spent; an approval for exactly `amountUsdc` remains.
+- Unwrap failed: the USDC is spent and the WETH is left unwrapped in the
+  wallet. `usdcSpent` and `wethReceived` are set, `ethReceived` is not.
+
+Once the swap has confirmed, a retry with the same `Idempotency-Key` replays the
+stored result rather than swapping again. Do not call again with a new key to
+finish a partial run: the USDC is already spent. Unwrap the remaining WETH with
+the `wrapped/unwrap` protocol action instead.
+
 ## Dry-Run Simulation
 
 All three execute endpoints (`/api/execute/transfer`, `/api/execute/contract-call`, `/api/execute/check-and-execute`) accept a `simulate` flag on the body. When set to boolean `true`, the endpoint validates inputs, resolves the org's from-address, encodes the call, and runs `provider.estimateGas` + `provider.call` against the chain — **without** signing or broadcasting a transaction.
