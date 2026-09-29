@@ -1,0 +1,560 @@
+import {
+  type Abi,
+  decodeFunctionData,
+  encodeFunctionResult,
+  getAddress,
+  type Hex,
+} from "viem";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
+import quoterAbiJson from "@/protocols/abis/uniswap-quoter.json";
+
+vi.mock("server-only", () => ({}));
+
+const BASE = 8453;
+const WALLET = getAddress("0x1111111111111111111111111111111111111111");
+const USDC = getAddress("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913");
+const WETH = getAddress("0x4200000000000000000000000000000000000006");
+const ROUTER = getAddress("0x2626664c2603336E57B271c5C0b26F421741e481");
+const QUOTER = getAddress("0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a");
+
+const erc20Abi = erc20AbiJson as Abi;
+const quoterAbi = quoterAbiJson as Abi;
+
+const chain = vi.hoisted(() => ({
+  balances: new Map<string, bigint>(),
+  quote: BigInt(0) as bigint,
+  quoteThrows: false,
+  tokenRows: [] as Array<{
+    tokenAddress: string;
+    decimals: number;
+    symbol: string;
+  }>,
+}));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { TRANSACTION: "transaction", VALIDATION: "validation" },
+  logUserError: vi.fn(),
+  logSystemWarn: vi.fn(),
+  logSecurityEvent: vi.fn(),
+}));
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    select: () => ({
+      from: () => ({ where: () => Promise.resolve(chain.tokenRows) }),
+    }),
+    query: {
+      explorerConfigs: {
+        findFirst: () => Promise.resolve({ chainId: 8453 }),
+      },
+    },
+  },
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  explorerConfigs: { chainId: "chainId" },
+  supportedTokens: {
+    chainId: "chainId",
+    isStablecoin: "isStablecoin",
+    tokenAddress: "tokenAddress",
+    decimals: "decimals",
+    symbol: "symbol",
+  },
+}));
+
+vi.mock("drizzle-orm", () => ({ eq: () => ({}), and: () => ({}) }));
+
+vi.mock("@/lib/explorer", () => ({
+  getTransactionUrl: (_config: unknown, hash: string) =>
+    `https://basescan.org/tx/${hash}`,
+}));
+
+vi.mock("@/lib/utils", async () =>
+  (await import("../mocks/step-mocks")).utilsGetErrorMessage()
+);
+
+const mockCheckCap = vi.fn();
+vi.mock("@/lib/execute/stablecoin-cap", () => ({
+  checkStablecoinTransferAmount: (...args: unknown[]) => mockCheckCap(...args),
+}));
+
+const mockResolveSigner = vi.fn();
+vi.mock("@/lib/safe/signer-resolver", () => ({
+  resolveSignerForNode: (...args: unknown[]) => mockResolveSigner(...args),
+}));
+
+const mockShouldTrySponsorship = vi.fn();
+vi.mock("@/lib/web3/sponsorship-eligibility", () => ({
+  shouldTrySponsorship: (...args: unknown[]) =>
+    mockShouldTrySponsorship(...args),
+}));
+
+const mockCheckGasCredits = vi.fn();
+vi.mock("@/lib/billing/gas-credits", () => ({
+  checkGasCredits: (...args: unknown[]) => mockCheckGasCredits(...args),
+}));
+
+const mockCreateSponsoredClient = vi.fn();
+vi.mock("@/lib/web3/sponsored-client", () => ({
+  createSponsoredClient: (...args: unknown[]) =>
+    mockCreateSponsoredClient(...args),
+}));
+
+const mockSponsoredSend = vi.fn();
+vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({
+  executeSponsoredContractTransaction: (...args: unknown[]) =>
+    mockSponsoredSend(...args),
+}));
+
+function balanceKey(token: string, owner: string): string {
+  return `${token.toLowerCase()}:${owner.toLowerCase()}`;
+}
+
+const fakeProvider = {
+  call: ({ to, data }: { to: string; data: Hex }): Promise<Hex> => {
+    if (to.toLowerCase() === QUOTER.toLowerCase()) {
+      if (chain.quoteThrows) {
+        return Promise.reject(new Error("execution reverted"));
+      }
+      return Promise.resolve(
+        encodeFunctionResult({
+          abi: quoterAbi,
+          functionName: "quoteExactInputSingle",
+          result: [chain.quote, BigInt(0), 0, BigInt(0)],
+        })
+      );
+    }
+    const { args } = decodeFunctionData({ abi: erc20Abi, data });
+    const owner = String(args?.[0]);
+    return Promise.resolve(
+      encodeFunctionResult({
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        result: chain.balances.get(balanceKey(to, owner)) ?? BigInt(0),
+      })
+    );
+  },
+};
+
+vi.mock("@/lib/rpc/provider-factory", () => ({
+  getRpcProvider: () =>
+    Promise.resolve({
+      resolveActiveRpcUrl: () => Promise.resolve("https://rpc.example.com"),
+      executeWithFailover: <T>(op: (p: typeof fakeProvider) => Promise<T>) =>
+        op(fakeProvider),
+    }),
+}));
+
+const {
+  applySlippageFloor,
+  executeGasTopUp,
+  prepareGasTopUp,
+  resolveGasTopUpContracts,
+} = await import("@/lib/execute/gas-top-up");
+const { SponsoredTxPendingError, SponsoredTxRevertError } = await import(
+  "@/lib/web3/turnkey-revert"
+);
+
+const ONE_WETH = BigInt("1000000000000000000");
+const QUOTE = ONE_WETH / BigInt(1000);
+
+function confirmed(hash: string) {
+  return {
+    success: true,
+    transactionHash: hash,
+    gasUsed: "100",
+    gasUsedUnits: "50000",
+    effectiveGasPrice: "2",
+    sponsored: true,
+  };
+}
+
+/** Confirm every send; the swap credits `received` WETH to the wallet. */
+function sendsSucceed(received: bigint = QUOTE): void {
+  mockSponsoredSend.mockImplementation(
+    (params: { functionName: string; args: unknown[] }) => {
+      if (params.functionName === "exactInputSingle") {
+        const key = balanceKey(WETH, WALLET);
+        chain.balances.set(
+          key,
+          (chain.balances.get(key) ?? BigInt(0)) + received
+        );
+      }
+      return Promise.resolve(confirmed(`0x${params.functionName}`));
+    }
+  );
+}
+
+async function preparedPlan(amountUsdc = "5") {
+  const prepared = await prepareGasTopUp({
+    organizationId: "org-1",
+    chainId: BASE,
+    amountUsdc,
+  });
+  if (!prepared.ok) {
+    throw new Error(`prepare refused: ${prepared.error}`);
+  }
+  return prepared.plan;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  chain.balances = new Map([[balanceKey(USDC, WALLET), BigInt(50_000_000)]]);
+  chain.quote = QUOTE;
+  chain.quoteThrows = false;
+  chain.tokenRows = [
+    { tokenAddress: USDC.toLowerCase(), decimals: 6, symbol: "USDC" },
+  ];
+  mockCheckCap.mockResolvedValue({ kind: "allowed" });
+  mockResolveSigner.mockResolvedValue({ kind: "eoa", ownerAddress: WALLET });
+  mockShouldTrySponsorship.mockReturnValue(true);
+  mockCheckGasCredits.mockResolvedValue({ allowed: true, remainingCents: 1 });
+  mockCreateSponsoredClient.mockResolvedValue({
+    subOrgId: "sub-1",
+    walletAddress: WALLET.toLowerCase(),
+    chainId: BASE,
+  });
+  sendsSucceed();
+});
+
+describe("applySlippageFloor", () => {
+  it("takes 50 bps off the quote in bigint arithmetic", () => {
+    expect(applySlippageFloor(BigInt(10_000))).toBe(BigInt(9950));
+    expect(applySlippageFloor(ONE_WETH)).toBe(BigInt("995000000000000000"));
+  });
+
+  it("rounds down, never up", () => {
+    expect(applySlippageFloor(BigInt(1))).toBe(BigInt(0));
+    expect(applySlippageFloor(BigInt(201))).toBe(BigInt(199));
+  });
+});
+
+describe("resolveGasTopUpContracts", () => {
+  it("reads router, quoter and WETH from the protocol registry", () => {
+    expect(resolveGasTopUpContracts(BASE)).toEqual({
+      router: ROUTER,
+      quoter: QUOTER,
+      weth: WETH,
+      fee: 500,
+    });
+  });
+
+  it("resolves every supported chain", () => {
+    for (const chainId of [1, 8453, 42_161, 11_155_111] as const) {
+      expect(resolveGasTopUpContracts(chainId), String(chainId)).not.toBeNull();
+    }
+  });
+});
+
+describe("prepareGasTopUp", () => {
+  it("refuses an unsupported chain", async () => {
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: 10,
+      amountUsdc: "5",
+    });
+    expect(result).toMatchObject({ ok: false, code: "UNSUPPORTED_CHAIN" });
+  });
+
+  it("refuses when USDC is not in the stablecoin registry for the chain", async () => {
+    chain.tokenRows = [];
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "5",
+    });
+    expect(result).toMatchObject({ ok: false, code: "USDC_NOT_CONFIGURED" });
+  });
+
+  it("checks the full amount against the per-call stablecoin cap", async () => {
+    mockCheckCap.mockResolvedValue({
+      kind: "denied",
+      error:
+        "Stablecoin transfer of 250 USDC exceeds the 100 USD per-transaction limit",
+    });
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "250",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "STABLECOIN_CAP_EXCEEDED",
+      field: "amountUsdc",
+    });
+    expect(mockCheckCap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chainId: BASE,
+        tokenAddress: USDC,
+        amount: "250",
+      })
+    );
+    expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
+  });
+
+  it("pins the signer to the EOA", async () => {
+    await preparedPlan();
+    expect(mockResolveSigner).toHaveBeenCalledWith(
+      expect.objectContaining({ web3Connection: "eoa" })
+    );
+  });
+
+  it("fails closed when sponsorship is not available on the chain", async () => {
+    mockShouldTrySponsorship.mockReturnValue(false);
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "5",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "SPONSORSHIP_UNAVAILABLE",
+    });
+  });
+
+  it("fails closed when gas credits are exhausted", async () => {
+    mockCheckGasCredits.mockResolvedValue({
+      allowed: false,
+      reason: "cap reached",
+    });
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "5",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "SPONSORSHIP_UNAVAILABLE",
+    });
+  });
+
+  it("fails closed when there is no Turnkey wallet to sponsor", async () => {
+    mockCreateSponsoredClient.mockResolvedValue(null);
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "5",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "SPONSORSHIP_UNAVAILABLE",
+    });
+  });
+
+  it("uses the sponsored wallet as the plan wallet, in base units", async () => {
+    const plan = await preparedPlan("2.5");
+    expect(plan.wallet).toBe(WALLET);
+    expect(plan.amountIn).toBe(BigInt(2_500_000));
+  });
+});
+
+describe("executeGasTopUp", () => {
+  it("approves exactly amountIn, swaps to the wallet with the quoted floor, and unwraps what arrived", async () => {
+    const plan = await preparedPlan("5");
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(true);
+    expect(mockSponsoredSend).toHaveBeenCalledTimes(3);
+
+    const [approve, swap, unwrap] = mockSponsoredSend.mock.calls.map(
+      (call) => call[0]
+    );
+    expect(approve).toMatchObject({
+      executionId: "exec-1",
+      to: USDC,
+      functionName: "approve",
+      args: [ROUTER, BigInt(5_000_000)],
+    });
+    expect(swap).toMatchObject({
+      to: ROUTER,
+      functionName: "exactInputSingle",
+      args: [
+        {
+          tokenIn: USDC,
+          tokenOut: WETH,
+          fee: 500,
+          recipient: WALLET,
+          amountIn: BigInt(5_000_000),
+          amountOutMinimum: applySlippageFloor(QUOTE),
+          sqrtPriceLimitX96: BigInt(0),
+        },
+      ],
+    });
+    expect(unwrap).toMatchObject({
+      to: WETH,
+      functionName: "withdraw",
+      args: [QUOTE],
+    });
+
+    expect(result.steps.map((step) => [step.name, step.status])).toEqual([
+      ["approve", "confirmed"],
+      ["swap", "confirmed"],
+      ["unwrap", "confirmed"],
+    ]);
+    expect(result).toMatchObject({
+      usdcSpent: "5",
+      ethReceived: "0.001",
+      swapLanded: true,
+      sponsored: true,
+      gasUsedWei: "300",
+      finalTransactionHash: "0xwithdraw",
+      finalTransactionLink: "https://basescan.org/tx/0xwithdraw",
+      quotedWethOut: QUOTE.toString(),
+      amountOutMinimum: applySlippageFloor(QUOTE).toString(),
+    });
+  });
+
+  it("unwraps only the WETH the swap delivered, not WETH already held", async () => {
+    chain.balances.set(balanceKey(WETH, WALLET), ONE_WETH);
+    const plan = await preparedPlan();
+
+    await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    const unwrap = mockSponsoredSend.mock.calls[2]?.[0];
+    expect(unwrap.args).toEqual([QUOTE]);
+  });
+
+  it("refuses before sending anything when the quote is zero", async () => {
+    chain.quote = BigInt(0);
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.broadcastAttempted).toBe(false);
+    expect(result.failure).toMatchObject({
+      step: "preflight",
+      broadcastAttempted: false,
+    });
+    expect(mockSponsoredSend).not.toHaveBeenCalled();
+  });
+
+  it("refuses before sending anything when the quote fails", async () => {
+    chain.quoteThrows = true;
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Quote failed");
+    expect(mockSponsoredSend).not.toHaveBeenCalled();
+  });
+
+  it("refuses before sending anything when the wallet holds too little USDC", async () => {
+    chain.balances.set(balanceKey(USDC, WALLET), BigInt(1_000_000));
+    const plan = await preparedPlan("5");
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Insufficient USDC");
+    expect(mockSponsoredSend).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with no fallback when sponsorship declines the approve", async () => {
+    mockSponsoredSend.mockResolvedValue(null);
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(mockSponsoredSend).toHaveBeenCalledOnce();
+    expect(result.success).toBe(false);
+    expect(result.failure).toMatchObject({
+      step: "approve",
+      broadcastAttempted: false,
+    });
+    expect(result.steps.map((step) => step.status)).toEqual([
+      "failed",
+      "skipped",
+      "skipped",
+    ]);
+    expect(result.usdcSpent).toBe("0");
+  });
+
+  it("reports a reverted swap after a confirmed approve with no USDC spent", async () => {
+    mockSponsoredSend.mockImplementation((params: { functionName: string }) => {
+      if (params.functionName === "exactInputSingle") {
+        return Promise.reject(
+          new SponsoredTxRevertError({
+            message: "Too little received",
+            txHash: "0xswapfail",
+            sendTransactionStatusId: "st-1",
+            revertChain: [],
+          })
+        );
+      }
+      return Promise.resolve(confirmed(`0x${params.functionName}`));
+    });
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.swapLanded).toBe(false);
+    expect(result.usdcSpent).toBe("0");
+    expect(result.steps).toMatchObject([
+      { name: "approve", status: "confirmed", transactionHash: "0xapprove" },
+      { name: "swap", status: "failed", transactionHash: "0xswapfail" },
+      { name: "unwrap", status: "skipped" },
+    ]);
+    expect(result.failure).toMatchObject({
+      step: "swap",
+      transactionHash: "0xswapfail",
+      broadcastAttempted: true,
+    });
+  });
+
+  it("does not claim the USDC is unspent while a broadcast swap is unconfirmed", async () => {
+    mockSponsoredSend.mockImplementation((params: { functionName: string }) => {
+      if (params.functionName === "exactInputSingle") {
+        return Promise.reject(
+          new SponsoredTxPendingError({
+            message: "timed out",
+            txHash: "0xswappending",
+          })
+        );
+      }
+      return Promise.resolve(confirmed(`0x${params.functionName}`));
+    });
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.usdcSpent).toBeUndefined();
+    expect(result.error).toContain("may or may not have been spent");
+    expect(mockSponsoredSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports WETH left unwrapped when the unwrap fails after the swap landed", async () => {
+    mockSponsoredSend.mockImplementation((params: { functionName: string }) => {
+      if (params.functionName === "exactInputSingle") {
+        chain.balances.set(balanceKey(WETH, WALLET), QUOTE);
+      }
+      if (params.functionName === "withdraw") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(confirmed(`0x${params.functionName}`));
+    });
+    const plan = await preparedPlan("5");
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.swapLanded).toBe(true);
+    expect(result.usdcSpent).toBe("5");
+    expect(result.wethReceived).toBe("0.001");
+    expect(result.ethReceived).toBeUndefined();
+    expect(result.error).toContain("WETH is left unwrapped");
+    expect(result.steps.map((step) => [step.name, step.status])).toEqual([
+      ["approve", "confirmed"],
+      ["swap", "confirmed"],
+      ["unwrap", "failed"],
+    ]);
+    expect(result.failure).toMatchObject({
+      step: "unwrap",
+      broadcastAttempted: false,
+    });
+  });
+});
