@@ -691,6 +691,21 @@ function parseRetryAfterSeconds(header: string | null): number {
   return DEFAULT_COLD_START_RETRY_SECONDS;
 }
 
+function parseRateLimitRetryAfterSeconds(header: string | null): number | null {
+  if (!header) {
+    return null;
+  }
+  const asNumber = Number(header);
+  if (Number.isFinite(asNumber) && asNumber >= 0) {
+    return Math.ceil(asNumber);
+  }
+  const asDate = Date.parse(header);
+  if (!Number.isNaN(asDate)) {
+    return Math.max(1, Math.ceil((asDate - Date.now()) / 1000));
+  }
+  return null;
+}
+
 function buildColdStartError(
   retryAfterSeconds: number,
   idempotencyKey?: string
@@ -765,9 +780,10 @@ async function callApi(
       ? `${response.status} ${response.statusText}`
       : String(response.status);
     if (response.status === 429) {
-      const retryAfter = response.headers.get("Retry-After");
-      if (retryAfter) {
-        const seconds = parseRetryAfterSeconds(retryAfter);
+      const seconds = parseRateLimitRetryAfterSeconds(
+        response.headers.get("Retry-After")
+      );
+      if (seconds !== null) {
         statusLabel += ` (Retry-After: ${seconds}s)`;
       }
     }

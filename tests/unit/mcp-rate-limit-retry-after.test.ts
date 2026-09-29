@@ -32,10 +32,10 @@ describe("MCP callApi 429 Retry-After handling (#2633)", () => {
     }
 
     await expect(listTool.handler({})).rejects.toThrow(/API call failed: 429/);
-    await expect(listTool.handler({})).rejects.toThrow(/Retry-After: 30/);
+    await expect(listTool.handler({})).rejects.toThrow(/Retry-After: 30s/);
   });
 
-  it("handles 429 gracefully when Retry-After header is omitted", async () => {
+  it("handles 429 gracefully when Retry-After header is omitted without fabricated wait", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
         status: 429,
@@ -57,7 +57,92 @@ describe("MCP callApi 429 Retry-After handling (#2633)", () => {
       throw new Error("list_executions not registered");
     }
 
-    await expect(listTool.handler({})).rejects.toThrow(/API call failed: 429/);
+    await expect(listTool.handler({})).rejects.toThrow(
+      'API call failed: 429 Too Many Requests - {"error":"Rate limit exceeded"}'
+    );
+    await expect(listTool.handler({})).rejects.not.toThrow(/Retry-After/);
+  });
+
+  it("handles unparseable Retry-After header without fabricating a default wait duration", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          "Retry-After": "not-a-number-or-date",
+          "content-type": "application/json",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { server, tools } = makeMockServer();
+    const { registerTools } = await import("@/lib/mcp/tools");
+    registerTools(
+      server as unknown as McpServer,
+      "http://localhost:3000",
+      "Bearer test-token"
+    );
+    const listTool = tools.find((t) => t.name === "list_executions");
+    if (!listTool) {
+      throw new Error("list_executions not registered");
+    }
+
+    await expect(listTool.handler({})).rejects.toThrow(
+      'API call failed: 429 Too Many Requests - {"error":"Rate limit exceeded"}'
+    );
+    await expect(listTool.handler({})).rejects.not.toThrow(/Retry-After/);
+  });
+
+  it("surfaces Retry-After: 0s when header is 0", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: { "Retry-After": "0", "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { server, tools } = makeMockServer();
+    const { registerTools } = await import("@/lib/mcp/tools");
+    registerTools(
+      server as unknown as McpServer,
+      "http://localhost:3000",
+      "Bearer test-token"
+    );
+    const listTool = tools.find((t) => t.name === "list_executions");
+    if (!listTool) {
+      throw new Error("list_executions not registered");
+    }
+
+    await expect(listTool.handler({})).rejects.toThrow(/Retry-After: 0s/);
+  });
+
+  it("leaves non-429 error messages untouched", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response("Internal Server Error", {
+        status: 500,
+        statusText: "Internal Server Error",
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { server, tools } = makeMockServer();
+    const { registerTools } = await import("@/lib/mcp/tools");
+    registerTools(
+      server as unknown as McpServer,
+      "http://localhost:3000",
+      "Bearer test-token"
+    );
+    const listTool = tools.find((t) => t.name === "list_executions");
+    if (!listTool) {
+      throw new Error("list_executions not registered");
+    }
+
+    await expect(listTool.handler({})).rejects.toThrow(
+      "API call failed: 500 Internal Server Error - Internal Server Error"
+    );
   });
 });
 
