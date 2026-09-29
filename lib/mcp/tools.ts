@@ -761,9 +761,16 @@ async function callApi(
       );
     }
     const errorText = await response.text();
-    const statusLabel = response.statusText
+    let statusLabel = response.statusText
       ? `${response.status} ${response.statusText}`
       : String(response.status);
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("Retry-After");
+      if (retryAfter) {
+        const seconds = parseRetryAfterSeconds(retryAfter);
+        statusLabel += ` (Retry-After: ${seconds}s)`;
+      }
+    }
     throw new Error(`API call failed: ${statusLabel} - ${errorText}`);
   }
 
