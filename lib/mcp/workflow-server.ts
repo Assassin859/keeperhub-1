@@ -1,6 +1,7 @@
 import "server-only";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { hasIrreversibleEffect } from "@/lib/mcp/action-type";
+import { parseRetryAfterSeconds } from "@/lib/mcp/tools";
 import {
   buildTriggerInputSchema,
   detectListingTriggerType,
@@ -110,9 +111,18 @@ async function callApi(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `API call failed: ${response.status} ${response.statusText} - ${errorText}`
-    );
+    let statusLabel = response.statusText
+      ? `${response.status} ${response.statusText}`
+      : String(response.status);
+    if (response.status === 429) {
+      const seconds = parseRetryAfterSeconds(
+        response.headers.get("Retry-After")
+      );
+      if (seconds !== null) {
+        statusLabel += ` (Retry-After: ${seconds}s)`;
+      }
+    }
+    throw new Error(`API call failed: ${statusLabel} - ${errorText}`);
   }
 
   const contentType = response.headers.get("content-type") ?? "";

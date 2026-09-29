@@ -4,7 +4,11 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AuthMethod } from "@/lib/middleware/auth-helpers";
 import { PUBLIC_TOOLS, SCOPE_MCP_PUBLIC } from "./oauth-scopes";
-import { registerMetaTools, registerTools } from "./tools";
+import {
+  parseRetryAfterSeconds,
+  registerMetaTools,
+  registerTools,
+} from "./tools";
 
 /**
  * Wrap an McpServer so `registerTools`/`registerMetaTools` can only register
@@ -47,15 +51,24 @@ async function fetchJson(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `API call failed: ${response.status} ${response.statusText} - ${errorText}`
-    );
+    let statusLabel = response.statusText
+      ? `${response.status} ${response.statusText}`
+      : String(response.status);
+    if (response.status === 429) {
+      const seconds = parseRetryAfterSeconds(
+        response.headers.get("Retry-After")
+      );
+      if (seconds !== null) {
+        statusLabel += ` (Retry-After: ${seconds}s)`;
+      }
+    }
+    throw new Error(`API call failed: ${statusLabel} - ${errorText}`);
   }
 
   return response.json();
 }
 
-function registerResources(
+export function registerResources(
   server: McpServer,
   internalApiBaseUrl: string,
   authHeader: string

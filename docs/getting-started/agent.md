@@ -140,9 +140,12 @@ instead of the full toolset. See [MCP Server](/agent/mcp-server).
 | Public MCP `tools/call`, per IP | 10 requests / minute |
 | Direct execution, per API key | 60 requests / minute |
 
-Rate-limited requests return `429` with a `Retry-After` header in seconds. Wait at least that
-long, then back off exponentially. Pass a stable `idempotency_key` on writes so a retry cannot
-double-spend.
+Rate-limited requests return `429` with a `Retry-After` header in seconds on HTTP transport
+responses. Inside MCP tool calls where HTTP headers are not surfaced directly, the wait is
+embedded into the error message as `(Retry-After: <seconds>s)`
+(for example `API call failed: 429 Too Many Requests (Retry-After: 30s) - ...`).
+Wait at least that long, then back off exponentially. Pass a stable `idempotency_key` on writes
+so a retry cannot double-spend.
 
 ## Next
 
