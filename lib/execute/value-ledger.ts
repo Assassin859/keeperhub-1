@@ -130,6 +130,40 @@ export async function sumOrgSolanaValueTodayLamports(
 }
 
 /**
+ * USDC (micro-USD) an org has converted to gas today through
+ * /api/execute/gas-top-up, read from the `amountMicroUsd` the route writes into
+ * each row's input. The swap forwards no native value, so the wei cap never
+ * sees it; this is what the route's daily cap is charged against.
+ *
+ * A failed row still counts when its swap landed (`output.swapLanded`): the
+ * USDC is spent even though the unwrap did not finish. In-flight rows follow
+ * the same stale window as the wei sum.
+ */
+export async function sumOrgGasTopUpTodayMicroUsd(
+  executor: Executor,
+  organizationId: string
+): Promise<bigint> {
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+
+  const rows = await executor
+    .select({
+      totalMicroUsd: sql<string>`COALESCE(SUM(CAST(${directExecutions.input}->>'amountMicroUsd' AS NUMERIC)), 0)::text`,
+    })
+    .from(directExecutions)
+    .where(
+      and(
+        eq(directExecutions.organizationId, organizationId),
+        eq(directExecutions.type, "gas-top-up"),
+        gte(directExecutions.createdAt, todayStart),
+        sql`(${directExecutions.status} IN ('completed', 'unconfirmed') OR (${directExecutions.status} = 'failed' AND ${directExecutions.output}->>'swapLanded' = 'true') OR (${directExecutions.status} IN ('pending', 'running') AND ${directExecutions.createdAt} > now() - interval '${sql.raw(String(STALE_INFLIGHT_MINUTES))} minutes'))`
+      )
+    );
+
+  return BigInt(rows[0]?.totalMicroUsd ?? "0");
+}
+
+/**
  * The org's total value moved today (wei) across both stores, for read-only
  * surfaces (the dashboard gauge). Uses the app db, not a transaction.
  */
