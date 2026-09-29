@@ -553,4 +553,26 @@ describe("redactExecutionStatusForPublicView", () => {
       nodeName: "",
     });
   });
+
+  it("preserves pollIntervalHint for polling ongoing public executions", () => {
+    const payload = {
+      status: "running",
+      pollIntervalHint: 2,
+      nodeStatuses: [{ nodeId: "n1", status: "running" as const }],
+      progress: {
+        totalSteps: 1,
+        completedSteps: 0,
+        runningSteps: 1,
+        currentNodeId: "n1",
+        currentNodeName: "Step",
+        percentage: 0,
+      },
+      errorContext: null,
+      transactionHashes: [],
+    };
+
+    const redacted = redactExecutionStatusForPublicView(payload);
+    expect(redacted.pollIntervalHint).toBe(2);
+    expect(redacted.status).toBe("running");
+  });
 });
