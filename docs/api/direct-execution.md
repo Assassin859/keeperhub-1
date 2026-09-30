@@ -839,8 +839,10 @@ Checked before an execution is reserved or anything is sent:
 An insufficient USDC balance or a failed quote is reported after the execution
 is reserved, as `202` with `status: "failed"` and no transaction sent.
 
-The daily limit counts completed, unconfirmed and in-flight top-ups, and any
-failed top-up whose swap landed (its USDC is spent). It is checked atomically
+The daily limit counts completed and unconfirmed top-ups, top-ups still in
+flight within 30 minutes of starting (long enough for all three transactions to
+wait out slow receipts), and any failed top-up whose swap landed (its USDC is
+spent). It is checked atomically
 with the reservation, so concurrent requests cannot both fit under the last of
 the day's allowance. Self-hosted deployments can change it with
 `EXECUTE_DEFAULT_DAILY_GAS_TOP_UP_CAP_MICRO_USD` (micro-USD, so `200000000` is

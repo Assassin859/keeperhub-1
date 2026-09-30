@@ -76,6 +76,8 @@ describe("sumOrgGasTopUpTodayMicroUsd", () => {
     expect(where).toContain("= 'failed' AND");
     expect(where).toContain("->>'swapLanded' = 'true'");
     expect(where).toContain("IN ('pending', 'running')");
-    expect(where).toContain("interval '15 minutes'");
+    // Three sponsored sends at up to eight minutes each outlast the 15-minute
+    // window the wei sums use.
+    expect(where).toContain("interval '30 minutes'");
   });
 });
