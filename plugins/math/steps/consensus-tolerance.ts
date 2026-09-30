@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { getErrorMessage } from "@/lib/utils";
 import {
   runPluginStep,
@@ -8,27 +8,32 @@ import {
 } from "@/lib/workflow/executor/step-handler";
 import {
   absBigInt,
-  align,
+  type Decimal,
   divideScaled,
+  failed,
   formatScaled,
+  HUNDRED,
+  isWithinAbsolute,
+  isWithinPercent,
+  medianScaled,
+  type Mode,
   parseDecimal,
-  pow10,
+  parseValueList,
   rescale,
+  resolveMode,
+  resolvePrecision,
+  ZERO,
 } from "./decimal-core";
 
 const PLUGIN_NAME = "math";
 const ACTION_NAME = "consensus-tolerance";
 
-const DEFAULT_PRECISION = 6;
-const MAX_PRECISION = 30;
-const HUNDRED = BigInt(100);
-const ZERO = BigInt(0);
-
-const MODES = ["percent", "absolute"] as const;
-type Mode = (typeof MODES)[number];
+/** A consensus check over one source is meaningless, so two is the floor. */
+const MIN_SOURCES_FLOOR = 2;
+const LINE_SEPARATOR = /\r?\n/;
 
 export type ConsensusToleranceCoreInput = {
-  values: string; // Comma, newline or JSON array of strings/numbers
+  values: string; // Newline-separated list or JSON array of strings/numbers
   tolerance: string;
   mode?: string;
   precision?: string | number;
@@ -42,7 +47,6 @@ type ConsensusToleranceResult =
       success: true;
       inConsensus: boolean;
       sourceCount: number;
-      minSourcesMet: boolean;
       maxDeviation: string;
       maxPercentDeviation: string | null;
       mode: Mode;
@@ -52,114 +56,116 @@ type ConsensusToleranceResult =
     }
   | { success: false; error: string; errorClass?: ExecutionErrorType };
 
-function failed(error: string): ConsensusToleranceResult {
-  return { success: false, error, errorClass: ExecutionErrorType.USER };
-}
+type PairwiseScan = {
+  maxDifference: bigint;
+  maxDifferenceBase: bigint;
+  inConsensus: boolean;
+};
 
-function resolveMode(raw: string | undefined): Mode {
-  return raw === "absolute" ? "absolute" : "percent";
-}
-
-function resolvePrecision(raw: string | number | undefined): number {
+function resolveMinSources(raw: string | number | undefined): number {
   const parsed = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return DEFAULT_PRECISION;
+  if (!Number.isFinite(parsed)) {
+    return MIN_SOURCES_FLOOR;
   }
-  return Math.min(Math.trunc(parsed), MAX_PRECISION);
+  return Math.max(MIN_SOURCES_FLOOR, Math.trunc(parsed));
 }
 
-function parseValues(raw: string): string[] {
-  if (!raw || typeof raw !== "string") return [];
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        return parsed.map((item) => (typeof item === "object" && item !== null ? String(item.value ?? item.price ?? item.result ?? item) : String(item))).filter(Boolean);
+/** Symmetric percent base, so the verdict does not depend on source order. */
+function maxAbs(a: bigint, b: bigint): bigint {
+  const absA = absBigInt(a);
+  const absB = absBigInt(b);
+  return absA > absB ? absA : absB;
+}
+
+function scanPairs(
+  normalized: bigint[],
+  decimals: number,
+  tolerance: Decimal,
+  mode: Mode
+): PairwiseScan {
+  let maxDifference = ZERO;
+  let maxDifferenceBase = ZERO;
+  let inConsensus = true;
+
+  for (const [index, a] of normalized.entries()) {
+    for (const b of normalized.slice(index + 1)) {
+      const difference = absBigInt(a - b);
+      const base = maxAbs(a, b);
+
+      if (difference > maxDifference) {
+        maxDifference = difference;
+        maxDifferenceBase = base;
       }
-    } catch {
-      // Fallback to text parsing
+
+      const pairWithin =
+        mode === "absolute"
+          ? isWithinAbsolute(difference, decimals, tolerance)
+          : isWithinPercent(difference, base, tolerance);
+
+      if (!pairWithin) {
+        inConsensus = false;
+      }
     }
   }
-  return trimmed
-    .split(/[\n,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+
+  return { maxDifference, maxDifferenceBase, inConsensus };
 }
 
-function isPairWithinPercent(
-  absDiff: bigint,
-  base: bigint,
-  tolerance: { value: bigint; decimals: number }
-): boolean {
-  if (base === ZERO) return absDiff === ZERO;
-  const left = absDiff * HUNDRED * pow10(tolerance.decimals);
-  const right = absBigInt(tolerance.value) * absBigInt(base);
-  return left <= right;
+function percentDeviationOf(
+  scan: PairwiseScan,
+  precision: number
+): string | null {
+  if (scan.maxDifference === ZERO) {
+    return "0";
+  }
+  if (scan.maxDifferenceBase === ZERO) {
+    return null;
+  }
+  return formatScaled(
+    divideScaled(
+      scan.maxDifference * HUNDRED,
+      scan.maxDifferenceBase,
+      precision
+    ),
+    precision
+  );
 }
 
-function stepHandler(input: ConsensusToleranceCoreInput): ConsensusToleranceResult {
+function stepHandler(
+  input: ConsensusToleranceCoreInput
+): ConsensusToleranceResult {
   try {
-    const rawList = parseValues(input.values);
-    const minRequired = typeof input.minSources === "number" ? input.minSources : Number(input.minSources) || 2;
-    if (rawList.length < minRequired) {
-      return failed(`Insufficient sources: got ${rawList.length}, minimum required is ${minRequired}`);
+    const sources = parseValueList(input.values, LINE_SEPARATOR);
+    const minRequired = resolveMinSources(input.minSources);
+    if (sources.length < minRequired) {
+      return failed(
+        `Insufficient sources: got ${sources.length}, minimum required is ${minRequired}`
+      );
     }
 
     const tolerance = parseDecimal(input.tolerance, "Tolerance");
     const mode = resolveMode(input.mode);
     const precision = resolvePrecision(input.precision);
 
-    const parsedDecimals = rawList.map((val, idx) => parseDecimal(val, `Source ${idx + 1}`));
-    const maxDecimals = Math.max(...parsedDecimals.map((d) => d.decimals));
-    const normalized = parsedDecimals.map((d) => rescale(d, maxDecimals));
+    const parsed = sources.map((value, index) =>
+      parseDecimal(value, `Source ${index + 1}`)
+    );
+    const decimals = Math.max(...parsed.map((entry) => entry.decimals));
+    const normalized = parsed.map((entry) => rescale(entry, decimals));
 
-    let maxDiff = ZERO;
-    let maxDiffBase = ZERO;
-    let inConsensus = true;
-
-    // Check all pairwise combinations
-    for (let i = 0; i < normalized.length; i++) {
-      for (let j = i + 1; j < normalized.length; j++) {
-        const a = normalized[i];
-        const b = normalized[j];
-        const diff = absBigInt(a - b);
-        const base = absBigInt(b);
-
-        if (diff > maxDiff) {
-          maxDiff = diff;
-          maxDiffBase = base;
-        }
-
-        const pairOk =
-          mode === "absolute"
-            ? diff <= absBigInt(rescale(tolerance, maxDecimals))
-            : isPairWithinPercent(diff, base, tolerance);
-
-        if (!pairOk) {
-          inConsensus = false;
-        }
-      }
-    }
-
-    // Compute median for reporting
-    const sorted = [...normalized].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    const mid = Math.floor(sorted.length / 2);
-    const medianVal = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / BigInt(2) : sorted[mid];
-
-    const maxPercent = maxDiffBase === ZERO ? null : formatScaled(divideScaled(maxDiff * HUNDRED, maxDiffBase, precision), precision);
+    const scan = scanPairs(normalized, decimals, tolerance, mode);
+    const median = medianScaled(normalized, decimals);
 
     return {
       success: true,
-      inConsensus,
-      sourceCount: rawList.length,
-      minSourcesMet: true,
-      maxDeviation: formatScaled(maxDiff, maxDecimals),
-      maxPercentDeviation: maxPercent,
+      inConsensus: scan.inConsensus,
+      sourceCount: sources.length,
+      maxDeviation: formatScaled(scan.maxDifference, decimals),
+      maxPercentDeviation: percentDeviationOf(scan, precision),
       mode,
       tolerance: formatScaled(tolerance.value, tolerance.decimals),
-      median: formatScaled(medianVal, maxDecimals),
-      values: rawList,
+      median: formatScaled(median.value, median.decimals),
+      values: sources,
     };
   } catch (error) {
     return failed(`Consensus tolerance failed: ${getErrorMessage(error)}`);

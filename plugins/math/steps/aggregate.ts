@@ -3,6 +3,12 @@ import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
+import {
+  computeMedian,
+  parseJsonArray,
+  sortBigIntsAscending,
+  splitValueList,
+} from "./decimal-core";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -155,16 +161,7 @@ const BIGINT_ARITHMETIC: ArithmeticOperations<bigint> = {
   multiply: (a, b) => a * b,
   divide: (a, b) => a / b,
   lessThan: (a, b) => a < b,
-  sortAscending: (values) =>
-    [...values].sort((a, b) => {
-      if (a < b) {
-        return -1;
-      }
-      if (a > b) {
-        return 1;
-      }
-      return 0;
-    }),
+  sortAscending: sortBigIntsAscending,
   fromLength: (n) => BigInt(n),
   toString: (a) => a.toString(),
 };
@@ -236,25 +233,6 @@ function resolveFieldPath(obj: unknown, path: string): unknown {
 
 // ─── Value extraction ───────────────────────────────────────────────────────
 
-function parseJsonToArray(input: string): unknown[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(input);
-  } catch {
-    throw new Error(
-      "arrayInput is not valid JSON. Expected a JSON array, e.g. [1, 2, 3]."
-    );
-  }
-
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  throw new Error(
-    "arrayInput must be a JSON array. If your upstream node returns an object, reference the array field directly in your template variable, e.g. {{@node:Label.rows}} instead of {{@node:Label}}."
-  );
-}
-
 function collectNumericValues(
   items: unknown[],
   fieldPath: string | undefined
@@ -274,12 +252,12 @@ function extractArrayValues(
   arrayInput: string,
   fieldPath: string | undefined
 ): NumericValue[] {
-  const items = parseJsonToArray(arrayInput);
+  const items = parseJsonArray(arrayInput, "arrayInput");
   return collectNumericValues(items, fieldPath);
 }
 
 function extractExplicitValues(explicitValues: string): NumericValue[] {
-  const parts = explicitValues.split(EXPLICIT_SEPARATOR);
+  const parts = splitValueList(explicitValues, EXPLICIT_SEPARATOR);
   const values: NumericValue[] = [];
   for (const part of parts) {
     const numericValue = parseUnknownToNumericValue(part);
@@ -327,18 +305,6 @@ function findExtremeValue<T>(
     }
   }
   return extreme;
-}
-
-function computeMedian<T>(values: T[], arithmetic: ArithmeticOperations<T>): T {
-  const sorted = arithmetic.sortAscending(values);
-  const midIndex = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return arithmetic.divide(
-      arithmetic.addition(sorted[midIndex - 1], sorted[midIndex]),
-      arithmetic.two
-    );
-  }
-  return sorted[midIndex];
 }
 
 function computeAggregation<T>(
