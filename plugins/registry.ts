@@ -145,6 +145,16 @@ export type ActionConfigFieldBase = {
   // needs to gate on the sibling's own condition too.
   showWhen?: ShowWhen;
 
+  // Escape values substituted from {{...}} references into this field before
+  // the step runs, so resolved data cannot change the meaning of the author's
+  // own markup. `when` gates the rule on a sibling field using showWhen syntax.
+  escapeSubstitutions?: {
+    as: "html";
+    when?:
+      | { field: string; equals: string }
+      | { field: string; oneOf: string[] };
+  };
+
   // For abi-function-select and abi-event-select: which field contains the ABI JSON
   abiField?: string;
 
