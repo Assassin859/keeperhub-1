@@ -9,7 +9,7 @@ import {
 import {
   absBigInt,
   type Decimal,
-  divideScaled,
+  divideCeil,
   failed,
   formatScaled,
   HUNDRED,
@@ -19,6 +19,7 @@ import {
   type Mode,
   parseDecimal,
   parseValueList,
+  pow10,
   rescale,
   resolveMode,
   resolvePrecision,
@@ -30,6 +31,7 @@ const ACTION_NAME = "consensus-tolerance";
 
 /** A consensus check over one source is meaningless, so two is the floor. */
 const MIN_SOURCES_FLOOR = 2;
+const ONE = BigInt(1);
 const LINE_SEPARATOR = /\r?\n/;
 
 export type ConsensusToleranceCoreInput = {
@@ -48,7 +50,7 @@ type ConsensusToleranceResult =
       inConsensus: boolean;
       sourceCount: number;
       maxDeviation: string;
-      maxPercentDeviation: string | null;
+      maxPercentDeviation: string;
       mode: Mode;
       tolerance: string;
       median: string;
@@ -58,7 +60,8 @@ type ConsensusToleranceResult =
 
 type PairwiseScan = {
   maxDifference: bigint;
-  maxDifferenceBase: bigint;
+  worstPercentDifference: bigint;
+  worstPercentBase: bigint;
   inConsensus: boolean;
 };
 
@@ -84,7 +87,8 @@ function scanPairs(
   mode: Mode
 ): PairwiseScan {
   let maxDifference = ZERO;
-  let maxDifferenceBase = ZERO;
+  let worstPercentDifference = ZERO;
+  let worstPercentBase = ONE;
   let inConsensus = true;
 
   for (const [index, a] of normalized.entries()) {
@@ -94,7 +98,12 @@ function scanPairs(
 
       if (difference > maxDifference) {
         maxDifference = difference;
-        maxDifferenceBase = base;
+      }
+
+      // Cross-multiplied so the worst ratio is tracked, not the worst numerator.
+      if (difference * worstPercentBase > worstPercentDifference * base) {
+        worstPercentDifference = difference;
+        worstPercentBase = base;
       }
 
       const pairWithin =
@@ -108,24 +117,23 @@ function scanPairs(
     }
   }
 
-  return { maxDifference, maxDifferenceBase, inConsensus };
+  return {
+    maxDifference,
+    worstPercentDifference,
+    worstPercentBase,
+    inConsensus,
+  };
 }
 
-function percentDeviationOf(
-  scan: PairwiseScan,
-  precision: number
-): string | null {
-  if (scan.maxDifference === ZERO) {
+/** Rounded up so only a genuinely zero spread can render as "0". */
+function percentDeviationOf(scan: PairwiseScan, precision: number): string {
+  if (scan.worstPercentDifference === ZERO) {
     return "0";
   }
-  if (scan.maxDifferenceBase === ZERO) {
-    return null;
-  }
   return formatScaled(
-    divideScaled(
-      scan.maxDifference * HUNDRED,
-      scan.maxDifferenceBase,
-      precision
+    divideCeil(
+      scan.worstPercentDifference * HUNDRED * pow10(precision),
+      scan.worstPercentBase
     ),
     precision
   );

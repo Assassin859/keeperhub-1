@@ -472,7 +472,7 @@ const mathPlugin: IntegrationPlugin = {
         { field: "inConsensus", description: "True when all sources agree within the specified tolerance" },
         { field: "sourceCount", description: "Number of sources evaluated" },
         { field: "maxDeviation", description: "Largest difference found between any two sources" },
-        { field: "maxPercentDeviation", description: "Largest percentage difference between any pair, relative to the larger value of that pair" },
+        { field: "maxPercentDeviation", description: "Largest percentage difference between any pair, relative to the larger absolute value of that pair. 0 only when every source agrees exactly" },
         { field: "median", description: "Median across all sources, including any that broke consensus" },
         { field: "values", description: "The source values as they were read, in input order" },
         { field: "tolerance", description: "The tolerance applied" },

@@ -21,7 +21,7 @@ type ConsensusSuccess = {
   inConsensus: boolean;
   sourceCount: number;
   maxDeviation: string;
-  maxPercentDeviation: string | null;
+  maxPercentDeviation: string;
   mode: string;
   tolerance: string;
   median: string;
@@ -56,6 +56,20 @@ async function runOk(
   return result as ConsensusSuccess;
 }
 
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) {
+    return [items];
+  }
+  const result: T[][] = [];
+  for (const [index, item] of items.entries()) {
+    const rest = [...items.slice(0, index), ...items.slice(index + 1)];
+    for (const tail of permutations(rest)) {
+      result.push([item, ...tail]);
+    }
+  }
+  return result;
+}
+
 describe("math/consensus-tolerance", () => {
   it("returns the same verdict whichever order the sources arrive in", async () => {
     const forward = await runOk({ values: "100\n101", tolerance: "0.995" });
@@ -64,7 +78,7 @@ describe("math/consensus-tolerance", () => {
     expect(forward.inConsensus).toBe(true);
     expect(reversed.inConsensus).toBe(true);
     expect(reversed.maxPercentDeviation).toBe(forward.maxPercentDeviation);
-    expect(forward.maxPercentDeviation).toBe("0.990099");
+    expect(forward.maxPercentDeviation).toBe("0.9901");
   });
 
   it("breaches in both orders when the pair is past the tolerance", async () => {
@@ -99,8 +113,8 @@ describe("math/consensus-tolerance", () => {
 
     expect(forward.maxDeviation).toBe("10");
     expect(reversed.maxDeviation).toBe("10");
-    expect(forward.maxPercentDeviation).toBe("9.090909");
-    expect(reversed.maxPercentDeviation).toBe("9.090909");
+    expect(forward.maxPercentDeviation).toBe("9.09091");
+    expect(reversed.maxPercentDeviation).toBe("9.09091");
   });
 
   it("reports a zero spread as zero percent, not null", async () => {
@@ -219,7 +233,7 @@ describe("math/consensus-tolerance", () => {
     expect(result.sourceCount).toBe(2);
     expect(result.values).toEqual(["1,234.5", "1235"]);
     expect(result.inConsensus).toBe(true);
-    expect(result.maxPercentDeviation).toBe("0.040485");
+    expect(result.maxPercentDeviation).toBe("0.040486");
   });
 
   it("separates WAD magnitude sources that a float round-trip cannot", async () => {
@@ -259,5 +273,70 @@ describe("math/consensus-tolerance", () => {
     expect((result as ConsensusFailure).error).toContain(
       "Source 2 must be a number"
     );
+  });
+
+  it("breaks consensus on a non-adjacent pair the neighbours both clear", async () => {
+    const result = await runOk({ values: "100\n105\n110", tolerance: "6" });
+
+    expect(result.inConsensus).toBe(false);
+    expect(result.maxDeviation).toBe("10");
+  });
+
+  it("counts an absolute difference exactly at the tolerance as in consensus", async () => {
+    const atTolerance = await runOk({
+      values: "3000\n3001",
+      tolerance: "1",
+      mode: "absolute",
+    });
+    const pastTolerance = await runOk({
+      values: "3000\n3002",
+      tolerance: "1",
+      mode: "absolute",
+    });
+
+    expect(atTolerance.inConsensus).toBe(true);
+    expect(pastTolerance.inConsensus).toBe(false);
+  });
+
+  it("reports the worst ratio, not the pair with the largest difference", async () => {
+    const result = await runOk({ values: "-100\n100\n300", tolerance: "150" });
+
+    expect(result.maxDeviation).toBe("400");
+    expect(result.maxPercentDeviation).toBe("200");
+    expect(result.inConsensus).toBe(false);
+  });
+
+  it("keeps the verdict and the worst ratio identical across every ordering", async () => {
+    const sources = ["-100", "100", "300", "250"];
+    const results = await Promise.all(
+      permutations(sources).map((order) =>
+        runOk({ values: order.join("\n"), tolerance: "150" })
+      )
+    );
+
+    const [first] = results;
+    for (const result of results) {
+      expect(result.inConsensus).toBe(first.inConsensus);
+      expect(result.maxDeviation).toBe(first.maxDeviation);
+      expect(result.maxPercentDeviation).toBe(first.maxPercentDeviation);
+    }
+  });
+
+  it("reserves a zero percent deviation for sources that agree exactly", async () => {
+    const wad = await runOk({
+      values: "1000000000000000000\n1000000000000000001",
+      tolerance: "0",
+    });
+    const coarse = await runOk({
+      values: "100\n101",
+      tolerance: "5",
+      precision: 0,
+    });
+    const identical = await runOk({ values: "100\n100", tolerance: "0" });
+
+    expect(wad.inConsensus).toBe(false);
+    expect(wad.maxPercentDeviation).toBe("0.000001");
+    expect(coarse.maxPercentDeviation).toBe("1");
+    expect(identical.maxPercentDeviation).toBe("0");
   });
 });

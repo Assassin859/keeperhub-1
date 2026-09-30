@@ -239,7 +239,7 @@ Checks that several oracle or price feed readings agree. Every pair of sources i
 | inConsensus | True when every pair of sources is inside the tolerance |
 | sourceCount | Number of sources evaluated |
 | maxDeviation | Largest difference found between any two sources |
-| maxPercentDeviation | Largest percentage difference between any pair, relative to the larger value of that pair. `0` when every source agrees exactly |
+| maxPercentDeviation | Largest percentage difference between any pair, relative to the larger absolute value of that pair. Rounded up at the configured precision, so `0` means every source agreed exactly |
 | median | Median across all sources, including any that broke consensus |
 | values | The source values as they were read, in input order |
 | tolerance | The tolerance that was applied |
@@ -248,7 +248,8 @@ Checks that several oracle or price feed readings agree. Every pair of sources i
 
 ### Notes
 
-- A pair is measured against the larger of its two values, so the verdict and `maxPercentDeviation` stay the same when the sources are reordered.
+- A pair is measured against the larger of its two absolute values, so for `-300` and `100` the base is 300. The verdict and `maxPercentDeviation` stay the same when the sources are reordered.
+- `maxPercentDeviation` is the largest ratio across every pair, which is not always the pair with the largest `maxDeviation` once the sources have mixed signs.
 - A difference exactly equal to the tolerance counts as in consensus.
 - Fewer sources than `minSources` is an error rather than a `false` verdict, so a feed that returned nothing fails the step instead of passing a one source check. Read `success` alongside `inConsensus` when a missing feed needs its own alert branch.
 - `median` covers every source, including ones outside the tolerance. Check `inConsensus` before you act on it.

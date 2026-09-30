@@ -1,10 +1,11 @@
 import "server-only";
-import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import {
   computeMedian,
+  failed,
   parseJsonArray,
   sortBigIntsAscending,
   splitValueList,
@@ -130,12 +131,6 @@ function isActivePostOperation(
 
 function isBinaryPostOperation(value: string): value is BinaryPostOperation {
   return BINARY_POST_OPS_SET.has(value);
-}
-
-// ─── Error helpers ──────────────────────────────────────────────────────────
-
-function failedAggregation(error: string): AggregateResult {
-  return { success: false, error, errorClass: ExecutionErrorType.USER };
 }
 
 // ─── Arithmetic implementations ─────────────────────────────────────────────
@@ -429,7 +424,7 @@ function parseInputValues(
 ): NumericValue[] | AggregateResult {
   if (input.inputMode === "array") {
     if (!input.arrayInput) {
-      return failedAggregation(
+      return failed(
         "arrayInput is required in array mode. Reference an upstream node output containing a JSON array."
       );
     }
@@ -438,14 +433,14 @@ function parseInputValues(
 
   if (input.inputMode === "explicit") {
     if (!input.explicitValues) {
-      return failedAggregation(
+      return failed(
         "explicitValues is required in explicit mode. Provide comma-separated or newline-separated values."
       );
     }
     return extractExplicitValues(input.explicitValues);
   }
 
-  return failedAggregation(
+  return failed(
     `Invalid inputMode "${input.inputMode}". Must be "array" or "explicit".`
   );
 }
@@ -458,7 +453,7 @@ function validatePostOperation(
     return null;
   }
   if (!VALID_POST_OPERATIONS.has(postOperation)) {
-    return failedAggregation(
+    return failed(
       `Invalid postOperation "${postOperation}". Must be one of: ${ALL_POST_OPERATIONS.join(", ")}.`
     );
   }
@@ -473,7 +468,7 @@ function validatePostOperation(
         postOperation === "round-decimals"
           ? "postDecimalPlaces"
           : "postOperand";
-      return failedAggregation(
+      return failed(
         `${fieldName} is required and must be a valid number for "${postOperation}" post-operation.`
       );
     }
@@ -493,7 +488,7 @@ function buildOperationLabel(input: AggregateCoreInput): string {
 function stepHandler(input: AggregateCoreInput): AggregateResult {
   try {
     if (!isValidOperation(input.operation)) {
-      return failedAggregation(
+      return failed(
         `Invalid operation "${input.operation}". Must be one of: ${AGGREGATE_OPERATIONS.join(", ")}.`
       );
     }
@@ -571,7 +566,7 @@ function stepHandler(input: AggregateCoreInput): AggregateResult {
       inputCount: parsed.length,
     };
   } catch (error) {
-    return failedAggregation(`Aggregation failed: ${getErrorMessage(error)}`);
+    return failed(`Aggregation failed: ${getErrorMessage(error)}`);
   }
 }
 
