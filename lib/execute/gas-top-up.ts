@@ -32,6 +32,7 @@ import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
+import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
@@ -570,34 +571,62 @@ export function wethReceivedFromLogs(
 
 type SwapOutput = { ok: true; amount: bigint } | { ok: false; error: unknown };
 
+// executeWithFailover takes a null receipt as a valid answer, and a
+// load-balanced endpoint can answer from a node a block behind the one the
+// sponsored manager just read the receipt from. A few short retries ride that
+// lag out before the floor fallback leaves WETH behind.
+const SWAP_RECEIPT_READ_ATTEMPTS = 5;
+const SWAP_RECEIPT_RETRY_MS = 2000;
+
+/** Shrinkable in tests so the retries do not add wall-clock time. */
+export type SwapReceiptReadOptions = {
+  attempts?: number;
+  delayMs?: number;
+};
+
 async function readSwapWethReceived(
   rpcManager: RpcProviderManager,
   plan: GasTopUpPlan,
-  swapHash: string
+  swapHash: string,
+  options: SwapReceiptReadOptions = {}
 ): Promise<SwapOutput> {
-  try {
-    const receipt = await rpcManager.executeWithFailover(
-      (provider) => provider.getTransactionReceipt(swapHash),
-      "read"
-    );
-    if (!receipt) {
-      return { ok: false, error: new Error("swap receipt not found") };
+  const attempts = options.attempts ?? SWAP_RECEIPT_READ_ATTEMPTS;
+  const delayMs = options.delayMs ?? SWAP_RECEIPT_RETRY_MS;
+  let lastError: unknown = new Error("swap receipt not found");
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (attempt > 1) {
+      await sleep(delayMs);
     }
-    const amount = wethReceivedFromLogs(
-      receipt.logs,
-      plan.contracts.weth,
-      plan.wallet
-    );
-    if (amount === BigInt(0)) {
-      return {
-        ok: false,
-        error: new Error("swap receipt has no WETH transfer to the wallet"),
-      };
+    try {
+      const receipt = await rpcManager.executeWithFailover(
+        (provider) => provider.getTransactionReceipt(swapHash),
+        "read"
+      );
+      if (!receipt) {
+        lastError = new Error(
+          `swap receipt not found after ${attempt} attempt(s)`
+        );
+        continue;
+      }
+      // A mined receipt is final, so a missing transfer is not retried.
+      const amount = wethReceivedFromLogs(
+        receipt.logs,
+        plan.contracts.weth,
+        plan.wallet
+      );
+      if (amount === BigInt(0)) {
+        return {
+          ok: false,
+          error: new Error("swap receipt has no WETH transfer to the wallet"),
+        };
+      }
+      return { ok: true, amount };
+    } catch (error) {
+      lastError = error;
     }
-    return { ok: true, amount };
-  } catch (error) {
-    return { ok: false, error };
   }
+  return { ok: false, error: lastError };
 }
 
 function skippedSteps(from: GasTopUpStepName): GasTopUpStep[] {
@@ -634,6 +663,7 @@ function partialMessage(
 export async function executeGasTopUp(params: {
   plan: GasTopUpPlan;
   executionId: string;
+  receiptRead?: SwapReceiptReadOptions;
 }): Promise<GasTopUpResult> {
   const { plan, executionId } = params;
   const steps: GasTopUpStep[] = [];
@@ -836,7 +866,8 @@ export async function executeGasTopUp(params: {
   const swapOutput = await readSwapWethReceived(
     rpcManager,
     plan,
-    swap.transactionHash
+    swap.transactionHash,
+    params.receiptRead
   );
   if (swapOutput.ok) {
     wethReceived = swapOutput.amount;

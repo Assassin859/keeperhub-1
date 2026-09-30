@@ -62,6 +62,8 @@ const chain = vi.hoisted(() => ({
     { logs: Array<{ address: string; topics: string[]; data: string }> }
   >(),
   receiptThrows: false,
+  receiptReads: 0,
+  receiptLagReads: 0,
   tokenRows: [] as Array<{
     tokenAddress: string;
     decimals: number;
@@ -158,8 +160,13 @@ function balanceKey(token: string, owner: string): string {
 
 const fakeProvider = {
   getTransactionReceipt: (hash: string) => {
+    chain.receiptReads += 1;
     if (chain.receiptThrows) {
       return Promise.reject(new Error("receipt endpoint timed out"));
+    }
+    // A node a block behind answers null for a receipt that exists.
+    if (chain.receiptReads <= chain.receiptLagReads) {
+      return Promise.resolve(null);
     }
     return Promise.resolve(chain.receipts.get(hash) ?? null);
   },
@@ -268,6 +275,8 @@ beforeEach(() => {
   chain.quotes = [];
   chain.receipts = new Map();
   chain.receiptThrows = false;
+  chain.receiptReads = 0;
+  chain.receiptLagReads = 0;
   chain.tokenRows = [
     { tokenAddress: USDC.toLowerCase(), decimals: 6, symbol: "USDC" },
   ];
@@ -625,15 +634,42 @@ describe("executeGasTopUp", () => {
     }
   );
 
+  it("retries a receipt a lagging node reports missing and unwraps it exactly", async () => {
+    const better = QUOTE + BigInt(777);
+    sendsSucceed(better);
+    chain.receiptLagReads = 2;
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({
+      plan,
+      executionId: "exec-1",
+      receiptRead: { delayMs: 0 },
+    });
+
+    expect(chain.receiptReads).toBe(3);
+    expect(mockSponsoredSend.mock.calls[2]?.[0].args).toEqual([better]);
+    expect(result.warning).toBeUndefined();
+    expect(mockLogSystemWarn).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
-      "the receipt read fails",
+      "the receipt read keeps failing",
+      5,
       () => {
         chain.receiptThrows = true;
       },
     ],
     [
+      "every read reports the receipt missing",
+      5,
+      () => {
+        chain.receiptLagReads = Number.POSITIVE_INFINITY;
+      },
+    ],
+    [
       "the receipt carries no WETH transfer to the wallet",
+      1,
       () => {
         mockSponsoredSend.mockImplementation(
           (params: { to: string; functionName: string }) => {
@@ -648,27 +684,36 @@ describe("executeGasTopUp", () => {
         );
       },
     ],
-  ])("unwraps the floor, warns and logs when %s", async (_label, arrange) => {
-    arrange();
-    const plan = await preparedPlan();
+  ])(
+    "unwraps the floor, warns and logs when %s",
+    async (_label, reads, arrange) => {
+      arrange();
+      const plan = await preparedPlan();
 
-    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+      const result = await executeGasTopUp({
+        plan,
+        executionId: "exec-1",
+        receiptRead: { delayMs: 0 },
+      });
 
-    const floor = applySlippageFloor(QUOTE);
-    expect(mockSponsoredSend.mock.calls[2]?.[0].args).toEqual([floor]);
-    expect(result.success).toBe(true);
-    expect(result.warning).toContain("guaranteed minimum");
-    expect(result.warning).toContain("wrapped/unwrap");
-    expect(mockLogSystemWarn).toHaveBeenCalledWith(
-      "network_rpc",
-      expect.stringContaining("Could not read the swap's WETH output"),
-      expect.any(Error),
-      expect.objectContaining({
-        execution_id: "exec-1",
-        transaction_hash: SWAP_HASH,
-      })
-    );
-  });
+      // A mined receipt is final; only a missing or failed read is retried.
+      expect(chain.receiptReads).toBe(reads);
+      const floor = applySlippageFloor(QUOTE);
+      expect(mockSponsoredSend.mock.calls[2]?.[0].args).toEqual([floor]);
+      expect(result.success).toBe(true);
+      expect(result.warning).toContain("guaranteed minimum");
+      expect(result.warning).toContain("wrapped/unwrap");
+      expect(mockLogSystemWarn).toHaveBeenCalledWith(
+        "network_rpc",
+        expect.stringContaining("Could not read the swap's WETH output"),
+        expect.any(Error),
+        expect.objectContaining({
+          execution_id: "exec-1",
+          transaction_hash: SWAP_HASH,
+        })
+      );
+    }
+  );
 
   it("refuses before sending anything when the quote is zero", async () => {
     chain.quote = BigInt(0);

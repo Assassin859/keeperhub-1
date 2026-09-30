@@ -878,7 +878,8 @@ the day's allowance. Self-hosted deployments can change it with
 `transactionHash` is the unwrap transaction on success. `quotedWethOut` and
 `amountOutMinimum` are in wei.
 
-If the swap's receipt cannot be read, the route unwraps `amountOutMinimum`,
+If the swap's receipt still cannot be read after a few seconds of retries, the
+route unwraps `amountOutMinimum`,
 which the swap is guaranteed to have delivered, and the response carries a
 `warning`: any WETH above that minimum stays in the wallet. Unwrap it with the
 `wrapped/unwrap` protocol action.
