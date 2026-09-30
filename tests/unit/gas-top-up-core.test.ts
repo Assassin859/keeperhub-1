@@ -55,6 +55,8 @@ const chain = vi.hoisted(() => ({
   balances: new Map<string, bigint>(),
   quote: BigInt(0) as bigint,
   quoteThrows: false,
+  // Answers for successive quotes, taken first; `quote`/`quoteThrows` after.
+  quotes: [] as Array<bigint | Error>,
   receipts: new Map<
     string,
     { logs: Array<{ address: string; topics: string[]; data: string }> }
@@ -163,14 +165,18 @@ const fakeProvider = {
   },
   call: ({ to, data }: { to: string; data: Hex }): Promise<Hex> => {
     if (to.toLowerCase() === QUOTER.toLowerCase()) {
-      if (chain.quoteThrows) {
+      const next = chain.quotes.shift();
+      if (next instanceof Error) {
+        return Promise.reject(next);
+      }
+      if (next === undefined && chain.quoteThrows) {
         return Promise.reject(new Error("execution reverted"));
       }
       return Promise.resolve(
         encodeFunctionResult({
           abi: quoterAbi,
           functionName: "quoteExactInputSingle",
-          result: [chain.quote, BigInt(0), 0, BigInt(0)],
+          result: [next ?? chain.quote, BigInt(0), 0, BigInt(0)],
         })
       );
     }
@@ -259,6 +265,7 @@ beforeEach(() => {
   chain.balances = new Map([[balanceKey(USDC, WALLET), BigInt(50_000_000)]]);
   chain.quote = QUOTE;
   chain.quoteThrows = false;
+  chain.quotes = [];
   chain.receipts = new Map();
   chain.receiptThrows = false;
   chain.tokenRows = [
@@ -561,6 +568,62 @@ describe("executeGasTopUp", () => {
     expect(result.warning).toBeUndefined();
     expect(mockLogSystemWarn).not.toHaveBeenCalled();
   });
+
+  it("sets the swap floor from a quote taken after the approve, not the pre-flight one", async () => {
+    const fresh = QUOTE * BigInt(2);
+    chain.quotes = [QUOTE, fresh];
+    sendsSucceed(fresh);
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    const [, calls] = mockSponsoredSend.mock.calls[1]?.[0].args as [
+      bigint,
+      Hex[],
+    ];
+    const inner = decodeFunctionData({ abi: swapRouterAbi, data: calls[0] });
+    expect(inner.args?.[0]).toMatchObject({
+      amountOutMinimum: applySlippageFloor(fresh),
+    });
+    expect(result).toMatchObject({
+      success: true,
+      quotedWethOut: fresh.toString(),
+      amountOutMinimum: applySlippageFloor(fresh).toString(),
+    });
+  });
+
+  it.each([
+    [
+      "fails",
+      new Error("quoter unavailable"),
+      "Re-quote before the swap failed",
+    ],
+    ["returns zero", BigInt(0), "returned no WETH"],
+  ])(
+    "does not send the swap when the re-quote %s",
+    async (_label, answer, message) => {
+      chain.quotes = [QUOTE, answer];
+      const plan = await preparedPlan();
+
+      const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+      expect(mockSponsoredSend).toHaveBeenCalledTimes(1);
+      expect(mockSponsoredSend.mock.calls[0]?.[0].functionName).toBe("approve");
+      expect(result.steps.map((step) => [step.name, step.status])).toEqual([
+        ["approve", "confirmed"],
+        ["swap", "failed"],
+        ["unwrap", "skipped"],
+      ]);
+      expect(result).toMatchObject({
+        success: false,
+        usdcSpent: "0",
+        swapLanded: false,
+        failure: { step: "swap", broadcastAttempted: false },
+      });
+      expect(result.error).toContain(message);
+      expect(result.error).toContain("no USDC was spent");
+    }
+  );
 
   it.each([
     [

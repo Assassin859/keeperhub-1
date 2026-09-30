@@ -794,12 +794,15 @@ The route sends three gas-sponsored transactions from the organization's
 Turnkey EOA:
 
 1. `approve` exactly `amountUsdc` to Uniswap V3 SwapRouter02 (never unlimited).
-2. `exactInputSingle` USDC to WETH, with the wallet as recipient. The minimum
-   output is set server-side from a Uniswap QuoterV2 `quoteExactInputSingle`
-   call taken in the same request, less 0.5%. A zero or failed quote refuses
-   the request before anything is sent. The swap goes through the router's
-   `multicall` with a deadline 10 minutes after the quote, so a swap left in
-   the mempool past that reverts instead of filling at a stale price.
+2. `exactInputSingle` USDC to WETH, with the wallet as recipient. A Uniswap
+   QuoterV2 `quoteExactInputSingle` call is taken before anything is sent, and
+   a zero or failed quote refuses the request. Once the approve confirms, the
+   quote is taken again, and the minimum output is that fresh quote less 0.5%,
+   set server-side. The swap goes through the router's `multicall` with a
+   deadline 10 minutes after that fresh quote, so a swap left in the mempool
+   past that reverts instead of filling at a stale price. If the second quote
+   fails, the swap is not sent: no USDC is spent and the approval for exactly
+   `amountUsdc` remains.
 3. `withdraw` on WETH for the amount the swap delivered, read from the swap's
    own receipt, which pays native ETH to the wallet. WETH the wallet already
    held is left alone.

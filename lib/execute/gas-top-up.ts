@@ -75,7 +75,7 @@ const POOL_FEE: Readonly<Record<GasTopUpChainId, number>> = {
 /** Same default the Tempo DEX swap applies (plugins/tempo/steps/dex-swap.ts). */
 const GAS_TOP_UP_SLIPPAGE_BPS = 50;
 const BPS_DENOMINATOR = 10_000;
-/** A swap still in the mempool this long after the quote is not executed. */
+/** A swap still in the mempool this long after its pre-swap quote reverts. */
 const GAS_TOP_UP_DEADLINE_SECONDS = 600;
 const WETH_DECIMALS = 18;
 const LOG_PREFIX = "[Gas Top-up]";
@@ -626,10 +626,10 @@ function partialMessage(
 }
 
 /**
- * approve(exact amount) -> multicall(deadline, [exactInputSingle(recipient =
- * wallet, floor from a same-request quote)]) -> WETH.withdraw(received). Three
- * separate sponsored transactions, so the sequence can stop part-way, and the
- * result says exactly where.
+ * approve(exact amount) -> re-quote -> multicall(deadline, [exactInputSingle(
+ * recipient = wallet, floor and deadline from that re-quote)]) ->
+ * WETH.withdraw(received). Three separate sponsored transactions, so the
+ * sequence can stop part-way, and the result says exactly where.
  */
 export async function executeGasTopUp(params: {
   plan: GasTopUpPlan;
@@ -678,18 +678,20 @@ export async function executeGasTopUp(params: {
     );
   }
 
+  // Pre-flight quote: a pool that cannot fill the amount refuses here, before
+  // anything is sent. The swap's own floor comes from a second quote below.
   let quotedOut: bigint;
   try {
     quotedOut = await quoteUsdcToWeth(rpcManager, plan);
   } catch (error) {
     return refuse(`Quote failed: ${getErrorMessage(error)}`);
   }
-  const amountOutMinimum = applySlippageFloor(quotedOut);
+  let amountOutMinimum = applySlippageFloor(quotedOut);
   if (quotedOut <= BigInt(0) || amountOutMinimum <= BigInt(0)) {
     return refuse("Quote returned no WETH for this amount; refusing to swap");
   }
 
-  const quoteFields = {
+  let quoteFields = {
     quotedWethOut: quotedOut.toString(),
     amountOutMinimum: amountOutMinimum.toString(),
   };
@@ -765,6 +767,31 @@ export async function executeGasTopUp(params: {
     transactionLink: approve.transactionLink,
   });
 
+  // The approve can wait minutes for its receipt, so the floor and the
+  // deadline come from a quote taken now rather than the pre-flight one.
+  const swapQuoteFailed = (error: string) =>
+    stop("swap", { kind: "failed", error, broadcastAttempted: false });
+  try {
+    quotedOut = await quoteUsdcToWeth(rpcManager, plan);
+  } catch (error) {
+    return swapQuoteFailed(
+      `Re-quote before the swap failed: ${getErrorMessage(error)}`
+    );
+  }
+  amountOutMinimum = applySlippageFloor(quotedOut);
+  if (quotedOut <= BigInt(0) || amountOutMinimum <= BigInt(0)) {
+    return swapQuoteFailed(
+      "Re-quote before the swap returned no WETH for this amount; refusing to swap"
+    );
+  }
+  quoteFields = {
+    quotedWethOut: quotedOut.toString(),
+    amountOutMinimum: amountOutMinimum.toString(),
+  };
+  const deadline = BigInt(
+    Math.floor(Date.now() / 1000) + GAS_TOP_UP_DEADLINE_SECONDS
+  );
+
   const exactInputSingle = encodeFunctionData({
     abi: swapRouterAbi,
     functionName: "exactInputSingle",
@@ -780,9 +807,6 @@ export async function executeGasTopUp(params: {
       },
     ],
   });
-  const deadline = BigInt(
-    Math.floor(Date.now() / 1000) + GAS_TOP_UP_DEADLINE_SECONDS
-  );
   const swap = await sendSponsored({
     plan,
     executionId,
