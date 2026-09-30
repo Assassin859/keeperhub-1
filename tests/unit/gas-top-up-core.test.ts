@@ -586,10 +586,8 @@ describe("executeGasTopUp", () => {
 
     const result = await executeGasTopUp({ plan, executionId: "exec-1" });
 
-    const [, calls] = mockSponsoredSend.mock.calls[1]?.[0].args as [
-      bigint,
-      Hex[],
-    ];
+    const swap = mockSponsoredSend.mock.calls[1]?.[0];
+    const [, calls] = swap.args as [bigint, Hex[]];
     const inner = decodeFunctionData({ abi: swapRouterAbi, data: calls[0] });
     expect(inner.args?.[0]).toMatchObject({
       amountOutMinimum: applySlippageFloor(fresh),
