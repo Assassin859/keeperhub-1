@@ -30,7 +30,7 @@ export type SendTelegramMessageCoreInput = {
   chatId: string;
   message: string;
   parseMode?: string;
-  disablePreview?: string | boolean;
+  disablePreview?: string;
 };
 
 export type SendTelegramMessageInput = StepInput &
@@ -39,7 +39,7 @@ export type SendTelegramMessageInput = StepInput &
   };
 
 /**
- * Enhance error message for MarkdownV2 parsing errors
+ * Enhance error message for MarkdownV2 and HTML parsing errors
  */
 function enhanceErrorMessage(
   description: string | undefined,
@@ -51,6 +51,9 @@ function enhanceErrorMessage(
     description?.includes("reserved and must be escaped")
   ) {
     return `${description} When using MarkdownV2, special characters (., -, _, *, [, ], (, ), ~, \`, >, #, +, =, |, {, }, !) must be escaped with a backslash (\\) before them.`;
+  }
+  if (parseMode === "HTML" && description?.includes("can't parse entities")) {
+    return `${description} When using HTML, Telegram accepts only b, strong, i, em, u, ins, s, strike, del, span, tg-spoiler, a, code, pre and blockquote tags, every tag must be closed, and a literal &, < or > must be written as &amp;, &lt; or &gt;.`;
   }
   return description || "Failed to send Telegram message";
 }
@@ -224,11 +227,7 @@ async function stepHandler(
   }
 
   // Optional: disable link previews for long URLs
-  const disablePreview =
-    input.disablePreview === true ||
-    (typeof input.disablePreview === "string" &&
-      input.disablePreview.toLowerCase() === "true");
-  if (disablePreview) {
+  if (input.disablePreview === "true") {
     params.append("disable_web_page_preview", "true");
   }
 

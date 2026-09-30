@@ -35,13 +35,28 @@ export type SendDiscordMessageInput = StepInput &
 
 const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com"]);
 
-const EMBED_COLORS: Record<string, number> = {
-  red: 15158332,
-  green: 3066993,
-  yellow: 15844367,
-  blue: 3447003,
-  gray: 9807270,
-};
+const EMBED_COLORS = new Map<string, number>([
+  ["red", 15_158_332],
+  ["green", 3_066_993],
+  ["yellow", 15_844_367],
+  ["blue", 3_447_003],
+  ["gray", 9_807_270],
+]);
+
+const USERNAME_MAX_CHARS = 80;
+const EMBED_TITLE_MAX_CHARS = 256;
+const EMBED_DESCRIPTION_MAX_CHARS = 4096;
+
+// Discord rejects a webhook username carrying either substring.
+const USERNAME_BANNED_SUBSTRINGS = ["discord", "clyde"];
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control chars are stripped from the username before it reaches the Discord API
+const USERNAME_CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+
+const LOG_LABELS = {
+  plugin_name: "discord",
+  action_name: "send-message",
+} as const;
 
 type DiscordEmbed = {
   title?: string;
@@ -50,11 +65,93 @@ type DiscordEmbed = {
 };
 
 type DiscordWebhookPayload = {
-  content: string;
+  content?: string;
   username?: string;
   avatar_url?: string;
   embeds?: DiscordEmbed[];
 };
+
+/**
+ * A malformed avatar URL makes Discord reject the whole request, and this step
+ * does not retry, so an unusable value is dropped instead of sent.
+ */
+function resolveAvatarUrl(
+  rawAvatarUrl: string | undefined
+): string | undefined {
+  const trimmed = rawAvatarUrl?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Discord] Avatar URL is not a valid URL, sending without it",
+      undefined,
+      LOG_LABELS
+    );
+    return undefined;
+  }
+  if (parsed.protocol !== "https:") {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Discord] Avatar URL must use https, sending without it",
+      undefined,
+      LOG_LABELS
+    );
+    return undefined;
+  }
+  return trimmed;
+}
+
+/** Same degrade-instead-of-fail treatment for the bot username override. */
+function resolveUsername(rawUsername: string | undefined): string | undefined {
+  const trimmed = rawUsername?.replace(USERNAME_CONTROL_CHARS, " ").trim();
+  if (!trimmed) {
+    if (rawUsername?.trim()) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Discord] Bot username has no usable characters, sending without it",
+        undefined,
+        LOG_LABELS
+      );
+    }
+    return undefined;
+  }
+  const lowered = trimmed.toLowerCase();
+  if (USERNAME_BANNED_SUBSTRINGS.some((banned) => lowered.includes(banned))) {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Discord] Bot username contains a reserved word, sending without it",
+      undefined,
+      LOG_LABELS
+    );
+    return undefined;
+  }
+  return trimmed.slice(0, USERNAME_MAX_CHARS);
+}
+
+/** Returns the Discord colour integer, or undefined when none applies. */
+function resolveEmbedColor(
+  rawEmbedColor: string | undefined
+): number | undefined {
+  const key = rawEmbedColor?.trim().toLowerCase();
+  if (!key || key === "none") {
+    return undefined;
+  }
+  const color = EMBED_COLORS.get(key);
+  if (color === undefined) {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Discord] Unrecognised embed colour, sending without it",
+      undefined,
+      LOG_LABELS
+    );
+  }
+  return color;
+}
 
 /**
  * Validates a Discord webhook URL by hostname over https, not by substring.
@@ -135,35 +232,38 @@ async function stepHandler(
   try {
     console.log("[Discord] Sending message to webhook");
 
-    const payload: DiscordWebhookPayload = {
-      content: input.discordMessage,
-    };
+    const payload: DiscordWebhookPayload = {};
 
-    const username = input.username?.trim();
+    const username = resolveUsername(input.username);
     if (username) {
-      payload.username = username.slice(0, 80);
+      payload.username = username;
     }
 
-    const avatarUrl = input.avatarUrl?.trim();
+    const avatarUrl = resolveAvatarUrl(input.avatarUrl);
     if (avatarUrl) {
       payload.avatar_url = avatarUrl;
     }
 
     const embedTitle = input.embedTitle?.trim();
-    const embedColorKey = input.embedColor?.trim().toLowerCase();
-    const embedColor =
-      embedColorKey && embedColorKey !== "none"
-        ? EMBED_COLORS[embedColorKey]
-        : undefined;
+    const embedColor = resolveEmbedColor(input.embedColor);
 
+    // An embed carries the message text instead of `content`, so the channel
+    // shows it once and the 2000-char content limit does not apply.
     if (embedTitle || embedColor !== undefined) {
       payload.embeds = [
         {
-          ...(embedTitle ? { title: embedTitle.slice(0, 256) } : {}),
-          description: input.discordMessage.slice(0, 4096),
+          ...(embedTitle
+            ? { title: embedTitle.slice(0, EMBED_TITLE_MAX_CHARS) }
+            : {}),
+          description: input.discordMessage.slice(
+            0,
+            EMBED_DESCRIPTION_MAX_CHARS
+          ),
           ...(embedColor !== undefined ? { color: embedColor } : {}),
         },
       ];
+    } else {
+      payload.content = input.discordMessage;
     }
 
     const response = await safeFetch(webhookUrl, {

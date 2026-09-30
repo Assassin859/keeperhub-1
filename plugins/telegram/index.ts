@@ -62,7 +62,13 @@ const telegramPlugin: IntegrationPlugin = {
           label: "Message",
           type: "template-textarea",
           placeholder:
-            "Your message. Use {{NodeName.field}} to insert data from previous nodes. Note: If using MarkdownV2, special characters (., -, _, *, [, ], (, ), ~, `, >, #, +, =, |, {, }, !) must be escaped with \\.",
+            "Your message. Use {{NodeName.field}} to insert data from previous nodes. With MarkdownV2, special characters (., -, _, *, [, ], (, ), ~, `, >, #, +, =, |, {, }, !) must be escaped with \\. With HTML, write your own tags as usual; values pulled in from other nodes are escaped for you.",
+          helpTip:
+            "HTML parse mode accepts Telegram's b, i, u, s, span, tg-spoiler, a, code, pre and blockquote tags. Your own markup renders; &, < and > inside values inserted from other nodes are escaped so they display as text.",
+          escapeSubstitutions: {
+            as: "html",
+            when: { field: "parseMode", equals: "HTML" },
+          },
           rows: 4,
           example: "Hello from my workflow!",
           required: true,

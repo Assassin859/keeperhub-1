@@ -40,6 +40,7 @@ import {
   buildEdgesBySourceHandle,
   type EdgesBySourceHandle,
 } from "@/lib/workflow/editor/edge-handle-utils";
+import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import {
   buildEdgesBySource,
   buildEdgesByTarget,
@@ -104,6 +105,7 @@ import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { splitTemplateRef } from "@/lib/workflow/template-ref";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
+import { findActionById, flattenConfigFields } from "@/plugins/registry";
 
 export {
   type ForEachIterationFailure,
@@ -1017,19 +1019,35 @@ function renderTemplateValue(
   return value;
 }
 
-function renderTemplateString(
+/**
+ * Render a config string, optionally passing every substituted value through
+ * `escape`. The author's own text outside `{{...}}` is never escaped, so their
+ * markup keeps rendering while resolved data stays inert.
+ *
+ * Exported for the escaped-field path in processActionConfig; the generic
+ * config walk calls it without an escaper.
+ */
+export function renderTemplateString(
   value: string,
   outputs: NodeOutputs,
-  tracker?: TemplateResolutionTracker
+  tracker?: TemplateResolutionTracker,
+  escapeValue?: (substituted: string) => string
 ): string {
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
   // Fallback: resolve display-format templates {{Label.field}} that were not
   // converted to stored format by the editor (mirrors extractTemplateParameters).
   const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
 
-  let result = value.replace(storedPattern, (m, nodeId, rest) =>
-    replaceConfigTemplate(m, nodeId, rest, outputs, tracker)
-  );
+  let result = value.replace(storedPattern, (m, nodeId, rest) => {
+    const substituted = replaceConfigTemplate(
+      m,
+      nodeId,
+      rest,
+      outputs,
+      tracker
+    );
+    return escapeValue ? escapeValue(substituted) : substituted;
+  });
   result = result.replace(displayPattern, (full, displayRef) => {
     const resolved = resolveDisplayTemplate(displayRef, outputs);
     if (resolved === null || resolved === undefined) {
@@ -1040,9 +1058,62 @@ function renderTemplateString(
       });
       return full;
     }
-    return formatConfigValue(resolved);
+    const substituted = formatConfigValue(resolved);
+    return escapeValue ? escapeValue(substituted) : substituted;
   });
   return result;
+}
+
+const HTML_ENTITIES = new Map([
+  ["&", "&amp;"],
+  ["<", "&lt;"],
+  [">", "&gt;"],
+]);
+
+/** Escape a value substituted into a field parsed as HTML by its provider. */
+export function escapeHtmlSubstitution(substituted: string): string {
+  return substituted.replace(
+    /[&<>]/g,
+    (char) => HTML_ENTITIES.get(char) ?? char
+  );
+}
+
+const SUBSTITUTION_ESCAPERS = new Map<string, (substituted: string) => string>([
+  ["html", escapeHtmlSubstitution],
+]);
+
+export type EscapedSubstitutionField = {
+  key: string;
+  escapeValue: (substituted: string) => string;
+};
+
+/**
+ * String config fields that opted into substitution escaping and whose
+ * `when` predicate holds for this node's config.
+ */
+export function getEscapedSubstitutionFields(
+  actionType: string,
+  config: Record<string, unknown>
+): EscapedSubstitutionField[] {
+  const action = findActionById(actionType);
+  if (!action) {
+    return [];
+  }
+  const escaped: EscapedSubstitutionField[] = [];
+  for (const field of flattenConfigFields(action.configFields)) {
+    const rule = field.escapeSubstitutions;
+    if (!rule || typeof config[field.key] !== "string") {
+      continue;
+    }
+    if (!evaluateShowWhen(rule.when, config)) {
+      continue;
+    }
+    const escapeValue = SUBSTITUTION_ESCAPERS.get(rule.as);
+    if (escapeValue) {
+      escaped.push({ key: field.key, escapeValue });
+    }
+  }
+  return escaped;
 }
 
 /**
@@ -2601,6 +2672,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       configWithoutSpecial.code = undefined;
     }
 
+    const escapedFields = getEscapedSubstitutionFields(actionType, config);
+    for (const field of escapedFields) {
+      configWithoutSpecial[field.key] = undefined;
+    }
+
     // KEEP-468: collect every unresolved reference so we can fail closed
     // before the step runs. Tracker entries cover empty-string substitutions
     // (no-node / no-data / no-path); the post-scan inside `assertResolved`
@@ -2629,6 +2705,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       originalDbQuery !== undefined
     ) {
       processedConfig.dbQuery = originalDbQuery;
+    }
+
+    // Escaped fields render on their own path so a substituted value cannot
+    // change the meaning of the author's surrounding markup.
+    for (const { key, escapeValue } of escapedFields) {
+      processedConfig[key] = renderTemplateString(
+        config[key] as string,
+        currentOutputs,
+        tracker,
+        escapeValue
+      );
     }
 
     // Render the code now (so genuine unresolved refs in executable code land
