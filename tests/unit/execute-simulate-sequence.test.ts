@@ -336,6 +336,41 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
     });
   });
 
+  it("stops the sequence when a call's own outcome is unknown", async () => {
+    let ethCalls = 0;
+    spies.send.mockImplementation((method: string) => {
+      if (method === "eth_simulateV1") {
+        return Promise.reject(new Error("method not found"));
+      }
+      if (method === "eth_call") {
+        ethCalls += 1;
+        // The first call's outcome is unknown, so nothing after it is knowable.
+        return ethCalls === 1
+          ? Promise.reject(new Error("connection reset"))
+          : Promise.resolve(TRUE);
+      }
+      if (method === "eth_estimateGas") {
+        return Promise.resolve("0x5208");
+      }
+      return Promise.resolve({ post: {} });
+    });
+
+    const result = await run();
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0]).toMatchObject({
+      success: false,
+      failureKind: "unavailable",
+    });
+    // Not a decoded revert inherited from state the first call never wrote.
+    expect(result.results[1]).toMatchObject({
+      success: false,
+      failureKind: "unavailable",
+    });
+    expect(result.results[1].revertReason).toBeUndefined();
+    expect(result.wouldRevert).toBe(false);
+  });
+
   it("keeps a node error that is not a missing method as unavailable", async () => {
     spies.send.mockRejectedValue(new Error("connection reset"));
 

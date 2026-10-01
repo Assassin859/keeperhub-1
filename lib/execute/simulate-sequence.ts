@@ -253,16 +253,23 @@ async function runWithStateOverrides(
       // status "0x0" as "do not broadcast"; reporting "we could not find out"
       // the same way makes them abandon transactions that would have worked.
       // Classified with the single-call path's classifier so the two agree.
+      const failureKind = classifySimulationError(err);
       results.push({
         status: "0x0",
-        failureKind: classifySimulationError(err),
+        failureKind,
         error: {
           message: getErrorMessage(err),
           data: extractDataFromError(err),
         },
       });
-      // The sequence is what the caller asked about, so keep going: the later
-      // calls still answer against the state as it stands.
+      if (failureKind === "unavailable") {
+        // The call may or may not have executed, so no later answer carries
+        // state we can stand behind.
+        results.push(...unavailableRest(calls, results.length));
+        return results;
+      }
+      // A revert or a rejected call changed nothing, so the later calls still
+      // answer against the state as it stands.
       continue;
     }
 
