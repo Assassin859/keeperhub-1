@@ -263,14 +263,20 @@ async function runWithStateOverrides(
           data: extractDataFromError(err),
         },
       });
-      if (failureKind === "unavailable") {
-        // The call may or may not have executed, so no later answer carries
-        // state we can stand behind.
-        results.push(...unavailableRest(calls, results.length));
+      if (failureKind !== "revert") {
+        // Only a revert is known to have left no state behind, so every other
+        // outcome leaves the later calls nothing to answer against.
+        results.push(
+          ...unavailableRest(
+            calls,
+            results.length,
+            `call ${index + 1} of the sequence could not be simulated: ${getErrorMessage(err)}`
+          )
+        );
         return results;
       }
-      // A revert or a rejected call changed nothing, so the later calls still
-      // answer against the state as it stands.
+      // A revert changed nothing, so the later calls still answer against the
+      // state as it stands.
       continue;
     }
 
