@@ -3,12 +3,9 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AuthMethod } from "@/lib/middleware/auth-helpers";
+import { buildApiCallFailedError } from "./api-call-error";
 import { PUBLIC_TOOLS, SCOPE_MCP_PUBLIC } from "./oauth-scopes";
-import {
-  parseRetryAfterSeconds,
-  registerMetaTools,
-  registerTools,
-} from "./tools";
+import { registerMetaTools, registerTools } from "./tools";
 
 /**
  * Wrap an McpServer so `registerTools`/`registerMetaTools` can only register
@@ -51,18 +48,7 @@ async function fetchJson(
 
   if (!response.ok) {
     const errorText = await response.text();
-    let statusLabel = response.statusText
-      ? `${response.status} ${response.statusText}`
-      : String(response.status);
-    if (response.status === 429) {
-      const seconds = parseRetryAfterSeconds(
-        response.headers.get("Retry-After")
-      );
-      if (seconds !== null) {
-        statusLabel += ` (Retry-After: ${seconds}s)`;
-      }
-    }
-    throw new Error(`API call failed: ${statusLabel} - ${errorText}`);
+    throw buildApiCallFailedError(response, errorText);
   }
 
   return response.json();

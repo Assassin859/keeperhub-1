@@ -144,6 +144,9 @@ Rate-limited requests return `429` with a `Retry-After` header in seconds on HTT
 responses. Inside MCP tool calls where HTTP headers are not surfaced directly, the wait is
 embedded into the error message as `(Retry-After: <seconds>s)`
 (for example `API call failed: 429 Too Many Requests (Retry-After: 30s) - ...`).
+That token appears only when the upstream response carries a `Retry-After` header, and a `429`
+whose body carries `plan`, `limit` and `used` is the monthly execution limit, which no amount of
+waiting clears.
 Wait at least that long, then back off exponentially. Pass a stable `idempotency_key` on writes
 so a retry cannot double-spend.
 
