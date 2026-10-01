@@ -487,7 +487,9 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
       success: false,
       failureKind: "unavailable",
     });
-    expect(result.results[1].revertReason).toBeUndefined();
+    expect(
+      (result.results[1] as Record<string, unknown>).revertReason
+    ).toBeUndefined();
     expect(result.wouldRevert).toBe(false);
   });
 
