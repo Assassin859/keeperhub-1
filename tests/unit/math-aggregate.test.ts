@@ -765,6 +765,38 @@ describe("math/aggregate - bounds on fixed-point work", () => {
     expect(result.resultType).toBe("bigint");
   });
 
+  it("bounds the running product's scale however many factors arrive", async () => {
+    // A factor of 1e-256 has the value 1, so nothing trims the accumulator by
+    // significant digits and only the scale cap keeps the work linear.
+    const tiny = Array.from({ length: 300_000 }, () => "1e-256").join(", ");
+    const start = performance.now();
+    const result = await expectSuccess({
+      operation: "product",
+      explicitValues: `9007199254740993, ${tiny}`,
+    });
+    expect(performance.now() - start).toBeLessThan(1500);
+    expect(result.result).toBe("0");
+    expect(result.resultType).toBe("number");
+  });
+
+  it("keeps a product exact across orders when the scale cap applies", async () => {
+    const tiny = "1e-256";
+    const big = `1${"0".repeat(768)}`;
+    for (const explicitValues of [
+      `${tiny}, ${tiny}, ${tiny}, ${big}, 9007199254740993`,
+      `9007199254740993, ${tiny}, ${big}, ${tiny}, ${tiny}`,
+      `${big}, ${tiny}, ${tiny}, 9007199254740993, ${tiny}`,
+      `${tiny}, ${big}, 9007199254740993, ${tiny}, ${tiny}`,
+    ]) {
+      const result = await expectSuccess({
+        operation: "product",
+        explicitValues,
+      });
+      expect(result.result).toBe("9007199254740993");
+      expect(result.resultType).toBe("bigint");
+    }
+  });
+
   it("sends a power whose result would be too long through float", async () => {
     const base = "1".repeat(1000);
     const start = performance.now();
@@ -835,6 +867,41 @@ describe("math/aggregate - divisor precision and negative rounding", () => {
     // but it is reported as a float, not as an exact whole number.
     expect(result.result).toBe("0");
     expect(result.resultType).toBe("number");
+  });
+
+  it("multiplies through float by an operand that is zero at the scale bound but not to a float", async () => {
+    for (const [postOperand, expected] of [
+      ["1e-257", "9.007199254740992e-242"],
+      ["1e-300", "9.007199254740992e-285"],
+      ["1e-400", "0"],
+    ]) {
+      const result = await expectSuccess({
+        operation: "sum",
+        explicitValues: "9007199254740993",
+        postOperation: "multiply",
+        postOperand,
+      });
+      expect(result.result).toBe(expected);
+      expect(result.resultType).toBe("number");
+    }
+  });
+
+  it("gives the same answer whether a tiny factor is one operand or two", async () => {
+    const asOperand = await expectSuccess({
+      operation: "sum",
+      explicitValues: "9007199254740993",
+      postOperation: "multiply",
+      postOperand: "1e-300",
+    });
+    const asFactors = await expectSuccess({
+      operation: "product",
+      explicitValues: "9007199254740993, 1e-250, 1e-50",
+    });
+    expect(Number(asOperand.result)).toBeGreaterThan(0);
+    expect(Number(asOperand.result) / Number(asFactors.result)).toBeCloseTo(
+      1,
+      15
+    );
   });
 
   it("divides by a divisor at the scale bound exactly", async () => {

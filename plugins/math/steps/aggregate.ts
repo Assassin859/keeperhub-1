@@ -85,6 +85,9 @@ const EXPONENT_FORM = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))[eE]([+-]?\d+)$/;
 const MAX_SCALE = 256;
 const MAX_DIGITS = 4096;
 const MAX_EXACT_POWER = 256;
+// Places past what the remaining factors of a product can lift: digits beyond
+// this reach neither MAX_SCALE nor the float floor (1e-324 and 17 digits).
+const PRODUCT_SCALE_HEADROOM = 350;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -356,16 +359,21 @@ function convertNumericValuesToNumbers(values: NumericValue[]): number[] {
 
 // ─── Fixed-point conversion ─────────────────────────────────────────────────
 
-// Drops fractional digits past MAX_SCALE. Applied wherever a scale is made,
-// so no input or intermediate can push the whole set to an absurd scale.
-function boundScale(d: Decimal): Decimal {
-  if (d.decimals <= MAX_SCALE) {
+// Drops fractional digits past `limit`.
+function capScale(d: Decimal, limit: number): Decimal {
+  if (d.decimals <= limit) {
     return d;
   }
   return {
-    value: d.value / pow10(d.decimals - MAX_SCALE),
-    decimals: MAX_SCALE,
+    value: d.value / pow10(d.decimals - limit),
+    decimals: limit,
   };
+}
+
+// Drops fractional digits past MAX_SCALE. Applied wherever a scale is made,
+// so no input or intermediate can push the whole set to an absurd scale.
+function boundScale(d: Decimal): Decimal {
+  return capScale(d, MAX_SCALE);
 }
 
 function digitCount(value: bigint): number {
@@ -493,6 +501,30 @@ function trimSignificant(d: Decimal): Decimal {
   return { value: d.value / pow10(drop), decimals: d.decimals - drop };
 }
 
+// Places the factors after each index can still lift the running product by.
+function liftableDigits(decimals: Decimal[]): number[] {
+  const liftable: number[] = [];
+  let total = 0;
+  for (const d of [...decimals].reverse()) {
+    liftable.push(total);
+    total += Math.max(0, digitCount(d.value) - d.decimals);
+  }
+  return liftable.reverse();
+}
+
+// Bounds a running product's scale; a value the drop would zero keeps one unit
+// in the last place, so the end still reads it as a float underflow.
+function capProductScale(d: Decimal, limit: number): Decimal {
+  const capped = capScale(d, limit);
+  if (capped.value !== BIGINT_ZERO || d.value === BIGINT_ZERO) {
+    return capped;
+  }
+  return {
+    value: d.value < BIGINT_ZERO ? -BIGINT_ONE : BIGINT_ONE,
+    decimals: capped.decimals,
+  };
+}
+
 type Aggregated =
   | { kind: "value"; value: Decimal }
   | { kind: "float"; value: number };
@@ -542,18 +574,21 @@ function aggregateDecimals(
         decimals: scale,
       });
     case "product": {
-      // The running product is carried exactly, its scale allowed past
-      // MAX_SCALE while factors remain: a tiny factor followed by a large one
-      // must not vanish on the way, and the result must not depend on the
-      // order the factors came in. The scale bound is applied once, at the
-      // end; a product with no 256-place form is handed to float from that
-      // exact value, never from a float of each factor.
+      // The running product keeps every digit a later factor can still lift
+      // into view, so a tiny factor followed by a large one does not vanish
+      // and the answer does not depend on the order the factors came in.
+      const liftable = liftableDigits(decimals);
       let acc: Decimal = { value: BIGINT_ONE, decimals: 0 };
-      for (const d of decimals) {
-        acc = trimSignificant({
-          value: acc.value * d.value,
-          decimals: acc.decimals + d.decimals,
-        });
+      for (const [index, d] of decimals.entries()) {
+        acc = trimSignificant(
+          capProductScale(
+            {
+              value: acc.value * d.value,
+              decimals: acc.decimals + d.decimals,
+            },
+            liftable[index] + PRODUCT_SCALE_HEADROOM
+          )
+        );
       }
       return boundedOrFloat(acc);
     }
@@ -580,11 +615,19 @@ function applyBinaryDecimalPostOperation(
       return valueOf({ value: a + b, decimals: scale });
     case "subtract":
       return valueOf({ value: a - b, decimals: scale });
-    case "multiply":
+    case "multiply": {
+      if (operandDecimal.value === BIGINT_ZERO && !writtenAsZero(operand)) {
+        // Zeroed at the scale bound, not as written: float still has an answer.
+        return {
+          kind: "float",
+          value: floatOfExact(value) * Number(operand.value),
+        };
+      }
       return boundedOrFloat({
         value: value.value * operandDecimal.value,
         decimals: value.decimals + operandDecimal.decimals,
       });
+    }
     case "divide":
     case "modulo": {
       if (writtenAsZero(operand)) {
