@@ -429,7 +429,7 @@ const TEST_DATA: ProtocolTestData = {
       "endpoint-get-config": [{ notEmpty: true }],
       "endpoint-is-supported-eid": [{ equals: "true" }],
       // 3 is Executed; see the fixture above.
-      "endpoint-view-executable": [{ equals: "3" }],
+      "endpoint-view-executable": [{ field: "state", equals: "3" }],
     },
     // oft-approve runs. An earlier revision skipped it as "a write
     // requiring a USDT balance"; that reason was wrong twice over. ERC-20
