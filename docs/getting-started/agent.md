@@ -98,8 +98,8 @@ Always preflight the three simulate-capable tools:
 2. Continue only when the result reports `success: true` and `wouldRevert: false`.
 3. Repeat the call with `simulate` omitted, passing a fresh `idempotency_key`.
 4. Poll `get_direct_execution_status` with the returned `executionId` until it is terminal. Wait
-   the number of seconds in the `X-Poll-Interval-Hint` response header between polls; `0` means
-   the execution is terminal and you can stop.
+   the number of seconds in the `pollIntervalHint` response body field (or the `X-Poll-Interval-Hint`
+   header on REST) between polls; `0` means the execution is terminal and you can stop.
 5. Keep `transactionLink` from the terminal response as the onchain proof.
 
 `execute_protocol_action` is not in that loop: it has no simulate step, so call it once with
