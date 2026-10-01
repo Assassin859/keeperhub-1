@@ -582,7 +582,7 @@ describe("LayerZero reference map completeness", () => {
 // Values read over eth_call on 2026-09-09; all seven match LAYERZERO_EIDS.
 //
 // The loop follows the endpoint address map rather than LAYERZERO_EIDS,
-// which now publishes an endpoint ID for every chain KeeperHub runs so the
+// which now publishes an endpoint ID for a wider set of chains so the
 // view read below can reach them. Only chains with an endpoint address have
 // something to call here.
 const EID_ABI = ["function eid() view returns (uint32)"];

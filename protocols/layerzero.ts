@@ -29,8 +29,11 @@ export const LAYERZERO_CONFIG_DOCS =
 export const LAYERZERO_DEPLOYMENTS_DOCS =
   "https://docs.layerzero.network/v2/deployments/deployed-contracts";
 
-// Endpoint IDs per EVM chain ID, covering every EVM chain KeeperHub
-// supports. Source: LayerZero metadata API
+// Endpoint IDs per EVM chain ID, for the chains the executable read is
+// offered on. Not yet every EVM chain KeeperHub supports: LayerZero also
+// deploys a view on Unichain, HyperEVM, Somnia, Ethereum Hoodi, Unichain
+// Sepolia and Somnia Shannon, which are absent here.
+// Source: LayerZero metadata API
 // (metadata.layerzero-api.com/v1/metadata), 2026-09-16, with every entry
 // then confirmed against the chain itself by calling eid() on that chain's
 // EndpointV2. The integration suite repeats that check for all of them: it
@@ -144,7 +147,7 @@ const EID_TABLE = formatEidTable();
 // share a different one. Source: LayerZero metadata API, 2026-09-05.
 //
 // Deliberately still the five mainnets and two testnets the OFT reference
-// map covers, while the view map below covers every chain KeeperHub runs.
+// map covers, while the view map below covers a wider set of chains.
 // The endpoint's own actions bind a reference OFT deployment per chain; the
 // view's does not, so widening this map is a separate change from widening
 // the read that needs no such deployment.
