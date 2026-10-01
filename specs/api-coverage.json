@@ -61,7 +61,7 @@
       "path": "/api/workflows/{workflowId}/executions",
       "route_file": "app/api/workflows/[workflowId]/executions/route.ts",
       "source": "docs/api/executions.md",
-      "line": 351
+      "line": 352
     },
     {
       "method": "GET",
@@ -258,7 +258,7 @@
       "path": "/api/workflows/executions/{executionId}/logs",
       "route_file": "app/api/workflows/executions/[executionId]/logs/route.ts",
       "source": "docs/api/executions.md",
-      "line": 206
+      "line": 207
     },
     {
       "method": "GET",
@@ -272,7 +272,7 @@
       "path": "/api/workflows/executions/{executionId}/wait",
       "route_file": "app/api/workflows/executions/[executionId]/wait/route.ts",
       "source": "docs/api/executions.md",
-      "line": 163
+      "line": 164
     },
     {
       "method": "GET",

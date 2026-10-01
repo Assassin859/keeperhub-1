@@ -87,6 +87,7 @@ Returns real-time execution status with progress tracking.
 ```json
 {
   "status": "success",
+  "pollIntervalHint": 0,
   "nodeStatuses": [
     { "nodeId": "node_1", "status": "success" },
     { "nodeId": "node_2", "status": "success" }
