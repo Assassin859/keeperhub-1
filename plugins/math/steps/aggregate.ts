@@ -1,16 +1,21 @@
 import "server-only";
-import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import {
   absBigInt,
   alignAll,
+  computeMedian,
   type Decimal,
   divideScaled,
+  failed,
   formatScaled,
+  medianScaled,
   parseDecimal,
+  parseJsonArray,
   pow10,
+  splitValueList,
 } from "./decimal-core";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -179,10 +184,6 @@ function isBinaryPostOperation(value: string): value is BinaryPostOperation {
 
 // ─── Error helpers ──────────────────────────────────────────────────────────
 
-function failedAggregation(error: string): AggregateResult {
-  return { success: false, error, errorClass: ExecutionErrorType.USER };
-}
-
 // The result of a post-operation that did not stay in fixed point: a float,
 // a zero divisor (null result with the flag), or a divisor below precision.
 function finishNumberResult(
@@ -221,7 +222,7 @@ function finishNumberResult(
 
 function belowPrecision(postOp: "divide" | "modulo"): AggregateResult {
   const name = postOp === "divide" ? "Division" : "Modulo";
-  return failedAggregation(
+  return failed(
     `${name} by an operand that is not zero but is below the precision this step carries.`
   );
 }
@@ -312,25 +313,6 @@ function resolveFieldPath(obj: unknown, path: string): unknown {
 
 // ─── Value extraction ───────────────────────────────────────────────────────
 
-function parseJsonToArray(input: string): unknown[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(input);
-  } catch {
-    throw new Error(
-      "arrayInput is not valid JSON. Expected a JSON array, e.g. [1, 2, 3]."
-    );
-  }
-
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  throw new Error(
-    "arrayInput must be a JSON array. If your upstream node returns an object, reference the array field directly in your template variable, e.g. {{@node:Label.rows}} instead of {{@node:Label}}."
-  );
-}
-
 function collectNumericValues(
   items: unknown[],
   fieldPath: string | undefined
@@ -350,12 +332,12 @@ function extractArrayValues(
   arrayInput: string,
   fieldPath: string | undefined
 ): NumericValue[] {
-  const items = parseJsonToArray(arrayInput);
+  const items = parseJsonArray(arrayInput, "arrayInput");
   return collectNumericValues(items, fieldPath);
 }
 
 function extractExplicitValues(explicitValues: string): NumericValue[] {
-  const parts = explicitValues.split(EXPLICIT_SEPARATOR);
+  const parts = splitValueList(explicitValues, EXPLICIT_SEPARATOR);
   const values: NumericValue[] = [];
   for (const part of parts) {
     const numericValue = parseUnknownToNumericValue(part);
@@ -490,15 +472,6 @@ function decimalDivide(numerator: Decimal, denominator: Decimal): Aggregated {
   return aggregated({ value: quotient, decimals: quotientScale });
 }
 
-function sortBigInts(values: bigint[]): bigint[] {
-  return [...values].sort((a, b) => {
-    if (a < b) {
-      return -1;
-    }
-    return a > b ? 1 : 0;
-  });
-}
-
 // The float nearest an exact fixed-point value, taken from the value itself
 // rather than from its factors, so the answer cannot depend on the order the
 // factors came in or underflow on a transient intermediate. A magnitude past
@@ -555,18 +528,9 @@ function aggregateDecimals(
         { value: sum, decimals: scale },
         { value: BigInt(values.length), decimals: 0 }
       );
-    case "median": {
-      const sorted = sortBigInts(values);
-      const mid = Math.floor(sorted.length / 2);
-      if (sorted.length % 2 === 0) {
-        // One extra place makes halving exact.
-        const doubled = (sorted[mid - 1] + sorted[mid]) * BigInt(10);
-        return aggregated(
-          boundScale({ value: doubled / BIGINT_TWO, decimals: scale + 1 })
-        );
-      }
-      return aggregated({ value: sorted[mid], decimals: scale });
-    }
+    case "median":
+      // medianScaled widens one place so halving the two middle entries is exact.
+      return aggregated(boundScale(medianScaled(values, scale)));
     case "min":
       return aggregated({
         value: findExtremeValue(values, (a, b) => a < b),
@@ -754,18 +718,6 @@ function findExtremeValue<T>(
   return extreme;
 }
 
-function computeMedian<T>(values: T[], arithmetic: ArithmeticOperations<T>): T {
-  const sorted = arithmetic.sortAscending(values);
-  const midIndex = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return arithmetic.divide(
-      arithmetic.addition(sorted[midIndex - 1], sorted[midIndex]),
-      arithmetic.two
-    );
-  }
-  return sorted[midIndex];
-}
-
 function computeAggregation<T>(
   values: T[],
   operation: AggregateOperation,
@@ -897,7 +849,7 @@ function parseInputValues(
 ): NumericValue[] | AggregateResult {
   if (input.inputMode === "array") {
     if (!input.arrayInput) {
-      return failedAggregation(
+      return failed(
         "arrayInput is required in array mode. Reference an upstream node output containing a JSON array."
       );
     }
@@ -906,14 +858,14 @@ function parseInputValues(
 
   if (input.inputMode === "explicit") {
     if (!input.explicitValues) {
-      return failedAggregation(
+      return failed(
         "explicitValues is required in explicit mode. Provide comma-separated or newline-separated values."
       );
     }
     return extractExplicitValues(input.explicitValues);
   }
 
-  return failedAggregation(
+  return failed(
     `Invalid inputMode "${input.inputMode}". Must be "array" or "explicit".`
   );
 }
@@ -926,7 +878,7 @@ function validatePostOperation(
     return null;
   }
   if (!VALID_POST_OPERATIONS.has(postOperation)) {
-    return failedAggregation(
+    return failed(
       `Invalid postOperation "${postOperation}". Must be one of: ${ALL_POST_OPERATIONS.join(", ")}.`
     );
   }
@@ -941,7 +893,7 @@ function validatePostOperation(
         postOperation === "round-decimals"
           ? "postDecimalPlaces"
           : "postOperand";
-      return failedAggregation(
+      return failed(
         `${fieldName} is required and must be a valid number for "${postOperation}" post-operation.`
       );
     }
@@ -961,7 +913,7 @@ function buildOperationLabel(input: AggregateCoreInput): string {
 function stepHandler(input: AggregateCoreInput): AggregateResult {
   try {
     if (!isValidOperation(input.operation)) {
-      return failedAggregation(
+      return failed(
         `Invalid operation "${input.operation}". Must be one of: ${AGGREGATE_OPERATIONS.join(", ")}.`
       );
     }
@@ -1028,7 +980,7 @@ function stepHandler(input: AggregateCoreInput): AggregateResult {
       : valueOf(floatAggregate);
     return done(post);
   } catch (error) {
-    return failedAggregation(`Aggregation failed: ${getErrorMessage(error)}`);
+    return failed(`Aggregation failed: ${getErrorMessage(error)}`);
   }
 }
 
