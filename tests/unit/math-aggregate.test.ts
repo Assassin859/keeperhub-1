@@ -621,6 +621,16 @@ describe("math/aggregate - quotients far below the working scale", () => {
     expect(third.result).toBe("0.000000000000000000333333333333333333");
   });
 
+  it("keeps the same significant digits when the numerator is negative", async () => {
+    const result = await expectSuccess({
+      operation: "sum",
+      explicitValues: "-1, 9007199254740993, -9007199254740993",
+      postOperation: "divide",
+      postOperand: "3000000000000000000",
+    });
+    expect(result.result).toBe("-0.000000000000000000333333333333333333");
+  });
+
   it("keeps a dust amount over a raw supply from collapsing to zero in an average", async () => {
     const result = await expectSuccess({
       operation: "average",
@@ -628,6 +638,39 @@ describe("math/aggregate - quotients far below the working scale", () => {
         "0.000000000000000000001, 9007199254740993, -9007199254740993",
     });
     expect(result.result).toBe("0.000000000000000000000333333333333333333");
+    expect(result.resultType).toBe("number");
+  });
+
+  it("hands a quotient below the scale bound to float instead of reporting zero", async () => {
+    const result = await expectSuccess({
+      operation: "sum",
+      explicitValues: "9007199254740993",
+      postOperation: "divide",
+      postOperand: "1e300",
+    });
+    expect(result.result).toBe("9.007199254740992e-285");
+    expect(result.resultType).toBe("number");
+  });
+
+  it("hands an average below the scale bound to float instead of reporting zero", async () => {
+    const tiny = `0.${"0".repeat(255)}1`;
+    const result = await expectSuccess({
+      operation: "average",
+      explicitValues: `${tiny}, 9007199254740993, -9007199254740993`,
+    });
+    expect(result.result).toBe("3.3333333333333335e-257");
+    expect(result.resultType).toBe("number");
+  });
+
+  it("hands an exact power below the scale bound to float instead of reporting zero", async () => {
+    const result = await expectSuccess({
+      operation: "sum",
+      explicitValues: "0.01, 9007199254740993, -9007199254740993",
+      postOperation: "power",
+      postOperand: "160",
+    });
+    expect(result.result).toBe("1e-320");
+    expect(result.resultType).toBe("number");
   });
 });
 
@@ -706,6 +749,20 @@ describe("math/aggregate - bounds on fixed-point work", () => {
       expect(result.result).toBe(expected);
       expect(result.resultType).toBe("number");
     }
+  });
+
+  it("trims the product accumulator once it passes the significant-digit bound", async () => {
+    // 10^4099 + 1 is 4,100 digits, so one 1.5 factor pushes the accumulator
+    // past MAX_DIGITS and its single fractional place is dropped. Without the
+    // trim the result would keep that place and report a fraction.
+    const base = `1${"0".repeat(4098)}1`;
+    const result = await expectSuccess({
+      operation: "product",
+      explicitValues: `${base}, 1.5`,
+    });
+    expect(result.result).toBe(`15${"0".repeat(4097)}1`);
+    expect(result.result).not.toContain(".");
+    expect(result.resultType).toBe("bigint");
   });
 
   it("sends a power whose result would be too long through float", async () => {
@@ -1020,27 +1077,54 @@ describe("math/aggregate - post-operations (binary)", () => {
     expect(result.result).toBe("15");
   });
 
-  it("returns a null result with the flag on division by zero", async () => {
-    // A zero denominator is a legitimate state for a ratio, and a failed step
-    // reaches no later node, so the step succeeds with null and the flag.
+  it("fails on division by zero when the behaviour field is absent", async () => {
+    // A stored configuration without the field keeps the original behaviour:
+    // the step fails and the run stops.
+    const result = await expectFailure({
+      operation: "sum",
+      explicitValues: "10",
+      postOperation: "divide",
+      postOperand: "0",
+    });
+    expect(result.error).toBe("Aggregation failed: Division by zero.");
+    expect(
+      (result as { divisionByZero?: true }).divisionByZero
+    ).toBeUndefined();
+  });
+
+  it("fails on division by zero on the fixed-point path too", async () => {
+    for (const operand of ["0", "0.000", "0e5", "0x0"]) {
+      const result = await expectFailure({
+        operation: "sum",
+        explicitValues: "-9007199254740993",
+        postOperation: "divide",
+        postOperand: operand,
+      });
+      expect(result.error).toBe("Aggregation failed: Division by zero.");
+    }
+  });
+
+  it("returns a null result with the flag when the author opts in", async () => {
     const result = await expectSuccess({
       operation: "sum",
       explicitValues: "10",
       postOperation: "divide",
       postOperand: "0",
+      zeroDivisorBehaviour: "null-result",
     });
     expect(result.result).toBeNull();
     expect(result.divisionByZero).toBe(true);
     expect(result.resultType).toBe("number");
   });
 
-  it("returns a null result with the flag on the fixed-point path the same way", async () => {
+  it("returns a null result with the flag on the fixed-point path when opted in", async () => {
     for (const operand of ["0", "0.000", "0e5", "0x0"]) {
       const result = await expectSuccess({
         operation: "sum",
         explicitValues: "-9007199254740993",
         postOperation: "divide",
         postOperand: operand,
+        zeroDivisorBehaviour: "null-result",
       });
       expect(result.result).toBeNull();
       expect(result.divisionByZero).toBe(true);
@@ -1068,15 +1152,39 @@ describe("math/aggregate - post-operations (binary)", () => {
     expect(result.result).toBe("2");
   });
 
-  it("returns a null result with the flag on modulo by zero", async () => {
-    const result = await expectSuccess({
+  it("fails on modulo by zero when the behaviour field is absent", async () => {
+    const result = await expectFailure({
       operation: "sum",
       explicitValues: "10",
       postOperation: "modulo",
       postOperand: "0",
     });
+    expect(result.error).toBe("Aggregation failed: Modulo by zero.");
+  });
+
+  it("returns a null result with the flag on modulo by zero when opted in", async () => {
+    const result = await expectSuccess({
+      operation: "sum",
+      explicitValues: "10",
+      postOperation: "modulo",
+      postOperand: "0",
+      zeroDivisorBehaviour: "null-result",
+    });
     expect(result.result).toBeNull();
     expect(result.divisionByZero).toBe(true);
+  });
+
+  it("keeps the original behaviour for any value other than the opt-in", async () => {
+    for (const zeroDivisorBehaviour of [undefined, "fail"] as const) {
+      const result = await expectFailure({
+        operation: "sum",
+        explicitValues: "10",
+        postOperation: "divide",
+        postOperand: "0",
+        zeroDivisorBehaviour,
+      });
+      expect(result.error).toBe("Aggregation failed: Division by zero.");
+    }
   });
 
   it("raises to a power", async () => {

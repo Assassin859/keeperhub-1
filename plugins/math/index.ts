@@ -34,7 +34,7 @@ const mathPlugin: IntegrationPlugin = {
         {
           field: "result",
           description:
-            "The aggregation result as a string (exact on the fixed-point path), or null when divide or modulo had a zero operand",
+            "The aggregation result as a string (exact on the fixed-point path), or null when divide or modulo had a zero operand and the Zero Divisor field is set to return a null result",
         },
         {
           field: "resultType",
@@ -52,7 +52,7 @@ const mathPlugin: IntegrationPlugin = {
         {
           field: "divisionByZero",
           description:
-            "true when the divide or modulo post-operation had a zero operand; result is then null and the step succeeds so a Condition can branch on it",
+            "true when the divide or modulo post-operation had a zero operand and the Zero Divisor field is set to return a null result; result is then null and the step succeeds so a Condition can branch on it",
         },
         { field: "error", description: "Error message if aggregation failed" },
       ],
@@ -176,6 +176,26 @@ const mathPlugin: IntegrationPlugin = {
               showWhen: {
                 field: "postOperation",
                 equals: "round-decimals",
+              },
+            },
+            {
+              key: "zeroDivisorBehaviour",
+              label: "Zero Divisor",
+              type: "select",
+              options: [
+                { value: "fail", label: "Fail the step" },
+                {
+                  value: "null-result",
+                  label: "Return a null result and set divisionByZero",
+                },
+              ],
+              defaultValue: "fail",
+              example: "fail",
+              helpText:
+                "What happens when the operand is zero. Failing stops the run; a null result lets a Condition node branch on divisionByZero.",
+              showWhen: {
+                field: "postOperation",
+                oneOf: ["divide", "modulo"],
               },
             },
           ],

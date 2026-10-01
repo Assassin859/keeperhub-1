@@ -19,7 +19,7 @@ No credentials or setup required -- this is a pure computation node.
 
 ## Aggregate
 
-Reduces multiple numeric values into a single result. When any input is a large integer (e.g., a raw token balance in wei) the whole set is computed in fixed-point arithmetic, so a fractional value next to it keeps its digits.
+Reduces multiple numeric values into a single result. When any input is written as a plain integer past the safe-integer range (e.g., a raw token balance in wei) the whole set is computed in fixed-point arithmetic, so a fractional value next to it keeps its digits.
 
 ### Aggregation Operations
 
@@ -27,7 +27,7 @@ Reduces multiple numeric values into a single result. When any input is a large 
 | --------- | ------------------------------------ | ----------- | --------------------- |
 | sum       | Add all values together              | Returns `0` | Exact                 |
 | count     | Number of values in the set          | Returns `0` | Exact                 |
-| average   | Arithmetic mean (sum / count)        | Error       | Up to 18 decimals     |
+| average   | Arithmetic mean (sum / count)        | Error       | 18 to 256 decimals    |
 | median    | Middle value (or mean of two middle) | Error       | Exact                 |
 | min       | Smallest value                       | Error       | Exact                 |
 | max       | Largest value                        | Error       | Exact                 |
@@ -88,33 +88,39 @@ Applied to the aggregated result. Useful for unit conversions, thresholds, and f
 | fieldPath      | No (array mode)  | Dot-path to numeric field in each array element                       |
 | postOperation  | No               | Optional arithmetic on the result (see table above)                   |
 | postOperand    | If binary post-op| Number for binary post-ops and round-decimals (decimal count)         |
+| zeroDivisorBehaviour | No         | `fail` (default) or `null-result`, for a zero divide or modulo operand |
 
 ### Outputs
 
 | Output     | Description                                                         |
 | ---------- | ------------------------------------------------------------------- |
-| result     | The aggregation result as a string (exact on the fixed-point path), or `null` on division by zero |
+| result     | The aggregation result as a string (exact on the fixed-point path), or `null` on a zero divisor when the step opts into that (see below) |
 | resultType | `"bigint"` for a whole number computed in fixed point, `"number"` otherwise |
 | operation  | Description of operations performed (e.g., `"sum then divide"`)    |
 | inputCount | Number of values that were aggregated                               |
-| divisionByZero | `true` when divide or modulo had a zero operand; `result` is then `null` (see below) |
+| divisionByZero | `true` when divide or modulo had a zero operand and Zero Divisor is set to return a null result (see below) |
 | error      | Error message if the aggregation failed                             |
 
 ### Large Values and Fractions
 
-When any input value is an integer that exceeds JavaScript's `Number.MAX_SAFE_INTEGER` (2^53 - 1), the whole set is computed in fixed-point arithmetic: every value is carried as an integer plus a decimal scale, so a wei balance and a fractional rate can be aggregated together without either losing digits. Decimal strings keep their exact digits (`0.1` stays `0.1`); numbers written in exponent form (`1e18`, `2.5e-3`) are expanded first.
+When any input value is written as a plain integer that exceeds JavaScript's `Number.MAX_SAFE_INTEGER` (2^53 - 1), the whole set is computed in fixed-point arithmetic: every value is carried as an integer plus a decimal scale, so a wei balance and a fractional rate can be aggregated together without either losing digits. Decimal strings keep their exact digits (`0.1` stays `0.1`); numbers written in exponent form (`1e18`, `2.5e-3`) are expanded first.
 
 - Sum, product, min, max, median and the add, subtract, multiply, modulo, abs, round, floor, ceil and round-decimals post-operations are exact
-- Average and the divide post-operation keep at least 18 decimal places and at least 18 significant digits, whichever needs more, and truncate beyond that, so a dust amount divided by a raw supply keeps its digits rather than becoming zero
-- Power is exact for a whole-number exponent from 0 to 256 when the result stays under 4,096 digits; any other exponent, or a larger result, is computed in floating point
+- Average and the divide post-operation keep at least 18 decimal places and at least 18 significant digits, whichever needs more, up to the 256-place limit below, and truncate beyond that, so a dust amount divided by a raw supply keeps its digits rather than becoming zero. A quotient with no form inside that limit is computed in floating point rather than reported as an exact zero
+- Power is exact for a whole-number exponent from 0 to 256 when the result stays under 4,096 digits; any other exponent, or a larger result, is computed in floating point. An exact power whose value is too small for the 256-place limit is also computed in floating point rather than reported as an exact zero
 - `resultType` is `"bigint"` when the result is a whole number and `"number"` when it carries a fraction; the `result` string is exact either way
 - Values are carried to at most 256 decimal places; fractional digits beyond that are dropped on inputs and on every intermediate. A running product is carried exactly between factors, so a tiny factor followed by a large one does not vanish on the way and the answer does not depend on input order; a product or multiply whose exact result has no 256-place form is handed to floating point from that exact value, so it is never reported as an exact zero. Inputs that only the JavaScript number parser understands (`0x...` hex, `5.`) are carried as the number's own digits
 
-When every input fits in the safe-integer range the node uses standard floating-point arithmetic.
+Every other input set, including a large magnitude written in exponent form, uses standard floating-point arithmetic. To keep a fraction next to a large value, write the large value as a plain integer.
 
-### Division by Zero
+### Zero Divisor
 
-A zero operand on the divide or modulo post-operation does not fail the step. The step succeeds with `result: null` and `divisionByZero: true`, so a Condition node after it can branch on the case: a zero denominator is often a legitimate state, for example a ratio whose denominator is a rate of consumption that is currently zero. A failed step would reach no later node, which is why the case is a success rather than an error. Zero is judged from the operand as written (`0`, `0.000`, `0e5`, `0x0`), not from what a float makes of it. An operand that is not zero as written but is too small for any precision this step carries fails with a precision message and does not set the flag; for the divide post-operation, one that is too small for fixed point but not for floating point is computed in floating point, which for a very large numerator can return `Infinity`, as the power path does; the modulo post-operation fails with the precision message on such a divisor, since a floating-point remainder by a divisor the fixed-point scale cannot represent is not an answer.
+The **Zero Divisor** field in the Post-Aggregation Arithmetic group selects what a zero operand on the divide or modulo post-operation does:
+
+- **Fail the step** (the default, and what a configuration without the field does): the step fails with `Division by zero.` or `Modulo by zero.`, and the run stops there
+- **Return a null result and set divisionByZero**: the step succeeds with `result: null` and `divisionByZero: true`, so a Condition node after it can branch on the case. Pick this when a zero denominator is a legitimate state, for example a ratio whose denominator is a rate of consumption that is currently zero. Any node reading `result` then receives an empty value, so route the null branch away from nodes that need a number
+
+Zero is judged from the operand as written (`0`, `0.000`, `0e5`, `0x0`), not from what a float makes of it. An operand that is not zero as written but is too small for any precision this step carries fails with a precision message under either setting and does not set the flag; for the divide post-operation, one that is too small for fixed point but not for floating point is computed in floating point, which for a very large numerator can return `Infinity`, as the power path does; the modulo post-operation fails with the precision message on such a divisor, since a floating-point remainder by a divisor the fixed-point scale cannot represent is not an answer.
 
 ### String-Encoded Numbers
 
@@ -122,7 +128,7 @@ Values from upstream nodes often arrive as strings. The Aggregate node handles:
 
 - Plain strings: `"1234.56"` -> `1234.56`
 - Comma-formatted: `"1,234,567.89"` -> `1234567.89`
-- Integer strings: `"1000000000000000000"` -> BigInt if above MAX_SAFE_INTEGER
+- Integer strings: `"1000000000000000000"` -> fixed point if above MAX_SAFE_INTEGER
 - Mixed types in the same set (some string, some number)
 
 Non-numeric values are silently skipped. Check `inputCount` to verify how many values were actually processed.
