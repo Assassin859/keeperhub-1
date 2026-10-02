@@ -66,16 +66,19 @@ describe("sumOrgGasTopUpTodayMicroUsd", () => {
     );
   });
 
-  it("still counts a failed run whose swap landed, and in-flight rows of any age", async () => {
+  it("counts a finished run only when its swap landed or may still land, and in-flight rows of any age", async () => {
     const { executor, captured } = fakeExecutor([{ totalMicroUsd: "0" }]);
 
     await sumOrgGasTopUpTodayMicroUsd(executor, "org_1");
 
     const where = render(captured.where).sql;
-    expect(where).toContain("IN ('completed', 'unconfirmed')");
-    expect(where).toContain("= 'failed' AND");
-    expect(where).toContain("->>'swapLanded' = 'true'");
     expect(where).toContain("IN ('pending', 'running')");
+    expect(where).toContain("->>'swapLanded' = 'true'");
+    expect(where).toContain("IN ('completed', 'unconfirmed') AND");
+    expect(where).toContain("->>'swapPending' = 'true'");
+    // A finished row is never counted on its status alone: the reconciler can
+    // mark a run completed when only its approve landed.
+    expect(where).not.toContain("IN ('completed', 'unconfirmed') OR");
     // A run's worst case outlasts any fixed window and a crashed run is never
     // swept, so in-flight rows count until the UTC day ends.
     expect(where).not.toContain("interval");

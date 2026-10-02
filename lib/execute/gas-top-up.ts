@@ -338,6 +338,12 @@ export type GasTopUpResult = {
   broadcastAttempted: boolean;
   /** True once the swap confirmed: the USDC is spent, whatever happens next. */
   swapLanded: boolean;
+  /**
+   * True when the swap was broadcast but is unconfirmed: the USDC may or may
+   * not be spent. The daily cap keys on this, since the reconciler settles the
+   * row's status later but never rewrites its output.
+   */
+  swapPending?: boolean;
   /** Sum of the confirmed steps' fees, in wei. */
   gasUsedWei: string;
   finalTransactionHash?: string;
@@ -748,8 +754,10 @@ export async function executeGasTopUp(params: {
         },
         ...(next ? skippedSteps(next) : []),
       ],
-      // Unknown while a broadcast swap is unconfirmed.
-      ...(step === "swap" && pending ? {} : { usdcSpent: "0" }),
+      // usdcSpent is unknown while a broadcast swap is unconfirmed.
+      ...(step === "swap" && pending
+        ? { swapPending: true }
+        : { usdcSpent: "0" }),
       broadcastAttempted:
         outcome.broadcastAttempted || steps.some((s) => s.transactionHash),
       swapLanded: false,

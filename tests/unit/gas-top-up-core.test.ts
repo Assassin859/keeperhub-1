@@ -855,6 +855,7 @@ describe("executeGasTopUp", () => {
 
     expect(result.success).toBe(false);
     expect(result.swapLanded).toBe(false);
+    expect(result.swapPending).toBeUndefined();
     expect(result.usdcSpent).toBe("0");
     expect(result.steps).toMatchObject([
       { name: "approve", status: "confirmed", transactionHash: "0xapprove" },
@@ -893,8 +894,45 @@ describe("executeGasTopUp", () => {
     const result = await executeGasTopUp({ plan, executionId: "exec-1" });
 
     expect(result.usdcSpent).toBeUndefined();
+    expect(result.swapLanded).toBe(false);
+    expect(result.swapPending).toBe(true);
     expect(result.error).toContain("may or may not have been spent");
     expect(mockSponsoredSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not mark the swap pending when only the approve is unconfirmed", async () => {
+    mockSponsoredSend.mockImplementation(
+      (params: { to: string; functionName: string }) => {
+        if (params.functionName === "approve") {
+          return Promise.reject(
+            new SponsoredTxPendingError({
+              message: "timed out",
+              txHash: "0xapprovepending",
+            })
+          );
+        }
+        return Promise.resolve(confirmed(`0x${params.functionName}`));
+      }
+    );
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.usdcSpent).toBe("0");
+    expect(result.swapLanded).toBe(false);
+    expect(result.swapPending).toBeUndefined();
+    expect(result.steps.map((step) => [step.name, step.status])).toEqual([
+      ["approve", "failed"],
+      ["swap", "skipped"],
+      ["unwrap", "skipped"],
+    ]);
+    expect(result.failure).toMatchObject({
+      step: "approve",
+      transactionHash: "0xapprovepending",
+      broadcastAttempted: true,
+    });
+    expect(mockSponsoredSend).toHaveBeenCalledOnce();
   });
 
   it("reports WETH left unwrapped when the unwrap fails after the swap landed", async () => {

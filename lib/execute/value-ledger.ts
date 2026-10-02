@@ -135,8 +135,14 @@ export async function sumOrgSolanaValueTodayLamports(
  * each row's input. The swap forwards no native value, so the wei cap never
  * sees it; this is what the route's daily cap is charged against.
  *
- * A failed row still counts when its swap landed (`output.swapLanded`): the
- * USDC is spent even though the unwrap did not finish.
+ * A finished row counts only when its swap landed or may still land, whatever
+ * its status: `output.swapLanded` means the USDC is spent (even if the unwrap
+ * did not finish), and `output.swapPending` means the swap was broadcast but is
+ * unconfirmed. The output is the run's own record; the reconciler later settles
+ * the status from the row's last transaction but never rewrites the output, so
+ * status alone would charge a run that only broadcast its approve. A pending
+ * swap stops counting once the reconciler marks it failed (reverted or
+ * dropped) and keeps counting if it marks it completed.
  *
  * Pending and running rows count for the rest of the UTC day, with no stale
  * cutoff. One run is three sponsored sends, each with a Turnkey status poll and
@@ -162,7 +168,7 @@ export async function sumOrgGasTopUpTodayMicroUsd(
         eq(directExecutions.organizationId, organizationId),
         eq(directExecutions.type, "gas-top-up"),
         gte(directExecutions.createdAt, todayStart),
-        sql`(${directExecutions.status} IN ('completed', 'unconfirmed') OR (${directExecutions.status} = 'failed' AND ${directExecutions.output}->>'swapLanded' = 'true') OR ${directExecutions.status} IN ('pending', 'running'))`
+        sql`(${directExecutions.status} IN ('pending', 'running') OR ${directExecutions.output}->>'swapLanded' = 'true' OR (${directExecutions.status} IN ('completed', 'unconfirmed') AND ${directExecutions.output}->>'swapPending' = 'true'))`
       )
     );
 

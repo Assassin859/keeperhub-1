@@ -843,9 +843,11 @@ Checked before an execution is reserved or anything is sent:
 An insufficient USDC balance or a failed quote is reported after the execution
 is reserved, as `202` with `status: "failed"` and no transaction sent.
 
-The daily limit counts completed and unconfirmed top-ups, any failed top-up
-whose swap landed (its USDC is spent), and top-ups still in flight. In-flight
-top-ups count for the rest of the UTC day however long they take, so a slow or
+The daily limit counts a finished top-up, whatever its status, when its swap
+landed (its USDC is spent), and a completed or unconfirmed top-up whose swap was
+broadcast and may still land. A top-up that stopped before its swap, or whose
+swap reverted, does not count. Top-ups still in flight count too, for the rest
+of the UTC day however long they take, so a slow or
 interrupted run never frees its share early. It is checked atomically
 with the reservation, so concurrent requests cannot both fit under the last of
 the day's allowance. Self-hosted deployments can change it with
@@ -893,6 +895,8 @@ response says which landed: each entry in `steps` is `confirmed`, `failed`, or
 
 - Approve failed: no USDC was spent.
 - Swap failed: no USDC was spent; an approval for exactly `amountUsdc` remains.
+- Swap broadcast but unconfirmed: the USDC may or may not have been spent.
+  `usdcSpent` is omitted and `swapPending` is `true`.
 - Unwrap failed: the USDC is spent and the WETH is left unwrapped in the
   wallet. `usdcSpent` and `wethReceived` are set, `ethReceived` is not.
 
