@@ -15,7 +15,10 @@ import {
   parseUnits,
   toEventSelector,
 } from "viem";
-import { checkGasCredits } from "@/lib/billing/gas-credits";
+import {
+  checkGasCredits,
+  getFreshGasTokenPriceUsd,
+} from "@/lib/billing/gas-credits";
 import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
 import { getChainTokens } from "@/lib/contracts/tokens";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
@@ -34,6 +37,7 @@ import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import { buildChainTransactionUrl } from "@/lib/web3/chain-adapter/explorer";
+import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
@@ -76,8 +80,18 @@ const POOL_FEE: Readonly<Record<GasTopUpChainId, number>> = {
 /** Same default the Tempo DEX swap applies (plugins/tempo/steps/dex-swap.ts). */
 const GAS_TOP_UP_SLIPPAGE_BPS = 50;
 const BPS_DENOMINATOR = 10_000;
-/** A swap still in the mempool this long after its pre-swap quote reverts. */
-const GAS_TOP_UP_DEADLINE_SECONDS = 600;
+/**
+ * A swap still in the mempool this long after its pre-swap quote reverts, so it
+ * cannot fill long after the price that set its floor. A revert spends no USDC.
+ */
+const GAS_TOP_UP_DEADLINE_SECONDS = 180;
+/**
+ * How much worse than the chain's Chainlink ETH/USD price a quote may be. The
+ * quotes and the floor come from the pool the swap fills against, so the
+ * oracle is the only price an adversary moving that pool cannot also move.
+ * One-sided: a quote better than the oracle never refuses.
+ */
+const GAS_TOP_UP_ORACLE_TOLERANCE_BPS = 200;
 const WETH_DECIMALS = 18;
 const LOG_PREFIX = "[Gas Top-up]";
 const ACTION_NAME = "gas-top-up";
@@ -91,6 +105,63 @@ export function applySlippageFloor(
     (quotedOut * BigInt(BPS_DENOMINATOR - slippageBps)) /
     BigInt(BPS_DENOMINATOR)
   );
+}
+
+const ORACLE_PRICE_DECIMALS = 8;
+
+/**
+ * The least WETH (wei) `amountIn` USDC may buy at the oracle's ETH/USD price
+ * less the tolerance, valuing USDC at 1 USD. In bigint after scaling the price
+ * to the oracle's own 8 decimals.
+ */
+export function minimumOracleWethOut(
+  amountIn: bigint,
+  usdcDecimals: number,
+  ethPriceUsd: number,
+  toleranceBps: number = GAS_TOP_UP_ORACLE_TOLERANCE_BPS
+): bigint {
+  const price = BigInt(Math.round(ethPriceUsd * 10 ** ORACLE_PRICE_DECIMALS));
+  const expectedWei =
+    (amountIn *
+      BigInt(10) ** BigInt(WETH_DECIMALS - usdcDecimals) *
+      BigInt(10) ** BigInt(ORACLE_PRICE_DECIMALS)) /
+    price;
+  return (
+    (expectedWei * BigInt(BPS_DENOMINATOR - toleranceBps)) /
+    BigInt(BPS_DENOMINATOR)
+  );
+}
+
+/**
+ * A refusal message when the quote is materially worse than the oracle price,
+ * or when no fresh oracle price can be read (fail closed); null when it passes.
+ * Testnets have no feed and no value at stake, so they skip the check.
+ */
+async function oracleCheck(
+  plan: GasTopUpPlan,
+  rpcUrl: string,
+  quotedOut: bigint
+): Promise<string | null> {
+  if (isTestnetChain(plan.chainId)) {
+    return null;
+  }
+  let ethPriceUsd: number;
+  try {
+    ethPriceUsd = await getFreshGasTokenPriceUsd(rpcUrl, plan.chainId);
+  } catch (error) {
+    return `No fresh Chainlink ETH/USD price (${getErrorMessage(error)}); refusing to swap without an independent price check`;
+  }
+  const minimum = minimumOracleWethOut(
+    plan.amountIn,
+    plan.usdc.decimals,
+    ethPriceUsd
+  );
+  if (quotedOut >= minimum) {
+    return null;
+  }
+  const impliedUsdPerEth =
+    Number(plan.amountUsdc) / Number(formatUnits(quotedOut, WETH_DECIMALS));
+  return `Quote implies ${impliedUsdPerEth.toFixed(2)} USD per ETH, more than ${GAS_TOP_UP_ORACLE_TOLERANCE_BPS / 100}% worse than the Chainlink price of ${ethPriceUsd.toFixed(2)}; refusing to swap`;
 }
 
 type GasTopUpContracts = {
@@ -716,6 +787,10 @@ export async function executeGasTopUp(params: {
   if (quotedOut <= BigInt(0) || amountOutMinimum <= BigInt(0)) {
     return refuse("Quote returned no WETH for this amount; refusing to swap");
   }
+  const preflightOracleRefusal = await oracleCheck(plan, rpcUrl, quotedOut);
+  if (preflightOracleRefusal) {
+    return refuse(preflightOracleRefusal);
+  }
 
   let quoteFields = {
     quotedWethOut: quotedOut.toString(),
@@ -811,6 +886,10 @@ export async function executeGasTopUp(params: {
     return swapQuoteFailed(
       "Re-quote before the swap returned no WETH for this amount; refusing to swap"
     );
+  }
+  const swapOracleRefusal = await oracleCheck(plan, rpcUrl, quotedOut);
+  if (swapOracleRefusal) {
+    return swapQuoteFailed(`Re-quote before the swap: ${swapOracleRefusal}`);
   }
   quoteFields = {
     quotedWethOut: quotedOut.toString(),

@@ -144,8 +144,10 @@ vi.mock("@/lib/web3/sponsorship-eligibility", () => ({
 }));
 
 const mockCheckGasCredits = vi.fn();
+const mockOraclePrice = vi.fn();
 vi.mock("@/lib/billing/gas-credits", () => ({
   checkGasCredits: (...args: unknown[]) => mockCheckGasCredits(...args),
+  getFreshGasTokenPriceUsd: (...args: unknown[]) => mockOraclePrice(...args),
 }));
 
 const mockCreateSponsoredClient = vi.fn();
@@ -217,6 +219,7 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
 const {
   applySlippageFloor,
   executeGasTopUp,
+  minimumOracleWethOut,
   prepareGasTopUp,
   resolveGasTopUpContracts,
   wethReceivedFromLogs,
@@ -300,6 +303,8 @@ beforeEach(() => {
   mockResolveSigner.mockResolvedValue({ kind: "eoa", ownerAddress: WALLET });
   mockShouldTrySponsorship.mockReturnValue(true);
   mockCheckGasCredits.mockResolvedValue({ allowed: true, remainingCents: 1 });
+  // 5 USDC for QUOTE (0.001 WETH) is exactly 5000 USD per ETH.
+  mockOraclePrice.mockResolvedValue(5000);
   mockCreateSponsoredClient.mockResolvedValue({
     subOrgId: "sub-1",
     walletAddress: WALLET.toLowerCase(),
@@ -317,6 +322,22 @@ describe("applySlippageFloor", () => {
   it("rounds down, never up", () => {
     expect(applySlippageFloor(BigInt(1))).toBe(BigInt(0));
     expect(applySlippageFloor(BigInt(201))).toBe(BigInt(199));
+  });
+});
+
+describe("minimumOracleWethOut", () => {
+  it("prices USDC at 1 USD against the oracle, less 2%", () => {
+    // 5 USDC at 5000 USD per ETH is 0.001 ETH; 2% off is 0.00098.
+    expect(minimumOracleWethOut(BigInt(5_000_000), 6, 5000)).toBe(
+      BigInt("980000000000000")
+    );
+    expect(minimumOracleWethOut(BigInt(5_000_000), 6, 5000, 0)).toBe(QUOTE);
+  });
+
+  it("handles an 18-decimal token and a fractional price", () => {
+    expect(minimumOracleWethOut(ONE_WETH, 18, 2500.5, 0)).toBe(
+      (ONE_WETH * BigInt(100_000_000)) / BigInt(250_050_000_000)
+    );
   });
 });
 
@@ -552,8 +573,8 @@ describe("executeGasTopUp", () => {
     });
     expect(swap).toMatchObject({ to: ROUTER, functionName: "multicall" });
     const [deadline, calls] = swap.args as [bigint, Hex[]];
-    expect(deadline).toBeGreaterThanOrEqual(BigInt(before + 600));
-    expect(deadline).toBeLessThanOrEqual(BigInt(after + 600));
+    expect(deadline).toBeGreaterThanOrEqual(BigInt(before + 180));
+    expect(deadline).toBeLessThanOrEqual(BigInt(after + 180));
     expect(calls).toHaveLength(1);
     const inner = decodeFunctionData({
       abi: swapRouterAbi,
@@ -694,6 +715,86 @@ describe("executeGasTopUp", () => {
       expect(result.error).toContain("no USDC was spent");
     }
   );
+
+  it("refuses before sending anything when the quote is more than 2% worse than the oracle", async () => {
+    chain.quote = (QUOTE * BigInt(97)) / BigInt(100);
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(mockSponsoredSend).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      usdcSpent: "0",
+      failure: { step: "preflight", broadcastAttempted: false },
+    });
+    expect(result.error).toContain("more than 2% worse than the Chainlink");
+    expect(mockOraclePrice).toHaveBeenCalledWith(
+      "https://rpc.example.com",
+      BASE
+    );
+  });
+
+  it("does not send the swap when the re-quote is more than 2% worse than the oracle", async () => {
+    chain.quotes = [QUOTE, (QUOTE * BigInt(97)) / BigInt(100)];
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(mockSponsoredSend).toHaveBeenCalledOnce();
+    expect(mockSponsoredSend.mock.calls[0]?.[0].functionName).toBe("approve");
+    expect(result.steps).toMatchObject([
+      { name: "approve", status: "confirmed" },
+      { name: "swap", status: "failed" },
+      { name: "unwrap", status: "skipped" },
+    ]);
+    expect(result.steps[1]?.transactionHash).toBeUndefined();
+    expect(result).toMatchObject({
+      success: false,
+      usdcSpent: "0",
+      swapLanded: false,
+      failure: { step: "swap", broadcastAttempted: false },
+    });
+    expect(result.error).toContain("more than 2% worse than the Chainlink");
+  });
+
+  it("refuses before sending anything when no fresh oracle price is available", async () => {
+    mockOraclePrice.mockRejectedValue(new Error("Chainlink price stale"));
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(mockSponsoredSend).not.toHaveBeenCalled();
+    expect(result.failure).toMatchObject({ step: "preflight" });
+    expect(result.error).toContain("No fresh Chainlink ETH/USD price");
+    expect(result.error).toContain("Chainlink price stale");
+  });
+
+  it.each([
+    ["better than the oracle", (QUOTE * BigInt(110)) / BigInt(100)],
+    ["within 2% of the oracle", (QUOTE * BigInt(99)) / BigInt(100)],
+  ])("swaps when the quote is %s", async (_label, quote) => {
+    chain.quote = quote;
+    sendsSucceed(quote);
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(true);
+    expect(mockSponsoredSend).toHaveBeenCalledTimes(3);
+    expect(mockOraclePrice).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips the oracle check on a testnet", async () => {
+    chain.quote = QUOTE / BigInt(2);
+    sendsSucceed(QUOTE / BigInt(2));
+    const plan = { ...(await preparedPlan()), chainId: 11_155_111 as const };
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(true);
+    expect(mockOraclePrice).not.toHaveBeenCalled();
+  });
 
   it("retries a receipt a lagging node reports missing and unwraps it exactly", async () => {
     const better = QUOTE + BigInt(777);

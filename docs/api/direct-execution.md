@@ -799,11 +799,14 @@ Turnkey EOA:
    QuoterV2 `quoteExactInputSingle` call is taken before anything is sent, and
    a zero or failed quote refuses the request. Once the approve confirms, the
    quote is taken again, and the minimum output is that fresh quote less 0.5%,
-   set server-side. The swap goes through the router's `multicall` with a
-   deadline 10 minutes after that fresh quote, so a swap left in the mempool
-   past that reverts instead of filling at a stale price. If the second quote
-   fails, the swap is not sent: no USDC is spent and the approval for exactly
-   `amountUsdc` remains.
+   set server-side. Each quote is also checked against the chain's Chainlink
+   ETH/USD price, which the pool cannot move: a quote more than 2% worse than
+   that price, or no fresh Chainlink price at all, refuses the request
+   (testnets skip this check). The swap goes through the router's `multicall`
+   with a deadline 3 minutes after that fresh quote, so a swap left in the
+   mempool past that reverts instead of filling at a stale price. If the second
+   quote fails or fails the Chainlink check, the swap is not sent: no USDC is
+   spent and the approval for exactly `amountUsdc` remains.
 3. `withdraw` on WETH for the amount the swap delivered, read from the swap's
    own receipt, which pays native ETH to the wallet. WETH the wallet already
    held is left alone.
@@ -840,8 +843,9 @@ Checked before an execution is reserved or anything is sent:
 | `422` | Gas sponsorship unavailable: not enabled on the chain, credits exhausted, or no Turnkey wallet. The route never falls back to self-paid gas |
 | `422` | `WALLET_NOT_CONFIGURED`, or the chain's canonical USDC is not a supported stablecoin |
 
-An insufficient USDC balance or a failed quote is reported after the execution
-is reserved, as `202` with `status: "failed"` and no transaction sent.
+An insufficient USDC balance, a failed quote, or a first quote that fails the
+Chainlink price check (or finds no fresh Chainlink price) is reported after the
+execution is reserved, as `202` with `status: "failed"` and no transaction sent.
 
 The daily limit counts a finished top-up, whatever its status, when its swap
 landed (its USDC is spent), and a completed or unconfirmed top-up whose swap was
