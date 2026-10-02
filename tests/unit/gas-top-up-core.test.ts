@@ -11,6 +11,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
 import { getChainTokens } from "@/lib/contracts/tokens";
+import { applySlippageFloor } from "@/lib/web3/slippage";
 import quoterAbiJson from "@/protocols/abis/uniswap-quoter.json";
 import swapRouterAbiJson from "@/protocols/abis/uniswap-swap-router.json";
 
@@ -230,7 +231,6 @@ vi.mock("@/lib/rpc/provider-factory", () => ({
 }));
 
 const {
-  applySlippageFloor,
   executeGasTopUp,
   minimumOracleWethOut,
   prepareGasTopUp,
@@ -347,18 +347,6 @@ beforeEach(() => {
     chainId: BASE,
   });
   sendsSucceed();
-});
-
-describe("applySlippageFloor", () => {
-  it("takes 50 bps off the quote in bigint arithmetic", () => {
-    expect(applySlippageFloor(BigInt(10_000))).toBe(BigInt(9950));
-    expect(applySlippageFloor(ONE_WETH)).toBe(BigInt("995000000000000000"));
-  });
-
-  it("rounds down, never up", () => {
-    expect(applySlippageFloor(BigInt(1))).toBe(BigInt(0));
-    expect(applySlippageFloor(BigInt(201))).toBe(BigInt(199));
-  });
 });
 
 describe("minimumOracleWethOut", () => {

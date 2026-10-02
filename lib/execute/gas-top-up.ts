@@ -43,6 +43,7 @@ import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import { buildChainTransactionUrl } from "@/lib/web3/chain-adapter/explorer";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
+import { applySlippageFloor, BPS_DENOMINATOR } from "@/lib/web3/slippage";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
@@ -82,9 +83,6 @@ const POOL_FEE: Readonly<Record<GasTopUpChainId, number>> = {
   11155111: 3000,
 };
 
-/** Same default the Tempo DEX swap applies (plugins/tempo/steps/dex-swap.ts). */
-const GAS_TOP_UP_SLIPPAGE_BPS = 50;
-const BPS_DENOMINATOR = 10_000;
 /**
  * A swap still in the mempool this long after its pre-swap quote reverts, so it
  * cannot fill long after the price that set its floor. A revert spends no USDC.
@@ -100,17 +98,6 @@ const GAS_TOP_UP_ORACLE_TOLERANCE_BPS = 200;
 const WETH_DECIMALS = 18;
 const LOG_PREFIX = "[Gas Top-up]";
 const ACTION_NAME = "gas-top-up";
-
-/** The quote less a fixed tolerance, in bigint so no precision is lost. */
-export function applySlippageFloor(
-  quotedOut: bigint,
-  slippageBps: number = GAS_TOP_UP_SLIPPAGE_BPS
-): bigint {
-  return (
-    (quotedOut * BigInt(BPS_DENOMINATOR - slippageBps)) /
-    BigInt(BPS_DENOMINATOR)
-  );
-}
 
 const ORACLE_PRICE_DECIMALS = 8;
 
