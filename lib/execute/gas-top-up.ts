@@ -22,7 +22,7 @@ import {
 import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
 import { getChainTokens } from "@/lib/contracts/tokens";
 import { db } from "@/lib/db";
-import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   type GasTopUpChainId,
   isGasTopUpChain,
@@ -43,7 +43,7 @@ import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import { buildChainTransactionUrl } from "@/lib/web3/chain-adapter/explorer";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
-import { applySlippageFloor, BPS_DENOMINATOR } from "@/lib/web3/slippage";
+import { applySlippageFloor } from "@/lib/web3/slippage";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
@@ -118,10 +118,7 @@ export function minimumOracleWethOut(
       BigInt(10) ** BigInt(WETH_DECIMALS - usdcDecimals) *
       BigInt(10) ** BigInt(ORACLE_PRICE_DECIMALS)) /
     price;
-  return (
-    (expectedWei * BigInt(BPS_DENOMINATOR - toleranceBps)) /
-    BigInt(BPS_DENOMINATOR)
-  );
+  return applySlippageFloor(expectedWei, toleranceBps);
 }
 
 /**
@@ -549,19 +546,27 @@ async function sendSponsored(params: {
         actionName: ACTION_NAME,
         chainId: plan.chainId,
       });
-      if (!decision.fallback) {
-        return {
-          kind: "failed",
-          error: decision.error,
-          transactionHash: decision.transactionHash,
-          transactionLink: decision.transactionHash
-            ? await transactionLinkFor(plan.chainId, decision.transactionHash)
-            : undefined,
-          broadcastAttempted: true,
-          pending: isSponsoredTxPendingError(error),
-          errorClass: decision.errorClass,
-        };
-      }
+      const pending = isSponsoredTxPendingError(error);
+      // The error type, not decision.fallback, proves the send reached
+      // Turnkey, so a fallback answer here still reports a broadcast.
+      const failure = decision.fallback
+        ? {
+            error: `Sponsored transaction was broadcast: ${getErrorMessage(error)}`,
+            transactionHash: error.txHash,
+            errorClass: pending ? ExecutionErrorType.SYSTEM : undefined,
+          }
+        : decision;
+      return {
+        kind: "failed",
+        error: failure.error,
+        transactionHash: failure.transactionHash,
+        transactionLink: failure.transactionHash
+          ? await transactionLinkFor(plan.chainId, failure.transactionHash)
+          : undefined,
+        broadcastAttempted: true,
+        pending,
+        errorClass: failure.errorClass,
+      };
     }
     return {
       kind: "failed",

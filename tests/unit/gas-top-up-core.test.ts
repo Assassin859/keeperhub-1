@@ -176,6 +176,15 @@ vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({
     mockSponsoredSend(...args),
 }));
 
+vi.mock("@/lib/web3/sponsored-send-error", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/web3/sponsored-send-error")>();
+  return {
+    ...actual,
+    resolveSponsoredSendError: vi.fn(actual.resolveSponsoredSendError),
+  };
+});
+
 function balanceKey(token: string, owner: string): string {
   return `${token.toLowerCase()}:${owner.toLowerCase()}`;
 }
@@ -239,6 +248,9 @@ const {
 } = await import("@/lib/execute/gas-top-up");
 const { SponsoredTxPendingError, SponsoredTxRevertError } = await import(
   "@/lib/web3/turnkey-revert"
+);
+const { resolveSponsoredSendError } = await import(
+  "@/lib/web3/sponsored-send-error"
 );
 const { clearExplorerConfigCache } = await import(
   "@/lib/web3/chain-adapter/explorer"
@@ -1213,6 +1225,85 @@ describe("executeGasTopUp", () => {
     });
     expect(mockSponsoredSend).toHaveBeenCalledOnce();
     expect(result.approvalRevoked).toBeUndefined();
+  });
+
+  it.each([
+    {
+      label: "reverted",
+      error: () =>
+        new SponsoredTxRevertError({
+          message: "Too little received",
+          txHash: "0xswapfail",
+          sendTransactionStatusId: "st-1",
+          revertChain: [],
+        }),
+      hash: "0xswapfail",
+      pending: false,
+    },
+    {
+      label: "unconfirmed",
+      error: () =>
+        new SponsoredTxPendingError({
+          message: "timed out",
+          txHash: "0xswappending",
+        }),
+      hash: "0xswappending",
+      pending: true,
+    },
+  ])(
+    "still reports a $label swap as broadcast if the classifier answers fallback",
+    async ({ error, hash, pending }) => {
+      vi.mocked(resolveSponsoredSendError).mockReturnValueOnce({
+        fallback: true,
+      });
+      mockSponsoredSend.mockImplementation((params: SendParams) =>
+        params.to === ROUTER ? Promise.reject(error()) : confirmedSend(params)
+      );
+      const plan = await preparedPlan();
+
+      const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+      expect(resolveSponsoredSendError).toHaveBeenCalledOnce();
+      expect(result.success).toBe(false);
+      expect(result.error).not.toContain("before broadcast");
+      expect(result.failure).toMatchObject({
+        step: "swap",
+        transactionHash: hash,
+        transactionLink: `https://basescan.org/tx/${hash}`,
+        broadcastAttempted: true,
+      });
+      if (pending) {
+        expect(result.swapPending).toBe(true);
+        expect(result.failure?.errorClass).toBe("system");
+        expect(approvedAmounts()).toEqual([BigInt(5_000_000)]);
+        expect(result.approvalRevoked).toBeUndefined();
+      } else {
+        expect(result.swapPending).toBeUndefined();
+        expect(result.failure?.errorClass).toBeUndefined();
+        expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
+        expect(result.approvalRevoked).toBe(true);
+      }
+    }
+  );
+
+  it("reports a send that throws outside Turnkey's broadcast errors as never broadcast", async () => {
+    mockSponsoredSend.mockRejectedValue(new Error("signer unavailable"));
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(mockSponsoredSend).toHaveBeenCalledOnce();
+    expect(resolveSponsoredSendError).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.usdcSpent).toBe("0");
+    expect(result.error).toContain(
+      "Sponsored send failed before broadcast: signer unavailable"
+    );
+    expect(result.failure).toMatchObject({
+      step: "approve",
+      broadcastAttempted: false,
+    });
+    expect(result.failure?.transactionHash).toBeUndefined();
   });
 
   it("reports WETH left unwrapped when the unwrap fails after the swap landed", async () => {

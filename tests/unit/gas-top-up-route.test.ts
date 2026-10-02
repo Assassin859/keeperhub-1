@@ -89,6 +89,9 @@ vi.mock("@/lib/idempotency", async () => ({
 }));
 
 const { POST } = await import("@/app/api/execute/gas-top-up/route");
+const { sumOrgGasTopUpTodayMicroUsd } = await import(
+  "@/lib/execute/value-ledger"
+);
 
 const PLAN = {
   chainId: 8453,
@@ -188,9 +191,16 @@ describe("POST /api/execute/gas-top-up", () => {
         stablecoinDaily: expect.objectContaining({
           amountMicroUsd: BigInt(5_000_000),
           capMicroUsd: BigInt(200_000_000),
+          label: "gas top-up",
         }),
       })
     );
+    // The native-value sums take the same arguments, so only identity tells
+    // the gas top-up sum apart from them.
+    expect(
+      checkAndReserveExecutionMock.mock.calls[0][0].stablecoinDaily
+        .sumTodayMicroUsd
+    ).toBe(sumOrgGasTopUpTodayMicroUsd);
     // The status endpoint reads the link back from the stored output.
     expect(completeExecutionMock).toHaveBeenCalledWith(
       "exec_1",
