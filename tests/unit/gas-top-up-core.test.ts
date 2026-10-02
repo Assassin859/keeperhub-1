@@ -773,6 +773,8 @@ describe("executeGasTopUp", () => {
         revokeTransactionLink: `https://basescan.org/tx/${REVOKE_HASH}`,
         failure: { step: "swap", broadcastAttempted: false },
       });
+      expect(result.failure?.transactionHash).toBeUndefined();
+      expect(result.gasUsedWei).toBe("200");
       expect(result.error).toContain(message);
       expect(result.error).toContain("no USDC was spent");
       expect(result.error).toContain("the approval was set back to zero");
@@ -1028,6 +1030,8 @@ describe("executeGasTopUp", () => {
     });
     expect(result.error).toContain("the approval was set back to zero");
     expect(result.error).toContain("Too little received");
+    // The approve and the revoke; the reverted swap's fee is not counted.
+    expect(result.gasUsedWei).toBe("200");
     expect(result.steps).toMatchObject([
       { name: "approve", status: "confirmed", transactionHash: "0xapprove" },
       {
@@ -1084,8 +1088,9 @@ describe("executeGasTopUp", () => {
       expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
       expect(result.success).toBe(false);
       expect(result.usdcSpent).toBe("0");
-      expect(result.approvalRevoked).toBe(false);
-      expect(result.revokeTransactionHash).toBe(revokeHash);
+    expect(result.approvalRevoked).toBe(false);
+    expect(result.revokeTransactionHash).toBe(revokeHash);
+    expect(result.gasUsedWei).toBe("100");
       expect(result.error).toContain(
         "an approval for exactly the requested amount remains"
       );

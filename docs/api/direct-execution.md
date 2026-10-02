@@ -904,7 +904,8 @@ response says which landed: each entry in `steps` is `confirmed`, `failed`, or
   zero. `approvalRevoked` is `true` once that confirmed, with
   `revokeTransactionHash` and `revokeTransactionLink`. It is `false` when the
   reset did not complete, in which case an approval for exactly `amountUsdc`
-  remains; revoke it with an `approve` of `0` to the router.
+  remains; revoke it with an `approve` of `0` to the router. A swap that is
+  still unconfirmed is never revoked, since it needs the approval to land.
 - Swap broadcast but unconfirmed: the USDC may or may not have been spent.
   `usdcSpent` is omitted and `swapPending` is `true`.
 - Unwrap failed: the USDC is spent and the WETH is left unwrapped in the
