@@ -68,15 +68,18 @@ const chain = vi.hoisted(() => ({
     tokenAddress: string;
     decimals: number;
     symbol: string;
+    isStablecoin: boolean;
   }>,
 }));
 
-const { mockLogSystemWarn } = vi.hoisted(() => ({
+const { mockLogSystemWarn, mockExplorerFindFirst } = vi.hoisted(() => ({
   mockLogSystemWarn: vi.fn(),
+  mockExplorerFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: {
+    DATABASE: "database",
     TRANSACTION: "transaction",
     VALIDATION: "validation",
     NETWORK_RPC: "network_rpc",
@@ -93,7 +96,7 @@ vi.mock("@/lib/db", () => ({
     }),
     query: {
       explorerConfigs: {
-        findFirst: () => Promise.resolve({ chainId: 8453 }),
+        findFirst: (...args: unknown[]) => mockExplorerFindFirst(...args),
       },
     },
   },
@@ -121,8 +124,11 @@ vi.mock("@/lib/utils", async () =>
   (await import("../mocks/step-mocks")).utilsGetErrorMessage()
 );
 
+// loadStablecoin stays real so resolveUsdc goes through the cap's own lookup
+// (over the mocked `db.select` rows above); only the cap decision is stubbed.
 const mockCheckCap = vi.fn();
-vi.mock("@/lib/execute/stablecoin-cap", () => ({
+vi.mock("@/lib/execute/stablecoin-cap", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/execute/stablecoin-cap")>()),
   checkStablecoinTransferAmount: (...args: unknown[]) => mockCheckCap(...args),
 }));
 
@@ -218,6 +224,9 @@ const {
 const { SponsoredTxPendingError, SponsoredTxRevertError } = await import(
   "@/lib/web3/turnkey-revert"
 );
+const { clearExplorerConfigCache } = await import(
+  "@/lib/web3/chain-adapter/explorer"
+);
 
 const ONE_WETH = BigInt("1000000000000000000");
 const QUOTE = ONE_WETH / BigInt(1000);
@@ -278,8 +287,15 @@ beforeEach(() => {
   chain.receiptReads = 0;
   chain.receiptLagReads = 0;
   chain.tokenRows = [
-    { tokenAddress: USDC.toLowerCase(), decimals: 6, symbol: "USDC" },
+    {
+      tokenAddress: USDC.toLowerCase(),
+      decimals: 6,
+      symbol: "USDC",
+      isStablecoin: true,
+    },
   ];
+  clearExplorerConfigCache();
+  mockExplorerFindFirst.mockResolvedValue({ chainId: BASE });
   mockCheckCap.mockResolvedValue({ kind: "allowed" });
   mockResolveSigner.mockResolvedValue({ kind: "eoa", ownerAddress: WALLET });
   mockShouldTrySponsorship.mockReturnValue(true);
@@ -380,8 +396,14 @@ describe("prepareGasTopUp", () => {
         tokenAddress: "0x00000000000000000000000000000000000000c1",
         decimals: 18,
         symbol: "USDC",
+        isStablecoin: true,
       },
-      { tokenAddress: USDC.toLowerCase(), decimals: 6, symbol: "USDC" },
+      {
+        tokenAddress: USDC.toLowerCase(),
+        decimals: 6,
+        symbol: "USDC",
+        isStablecoin: true,
+      },
     ];
 
     const plan = await preparedPlan("5");
@@ -396,6 +418,25 @@ describe("prepareGasTopUp", () => {
         tokenAddress: "0x00000000000000000000000000000000000000c1",
         decimals: 6,
         symbol: "USDC",
+        isStablecoin: true,
+      },
+    ];
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "5",
+    });
+    expect(result).toMatchObject({ ok: false, code: "USDC_NOT_CONFIGURED" });
+    expect(mockCheckCap).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the canonical USDC row is not flagged as a stablecoin", async () => {
+    chain.tokenRows = [
+      {
+        tokenAddress: USDC.toLowerCase(),
+        decimals: 6,
+        symbol: "USDC",
+        isStablecoin: false,
       },
     ];
     const result = await prepareGasTopUp({
@@ -554,6 +595,28 @@ describe("executeGasTopUp", () => {
       quotedWethOut: QUOTE.toString(),
       amountOutMinimum: applySlippageFloor(QUOTE).toString(),
     });
+  });
+
+  it("keeps a confirmed top-up confirmed when the explorer lookup throws", async () => {
+    mockExplorerFindFirst.mockRejectedValue(new Error("db down"));
+    const plan = await preparedPlan();
+
+    const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+    expect(result.success).toBe(true);
+    expect(result.steps.map((step) => [step.name, step.status])).toEqual([
+      ["approve", "confirmed"],
+      ["swap", "confirmed"],
+      ["unwrap", "confirmed"],
+    ]);
+    expect(result.finalTransactionHash).toBe("0xwithdraw");
+    expect(result.finalTransactionLink).toBeUndefined();
+    expect(mockLogSystemWarn).toHaveBeenCalledWith(
+      "database",
+      expect.stringContaining("Could not build the explorer link"),
+      expect.any(Error),
+      expect.objectContaining({ chain_id: String(BASE) })
+    );
   });
 
   it("unwraps only the WETH the swap delivered, not WETH already held", async () => {

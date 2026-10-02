@@ -1,6 +1,5 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
 import {
   type Abi,
   type Address,
@@ -19,21 +18,22 @@ import {
 import { checkGasCredits } from "@/lib/billing/gas-credits";
 import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
 import { getChainTokens } from "@/lib/contracts/tokens";
-import { db } from "@/lib/db";
-import { explorerConfigs, supportedTokens } from "@/lib/db/schema";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   type GasTopUpChainId,
   isGasTopUpChain,
 } from "@/lib/execute/gas-top-up-chains";
-import { checkStablecoinTransferAmount } from "@/lib/execute/stablecoin-cap";
-import { getTransactionUrl } from "@/lib/explorer";
+import {
+  checkStablecoinTransferAmount,
+  loadStablecoin,
+} from "@/lib/execute/stablecoin-cap";
 import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
+import { buildChainTransactionUrl } from "@/lib/web3/chain-adapter/explorer";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
@@ -130,10 +130,10 @@ export function resolveGasTopUpContracts(
 type UsdcToken = { address: Address; decimals: number };
 
 /**
- * The address is pinned to canonical USDC from the static token list; a
- * `supported_tokens` row is matched by that address, never by symbol, so a
- * second row labelled USDC cannot redirect the swap to another token. The
- * row must exist (the stablecoin cap meters it) and supplies the decimals.
+ * The address is pinned to canonical USDC from the static token list, never
+ * matched by symbol, so a second row labelled USDC cannot redirect the swap to
+ * another token. The `supported_tokens` row is found with the stablecoin cap's
+ * own lookup: it must exist (the cap meters it) and supplies the decimals.
  */
 async function resolveUsdc(chainId: number): Promise<UsdcToken | null> {
   const canonical = getChainTokens(chainId).find(
@@ -142,26 +142,10 @@ async function resolveUsdc(chainId: number): Promise<UsdcToken | null> {
   if (!canonical) {
     return null;
   }
-  const rows = await db
-    .select({
-      tokenAddress: supportedTokens.tokenAddress,
-      decimals: supportedTokens.decimals,
-    })
-    .from(supportedTokens)
-    .where(
-      and(
-        eq(supportedTokens.chainId, chainId),
-        eq(supportedTokens.isStablecoin, true)
-      )
-    );
-  const row = rows.find(
-    (candidate) =>
-      candidate.tokenAddress.toLowerCase() === canonical.address.toLowerCase()
-  );
-  if (!row) {
-    return null;
-  }
-  return { address: getAddress(canonical.address), decimals: row.decimals };
+  const token = await loadStablecoin(chainId, canonical.address);
+  return token
+    ? { address: getAddress(canonical.address), decimals: token.decimals }
+    : null;
 }
 
 export type GasTopUpPlan = {
@@ -382,16 +366,22 @@ type SendOutcome =
       errorClass?: ExecutionErrorType;
     };
 
-async function buildTransactionLink(
+// The explorer link is cosmetic. sendSponsored builds it after a confirmed
+// send, inside the try that maps a throw to "failed before broadcast", so a
+// failed config lookup must never propagate and mislabel a landed transaction.
+async function transactionLinkFor(
   chainId: number,
   hash: string
 ): Promise<string | undefined> {
   try {
-    const config = await db.query.explorerConfigs.findFirst({
-      where: eq(explorerConfigs.chainId, chainId),
-    });
-    return config ? getTransactionUrl(config, hash) : undefined;
-  } catch {
+    return (await buildChainTransactionUrl(chainId, hash)) || undefined;
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      `${LOG_PREFIX} Could not build the explorer link`,
+      error,
+      { chain_id: String(chainId), transaction_hash: hash }
+    );
     return;
   }
 }
@@ -436,7 +426,7 @@ async function sendSponsored(params: {
     return {
       kind: "confirmed",
       transactionHash: result.transactionHash,
-      transactionLink: await buildTransactionLink(
+      transactionLink: await transactionLinkFor(
         plan.chainId,
         result.transactionHash
       ),
@@ -455,7 +445,7 @@ async function sendSponsored(params: {
           error: decision.error,
           transactionHash: decision.transactionHash,
           transactionLink: decision.transactionHash
-            ? await buildTransactionLink(plan.chainId, decision.transactionHash)
+            ? await transactionLinkFor(plan.chainId, decision.transactionHash)
             : undefined,
           broadcastAttempted: true,
           pending: isSponsoredTxPendingError(error),
