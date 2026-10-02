@@ -1088,9 +1088,9 @@ describe("executeGasTopUp", () => {
       expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
       expect(result.success).toBe(false);
       expect(result.usdcSpent).toBe("0");
-    expect(result.approvalRevoked).toBe(false);
-    expect(result.revokeTransactionHash).toBe(revokeHash);
-    expect(result.gasUsedWei).toBe("100");
+      expect(result.approvalRevoked).toBe(false);
+      expect(result.revokeTransactionHash).toBe(revokeHash);
+      expect(result.gasUsedWei).toBe("100");
       expect(result.error).toContain(
         "an approval for exactly the requested amount remains"
       );
