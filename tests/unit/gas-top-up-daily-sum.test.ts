@@ -66,7 +66,7 @@ describe("sumOrgGasTopUpTodayMicroUsd", () => {
     );
   });
 
-  it("still counts a failed run whose swap landed, and ages out stale in-flight rows", async () => {
+  it("still counts a failed run whose swap landed, and in-flight rows of any age", async () => {
     const { executor, captured } = fakeExecutor([{ totalMicroUsd: "0" }]);
 
     await sumOrgGasTopUpTodayMicroUsd(executor, "org_1");
@@ -76,8 +76,8 @@ describe("sumOrgGasTopUpTodayMicroUsd", () => {
     expect(where).toContain("= 'failed' AND");
     expect(where).toContain("->>'swapLanded' = 'true'");
     expect(where).toContain("IN ('pending', 'running')");
-    // Three sponsored sends at up to eight minutes each outlast the 15-minute
-    // window the wei sums use.
-    expect(where).toContain("interval '30 minutes'");
+    // A run's worst case outlasts any fixed window and a crashed run is never
+    // swept, so in-flight rows count until the UTC day ends.
+    expect(where).not.toContain("interval");
   });
 });

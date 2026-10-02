@@ -25,13 +25,6 @@ import { logSecurityEvent } from "@/lib/logging";
 // the funds, so it keeps counting until the reconciler settles it.
 const STALE_INFLIGHT_MINUTES = 15;
 
-// A gas top-up is three sponsored sends, and each can wait up to eight minutes
-// for its receipt (RECEIPT_WAIT_BUDGET_MS in sponsored-transaction-manager), so
-// a healthy run can still be in flight well past 15 minutes. Its window covers
-// all three waits with margin, or a slow run would drop out of the daily sum
-// while it can still spend the USDC.
-const GAS_TOP_UP_INFLIGHT_MINUTES = 30;
-
 // biome-ignore lint/suspicious/noExplicitAny: accept either the app db or a tx
 type Executor = any;
 
@@ -143,8 +136,14 @@ export async function sumOrgSolanaValueTodayLamports(
  * sees it; this is what the route's daily cap is charged against.
  *
  * A failed row still counts when its swap landed (`output.swapLanded`): the
- * USDC is spent even though the unwrap did not finish. In-flight rows count for
- * GAS_TOP_UP_INFLIGHT_MINUTES, which covers the route's three receipt waits.
+ * USDC is spent even though the unwrap did not finish.
+ *
+ * Pending and running rows count for the rest of the UTC day, with no stale
+ * cutoff. One run is three sponsored sends, each with a Turnkey status poll and
+ * a receipt wait, plus RPC retries, so its worst case outlasts any fixed window;
+ * and a process that dies mid-run leaves the row running with nothing to sweep
+ * it. Either way the spend may be real, so it keeps counting until midnight
+ * rather than freeing its share early.
  */
 export async function sumOrgGasTopUpTodayMicroUsd(
   executor: Executor,
@@ -163,7 +162,7 @@ export async function sumOrgGasTopUpTodayMicroUsd(
         eq(directExecutions.organizationId, organizationId),
         eq(directExecutions.type, "gas-top-up"),
         gte(directExecutions.createdAt, todayStart),
-        sql`(${directExecutions.status} IN ('completed', 'unconfirmed') OR (${directExecutions.status} = 'failed' AND ${directExecutions.output}->>'swapLanded' = 'true') OR (${directExecutions.status} IN ('pending', 'running') AND ${directExecutions.createdAt} > now() - interval '${sql.raw(String(GAS_TOP_UP_INFLIGHT_MINUTES))} minutes'))`
+        sql`(${directExecutions.status} IN ('completed', 'unconfirmed') OR (${directExecutions.status} = 'failed' AND ${directExecutions.output}->>'swapLanded' = 'true') OR ${directExecutions.status} IN ('pending', 'running'))`
       )
     );
 
