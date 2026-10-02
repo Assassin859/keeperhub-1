@@ -227,7 +227,20 @@ export type GasTopUpPlan = {
   contracts: GasTopUpContracts;
   amountUsdc: string;
   amountIn: bigint;
+  /** What the daily cap is charged, in micro-USD, derived from `amountIn`. */
+  amountMicroUsd: bigint;
 };
+
+const MICRO_USD_DECIMALS = 6;
+
+/** USDC counted at 1 USD. Rounded up so the cap never under-counts. */
+function toMicroUsd(amountIn: bigint, decimals: number): bigint {
+  if (decimals <= MICRO_USD_DECIMALS) {
+    return amountIn * BigInt(10) ** BigInt(MICRO_USD_DECIMALS - decimals);
+  }
+  const scale = BigInt(10) ** BigInt(decimals - MICRO_USD_DECIMALS);
+  return (amountIn + scale - BigInt(1)) / scale;
+}
 
 export type GasTopUpRefusalCode =
   | "UNSUPPORTED_CHAIN"
@@ -371,6 +384,7 @@ export async function prepareGasTopUp(params: {
       contracts,
       amountUsdc,
       amountIn,
+      amountMicroUsd: toMicroUsd(amountIn, usdc.decimals),
     },
   };
 }

@@ -90,7 +90,11 @@ vi.mock("@/lib/idempotency", async () => ({
 
 const { POST } = await import("@/app/api/execute/gas-top-up/route");
 
-const PLAN = { chainId: 8453, amountUsdc: "5" };
+const PLAN = {
+  chainId: 8453,
+  amountUsdc: "5",
+  amountMicroUsd: BigInt(5_000_000),
+};
 
 function post(body: unknown, query = ""): Promise<Response> {
   return POST(
@@ -192,6 +196,24 @@ describe("POST /api/execute/gas-top-up", () => {
         chainId: 8453,
         output: expect.objectContaining({
           transactionLink: "https://basescan.org/tx/0xu",
+        }),
+      })
+    );
+  });
+
+  it("charges the daily cap the prepared plan's amount, not a re-parse of the body", async () => {
+    prepareMock.mockResolvedValue({
+      ok: true,
+      plan: { ...PLAN, amountMicroUsd: BigInt(7_000_000) },
+    });
+
+    await post({ chainId: 8453, amountUsdc: "5" });
+
+    expect(checkAndReserveExecutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ amountMicroUsd: "7000000" }),
+        stablecoinDaily: expect.objectContaining({
+          amountMicroUsd: BigInt(7_000_000),
         }),
       })
     );

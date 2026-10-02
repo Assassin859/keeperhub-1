@@ -548,6 +548,39 @@ describe("prepareGasTopUp", () => {
     const plan = await preparedPlan("2.5");
     expect(plan.wallet).toBe(WALLET);
     expect(plan.amountIn).toBe(BigInt(2_500_000));
+    expect(plan.amountMicroUsd).toBe(BigInt(2_500_000));
+  });
+
+  it("derives the cap amount from the token row's decimals, not a fixed 6", async () => {
+    chain.tokenRows = [
+      {
+        tokenAddress: USDC.toLowerCase(),
+        decimals: 18,
+        symbol: "USDC",
+        isStablecoin: true,
+      },
+    ];
+
+    const plan = await preparedPlan("5");
+
+    expect(plan.amountIn).toBe(BigInt(5) * BigInt(10) ** BigInt(18));
+    expect(plan.amountMicroUsd).toBe(BigInt(5_000_000));
+  });
+
+  it("rounds the cap amount up so a sub-micro-USD remainder is never dropped", async () => {
+    chain.tokenRows = [
+      {
+        tokenAddress: USDC.toLowerCase(),
+        decimals: 18,
+        symbol: "USDC",
+        isStablecoin: true,
+      },
+    ];
+
+    const plan = await preparedPlan("0.0000005");
+
+    expect(plan.amountIn).toBe(BigInt(500_000_000_000));
+    expect(plan.amountMicroUsd).toBe(BigInt(1));
   });
 });
 

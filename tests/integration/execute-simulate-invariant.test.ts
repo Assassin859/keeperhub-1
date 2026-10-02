@@ -573,7 +573,11 @@ beforeEach(() => {
   stepFn.mockResolvedValue({ success: true });
   prepareGasTopUp.mockResolvedValue({
     ok: true,
-    plan: { chainId: 8453, wallet: FROM_ADDRESS },
+    plan: {
+      chainId: 8453,
+      wallet: FROM_ADDRESS,
+      amountMicroUsd: BigInt(5_000_000),
+    },
   });
   executeGasTopUp.mockResolvedValue({
     success: true,

@@ -1,7 +1,6 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { parseUnits } from "viem";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
@@ -298,8 +297,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  // amountUsdc is validated to at most 6 decimals, so this is exact.
-  const amountMicroUsd = parseUnits(amountUsdc, 6);
+  const { amountMicroUsd } = preparation.plan;
   const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId: apiKeyCtx.apiKeyId,
