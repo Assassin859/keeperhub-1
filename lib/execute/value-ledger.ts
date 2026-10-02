@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, gte, ne, sql } from "drizzle-orm";
+import { formatUnits } from "viem";
 import { db } from "@/lib/db";
 import {
   directExecutions,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/execute/org-circuit-breaker";
 import { parseNodeNativeValueWei } from "@/lib/execute/reserved-value";
 import {
+  getDefaultDailyGasTopUpCapMicroUsd,
   getDefaultDailySolanaValueCapLamports,
   getDefaultDailyValueCapWei,
 } from "@/lib/execute/spend-cap-defaults";
@@ -173,6 +175,61 @@ export async function sumOrgGasTopUpTodayMicroUsd(
     );
 
   return BigInt(rows[0]?.totalMicroUsd ?? "0");
+}
+
+/**
+ * A stablecoin amount charged against its own daily total, for a route whose
+ * spend the native caps cannot see (gas top-up: USDC in, no native value out).
+ */
+export type StablecoinDailyLimit = {
+  amountMicroUsd: bigint;
+  capMicroUsd: bigint;
+  sumTodayMicroUsd: (
+    executor: Executor,
+    organizationId: string
+  ) => Promise<bigint>;
+  label: string;
+};
+
+/** The gas top-up's daily limit for one request of `amountMicroUsd`. */
+export function gasTopUpDailyLimit(
+  amountMicroUsd: bigint
+): StablecoinDailyLimit {
+  return {
+    amountMicroUsd,
+    capMicroUsd: BigInt(getDefaultDailyGasTopUpCapMicroUsd()),
+    sumTodayMicroUsd: sumOrgGasTopUpTodayMicroUsd,
+    label: "gas top-up",
+  };
+}
+
+function formatMicroUsd(value: bigint): string {
+  return formatUnits(value, 6);
+}
+
+/**
+ * The refusal reason when `limit.amountMicroUsd` would take the org past the
+ * day's limit, or null when it fits. Only authoritative when `executor` is the
+ * transaction holding the org's cap row; on the app db it is a cheap early
+ * answer that a concurrent request can race.
+ */
+export async function stablecoinDailyLimitDenial(
+  executor: Executor,
+  organizationId: string,
+  limit: StablecoinDailyLimit
+): Promise<string | null> {
+  const used = await limit.sumTodayMicroUsd(executor, organizationId);
+  if (used + limit.amountMicroUsd <= limit.capMicroUsd) {
+    return null;
+  }
+  logSecurityEvent("stablecoin_daily_cap_blocked", {
+    organizationId,
+    surface: limit.label,
+    usedMicroUsd: used.toString(),
+    requestedMicroUsd: limit.amountMicroUsd.toString(),
+    capMicroUsd: limit.capMicroUsd.toString(),
+  });
+  return `Daily ${limit.label} limit exceeded: ${formatMicroUsd(used)} USD used today, ${formatMicroUsd(limit.amountMicroUsd)} USD requested, limit ${formatMicroUsd(limit.capMicroUsd)} USD`;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
 } from "@/lib/billing/gas-credits";
 import erc20AbiJson from "@/lib/contracts/abis/erc20.json";
 import { getChainTokens } from "@/lib/contracts/tokens";
+import { db } from "@/lib/db";
 import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import {
   type GasTopUpChainId,
@@ -30,6 +31,10 @@ import {
   checkStablecoinTransferAmount,
   loadStablecoin,
 } from "@/lib/execute/stablecoin-cap";
+import {
+  gasTopUpDailyLimit,
+  stablecoinDailyLimitDenial,
+} from "@/lib/execute/value-ledger";
 import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
@@ -247,6 +252,7 @@ export type GasTopUpRefusalCode =
   | "USDC_NOT_CONFIGURED"
   | "INVALID_AMOUNT"
   | "STABLECOIN_CAP_EXCEEDED"
+  | "DAILY_LIMIT_EXCEEDED"
   | "SPONSORSHIP_UNAVAILABLE";
 
 export type GasTopUpPreparation =
@@ -337,6 +343,24 @@ export async function prepareGasTopUp(params: {
     };
   }
 
+  // Unlocked, so a concurrent request can race it: this only spares an org
+  // whose day is already spent the signer, credit and Turnkey work below. The
+  // reservation repeats the check under the cap row lock, and that one decides.
+  const amountMicroUsd = toMicroUsd(amountIn, usdc.decimals);
+  const dailyDenial = await stablecoinDailyLimitDenial(
+    db,
+    organizationId,
+    gasTopUpDailyLimit(amountMicroUsd)
+  );
+  if (dailyDenial) {
+    return {
+      ok: false,
+      code: "DAILY_LIMIT_EXCEEDED",
+      error: dailyDenial,
+      field: "amountUsdc",
+    };
+  }
+
   // web3Connection "eoa" pins the sender to the org's Turnkey EOA regardless
   // of any Safe the org runs on this chain: the native balance is for the
   // wallet that pays gas, and that is the EOA.
@@ -384,7 +408,7 @@ export async function prepareGasTopUp(params: {
       contracts,
       amountUsdc,
       amountIn,
-      amountMicroUsd: toMicroUsd(amountIn, usdc.decimals),
+      amountMicroUsd,
     },
   };
 }

@@ -854,9 +854,12 @@ landed (its USDC is spent), and a completed or unconfirmed top-up whose swap was
 broadcast and may still land. A top-up that stopped before its swap, or whose
 swap reverted, does not count. Top-ups still in flight count too, for the rest
 of the UTC day however long they take, so a slow or
-interrupted run never frees its share early. It is checked atomically
-with the reservation, so concurrent requests cannot both fit under the last of
-the day's allowance. Self-hosted deployments can change it with
+interrupted run never frees its share early. It is checked twice: once before
+the wallet and sponsorship are resolved, so a request over a spent budget is
+refused without that work, and again atomically with the reservation, so
+concurrent requests cannot both fit under the last of the day's allowance. A
+retry with the same `Idempotency-Key` replays the stored result even once the
+limit is reached. Self-hosted deployments can change it with
 `EXECUTE_DEFAULT_DAILY_GAS_TOP_UP_CAP_MICRO_USD` (micro-USD, so `200000000` is
 200 USD).
 

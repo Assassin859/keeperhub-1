@@ -132,6 +132,19 @@ vi.mock("@/lib/execute/stablecoin-cap", async (importOriginal) => ({
   checkStablecoinTransferAmount: (...args: unknown[]) => mockCheckCap(...args),
 }));
 
+// The real limit's wiring is covered in gas-top-up-daily-sum.test.ts; here it
+// is a marker, so the test can see it reach the denial unchanged.
+const mockDailyLimit = vi.fn((amountMicroUsd: bigint) => ({
+  amountMicroUsd,
+  label: "gas top-up",
+}));
+const mockDailyDenial = vi.fn();
+vi.mock("@/lib/execute/value-ledger", () => ({
+  gasTopUpDailyLimit: (amountMicroUsd: bigint) =>
+    mockDailyLimit(amountMicroUsd),
+  stablecoinDailyLimitDenial: (...args: unknown[]) => mockDailyDenial(...args),
+}));
+
 const mockResolveSigner = vi.fn();
 vi.mock("@/lib/safe/signer-resolver", () => ({
   resolveSignerForNode: (...args: unknown[]) => mockResolveSigner(...args),
@@ -230,6 +243,7 @@ const { SponsoredTxPendingError, SponsoredTxRevertError } = await import(
 const { clearExplorerConfigCache } = await import(
   "@/lib/web3/chain-adapter/explorer"
 );
+const { db } = await import("@/lib/db");
 
 const ONE_WETH = BigInt("1000000000000000000");
 const QUOTE = ONE_WETH / BigInt(1000);
@@ -321,6 +335,7 @@ beforeEach(() => {
   clearExplorerConfigCache();
   mockExplorerFindFirst.mockResolvedValue({ chainId: BASE });
   mockCheckCap.mockResolvedValue({ kind: "allowed" });
+  mockDailyDenial.mockResolvedValue(null);
   mockResolveSigner.mockResolvedValue({ kind: "eoa", ownerAddress: WALLET });
   mockShouldTrySponsorship.mockReturnValue(true);
   mockCheckGasCredits.mockResolvedValue({ allowed: true, remainingCents: 1 });
@@ -514,6 +529,43 @@ describe("prepareGasTopUp", () => {
       })
     );
     expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
+    expect(mockDailyDenial).not.toHaveBeenCalled();
+  });
+
+  it("refuses a spent daily budget before the signer, credit and Turnkey work", async () => {
+    const denial =
+      "Daily gas top-up limit exceeded: 198 USD used today, 5 USD requested, limit 200 USD";
+    mockDailyDenial.mockResolvedValue(denial);
+
+    const result = await prepareGasTopUp({
+      organizationId: "org-1",
+      chainId: BASE,
+      amountUsdc: "5",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "DAILY_LIMIT_EXCEEDED",
+      error: denial,
+      field: "amountUsdc",
+    });
+    expect(mockDailyLimit).toHaveBeenCalledWith(BigInt(5_000_000));
+    expect(mockDailyDenial).toHaveBeenCalledWith(
+      db,
+      "org-1",
+      mockDailyLimit.mock.results[0]?.value
+    );
+    expect(mockResolveSigner).not.toHaveBeenCalled();
+    expect(mockCheckGasCredits).not.toHaveBeenCalled();
+    expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
+  });
+
+  it("checks the daily budget with the same amount the plan carries", async () => {
+    const plan = await preparedPlan("2.5");
+
+    expect(mockDailyLimit).toHaveBeenCalledOnce();
+    expect(mockDailyLimit).toHaveBeenCalledWith(plan.amountMicroUsd);
+    expect(mockCreateSponsoredClient).toHaveBeenCalledOnce();
   });
 
   it("pins the signer to the EOA", async () => {

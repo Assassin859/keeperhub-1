@@ -14,8 +14,7 @@ import {
   isOrgHalted,
   ORG_HALTED_REASON,
 } from "@/lib/execute/org-circuit-breaker";
-import { getDefaultDailyGasTopUpCapMicroUsd } from "@/lib/execute/spend-cap-defaults";
-import { sumOrgGasTopUpTodayMicroUsd } from "@/lib/execute/value-ledger";
+import { gasTopUpDailyLimit } from "@/lib/execute/value-ledger";
 import { HttpStatus, type HttpStatusCode } from "@/lib/http-status";
 import {
   beginIdempotentFromRequest,
@@ -52,6 +51,7 @@ const REFUSAL_STATUS: Readonly<Record<GasTopUpRefusalCode, HttpStatusCode>> = {
   INVALID_AMOUNT: HttpStatus.BAD_REQUEST,
   USDC_NOT_CONFIGURED: HttpStatus.UNPROCESSABLE_ENTITY,
   STABLECOIN_CAP_EXCEEDED: HttpStatus.FORBIDDEN,
+  DAILY_LIMIT_EXCEEDED: HttpStatus.FORBIDDEN,
   SPONSORSHIP_UNAVAILABLE: HttpStatus.UNPROCESSABLE_ENTITY,
 };
 
@@ -276,25 +276,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return concurrency;
   }
 
-  const preparation = await prepareGasTopUp({
-    organizationId,
-    chainId,
-    amountUsdc,
-  });
-  if (!preparation.ok) {
-    return applyRateLimitHeaders(
-      NextResponse.json(
-        {
-          error: preparation.error,
-          code: preparation.code,
-          ...(preparation.field ? { field: preparation.field } : {}),
-        },
-        { status: REFUSAL_STATUS[preparation.code] }
-      ),
-      rateLimit
-    );
-  }
-
+  // Claimed before preparation so a retry replays its stored result: the
+  // preparation's daily check would otherwise count the original run against
+  // its own retry and refuse it once that run used the day's last allowance.
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId,
@@ -311,6 +295,29 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
+  const preparation = await prepareGasTopUp({
+    organizationId,
+    chainId,
+    amountUsdc,
+  });
+  if (!preparation.ok) {
+    return applyRateLimitHeaders(
+      await recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          {
+            error: preparation.error,
+            code: preparation.code,
+            ...(preparation.field ? { field: preparation.field } : {}),
+          },
+          { status: REFUSAL_STATUS[preparation.code] }
+        ),
+        "release"
+      ),
+      rateLimit
+    );
+  }
+
   const { amountMicroUsd } = preparation.plan;
   const reserve = await checkAndReserveExecution({
     organizationId,
@@ -320,12 +327,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     input: { ...redactInput(body), amountMicroUsd: amountMicroUsd.toString() },
     reserved: { kind: "evm", valueWei: "0" },
     paygOverflow: executionGuard.limitResult?.paygOverflow === true,
-    stablecoinDaily: {
-      amountMicroUsd,
-      capMicroUsd: BigInt(getDefaultDailyGasTopUpCapMicroUsd()),
-      sumTodayMicroUsd: sumOrgGasTopUpTodayMicroUsd,
-      label: "gas top-up",
-    },
+    stablecoinDaily: gasTopUpDailyLimit(amountMicroUsd),
   });
   if (!reserve.allowed) {
     return applyRateLimitHeaders(

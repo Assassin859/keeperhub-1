@@ -262,6 +262,30 @@ describe("POST /api/execute/gas-top-up", () => {
       code: "STABLECOIN_CAP_EXCEEDED",
       field: "amountUsdc",
     });
+    expect(lastDisposition()).toBe("release");
+    expect(checkAndReserveExecutionMock).not.toHaveBeenCalled();
+    expect(executeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a spent daily budget with 403 from preparation, releasing the key", async () => {
+    const error =
+      "Daily gas top-up limit exceeded: 198 USD used today, 5 USD requested, limit 200 USD";
+    prepareMock.mockResolvedValue({
+      ok: false,
+      code: "DAILY_LIMIT_EXCEEDED",
+      error,
+      field: "amountUsdc",
+    });
+
+    const response = await post({ chainId: 8453, amountUsdc: "5" });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error,
+      code: "DAILY_LIMIT_EXCEEDED",
+      field: "amountUsdc",
+    });
+    expect(lastDisposition()).toBe("release");
     expect(checkAndReserveExecutionMock).not.toHaveBeenCalled();
     expect(executeMock).not.toHaveBeenCalled();
   });
@@ -276,6 +300,7 @@ describe("POST /api/execute/gas-top-up", () => {
     const response = await post({ chainId: 8453, amountUsdc: "5" });
 
     expect(response.status).toBe(422);
+    expect(lastDisposition()).toBe("release");
     expect(executeMock).not.toHaveBeenCalled();
   });
 
@@ -329,6 +354,9 @@ describe("POST /api/execute/gas-top-up", () => {
 
     expect(response.status).toBe(202);
     expect((await response.json()).idempotentReplay).toBe(true);
+    // A replay must not reach preparation, whose daily check would count the
+    // original run against its own retry.
+    expect(prepareMock).not.toHaveBeenCalled();
     expect(checkAndReserveExecutionMock).not.toHaveBeenCalled();
     expect(executeMock).not.toHaveBeenCalled();
   });

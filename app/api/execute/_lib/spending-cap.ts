@@ -1,7 +1,6 @@
 import "server-only";
 
 import { eq } from "drizzle-orm";
-import { formatUnits } from "viem";
 import { chargePaygIfBillable } from "@/lib/billing/payg/charge";
 import { db } from "@/lib/db";
 import { directExecutions } from "@/lib/db/schema";
@@ -16,6 +15,8 @@ import {
 import {
   type LockedSpendCap,
   lockOrgSpendCapRow,
+  type StablecoinDailyLimit,
+  stablecoinDailyLimitDenial,
   sumOrgSolanaValueTodayLamports,
   sumOrgValueTodayWei,
 } from "@/lib/execute/value-ledger";
@@ -52,13 +53,7 @@ type ReserveExecutionParams = {
   // spend the native caps cannot see (gas top-up: USDC in, no native value
   // out). Checked under the same cap row lock as the native caps, so
   // concurrent requests for one org cannot both fit under the last of the day.
-  stablecoinDaily?: {
-    amountMicroUsd: bigint;
-    capMicroUsd: bigint;
-    // biome-ignore lint/suspicious/noExplicitAny: receives the open transaction
-    sumTodayMicroUsd: (tx: any, organizationId: string) => Promise<bigint>;
-    label: string;
-  };
+  stablecoinDaily?: StablecoinDailyLimit;
 };
 
 type ReserveResult =
@@ -71,33 +66,6 @@ function defaultCapFor(isSolana: boolean): string {
   return isSolana
     ? getDefaultDailySolanaValueCapLamports()
     : getDefaultDailyValueCapWei();
-}
-
-function formatMicroUsd(value: bigint): string {
-  return formatUnits(value, 6);
-}
-
-async function stablecoinDailyDenial(
-  // biome-ignore lint/suspicious/noExplicitAny: the open transaction
-  tx: any,
-  organizationId: string,
-  daily: NonNullable<ReserveExecutionParams["stablecoinDaily"]>
-): Promise<Denial | null> {
-  const used = await daily.sumTodayMicroUsd(tx, organizationId);
-  if (used + daily.amountMicroUsd <= daily.capMicroUsd) {
-    return null;
-  }
-  logSecurityEvent("stablecoin_daily_cap_blocked", {
-    organizationId,
-    surface: daily.label,
-    usedMicroUsd: used.toString(),
-    requestedMicroUsd: daily.amountMicroUsd.toString(),
-    capMicroUsd: daily.capMicroUsd.toString(),
-  });
-  return {
-    allowed: false,
-    reason: `Daily ${daily.label} limit exceeded: ${formatMicroUsd(used)} USD used today, ${formatMicroUsd(daily.amountMicroUsd)} USD requested, limit ${formatMicroUsd(daily.capMicroUsd)} USD`,
-  };
 }
 
 async function nativeCapDenial(
@@ -256,13 +224,13 @@ export async function checkAndReserveExecution(
     const cap = await lockOrgSpendCapRow(tx, params.organizationId);
 
     if (params.stablecoinDaily) {
-      const denial = await stablecoinDailyDenial(
+      const reason = await stablecoinDailyLimitDenial(
         tx,
         params.organizationId,
         params.stablecoinDaily
       );
-      if (denial) {
-        return denial;
+      if (reason) {
+        return { allowed: false, reason } as const;
       }
     }
 
