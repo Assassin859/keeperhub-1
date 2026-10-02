@@ -101,8 +101,8 @@ async function settle(
 ): Promise<CompleteExecutionOutcome> {
   const output = result as unknown as Record<string, unknown>;
   if (result.success) {
-    // KEEP-966: the final (unwrap) hash is re-verified on chain; its verdict,
-    // not result.success, is what the response and idempotency record carry.
+    // The final (unwrap) hash is re-verified on chain; its verdict, not
+    // result.success, is what the response and idempotency record carry.
     // completeExecution persists only `output`, so the link rides inside it
     // for the status endpoint to read back.
     return await completeExecution(executionId, {
