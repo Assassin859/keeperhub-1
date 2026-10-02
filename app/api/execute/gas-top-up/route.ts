@@ -66,6 +66,10 @@ type GasTopUpResponse = ExecuteResponse &
     | "amountOutMinimum"
     | "sponsored"
     | "warning"
+    | "swapPending"
+    | "approvalRevoked"
+    | "revokeTransactionHash"
+    | "revokeTransactionLink"
   > & { chainId: number; wallet: string };
 
 /**
@@ -152,6 +156,16 @@ function buildResponse(
       ? { amountOutMinimum: result.amountOutMinimum }
       : {}),
     sponsored: true,
+    ...(result.swapPending ? { swapPending: true } : {}),
+    ...(result.approvalRevoked === undefined
+      ? {}
+      : { approvalRevoked: result.approvalRevoked }),
+    ...(result.revokeTransactionHash
+      ? { revokeTransactionHash: result.revokeTransactionHash }
+      : {}),
+    ...(result.revokeTransactionLink
+      ? { revokeTransactionLink: result.revokeTransactionLink }
+      : {}),
     ...(result.warning ? { warning: result.warning } : {}),
     ...(outcome.error ? { error: outcome.error } : {}),
     ...(result.failure?.errorClass

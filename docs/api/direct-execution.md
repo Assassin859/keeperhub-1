@@ -805,8 +805,10 @@ Turnkey EOA:
    (testnets skip this check). The swap goes through the router's `multicall`
    with a deadline 3 minutes after that fresh quote, so a swap left in the
    mempool past that reverts instead of filling at a stale price. If the second
-   quote fails or fails the Chainlink check, the swap is not sent: no USDC is
-   spent and the approval for exactly `amountUsdc` remains.
+   quote fails or fails the Chainlink check, the swap is not sent and no USDC
+   is spent. Whenever the swap does not happen after the approve confirmed
+   (not sent, declined, or reverted), the route sends `approve` of `0` to the
+   router so no allowance is left behind.
 3. `withdraw` on WETH for the amount the swap delivered, read from the swap's
    own receipt, which pays native ETH to the wallet. WETH the wallet already
    held is left alone.
@@ -898,7 +900,11 @@ response says which landed: each entry in `steps` is `confirmed`, `failed`, or
 `skipped`. `error` explains what state the wallet is left in:
 
 - Approve failed: no USDC was spent.
-- Swap failed: no USDC was spent; an approval for exactly `amountUsdc` remains.
+- Swap failed: no USDC was spent, and the route sets the approval back to
+  zero. `approvalRevoked` is `true` once that confirmed, with
+  `revokeTransactionHash` and `revokeTransactionLink`. It is `false` when the
+  reset did not complete, in which case an approval for exactly `amountUsdc`
+  remains; revoke it with an `approve` of `0` to the router.
 - Swap broadcast but unconfirmed: the USDC may or may not have been spent.
   `usdcSpent` is omitted and `swapPending` is `true`.
 - Unwrap failed: the USDC is spent and the WETH is left unwrapped in the

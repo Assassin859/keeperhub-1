@@ -429,6 +429,14 @@ export type GasTopUpResult = {
    * row's status later but never rewrites its output.
    */
   swapPending?: boolean;
+  /**
+   * Set only when the approve confirmed and the swap then did not happen:
+   * true once approve(router, 0) confirmed, false when that cleanup was
+   * attempted but did not confirm, so the exact-amount approval may remain.
+   */
+  approvalRevoked?: boolean;
+  revokeTransactionHash?: string;
+  revokeTransactionLink?: string;
   /** Sum of the confirmed steps' fees, in wei. */
   gasUsedWei: string;
   finalTransactionHash?: string;
@@ -717,10 +725,14 @@ function skippedSteps(from: GasTopUpStepName): GasTopUpStep[] {
     .map((name) => ({ name, status: "skipped" as const }));
 }
 
+/** The approve(router, 0) sent after a swap that did not happen. */
+type RevokeOutcome = { revoked: true } | { revoked: false; error: string };
+
 function partialMessage(
   step: GasTopUpStepName,
   error: string,
-  pending: boolean
+  pending: boolean,
+  revoke?: RevokeOutcome
 ): string {
   if (step === "approve") {
     return pending
@@ -728,9 +740,16 @@ function partialMessage(
       : `Approve failed; no USDC was spent. ${error}`;
   }
   if (step === "swap") {
-    return pending
-      ? `Approve confirmed; the swap was broadcast but is unconfirmed, so the USDC may or may not have been spent. ${error}`
-      : `Approve confirmed but the swap did not complete; no USDC was spent and an approval for exactly the requested amount remains. ${error}`;
+    if (pending) {
+      return `Approve confirmed; the swap was broadcast but is unconfirmed, so the USDC may or may not have been spent. ${error}`;
+    }
+    if (revoke?.revoked) {
+      return `Approve confirmed but the swap did not complete; no USDC was spent and the approval was set back to zero. ${error}`;
+    }
+    const cleanup = revoke
+      ? ` (setting it back to zero did not complete: ${revoke.error})`
+      : "";
+    return `Approve confirmed but the swap did not complete; no USDC was spent and an approval for exactly the requested amount remains${cleanup}. ${error}`;
   }
   return `Approve and swap confirmed but the unwrap did not complete; the swapped WETH is left unwrapped in the wallet. ${error}`;
 }
@@ -814,10 +833,11 @@ export async function executeGasTopUp(params: {
   const stop = (
     step: GasTopUpStepName,
     outcome: Extract<SendOutcome, { kind: "failed" }>,
-    extra: Partial<GasTopUpResult> = {}
+    extra: Partial<GasTopUpResult> = {},
+    revoke?: RevokeOutcome
   ): GasTopUpResult => {
     const pending = outcome.pending === true;
-    const error = partialMessage(step, outcome.error, pending);
+    const error = partialMessage(step, outcome.error, pending, revoke);
     let next: GasTopUpStepName | null = null;
     if (step === "approve") {
       next = "swap";
@@ -884,26 +904,82 @@ export async function executeGasTopUp(params: {
     transactionLink: approve.transactionLink,
   });
 
+  // The swap did not happen, so the exact-amount approval would otherwise be
+  // left standing. A swap still pending is left alone: it may yet land, and it
+  // needs the allowance to. The cleanup is best effort and never changes which
+  // step failed, so the row is settled from the swap as before.
+  const failSwap = async (
+    outcome: Extract<SendOutcome, { kind: "failed" }>
+  ): Promise<GasTopUpResult> => {
+    if (outcome.pending) {
+      return stop("swap", outcome);
+    }
+    const revoke = await sendSponsored({
+      plan,
+      executionId,
+      rpcUrl,
+      to: plan.usdc.address,
+      abi: erc20Abi,
+      functionName: "approve",
+      args: [plan.contracts.router, BigInt(0)],
+    });
+    const revokeLink = {
+      ...(revoke.transactionHash
+        ? { revokeTransactionHash: revoke.transactionHash }
+        : {}),
+      ...(revoke.transactionLink
+        ? { revokeTransactionLink: revoke.transactionLink }
+        : {}),
+    };
+    if (revoke.kind === "confirmed") {
+      gasUsedWei += revoke.gasUsedWei;
+      return stop(
+        "swap",
+        outcome,
+        { approvalRevoked: true, ...revokeLink },
+        { revoked: true }
+      );
+    }
+    logSystemWarn(
+      ErrorCategory.TRANSACTION,
+      `${LOG_PREFIX} Could not set the approval back to zero`,
+      new Error(revoke.error),
+      {
+        chain_id: String(plan.chainId),
+        execution_id: executionId,
+        swap_error: outcome.error,
+      }
+    );
+    return stop(
+      "swap",
+      outcome,
+      { approvalRevoked: false, ...revokeLink },
+      { revoked: false, error: revoke.error }
+    );
+  };
+
   // The approve can wait minutes for its receipt, so the floor and the
   // deadline come from a quote taken now rather than the pre-flight one.
   const swapQuoteFailed = (error: string) =>
-    stop("swap", { kind: "failed", error, broadcastAttempted: false });
+    failSwap({ kind: "failed", error, broadcastAttempted: false });
   try {
     quotedOut = await quoteUsdcToWeth(rpcManager, plan);
   } catch (error) {
-    return swapQuoteFailed(
+    return await swapQuoteFailed(
       `Re-quote before the swap failed: ${getErrorMessage(error)}`
     );
   }
   amountOutMinimum = applySlippageFloor(quotedOut);
   if (quotedOut <= BigInt(0) || amountOutMinimum <= BigInt(0)) {
-    return swapQuoteFailed(
+    return await swapQuoteFailed(
       "Re-quote before the swap returned no WETH for this amount; refusing to swap"
     );
   }
   const swapOracleRefusal = await oracleCheck(plan, rpcUrl, quotedOut);
   if (swapOracleRefusal) {
-    return swapQuoteFailed(`Re-quote before the swap: ${swapOracleRefusal}`);
+    return await swapQuoteFailed(
+      `Re-quote before the swap: ${swapOracleRefusal}`
+    );
   }
   quoteFields = {
     quotedWethOut: quotedOut.toString(),
@@ -938,7 +1014,7 @@ export async function executeGasTopUp(params: {
     args: [deadline, [exactInputSingle]],
   });
   if (swap.kind === "failed") {
-    return stop("swap", swap);
+    return await failSwap(swap);
   }
   gasUsedWei += swap.gasUsedWei;
   steps.push({

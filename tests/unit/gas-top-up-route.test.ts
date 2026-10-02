@@ -175,6 +175,9 @@ describe("POST /api/execute/gas-top-up", () => {
       sponsored: true,
     });
     expect(body.steps).toHaveLength(3);
+    expect(body).not.toHaveProperty("swapPending");
+    expect(body).not.toHaveProperty("approvalRevoked");
+    expect(body).not.toHaveProperty("revokeTransactionHash");
     expect(lastDisposition()).toBe("success");
     expect(checkAndReserveExecutionMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -409,6 +412,83 @@ describe("POST /api/execute/gas-top-up", () => {
         output: expect.objectContaining({ swapLanded: true }),
       })
     );
+  });
+
+  const swapFailedSteps = [
+    { name: "approve", status: "confirmed", transactionHash: "0xa" },
+    { name: "swap", status: "failed", transactionHash: "0xs" },
+    { name: "unwrap", status: "skipped" },
+  ];
+
+  it.each([
+    [
+      "set back to zero",
+      {
+        approvalRevoked: true,
+        revokeTransactionHash: "0xr",
+        revokeTransactionLink: "https://basescan.org/tx/0xr",
+      },
+    ],
+    ["left in place", { approvalRevoked: false }],
+  ])(
+    "returns whether the approval was %s after a failed swap",
+    async (_label, revoke) => {
+      executeMock.mockResolvedValue({
+        ...baseResult,
+        ...revoke,
+        success: false,
+        steps: swapFailedSteps,
+        usdcSpent: "0",
+        broadcastAttempted: true,
+        swapLanded: false,
+        error: "Approve confirmed but the swap did not complete",
+        failure: {
+          step: "swap",
+          error: "Approve confirmed but the swap did not complete",
+          transactionHash: "0xs",
+          broadcastAttempted: true,
+        },
+      });
+
+      const response = await post({ chainId: 8453, amountUsdc: "5" });
+
+      const body = await response.json();
+      expect(body).toMatchObject({
+        status: "failed",
+        usdcSpent: "0",
+        ...revoke,
+      });
+      expect(body).not.toHaveProperty("swapPending");
+      if (!revoke.approvalRevoked) {
+        expect(body).not.toHaveProperty("revokeTransactionHash");
+      }
+    }
+  );
+
+  it("returns swapPending while a broadcast swap is unconfirmed", async () => {
+    executeMock.mockResolvedValue({
+      ...baseResult,
+      success: false,
+      steps: swapFailedSteps,
+      broadcastAttempted: true,
+      swapLanded: false,
+      swapPending: true,
+      error: "the USDC may or may not have been spent",
+      failure: {
+        step: "swap",
+        error: "the USDC may or may not have been spent",
+        transactionHash: "0xs",
+        broadcastAttempted: true,
+        pending: true,
+      },
+    });
+
+    const response = await post({ chainId: 8453, amountUsdc: "5" });
+
+    const body = await response.json();
+    expect(body.swapPending).toBe(true);
+    expect(body).not.toHaveProperty("usdcSpent");
+    expect(body).not.toHaveProperty("approvalRevoked");
   });
 
   it("returns the reservation refusal as 403 and releases the key", async () => {

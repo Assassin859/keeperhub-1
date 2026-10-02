@@ -254,17 +254,38 @@ function swapPays(received: bigint, extra: FakeLog[] = []): void {
   });
 }
 
+type SendParams = { to: string; functionName: string; args: unknown[] };
+
+const REVOKE_HASH = "0xrevoke";
+
+function isRevoke(params: SendParams): boolean {
+  return params.functionName === "approve" && params.args[1] === BigInt(0);
+}
+
+/** Confirm a non-swap send under a hash named after it. */
+function confirmedSend(params: SendParams) {
+  return Promise.resolve(
+    confirmed(isRevoke(params) ? REVOKE_HASH : `0x${params.functionName}`)
+  );
+}
+
+/** The amounts approved for the router, in send order. */
+function approvedAmounts(): unknown[] {
+  return mockSponsoredSend.mock.calls
+    .map(([params]) => params as SendParams)
+    .filter((params) => params.functionName === "approve")
+    .map((params) => params.args[1]);
+}
+
 /** Confirm every send; the swap (the call to the router) pays `received`. */
 function sendsSucceed(received: bigint = QUOTE): void {
-  mockSponsoredSend.mockImplementation(
-    (params: { to: string; functionName: string }) => {
-      if (params.to === ROUTER) {
-        swapPays(received);
-        return Promise.resolve(confirmed(SWAP_HASH));
-      }
-      return Promise.resolve(confirmed(`0x${params.functionName}`));
+  mockSponsoredSend.mockImplementation((params: SendParams) => {
+    if (params.to === ROUTER) {
+      swapPays(received);
+      return Promise.resolve(confirmed(SWAP_HASH));
     }
-  );
+    return confirmedSend(params);
+  });
 }
 
 async function preparedPlan(amountUsdc = "5") {
@@ -731,8 +752,13 @@ describe("executeGasTopUp", () => {
 
       const result = await executeGasTopUp({ plan, executionId: "exec-1" });
 
-      expect(mockSponsoredSend).toHaveBeenCalledTimes(1);
-      expect(mockSponsoredSend.mock.calls[0]?.[0].functionName).toBe("approve");
+      expect(mockSponsoredSend).toHaveBeenCalledTimes(2);
+      expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
+      expect(mockSponsoredSend.mock.calls[1]?.[0]).toMatchObject({
+        to: USDC,
+        functionName: "approve",
+        args: [ROUTER, BigInt(0)],
+      });
       expect(result.steps.map((step) => [step.name, step.status])).toEqual([
         ["approve", "confirmed"],
         ["swap", "failed"],
@@ -742,10 +768,14 @@ describe("executeGasTopUp", () => {
         success: false,
         usdcSpent: "0",
         swapLanded: false,
+        approvalRevoked: true,
+        revokeTransactionHash: REVOKE_HASH,
+        revokeTransactionLink: `https://basescan.org/tx/${REVOKE_HASH}`,
         failure: { step: "swap", broadcastAttempted: false },
       });
       expect(result.error).toContain(message);
       expect(result.error).toContain("no USDC was spent");
+      expect(result.error).toContain("the approval was set back to zero");
     }
   );
 
@@ -774,8 +804,9 @@ describe("executeGasTopUp", () => {
 
     const result = await executeGasTopUp({ plan, executionId: "exec-1" });
 
-    expect(mockSponsoredSend).toHaveBeenCalledOnce();
-    expect(mockSponsoredSend.mock.calls[0]?.[0].functionName).toBe("approve");
+    expect(mockSponsoredSend).toHaveBeenCalledTimes(2);
+    expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
+    expect(result.approvalRevoked).toBe(true);
     expect(result.steps).toMatchObject([
       { name: "approve", status: "confirmed" },
       { name: "swap", status: "failed" },
@@ -965,24 +996,23 @@ describe("executeGasTopUp", () => {
       "skipped",
     ]);
     expect(result.usdcSpent).toBe("0");
+    expect(result.approvalRevoked).toBeUndefined();
   });
 
   it("reports a reverted swap after a confirmed approve with no USDC spent", async () => {
-    mockSponsoredSend.mockImplementation(
-      (params: { to: string; functionName: string }) => {
-        if (params.to === ROUTER) {
-          return Promise.reject(
-            new SponsoredTxRevertError({
-              message: "Too little received",
-              txHash: "0xswapfail",
-              sendTransactionStatusId: "st-1",
-              revertChain: [],
-            })
-          );
-        }
-        return Promise.resolve(confirmed(`0x${params.functionName}`));
+    mockSponsoredSend.mockImplementation((params: SendParams) => {
+      if (params.to === ROUTER) {
+        return Promise.reject(
+          new SponsoredTxRevertError({
+            message: "Too little received",
+            txHash: "0xswapfail",
+            sendTransactionStatusId: "st-1",
+            revertChain: [],
+          })
+        );
       }
-    );
+      return confirmedSend(params);
+    });
     const plan = await preparedPlan();
 
     const result = await executeGasTopUp({ plan, executionId: "exec-1" });
@@ -991,6 +1021,13 @@ describe("executeGasTopUp", () => {
     expect(result.swapLanded).toBe(false);
     expect(result.swapPending).toBeUndefined();
     expect(result.usdcSpent).toBe("0");
+    expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
+    expect(result).toMatchObject({
+      approvalRevoked: true,
+      revokeTransactionHash: REVOKE_HASH,
+    });
+    expect(result.error).toContain("the approval was set back to zero");
+    expect(result.error).toContain("Too little received");
     expect(result.steps).toMatchObject([
       { name: "approve", status: "confirmed", transactionHash: "0xapprove" },
       {
@@ -1008,6 +1045,67 @@ describe("executeGasTopUp", () => {
       broadcastAttempted: true,
     });
   });
+
+  it.each([
+    ["is declined", () => Promise.resolve(null), undefined],
+    [
+      "reverts",
+      () =>
+        Promise.reject(
+          new SponsoredTxRevertError({
+            message: "approve reverted",
+            txHash: "0xrevokefail",
+            sendTransactionStatusId: "st-2",
+            revertChain: [],
+          })
+        ),
+      "0xrevokefail",
+    ],
+  ])(
+    "reports the exact-amount approval as remaining when setting it back to zero %s",
+    async (_label, revokeAnswer, revokeHash) => {
+      mockSponsoredSend.mockImplementation((params: SendParams) => {
+        if (params.to === ROUTER) {
+          return Promise.reject(
+            new SponsoredTxRevertError({
+              message: "Too little received",
+              txHash: "0xswapfail",
+              sendTransactionStatusId: "st-1",
+              revertChain: [],
+            })
+          );
+        }
+        return isRevoke(params) ? revokeAnswer() : confirmedSend(params);
+      });
+      const plan = await preparedPlan();
+
+      const result = await executeGasTopUp({ plan, executionId: "exec-1" });
+
+      expect(approvedAmounts()).toEqual([BigInt(5_000_000), BigInt(0)]);
+      expect(result.success).toBe(false);
+      expect(result.usdcSpent).toBe("0");
+      expect(result.approvalRevoked).toBe(false);
+      expect(result.revokeTransactionHash).toBe(revokeHash);
+      expect(result.error).toContain(
+        "an approval for exactly the requested amount remains"
+      );
+      expect(result.error).toContain(
+        "setting it back to zero did not complete"
+      );
+      expect(result.error).toContain("Too little received");
+      expect(result.failure).toMatchObject({
+        step: "swap",
+        transactionHash: "0xswapfail",
+        broadcastAttempted: true,
+      });
+      expect(mockLogSystemWarn).toHaveBeenCalledWith(
+        "transaction",
+        expect.stringContaining("Could not set the approval back to zero"),
+        expect.any(Error),
+        expect.objectContaining({ execution_id: "exec-1" })
+      );
+    }
+  );
 
   it("does not claim the USDC is unspent while a broadcast swap is unconfirmed", async () => {
     mockSponsoredSend.mockImplementation(
@@ -1032,6 +1130,8 @@ describe("executeGasTopUp", () => {
     expect(result.swapPending).toBe(true);
     expect(result.error).toContain("may or may not have been spent");
     expect(mockSponsoredSend).toHaveBeenCalledTimes(2);
+    expect(approvedAmounts()).toEqual([BigInt(5_000_000)]);
+    expect(result.approvalRevoked).toBeUndefined();
   });
 
   it("does not mark the swap pending when only the approve is unconfirmed", async () => {
@@ -1067,6 +1167,7 @@ describe("executeGasTopUp", () => {
       broadcastAttempted: true,
     });
     expect(mockSponsoredSend).toHaveBeenCalledOnce();
+    expect(result.approvalRevoked).toBeUndefined();
   });
 
   it("reports WETH left unwrapped when the unwrap fails after the swap landed", async () => {
